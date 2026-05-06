@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-from typing import Optional
-
 from .config import RuntimeConfig
 from .runtime import json_dumps
 from .store import GatewayStore
@@ -80,14 +78,6 @@ class SessionManager:
         self.store.append_message(session_id=session_id, role="assistant", content=content)
         self.store.touch_session(session_id, message_increment=1)
 
-    def latest_summary(self, session_id: str) -> Optional[str]:
-        row = self.store.latest_summary(session_id)
-        return row["content"] if row else None
-
-    def latest_frozen_window(self, session_id: str) -> Optional[list[dict]]:
-        row = self.store.latest_frozen_window(session_id)
-        return row["messages"] if row else None
-
     def recent_tail(self, session_id: str, limit: int = 4) -> list[dict]:
         rows = self.store.get_recent_messages(session_id, limit=limit)
         tail = []
@@ -96,39 +86,3 @@ class SessionManager:
                 continue
             tail.append({"role": row["role"], "content": row["content"]})
         return tail
-
-    def maybe_refresh_summary(self, session_id: str):
-        count = self.store.get_message_count(session_id)
-        if count == 0 or count % max(self.cfg.summary_update_every_messages, 1) != 0:
-            return
-        messages = self.store.get_recent_messages(session_id, limit=12)
-        content = self._summarize_messages(messages)
-        self.store.write_summary(
-            session_id=session_id,
-            summary_type="rolling",
-            content=content,
-            covered_from=max(count - len(messages) + 1, 1),
-            covered_to=count,
-        )
-
-    def maybe_refresh_frozen_window(self, session_id: str):
-        count = self.store.get_message_count(session_id)
-        if count == 0 or count % max(self.cfg.freeze_every_messages, 1) != 0:
-            return
-        messages = self.store.get_recent_messages(session_id, limit=max(self.cfg.freeze_tail_messages, 2))
-        raw_messages = [{"role": item["role"], "content": item["content"]} for item in messages if item["role"] in {"user", "assistant"}]
-        token_estimate = sum(len(item["content"] or "") for item in raw_messages) // 4
-        self.store.write_frozen_window(session_id, raw_messages, token_estimate)
-
-    def _summarize_messages(self, rows: list[dict]) -> str:
-        bullets = []
-        for row in rows:
-            role = row.get("role")
-            content = shorten(row.get("content") or "", 120)
-            if not content:
-                continue
-            prefix = "User" if role == "user" else "Assistant"
-            bullets.append(f"- {prefix}: {content}")
-        if not bullets:
-            return "No rolling summary yet."
-        return "Recent thread summary:\n" + "\n".join(bullets)

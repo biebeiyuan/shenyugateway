@@ -80,6 +80,18 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
 .preset-save-row input{flex:1;background:#0d1117;border:1px solid #30363d;color:#e1e4e8;padding:4px 8px;border-radius:6px;font-size:12px}
 .preset-save-row input:focus{outline:none;border-color:#8b5cf6}
 .preset-save-row .btn{font-size:11px;padding:4px 10px;white-space:nowrap}
+.cfg-split{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.cfg-inline{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.rev-toolbar{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-bottom:10px}
+.rev-list{display:grid;gap:10px}
+.rev-card{background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:10px}
+.rev-card h4{font-size:13px;color:#e1e4e8;margin-bottom:6px}
+.rev-meta{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
+.rev-pill{padding:2px 7px;border-radius:999px;font-size:10px;background:#21262d;color:#7d8590}
+.rev-body{font-size:12px;line-height:1.55;color:#c9d1d9;white-space:pre-wrap;word-break:break-word}
+.rev-body + .rev-body{margin-top:8px}
+.rev-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:10px}
+.rev-empty{padding:18px 0;text-align:center;color:#484f58;font-size:12px}
 /* calendar */
 .cal-wrap{display:grid;grid-template-columns:420px 1fr;gap:16px;align-items:start}
 .cal-tabs{display:flex;gap:6px;margin-bottom:10px}
@@ -89,6 +101,12 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
 .cal-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
 .cal-input{width:100%;background:#0d1117;border:1px solid #30363d;color:#e1e4e8;padding:7px 10px;border-radius:6px;font-size:12px}
 .cal-status{font-size:12px;color:#7d8590;margin-top:8px;min-height:18px}
+.cal-thread-list{margin-top:10px;border-top:1px solid #21262d;padding-top:10px}
+.cal-thread-head{display:flex;align-items:center;gap:8px;margin-bottom:8px}
+.cal-thread-head h4{font-size:12px;color:#7d8590;margin-right:auto}
+.cal-thread{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:7px 8px;margin-bottom:6px;cursor:pointer}
+.cal-thread:hover{border-color:#8b5cf6}.cal-thread.active{border-color:#8b5cf6;background:#8b5cf615}
+.cal-thread b{display:block;font-size:12px;color:#e1e4e8;margin-bottom:3px}.cal-thread span{display:block;font-size:11px;color:#7d8590;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .month-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
 .month-head h3{font-size:14px;color:#8b5cf6;margin-right:auto}
 .month-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
@@ -103,7 +121,7 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
 .cal-page-item:hover{border-color:#8b5cf6}.cal-page-item b{display:block;font-size:12px;color:#e1e4e8;margin-bottom:3px}.cal-page-item span{font-size:11px;color:#7d8590}
 .cal-detail{margin-top:12px;background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px}
 .cal-detail h3{font-size:15px;color:#e1e4e8;margin-bottom:6px}.cal-detail pre{white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.6;color:#c9d1d9}
-@media(max-width:980px){.cal-wrap{grid-template-columns:1fr}.cal-list{grid-template-columns:1fr}}
+@media(max-width:980px){.cal-wrap,.cfg-split,.cfg-inline{grid-template-columns:1fr}.cal-list{grid-template-columns:1fr}}
 </style>
 </head>
 <body>
@@ -140,6 +158,26 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
     <div class="cfg-row"><label>API Key</label><input id="c_key" type="password"></div>
     <div class="cfg-row"><label>协议</label><select id="c_proto"><option value="auto">自动检测</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></div>
   </div>
+  <div class="cfg-card"><h3>原子记忆小模型</h3>
+    <div class="cfg-split">
+      <div>
+        <div class="cfg-row"><label>小模型 URL</label><input id="c_am_url" placeholder="留空继承日历上游，再留空继承主上游"></div>
+        <div class="cfg-row"><label>小模型 API Key</label><input id="c_am_key" type="password" placeholder="留空继承上游 key"></div>
+        <div class="cfg-row"><label>小模型协议</label><select id="c_am_proto"><option value="auto">自动检测</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></div>
+        <div class="cfg-row"><label>小模型名</label><input id="c_am_model" placeholder="比如 deepseek-chat / gpt-4.1-mini / claude-3-5-haiku"></div>
+      </div>
+      <div>
+        <div class="cfg-row"><label><input type="checkbox" id="c_am_extract" style="accent-color:#8b5cf6"> 回复后异步提取原子记忆</label></div>
+        <div class="cfg-row"><label><input type="checkbox" id="c_am_inject" style="accent-color:#8b5cf6"> 聊天前注入 active 原子记忆</label></div>
+        <div class="cfg-inline">
+          <div class="cfg-row"><label>注入数量</label><input id="c_am_limit" type="number" min="1" max="8"></div>
+          <div class="cfg-row"><label>命中阈值 (0-1)</label><input id="c_am_score" type="number" min="0" max="1" step="0.01"></div>
+        </div>
+        <div class="cfg-row"><label>自动激活阈值 (0-1)</label><input id="c_am_auto" type="number" min="0" max="1" step="0.01"></div>
+        <div class="cfg-hint">建议先只开提取，观察 proposed 候选质量，再开注入。</div>
+      </div>
+    </div>
+  </div>
   <div class="cfg-card"><h3>Supabase</h3>
     <div class="cfg-row"><label>Project URL</label><input id="c_surl"></div>
     <div class="cfg-row"><label>Service Key</label><input id="c_skey" type="password"></div>
@@ -154,11 +192,34 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
   </div>
   <div class="cfg-card"><h3>节奏参数</h3>
     <div class="cfg-row"><label>工具回环轮数 (1-8)</label><input id="c_rounds" type="number" min="1" max="8"></div>
-    <div class="cfg-row"><label>摘要更新间隔 (条)</label><input id="c_sumevery" type="number" min="2" max="20"></div>
-    <div class="cfg-row"><label>冻结间隔 (条)</label><input id="c_frevery" type="number" min="2" max="30"></div>
-    <div class="cfg-row"><label>冻结保留 (条)</label><input id="c_frtail" type="number" min="2" max="20"></div>
+    <div class="cfg-row"><label>客户端上下文保留 (条，空=全部)</label><input id="c_clientmax" type="number" min="1" max="500" placeholder="全部"></div>
     <div class="cfg-row"><label>浮现数量</label><input id="c_slimit" type="number" min="1" max="8"></div>
     <div class="cfg-row"><label>简报缓存 (分钟)</label><input id="c_bttl" type="number" min="5" max="1440"></div>
+  </div>
+  <div class="cfg-card"><h3>冷启动桥接</h3>
+    <div class="cfg-row"><label><input type="checkbox" id="c_cold_enabled" style="accent-color:#8b5cf6"> 启用冷启动注入</label></div>
+    <div class="cfg-inline">
+      <div class="cfg-row"><label>注入请求数</label><input id="c_cold_turns" type="number" min="1" max="20"></div>
+      <div class="cfg-row"><label>注入消息数</label><input id="c_cold_limit" type="number" min="1" max="50"></div>
+    </div>
+    <div class="cfg-row"><label>旧窗口沉寂多久触发 (分钟)</label><input id="c_cold_idle" type="number" min="1" max="10080"></div>
+    <div class="rev-toolbar"><button class="btn" onclick="loadColdPreview()">预览下一次冷启动</button><button class="btn" onclick="loadGatewayOverview()">刷新统计</button></div>
+    <div id="coldOverview" class="rev-empty">尚未加载统计</div>
+    <div id="coldPreview" class="rev-list"></div>
+  </div>
+  <div class="cfg-card"><h3>原子记忆审核</h3>
+    <div class="rev-toolbar">
+      <select id="amReviewStatus" class="cal-input" style="width:160px" onchange="loadAtomicReview()">
+        <option value="proposed">proposed</option>
+        <option value="active">active</option>
+        <option value="deprecated">deprecated</option>
+        <option value="all">all</option>
+      </select>
+      <input id="amReviewSessionTag" class="cal-input" style="width:180px" placeholder="session_tag（可选）">
+      <input id="amReviewLimit" class="cal-input" style="width:100px" type="number" min="1" max="200" value="30">
+      <button class="btn" onclick="loadAtomicReview()">刷新</button>
+    </div>
+    <div id="amReviewList" class="rev-list"><div class="rev-empty">加载中…</div></div>
   </div>
   <button class="btn-primary" onclick="saveConfig()">保存配置</button>
   <div class="save-msg" id="saveMsg"></div>
@@ -187,6 +248,10 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
         <button class="btn-primary" onclick="generateCalPage()">生成这一页</button>
       </div>
       <div class="cfg-row" style="margin-top:10px"><label>period_key</label><input class="cal-input" id="calPeriodKey" placeholder="2026-05-06 / 2026-W19 / 2026-05"></div>
+      <div class="cal-thread-list">
+        <div class="cal-thread-head"><h4>Context Threads</h4><button class="btn" onclick="loadCalThreads()">刷新</button></div>
+        <div id="calThreads"><div class="empty" style="padding:12px 0">暂无上下文快照</div></div>
+      </div>
       <div class="cal-status" id="calStatus"></div>
     </div>
     <div class="cfg-card">
@@ -206,6 +271,7 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
 
 <script>
 let logs=[],expIds=new Set(),aTabs={},detCache={},timer=null;
+let atomicReviewItems=[];
 function $(id){return document.getElementById(id)}
 function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
 
@@ -230,7 +296,7 @@ function showPanel(name){
   document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
   $('p-'+name).classList.add('active');
   document.querySelectorAll('.tab')[name==='logs'?0:(name==='config'?1:2)].classList.add('active');
-  if(name==='config')loadCfg();
+  if(name==='config'){loadCfg();loadAtomicReview();loadGatewayOverview();}
   if(name==='calendar')loadCalendar();
 }
 
@@ -413,25 +479,44 @@ async function loadCfg(){
   try{
     const r=await authFetch('/api/config/full');const c=await r.json();
     $('c_url').value=c.upstream_url||'';$('c_key').value=c.upstream_api_key||'';$('c_proto').value=c.upstream_protocol||'auto';
+    $('c_am_url').value=c.atomic_memory_upstream_url||'';
+    $('c_am_key').value=c.atomic_memory_api_key||'';
+    $('c_am_proto').value=c.atomic_memory_protocol||'auto';
+    $('c_am_model').value=c.atomic_memory_model||'';
     $('c_surl').value=c.supabase_url||'';$('c_skey').value=c.supabase_key||'';$('c_gkey').value=c.gateway_key||'';
     $('c_briefing').checked=c.inject_briefing!==false;$('c_meta').checked=c.inject_meta_summaries!==false;
     $('c_surface').checked=c.inject_surface_passages!==false;$('c_gtools').checked=c.enable_gateway_tools!==false;
+    $('c_am_extract').checked=c.extract_atomic_memories===true;$('c_am_inject').checked=c.inject_atomic_memories===true;
     $('c_stools').checked=c.expose_supabase_tools!==false;$('c_rounds').value=c.max_internal_tool_rounds||3;
-    $('c_sumevery').value=c.summary_update_every_messages||6;$('c_frevery').value=c.freeze_every_messages||8;
-    $('c_frtail').value=c.freeze_tail_messages||6;$('c_slimit').value=c.default_surface_limit||3;
+    $('c_clientmax').value=c.max_client_messages||'';
+    $('c_cold_enabled').checked=c.enable_cold_start!==false;
+    $('c_cold_turns').value=c.cold_start_turns||3;
+    $('c_cold_limit').value=c.cold_start_message_limit||8;
+    $('c_cold_idle').value=c.cold_start_idle_minutes||120;
+    $('c_slimit').value=c.default_surface_limit||3;
+    $('c_am_limit').value=c.default_atomic_memory_limit||3;
+    $('c_am_score').value=(c.atomic_memory_min_score??0.42);
+    $('c_am_auto').value=(c.atomic_memory_auto_activate_min_confidence??0.92);
     $('c_bttl').value=c.daily_briefing_ttl_minutes||60;
     renderPresets();
   }catch(e){$('saveMsg').innerHTML='<span style="color:#f85149">加载失败</span>'}
 }
 async function saveConfig(){
+  const maxClientRaw=($('c_clientmax').value||'').trim();
   const body={
     upstream_url:$('c_url').value,upstream_api_key:$('c_key').value,upstream_protocol:$('c_proto').value,
+    atomic_memory_upstream_url:$('c_am_url').value,atomic_memory_api_key:$('c_am_key').value,atomic_memory_protocol:$('c_am_proto').value,atomic_memory_model:$('c_am_model').value,
     supabase_url:$('c_surl').value,supabase_key:$('c_skey').value,gateway_key:$('c_gkey').value,
     inject_briefing:$('c_briefing').checked,inject_meta_summaries:$('c_meta').checked,
+    extract_atomic_memories:$('c_am_extract').checked,inject_atomic_memories:$('c_am_inject').checked,
+    enable_cold_start:$('c_cold_enabled').checked,
     inject_surface_passages:$('c_surface').checked,enable_gateway_tools:$('c_gtools').checked,
     expose_supabase_tools:$('c_stools').checked,max_internal_tool_rounds:+$('c_rounds').value,
-    summary_update_every_messages:+$('c_sumevery').value,freeze_every_messages:+$('c_frevery').value,
-    freeze_tail_messages:+$('c_frtail').value,default_surface_limit:+$('c_slimit').value,
+    max_client_messages:maxClientRaw?+maxClientRaw:null,
+    cold_start_turns:+$('c_cold_turns').value,cold_start_message_limit:+$('c_cold_limit').value,cold_start_idle_minutes:+$('c_cold_idle').value,
+    default_surface_limit:+$('c_slimit').value,
+    default_atomic_memory_limit:+$('c_am_limit').value,atomic_memory_min_score:+$('c_am_score').value,
+    atomic_memory_auto_activate_min_confidence:+$('c_am_auto').value,
     daily_briefing_ttl_minutes:+$('c_bttl').value
   };
   try{
@@ -439,6 +524,99 @@ async function saveConfig(){
     const d=await r.json();$('saveMsg').innerHTML='<span style="color:#3fb950">已保存 ✓ ('+d.changed.join(', ')+')</span>';
     loadHealth();setTimeout(()=>$('saveMsg').innerHTML='',3000);
   }catch(e){$('saveMsg').innerHTML='<span style="color:#f85149">保存失败</span>'}
+}
+
+async function loadGatewayOverview(){
+  try{
+    const r=await authFetch('/api/gateway/overview');const d=await r.json();
+    const o=d.overview||{};
+    $('coldOverview').innerHTML=`消息 ${esc(o.messages_total||0)} 条 · 今日 ${esc(o.messages_today||0)} 条 · 窗口 ${esc(o.sessions_total||0)} 个 · 冷启动快照 ${esc(o.cold_start_snapshots||0)} 张<br>最早：${esc(o.earliest_message_at||'-')} · 最新：${esc(o.latest_message_at||'-')}`;
+  }catch(e){$('coldOverview').innerHTML='<span style="color:#f85149">统计加载失败</span>'}
+}
+
+async function loadColdPreview(){
+  try{
+    await loadGatewayOverview();
+    const r=await authFetch('/api/gateway/cold-start/preview');const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||d.error||'preview failed');
+    if(!d.would_inject){
+      $('coldPreview').innerHTML='<div class="rev-empty">按当前配置，下一次不会注入冷启动内容</div>';
+      return;
+    }
+    $('coldPreview').innerHTML=(d.sources||[]).map(source=>`
+      <div class="rev-card">
+        <h4>${esc(source.session_tag||'unknown')} · ${esc(source.client_name||'unknown')}</h4>
+        <div class="rev-meta"><span class="rev-pill">${esc(d.reason)}</span><span class="rev-pill">${esc(source.snapshot_at||'')}</span></div>
+        <div class="rev-body">${(source.messages||[]).map(m=>`- ${esc(m.role)}: ${esc(m.content)}`).join('\n')}</div>
+      </div>
+    `).join('');
+  }catch(e){$('coldPreview').innerHTML='<div class="rev-empty" style="color:#f85149">预览失败：'+esc(e.message||e)+'</div>'}
+}
+
+async function loadAtomicReview(){
+  const status=$('amReviewStatus').value||'proposed';
+  const limit=Math.max(1,Math.min(200,+($('amReviewLimit').value||30)));
+  const sessionTag=($('amReviewSessionTag').value||'').trim();
+  const qs=new URLSearchParams({status,limit:String(limit)});
+  if(sessionTag)qs.set('session_tag',sessionTag);
+  try{
+    const r=await authFetch('/api/gateway/atomic-memories?'+qs.toString());
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||d.error||'load failed');
+    atomicReviewItems=d.items||[];
+    renderAtomicReview();
+  }catch(e){
+    $('amReviewList').innerHTML='<div class="rev-empty" style="color:#f85149">加载失败：'+esc(e.message||e)+'</div>';
+  }
+}
+
+function renderAtomicReview(){
+  const box=$('amReviewList');
+  if(!atomicReviewItems.length){
+    box.innerHTML='<div class="rev-empty">这里还没有候选纸条</div>';
+    return;
+  }
+  box.innerHTML=atomicReviewItems.map(item=>{
+    const tags=Array.isArray(item.tags_json)?item.tags_json:[];
+    const entities=Array.isArray(item.entities_json)?item.entities_json:[];
+    const conf=typeof item.confidence==='number'?item.confidence.toFixed(2):item.confidence;
+    const heat=typeof item.heat==='number'?item.heat.toFixed(2):item.heat;
+    return `<div class="rev-card">
+      <h4>${esc(item.content_canonical||'(empty)')}</h4>
+      <div class="rev-meta">
+        <span class="rev-pill">${esc(item.status||'')}</span>
+        <span class="rev-pill">${esc(item.owner||'shared')}</span>
+        <span class="rev-pill">${esc(item.memory_type||'other')}</span>
+        <span class="rev-pill">tier ${esc(item.tier)}</span>
+        <span class="rev-pill">importance ${esc(item.importance)}</span>
+        <span class="rev-pill">conf ${esc(conf)}</span>
+        <span class="rev-pill">heat ${esc(heat)}</span>
+        <span class="rev-pill">${esc(item.session_tag||'default')}</span>
+      </div>
+      ${item.content_surface&&item.content_surface!==item.content_canonical?`<div class="rev-body"><b>surface:</b> ${esc(item.content_surface)}</div>`:''}
+      ${item.source_excerpt?`<div class="rev-body"><b>source:</b>\n${esc(item.source_excerpt)}</div>`:''}
+      ${(tags.length||entities.length)?`<div class="rev-body"><b>tags/entities:</b> ${esc(tags.join(', '))}${tags.length&&entities.length?' | ':''}${esc(entities.join(', '))}</div>`:''}
+      <div class="rev-actions">
+        <button class="btn" onclick="reviewAtomicMemory('${esc(item.id)}','active')">批准</button>
+        <button class="btn" onclick="reviewAtomicMemory('${esc(item.id)}','deprecated')">废弃</button>
+        <button class="btn" onclick="reviewAtomicMemory('${esc(item.id)}','proposed')">退回 proposed</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function reviewAtomicMemory(id,status){
+  try{
+    const r=await authFetch('/api/gateway/atomic-memories/'+encodeURIComponent(id)+'/review',{
+      method:'POST',
+      body:JSON.stringify({status})
+    });
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||d.error||'review failed');
+    loadAtomicReview();
+  }catch(e){
+    alert('审核失败：'+(e.message||e));
+  }
 }
 
 // --- Presets ---
@@ -516,7 +694,7 @@ function renderPresets(){
 }
 
 // --- Calendar Memory ---
-let calType='day',calPrompts=null,calMonthData=null;
+let calType='day',calPrompts=null,calMonthData=null,calThreads=[],selectedCalSessionTag='';
 function ymd(d){return d.toISOString().slice(0,10)}
 function currentMonth(){return new Date().toISOString().slice(0,7)}
 function currentWeek(){
@@ -542,6 +720,7 @@ async function loadCalendar(){
   if(!$('calPeriodKey').value)$('calPeriodKey').value=defaultPeriodKey(calType);
   await loadCalUpstream();
   await loadCalPrompts();
+  await loadCalThreads();
   await loadCalendarMonth();
 }
 async function loadCalUpstream(){
@@ -585,11 +764,44 @@ async function saveCalPrompt(){
     await r.json();$('calStatus').innerHTML='<span style="color:#3fb950">提示词已保存为新版本</span>';await loadCalPrompts();
   }catch(e){$('calStatus').innerHTML='<span style="color:#f85149">保存失败</span>'}
 }
+function calSessionParam(){
+  return selectedCalSessionTag?'&session_tag='+encodeURIComponent(selectedCalSessionTag):'';
+}
+async function loadCalThreads(){
+  try{
+    const r=await authFetch('/api/calendar/context-snapshots?limit=8');
+    const d=await r.json();if(!r.ok)throw new Error(d.detail||d.error||'load failed');
+    calThreads=d.items||[];
+    renderCalThreads();
+  }catch(e){$('calThreads').innerHTML='<div class="empty" style="padding:12px 0">上下文快照加载失败</div>'}
+}
+function selectCalThread(tag){
+  selectedCalSessionTag=tag||'';
+  renderCalThreads();
+}
+function renderCalThreads(){
+  const allCls=selectedCalSessionTag?'cal-thread':'cal-thread active';
+  let html=`<div class="${allCls}" onclick="selectCalThread('')"><b>All recent threads</b><span>默认取最近多个线程各自最新上下文</span></div>`;
+  if(!calThreads.length){
+    html+='<div class="empty" style="padding:12px 0">暂无上下文快照</div>';
+  }else{
+    html+=calThreads.map(x=>{
+      const tag=x.session_tag||'';
+      const cls=selectedCalSessionTag===tag?'cal-thread active':'cal-thread';
+      const count=(x.messages||[]).length;
+      return `<div class="${cls}" data-session-tag="${esc(tag)}"><b>${esc(tag||'(empty)')}</b><span>${esc(x.client_name||'')} · ${esc(x.created_at||'')} · ${count} msgs</span><span>${esc(x.latest_user_text||'')}</span></div>`;
+    }).join('');
+  }
+  $('calThreads').innerHTML=html;
+  document.querySelectorAll('#calThreads .cal-thread[data-session-tag]').forEach(el=>{
+    el.onclick=()=>selectCalThread(el.dataset.sessionTag||'');
+  });
+}
 async function previewCalSources(){
   const key=$('calPeriodKey').value||defaultPeriodKey(calType);
   try{
     const model=($('calModel')&&$('calModel').value)||'';
-    const r=await authFetch('/api/calendar/send-preview?period_type='+encodeURIComponent(calType)+'&period_key='+encodeURIComponent(key)+'&model='+encodeURIComponent(model));
+    const r=await authFetch('/api/calendar/send-preview?period_type='+encodeURIComponent(calType)+'&period_key='+encodeURIComponent(key)+'&model='+encodeURIComponent(model)+calSessionParam());
     const d=await r.json();
     if(!r.ok)throw new Error(d.detail||d.error||'preview failed');
     $('calDetail').style.display='block';
@@ -603,7 +815,7 @@ async function generateCalPage(){
   if(!confirm('生成 '+calType+' / '+key+' ？'))return;
   $('calStatus').textContent='正在生成...';
   try{
-    const r=await authFetch('/api/calendar/generate',{method:'POST',body:JSON.stringify({period_type:calType,period_key:key,model:$('calModel').value.trim()||undefined})});
+    const r=await authFetch('/api/calendar/generate',{method:'POST',body:JSON.stringify({period_type:calType,period_key:key,model:$('calModel').value.trim()||undefined,session_tag:selectedCalSessionTag||undefined})});
     const d=await r.json();
     if(!r.ok)throw new Error(d.detail||d.error||'generate failed');
     $('calStatus').innerHTML='<span style="color:#3fb950">生成完成：'+esc((d.page||{}).title||key)+'</span>';

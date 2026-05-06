@@ -1,4 +1,4 @@
-"""
+﻿"""
 shenyu memory gateway
 OpenAI-compatible gateway with:
 - optional context injection
@@ -8,6 +8,7 @@ OpenAI-compatible gateway with:
 """
 
 import hashlib
+import asyncio
 import json
 import logging
 import os
@@ -44,6 +45,7 @@ from shenyu_gateway.runtime import (
     persist_env as _persist_env,
 )
 from shenyu_gateway.schemas import (
+    AtomicMemoryReviewUpdate,
     CalendarGenerateRequest,
     CalendarPromptUpdate,
     ChatRequest,
@@ -360,7 +362,7 @@ _TOOL_MENU = """小圆有话说："予予，当你打开这个简报，就说明
 想起某件具体的事  →  shenyu_ask_memory 查一下
 简报里提了但没细说  →  supabase_query 对应的表
 想跟圆儿说话  →  supabase_insert（table=message_board）
-想写今天  →  supabase_insert（table=journal 长的，或 table=daily_notes 短的，三天自动清）
+想写今天  →  supabase_insert（table=journal）
 想给下一个自己留话  →  supabase_insert（table=memos）
 
 journal 里 category=letter 是以前的我给你写的信。
@@ -530,25 +532,6 @@ class GatewayToolService:
         else:
             memo_text = "暂无备忘记录。"
 
-        # ── 2. 近况（daily_notes 未过期） ──
-        now_iso = _iso_now()
-        daily_rows = await self._safe_query(
-            "daily_notes",
-            {
-                "select": "*",
-                "expires_at": f"gt.{now_iso}",
-                "order": "created_at.desc",
-                "limit": "5",
-            },
-        )
-        if daily_rows:
-            daily_text = "\n".join(
-                f"[{d.get('created_at', '')[11:16]}] {d.get('author', 'unknown')}: {d.get('content', '')}"
-                for d in daily_rows
-            )
-        else:
-            daily_text = "最近很安静。"
-
         # ── 3. 留言板 ──
         msg_rows = await self._safe_query(
             "message_board",
@@ -625,11 +608,10 @@ class GatewayToolService:
             f"{identity}\n\n"
             f"## 1. 备忘\n{memo_text}\n\n"
             f"（journal 里有 category=letter 是我以前给你写的信。想看再看。）\n\n"
-            f"## 2. 近况\n{daily_text}\n\n"
-            f"## 3. 留言板\n{msg_text}\n\n"
-            f"## 4. 日记\n{journal_text}\n\n"
-            f"## 5. 今天\n{health_text}\n\n"
-            f"## 6. 家里\n{_TOOL_MENU}\n"
+            f"## 2. 留言板\n{msg_text}\n\n"
+            f"## 3. 日记\n{journal_text}\n\n"
+            f"## 4. 今天\n{health_text}\n\n"
+            f"## 5. 家里\n{_TOOL_MENU}\n"
         )
 
         if session_store:
@@ -719,6 +701,42 @@ class GatewayToolService:
             "echoes": echoes,
             "linked_threads": linked_threads,
         }
+
+    async def search_atomic_memories(self, query: str, session_tag: Optional[str], limit: int = 3) -> dict:
+        if not supabase_client:
+            return {"query": query, "count": 0, "memories": [], "note": "Supabase is not configured."}
+
+        params = {
+            "status": "eq.active",
+            "order": "heat.desc,importance.desc,updated_at.desc",
+            "limit": "80",
+            "select": (
+                "id,session_tag,owner,applies_to,speaker_perspective,content_canonical,content_surface,"
+                "memory_type,tier,confidence,importance,heat,valence,arousal,entities_json,tags_json,"
+                "source_excerpt,activation_count,last_activated,created_at,updated_at"
+            ),
+        }
+        if session_tag:
+            params["session_tag"] = f"eq.{session_tag}"
+
+        try:
+            rows = await supabase_client.query("atomic_memories", params)
+        except Exception as exc:
+            logger.warning("[AtomicMemory] search skipped: %s", exc)
+            return {"query": query, "count": 0, "memories": [], "note": "atomic_memories table is not ready."}
+
+        scored = []
+        for row in rows:
+            score, why = self._score_atomic_memory(query, row)
+            if score < cfg.atomic_memory_min_score:
+                continue
+            scored.append({**row, "score": round(score, 3), "why": why})
+
+        scored.sort(key=lambda item: item["score"], reverse=True)
+        memories = scored[: max(1, min(limit, 8))]
+        for memory in memories:
+            await self._boost_atomic_memory(memory.get("id"))
+        return {"query": query, "count": len(memories), "memories": memories}
 
     async def surface_passages(self, query: str, session_tag: Optional[str], limit: int = 3) -> dict:
         candidates = await self._collect_primary_text_candidates(session_tag=session_tag)
@@ -810,25 +828,6 @@ class GatewayToolService:
                 }
             )
 
-        daily_rows = await self._safe_query(
-            "daily_notes",
-            {"order": "created_at.desc", "limit": "8", "select": "id,author,content,created_at,expires_at"},
-        )
-        for row in daily_rows:
-            items.append(
-                {
-                    "source_table": "daily_notes",
-                    "source_id": row.get("id"),
-                    "title": f"Daily note by {row.get('author', 'unknown')}",
-                    "excerpt": _shorten(row.get("content") or "", 220),
-                    "full_text": row.get("content") or "",
-                    "created_at": row.get("created_at"),
-                    "chunk_index": 0,
-                    "content_kind": "daily_notes",
-                    "base_salience": 0.46,
-                    "novelty_modifier": 1.0,
-                }
-            )
         return items
 
     def _row_to_chunks(
@@ -872,6 +871,55 @@ class GatewayToolService:
         body_bonus = self._body_bonus_for_item(item)
         return _clamp(item.get("base_salience", 0.5) * 0.45 + keyword_score * 0.35 + recency_score * 0.12 + body_bonus + length_bonus, 0.0, 1.0)
 
+    def _score_atomic_memory(self, query: str, memory: dict) -> tuple[float, list[str]]:
+        tags = _safe_json_loads(memory.get("tags_json"), [])
+        entities = _safe_json_loads(memory.get("entities_json"), [])
+        full_text = "\n".join(
+            [
+                memory.get("content_canonical") or "",
+                memory.get("content_surface") or "",
+                memory.get("memory_type") or "",
+                " ".join(str(tag) for tag in tags),
+                " ".join(str(entity) for entity in entities),
+            ]
+        )
+        keyword_score = _keyword_overlap_score(query, full_text)
+        tag_score = 0.15 if self._query_matches_text_items(query, tags) else 0.0
+        entity_score = 0.18 if self._query_matches_text_items(query, entities) else 0.0
+        importance_score = _clamp((memory.get("importance") or 1) / 5, 0.0, 1.0)
+        heat_score = _clamp(memory.get("heat") or 0.3, 0.0, 1.0)
+        tier = int(memory.get("tier") or 3)
+        tier_score = {1: 0.22, 2: 0.15, 3: 0.08}.get(tier, 0.02)
+        emotion_score = 0.08 if self._has_emotional_signal(memory) else 0.0
+        recency_score = self._recency_score(memory.get("updated_at") or memory.get("created_at"))
+
+        score = _clamp(
+            keyword_score * 0.42
+            + tag_score
+            + entity_score
+            + heat_score * 0.15
+            + importance_score * 0.10
+            + recency_score * 0.05
+            + tier_score
+            + emotion_score,
+            0.0,
+            1.0,
+        )
+        why = []
+        if keyword_score >= 0.25:
+            why.append("keyword overlap")
+        if tag_score:
+            why.append("tag match")
+        if entity_score:
+            why.append("entity match")
+        if heat_score >= 0.7:
+            why.append("warm memory")
+        if tier <= 2:
+            why.append(f"tier {tier}")
+        if emotion_score:
+            why.append("emotional signal")
+        return score, why or ["soft atomic match"]
+
     def _why_passage(self, query: str, item: dict, score: float) -> list[str]:
         reasons = []
         if _keyword_overlap_score(query, item.get("title", "") + "\n" + item.get("full_text", "")) >= 0.4:
@@ -902,8 +950,6 @@ class GatewayToolService:
             return 0.83
         if source_table == "message_board":
             return 0.76
-        if source_table == "daily_notes":
-            return 0.52
         return 0.64
 
     def _body_bonus_for_item(self, item: dict) -> float:
@@ -916,8 +962,6 @@ class GatewayToolService:
             return 0.08
         if content_kind == "paper":
             return 0.08
-        if item.get("source_table") == "daily_notes":
-            return 0.04
         return 0.05
 
     def _recency_score(self, created_at: Optional[str]) -> float:
@@ -1109,6 +1153,41 @@ class GatewayToolService:
         tag_texts = [(tag.get("tag") or "").lower() for tag in tags]
         return any(term in tag_text for term in terms for tag_text in tag_texts)
 
+    def _query_matches_text_items(self, query: str, items: Any) -> bool:
+        terms = _keyword_terms(query)
+        if not terms:
+            return False
+        if isinstance(items, str):
+            texts = [items.lower()]
+        elif isinstance(items, list):
+            texts = []
+            for item in items:
+                if isinstance(item, dict):
+                    texts.extend(str(value).lower() for value in item.values() if value)
+                elif item:
+                    texts.append(str(item).lower())
+        else:
+            texts = [str(items).lower()] if items else []
+        return any(term in text for term in terms for text in texts)
+
+    async def _boost_atomic_memory(self, memory_id: Optional[str]):
+        if not memory_id or not supabase_client:
+            return
+        try:
+            await supabase_client.rpc("boost_atomic_memory", {"memory_uuid": memory_id})
+        except Exception:
+            try:
+                await supabase_client.update(
+                    "atomic_memories",
+                    {"id": memory_id},
+                    {
+                        "heat": 0.75,
+                        "last_activated": _iso_now(),
+                    },
+                )
+            except Exception:
+                logger.debug("[AtomicMemory] boost skipped for %s", memory_id)
+
     def _has_strong_link(self, links: list[dict]) -> bool:
         return any((link.get("strength") or 0) >= 0.75 for link in links)
 
@@ -1135,6 +1214,224 @@ class GatewayToolService:
         if v <= -0.35 and a <= -0.15:
             return "heavy and low"
         return "mixed emotional shape"
+
+class AtomicMemoryService:
+    def __init__(self, request: Request):
+        self.request = request
+
+    async def process_turn(
+        self,
+        session: dict,
+        user_text: str,
+        assistant_text: str,
+        source_model: str,
+    ):
+        if not cfg.extract_atomic_memories or not supabase_client:
+            return
+        if not user_text.strip() or not assistant_text.strip():
+            return
+
+        run_id = f"aer_{uuid.uuid4().hex[:12]}"
+        started_at = _iso_now()
+        prompt_messages = self._build_extraction_messages(session, user_text, assistant_text)
+        upstream = self._atomic_upstream()
+        if not upstream["base_url"] or not upstream["api_key"] or not upstream["model"]:
+            logger.info("[AtomicMemory] extractor not configured; skipping.")
+            return
+
+        try:
+            result = await self._run_extractor(upstream, prompt_messages)
+            candidates = result.get("memories") or []
+            inserted = []
+            for candidate in candidates[:8]:
+                memory = self._candidate_to_row(candidate, session, user_text, assistant_text, source_model)
+                if not memory:
+                    continue
+                row = await supabase_client.insert("atomic_memories", memory)
+                inserted.append(row.get("id") if isinstance(row, dict) else None)
+            await self._write_run(
+                run_id,
+                session,
+                status="ok",
+                prompt_messages=prompt_messages,
+                raw_result=result,
+                candidate_count=len(candidates),
+                inserted_count=len([item for item in inserted if item]),
+                error=None,
+                started_at=started_at,
+            )
+            logger.info("[AtomicMemory] extracted %d candidates, inserted %d", len(candidates), len([item for item in inserted if item]))
+        except Exception as exc:
+            logger.exception("[AtomicMemory] extraction failed")
+            try:
+                await self._write_run(
+                    run_id,
+                    session,
+                    status="error",
+                    prompt_messages=prompt_messages,
+                    raw_result={},
+                    candidate_count=0,
+                    inserted_count=0,
+                    error=str(exc)[:1000],
+                    started_at=started_at,
+                )
+            except Exception:
+                logger.exception("[AtomicMemory] failed to write extraction run")
+
+    def _atomic_upstream(self) -> dict[str, str]:
+        base_url = (cfg.atomic_memory_upstream_url or cfg.calendar_upstream_url or cfg.upstream_url).strip()
+        configured_protocol = cfg.atomic_memory_protocol or (cfg.calendar_protocol if cfg.calendar_upstream_url else cfg.upstream_protocol)
+        protocol = _detect_protocol_for(base_url, configured_protocol)
+        api_key = (cfg.atomic_memory_api_key or cfg.calendar_api_key or cfg.upstream_api_key).strip()
+        model = (cfg.atomic_memory_model or cfg.calendar_model or "").strip()
+        return {
+            "base_url": base_url,
+            "chat_url": _chat_url_for(base_url, protocol),
+            "protocol": protocol,
+            "api_key": api_key,
+            "model": model,
+        }
+
+    def _build_extraction_messages(self, session: dict, user_text: str, assistant_text: str) -> list[dict]:
+        system = (
+            "You are Shenyu Gateway's atomic memory extractor. Return JSON only.\n"
+            "Extract only small long-term memories that would still be useful three months later.\n"
+            "Prefer returning an empty memories array over noisy memories.\n"
+            "Do not store greetings, filler, ordinary debugging logs, tool parameters, or generic warmth.\n"
+            "One memory must have a clear subject and should not split one fact into many items.\n"
+            "Capture user facts, assistant commitments, and shared relationship/project continuity when durable.\n"
+            "Use Chinese for content fields when the conversation is Chinese.\n"
+            "Schema: {\"memories\":[{\"owner\":\"user|assistant|shared\",\"applies_to\":\"user|assistant|shared\","
+            "\"speaker_perspective\":\"user|assistant|shared\",\"content_canonical\":\"...\","
+            "\"content_surface\":\"...\",\"memory_type\":\"preference|health|emotion|commitment|project|relation|boundary|routine|identity|event|other\","
+            "\"tier\":1-4,\"confidence\":0-1,\"importance\":1-5,\"valence\":-1..1,\"arousal\":-1..1,"
+            "\"tags\":[\"...\"],\"entities\":[\"...\"],\"reason\":\"why this is worth remembering\"}]}"
+        )
+        user = (
+            f"session_tag: {session.get('session_tag') or 'default'}\n\n"
+            "[user]\n"
+            f"{_shorten(user_text, 1600)}\n\n"
+            "[assistant]\n"
+            f"{_shorten(assistant_text, 2200)}"
+        )
+        return [{"role": "system", "content": system}, {"role": "user", "content": user}]
+
+    async def _run_extractor(self, upstream: dict[str, str], messages: list[dict]) -> dict:
+        if upstream["protocol"] == "anthropic":
+            system, anthropic_messages = _openai_to_anthropic(messages, cache_layers={}, cache_paths=[])
+            payload = {
+                "model": upstream["model"],
+                "system": system,
+                "messages": anthropic_messages,
+                "max_tokens": 1200,
+                "temperature": 0,
+            }
+            headers = {
+                "x-api-key": upstream["api_key"],
+                "anthropic-version": cfg.upstream_version,
+                "content-type": "application/json",
+            }
+            raw_response = await _call_upstream_json_at(self.request, upstream["chat_url"], payload, headers)
+            raw = _anthropic_to_openai_completion(upstream["model"], raw_response)
+        else:
+            payload = {
+                "model": upstream["model"],
+                "messages": messages,
+                "max_tokens": 1200,
+                "temperature": 0,
+            }
+            headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
+            raw = await _call_upstream_json_at(self.request, upstream["chat_url"], payload, headers)
+
+        content = raw.get("choices", [{}])[0].get("message", {}).get("content", "") or "{}"
+        return extract_json_object(content)
+
+    def _candidate_to_row(self, candidate: dict, session: dict, user_text: str, assistant_text: str, source_model: str) -> Optional[dict]:
+        canonical = (candidate.get("content_canonical") or "").strip()
+        if len(canonical) < 8:
+            return None
+        confidence = float(candidate.get("confidence") or 0)
+        status = "active" if confidence >= cfg.atomic_memory_auto_activate_min_confidence else "proposed"
+        now = _iso_now()
+        return {
+            "session_tag": session.get("session_tag") or "default",
+            "owner": self._choice(candidate.get("owner"), {"user", "assistant", "shared"}, "shared"),
+            "applies_to": self._choice(candidate.get("applies_to"), {"user", "assistant", "shared"}, "shared"),
+            "speaker_perspective": self._choice(candidate.get("speaker_perspective"), {"user", "assistant", "shared"}, "shared"),
+            "content_canonical": canonical,
+            "content_surface": (candidate.get("content_surface") or canonical).strip(),
+            "memory_type": self._choice(
+                candidate.get("memory_type"),
+                {"preference", "health", "emotion", "commitment", "project", "relation", "boundary", "routine", "identity", "event", "other"},
+                "other",
+            ),
+            "tier": max(1, min(int(candidate.get("tier") or 3), 4)),
+            "confidence": _clamp(confidence, 0.0, 1.0),
+            "importance": max(1, min(int(candidate.get("importance") or 2), 5)),
+            "heat": 0.68,
+            "valence": _clamp(float(candidate.get("valence") or 0), -1.0, 1.0),
+            "arousal": _clamp(float(candidate.get("arousal") or 0), -1.0, 1.0),
+            "entities_json": candidate.get("entities") or [],
+            "tags_json": candidate.get("tags") or [],
+            "source_session_id": session.get("id"),
+            "source_message_ids_json": [],
+            "source_excerpt": _shorten(f"用户：{user_text}\n小机：{assistant_text}", 800),
+            "source_model": source_model,
+            "status": status,
+            "activation_count": 0,
+            "created_at": now,
+            "updated_at": now,
+        }
+
+    def _choice(self, value: Any, allowed: set[str], fallback: str) -> str:
+        raw = str(value or "").strip()
+        return raw if raw in allowed else fallback
+
+    async def _write_run(
+        self,
+        run_id: str,
+        session: dict,
+        status: str,
+        prompt_messages: list[dict],
+        raw_result: dict,
+        candidate_count: int,
+        inserted_count: int,
+        error: Optional[str],
+        started_at: str,
+    ):
+        if not supabase_client:
+            return
+        await supabase_client.insert(
+            "atomic_extraction_runs",
+            {
+                "id": run_id,
+                "session_id": session.get("id"),
+                "session_tag": session.get("session_tag") or "default",
+                "status": status,
+                "prompt_json": prompt_messages,
+                "result_json": raw_result,
+                "candidate_count": candidate_count,
+                "inserted_count": inserted_count,
+                "error": error,
+                "started_at": started_at,
+                "finished_at": _iso_now(),
+            },
+        )
+
+
+def _schedule_atomic_memory_extraction(
+    request: Request,
+    session: dict,
+    user_text: str,
+    assistant_text: str,
+    source_model: str,
+):
+    if not cfg.extract_atomic_memories:
+        return
+    try:
+        asyncio.create_task(AtomicMemoryService(request).process_turn(session, user_text, assistant_text, source_model))
+    except RuntimeError:
+        logger.exception("[AtomicMemory] failed to schedule extraction")
 
 
 class CalendarService:
@@ -1319,22 +1616,28 @@ class CalendarService:
         row["meta"] = _safe_json_loads(row.get("meta"), {})
         return row
 
-    async def preview_sources(self, period_type: str, period_key: Optional[str]) -> dict[str, Any]:
+    async def preview_sources(self, period_type: str, period_key: Optional[str], session_tag: Optional[str] = None) -> dict[str, Any]:
         self._require_supabase()
         period_type = (period_type or "").strip().lower()
         if period_type not in {"day", "week", "month"}:
             raise HTTPException(status_code=400, detail="Unsupported period_type.")
         period_key = period_key or default_period_key(period_type)
-        return await self._collect_sources(period_type, period_key)
+        return await self._collect_sources(period_type, period_key, session_tag=session_tag)
 
-    async def send_preview(self, period_type: str, period_key: Optional[str], model_override: Optional[str] = None) -> dict[str, Any]:
+    async def send_preview(
+        self,
+        period_type: str,
+        period_key: Optional[str],
+        model_override: Optional[str] = None,
+        session_tag: Optional[str] = None,
+    ) -> dict[str, Any]:
         self._require_supabase()
         period_type = (period_type or "").strip().lower()
         if period_type not in {"day", "week", "month"}:
             raise HTTPException(status_code=400, detail="Unsupported period_type.")
         period_key = period_key or default_period_key(period_type)
         prompt_row = await self._active_prompt(period_type)
-        sources = await self._collect_sources(period_type, period_key)
+        sources = await self._collect_sources(period_type, period_key, session_tag=session_tag)
         prompt_pack = await self._build_generation_prompt(period_type, period_key, prompt_row, sources)
         upstream = self._calendar_upstream(model_override)
         return {
@@ -1360,7 +1663,7 @@ class CalendarService:
             raise HTTPException(status_code=400, detail="Unsupported period_type.")
         period_key = body.period_key or default_period_key(period_type)
         prompt_row = await self._active_prompt(period_type)
-        sources = await self._collect_sources(period_type, period_key)
+        sources = await self._collect_sources(period_type, period_key, session_tag=body.session_tag)
         run = await supabase_client.insert(
             "calendar_generation_runs",
             {
@@ -1428,125 +1731,59 @@ class CalendarService:
             raise HTTPException(status_code=404, detail=f"No prompt config found for {period_type}.")
         return rows[0]
 
-    async def _collect_sources(self, period_type: str, period_key: str) -> dict[str, Any]:
+    async def _collect_sources(self, period_type: str, period_key: str, session_tag: Optional[str] = None) -> dict[str, Any]:
         start, end = period_bounds(period_type, period_key)
         if period_type == "day":
-            return await self._collect_day_sources(period_key, start, end)
+            return await self._collect_day_sources(period_key, start, end, session_tag=session_tag)
         if period_type == "week":
-            return await self._collect_rollup_sources("day", start, end, period_key)
-        return await self._collect_rollup_sources("week", start, end, period_key)
+            return await self._collect_week_sources(period_key, start, end, session_tag=session_tag)
+        return await self._collect_month_sources(period_key, start, end)
 
-    def _current_context_sources(self) -> dict[str, Any]:
+    def _clean_snapshot_messages(self, messages: list[dict], limit: Optional[int] = None) -> list[dict[str, str]]:
+        cleaned: list[dict[str, str]] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role not in {"user", "assistant"}:
+                continue
+            content = _normalize_text(msg.get("content")).strip()
+            if not content:
+                continue
+            cleaned.append({"role": role, "content": _shorten(content, 1200)})
+        return cleaned[-limit:] if limit else cleaned
+
+    def _context_snapshots(self, limit: int = 5, session_tag: Optional[str] = None, message_limit: Optional[int] = None) -> list[dict[str, Any]]:
         if session_store is None:
-            return {}
-        with session_store._connect() as conn:
-            session = conn.execute(
-                """
-                SELECT *
-                FROM gateway_sessions
-                ORDER BY last_active_at DESC
-                LIMIT 1
-                """
-            ).fetchone()
-        if not session:
-            return {}
-        session_row = dict(session)
-        session_id = session_row["id"]
-        sessions = SessionManager(session_store, cfg)
-        recent_messages = [
-            {"role": row.get("role"), "content": row.get("content") or "", "created_at": row.get("created_at")}
-            for row in session_store.get_recent_messages(session_id, limit=18)
-            if row.get("role") in {"user", "assistant"}
-        ]
-        return {
-            "session_tag": session_row.get("session_tag") or "",
-            "message_count": session_row.get("message_count") or 0,
-            "rolling_summary": sessions.latest_summary(session_id) or "",
-            "frozen_window": sessions.latest_frozen_window(session_id) or [],
-            "recent_messages": recent_messages,
+            return []
+        snapshots = session_store.latest_request_context_snapshots(limit=limit, session_tag=session_tag)
+        for item in snapshots:
+            item["messages"] = self._clean_snapshot_messages(item.get("messages") or [], limit=message_limit)
+            item["latest_user_text"] = _shorten(item.get("latest_user_text") or "", 300)
+        return snapshots
+
+    async def _recent_calendar_pages(self, period_type: str, limit: int, before_key: Optional[str] = None) -> list[dict[str, Any]]:
+        params = {
+            "select": "*",
+            "period_type": f"eq.{period_type}",
+            "is_latest": "eq.true",
+            "order": "period_start.desc",
+            "limit": str(max(1, min(limit + 5, 50))),
         }
+        rows = await self._safe_supabase_query("calendar_pages", params)
+        if before_key:
+            rows = [row for row in rows if (row.get("period_key") or "") != before_key]
+        return rows[:limit]
 
-    async def _collect_day_sources(self, period_key: str, start: datetime, end: datetime) -> dict[str, Any]:
-        start_iso = start.isoformat()
-        end_iso = end.isoformat()
-        chat_rows: list[dict[str, Any]] = []
-        if session_store is not None:
-            with session_store._connect() as conn:
-                rows = conn.execute(
-                    """
-                    SELECT session_id, role, content, created_at
-                    FROM gateway_messages
-                    WHERE created_at >= ? AND created_at < ?
-                    ORDER BY created_at ASC
-                    """,
-                    (start_iso, end_iso),
-                ).fetchall()
-                chat_rows = [dict(row) for row in rows]
+    async def _surface_rows_for_snapshots(self, snapshots: list[dict[str, Any]], session_tag: Optional[str]) -> list[dict[str, Any]]:
+        if not snapshots:
+            return []
+        trigger_parts = [item.get("latest_user_text") or "" for item in snapshots[:3]]
+        trigger = "\n".join(part for part in trigger_parts if part).strip() or "calendar preview"
+        service = GatewayToolService()
+        surfaced = await service.surface_passages(trigger, session_tag=session_tag, limit=cfg.default_surface_limit)
+        return (surfaced.get("passages") or [])[:4]
 
-        journal_rows = await self._safe_supabase_query(
-            "journal",
-            {"select": "id,title,content,author,category,created_at,session_tag", "order": "created_at.desc", "limit": "40"},
-        )
-        journal_rows = [row for row in journal_rows if start_iso <= (row.get("created_at") or "") < end_iso]
-
-        room_rows = await self._safe_supabase_query(
-            "room",
-            {"select": "id,title,content,updated_at,status,visibility,session_tag", "order": "updated_at.desc", "limit": "10"},
-        )
-        board_rows = await self._safe_supabase_query(
-            "message_board",
-            {"select": "id,sender,content,created_at", "order": "created_at.desc", "limit": "30"},
-        )
-        board_rows = [row for row in board_rows if start_iso <= (row.get("created_at") or "") < end_iso]
-
-        surface_rows: list[dict[str, Any]] = []
-        if session_store is not None:
-            builder = ContextBuilder(session_store, SessionManager(session_store, cfg), GatewayToolService())
-            fake_session = {"id": "calendar-preview", "session_tag": "calendar-preview"}
-            package = await builder.build_context_package(fake_session, current_user_text="calendar preview", is_first_turn=False)
-            surface_rows = package.get("surface_passages") or []
-
-        source_refs: list[dict[str, Any]] = []
-        for row in journal_rows:
-            source_refs.append({"source_table": "journal", "source_id": row.get("id"), "title": row.get("title") or ""})
-        for row in room_rows[:4]:
-            source_refs.append({"source_table": "room", "source_id": row.get("id"), "title": row.get("title") or ""})
-        for row in board_rows[:6]:
-            source_refs.append({"source_table": "message_board", "source_id": row.get("id"), "title": row.get("sender") or "message"})
-
-        session_tags = sorted(
-            {
-                tag
-                for tag in [row.get("session_tag") for row in journal_rows] + [row.get("session_tag") for row in room_rows]
-                if tag
-            }
-        )
-        return {
-            "period_type": "day",
-            "period_key": period_key,
-            "period_start": start_iso,
-            "period_end": end_iso,
-            "current_context": self._current_context_sources(),
-            "chat_rows": chat_rows[-50:],
-            "journal_rows": journal_rows[:8],
-            "room_rows": room_rows[:5],
-            "message_board_rows": list(reversed(board_rows[:8])),
-            "surface_rows": surface_rows[:4],
-            "source_refs": source_refs,
-            "session_tags": session_tags,
-        }
-
-    async def _collect_rollup_sources(self, child_type: str, start: datetime, end: datetime, period_key: str) -> dict[str, Any]:
-        rows = await self._safe_supabase_query(
-            "calendar_pages",
-            {"select": "*", "period_type": f"eq.{child_type}", "is_latest": "eq.true", "order": "period_start.asc", "limit": "120"},
-        )
-        child_pages = [
-            row
-            for row in rows
-            if (row.get("period_start") or "") >= start.isoformat() and (row.get("period_end") or "") <= end.isoformat()
-        ]
-        source_refs = [
+    def _calendar_source_refs(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
             {
                 "source_table": "calendar_pages",
                 "source_id": row.get("id"),
@@ -1554,16 +1791,79 @@ class CalendarService:
                 "period_type": row.get("period_type"),
                 "period_key": row.get("period_key"),
             }
-            for row in child_pages
+            for row in rows
         ]
-        session_tags = sorted({tag for row in child_pages for tag in _safe_json_loads(row.get("session_tags"), []) if tag})
+
+    async def _collect_day_sources(
+        self,
+        period_key: str,
+        start: datetime,
+        end: datetime,
+        session_tag: Optional[str] = None,
+    ) -> dict[str, Any]:
+        snapshots = self._context_snapshots(limit=5, session_tag=session_tag)
+        recent_days = await self._recent_calendar_pages("day", 3, before_key=period_key)
+        recent_weeks = await self._recent_calendar_pages("week", 1)
+        recent_months = await self._recent_calendar_pages("month", 1)
+        surface_rows = await self._surface_rows_for_snapshots(snapshots, session_tag=session_tag)
+        calendar_rows = recent_days + recent_weeks + recent_months
+        session_tags = sorted({item.get("session_tag") for item in snapshots if item.get("session_tag")})
+        source_refs = self._calendar_source_refs(calendar_rows)
         return {
-            "period_type": "week" if child_type == "day" else "month",
+            "period_type": "day",
             "period_key": period_key,
             "period_start": start.isoformat(),
             "period_end": end.isoformat(),
-            "child_pages": child_pages,
+            "context_snapshots": snapshots,
+            "surface_rows": surface_rows,
+            "recent_days": recent_days,
+            "recent_weeks": recent_weeks,
+            "recent_months": recent_months,
             "source_refs": source_refs,
+            "session_tags": session_tags,
+        }
+
+    async def _collect_week_sources(
+        self,
+        period_key: str,
+        start: datetime,
+        end: datetime,
+        session_tag: Optional[str] = None,
+    ) -> dict[str, Any]:
+        snapshots = self._context_snapshots(limit=3, session_tag=session_tag, message_limit=20)
+        recent_days = await self._recent_calendar_pages("day", 7)
+        recent_weeks = await self._recent_calendar_pages("week", 2, before_key=period_key)
+        recent_months = await self._recent_calendar_pages("month", 1)
+        calendar_rows = recent_days + recent_weeks + recent_months
+        session_tags = sorted({item.get("session_tag") for item in snapshots if item.get("session_tag")})
+        return {
+            "period_type": "week",
+            "period_key": period_key,
+            "period_start": start.isoformat(),
+            "period_end": end.isoformat(),
+            "context_snapshots": snapshots,
+            "recent_days": recent_days,
+            "recent_weeks": recent_weeks,
+            "recent_months": recent_months,
+            "source_refs": self._calendar_source_refs(calendar_rows),
+            "session_tags": session_tags,
+        }
+
+    async def _collect_month_sources(self, period_key: str, start: datetime, end: datetime) -> dict[str, Any]:
+        recent_days = await self._recent_calendar_pages("day", 7)
+        recent_weeks = await self._recent_calendar_pages("week", 4)
+        recent_months = await self._recent_calendar_pages("month", 1, before_key=period_key)
+        calendar_rows = recent_days + recent_weeks + recent_months
+        session_tags = sorted({tag for row in calendar_rows for tag in _safe_json_loads(row.get("session_tags"), []) if tag})
+        return {
+            "period_type": "month",
+            "period_key": period_key,
+            "period_start": start.isoformat(),
+            "period_end": end.isoformat(),
+            "recent_days": recent_days,
+            "recent_weeks": recent_weeks,
+            "recent_months": recent_months,
+            "source_refs": self._calendar_source_refs(calendar_rows),
             "session_tags": session_tags,
         }
 
@@ -1731,59 +2031,44 @@ class CalendarService:
 
     def _render_source_block(self, period_type: str, sources: dict[str, Any]) -> str:
         lines = [f"Period: {period_type} / {sources.get('period_key')}"]
-        if period_type == "day":
-            current_context = sources.get("current_context") or {}
-            if current_context:
-                lines.append("\n[当前窗口上下文]")
-                if current_context.get("session_tag"):
-                    lines.append(f"- session_tag: {current_context.get('session_tag')} / messages: {current_context.get('message_count')}")
-                if current_context.get("rolling_summary"):
-                    lines.append("\n[Rolling Summary]")
-                    lines.append(_shorten(current_context.get("rolling_summary") or "", 900))
-                if current_context.get("frozen_window"):
-                    lines.append("\n[Frozen Window]")
-                    for row in (current_context.get("frozen_window") or [])[-8:]:
-                        lines.append(f"- {row.get('role')}: {_shorten(row.get('content') or '', 220)}")
-                if current_context.get("recent_messages"):
-                    lines.append("\n[最近原文]")
-                    for row in (current_context.get("recent_messages") or [])[-12:]:
-                        lines.append(f"- {row.get('role')}: {_shorten(row.get('content') or '', 260)}")
-            if sources.get("chat_rows"):
-                lines.append("\n[聊天原文]")
-                for row in sources["chat_rows"][-12:]:
-                    lines.append(f"- {row.get('role')}: {_shorten(row.get('content') or '', 180)}")
-            if sources.get("journal_rows"):
-                lines.append("\n[journal]")
-                for row in sources["journal_rows"][:4]:
-                    lines.append(f"- {row.get('title') or 'untitled'} / {_shorten(row.get('content') or '', 220)}")
-            if sources.get("room_rows"):
-                lines.append("\n[room]")
-                for row in sources["room_rows"][:3]:
-                    lines.append(f"- {row.get('title') or 'untitled'} / {_shorten(row.get('content') or '', 220)}")
-            if sources.get("message_board_rows"):
-                lines.append("\n[message_board]")
-                for row in sources["message_board_rows"][:4]:
-                    lines.append(f"- {row.get('sender') or 'unknown'}: {_shorten(row.get('content') or '', 180)}")
-            if sources.get("surface_rows"):
-                lines.append("\n[浮现]")
-                for row in sources["surface_rows"][:4]:
-                    lines.append(f"- {row.get('source_table')} / {row.get('title')} / {_shorten(row.get('excerpt') or '', 180)}")
-            return "\n".join(lines)
+        snapshots = sources.get("context_snapshots") or []
+        if snapshots:
+            lines.append("\n[Current Client Context Snapshots]")
+            for snapshot in snapshots:
+                lines.append(
+                    f"\n- session_tag: {snapshot.get('session_tag') or ''}"
+                    f" / client: {snapshot.get('client_name') or ''}"
+                    f" / snapshot_at: {snapshot.get('created_at') or ''}"
+                )
+                for msg in snapshot.get("messages") or []:
+                    lines.append(f"  - {msg.get('role')}: {_shorten(msg.get('content') or '', 520)}")
 
-        lines.append("\n[下层日历页]")
-        for row in (sources.get("child_pages") or [])[:10]:
-            lines.append(f"- {row.get('period_key')} / {row.get('title') or ''} / {_shorten((row.get('content') or row.get('summary') or ''), 220)}")
+        if sources.get("surface_rows"):
+            lines.append("\n[Soft Surfaced Primary Texts]")
+            for row in sources["surface_rows"][:4]:
+                lines.append(f"- {row.get('source_table')} / {row.get('title')} / {_shorten(row.get('excerpt') or '', 180)}")
+
+        def add_calendar_rows(label: str, rows: list[dict[str, Any]], limit: int):
+            if not rows:
+                return
+            lines.append(f"\n[{label}]")
+            for row in rows[:limit]:
+                text = row.get("digest") or row.get("summary") or row.get("content") or ""
+                lines.append(f"- {row.get('period_key')} / {row.get('title') or ''} / {_shorten(text, 260)}")
+
+        add_calendar_rows("Recent Day Pages", sources.get("recent_days") or [], 10)
+        add_calendar_rows("Recent Week Pages", sources.get("recent_weeks") or [], 6)
+        add_calendar_rows("Recent Month Pages", sources.get("recent_months") or [], 3)
         return "\n".join(lines)
 
     def _source_counts(self, sources: dict[str, Any]) -> dict[str, int]:
         return {
-            "chat_rows": len(sources.get("chat_rows") or []),
-            "journal_rows": len(sources.get("journal_rows") or []),
-            "room_rows": len(sources.get("room_rows") or []),
-            "message_board_rows": len(sources.get("message_board_rows") or []),
+            "context_snapshots": len(sources.get("context_snapshots") or []),
             "surface_rows": len(sources.get("surface_rows") or []),
-            "child_pages": len(sources.get("child_pages") or []),
-            "recent_context_messages": len((sources.get("current_context") or {}).get("recent_messages") or []),
+            "recent_days": len(sources.get("recent_days") or []),
+            "recent_weeks": len(sources.get("recent_weeks") or []),
+            "recent_months": len(sources.get("recent_months") or []),
+            "context_messages": sum(len(item.get("messages") or []) for item in sources.get("context_snapshots") or []),
         }
 
 
@@ -1793,7 +2078,13 @@ class ContextBuilder:
         self.sessions = sessions
         self.tools = tools
 
-    async def build_context_package(self, session: dict, current_user_text: str, is_first_turn: bool) -> dict:
+    async def build_context_package(
+        self,
+        session: dict,
+        current_user_text: str,
+        is_first_turn: bool,
+        cold_start_snapshot: Optional[dict] = None,
+    ) -> dict:
         session_id = session["id"]
         message_count = int(session.get("message_count") or 0)
 
@@ -1812,10 +2103,10 @@ class ContextBuilder:
         package = {
             "stable_charter": _stable_charter_block(),
             "daily_briefing": "",
-            "rolling_summary": self.sessions.latest_summary(session_id) or "",
             "heartbeat_digest": heartbeat_digest,
-            "frozen_window": self.sessions.latest_frozen_window(session_id) or [],
+            "cold_start_snapshot": cold_start_snapshot,
             "surface_passages": [],
+            "atomic_memories": [],
         }
 
         if cfg.inject_meta_summaries:
@@ -1844,6 +2135,13 @@ class ContextBuilder:
                     surfaced_items=surfaced["passages"],
                     reasons=["automatic surfaced passages"],
                 )
+        if cfg.inject_atomic_memories and current_user_text.strip():
+            atomic = await self.tools.search_atomic_memories(
+                current_user_text,
+                session_tag=session["session_tag"],
+                limit=cfg.default_atomic_memory_limit,
+            )
+            package["atomic_memories"] = atomic.get("memories") or []
         return package
 
     async def meta_block(self) -> str:
@@ -1866,15 +2164,13 @@ class ContextBuilder:
     def render_layered_additions(self, package: dict) -> dict:
         """返回分层的 system 内容，用于缓存友好的消息组装。
         按变化频率从低到高排列：
-          stable:   charter + briefing + tool_policy + heartbeat_prompt（每天最多变一次）
-          summary:  heartbeat_digest 或 rolling_summary（每 N 轮变一次）
-          frozen:   frozen_window（每 N 轮变一次）
-          volatile: surface_passages（每次都变，放在对话消息之后）
+          stable:   charter + tool_policy + heartbeat_prompt（尽量不变）
+          summary:  heartbeat_digest（每 N 轮变一次）
+          cold_start: 跨窗口冷启动快照（前 N 轮临时注入）
+          volatile: briefing + surface_passages + atomic_memories（经常变，放在对话消息之后）
         """
-        # Layer 1: 稳定层（charter + briefing + tool policy + heartbeat 引导）
+        # Layer 1: 稳定层（charter + tool policy + heartbeat 引导）
         stable_blocks = [package["stable_charter"]]
-        if package.get("daily_briefing"):
-            stable_blocks.append("## New Thread Briefing\n" + package["daily_briefing"])
         if cfg.enable_gateway_tools:
             stable_blocks.append(
                 "## Gateway Tool Policy\n"
@@ -1886,25 +2182,33 @@ class ContextBuilder:
         stable_blocks.append(_HEARTBEAT_PROMPT)
         stable = "\n\n".join(stable_blocks)
 
-        # Layer 2: 摘要层（优先用 heartbeat digest，没有则回退到 rolling_summary）
+        # Layer 2: 心跳回顾层
         summary = ""
         heartbeat_digest = package.get("heartbeat_digest", "")
         if heartbeat_digest:
             summary = "## 你之前写下的心跳\n" + heartbeat_digest
-        elif package.get("rolling_summary"):
-            summary = "## Rolling Summary\n" + package["rolling_summary"]
 
-        # Layer 3: 冻结层（frozen window）
-        frozen = ""
-        frozen_window = package.get("frozen_window") or []
-        if frozen_window:
-            lines = ["## Frozen Conversation Window"]
-            for item in frozen_window:
-                lines.append(f"- {item.get('role', 'unknown')}: {_shorten(item.get('content', ''), 160)}")
-            frozen = "\n".join(lines)
+        # Layer 3: 冷启动桥接层（只使用拍好的快照，不在后续轮次重新查询）
+        cold_start = ""
+        cold_snapshot = package.get("cold_start_snapshot") or {}
+        if cold_snapshot:
+            lines = [
+                "## Cold Start Bridge",
+                "这是打开这个窗口时拍下的跨窗口近况快照，只作为临时桥梁；优先尊重当前窗口正在发生的对话。",
+            ]
+            for source in cold_snapshot.get("sources") or []:
+                lines.append(
+                    f"\n[{source.get('session_tag') or 'unknown'} / {source.get('client_name') or 'unknown'} / {source.get('snapshot_at') or ''}]"
+                )
+                for msg in source.get("messages") or []:
+                    lines.append(f"- {msg.get('role')}: {_shorten(_normalize_text(msg.get('content')), 260)}")
+            cold_start = "\n".join(lines)
 
-        # Layer 4: 易变层（surface passages）—— 放在对话消息之后
+        # Layer 4: 易变层（briefing + surface passages）—— 放在对话消息之后
         volatile = ""
+        if package.get("daily_briefing"):
+            volatile = "## New Thread Briefing\n" + package["daily_briefing"]
+
         passages = package.get("surface_passages") or []
         if passages:
             lines = ["## Soft Surfaced Primary Texts"]
@@ -1913,9 +2217,21 @@ class ContextBuilder:
                     f"- {item.get('source_table')} / {item.get('title')} / {_shorten(item.get('excerpt', ''), 180)}"
                     f" ({', '.join(item.get('why', []))})"
                 )
-            volatile = "\n".join(lines)
+            passage_block = "\n".join(lines)
+            volatile = "\n\n".join(block for block in [volatile, passage_block] if block)
 
-        return {"stable": stable, "summary": summary, "frozen": frozen, "volatile": volatile}
+        atomic_memories = package.get("atomic_memories") or []
+        if atomic_memories:
+            lines = ["## Relevant Atomic Memories"]
+            for item in atomic_memories:
+                marker = f"{item.get('owner') or 'shared'} / {item.get('memory_type') or 'memory'} / tier {item.get('tier') or '?'}"
+                content = item.get("content_canonical") or item.get("content_surface") or ""
+                why = ", ".join(item.get("why") or [])
+                lines.append(f"- [{marker}] {_shorten(content, 180)} ({why})")
+            atomic_block = "\n".join(lines)
+            volatile = "\n\n".join(block for block in [volatile, atomic_block] if block)
+
+        return {"stable": stable, "summary": summary, "cold_start": cold_start, "volatile": volatile}
 
     def render_system_additions(self, package: dict) -> str:
         """兼容接口：返回拼合后的完整 system 内容（用于 preview 等）"""
@@ -1923,8 +2239,8 @@ class ContextBuilder:
         blocks = [layers["stable"]]
         if layers["summary"]:
             blocks.append(layers["summary"])
-        if layers["frozen"]:
-            blocks.append(layers["frozen"])
+        if layers["cold_start"]:
+            blocks.append(layers["cold_start"])
         if layers["volatile"]:
             blocks.append(layers["volatile"])
         return "\n\n".join(blocks)
@@ -1947,7 +2263,7 @@ def _gateway_native_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_build_briefing",
-                "description": "Refresh a compact current-state briefing from recent daily notes, messages, heartbeats, and primary texts.",
+                "description": "Refresh a compact current-state briefing from messages, heartbeats, and primary texts.",
                 "parameters": {"type": "object", "properties": {"session_tag": {"type": "string"}}},
             },
         },
@@ -1977,6 +2293,22 @@ def _gateway_native_tools() -> list[dict]:
                     "properties": {
                         "query": {"type": "string"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                        "session_tag": {"type": "string"},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_search_atomic_memory",
+                "description": "Search small atomic memory notes for durable preferences, states, commitments, and relationship continuity.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 8, "default": 3},
                         "session_tag": {"type": "string"},
                     },
                     "required": ["query"],
@@ -2129,7 +2461,7 @@ def _apply_openai_compatible_cache_control(
     if cached_tools:
         _add_cache_control(cached_tools[-1], cache_paths, "tools[-1]", max_breakpoints)
 
-    for layer_name in ("stable", "summary", "frozen"):
+    for layer_name in ("stable", "summary", "cold_start"):
         layer_text = layers.get(layer_name) or ""
         if not layer_text:
             continue
@@ -2148,17 +2480,18 @@ def _apply_openai_compatible_cache_control(
         if msg.get("role") == "user":
             last_user_idx = idx
 
-    for idx in range(last_user_idx - 1, -1, -1):
-        msg = cached_messages[idx]
-        if msg.get("role") not in {"user", "assistant"}:
-            continue
-        if _add_openai_message_cache_control(
-            msg,
-            cache_paths,
-            f"messages[{idx}]",
-            max_breakpoints,
-        ):
-            break
+    if len(cache_paths) < max_breakpoints:
+        for idx in range(last_user_idx - 1, -1, -1):
+            msg = cached_messages[idx]
+            if msg.get("role") not in {"user", "assistant"}:
+                continue
+            if _add_openai_message_cache_control(
+                msg,
+                cache_paths,
+                f"messages[{idx}]",
+                max_breakpoints,
+            ):
+                break
 
     return cached_messages, cached_tools, cache_paths
 
@@ -2198,6 +2531,75 @@ def _cache_usage_summary(usage: Optional[dict]) -> dict:
         "hit": read_tokens > 0,
         "write": write_tokens > 0,
     }
+
+
+def _trim_client_messages(messages: list[dict]) -> tuple[list[dict], dict]:
+    limit = cfg.max_client_messages
+    meta = {
+        "client_messages_original": len(messages),
+        "client_messages_retained": len(messages),
+        "max_client_messages": limit,
+    }
+    if not limit or limit <= 0:
+        return messages, meta
+
+    first_non_system = next((idx for idx, msg in enumerate(messages) if msg.get("role") != "system"), len(messages))
+    system_prefix = messages[:first_non_system]
+    non_system = messages[first_non_system:]
+    if len(non_system) <= limit:
+        return messages, meta
+
+    trimmed = system_prefix + non_system[-limit:]
+    meta["client_messages_retained"] = len(trimmed)
+    return trimmed, meta
+
+
+def _cold_start_idle_minutes(session: dict) -> float:
+    last_active = _parse_ts(session.get("last_active_at"))
+    if not last_active:
+        return 0.0
+    return max((_now() - last_active).total_seconds() / 60.0, 0.0)
+
+
+def _maybe_prepare_cold_start_snapshot(
+    session: dict,
+    is_first_turn: bool,
+) -> Optional[dict]:
+    if not cfg.enable_cold_start:
+        return None
+    assert session_store is not None
+
+    active = session_store.latest_active_cold_start_snapshot(session["id"])
+    if active:
+        return active
+
+    reason = ""
+    since = None
+    idle_minutes = _cold_start_idle_minutes(session)
+    if is_first_turn:
+        reason = "new_window"
+    elif idle_minutes >= max(cfg.cold_start_idle_minutes, 1):
+        reason = "stale_window_cross_activity"
+        since = session.get("last_active_at")
+    else:
+        return None
+
+    sources = session_store.recent_cross_session_context(
+        exclude_session_id=session["id"],
+        since=since,
+        limit_messages=cfg.cold_start_message_limit,
+    )
+    if not sources:
+        return None
+
+    return session_store.write_cold_start_snapshot(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        reason=reason,
+        sources=sources,
+        trigger_last_active_at=session.get("last_active_at"),
+        max_injections=cfg.cold_start_turns,
+    )
 
 
 def _aggregate_cache_usage(usages: list[dict]) -> dict:
@@ -2300,8 +2702,8 @@ def _openai_to_anthropic(
                     _add_cache_control(block, cache_paths, "system.stable", max_breakpoints)
                 elif text == layers.get("summary"):
                     _add_cache_control(block, cache_paths, "system.summary", max_breakpoints)
-                elif text == layers.get("frozen"):
-                    _add_cache_control(block, cache_paths, "system.frozen", max_breakpoints)
+                elif text == layers.get("cold_start"):
+                    _add_cache_control(block, cache_paths, "system.cold_start", max_breakpoints)
                 system_blocks.append(block)
             continue
 
@@ -2355,19 +2757,20 @@ def _openai_to_anthropic(
         if msg.get("role") == "user":
             last_user_idx = i
 
-    for msg_index in range(last_user_idx - 1, -1, -1):
-        content = anthropic_messages[msg_index].get("content")
-        if not isinstance(content, list):
-            continue
-        for block_index in range(len(content) - 1, -1, -1):
-            block = content[block_index]
-            if not isinstance(block, dict) or block.get("type") == "thinking":
+    if len(cache_paths) < max_breakpoints:
+        for msg_index in range(last_user_idx - 1, -1, -1):
+            content = anthropic_messages[msg_index].get("content")
+            if not isinstance(content, list):
                 continue
-            if _add_cache_control(block, cache_paths, f"messages[{msg_index}].content[{block_index}]", max_breakpoints):
-                break
-        else:
-            continue
-        break
+            for block_index in range(len(content) - 1, -1, -1):
+                block = content[block_index]
+                if not isinstance(block, dict) or block.get("type") == "thinking":
+                    continue
+                if _add_cache_control(block, cache_paths, f"messages[{msg_index}].content[{block_index}]", max_breakpoints):
+                    break
+            else:
+                continue
+            break
 
     return (system_blocks or None, anthropic_messages)
 
@@ -2618,17 +3021,31 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     non_system_count = sum(1 for m in body.messages if m.role != "system")
     is_first_turn = non_system_count <= 1
 
-    messages = [message.model_dump(exclude_none=True) for message in body.messages]
+    raw_messages = [message.model_dump(exclude_none=True) for message in body.messages]
+    messages, trim_meta = _trim_client_messages(raw_messages)
     user_text = _latest_user_text(messages)
-    package = await builder.build_context_package(session, current_user_text=user_text, is_first_turn=is_first_turn)
+    cold_start_snapshot = _maybe_prepare_cold_start_snapshot(session, is_first_turn)
+    session_store.write_request_context_snapshot(
+        session_id=session["id"],
+        session_tag=session_tag,
+        client_name=client_name,
+        messages=messages,
+        latest_user_text=user_text,
+    )
+    package = await builder.build_context_package(
+        session,
+        current_user_text=user_text,
+        is_first_turn=is_first_turn,
+        cold_start_snapshot=cold_start_snapshot,
+    )
     layers = builder.render_layered_additions(package)
 
     # ── 缓存友好的分层插入 ──
     # 原则：不变的放前面，会变的放后面。每层独立一条 system 消息。
     # 插入顺序（从前到后）：
     #   [0] stable:  charter + briefing + tool_policy    （每天变一次）
-    #   [1] summary: rolling_summary                     （每N轮变一次）
-    #   [2] frozen:  frozen_window                       （每N轮变一次）
+    #   [1] summary: heartbeat_digest                    （按心跳注入频率变化）
+    #   [2] cold_start: 跨窗口冷启动快照                 （临时桥梁，前 N 次请求）
     #   [3..M] 客户端原始消息（system prompt + 对话历史）（前缀稳定，每轮只增1条）
     #   [M+1] volatile: surface_passages                 （每次都变，放最后不影响前面的缓存）
     #   [M+2] 当前 user 消息                             （已在客户端消息里）
@@ -2639,8 +3056,10 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         prefix_layers.append({"role": "system", "content": layers["stable"]})
     if layers["summary"]:
         prefix_layers.append({"role": "system", "content": layers["summary"]})
-    if layers["frozen"]:
-        prefix_layers.append({"role": "system", "content": layers["frozen"]})
+    if layers["cold_start"]:
+        prefix_layers.append({"role": "system", "content": layers["cold_start"]})
+        if cold_start_snapshot:
+            session_store.mark_cold_start_injected(cold_start_snapshot["id"])
 
     # 在头部插入稳定层
     for i, layer_msg in enumerate(prefix_layers):
@@ -2655,7 +3074,14 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
                 break
         messages.insert(last_user_idx, {"role": "system", "content": layers["volatile"]})
 
-    return messages, {"session": session, "package": package, "is_first_turn": is_first_turn, "cache_layers": layers}
+    return messages, {
+        "session": session,
+        "package": package,
+        "is_first_turn": is_first_turn,
+        "cache_layers": layers,
+        "client_message_window": trim_meta,
+        "cold_start_snapshot": cold_start_snapshot,
+    }
 
 
 def _latest_user_text(messages: list[dict]) -> str:
@@ -2691,6 +3117,12 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
             query=arguments.get("query", ""),
             session_tag=arguments.get("session_tag") or session_tag,
             limit=int(arguments.get("limit", 5)),
+        )
+    if name == "shenyu_search_atomic_memory":
+        return await service.search_atomic_memories(
+            query=arguments.get("query", ""),
+            session_tag=arguments.get("session_tag") or session_tag,
+            limit=int(arguments.get("limit", cfg.default_atomic_memory_limit)),
         )
     if name == "shenyu_get_meta_summaries":
         return {"meta_summaries": await service.meta_summaries()}
@@ -2776,8 +3208,13 @@ async def _run_internal_tool_loop(
         if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
             assistant_message = completion.get("choices", [{}])[0].get("message", {})
             sessions.log_assistant_output(session_id, assistant_message)
-            sessions.maybe_refresh_summary(session_id)
-            sessions.maybe_refresh_frozen_window(session_id)
+            _schedule_atomic_memory_extraction(
+                request,
+                session,
+                _latest_user_text(working_messages),
+                _normalize_text(assistant_message.get("content")),
+                body.model,
+            )
             return completion
 
         assistant_message = completion["choices"][0]["message"]
@@ -2807,7 +3244,7 @@ async def _stream_chat(
     on_complete: callable = None,
 ):
     """流式转发，同时收集 assistant 回复文本。
-    on_complete(collected_text): 流结束后的回调，用于 session 记录和 summary 更新。
+    on_complete(collected_text): 流结束后的回调，用于 session 记录、heartbeat 与原子记忆抽取。
     """
     proto = _detect_protocol()
     client = request.app.state.http
@@ -3008,6 +3445,14 @@ async def chat_completions(request: Request, body: ChatRequest):
         "is_first_turn": is_first,
         "original_messages_count": len(body.messages),
         "prepared_messages_count": len(prepared_messages),
+        "client_message_window": meta.get("client_message_window", {}),
+        "cold_start": {
+            "injected": bool((meta.get("cache_layers") or {}).get("cold_start")),
+            "snapshot_id": (meta.get("cold_start_snapshot") or {}).get("id"),
+            "reason": (meta.get("cold_start_snapshot") or {}).get("reason"),
+            "source_message_count": (meta.get("cold_start_snapshot") or {}).get("source_message_count", 0),
+            "source_session_tags": (meta.get("cold_start_snapshot") or {}).get("source_session_tags", []),
+        },
         "system_additions_preview": system_additions[:500],
         "system_additions_full": system_additions,
         "tools_count": len(merged_tools),
@@ -3056,12 +3501,17 @@ async def chat_completions(request: Request, body: ChatRequest):
             log_entry["usage"] = {"note": "Streaming usage is not available in this gateway log path."}
 
             def _on_stream_complete(collected_text: str, heartbeat_content: str = ""):
-                """流结束后：记录 assistant 输出、存储 heartbeat、刷新 summary/frozen_window"""
+                """流结束后：记录 assistant 输出并存储 heartbeat。"""
                 if collected_text:
                     assistant_msg = {"role": "assistant", "content": collected_text}
                     sessions.log_assistant_output(session_id, assistant_msg)
-                    sessions.maybe_refresh_summary(session_id)
-                    sessions.maybe_refresh_frozen_window(session_id)
+                    _schedule_atomic_memory_extraction(
+                        request,
+                        session,
+                        _latest_user_text(prepared_messages),
+                        collected_text,
+                        body.model,
+                    )
                     log_entry["response_preview"] = collected_text
                     log_entry["status"] = "ok"
                 if heartbeat_content:
@@ -3091,8 +3541,13 @@ async def chat_completions(request: Request, body: ChatRequest):
             logger.info("[Heartbeat] 截获心跳 (%d chars) session=%s", len(heartbeat_content), session_id[:8])
 
         sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content})
-        sessions.maybe_refresh_summary(session_id)
-        sessions.maybe_refresh_frozen_window(session_id)
+        _schedule_atomic_memory_extraction(
+            request,
+            session,
+            _latest_user_text(prepared_messages),
+            clean_content,
+            body.model,
+        )
         log_entry["status"] = "ok"
         log_entry["response_preview"] = clean_content
         return completion
@@ -3118,6 +3573,9 @@ async def health():
         "inject_meta_summaries": cfg.inject_meta_summaries,
         "inject_briefing": cfg.inject_briefing,
         "inject_surface_passages": cfg.inject_surface_passages,
+        "inject_atomic_memories": cfg.inject_atomic_memories,
+        "extract_atomic_memories": cfg.extract_atomic_memories,
+        "enable_cold_start": cfg.enable_cold_start,
         "gateway_db_path": cfg.gateway_db_path,
     }
 
@@ -3138,20 +3596,31 @@ async def get_config_full():
         "calendar_api_key": cfg.calendar_api_key,
         "calendar_protocol": cfg.calendar_protocol,
         "calendar_model": cfg.calendar_model,
+        "atomic_memory_upstream_url": cfg.atomic_memory_upstream_url,
+        "atomic_memory_api_key": cfg.atomic_memory_api_key,
+        "atomic_memory_protocol": cfg.atomic_memory_protocol,
+        "atomic_memory_model": cfg.atomic_memory_model,
         "supabase_url": cfg.supabase_url,
         "supabase_key": cfg.supabase_key,
         "inject_meta_summaries": cfg.inject_meta_summaries,
         "inject_briefing": cfg.inject_briefing,
         "inject_surface_passages": cfg.inject_surface_passages,
+        "inject_atomic_memories": cfg.inject_atomic_memories,
+        "extract_atomic_memories": cfg.extract_atomic_memories,
+        "enable_cold_start": cfg.enable_cold_start,
         "enable_gateway_tools": cfg.enable_gateway_tools,
         "expose_supabase_tools": cfg.expose_supabase_tools,
         "max_internal_tool_rounds": cfg.max_internal_tool_rounds,
         "gateway_db_path": cfg.gateway_db_path,
         "daily_briefing_ttl_minutes": cfg.daily_briefing_ttl_minutes,
-        "summary_update_every_messages": cfg.summary_update_every_messages,
-        "freeze_every_messages": cfg.freeze_every_messages,
-        "freeze_tail_messages": cfg.freeze_tail_messages,
+        "max_client_messages": cfg.max_client_messages,
+        "cold_start_turns": cfg.cold_start_turns,
+        "cold_start_message_limit": cfg.cold_start_message_limit,
+        "cold_start_idle_minutes": cfg.cold_start_idle_minutes,
         "default_surface_limit": cfg.default_surface_limit,
+        "default_atomic_memory_limit": cfg.default_atomic_memory_limit,
+        "atomic_memory_min_score": cfg.atomic_memory_min_score,
+        "atomic_memory_auto_activate_min_confidence": cfg.atomic_memory_auto_activate_min_confidence,
     }
 
 
@@ -3170,20 +3639,31 @@ async def update_config(body: ConfigUpdate):
         "calendar_api_key": "CALENDAR_API_KEY",
         "calendar_protocol": "CALENDAR_PROTOCOL",
         "calendar_model": "CALENDAR_MODEL",
+        "atomic_memory_upstream_url": "ATOMIC_MEMORY_UPSTREAM_URL",
+        "atomic_memory_api_key": "ATOMIC_MEMORY_API_KEY",
+        "atomic_memory_protocol": "ATOMIC_MEMORY_PROTOCOL",
+        "atomic_memory_model": "ATOMIC_MEMORY_MODEL",
         "supabase_url": "SUPABASE_URL",
         "supabase_key": "SUPABASE_SERVICE_KEY",
         "inject_meta_summaries": "INJECT_META_SUMMARIES",
         "inject_briefing": "INJECT_BRIEFING",
         "inject_surface_passages": "INJECT_SURFACE_PASSAGES",
+        "inject_atomic_memories": "INJECT_ATOMIC_MEMORIES",
+        "extract_atomic_memories": "EXTRACT_ATOMIC_MEMORIES",
+        "enable_cold_start": "ENABLE_COLD_START",
         "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
         "expose_supabase_tools": "EXPOSE_SUPABASE_TOOLS",
         "gateway_db_path": "GATEWAY_DB_PATH",
         "max_internal_tool_rounds": "MAX_INTERNAL_TOOL_ROUNDS",
         "daily_briefing_ttl_minutes": "DAILY_BRIEFING_TTL_MINUTES",
-        "summary_update_every_messages": "SUMMARY_UPDATE_EVERY_MESSAGES",
-        "freeze_every_messages": "FREEZE_EVERY_MESSAGES",
-        "freeze_tail_messages": "FREEZE_TAIL_MESSAGES",
+        "max_client_messages": "MAX_CLIENT_MESSAGES",
+        "cold_start_turns": "COLD_START_TURNS",
+        "cold_start_message_limit": "COLD_START_MESSAGE_LIMIT",
+        "cold_start_idle_minutes": "COLD_START_IDLE_MINUTES",
         "default_surface_limit": "DEFAULT_SURFACE_LIMIT",
+        "default_atomic_memory_limit": "DEFAULT_ATOMIC_MEMORY_LIMIT",
+        "atomic_memory_min_score": "ATOMIC_MEMORY_MIN_SCORE",
+        "atomic_memory_auto_activate_min_confidence": "ATOMIC_MEMORY_AUTO_ACTIVATE_MIN_CONFIDENCE",
     }
 
     simple_fields = [
@@ -3195,11 +3675,18 @@ async def update_config(body: ConfigUpdate):
         "calendar_api_key",
         "calendar_protocol",
         "calendar_model",
+        "atomic_memory_upstream_url",
+        "atomic_memory_api_key",
+        "atomic_memory_protocol",
+        "atomic_memory_model",
         "supabase_url",
         "supabase_key",
         "inject_meta_summaries",
         "inject_briefing",
         "inject_surface_passages",
+        "inject_atomic_memories",
+        "extract_atomic_memories",
+        "enable_cold_start",
         "enable_gateway_tools",
         "expose_supabase_tools",
         "gateway_db_path",
@@ -3209,7 +3696,7 @@ async def update_config(body: ConfigUpdate):
         if value is not None:
             setattr(cfg, field, value)
             changed.append(field)
-            env_updates[env_names[field]] = value
+            env_updates[env_names[field]] = str(value).lower() if isinstance(value, bool) else value
 
     if body.max_internal_tool_rounds is not None:
         cfg.max_internal_tool_rounds = max(1, min(body.max_internal_tool_rounds, 8))
@@ -3219,22 +3706,39 @@ async def update_config(body: ConfigUpdate):
         cfg.daily_briefing_ttl_minutes = max(5, min(body.daily_briefing_ttl_minutes, 1440))
         changed.append("daily_briefing_ttl_minutes")
         env_updates[env_names["daily_briefing_ttl_minutes"]] = cfg.daily_briefing_ttl_minutes
-    if body.summary_update_every_messages is not None:
-        cfg.summary_update_every_messages = max(2, min(body.summary_update_every_messages, 20))
-        changed.append("summary_update_every_messages")
-        env_updates[env_names["summary_update_every_messages"]] = cfg.summary_update_every_messages
-    if body.freeze_every_messages is not None:
-        cfg.freeze_every_messages = max(2, min(body.freeze_every_messages, 30))
-        changed.append("freeze_every_messages")
-        env_updates[env_names["freeze_every_messages"]] = cfg.freeze_every_messages
-    if body.freeze_tail_messages is not None:
-        cfg.freeze_tail_messages = max(2, min(body.freeze_tail_messages, 20))
-        changed.append("freeze_tail_messages")
-        env_updates[env_names["freeze_tail_messages"]] = cfg.freeze_tail_messages
+    if "max_client_messages" in body.model_fields_set:
+        value = body.max_client_messages
+        cfg.max_client_messages = max(1, min(int(value), 500)) if value and int(value) > 0 else None
+        changed.append("max_client_messages")
+        env_updates[env_names["max_client_messages"]] = cfg.max_client_messages
+    if body.cold_start_turns is not None:
+        cfg.cold_start_turns = max(1, min(body.cold_start_turns, 20))
+        changed.append("cold_start_turns")
+        env_updates[env_names["cold_start_turns"]] = cfg.cold_start_turns
+    if body.cold_start_message_limit is not None:
+        cfg.cold_start_message_limit = max(1, min(body.cold_start_message_limit, 50))
+        changed.append("cold_start_message_limit")
+        env_updates[env_names["cold_start_message_limit"]] = cfg.cold_start_message_limit
+    if body.cold_start_idle_minutes is not None:
+        cfg.cold_start_idle_minutes = max(1, min(body.cold_start_idle_minutes, 10080))
+        changed.append("cold_start_idle_minutes")
+        env_updates[env_names["cold_start_idle_minutes"]] = cfg.cold_start_idle_minutes
     if body.default_surface_limit is not None:
         cfg.default_surface_limit = max(1, min(body.default_surface_limit, 8))
         changed.append("default_surface_limit")
         env_updates[env_names["default_surface_limit"]] = cfg.default_surface_limit
+    if body.default_atomic_memory_limit is not None:
+        cfg.default_atomic_memory_limit = max(1, min(body.default_atomic_memory_limit, 8))
+        changed.append("default_atomic_memory_limit")
+        env_updates[env_names["default_atomic_memory_limit"]] = cfg.default_atomic_memory_limit
+    if body.atomic_memory_min_score is not None:
+        cfg.atomic_memory_min_score = _clamp(float(body.atomic_memory_min_score), 0.0, 1.0)
+        changed.append("atomic_memory_min_score")
+        env_updates[env_names["atomic_memory_min_score"]] = cfg.atomic_memory_min_score
+    if body.atomic_memory_auto_activate_min_confidence is not None:
+        cfg.atomic_memory_auto_activate_min_confidence = _clamp(float(body.atomic_memory_auto_activate_min_confidence), 0.0, 1.0)
+        changed.append("atomic_memory_auto_activate_min_confidence")
+        env_updates[env_names["atomic_memory_auto_activate_min_confidence"]] = cfg.atomic_memory_auto_activate_min_confidence
 
     _persist_env(env_updates)
 
@@ -3261,6 +3765,106 @@ async def context_preview(session_tag: Optional[str] = None):
     return await builder.preview(session_tag=session_tag)
 
 
+@app.get("/api/gateway/overview")
+async def gateway_overview():
+    assert session_store is not None
+    return {
+        "overview": session_store.gateway_overview(),
+        "cold_start": {
+            "enabled": cfg.enable_cold_start,
+            "turns": cfg.cold_start_turns,
+            "message_limit": cfg.cold_start_message_limit,
+            "idle_minutes": cfg.cold_start_idle_minutes,
+        },
+    }
+
+
+@app.get("/api/gateway/cold-start/preview")
+async def cold_start_preview(session_tag: Optional[str] = None):
+    assert session_store is not None
+    exclude_session_id = None
+    since = None
+    reason = "new_window"
+    if session_tag:
+        session = session_store.get_session_by_tag(session_tag)
+        if session:
+            exclude_session_id = session["id"]
+            idle_minutes = _cold_start_idle_minutes(session)
+            if idle_minutes >= max(cfg.cold_start_idle_minutes, 1):
+                since = session.get("last_active_at")
+                reason = "stale_window_cross_activity"
+            else:
+                reason = "old_window_short_interval"
+    sources = []
+    if cfg.enable_cold_start and reason != "old_window_short_interval":
+        sources = session_store.recent_cross_session_context(
+            exclude_session_id=exclude_session_id,
+            since=since,
+            limit_messages=cfg.cold_start_message_limit,
+        )
+    return {
+        "enabled": cfg.enable_cold_start,
+        "reason": reason,
+        "would_inject": bool(sources),
+        "sources": sources,
+        "config": {
+            "turns": cfg.cold_start_turns,
+            "message_limit": cfg.cold_start_message_limit,
+            "idle_minutes": cfg.cold_start_idle_minutes,
+        },
+    }
+
+
+@app.get("/api/gateway/atomic-memories/search")
+async def atomic_memory_search(q: str, session_tag: Optional[str] = None, limit: int = 3):
+    service = GatewayToolService()
+    return await service.search_atomic_memories(q, session_tag=session_tag, limit=limit)
+
+
+@app.get("/api/gateway/atomic-memories")
+async def list_atomic_memories(status: str = "proposed", limit: int = 50, session_tag: Optional[str] = None):
+    if not supabase_client:
+        raise HTTPException(status_code=400, detail="Supabase is not configured.")
+    params = {
+        "order": "updated_at.desc",
+        "limit": str(max(1, min(limit, 200))),
+        "select": (
+            "id,session_tag,owner,applies_to,speaker_perspective,content_canonical,content_surface,"
+            "memory_type,tier,confidence,importance,heat,valence,arousal,entities_json,tags_json,"
+            "source_excerpt,source_model,status,activation_count,last_activated,created_at,updated_at"
+        ),
+    }
+    if status and status != "all":
+        params["status"] = f"eq.{status}"
+    if session_tag:
+        params["session_tag"] = f"eq.{session_tag}"
+    try:
+        rows = await supabase_client.query("atomic_memories", params)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"atomic_memories query failed: {exc}")
+    return {"items": rows, "status": status, "limit": max(1, min(limit, 200)), "session_tag": session_tag}
+
+
+@app.post("/api/gateway/atomic-memories/{memory_id}/review")
+async def review_atomic_memory(memory_id: str, body: AtomicMemoryReviewUpdate):
+    if not supabase_client:
+        raise HTTPException(status_code=400, detail="Supabase is not configured.")
+    allowed = {"proposed", "active", "deprecated", "superseded"}
+    status = (body.status or "").strip()
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail="Unsupported status.")
+    update = {"status": status, "updated_at": _iso_now()}
+    if body.tier is not None:
+        update["tier"] = max(1, min(body.tier, 4))
+    if body.importance is not None:
+        update["importance"] = max(1, min(body.importance, 5))
+    try:
+        rows = await supabase_client.update("atomic_memories", {"id": memory_id}, update)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"atomic_memories update failed: {exc}")
+    return {"ok": True, "memory_id": memory_id, "updated": rows}
+
+
 @app.get("/api/gateway/sessions")
 async def list_gateway_sessions(limit: int = 100, q: str = ""):
     assert session_store is not None
@@ -3272,14 +3876,12 @@ async def list_gateway_sessions(limit: int = 100, q: str = ""):
 async def session_debug(session_tag: str):
     assert session_store is not None
     session = session_store.get_or_create_session(session_tag, "debug")
-    summary = session_store.latest_summary(session["id"])
-    frozen = session_store.latest_frozen_window(session["id"])
     messages = session_store.get_recent_messages(session["id"], limit=12)
+    cold_start = session_store.latest_cold_start_snapshot(session["id"])
     return {
         "session": session,
         "stats": session_store.get_session_stats(session["id"]),
-        "latest_summary": summary,
-        "latest_frozen_window": frozen,
+        "latest_cold_start_snapshot": cold_start,
         "recent_messages": messages,
     }
 
@@ -3311,6 +3913,8 @@ async def gateway_logs(limit: int = 30):
             "is_first_turn": l["is_first_turn"],
             "original_messages_count": l["original_messages_count"],
             "prepared_messages_count": l["prepared_messages_count"],
+            "client_message_window": l.get("client_message_window"),
+            "cold_start": l.get("cold_start"),
             "system_additions_preview": l["system_additions_preview"],
             "tools_count": l["tools_count"],
             "tool_names": l["tool_names"],
@@ -3367,15 +3971,43 @@ async def calendar_page(page_id: str):
 
 
 @app.get("/api/calendar/preview-sources")
-async def calendar_preview_sources(period_type: str, period_key: Optional[str] = None):
+async def calendar_preview_sources(period_type: str, period_key: Optional[str] = None, session_tag: Optional[str] = None):
     service = CalendarService()
-    return await service.preview_sources(period_type, period_key)
+    return await service.preview_sources(period_type, period_key, session_tag=session_tag)
 
 
 @app.get("/api/calendar/send-preview")
-async def calendar_send_preview(period_type: str, period_key: Optional[str] = None, model: Optional[str] = None):
+async def calendar_send_preview(
+    period_type: str,
+    period_key: Optional[str] = None,
+    model: Optional[str] = None,
+    session_tag: Optional[str] = None,
+):
     service = CalendarService()
-    return await service.send_preview(period_type, period_key, model)
+    return await service.send_preview(period_type, period_key, model, session_tag=session_tag)
+
+
+@app.get("/api/calendar/context-snapshots")
+async def calendar_context_snapshots(limit: int = 8, session_tag: Optional[str] = None):
+    assert session_store is not None
+    service = CalendarService()
+    snapshots = service._context_snapshots(limit=limit, session_tag=session_tag)
+    return {
+        "items": [
+            {
+                "id": item.get("id"),
+                "session_tag": item.get("session_tag"),
+                "client_name": item.get("client_name"),
+                "created_at": item.get("created_at"),
+                "last_active_at": item.get("last_active_at"),
+                "message_count": item.get("message_count"),
+                "stored_message_count": item.get("stored_message_count"),
+                "latest_user_text": item.get("latest_user_text"),
+                "messages": item.get("messages") or [],
+            }
+            for item in snapshots
+        ]
+    }
 
 
 @app.post("/api/calendar/generate")

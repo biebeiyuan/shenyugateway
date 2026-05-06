@@ -1,9 +1,20 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from typing import Any, Optional
 
 from .runtime import mask, _env_bool
+
+
+def _env_optional_int(name: str) -> Optional[int]:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return None
+    try:
+        value = int(raw)
+    except ValueError:
+        return None
+    return value if value > 0 else None
 
 
 class RuntimeConfig:
@@ -19,20 +30,31 @@ class RuntimeConfig:
         self.calendar_api_key: str = os.getenv("CALENDAR_API_KEY", "")
         self.calendar_protocol: str = os.getenv("CALENDAR_PROTOCOL", "auto")
         self.calendar_model: str = os.getenv("CALENDAR_MODEL", "claude-opus-4-7")
+        self.atomic_memory_upstream_url: str = os.getenv("ATOMIC_MEMORY_UPSTREAM_URL", "")
+        self.atomic_memory_api_key: str = os.getenv("ATOMIC_MEMORY_API_KEY", "")
+        self.atomic_memory_protocol: str = os.getenv("ATOMIC_MEMORY_PROTOCOL", "auto")
+        self.atomic_memory_model: str = os.getenv("ATOMIC_MEMORY_MODEL", "")
 
         self.inject_meta_summaries: bool = _env_bool("INJECT_META_SUMMARIES", True)
         self.inject_briefing: bool = _env_bool("INJECT_BRIEFING", True)
         self.inject_surface_passages: bool = _env_bool("INJECT_SURFACE_PASSAGES", True)
+        self.inject_atomic_memories: bool = _env_bool("INJECT_ATOMIC_MEMORIES", False)
+        self.extract_atomic_memories: bool = _env_bool("EXTRACT_ATOMIC_MEMORIES", False)
+        self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
         self.enable_gateway_tools: bool = _env_bool("ENABLE_GATEWAY_TOOLS", False)
         self.expose_supabase_tools: bool = _env_bool("EXPOSE_SUPABASE_TOOLS", True)
         self.max_internal_tool_rounds: int = int(os.getenv("MAX_INTERNAL_TOOL_ROUNDS", "3"))
 
         self.gateway_db_path: str = os.getenv("GATEWAY_DB_PATH", "./data/shenyu_gateway.db")
         self.daily_briefing_ttl_minutes: int = int(os.getenv("DAILY_BRIEFING_TTL_MINUTES", "60"))
-        self.summary_update_every_messages: int = int(os.getenv("SUMMARY_UPDATE_EVERY_MESSAGES", "6"))
-        self.freeze_every_messages: int = int(os.getenv("FREEZE_EVERY_MESSAGES", "8"))
-        self.freeze_tail_messages: int = int(os.getenv("FREEZE_TAIL_MESSAGES", "6"))
+        self.max_client_messages: Optional[int] = _env_optional_int("MAX_CLIENT_MESSAGES")
+        self.cold_start_turns: int = int(os.getenv("COLD_START_TURNS", "3"))
+        self.cold_start_message_limit: int = int(os.getenv("COLD_START_MESSAGE_LIMIT", "8"))
+        self.cold_start_idle_minutes: int = int(os.getenv("COLD_START_IDLE_MINUTES", "120"))
         self.default_surface_limit: int = int(os.getenv("DEFAULT_SURFACE_LIMIT", "3"))
+        self.default_atomic_memory_limit: int = int(os.getenv("DEFAULT_ATOMIC_MEMORY_LIMIT", "3"))
+        self.atomic_memory_min_score: float = float(os.getenv("ATOMIC_MEMORY_MIN_SCORE", "0.42"))
+        self.atomic_memory_auto_activate_min_confidence: float = float(os.getenv("ATOMIC_MEMORY_AUTO_ACTIVATE_MIN_CONFIDENCE", "0.92"))
         self.heartbeat_inject_every: int = int(os.getenv("HEARTBEAT_INJECT_EVERY", "10"))
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -46,17 +68,28 @@ class RuntimeConfig:
             "calendar_api_key": mask(self.calendar_api_key),
             "calendar_protocol": self.calendar_protocol,
             "calendar_model": self.calendar_model,
+            "atomic_memory_upstream_url": self.atomic_memory_upstream_url,
+            "atomic_memory_api_key": mask(self.atomic_memory_api_key),
+            "atomic_memory_protocol": self.atomic_memory_protocol,
+            "atomic_memory_model": self.atomic_memory_model,
             "inject_meta_summaries": self.inject_meta_summaries,
             "inject_briefing": self.inject_briefing,
             "inject_surface_passages": self.inject_surface_passages,
+            "inject_atomic_memories": self.inject_atomic_memories,
+            "extract_atomic_memories": self.extract_atomic_memories,
+            "enable_cold_start": self.enable_cold_start,
             "enable_gateway_tools": self.enable_gateway_tools,
             "expose_supabase_tools": self.expose_supabase_tools,
             "max_internal_tool_rounds": self.max_internal_tool_rounds,
             "gateway_db_path": self.gateway_db_path,
             "daily_briefing_ttl_minutes": self.daily_briefing_ttl_minutes,
-            "summary_update_every_messages": self.summary_update_every_messages,
-            "freeze_every_messages": self.freeze_every_messages,
-            "freeze_tail_messages": self.freeze_tail_messages,
+            "max_client_messages": self.max_client_messages,
+            "cold_start_turns": self.cold_start_turns,
+            "cold_start_message_limit": self.cold_start_message_limit,
+            "cold_start_idle_minutes": self.cold_start_idle_minutes,
             "default_surface_limit": self.default_surface_limit,
+            "default_atomic_memory_limit": self.default_atomic_memory_limit,
+            "atomic_memory_min_score": self.atomic_memory_min_score,
+            "atomic_memory_auto_activate_min_confidence": self.atomic_memory_auto_activate_min_confidence,
             "heartbeat_inject_every": self.heartbeat_inject_every,
         }

@@ -8,6 +8,7 @@ import {
   NGi,
   NGrid,
   NInput,
+  NInputNumber,
   NLayout,
   NLayoutContent,
   NLayoutFooter,
@@ -15,6 +16,7 @@ import {
   NPopconfirm,
   NSelect,
   NSpace,
+  NSwitch,
   NTag,
   useMessage,
 } from 'naive-ui'
@@ -38,6 +40,11 @@ const config = ref<GatewayConfig>({
   upstream_protocol: 'auto',
   supabase_url: '',
   supabase_key: '',
+  max_client_messages: null,
+  enable_cold_start: true,
+  cold_start_turns: 3,
+  cold_start_message_limit: 8,
+  cold_start_idle_minutes: 120,
   model_mapping: {},
 })
 
@@ -135,6 +142,11 @@ async function doSave() {
       upstream_protocol: config.value.upstream_protocol,
       supabase_url: config.value.supabase_url,
       supabase_key: config.value.supabase_key,
+      max_client_messages: config.value.max_client_messages || null,
+      enable_cold_start: config.value.enable_cold_start,
+      cold_start_turns: config.value.cold_start_turns,
+      cold_start_message_limit: config.value.cold_start_message_limit,
+      cold_start_idle_minutes: config.value.cold_start_idle_minutes,
       model_mapping: Object.fromEntries(modelEntries.value.filter(([key, value]) => key && value)),
     }
     const result = await saveConfig(body)
@@ -304,6 +316,35 @@ function removeModel(index: number) {
                   </NFormItem>
                   <NFormItem label="Service role key">
                     <NInput v-model:value="config.supabase_key" type="password" show-password-on="click" />
+                  </NFormItem>
+                </NForm>
+              </NCard>
+            </NGi>
+
+            <NGi>
+              <NCard title="Context Window" size="small">
+                <NForm label-placement="top">
+                  <NFormItem label="Client messages to keep">
+                    <NInputNumber
+                      v-model:value="config.max_client_messages"
+                      clearable
+                      :min="1"
+                      :max="500"
+                      placeholder="Keep all client messages"
+                      style="width: 100%"
+                    />
+                  </NFormItem>
+                  <NFormItem label="Cold start bridge">
+                    <NSwitch v-model:value="config.enable_cold_start" />
+                  </NFormItem>
+                  <NFormItem label="Cold start requests">
+                    <NInputNumber v-model:value="config.cold_start_turns" :min="1" :max="20" style="width: 100%" />
+                  </NFormItem>
+                  <NFormItem label="Cold start messages">
+                    <NInputNumber v-model:value="config.cold_start_message_limit" :min="1" :max="50" style="width: 100%" />
+                  </NFormItem>
+                  <NFormItem label="Idle minutes before stale-window bridge">
+                    <NInputNumber v-model:value="config.cold_start_idle_minutes" :min="1" :max="10080" style="width: 100%" />
                   </NFormItem>
                 </NForm>
               </NCard>

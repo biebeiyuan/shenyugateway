@@ -32,7 +32,6 @@ class GatewayStore:
                     started_at TEXT NOT NULL,
                     last_active_at TEXT NOT NULL,
                     first_message_at TEXT NOT NULL,
-                    last_summary_at TEXT,
                     message_count INTEGER NOT NULL DEFAULT 0,
                     context_state_json TEXT NOT NULL DEFAULT '{}'
                 );
@@ -48,28 +47,6 @@ class GatewayStore:
                     source_table TEXT,
                     source_id TEXT,
                     created_at TEXT NOT NULL,
-                    FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS conversation_summaries (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    summary_type TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    covered_message_from INTEGER,
-                    covered_message_to INTEGER,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS frozen_windows (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    window_index INTEGER NOT NULL,
-                    messages_json TEXT NOT NULL,
-                    token_estimate INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    retired_at TEXT,
                     FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
                 );
 
@@ -102,6 +79,41 @@ class GatewayStore:
                     injected_at TEXT,
                     FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
                 );
+
+                CREATE TABLE IF NOT EXISTS request_context_snapshots (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    session_tag TEXT NOT NULL,
+                    client_name TEXT,
+                    messages_json TEXT NOT NULL,
+                    message_count INTEGER NOT NULL DEFAULT 0,
+                    latest_user_text TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_request_context_snapshots_session_created
+                    ON request_context_snapshots(session_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_request_context_snapshots_tag_created
+                    ON request_context_snapshots(session_tag, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS cold_start_snapshots (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    session_tag TEXT NOT NULL,
+                    reason TEXT NOT NULL,
+                    sources_json TEXT NOT NULL,
+                    source_session_tags_json TEXT NOT NULL,
+                    source_message_count INTEGER NOT NULL DEFAULT 0,
+                    trigger_last_active_at TEXT,
+                    injected_count INTEGER NOT NULL DEFAULT 0,
+                    max_injections INTEGER NOT NULL DEFAULT 3,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_cold_start_snapshots_session_created
+                    ON cold_start_snapshots(session_id, created_at DESC);
                 """
             )
 
@@ -137,13 +149,6 @@ class GatewayStore:
                 WHERE id = ?
                 """,
                 (iso_now(), message_increment, session_id),
-            )
-
-    def update_summary_marker(self, session_id: str):
-        with self._connect() as conn:
-            conn.execute(
-                "UPDATE gateway_sessions SET last_summary_at = ? WHERE id = ?",
-                (iso_now(), session_id),
             )
 
     def append_message(
@@ -248,14 +253,6 @@ class GatewayStore:
                 """,
                 (session_id,),
             ).fetchone()
-            summary_count = conn.execute(
-                "SELECT COUNT(*) AS count FROM conversation_summaries WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
-            frozen_count = conn.execute(
-                "SELECT COUNT(*) AS count FROM frozen_windows WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
             surface_count = conn.execute(
                 "SELECT COUNT(*) AS count FROM surface_events WHERE session_id = ?",
                 (session_id,),
@@ -264,28 +261,41 @@ class GatewayStore:
                 "SELECT COUNT(*) AS count FROM heartbeat_entries WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
+            cold_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM cold_start_snapshots WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
             return {
                 "messages": int(message_counts["total"] or 0),
                 "user_messages": int(message_counts["user_count"] or 0),
                 "assistant_messages": int(message_counts["assistant_count"] or 0),
                 "tool_messages": int(message_counts["tool_count"] or 0),
-                "summaries": int(summary_count["count"] or 0),
-                "frozen_windows": int(frozen_count["count"] or 0),
                 "surface_events": int(surface_count["count"] or 0),
                 "heartbeats": int(heartbeat_count["count"] or 0),
+                "cold_start_snapshots": int(cold_count["count"] or 0),
             }
 
     def delete_session(self, session_id: str) -> dict:
         tables = [
             "heartbeat_entries",
+            "cold_start_snapshots",
+            "request_context_snapshots",
             "surface_events",
-            "frozen_windows",
-            "conversation_summaries",
             "gateway_messages",
             "gateway_sessions",
         ]
         deleted: dict[str, int] = {}
         with self._connect() as conn:
+            existing_tables = {
+                row["name"]
+                for row in conn.execute(
+                    "SELECT name FROM sqlite_master WHERE type = 'table'"
+                ).fetchall()
+            }
+            for legacy_table in ("frozen_windows", "conversation_summaries"):
+                if legacy_table in existing_tables:
+                    cursor = conn.execute(f"DELETE FROM {legacy_table} WHERE session_id = ?", (session_id,))
+                    deleted[legacy_table] = int(cursor.rowcount or 0)
             for table in tables:
                 if table == "gateway_sessions":
                     cursor = conn.execute("DELETE FROM gateway_sessions WHERE id = ?", (session_id,))
@@ -294,87 +304,273 @@ class GatewayStore:
                 deleted[table] = int(cursor.rowcount or 0)
         return deleted
 
-    def write_summary(
+    def write_request_context_snapshot(
         self,
         session_id: str,
-        summary_type: str,
-        content: str,
-        covered_from: Optional[int],
-        covered_to: Optional[int],
-    ):
+        session_tag: str,
+        client_name: Optional[str],
+        messages: list[dict],
+        latest_user_text: str,
+    ) -> dict:
+        snapshot_id = f"rcs_{uuid.uuid4().hex[:12]}"
+        created_at = iso_now()
         with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO conversation_summaries (
-                    id, session_id, summary_type, content,
-                    covered_message_from, covered_message_to, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                INSERT INTO request_context_snapshots (
+                    id, session_id, session_tag, client_name, messages_json,
+                    message_count, latest_user_text, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
-                    f"cs_{uuid.uuid4().hex[:12]}",
+                    snapshot_id,
                     session_id,
-                    summary_type,
-                    content,
-                    covered_from,
-                    covered_to,
-                    iso_now(),
+                    session_tag,
+                    client_name,
+                    json_dumps(messages),
+                    len(messages),
+                    latest_user_text,
+                    created_at,
                 ),
             )
-        self.update_summary_marker(session_id)
+        return {
+            "id": snapshot_id,
+            "session_id": session_id,
+            "session_tag": session_tag,
+            "client_name": client_name,
+            "messages": messages,
+            "message_count": len(messages),
+            "latest_user_text": latest_user_text,
+            "created_at": created_at,
+        }
 
-    def latest_summary(self, session_id: str, summary_type: str = "rolling") -> Optional[dict]:
+    def latest_request_context_snapshots(self, limit: int = 5, session_tag: Optional[str] = None) -> list[dict]:
+        limit = max(1, min(int(limit or 5), 50))
+        with self._connect() as conn:
+            if session_tag:
+                rows = conn.execute(
+                    """
+                    SELECT r.*, s.last_active_at, s.message_count AS stored_message_count
+                    FROM request_context_snapshots r
+                    JOIN gateway_sessions s ON s.id = r.session_id
+                    WHERE r.session_tag = ?
+                    ORDER BY r.created_at DESC
+                    LIMIT 1
+                    """,
+                    (session_tag,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """
+                    SELECT r.*, s.last_active_at, s.message_count AS stored_message_count
+                    FROM request_context_snapshots r
+                    JOIN (
+                        SELECT session_tag, MAX(created_at) AS latest_created_at
+                        FROM request_context_snapshots
+                        GROUP BY session_tag
+                    ) latest
+                        ON latest.session_tag = r.session_tag
+                        AND latest.latest_created_at = r.created_at
+                    JOIN gateway_sessions s ON s.id = r.session_id
+                    ORDER BY r.created_at DESC
+                    LIMIT ?
+                    """,
+                    (limit,),
+                ).fetchall()
+        snapshots = []
+        for row in rows:
+            item = dict(row)
+            item["messages"] = json.loads(item.get("messages_json") or "[]")
+            snapshots.append(item)
+        return snapshots
+
+    def recent_cross_session_context(
+        self,
+        exclude_session_id: Optional[str],
+        since: Optional[str],
+        limit_messages: int = 8,
+        limit_sessions: int = 4,
+    ) -> list[dict]:
+        limit_messages = max(1, min(int(limit_messages or 8), 50))
+        limit_sessions = max(1, min(int(limit_sessions or 4), 20))
+        where = []
+        params: list[Any] = []
+        if exclude_session_id:
+            where.append("session_id != ?")
+            params.append(exclude_session_id)
+        if since:
+            where.append("created_at > ?")
+            params.append(since)
+        where_sql = "WHERE " + " AND ".join(where) if where else ""
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT r.*, s.session_tag AS resolved_session_tag, s.client_name AS resolved_client_name
+                FROM request_context_snapshots r
+                JOIN (
+                    SELECT session_id, MAX(created_at) AS latest_created_at
+                    FROM request_context_snapshots
+                    {where_sql}
+                    GROUP BY session_id
+                ) latest
+                    ON latest.session_id = r.session_id
+                    AND latest.latest_created_at = r.created_at
+                JOIN gateway_sessions s ON s.id = r.session_id
+                ORDER BY r.created_at DESC
+                LIMIT ?
+                """,
+                (*params, limit_sessions),
+            ).fetchall()
+
+        remaining = limit_messages
+        sources = []
+        for row in rows:
+            item = dict(row)
+            raw_messages = json.loads(item.get("messages_json") or "[]")
+            messages = [
+                {"role": msg.get("role"), "content": msg.get("content")}
+                for msg in raw_messages
+                if msg.get("role") in {"user", "assistant"} and msg.get("content")
+            ]
+            if not messages:
+                continue
+            selected = messages[-remaining:]
+            remaining -= len(selected)
+            sources.append(
+                {
+                    "session_id": item.get("session_id"),
+                    "session_tag": item.get("resolved_session_tag") or item.get("session_tag"),
+                    "client_name": item.get("resolved_client_name") or item.get("client_name"),
+                    "snapshot_at": item.get("created_at"),
+                    "latest_user_text": item.get("latest_user_text"),
+                    "messages": selected,
+                }
+            )
+            if remaining <= 0:
+                break
+        return sources
+
+    def write_cold_start_snapshot(
+        self,
+        session_id: str,
+        session_tag: str,
+        reason: str,
+        sources: list[dict],
+        trigger_last_active_at: Optional[str],
+        max_injections: int,
+    ) -> dict:
+        snapshot_id = f"csnap_{uuid.uuid4().hex[:12]}"
+        source_tags = sorted({source.get("session_tag") for source in sources if source.get("session_tag")})
+        source_message_count = sum(len(source.get("messages") or []) for source in sources)
+        created_at = iso_now()
+        row = {
+            "id": snapshot_id,
+            "session_id": session_id,
+            "session_tag": session_tag,
+            "reason": reason,
+            "sources": sources,
+            "source_session_tags": source_tags,
+            "source_message_count": source_message_count,
+            "trigger_last_active_at": trigger_last_active_at,
+            "injected_count": 0,
+            "max_injections": max(1, int(max_injections or 1)),
+            "created_at": created_at,
+        }
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO cold_start_snapshots (
+                    id, session_id, session_tag, reason, sources_json,
+                    source_session_tags_json, source_message_count,
+                    trigger_last_active_at, injected_count, max_injections, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?)
+                """,
+                (
+                    snapshot_id,
+                    session_id,
+                    session_tag,
+                    reason,
+                    json_dumps(sources),
+                    json_dumps(source_tags),
+                    source_message_count,
+                    trigger_last_active_at,
+                    row["max_injections"],
+                    created_at,
+                ),
+            )
+        return row
+
+    def latest_active_cold_start_snapshot(self, session_id: str) -> Optional[dict]:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT * FROM conversation_summaries
-                WHERE session_id = ? AND summary_type = ?
+                SELECT * FROM cold_start_snapshots
+                WHERE session_id = ? AND injected_count < max_injections
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
-                (session_id, summary_type),
-            ).fetchone()
-            return dict(row) if row else None
-
-    def write_frozen_window(self, session_id: str, messages: list[dict], token_estimate: int):
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT COALESCE(MAX(window_index), 0) AS max_idx FROM frozen_windows WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
-            next_index = int(row["max_idx"]) + 1 if row else 1
+        if not row:
+            return None
+        item = dict(row)
+        item["sources"] = json.loads(item.get("sources_json") or "[]")
+        item["source_session_tags"] = json.loads(item.get("source_session_tags_json") or "[]")
+        return item
+
+    def mark_cold_start_injected(self, snapshot_id: str):
+        with self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO frozen_windows (
-                    id, session_id, window_index, messages_json,
-                    token_estimate, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?)
+                UPDATE cold_start_snapshots
+                SET injected_count = injected_count + 1
+                WHERE id = ? AND injected_count < max_injections
                 """,
-                (
-                    f"fw_{uuid.uuid4().hex[:12]}",
-                    session_id,
-                    next_index,
-                    json_dumps(messages),
-                    token_estimate,
-                    iso_now(),
-                ),
+                (snapshot_id,),
             )
 
-    def latest_frozen_window(self, session_id: str) -> Optional[dict]:
+    def latest_cold_start_snapshot(self, session_id: str) -> Optional[dict]:
         with self._connect() as conn:
             row = conn.execute(
                 """
-                SELECT * FROM frozen_windows
+                SELECT * FROM cold_start_snapshots
                 WHERE session_id = ?
-                ORDER BY window_index DESC
+                ORDER BY created_at DESC
                 LIMIT 1
                 """,
                 (session_id,),
             ).fetchone()
-            if not row:
-                return None
-            item = dict(row)
-            item["messages"] = json.loads(item["messages_json"])
-            return item
+        if not row:
+            return None
+        item = dict(row)
+        item["sources"] = json.loads(item.get("sources_json") or "[]")
+        item["source_session_tags"] = json.loads(item.get("source_session_tags_json") or "[]")
+        return item
+
+    def gateway_overview(self) -> dict:
+        today = now().date().isoformat()
+        with self._connect() as conn:
+            message_counts = conn.execute(
+                """
+                SELECT
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN created_at >= ? THEN 1 ELSE 0 END) AS today,
+                    MIN(created_at) AS earliest,
+                    MAX(created_at) AS latest
+                FROM gateway_messages
+                """,
+                (today,),
+            ).fetchone()
+            session_count = conn.execute("SELECT COUNT(*) AS count FROM gateway_sessions").fetchone()
+            cold_count = conn.execute("SELECT COUNT(*) AS count FROM cold_start_snapshots").fetchone()
+        return {
+            "messages_total": int(message_counts["total"] or 0),
+            "messages_today": int(message_counts["today"] or 0),
+            "earliest_message_at": message_counts["earliest"],
+            "latest_message_at": message_counts["latest"],
+            "sessions_total": int(session_count["count"] or 0),
+            "cold_start_snapshots": int(cold_count["count"] or 0),
+        }
 
     def write_surface_event(
         self,

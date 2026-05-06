@@ -31,20 +31,31 @@ class ConfigUpdate(BaseModel):
     calendar_api_key: Optional[str] = None
     calendar_protocol: Optional[str] = None
     calendar_model: Optional[str] = None
+    atomic_memory_upstream_url: Optional[str] = None
+    atomic_memory_api_key: Optional[str] = None
+    atomic_memory_protocol: Optional[str] = None
+    atomic_memory_model: Optional[str] = None
     supabase_url: Optional[str] = None
     supabase_key: Optional[str] = None
     inject_meta_summaries: Optional[bool] = None
     inject_briefing: Optional[bool] = None
     inject_surface_passages: Optional[bool] = None
+    inject_atomic_memories: Optional[bool] = None
+    extract_atomic_memories: Optional[bool] = None
+    enable_cold_start: Optional[bool] = None
     enable_gateway_tools: Optional[bool] = None
     expose_supabase_tools: Optional[bool] = None
     max_internal_tool_rounds: Optional[int] = None
     gateway_db_path: Optional[str] = None
     daily_briefing_ttl_minutes: Optional[int] = None
-    summary_update_every_messages: Optional[int] = None
-    freeze_every_messages: Optional[int] = None
-    freeze_tail_messages: Optional[int] = None
+    max_client_messages: Optional[int] = None
+    cold_start_turns: Optional[int] = None
+    cold_start_message_limit: Optional[int] = None
+    cold_start_idle_minutes: Optional[int] = None
     default_surface_limit: Optional[int] = None
+    default_atomic_memory_limit: Optional[int] = None
+    atomic_memory_min_score: Optional[float] = None
+    atomic_memory_auto_activate_min_confidence: Optional[float] = None
 
 
 class SessionDeleteRequest(BaseModel):
@@ -63,3 +74,10 @@ class CalendarGenerateRequest(BaseModel):
     period_type: str
     period_key: Optional[str] = None
     model: Optional[str] = None
+    session_tag: Optional[str] = None
+
+
+class AtomicMemoryReviewUpdate(BaseModel):
+    status: str
+    tier: Optional[int] = None
+    importance: Optional[int] = None

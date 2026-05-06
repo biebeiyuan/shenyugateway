@@ -17,6 +17,11 @@ export interface GatewayConfig {
   upstream_protocol: string
   supabase_url: string
   supabase_key: string
+  max_client_messages: number | null
+  enable_cold_start: boolean
+  cold_start_turns: number
+  cold_start_message_limit: number
+  cold_start_idle_minutes: number
   model_mapping: Record<string, string>
 }
 
@@ -57,7 +62,6 @@ export interface GatewaySession {
   started_at: string
   last_active_at: string
   first_message_at: string
-  last_summary_at: string | null
   message_count: number
   context_state_json: string
   stored_message_count: number
@@ -85,17 +89,15 @@ export interface GatewaySessionStats {
   user_messages: number
   assistant_messages: number
   tool_messages: number
-  summaries: number
-  frozen_windows: number
   surface_events: number
   heartbeats: number
+  cold_start_snapshots: number
 }
 
 export interface GatewaySessionDetail {
   session: GatewaySession
   stats: GatewaySessionStats
-  latest_summary: Record<string, unknown> | null
-  latest_frozen_window: Record<string, unknown> | null
+  latest_cold_start_snapshot: Record<string, unknown> | null
   recent_messages: GatewayMessage[]
 }
 

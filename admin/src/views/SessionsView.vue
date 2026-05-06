@@ -237,15 +237,10 @@ function hDelete(row: GatewaySession) {
                 <NDescriptionsItem label="Last Active">{{ formatTime(selectedSession.last_active_at) }}</NDescriptionsItem>
                 <NDescriptionsItem label="Messages">{{ detail.stats.messages }}</NDescriptionsItem>
                 <NDescriptionsItem label="Artifacts">
-                  {{ detail.stats.summaries }} summaries · {{ detail.stats.frozen_windows }} windows ·
-                  {{ detail.stats.surface_events }} surface · {{ detail.stats.heartbeats }} heartbeats
+                  {{ detail.stats.surface_events }} surface · {{ detail.stats.heartbeats }} heartbeats ·
+                  {{ detail.stats.cold_start_snapshots }} cold starts
                 </NDescriptionsItem>
               </NDescriptions>
-
-              <div class="section">
-                <h2>Latest Summary</h2>
-                <p>{{ shortText(String(detail.latest_summary?.content || ''), 420) }}</p>
-              </div>
 
               <div class="section">
                 <h2>Recent Messages</h2>
