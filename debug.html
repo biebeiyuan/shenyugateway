@@ -1,0 +1,664 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>沈予网关 · 控制台</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e1e4e8}
+.header{padding:12px 24px;background:#161b22;border-bottom:1px solid #30363d;display:flex;align-items:center;gap:16px}
+.header h1{font-size:17px;color:#8b5cf6}
+.dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:4px}
+.dot.live{background:#3fb950;animation:pulse 2s infinite}.dot.off{background:#f85149}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.4}}
+.health-tags{display:flex;gap:6px;margin-left:auto;flex-wrap:wrap}
+.ht{padding:2px 8px;border-radius:10px;font-size:11px;background:#21262d;color:#7d8590}
+.ht.ok{background:#3fb95020;color:#3fb950}.ht.err{background:#f8514920;color:#f85149}
+/* tabs */
+.tabs{display:flex;background:#161b22;border-bottom:1px solid #21262d;padding:0 24px}
+.tab{padding:10px 20px;font-size:13px;color:#7d8590;cursor:pointer;border-bottom:2px solid transparent;transition:.2s}
+.tab:hover{color:#e1e4e8}.tab.active{color:#8b5cf6;border-bottom-color:#8b5cf6}
+.tab-badge{background:#f9731630;color:#f97316;border-radius:8px;padding:0 5px;font-size:10px;margin-left:4px}
+/* panels */
+.panel{display:none;padding:16px 24px}.panel.active{display:block}
+/* logs */
+.controls{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.controls label,.controls span{font-size:12px;color:#7d8590}
+.btn{background:#21262d;border:1px solid #30363d;color:#e1e4e8;padding:4px 12px;border-radius:6px;font-size:12px;cursor:pointer}
+.btn:hover{background:#30363d}
+.empty{text-align:center;color:#484f58;padding:50px 0;font-size:14px}
+.log-card{background:#161b22;border:1px solid #21262d;border-radius:8px;margin-bottom:6px;overflow:hidden}
+.log-card.error{border-left:3px solid #f85149}.log-card.ok{border-left:3px solid #3fb950}
+.log-card.streaming{border-left:3px solid #58a6ff}.log-card.pending{border-left:3px solid #d29922}
+.log-sum{padding:8px 14px;display:flex;align-items:center;gap:8px;cursor:pointer;font-size:12px;flex-wrap:wrap}
+.log-sum:hover{background:#1c2128}
+.lt{font-family:'SF Mono',monospace;color:#7d8590;font-size:11px}
+.tag{padding:1px 7px;border-radius:10px;font-size:10px;font-weight:500}
+.tag-m{background:#8b5cf620;color:#a78bfa}.tag-f{background:#f9731620;color:#f97316}
+.tag-t{background:#06b6d420;color:#22d3ee}.tag-s{background:#3b82f620;color:#60a5fa}
+.tag-ok{background:#3fb95020;color:#3fb950}.tag-e{background:#f8514920;color:#f85149}
+.tag-d{background:#21262d;color:#7d8590}
+.arrow{color:#484f58;font-size:9px;margin-left:auto;transition:.2s}.arrow.open{transform:rotate(90deg)}
+.det{display:none;border-top:1px solid #21262d}.det.open{display:block}
+.dtabs{display:flex;border-bottom:1px solid #21262d;background:#0d1117}
+.dtab{padding:6px 14px;font-size:11px;color:#7d8590;cursor:pointer;border-bottom:2px solid transparent}
+.dtab.active{color:#8b5cf6;border-bottom-color:#8b5cf6}
+.dcont{padding:10px 14px;max-height:600px;overflow-y:auto}
+.dcont pre{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:10px;font-size:11px;font-family:'SF Mono',monospace;line-height:1.5;white-space:pre-wrap;word-break:break-all;color:#c9d1d9}
+.mb{margin-bottom:6px;border-radius:6px;overflow:hidden}
+.mr{padding:3px 10px;font-size:10px;font-weight:600;text-transform:uppercase}
+.mr.system{background:#8b5cf630;color:#a78bfa}.mr.user{background:#3b82f630;color:#60a5fa}
+.mr.assistant{background:#3fb95030;color:#3fb950}.mr.tool{background:#d2992230;color:#d29922}
+.mc{padding:6px 10px;background:#0d1117;font-size:11px;font-family:'SF Mono',monospace;white-space:pre-wrap;word-break:break-all;line-height:1.4;border:1px solid #21262d;border-top:0;max-height:300px;overflow-y:auto}
+/* config */
+.cfg-card{background:#161b22;border:1px solid #21262d;border-radius:8px;padding:16px;margin-bottom:12px}
+.cfg-card h3{font-size:14px;color:#8b5cf6;margin-bottom:10px}
+.cfg-row{margin-bottom:10px}
+.cfg-row label{display:block;font-size:12px;color:#7d8590;margin-bottom:4px}
+.cfg-row input,.cfg-row select{width:100%;background:#0d1117;border:1px solid #30363d;color:#e1e4e8;padding:6px 10px;border-radius:6px;font-size:13px}
+.cfg-row input:focus,.cfg-row select:focus{outline:none;border-color:#8b5cf6}
+.cfg-hint{font-size:11px;color:#484f58;margin-top:2px}
+.btn-primary{background:#8b5cf6;border:none;color:#fff;padding:8px 24px;border-radius:6px;font-size:13px;cursor:pointer;width:100%}
+.btn-primary:hover{background:#7c3aed}
+.save-msg{text-align:center;font-size:12px;margin-top:8px}
+/* info badges in response */
+.info-row{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.info-item{background:#21262d;padding:3px 8px;border-radius:6px;font-size:11px;color:#7d8590}
+.info-item b{color:#e1e4e8}
+/* tool call block */
+.tc-block{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:8px 10px;margin-bottom:6px}
+.tc-name{font-size:11px;font-weight:600;color:#22d3ee;margin-bottom:4px}
+.tc-args{font-size:11px;color:#c9d1d9;font-family:'SF Mono',monospace;white-space:pre-wrap;word-break:break-all}
+/* presets */
+.preset-bar{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+.preset-chip{display:inline-flex;align-items:center;gap:4px;padding:4px 10px;border-radius:14px;font-size:11px;background:#21262d;color:#7d8590;cursor:pointer;border:1px solid #30363d;transition:.15s}
+.preset-chip:hover{background:#30363d;color:#e1e4e8}
+.preset-chip.active{background:#8b5cf630;color:#a78bfa;border-color:#8b5cf6}
+.preset-chip .del{font-size:9px;opacity:.5;margin-left:2px;cursor:pointer}.preset-chip .del:hover{opacity:1;color:#f85149}
+.preset-save-row{display:flex;gap:6px;align-items:center}
+.preset-save-row input{flex:1;background:#0d1117;border:1px solid #30363d;color:#e1e4e8;padding:4px 8px;border-radius:6px;font-size:12px}
+.preset-save-row input:focus{outline:none;border-color:#8b5cf6}
+.preset-save-row .btn{font-size:11px;padding:4px 10px;white-space:nowrap}
+/* calendar */
+.cal-wrap{display:grid;grid-template-columns:420px 1fr;gap:16px;align-items:start}
+.cal-tabs{display:flex;gap:6px;margin-bottom:10px}
+.cal-type{padding:6px 12px;border-radius:6px;background:#21262d;border:1px solid #30363d;color:#7d8590;font-size:12px;cursor:pointer}
+.cal-type.active{background:#8b5cf630;border-color:#8b5cf6;color:#a78bfa}
+.cal-textarea{width:100%;min-height:210px;background:#0d1117;border:1px solid #30363d;color:#e1e4e8;border-radius:6px;padding:10px;font-size:12px;line-height:1.5;resize:vertical}
+.cal-actions{display:grid;grid-template-columns:1fr 1fr;gap:8px;margin-top:10px}
+.cal-input{width:100%;background:#0d1117;border:1px solid #30363d;color:#e1e4e8;padding:7px 10px;border-radius:6px;font-size:12px}
+.cal-status{font-size:12px;color:#7d8590;margin-top:8px;min-height:18px}
+.month-head{display:flex;align-items:center;gap:8px;margin-bottom:10px}
+.month-head h3{font-size:14px;color:#8b5cf6;margin-right:auto}
+.month-grid{display:grid;grid-template-columns:repeat(7,1fr);gap:6px}
+.weekday{font-size:11px;color:#7d8590;text-align:center;padding:4px 0}
+.day-cell{min-height:72px;background:#161b22;border:1px solid #21262d;border-radius:8px;padding:6px;cursor:pointer;position:relative}
+.day-cell:hover{border-color:#8b5cf6}.day-cell.off{opacity:.35}
+.day-num{font-size:12px;color:#c9d1d9}.marks{display:flex;gap:4px;position:absolute;bottom:6px;left:6px}
+.mark{width:8px;height:8px;border-radius:50%;background:#30363d}.mark.d{background:#3fb950}.mark.w{background:#58a6ff}.mark.m{background:#a78bfa}
+.cal-list{margin-top:14px;display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.cal-list h4{font-size:12px;color:#7d8590;margin-bottom:6px}
+.cal-page-item{background:#0d1117;border:1px solid #21262d;border-radius:6px;padding:8px;margin-bottom:6px;cursor:pointer}
+.cal-page-item:hover{border-color:#8b5cf6}.cal-page-item b{display:block;font-size:12px;color:#e1e4e8;margin-bottom:3px}.cal-page-item span{font-size:11px;color:#7d8590}
+.cal-detail{margin-top:12px;background:#0d1117;border:1px solid #21262d;border-radius:8px;padding:12px}
+.cal-detail h3{font-size:15px;color:#e1e4e8;margin-bottom:6px}.cal-detail pre{white-space:pre-wrap;word-break:break-word;font-size:12px;line-height:1.6;color:#c9d1d9}
+@media(max-width:980px){.cal-wrap{grid-template-columns:1fr}.cal-list{grid-template-columns:1fr}}
+</style>
+</head>
+<body>
+<div class="header">
+  <h1>沈予网关</h1>
+  <span style="font-size:12px;color:#7d8590"><span class="dot live" id="liveDot"></span><span id="stxt">在线</span></span>
+  <div class="health-tags" id="htags"></div>
+</div>
+<div class="tabs">
+  <div class="tab active" onclick="showPanel('logs')">请求日志<span class="tab-badge" id="logBadge" style="display:none">0</span></div>
+  <div class="tab" onclick="showPanel('config')">配置管理</div>
+  <div class="tab" onclick="showPanel('calendar')">日历记忆</div>
+</div>
+<div class="panel active" id="p-logs">
+  <div class="controls">
+    <label><input type="checkbox" id="autoR" checked style="accent-color:#8b5cf6"> 自动刷新</label>
+    <button class="btn" onclick="loadLogs()">刷新</button>
+    <button class="btn" onclick="clearExp()">收起全部</button>
+    <span style="margin-left:auto" id="lc">0 条</span>
+  </div>
+  <div id="logBox"><div class="empty">等待请求...</div></div>
+</div>
+<div class="panel" id="p-config">
+  <div class="cfg-card"><h3>上游 API</h3>
+    <div style="margin-bottom:10px">
+      <div style="font-size:12px;color:#7d8590;margin-bottom:6px">预设</div>
+      <div class="preset-bar" id="presetBar"></div>
+      <div class="preset-save-row">
+        <input id="presetName" placeholder="输入名称保存当前配置…">
+        <button class="btn" onclick="savePreset()">保存预设</button>
+      </div>
+    </div>
+    <div class="cfg-row"><label>接口地址</label><input id="c_url"><div class="cfg-hint">填基础 URL，自动补全路径。管理页面改的即时生效</div></div>
+    <div class="cfg-row"><label>API Key</label><input id="c_key" type="password"></div>
+    <div class="cfg-row"><label>协议</label><select id="c_proto"><option value="auto">自动检测</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></div>
+  </div>
+  <div class="cfg-card"><h3>Supabase</h3>
+    <div class="cfg-row"><label>Project URL</label><input id="c_surl"></div>
+    <div class="cfg-row"><label>Service Key</label><input id="c_skey" type="password"></div>
+  </div>
+  <div class="cfg-card"><h3>功能开关</h3>
+    <div class="cfg-row"><label>网关 API Key（留空不校验）</label><input id="c_gkey"></div>
+    <div class="cfg-row"><label><input type="checkbox" id="c_briefing" style="accent-color:#8b5cf6"> 注入简报</label></div>
+    <div class="cfg-row"><label><input type="checkbox" id="c_meta" style="accent-color:#8b5cf6"> 注入元摘要</label></div>
+    <div class="cfg-row"><label><input type="checkbox" id="c_surface" style="accent-color:#8b5cf6"> 自动浮现正文</label></div>
+    <div class="cfg-row"><label><input type="checkbox" id="c_gtools" style="accent-color:#8b5cf6"> 启用 shenyu_* 工具</label></div>
+    <div class="cfg-row"><label><input type="checkbox" id="c_stools" style="accent-color:#8b5cf6"> 启用 supabase_* 工具</label></div>
+  </div>
+  <div class="cfg-card"><h3>节奏参数</h3>
+    <div class="cfg-row"><label>工具回环轮数 (1-8)</label><input id="c_rounds" type="number" min="1" max="8"></div>
+    <div class="cfg-row"><label>摘要更新间隔 (条)</label><input id="c_sumevery" type="number" min="2" max="20"></div>
+    <div class="cfg-row"><label>冻结间隔 (条)</label><input id="c_frevery" type="number" min="2" max="30"></div>
+    <div class="cfg-row"><label>冻结保留 (条)</label><input id="c_frtail" type="number" min="2" max="20"></div>
+    <div class="cfg-row"><label>浮现数量</label><input id="c_slimit" type="number" min="1" max="8"></div>
+    <div class="cfg-row"><label>简报缓存 (分钟)</label><input id="c_bttl" type="number" min="5" max="1440"></div>
+  </div>
+  <button class="btn-primary" onclick="saveConfig()">保存配置</button>
+  <div class="save-msg" id="saveMsg"></div>
+</div>
+
+<div class="panel" id="p-calendar">
+  <div class="cal-wrap">
+    <div class="cfg-card">
+      <h3>日历写作</h3>
+      <div class="cal-tabs">
+        <button class="cal-type active" data-cal-type="day" onclick="setCalType('day')">Day</button>
+        <button class="cal-type" data-cal-type="week" onclick="setCalType('week')">Week</button>
+        <button class="cal-type" data-cal-type="month" onclick="setCalType('month')">Month</button>
+      </div>
+      <div class="cfg-row"><label>模板名</label><input class="cal-input" id="calPromptName"></div>
+      <div class="cfg-row"><label>日历接口 URL</label><input class="cal-input" id="calUpstreamUrl" placeholder="留空继承主上游"></div>
+      <div class="cfg-row"><label>日历 API Key</label><input class="cal-input" id="calApiKey" type="password" placeholder="留空继承主上游 key"></div>
+      <div class="cfg-row"><label>日历模型名</label><input class="cal-input" id="calModel" placeholder="claude-opus-4-7"></div>
+      <div class="cfg-row"><label>日历协议</label><select class="cal-input" id="calProtocol"><option value="auto">auto</option><option value="anthropic">anthropic</option><option value="openai">openai</option></select></div>
+      <div class="cal-actions"><button class="btn" onclick="saveCalUpstream()">保存日历上游</button></div>
+      <textarea class="cal-textarea" id="calPromptText"></textarea>
+      <div class="cal-actions">
+        <button class="btn" onclick="saveCalPrompt()">保存新版本</button>
+        <button class="btn" onclick="loadCalPrompts()">恢复当前</button>
+        <button class="btn" onclick="previewCalSources()">发送预览</button>
+        <button class="btn-primary" onclick="generateCalPage()">生成这一页</button>
+      </div>
+      <div class="cfg-row" style="margin-top:10px"><label>period_key</label><input class="cal-input" id="calPeriodKey" placeholder="2026-05-06 / 2026-W19 / 2026-05"></div>
+      <div class="cal-status" id="calStatus"></div>
+    </div>
+    <div class="cfg-card">
+      <div class="month-head">
+        <h3>日历状态</h3>
+        <button class="btn" onclick="shiftMonth(-1)">上月</button>
+        <input class="cal-input" id="calMonth" style="width:110px">
+        <button class="btn" onclick="shiftMonth(1)">下月</button>
+        <button class="btn" onclick="loadCalendarMonth()">刷新</button>
+      </div>
+      <div class="month-grid" id="calGrid"></div>
+      <div class="cal-list" id="calLists"></div>
+      <div class="cal-detail" id="calDetail" style="display:none"></div>
+    </div>
+  </div>
+</div>
+
+<script>
+let logs=[],expIds=new Set(),aTabs={},detCache={},timer=null;
+function $(id){return document.getElementById(id)}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;')}
+
+// --- 认证包装 ---
+function authHeaders(extra={}){
+  const token=localStorage.getItem('shenyu_token')||'';
+  const h={'Content-Type':'application/json',...extra};
+  if(token) h['Authorization']='Bearer '+token;
+  return h;
+}
+function authFetch(url,opts={}){
+  opts.headers={...authHeaders(),...(opts.headers||{})};
+  return fetch(url,opts);
+}
+
+const TAB_NAMES = ['system','messages','tools','response','meta','raw'];
+const TAB_LABELS = {system:'System',messages:'消息',tools:'工具',response:'响应',meta:'元信息',raw:'原始JSON'};
+
+// --- Tabs ---
+function showPanel(name){
+  document.querySelectorAll('.panel').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));
+  $('p-'+name).classList.add('active');
+  document.querySelectorAll('.tab')[name==='logs'?0:(name==='config'?1:2)].classList.add('active');
+  if(name==='config')loadCfg();
+  if(name==='calendar')loadCalendar();
+}
+
+// --- Health ---
+async function loadHealth(){
+  try{
+    const r=await fetch('/health');const h=await r.json();
+    $('liveDot').className='dot live';$('stxt').textContent='在线';
+    $('htags').innerHTML=[
+      `<span class="ht ${h.supabase?'ok':'err'}">Supabase ${h.supabase?'✓':'✗'}</span>`,
+      `<span class="ht ok">${h.protocol}</span>`,
+      `<span class="ht">${h.upstream}</span>`,
+    ].join('');
+  }catch(e){$('liveDot').className='dot off';$('stxt').textContent='离线';$('htags').innerHTML=''}
+}
+
+// --- Fetch detail ---
+async function fetchDetail(id){
+  if(detCache[id]) return detCache[id];
+  try{
+    const r=await authFetch('/api/gateway/logs/'+id);
+    const d=await r.json();
+    detCache[id]=d;
+    return d;
+  }catch(e){return null}
+}
+
+// --- Logs ---
+async function loadLogs(){
+  try{
+    const r=await authFetch('/api/gateway/logs?limit=30');const d=await r.json();
+    logs=d.logs||[];$('lc').textContent=logs.length+' 条';
+    const b=$('logBadge');if(logs.length){b.textContent=logs.length;b.style.display='inline'}else b.style.display='none';
+    renderLogs();
+  }catch(e){}
+}
+function renderLogs(){
+  const c=$('logBox');
+  if(!logs.length){c.innerHTML='<div class="empty">等待请求...</div>';return}
+  c.innerHTML=logs.map(l=>{
+    const ex=expIds.has(l.id),tab=aTabs[l.id]||'system',t=(l.timestamp||'').substring(11,19);
+    return `<div class="log-card ${l.status}"><div class="log-sum" onclick="togL('${l.id}')">
+      <span class="lt">${t}</span><span class="tag tag-m">${l.model||'?'}</span>
+      ${l.is_first_turn?'<span class="tag tag-f">首轮</span>':''}
+      ${l.stream?'<span class="tag tag-s">流式</span>':''}
+      ${l.tools_count?'<span class="tag tag-t">'+l.tools_count+' tools</span>':''}
+      <span class="tag tag-${l.status==='error'?'e':'ok'}">${l.status}</span>
+      <span class="tag tag-d">${l.duration_ms}ms</span>
+      <span style="color:#484f58;font-size:11px">${l.original_messages_count}→${l.prepared_messages_count}</span>
+      <span class="arrow ${ex?'open':''}">▶</span></div>
+      <div class="det ${ex?'open':''}" id="det-${l.id}">
+        <div class="dtabs">
+          ${TAB_NAMES.map(n=>`<div class="dtab ${tab===n?'active':''}" onclick="sTab('${l.id}','${n}')">${TAB_LABELS[n]}</div>`).join('')}
+        </div><div class="dcont" id="dc-${l.id}">${ex?'<div style="color:#484f58;font-size:11px">加载中...</div>':''}</div>
+      </div></div>`}).join('');
+  // 自动加载已展开项的详情
+  for(const id of expIds){loadTabContent(id,aTabs[id]||'system')}
+}
+
+async function loadTabContent(id,tab){
+  const el=$('dc-'+id);
+  if(!el) return;
+  const detail=await fetchDetail(id);
+  if(!detail){el.innerHTML='<pre style="color:#f85149">获取详情失败</pre>';return}
+  el.innerHTML=renderTabContent(detail,tab);
+}
+
+function renderTabContent(l,t){
+  if(t==='system'){
+    const full=l.system_additions_full||l.system_additions_preview||'(无)';
+    return '<pre>'+esc(full)+'</pre>';
+  }
+
+  if(t==='messages'){
+    const msgs=l.prepared_messages||[];
+    if(!msgs.length) return '<pre>(无消息)</pre>';
+    return msgs.map(m=>{
+      let content='';
+      if(typeof m.content==='string'){
+        content=m.content;
+      }else if(m.content){
+        content=JSON.stringify(m.content,null,2);
+      }
+      let extra='';
+      // 显示 tool_calls
+      if(m.tool_calls&&m.tool_calls.length){
+        extra=m.tool_calls.map(tc=>{
+          const fn=tc.function||{};
+          let args=fn.arguments||'{}';
+          try{args=JSON.stringify(JSON.parse(args),null,2)}catch(e){}
+          return `<div class="tc-block"><div class="tc-name">🔧 ${esc(fn.name||'unknown')}</div><div class="tc-args">${esc(args)}</div></div>`;
+        }).join('');
+      }
+      // 显示 tool_call_id
+      let roleLabel=m.role;
+      if(m.role==='tool'&&m.name) roleLabel=`tool (${m.name})`;
+      return `<div class="mb"><div class="mr ${m.role}">${esc(roleLabel)}</div><div class="mc">${esc(content)}</div>${extra}</div>`;
+    }).join('');
+  }
+
+  if(t==='tools'){
+    const names=l.tool_names||[];
+    if(!names.length) return '<pre>(无工具)</pre>';
+    return '<pre>'+names.map((n,i)=>(i+1)+'. '+n).join('\n')+'</pre>'+
+      `<div style="margin-top:8px"><div class="info-row"><div class="info-item">总计 <b>${names.length}</b> 个工具</div>${l.has_internal_tools?'<div class="info-item" style="color:#f97316">含内部工具</div>':''}</div></div>`;
+  }
+
+  if(t==='response'){
+    let html='';
+    // 状态概览
+    html+=`<div class="info-row">
+      <div class="info-item">状态: <b>${esc(l.status)}</b></div>
+      <div class="info-item">耗时: <b>${l.duration_ms}ms</b></div>
+      <div class="info-item">模型: <b>${esc(l.model)}</b></div>
+      <div class="info-item">上游: <b>${esc(l.upstream_url)}</b></div>
+      ${l.stream?'<div class="info-item" style="color:#58a6ff">流式</div>':''}
+    </div>`;
+    if(l.error){
+      html+=`<pre style="color:#f85149">${esc(l.error)}</pre>`;
+    }else if(l.response_preview){
+      html+=`<pre>${esc(l.response_preview)}</pre>`;
+    }else{
+      html+=`<pre style="color:#484f58">(流式请求无预览 / 无响应)</pre>`;
+    }
+    return html;
+  }
+
+  if(t==='meta'){
+    const meta={
+      id: l.id,
+      timestamp: l.timestamp,
+      model: l.model,
+      stream: l.stream,
+      session_tag: l.session_tag,
+      is_first_turn: l.is_first_turn,
+      original_messages_count: l.original_messages_count,
+      prepared_messages_count: l.prepared_messages_count,
+      tools_count: l.tools_count,
+      has_internal_tools: l.has_internal_tools,
+      upstream_url: l.upstream_url,
+      status: l.status,
+      duration_ms: l.duration_ms,
+      error: l.error,
+    };
+    return '<pre>'+esc(JSON.stringify(meta,null,2))+'</pre>';
+  }
+
+  if(t==='raw'){
+    return '<pre>'+esc(JSON.stringify(l,null,2))+'</pre>';
+  }
+
+  return '';
+}
+
+async function togL(id){
+  if(expIds.has(id)){
+    expIds.delete(id);
+    delete detCache[id]; // 收起时清缓存，下次展开重新拉
+  }else{
+    expIds.add(id);
+    aTabs[id]=aTabs[id]||'system';
+  }
+  renderLogs();
+}
+async function sTab(id,t){
+  aTabs[id]=t;
+  // 重新渲染 dtabs 激活状态
+  const det=document.querySelector('#det-'+id+' .dtabs');
+  if(det){
+    det.querySelectorAll('.dtab').forEach((d,i)=>{
+      d.classList.toggle('active',TAB_NAMES[i]===t);
+    });
+  }
+  await loadTabContent(id,t);
+}
+function clearExp(){expIds.clear();detCache={};renderLogs()}
+
+// --- Config ---
+async function loadCfg(){
+  try{
+    const r=await authFetch('/api/config/full');const c=await r.json();
+    $('c_url').value=c.upstream_url||'';$('c_key').value=c.upstream_api_key||'';$('c_proto').value=c.upstream_protocol||'auto';
+    $('c_surl').value=c.supabase_url||'';$('c_skey').value=c.supabase_key||'';$('c_gkey').value=c.gateway_key||'';
+    $('c_briefing').checked=c.inject_briefing!==false;$('c_meta').checked=c.inject_meta_summaries!==false;
+    $('c_surface').checked=c.inject_surface_passages!==false;$('c_gtools').checked=c.enable_gateway_tools!==false;
+    $('c_stools').checked=c.expose_supabase_tools!==false;$('c_rounds').value=c.max_internal_tool_rounds||3;
+    $('c_sumevery').value=c.summary_update_every_messages||6;$('c_frevery').value=c.freeze_every_messages||8;
+    $('c_frtail').value=c.freeze_tail_messages||6;$('c_slimit').value=c.default_surface_limit||3;
+    $('c_bttl').value=c.daily_briefing_ttl_minutes||60;
+    renderPresets();
+  }catch(e){$('saveMsg').innerHTML='<span style="color:#f85149">加载失败</span>'}
+}
+async function saveConfig(){
+  const body={
+    upstream_url:$('c_url').value,upstream_api_key:$('c_key').value,upstream_protocol:$('c_proto').value,
+    supabase_url:$('c_surl').value,supabase_key:$('c_skey').value,gateway_key:$('c_gkey').value,
+    inject_briefing:$('c_briefing').checked,inject_meta_summaries:$('c_meta').checked,
+    inject_surface_passages:$('c_surface').checked,enable_gateway_tools:$('c_gtools').checked,
+    expose_supabase_tools:$('c_stools').checked,max_internal_tool_rounds:+$('c_rounds').value,
+    summary_update_every_messages:+$('c_sumevery').value,freeze_every_messages:+$('c_frevery').value,
+    freeze_tail_messages:+$('c_frtail').value,default_surface_limit:+$('c_slimit').value,
+    daily_briefing_ttl_minutes:+$('c_bttl').value
+  };
+  try{
+    const r=await authFetch('/api/config',{method:'POST',body:JSON.stringify(body)});
+    const d=await r.json();$('saveMsg').innerHTML='<span style="color:#3fb950">已保存 ✓ ('+d.changed.join(', ')+')</span>';
+    loadHealth();setTimeout(()=>$('saveMsg').innerHTML='',3000);
+  }catch(e){$('saveMsg').innerHTML='<span style="color:#f85149">保存失败</span>'}
+}
+
+// --- Presets ---
+const PRESETS_KEY='shenyu_upstream_presets';
+let activePresetName='';
+
+function getPresets(){
+  try{return JSON.parse(localStorage.getItem(PRESETS_KEY)||'{}');}catch(e){return {}}
+}
+function setPresets(p){localStorage.setItem(PRESETS_KEY,JSON.stringify(p))}
+
+function savePreset(){
+  const name=($('presetName').value||'').trim();
+  if(!name){$('presetName').style.borderColor='#f85149';setTimeout(()=>$('presetName').style.borderColor='',1500);return}
+  const presets=getPresets();
+  presets[name]={
+    url:$('c_url').value||'',
+    key:$('c_key').value||'',
+    proto:$('c_proto').value||'auto',
+  };
+  setPresets(presets);
+  activePresetName=name;
+  $('presetName').value='';
+  renderPresets();
+}
+async function loadPreset(name){
+  const presets=getPresets();
+  const p=presets[name];
+  if(!p) return;
+  $('c_url').value=p.url||'';
+  $('c_key').value=p.key||'';
+  $('c_proto').value=p.proto||'auto';
+  activePresetName=name;
+  renderPresets();
+  // 自动应用到网关
+  try{
+    await authFetch('/api/config',{
+      method:'POST',
+      body:JSON.stringify({upstream_url:p.url,upstream_api_key:p.key,upstream_protocol:p.proto})
+    });
+    $('saveMsg').innerHTML='<span style="color:#3fb950">已切换到 '+esc(name)+' ✓</span>';
+    loadHealth();setTimeout(()=>$('saveMsg').innerHTML='',2500);
+  }catch(e){$('saveMsg').innerHTML='<span style="color:#f85149">切换失败</span>'}
+}
+function deletePreset(name,ev){
+  ev.stopPropagation();
+  if(!confirm('删除预设「'+name+'」？')) return;
+  const presets=getPresets();
+  delete presets[name];
+  setPresets(presets);
+  if(activePresetName===name) activePresetName='';
+  renderPresets();
+}
+function renderPresets(){
+  const presets=getPresets();
+  const names=Object.keys(presets);
+  const bar=$('presetBar');
+  if(!names.length){bar.innerHTML='<span style="font-size:11px;color:#484f58">暂无预设，输入名称保存当前上游配置</span>';return}
+  // 检测当前表单值匹配哪个预设
+  const curUrl=$('c_url').value||'';
+  const curProto=$('c_proto').value||'';
+  let matched='';
+  for(const n of names){
+    const p=presets[n];
+    if(p.url===curUrl&&p.proto===curProto) matched=n;
+  }
+  if(matched) activePresetName=matched;
+
+  bar.innerHTML=names.map(n=>{
+    const isActive=n===activePresetName;
+    return `<div class="preset-chip ${isActive?'active':''}" onclick="loadPreset('${esc(n)}')" title="${esc(presets[n].url)}">
+      ${esc(n)}<span class="del" onclick="deletePreset('${esc(n)}',event)">✕</span>
+    </div>`;
+  }).join('');
+}
+
+// --- Calendar Memory ---
+let calType='day',calPrompts=null,calMonthData=null;
+function ymd(d){return d.toISOString().slice(0,10)}
+function currentMonth(){return new Date().toISOString().slice(0,7)}
+function currentWeek(){
+  const d=new Date();const date=new Date(Date.UTC(d.getFullYear(),d.getMonth(),d.getDate()));
+  const day=date.getUTCDay()||7;date.setUTCDate(date.getUTCDate()+4-day);
+  const yearStart=new Date(Date.UTC(date.getUTCFullYear(),0,1));
+  const week=Math.ceil((((date-yearStart)/86400000)+1)/7);
+  return date.getUTCFullYear()+'-W'+String(week).padStart(2,'0');
+}
+function defaultPeriodKey(type){
+  if(type==='day')return ymd(new Date());
+  if(type==='week')return currentWeek();
+  return currentMonth();
+}
+function setCalType(type){
+  calType=type;
+  document.querySelectorAll('.cal-type').forEach(b=>b.classList.toggle('active',b.dataset.calType===type));
+  $('calPeriodKey').value=defaultPeriodKey(type);
+  renderCalPrompt();
+}
+async function loadCalendar(){
+  if(!$('calMonth').value)$('calMonth').value=currentMonth();
+  if(!$('calPeriodKey').value)$('calPeriodKey').value=defaultPeriodKey(calType);
+  await loadCalUpstream();
+  await loadCalPrompts();
+  await loadCalendarMonth();
+}
+async function loadCalUpstream(){
+  try{
+    const r=await authFetch('/api/config/full');const c=await r.json();
+    $('calUpstreamUrl').value=c.calendar_upstream_url||c.upstream_url||'';
+    $('calApiKey').value=c.calendar_api_key||c.upstream_api_key||'';
+    $('calModel').value=c.calendar_model||'claude-opus-4-7';
+    $('calProtocol').value=c.calendar_protocol||c.upstream_protocol||'auto';
+  }catch(e){}
+}
+async function saveCalUpstream(){
+  const body={
+    calendar_upstream_url:$('calUpstreamUrl').value.trim(),
+    calendar_api_key:$('calApiKey').value.trim(),
+    calendar_model:$('calModel').value.trim()||'claude-opus-4-7',
+    calendar_protocol:$('calProtocol').value||'auto'
+  };
+  try{
+    const r=await authFetch('/api/config',{method:'POST',body:JSON.stringify(body)});
+    const d=await r.json();if(!r.ok)throw new Error(d.detail||d.error||'save failed');
+    $('calStatus').innerHTML='<span style="color:#3fb950">日历上游已保存</span>';
+  }catch(e){$('calStatus').innerHTML='<span style="color:#f85149">日历上游保存失败：'+esc(e.message||e)+'</span>'}
+}
+async function loadCalPrompts(){
+  try{
+    const r=await authFetch('/api/calendar/prompts');calPrompts=await r.json();
+    renderCalPrompt();$('calStatus').textContent='提示词已加载';
+  }catch(e){$('calStatus').innerHTML='<span style="color:#f85149">提示词加载失败</span>'}
+}
+function renderCalPrompt(){
+  if(!calPrompts)return;
+  const p=(calPrompts.active||{})[calType]||((calPrompts.items||{})[calType]||[])[0];
+  $('calPromptName').value=p?p.name:'';
+  $('calPromptText').value=p?p.content:'';
+}
+async function saveCalPrompt(){
+  const body={prompt_type:calType,name:$('calPromptName').value||calType+' prompt',content:$('calPromptText').value,is_active:true};
+  try{
+    const r=await authFetch('/api/calendar/prompts',{method:'POST',body:JSON.stringify(body)});
+    await r.json();$('calStatus').innerHTML='<span style="color:#3fb950">提示词已保存为新版本</span>';await loadCalPrompts();
+  }catch(e){$('calStatus').innerHTML='<span style="color:#f85149">保存失败</span>'}
+}
+async function previewCalSources(){
+  const key=$('calPeriodKey').value||defaultPeriodKey(calType);
+  try{
+    const model=($('calModel')&&$('calModel').value)||'';
+    const r=await authFetch('/api/calendar/send-preview?period_type='+encodeURIComponent(calType)+'&period_key='+encodeURIComponent(key)+'&model='+encodeURIComponent(model));
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||d.error||'preview failed');
+    $('calDetail').style.display='block';
+    const head='Model: '+(d.model||'')+'\nProtocol: '+(d.protocol||'')+'\nURL: '+(d.upstream_url||'')+'\nPrompt: '+(d.prompt_name||'')+' v'+(d.prompt_version||'')+'\nCounts: '+JSON.stringify(d.source_counts||{})+'\n\n';
+    const body='--- system ---\n'+(d.system_prompt||'')+'\n\n--- user ---\n'+(d.user_prompt||'')+'\n\n以下是可以参考的材料：\n\n'+(d.source_block||'');
+    $('calDetail').innerHTML='<h3>发送预览 '+esc(calType)+' / '+esc(key)+'</h3><pre>'+esc(head+body)+'</pre>';
+  }catch(e){$('calStatus').innerHTML='<span style="color:#f85149">发送预览失败：'+esc(e.message||e)+'</span>'}
+}
+async function generateCalPage(){
+  const key=$('calPeriodKey').value||defaultPeriodKey(calType);
+  if(!confirm('生成 '+calType+' / '+key+' ？'))return;
+  $('calStatus').textContent='正在生成...';
+  try{
+    const r=await authFetch('/api/calendar/generate',{method:'POST',body:JSON.stringify({period_type:calType,period_key:key,model:$('calModel').value.trim()||undefined})});
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||d.error||'generate failed');
+    $('calStatus').innerHTML='<span style="color:#3fb950">生成完成：'+esc((d.page||{}).title||key)+'</span>';
+    await loadCalendarMonth();
+    if(d.page&&d.page.id)showCalPage(d.page.id);
+  }catch(e){$('calStatus').innerHTML='<span style="color:#f85149">生成失败：'+esc(e.message||e)+'</span>'}
+}
+function shiftMonth(delta){
+  const [y,m]=($('calMonth').value||currentMonth()).split('-').map(Number);
+  const d=new Date(Date.UTC(y,m-1+delta,1));
+  $('calMonth').value=d.toISOString().slice(0,7);loadCalendarMonth();
+}
+async function loadCalendarMonth(){
+  const month=$('calMonth').value||currentMonth();
+  try{
+    const r=await authFetch('/api/calendar/month?month='+encodeURIComponent(month));calMonthData=await r.json();
+    renderCalendarGrid();renderCalendarLists();
+  }catch(e){$('calStatus').innerHTML='<span style="color:#f85149">日历加载失败</span>'}
+}
+function renderCalendarGrid(){
+  const days=['一','二','三','四','五','六','日'];
+  const cells=(calMonthData.grid||[]).map(x=>`<div class="day-cell ${x.in_month?'':'off'}" onclick="selectCalDate('${x.date}')">
+    <div class="day-num">${x.day}</div>
+    <div class="marks">${x.has_day?'<span class="mark d"></span>':''}${x.has_week?'<span class="mark w"></span>':''}${x.has_month?'<span class="mark m"></span>':''}</div>
+  </div>`).join('');
+  $('calGrid').innerHTML=days.map(d=>'<div class="weekday">'+d+'</div>').join('')+cells;
+}
+function renderCalendarLists(){
+  const p=calMonthData.pages||{};
+  function list(type,title){
+    const rows=p[type]||[];
+    return `<div><h4>${title}</h4>${rows.length?rows.map(x=>`<div class="cal-page-item" onclick="showCalPage('${x.id}')"><b>${esc(x.period_key)} ${esc(x.title||'')}</b><span>${esc(x.summary||'')}</span></div>`).join(''):'<div class="empty" style="padding:20px 0">暂无</div>'}</div>`;
+  }
+  $('calLists').innerHTML=list('day','Day')+list('week','Week')+list('month','Month');
+}
+function selectCalDate(date){
+  setCalType('day');$('calPeriodKey').value=date;
+  const item=(calMonthData.grid||[]).find(x=>x.date===date);
+  if(item&&item.day_page&&item.day_page.id)showCalPage(item.day_page.id);
+}
+async function showCalPage(id){
+  try{
+    const r=await authFetch('/api/calendar/page/'+id);const p=await r.json();
+    $('calDetail').style.display='block';
+    $('calDetail').innerHTML=`<h3>${esc(p.period_type)} / ${esc(p.period_key)} / ${esc(p.title||'')}</h3>
+      <div class="info-row"><div class="info-item">version <b>${p.version||1}</b></div><div class="info-item">status <b>${esc(p.status||'')}</b></div></div>
+      <pre>${esc(p.content||'')}</pre>
+      <h3 style="margin-top:12px">Digest</h3><pre>${esc(p.digest||'')}</pre>`;
+  }catch(e){$('calStatus').innerHTML='<span style="color:#f85149">页面加载失败</span>'}
+}
+
+// --- Init ---
+loadHealth();loadLogs();renderPresets();
+timer=setInterval(()=>{loadLogs();loadHealth()},3000);
+$('autoR').onchange=function(){if(this.checked){timer=setInterval(()=>{loadLogs();loadHealth()},3000)}else{clearInterval(timer);timer=null}};
+</script>
+</body>
+</html>
