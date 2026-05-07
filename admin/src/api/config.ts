@@ -5,6 +5,8 @@ export interface GatewayConfig {
   upstream_url: string
   upstream_api_key: string
   upstream_protocol: string
+  upstream_proxy?: string
+  upstream_trust_env?: boolean
   supabase_url: string
   supabase_key: string
   max_client_messages: number | null

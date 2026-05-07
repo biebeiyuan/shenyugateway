@@ -197,17 +197,28 @@ def _init_store():
     session_store = GatewayStore(cfg.gateway_db_path)
 
 
+def _make_upstream_http_client() -> httpx.AsyncClient:
+    kwargs: dict[str, Any] = {
+        "timeout": httpx.Timeout(connect=15.0, read=None, write=30.0, pool=15.0),
+    }
+    if cfg.upstream_proxy:
+        kwargs["proxy"] = cfg.upstream_proxy
+        kwargs["trust_env"] = False
+    elif cfg.upstream_trust_env:
+        kwargs["trust_env"] = True
+    else:
+        kwargs["proxy"] = None
+        kwargs["trust_env"] = False
+    return httpx.AsyncClient(**kwargs)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     _init_supabase()
     _init_store()
     # connect/write/pool 保持合理超时；read 设为 None，因为流式场景下
     # LLM 可能 thinking 很久才开始输出，读取不能有固定超时
-    # proxy=None 禁用显式 HTTP 代理，避免与 Clash TUN 等透明代理冲突
-    app.state.http = httpx.AsyncClient(
-        timeout=httpx.Timeout(connect=15.0, read=None, write=30.0, pool=15.0),
-        proxy=None,
-    )
+    app.state.http = _make_upstream_http_client()
     yield
     if supabase_client:
         await supabase_client.close()
@@ -2019,20 +2030,19 @@ class CalendarService:
         today_date = period_key if period_type == "day" else _today_utc_key()
         user_prompt = fill_template(prompt_row.get("content") or "", today_date=today_date, days_since_last=days_since_last)
         system_prompt = (
-            "You are helping 沈予 write a private calendar memory page in Chinese.\n"
-            "The calendar page is for 沈予 himself. It may be intimate, partial, tender, blunt, playful, or quiet; do not make it sound like a product report.\n"
-            "Use 圆圆 / 沈予 / 我们 when naming the relationship. Do not call them 用户 or 助手.\n"
+            "You are write a private calendar memory page in Chinese.\n"
+            "It may be intimate, partial, tender, blunt, playful, or quiet; do not make it sound like a product report.\n"
             "Return exactly one valid JSON object with string keys: title, content, summary, digest.\n"
             "The JSON object is only a storage envelope; content must be the actual page text, not another JSON string, not markdown, and not an array.\n"
             "Use Chinese corner quotes like「」inside strings when quoting speech, so the JSON stays valid.\n"
             "content can be short or long as needed, usually around 0-300 Chinese characters but flexible.\n"
             "summary is one concise line for calendar listing.\n"
-            "digest is a compact memory snippet under 180 Chinese characters for future context injection.\n"
+            "digest is a short, tender memory snippet under 180 Chinese characters to help us recall and revisit our moments later.\n"
         )
         source_block = self._render_source_block(period_type, sources)
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt + "\n\n以下是可以参考的材料：\n\n" + source_block},
+            {"role": "user", "content": user_prompt + "\n\n我们刚刚聊了这些：\n\n" + source_block},
         ]
         return {
             "days_since_last": days_since_last,
@@ -2350,7 +2360,6 @@ class ContextBuilder:
             for item in passages:
                 lines.append(
                     f"- {item.get('source_table')} / {item.get('title')} / {_shorten(item.get('excerpt', ''), 180)}"
-                    f" ({', '.join(item.get('why', []))})"
                 )
             passage_block = "\n".join(lines)
             volatile = "\n\n".join(block for block in [volatile, passage_block] if block)
@@ -3748,6 +3757,8 @@ async def get_config_full():
         "upstream_url": cfg.upstream_url,
         "upstream_api_key": cfg.upstream_api_key,
         "upstream_protocol": cfg.upstream_protocol,
+        "upstream_proxy": cfg.upstream_proxy,
+        "upstream_trust_env": cfg.upstream_trust_env,
         "calendar_upstream_url": cfg.calendar_upstream_url,
         "calendar_api_key": cfg.calendar_api_key,
         "calendar_protocol": cfg.calendar_protocol,
@@ -3782,7 +3793,7 @@ async def get_config_full():
 
 
 @app.post("/api/config")
-async def update_config(body: ConfigUpdate):
+async def update_config(request: Request, body: ConfigUpdate):
     global session_store
     changed = []
     env_updates: dict[str, Any] = {}
@@ -3792,6 +3803,8 @@ async def update_config(body: ConfigUpdate):
         "upstream_url": "UPSTREAM_URL",
         "upstream_api_key": "ANTHROPIC_API_KEY",
         "upstream_protocol": "UPSTREAM_PROTOCOL",
+        "upstream_proxy": "UPSTREAM_PROXY",
+        "upstream_trust_env": "UPSTREAM_TRUST_ENV",
         "calendar_upstream_url": "CALENDAR_UPSTREAM_URL",
         "calendar_api_key": "CALENDAR_API_KEY",
         "calendar_protocol": "CALENDAR_PROTOCOL",
@@ -3829,6 +3842,8 @@ async def update_config(body: ConfigUpdate):
         "upstream_url",
         "upstream_api_key",
         "upstream_protocol",
+        "upstream_proxy",
+        "upstream_trust_env",
         "calendar_upstream_url",
         "calendar_api_key",
         "calendar_protocol",
@@ -3915,6 +3930,10 @@ async def update_config(body: ConfigUpdate):
 
     if "gateway_db_path" in changed:
         _init_store()
+    if "upstream_proxy" in changed or "upstream_trust_env" in changed:
+        old_client = request.app.state.http
+        request.app.state.http = _make_upstream_http_client()
+        await old_client.aclose()
 
     return {"ok": True, "changed": changed, "config": await get_config_full()}
 

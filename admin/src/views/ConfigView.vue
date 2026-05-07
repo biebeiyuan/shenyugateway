@@ -47,6 +47,8 @@ const config = ref<GatewayConfig>({
   upstream_url: '',
   upstream_api_key: '',
   upstream_protocol: 'auto',
+  upstream_proxy: '',
+  upstream_trust_env: false,
   supabase_url: '',
   supabase_key: '',
   max_client_messages: null,
@@ -157,6 +159,8 @@ async function doSave() {
       upstream_url: config.value.upstream_url,
       upstream_api_key: config.value.upstream_api_key,
       upstream_protocol: config.value.upstream_protocol,
+      upstream_proxy: config.value.upstream_proxy,
+      upstream_trust_env: config.value.upstream_trust_env,
       supabase_url: config.value.supabase_url,
       supabase_key: config.value.supabase_key,
       max_client_messages: config.value.max_client_messages || null,
@@ -362,6 +366,12 @@ function removeModel(index: number) {
             </NFormItem>
             <NFormItem label="协议">
               <NSelect v-model:value="config.upstream_protocol" :options="protocolOptions" />
+            </NFormItem>
+            <NFormItem label="上游代理">
+              <NInput v-model:value="config.upstream_proxy" placeholder="可选，例如 http://127.0.0.1:7897" />
+            </NFormItem>
+            <NFormItem label="读取环境代理">
+              <NSwitch v-model:value="config.upstream_trust_env" />
             </NFormItem>
           </NForm>
         </NSpace>

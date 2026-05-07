@@ -208,6 +208,8 @@ Important environment variables:
 UPSTREAM_URL=
 ANTHROPIC_API_KEY=
 UPSTREAM_PROTOCOL=auto
+UPSTREAM_PROXY=
+UPSTREAM_TRUST_ENV=false
 
 CALENDAR_UPSTREAM_URL=
 CALENDAR_API_KEY=
@@ -239,6 +241,16 @@ ENABLE_GATEWAY_TOOLS=false
 EXPOSE_SUPABASE_TOOLS=true
 MAX_INTERNAL_TOOL_ROUNDS=3
 ```
+
+`UPSTREAM_PROXY` is optional. Use it when the gateway host can only reach the upstream API through a local proxy, for example:
+
+```text
+UPSTREAM_PROXY=http://127.0.0.1:7897
+```
+
+When `UPSTREAM_PROXY` is set, upstream LLM requests use that explicit proxy and ignore ambient proxy environment variables. If you prefer to inherit `HTTP_PROXY` / `HTTPS_PROXY` from the process environment, leave `UPSTREAM_PROXY` empty and set `UPSTREAM_TRUST_ENV=true`.
+
+Cloudflare Tunnel only handles inbound traffic to the gateway. It can make `https://your-domain` reach `localhost:8010`, but it does not by itself make the gateway's outbound connection to `UPSTREAM_URL` work. If requests fail with `无法连接上游 ... All connection attempts failed`, check the gateway machine's outbound route to the upstream host, local proxy/TUN mode, and `UPSTREAM_PROXY`.
 
 ## Running
 

@@ -27,6 +27,8 @@ class RuntimeConfig:
         self.upstream_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
         self.upstream_version: str = os.getenv("ANTHROPIC_VERSION", "2023-06-01")
         self.upstream_protocol: str = os.getenv("UPSTREAM_PROTOCOL", "auto")
+        self.upstream_proxy: str = os.getenv("UPSTREAM_PROXY", "").strip()
+        self.upstream_trust_env: bool = _env_bool("UPSTREAM_TRUST_ENV", False)
         self.calendar_upstream_url: str = os.getenv("CALENDAR_UPSTREAM_URL", "")
         self.calendar_api_key: str = os.getenv("CALENDAR_API_KEY", "")
         self.calendar_protocol: str = os.getenv("CALENDAR_PROTOCOL", "auto")
@@ -66,6 +68,8 @@ class RuntimeConfig:
             "upstream_url": self.upstream_url,
             "upstream_api_key": mask(self.upstream_api_key),
             "upstream_protocol": self.upstream_protocol,
+            "upstream_proxy": self.upstream_proxy,
+            "upstream_trust_env": self.upstream_trust_env,
             "calendar_upstream_url": self.calendar_upstream_url,
             "calendar_api_key": mask(self.calendar_api_key),
             "calendar_protocol": self.calendar_protocol,

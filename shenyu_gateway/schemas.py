@@ -27,6 +27,8 @@ class ConfigUpdate(BaseModel):
     upstream_url: Optional[str] = None
     upstream_api_key: Optional[str] = None
     upstream_protocol: Optional[str] = None
+    upstream_proxy: Optional[str] = None
+    upstream_trust_env: Optional[bool] = None
     calendar_upstream_url: Optional[str] = None
     calendar_api_key: Optional[str] = None
     calendar_protocol: Optional[str] = None
