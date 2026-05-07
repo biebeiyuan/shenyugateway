@@ -81,19 +81,62 @@ def fill_template(template: str, *, today_date: str, days_since_last: int) -> st
 
 
 def extract_json_object(text: str) -> dict[str, Any]:
+    import json
+
     raw = (text or "").strip()
     if not raw:
         return {"title": "未写下标题", "content": "今天还没有写下具体内容。", "summary": "今天还没有写下具体内容。", "digest": "今天还没有写下具体内容。"}
-    start = raw.find("{")
-    end = raw.rfind("}")
-    if start >= 0 and end > start:
-        import json
+    if raw.startswith("```"):
+        lines = raw.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        raw = "\n".join(lines).strip()
 
+    candidates = [raw]
+    start_obj = raw.find("{")
+    end_obj = raw.rfind("}")
+    if start_obj >= 0 and end_obj > start_obj:
+        candidates.append(raw[start_obj : end_obj + 1])
+    start_arr = raw.find("[")
+    end_arr = raw.rfind("]")
+    if start_arr >= 0 and end_arr > start_arr:
+        candidates.append(raw[start_arr : end_arr + 1])
+
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
         try:
-            return json.loads(raw[start : end + 1])
+            parsed = json.loads(candidate)
+        except Exception:
+            try:
+                parsed, _ = decoder.raw_decode(candidate)
+            except Exception:
+                continue
+        if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
+            parsed = parsed[0]
+        if isinstance(parsed, dict):
+            return _normalize_calendar_json(parsed)
+    return {"title": "日历记忆", "content": raw, "summary": raw[:120], "digest": raw[:220]}
+
+
+def _normalize_calendar_json(value: dict[str, Any]) -> dict[str, Any]:
+    import json
+
+    nested = value.get("content")
+    if isinstance(nested, str) and nested.strip().startswith("{"):
+        try:
+            nested_value = json.loads(nested)
+            if isinstance(nested_value, dict):
+                value = {**value, **nested_value}
         except Exception:
             pass
-    return {"title": "日历记忆", "content": raw, "summary": raw[:120], "digest": raw[:220]}
+    return {
+        "title": str(value.get("title") or "日历记忆"),
+        "content": str(value.get("content") or ""),
+        "summary": str(value.get("summary") or ""),
+        "digest": str(value.get("digest") or ""),
+    }
 
 
 @dataclass

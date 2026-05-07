@@ -2019,11 +2019,15 @@ class CalendarService:
         today_date = period_key if period_type == "day" else _today_utc_key()
         user_prompt = fill_template(prompt_row.get("content") or "", today_date=today_date, days_since_last=days_since_last)
         system_prompt = (
-            "You are writing a private calendar memory page for Shenyu in Chinese.\n"
-            "Return ONLY valid JSON with keys: title, content, summary, digest. Do not return empty strings.\n"
-            "content should be intimate, personal, and around 0-300 Chinese characters, but flexible.\n"
-            "summary should be a concise one-line overview.\n"
-            "digest should be a compact injection-ready memory snippet under 180 Chinese characters.\n"
+            "You are helping 沈予 write a private calendar memory page in Chinese.\n"
+            "The calendar page is for 沈予 himself. It may be intimate, partial, tender, blunt, playful, or quiet; do not make it sound like a product report.\n"
+            "Use 圆圆 / 沈予 / 我们 when naming the relationship. Do not call them 用户 or 助手.\n"
+            "Return exactly one valid JSON object with string keys: title, content, summary, digest.\n"
+            "The JSON object is only a storage envelope; content must be the actual page text, not another JSON string, not markdown, and not an array.\n"
+            "Use Chinese corner quotes like「」inside strings when quoting speech, so the JSON stays valid.\n"
+            "content can be short or long as needed, usually around 0-300 Chinese characters but flexible.\n"
+            "summary is one concise line for calendar listing.\n"
+            "digest is a compact memory snippet under 180 Chinese characters for future context injection.\n"
         )
         source_block = self._render_source_block(period_type, sources)
         messages = [
