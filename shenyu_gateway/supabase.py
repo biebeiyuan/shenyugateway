@@ -5,6 +5,18 @@ from typing import Any, Optional
 import httpx
 
 
+def _raise_for_status(response: httpx.Response):
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        detail = response.text[:1000]
+        raise httpx.HTTPStatusError(
+            f"{exc} | response: {detail}",
+            request=exc.request,
+            response=exc.response,
+        ) from exc
+
+
 class SupabaseClient:
     def __init__(self, url: str, key: str):
         self.base_url = url.rstrip("/") + "/rest/v1"
@@ -46,28 +58,28 @@ class SupabaseClient:
 
     async def query(self, table: str, params: Optional[dict] = None) -> list:
         response = await self._request("GET", f"{self.base_url}/{table}", params=params or {})
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     async def insert(self, table: str, data: dict) -> dict:
         response = await self._request("POST", f"{self.base_url}/{table}", json=data)
-        response.raise_for_status()
+        _raise_for_status(response)
         result = response.json()
         return result[0] if isinstance(result, list) and result else result
 
     async def update(self, table: str, match: dict, data: dict) -> list:
         params = {key: f"eq.{value}" for key, value in match.items()}
         response = await self._request("PATCH", f"{self.base_url}/{table}", params=params, json=data)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     async def delete(self, table: str, match: dict) -> list:
         params = {key: f"eq.{value}" for key, value in match.items()}
         response = await self._request("DELETE", f"{self.base_url}/{table}", params=params)
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()
 
     async def rpc(self, fn: str, params: Optional[dict] = None) -> Any:
         response = await self._request("POST", f"{self.rpc_url}/{fn}", json=params or {})
-        response.raise_for_status()
+        _raise_for_status(response)
         return response.json()

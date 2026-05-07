@@ -9,6 +9,7 @@ OpenAI-compatible gateway with:
 
 import hashlib
 import asyncio
+import copy
 import json
 import logging
 import os
@@ -23,7 +24,7 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from shenyu_gateway.calendar import (
@@ -51,6 +52,8 @@ from shenyu_gateway.schemas import (
     CalendarPromptUpdate,
     ChatRequest,
     ConfigUpdate,
+    HeartbeatCreateRequest,
+    HeartbeatDeleteRequest,
     SessionDeleteRequest,
 )
 from shenyu_gateway.sessions import SessionManager
@@ -132,9 +135,84 @@ def _split_paragraph_chunks(text: str, min_len: int = 80, max_len: int = 420) ->
     return merged
 
 
+def _paragraph_excerpt(text: str, min_len: int = 250, max_len: int = 300) -> str:
+    text = (text or "").strip()
+    if not text:
+        return ""
+
+    paragraphs = [part.strip() for part in text.replace("\r\n", "\n").split("\n\n") if part.strip()]
+    if not paragraphs:
+        paragraphs = [part.strip() for part in text.splitlines() if part.strip()] or [text]
+
+    best = ""
+    buffer = ""
+    for paragraph in paragraphs:
+        candidate = f"{buffer}\n\n{paragraph}".strip() if buffer else paragraph
+        if len(candidate) <= max_len:
+            buffer = candidate
+            if len(buffer) >= min_len:
+                return buffer
+            continue
+        if len(buffer) >= min_len:
+            return buffer
+        if not best or len(buffer) > len(best):
+            best = buffer
+        break
+
+    if len(buffer) >= min_len:
+        return buffer
+    if buffer and len(text) <= max_len:
+        return buffer
+
+    source = text if len(text) > max_len else (buffer or best or text)
+    sentence_enders = "。！？!?；;"
+    cut = -1
+    for idx, char in enumerate(source[: max_len + 1]):
+        if char in sentence_enders and idx + 1 >= min_len:
+            cut = idx + 1
+    if cut > 0:
+        return source[:cut].strip()
+
+    if len(source) <= max_len:
+        return source.strip()
+    return source[: max_len - 1].rstrip() + "…"
+
+
 def _keyword_terms(query: str) -> list[str]:
     raw = (query or "").replace("\n", " ").replace("，", " ").replace("。", " ")
     return [term.lower() for term in raw.split() if term.strip()]
+
+
+def _extract_json_payload(text: str) -> dict[str, Any]:
+    raw = (text or "").strip()
+    if not raw:
+        raise ValueError("Model returned empty content.")
+    if raw.startswith("```"):
+        lines = raw.splitlines()
+        if lines and lines[0].strip().startswith("```"):
+            lines = lines[1:]
+        if lines and lines[-1].strip().startswith("```"):
+            lines = lines[:-1]
+        raw = "\n".join(lines).strip()
+
+    candidates = [raw]
+    start_obj = raw.find("{")
+    end_obj = raw.rfind("}")
+    if start_obj >= 0 and end_obj > start_obj:
+        candidates.append(raw[start_obj : end_obj + 1])
+
+    decoder = json.JSONDecoder()
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+        except Exception:
+            try:
+                parsed, _ = decoder.raw_decode(candidate)
+            except Exception:
+                continue
+        if isinstance(parsed, dict):
+            return parsed
+    raise ValueError(f"Model returned non-JSON content: {_shorten(raw, 240)}")
 
 
 def _keyword_overlap_score(query: str, text: str) -> float:
@@ -800,6 +878,34 @@ class GatewayToolService:
         passages = scored[: max(1, min(limit, 8))]
         return {"query": query, "count": len(passages), "passages": passages}
 
+    async def surface_fixed_diary_passage(self) -> dict:
+        if not supabase_client or not _FIXED_JOURNAL_IDS:
+            return {"count": 0, "passages": []}
+        selected_id = random.choice(_FIXED_JOURNAL_IDS)
+        rows = await self._safe_query(
+            "journal",
+            {
+                "select": "id,title,content,created_at,category",
+                "id": f"eq.{selected_id}",
+                "limit": "1",
+            },
+        )
+        if not rows:
+            return {"count": 0, "passages": []}
+        row = rows[0]
+        excerpt = _paragraph_excerpt(row.get("content") or "", 250, 300)
+        if not excerpt:
+            return {"count": 0, "passages": []}
+        passage = {
+            "source_table": "journal",
+            "source_id": row.get("id"),
+            "title": row.get("title") or "untitled",
+            "excerpt": excerpt,
+            "created_at": row.get("created_at"),
+            "content_kind": row.get("category") or "diary",
+        }
+        return {"count": 1, "passages": [passage]}
+
     async def last_seen(self) -> Any:
         if not supabase_client:
             return {"note": "Supabase is not configured."}
@@ -1277,11 +1383,12 @@ class AtomicMemoryService:
         started_at = _iso_now()
         similar_memories = await self._find_similar_memories(session, user_text, assistant_text)
         prompt_messages = self._build_extraction_messages(session, user_text, assistant_text, similar_memories)
-        upstream = self._atomic_upstream()
+        upstream = self._atomic_upstream(source_model)
         if not upstream["base_url"] or not upstream["api_key"] or not upstream["model"]:
             logger.info("[AtomicMemory] extractor not configured; skipping.")
             return
 
+        result: dict[str, Any] = {}
         try:
             result = await self._run_extractor(upstream, prompt_messages)
             candidates = result.get("memories") or []
@@ -1312,7 +1419,7 @@ class AtomicMemoryService:
                     session,
                     status="error",
                     prompt_messages=prompt_messages,
-                    raw_result={},
+                    raw_result=result if isinstance(result, dict) else {},
                     candidate_count=0,
                     inserted_count=0,
                     error=str(exc)[:1000],
@@ -1321,12 +1428,14 @@ class AtomicMemoryService:
             except Exception:
                 logger.exception("[AtomicMemory] failed to write extraction run")
 
-    def _atomic_upstream(self) -> dict[str, str]:
-        base_url = (cfg.atomic_memory_upstream_url or cfg.calendar_upstream_url or cfg.upstream_url).strip()
-        configured_protocol = cfg.atomic_memory_protocol or (cfg.calendar_protocol if cfg.calendar_upstream_url else cfg.upstream_protocol)
+    def _atomic_upstream(self, source_model: str = "") -> dict[str, str]:
+        atomic_url = (cfg.atomic_memory_upstream_url or "").strip()
+        calendar_url = (cfg.calendar_upstream_url or "").strip()
+        base_url = atomic_url or calendar_url or cfg.upstream_url.strip()
+        configured_protocol = cfg.atomic_memory_protocol or (cfg.calendar_protocol if calendar_url else cfg.upstream_protocol)
         protocol = _detect_protocol_for(base_url, configured_protocol)
         api_key = (cfg.atomic_memory_api_key or cfg.calendar_api_key or cfg.upstream_api_key).strip()
-        model = (cfg.atomic_memory_model or cfg.calendar_model or "").strip()
+        model = _mapped_model_name(cfg.atomic_memory_model or cfg.calendar_model or source_model)
         return {
             "base_url": base_url,
             "chat_url": _chat_url_for(base_url, protocol),
@@ -1386,7 +1495,7 @@ class AtomicMemoryService:
         return _clamp(keyword_score * 0.72 + recency_score * 0.15 + tier_bonus + confidence_bonus, 0.0, 1.0)
 
     def _build_extraction_messages(self, session: dict, user_text: str, assistant_text: str, similar_memories: list[dict]) -> list[dict]:
-        system = (
+        default_system = (
             "You are Shenyu Gateway's atomic memory note-taker. Return JSON only.\n"
             "Your job is not to archive everything. Your job is to listen with care and keep small durable notes that may still matter later.\n"
             "You are listening inside the relationship, not from a generic product log.\n"
@@ -1421,6 +1530,8 @@ class AtomicMemoryService:
             "NO 圆圆 says: 哈哈哈好的。 -> {\"memories\":[]}.\n"
             "Boundary: 老公抱抱我，我今天真的被那个电话吓到了，晚上可能会一直想这事。 Keep it as state/event because it has a specific emotional incident, time marker, and future care context."
         )
+        custom_system = (cfg.atomic_memory_prompt or "").strip()
+        system = custom_system or default_system
         similar_block = ""
         if similar_memories:
             lines = ["[similar existing notes]"]
@@ -1442,14 +1553,28 @@ class AtomicMemoryService:
         )
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
+    def _extractor_payload_messages(self, messages: list[dict]) -> list[dict]:
+        payload_messages = copy.deepcopy(messages)
+        payload_messages.append(
+            {
+                "role": "system",
+                "content": (
+                    "Final output must be a single valid JSON object matching the schema. "
+                    "Do not include reasoning, markdown, or prose."
+                ),
+            }
+        )
+        return payload_messages
+
     async def _run_extractor(self, upstream: dict[str, str], messages: list[dict]) -> dict:
+        payload_messages = self._extractor_payload_messages(messages)
         if upstream["protocol"] == "anthropic":
-            system, anthropic_messages = _openai_to_anthropic(messages, cache_layers={}, cache_paths=[])
+            system, anthropic_messages = _openai_to_anthropic(payload_messages, cache_layers={}, cache_paths=[])
             payload = {
                 "model": upstream["model"],
                 "system": system,
                 "messages": anthropic_messages,
-                "max_tokens": 1200,
+                "max_tokens": cfg.atomic_memory_max_tokens,
                 "temperature": 0,
             }
             headers = {
@@ -1462,15 +1587,28 @@ class AtomicMemoryService:
         else:
             payload = {
                 "model": upstream["model"],
-                "messages": messages,
-                "max_tokens": 1200,
+                "messages": payload_messages,
+                "max_tokens": cfg.atomic_memory_max_tokens,
                 "temperature": 0,
+                "response_format": {"type": "json_object"},
             }
             headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
             raw = await _call_upstream_json_at(self.request, upstream["chat_url"], payload, headers)
 
-        content = raw.get("choices", [{}])[0].get("message", {}).get("content", "") or "{}"
-        return extract_json_object(content)
+        message = raw.get("choices", [{}])[0].get("message", {}) or {}
+        content = message.get("content", "") or ""
+        parsed = _extract_json_payload(content)
+        if not isinstance(parsed.get("memories"), list):
+            raise ValueError(
+                "Atomic memory extractor returned JSON without memories array: "
+                f"{_shorten(json.dumps(parsed, ensure_ascii=False), 240)}"
+            )
+        parsed["_debug"] = {
+            "content_chars": len(content),
+            "reasoning_chars": len(str(message.get("reasoning_content") or "")),
+            "finish_reason": (raw.get("choices") or [{}])[0].get("finish_reason"),
+        }
+        return parsed
 
     def _candidate_to_row(self, candidate: dict, session: dict, user_text: str, assistant_text: str, source_model: str) -> Optional[dict]:
         canonical = (candidate.get("content_canonical") or "").strip()
@@ -1480,23 +1618,20 @@ class AtomicMemoryService:
         status = "active" if confidence >= cfg.atomic_memory_auto_activate_min_confidence else "proposed"
         now = _iso_now()
         subject = self._choice(candidate.get("subject"), {"圆圆", "沈予", "我们"}, "我们")
+        applies_to = self._subject_scope(subject)
         quote = (candidate.get("quote") or "").strip()
         time_hint = (candidate.get("time_hint") or "").strip()
         return {
             "session_tag": session.get("session_tag") or "default",
             "subject": subject,
-            "owner": subject,
-            "applies_to": subject,
-            "speaker_perspective": subject,
+            "owner": applies_to,
+            "applies_to": applies_to,
+            "speaker_perspective": applies_to,
             "content_canonical": canonical,
             "content_surface": (candidate.get("content_surface") or canonical).strip(),
             "quote": quote,
             "time_hint": time_hint,
-            "memory_type": self._choice(
-                candidate.get("memory_type"),
-                {"preference", "state", "commitment", "relation", "event", "other"},
-                "other",
-            ),
+            "memory_type": self._memory_type(candidate.get("memory_type")),
             "tier": max(1, min(int(candidate.get("tier") or 3), 4)),
             "confidence": _clamp(confidence, 0.0, 1.0),
             "importance": max(1, min(int(candidate.get("importance") or 2), 5)),
@@ -1528,6 +1663,37 @@ class AtomicMemoryService:
     def _choice(self, value: Any, allowed: set[str], fallback: str) -> str:
         raw = str(value or "").strip()
         return raw if raw in allowed else fallback
+
+    def _subject_scope(self, subject: str) -> str:
+        return {
+            "圆圆": "user",
+            "沈予": "assistant",
+            "我们": "shared",
+        }.get(subject, "shared")
+
+    def _memory_type(self, value: Any) -> str:
+        raw = str(value or "").strip()
+        aliases = {
+            "state": "emotion",
+        }
+        raw = aliases.get(raw, raw)
+        return self._choice(
+            raw,
+            {
+                "preference",
+                "health",
+                "emotion",
+                "commitment",
+                "project",
+                "relation",
+                "boundary",
+                "routine",
+                "identity",
+                "event",
+                "other",
+            },
+            "other",
+        )
 
     async def _write_run(
         self,
@@ -1569,6 +1735,12 @@ def _schedule_atomic_memory_extraction(
     source_model: str,
 ):
     if not cfg.extract_atomic_memories:
+        return
+    every = max(1, int(cfg.atomic_memory_extract_every_turns or 1))
+    message_count = int(session.get("message_count") or 0)
+    next_turn = (message_count // 2) + 1
+    if every > 1 and next_turn % every != 0:
+        logger.debug("[AtomicMemory] skipped turn %s; extract_every_turns=%s", next_turn, every)
         return
     try:
         asyncio.create_task(AtomicMemoryService(request).process_turn(session, user_text, assistant_text, source_model))
@@ -2223,6 +2395,39 @@ class ContextBuilder:
         self.sessions = sessions
         self.tools = tools
 
+    async def calendar_context_pages(self) -> dict[str, list[dict[str, Any]]]:
+        if not supabase_client:
+            return {"day": [], "week": [], "month": []}
+
+        async def load(period_type: str, limit: int) -> list[dict[str, Any]]:
+            try:
+                rows = await supabase_client.query(
+                    "calendar_pages",
+                    {
+                        "select": "period_type,period_key,title,summary,digest,period_start",
+                        "period_type": f"eq.{period_type}",
+                        "is_latest": "eq.true",
+                        "order": "period_start.desc",
+                        "limit": str(limit),
+                    },
+                )
+            except Exception:
+                return []
+            return [
+                {
+                    "period_type": row.get("period_type") or period_type,
+                    "period_key": row.get("period_key") or "",
+                    "title": row.get("title") or "",
+                    "summary": row.get("summary") or "",
+                    "digest": row.get("digest") or "",
+                }
+                for row in rows
+                if (row.get("summary") or row.get("digest"))
+            ]
+
+        days, weeks, months = await asyncio.gather(load("day", 3), load("week", 1), load("month", 1))
+        return {"day": days, "week": weeks, "month": months}
+
     async def build_context_package(
         self,
         session: dict,
@@ -2235,24 +2440,28 @@ class ContextBuilder:
 
         # 检查是否到了注入 heartbeat 的节点
         heartbeat_digest = ""
-        pending_hbs = self.store.get_pending_heartbeats(session_id, limit=cfg.heartbeat_inject_every)
-        if len(pending_hbs) >= cfg.heartbeat_inject_every:
+        heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
+        pending_hbs = self.store.get_pending_heartbeats(session_id, limit=heartbeat_batch_size)
+        if len(pending_hbs) >= heartbeat_batch_size:
             # 攒够了，合并并标记为已注入
             heartbeat_digest = "\n".join(hb["content"] for hb in pending_hbs)
-            self.store.mark_heartbeats_injected(session_id)
+            self.store.mark_heartbeats_injected(session_id, [hb["id"] for hb in pending_hbs])
             logger.info("[Heartbeat] 注入 %d 条心跳到 Layer 2 (session=%s)", len(pending_hbs), session_id[:8])
         else:
             # 未攒够，使用上一批已注入的 digest
-            heartbeat_digest = self.store.get_latest_heartbeat_digest(session_id, limit=cfg.heartbeat_inject_every)
+            heartbeat_digest = self.store.get_latest_heartbeat_digest(session_id, limit=heartbeat_batch_size)
 
         package = {
             "stable_charter": _stable_charter_block(),
             "daily_briefing": "",
             "heartbeat_digest": heartbeat_digest,
             "cold_start_snapshot": cold_start_snapshot,
+            "calendar_context": {"day": [], "week": [], "month": []},
             "surface_passages": [],
             "atomic_memories": [],
         }
+
+        package["calendar_context"] = await self.calendar_context_pages()
 
         if cfg.inject_meta_summaries:
             meta_block = await self.meta_block()
@@ -2266,19 +2475,15 @@ class ContextBuilder:
             )
 
         if cfg.inject_surface_passages and current_user_text.strip():
-            surfaced = await self.tools.surface_passages(
-                current_user_text,
-                session_tag=session["session_tag"],
-                limit=cfg.default_surface_limit,
-            )
+            surfaced = await self.tools.surface_fixed_diary_passage()
             package["surface_passages"] = surfaced["passages"]
             if surfaced["passages"]:
                 self.store.write_surface_event(
                     session_id=session_id,
                     trigger_text=current_user_text,
-                    surfaced_type="primary_text",
+                    surfaced_type="fixed_diary",
                     surfaced_items=surfaced["passages"],
-                    reasons=["automatic surfaced passages"],
+                    reasons=["automatic fixed diary surface"],
                 )
         if cfg.inject_atomic_memories and current_user_text.strip():
             atomic = await self.tools.search_atomic_memories(
@@ -2310,8 +2515,7 @@ class ContextBuilder:
         """返回分层的 system 内容，用于缓存友好的消息组装。
         按变化频率从低到高排列：
           stable:   charter + tool_policy + heartbeat_prompt（尽量不变）
-          summary:  heartbeat_digest（每 N 轮变一次）
-          cold_start: 跨窗口冷启动快照（前 N 轮临时注入）
+          slow:     calendar_context + heartbeat_digest + cold_start（低频变化）
           volatile: briefing + surface_passages + atomic_memories（经常变，放在对话消息之后）
         """
         # Layer 1: 稳定层（charter + tool policy + heartbeat 引导）
@@ -2327,14 +2531,30 @@ class ContextBuilder:
         stable_blocks.append(_HEARTBEAT_PROMPT)
         stable = "\n\n".join(stable_blocks)
 
-        # Layer 2: 心跳回顾层
-        summary = ""
+        slow_blocks = []
+
+        calendar_context = package.get("calendar_context") or {}
+        calendar_lines = []
+        for label, period_type in (("这几天", "day"), ("这周", "week"), ("这个月", "month")):
+            rows = calendar_context.get(period_type) or []
+            if not rows:
+                continue
+            calendar_lines.append(f"{label}:")
+            for row in rows:
+                text_parts = []
+                if row.get("summary"):
+                    text_parts.append(f"summary: {_shorten(row.get('summary') or '', 160)}")
+                if row.get("digest"):
+                    text_parts.append(f"digest: {_shorten(row.get('digest') or '', 180)}")
+                if text_parts:
+                    calendar_lines.append(f"- {row.get('period_key') or ''} {' / '.join(text_parts)}")
+        if calendar_lines:
+            slow_blocks.append("## Calendar Memory\n" + "\n".join(calendar_lines))
+
         heartbeat_digest = package.get("heartbeat_digest", "")
         if heartbeat_digest:
-            summary = "## 你之前写下的心跳\n" + heartbeat_digest
+            slow_blocks.append("## 你之前写下的心跳\n" + heartbeat_digest)
 
-        # Layer 3: 冷启动桥接层（只使用拍好的快照，不在后续轮次重新查询）
-        cold_start = ""
         cold_snapshot = package.get("cold_start_snapshot") or {}
         if cold_snapshot:
             lines = [
@@ -2347,7 +2567,8 @@ class ContextBuilder:
                 )
                 for msg in source.get("messages") or []:
                     lines.append(f"- {msg.get('role')}: {_shorten(_normalize_text(msg.get('content')), 260)}")
-            cold_start = "\n".join(lines)
+            slow_blocks.append("\n".join(lines))
+        slow = "\n\n".join(slow_blocks)
 
         # Layer 4: 易变层（briefing + surface passages）—— 放在对话消息之后
         volatile = ""
@@ -2356,10 +2577,10 @@ class ContextBuilder:
 
         passages = package.get("surface_passages") or []
         if passages:
-            lines = ["## Soft Surfaced Primary Texts"]
+            lines = ["## Soft Diary Surface"]
             for item in passages:
                 lines.append(
-                    f"- {item.get('source_table')} / {item.get('title')} / {_shorten(item.get('excerpt', ''), 180)}"
+                    f"《{item.get('title') or 'untitled'}》\n{item.get('excerpt', '')}"
                 )
             passage_block = "\n".join(lines)
             volatile = "\n\n".join(block for block in [volatile, passage_block] if block)
@@ -2374,22 +2595,24 @@ class ContextBuilder:
                 when = _relative_time_label(item.get("created_at"))
                 if when:
                     marker += f" / {when}"
-                content = item.get("content_canonical") or item.get("content_surface") or ""
+                canonical = (item.get("content_canonical") or "").strip()
+                surface = (item.get("content_surface") or "").strip()
+                content = surface or canonical
+                if surface and canonical and surface != canonical:
+                    content = f"{surface}（{canonical}）"
                 why = ", ".join(item.get("why") or [])
                 lines.append(f"- [{marker}] {_shorten(content, 180)} ({why})")
             atomic_block = "\n".join(lines)
             volatile = "\n\n".join(block for block in [volatile, atomic_block] if block)
 
-        return {"stable": stable, "summary": summary, "cold_start": cold_start, "volatile": volatile}
+        return {"stable": stable, "slow": slow, "volatile": volatile}
 
     def render_system_additions(self, package: dict) -> str:
         """兼容接口：返回拼合后的完整 system 内容（用于 preview 等）"""
         layers = self.render_layered_additions(package)
         blocks = [layers["stable"]]
-        if layers["summary"]:
-            blocks.append(layers["summary"])
-        if layers["cold_start"]:
-            blocks.append(layers["cold_start"])
+        if layers["slow"]:
+            blocks.append(layers["slow"])
         if layers["volatile"]:
             blocks.append(layers["volatile"])
         return "\n\n".join(blocks)
@@ -2610,7 +2833,7 @@ def _apply_openai_compatible_cache_control(
     if cached_tools:
         _add_cache_control(cached_tools[-1], cache_paths, "tools[-1]", max_breakpoints)
 
-    for layer_name in ("stable", "summary", "cold_start"):
+    for layer_name in ("stable", "slow"):
         layer_text = layers.get(layer_name) or ""
         if not layer_text:
             continue
@@ -2751,6 +2974,18 @@ def _maybe_prepare_cold_start_snapshot(
     )
 
 
+def _prune_runtime_state(session_id: Optional[str] = None) -> dict[str, int]:
+    if session_store is None:
+        return {}
+    return session_store.prune_runtime_state(
+        session_id=session_id,
+        message_retention=cfg.gateway_message_retention,
+        context_snapshot_retention=cfg.gateway_context_snapshot_retention,
+        cold_start_retention=cfg.gateway_cold_start_retention,
+        surface_event_retention=cfg.gateway_surface_event_retention,
+    )
+
+
 def _aggregate_cache_usage(usages: list[dict]) -> dict:
     total_read = 0
     total_write = 0
@@ -2849,10 +3084,8 @@ def _openai_to_anthropic(
                 block = {"type": "text", "text": text}
                 if text == layers.get("stable"):
                     _add_cache_control(block, cache_paths, "system.stable", max_breakpoints)
-                elif text == layers.get("summary"):
-                    _add_cache_control(block, cache_paths, "system.summary", max_breakpoints)
-                elif text == layers.get("cold_start"):
-                    _add_cache_control(block, cache_paths, "system.cold_start", max_breakpoints)
+                elif text == layers.get("slow"):
+                    _add_cache_control(block, cache_paths, "system.slow", max_breakpoints)
                 system_blocks.append(block)
             continue
 
@@ -3181,6 +3414,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         messages=messages,
         latest_user_text=user_text,
     )
+    _prune_runtime_state(session["id"])
     package = await builder.build_context_package(
         session,
         current_user_text=user_text,
@@ -3192,21 +3426,19 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     # ── 缓存友好的分层插入 ──
     # 原则：不变的放前面，会变的放后面。每层独立一条 system 消息。
     # 插入顺序（从前到后）：
-    #   [0] stable:  charter + briefing + tool_policy    （每天变一次）
-    #   [1] summary: heartbeat_digest                    （按心跳注入频率变化）
-    #   [2] cold_start: 跨窗口冷启动快照                 （临时桥梁，前 N 次请求）
-    #   [3..M] 客户端原始消息（system prompt + 对话历史）（前缀稳定，每轮只增1条）
-    #   [M+1] volatile: surface_passages                 （每次都变，放最后不影响前面的缓存）
+    #   [0] stable:  charter + tool_policy + heartbeat_prompt（尽量不变）
+    #   [1] slow:    calendar + heartbeat batch + cold_start  （低频变化，可缓存）
+    #   [2..M] 客户端原始消息（system prompt + 对话历史）（可能按 MAX_CLIENT_MESSAGES 裁剪）
+    #   [M+1] volatile: briefing + diary surface + atomic memories（活动层，不打断点）
     #   [M+2] 当前 user 消息                             （已在客户端消息里）
 
     # 在客户端消息前面插入网关的稳定层（倒序 insert(0) 保证顺序正确）
     prefix_layers = []
     if layers["stable"]:
         prefix_layers.append({"role": "system", "content": layers["stable"]})
-    if layers["summary"]:
-        prefix_layers.append({"role": "system", "content": layers["summary"]})
-    if layers["cold_start"]:
-        prefix_layers.append({"role": "system", "content": layers["cold_start"]})
+    if layers["slow"]:
+        prefix_layers.append({"role": "system", "content": layers["slow"]})
+    if (package.get("cold_start_snapshot") or {}):
         if cold_start_snapshot:
             session_store.mark_cold_start_injected(cold_start_snapshot["id"])
 
@@ -3238,6 +3470,21 @@ def _latest_user_text(messages: list[dict]) -> str:
         if msg.get("role") == "user":
             return _normalize_text(msg.get("content"))
     return ""
+
+
+def _split_heartbeat_content(content: str) -> tuple[str, str]:
+    hb_filter = _HeartbeatFilter()
+    clean_content = hb_filter.feed(content or "") + hb_filter.flush()
+    return clean_content, hb_filter.get_heartbeat()
+
+
+def _store_heartbeat(session_id: str, session: dict, content: str):
+    heartbeat_content = (content or "").strip()
+    if not heartbeat_content or session_store is None:
+        return
+    msg_count = int(session.get("message_count") or 0)
+    session_store.append_heartbeat(session_id, heartbeat_content, turn_number=msg_count)
+    logger.info("[Heartbeat] 截获心跳 (%d chars) session=%s", len(heartbeat_content), session_id[:8])
 
 
 def _extract_tool_calls(completion: dict) -> list[dict]:
@@ -3356,12 +3603,16 @@ async def _run_internal_tool_loop(
         tool_calls = _extract_tool_calls(completion)
         if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
             assistant_message = completion.get("choices", [{}])[0].get("message", {})
+            clean_content, heartbeat_content = _split_heartbeat_content(_normalize_text(assistant_message.get("content")))
+            if heartbeat_content:
+                assistant_message["content"] = clean_content
+                _store_heartbeat(session_id, session, heartbeat_content)
             sessions.log_assistant_output(session_id, assistant_message)
             _schedule_atomic_memory_extraction(
                 request,
                 session,
                 _latest_user_text(working_messages),
-                _normalize_text(assistant_message.get("content")),
+                clean_content,
                 body.model,
             )
             return completion
@@ -3612,7 +3863,7 @@ async def chat_completions(request: Request, body: ChatRequest):
         "prepared_messages_count": len(prepared_messages),
         "client_message_window": meta.get("client_message_window", {}),
         "cold_start": {
-            "injected": bool((meta.get("cache_layers") or {}).get("cold_start")),
+            "injected": bool(meta.get("cold_start_snapshot")),
             "snapshot_id": (meta.get("cold_start_snapshot") or {}).get("id"),
             "reason": (meta.get("cold_start_snapshot") or {}).get("reason"),
             "source_message_count": (meta.get("cold_start_snapshot") or {}).get("source_message_count", 0),
@@ -3625,6 +3876,7 @@ async def chat_completions(request: Request, body: ChatRequest):
         "has_internal_tools": body_has_internal_tools,
         "upstream_url": _get_chat_url(),
         "prepared_messages": prepared_messages,
+        "upstream_payload": None,
         "cache_layers": {
             k: f"{len(v)} chars" if v else "(empty)"
             for k, v in meta.get("cache_layers", {}).items()
@@ -3660,6 +3912,7 @@ async def chat_completions(request: Request, body: ChatRequest):
             messages_override=prepared_messages,
             meta=meta,
         )
+        log_entry["upstream_payload"] = payload
         log_entry["prompt_cache"] = cache_meta
         if body.stream:
             log_entry["status"] = "streaming"
@@ -3680,9 +3933,7 @@ async def chat_completions(request: Request, body: ChatRequest):
                     log_entry["response_preview"] = collected_text
                     log_entry["status"] = "ok"
                 if heartbeat_content:
-                    msg_count = int(session.get("message_count") or 0)
-                    session_store.append_heartbeat(session_id, heartbeat_content, turn_number=msg_count)
-                    logger.info("[Heartbeat] 截获心跳 (%d chars) session=%s", len(heartbeat_content), session_id[:8])
+                    _store_heartbeat(session_id, session, heartbeat_content)
 
             return await _stream_chat(request, payload, headers, body.model, on_complete=_on_stream_complete)
 
@@ -3693,17 +3944,12 @@ async def chat_completions(request: Request, body: ChatRequest):
         assistant_message = completion.get("choices", [{}])[0].get("message", {})
         raw_content = assistant_message.get("content", "") or ""
 
-        # 用 HeartbeatFilter 过滤
-        hb_filter = _HeartbeatFilter()
-        clean_content = hb_filter.feed(raw_content) + hb_filter.flush()
-        heartbeat_content = hb_filter.get_heartbeat()
+        clean_content, heartbeat_content = _split_heartbeat_content(raw_content)
 
         if heartbeat_content:
             # 把干净内容写回 completion，heartbeat 存入 DB
             assistant_message["content"] = clean_content
-            msg_count = int(session.get("message_count") or 0)
-            session_store.append_heartbeat(session_id, heartbeat_content, turn_number=msg_count)
-            logger.info("[Heartbeat] 截获心跳 (%d chars) session=%s", len(heartbeat_content), session_id[:8])
+            _store_heartbeat(session_id, session, heartbeat_content)
 
         sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content})
         _schedule_atomic_memory_extraction(
@@ -3767,6 +4013,7 @@ async def get_config_full():
         "atomic_memory_api_key": cfg.atomic_memory_api_key,
         "atomic_memory_protocol": cfg.atomic_memory_protocol,
         "atomic_memory_model": cfg.atomic_memory_model,
+        "atomic_memory_prompt": cfg.atomic_memory_prompt,
         "model_mapping": cfg.model_mapping,
         "supabase_url": cfg.supabase_url,
         "supabase_key": cfg.supabase_key,
@@ -3787,6 +4034,8 @@ async def get_config_full():
         "cold_start_idle_minutes": cfg.cold_start_idle_minutes,
         "default_surface_limit": cfg.default_surface_limit,
         "default_atomic_memory_limit": cfg.default_atomic_memory_limit,
+        "atomic_memory_max_tokens": cfg.atomic_memory_max_tokens,
+        "atomic_memory_extract_every_turns": cfg.atomic_memory_extract_every_turns,
         "atomic_memory_min_score": cfg.atomic_memory_min_score,
         "atomic_memory_auto_activate_min_confidence": cfg.atomic_memory_auto_activate_min_confidence,
     }
@@ -3813,6 +4062,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "atomic_memory_api_key": "ATOMIC_MEMORY_API_KEY",
         "atomic_memory_protocol": "ATOMIC_MEMORY_PROTOCOL",
         "atomic_memory_model": "ATOMIC_MEMORY_MODEL",
+        "atomic_memory_prompt": "ATOMIC_MEMORY_PROMPT",
         "model_mapping": "MODEL_MAPPING",
         "supabase_url": "SUPABASE_URL",
         "supabase_key": "SUPABASE_SERVICE_KEY",
@@ -3827,12 +4077,19 @@ async def update_config(request: Request, body: ConfigUpdate):
         "gateway_db_path": "GATEWAY_DB_PATH",
         "max_internal_tool_rounds": "MAX_INTERNAL_TOOL_ROUNDS",
         "daily_briefing_ttl_minutes": "DAILY_BRIEFING_TTL_MINUTES",
+        "heartbeat_inject_every": "HEARTBEAT_INJECT_EVERY",
+        "gateway_message_retention": "GATEWAY_MESSAGE_RETENTION",
+        "gateway_context_snapshot_retention": "GATEWAY_CONTEXT_SNAPSHOT_RETENTION",
+        "gateway_cold_start_retention": "GATEWAY_COLD_START_RETENTION",
+        "gateway_surface_event_retention": "GATEWAY_SURFACE_EVENT_RETENTION",
         "max_client_messages": "MAX_CLIENT_MESSAGES",
         "cold_start_turns": "COLD_START_TURNS",
         "cold_start_message_limit": "COLD_START_MESSAGE_LIMIT",
         "cold_start_idle_minutes": "COLD_START_IDLE_MINUTES",
         "default_surface_limit": "DEFAULT_SURFACE_LIMIT",
         "default_atomic_memory_limit": "DEFAULT_ATOMIC_MEMORY_LIMIT",
+        "atomic_memory_max_tokens": "ATOMIC_MEMORY_MAX_TOKENS",
+        "atomic_memory_extract_every_turns": "ATOMIC_MEMORY_EXTRACT_EVERY_TURNS",
         "atomic_memory_min_score": "ATOMIC_MEMORY_MIN_SCORE",
         "atomic_memory_auto_activate_min_confidence": "ATOMIC_MEMORY_AUTO_ACTIVATE_MIN_CONFIDENCE",
     }
@@ -3852,6 +4109,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "atomic_memory_api_key",
         "atomic_memory_protocol",
         "atomic_memory_model",
+        "atomic_memory_prompt",
         "supabase_url",
         "supabase_key",
         "inject_meta_summaries",
@@ -3879,6 +4137,26 @@ async def update_config(request: Request, body: ConfigUpdate):
         cfg.daily_briefing_ttl_minutes = max(5, min(body.daily_briefing_ttl_minutes, 1440))
         changed.append("daily_briefing_ttl_minutes")
         env_updates[env_names["daily_briefing_ttl_minutes"]] = cfg.daily_briefing_ttl_minutes
+    if body.heartbeat_inject_every is not None:
+        cfg.heartbeat_inject_every = max(1, min(body.heartbeat_inject_every, 50))
+        changed.append("heartbeat_inject_every")
+        env_updates[env_names["heartbeat_inject_every"]] = cfg.heartbeat_inject_every
+    if body.gateway_message_retention is not None:
+        cfg.gateway_message_retention = max(50, min(body.gateway_message_retention, 200000))
+        changed.append("gateway_message_retention")
+        env_updates[env_names["gateway_message_retention"]] = cfg.gateway_message_retention
+    if body.gateway_context_snapshot_retention is not None:
+        cfg.gateway_context_snapshot_retention = max(1, min(body.gateway_context_snapshot_retention, 100))
+        changed.append("gateway_context_snapshot_retention")
+        env_updates[env_names["gateway_context_snapshot_retention"]] = cfg.gateway_context_snapshot_retention
+    if body.gateway_cold_start_retention is not None:
+        cfg.gateway_cold_start_retention = max(1, min(body.gateway_cold_start_retention, 1000))
+        changed.append("gateway_cold_start_retention")
+        env_updates[env_names["gateway_cold_start_retention"]] = cfg.gateway_cold_start_retention
+    if body.gateway_surface_event_retention is not None:
+        cfg.gateway_surface_event_retention = max(1, min(body.gateway_surface_event_retention, 10000))
+        changed.append("gateway_surface_event_retention")
+        env_updates[env_names["gateway_surface_event_retention"]] = cfg.gateway_surface_event_retention
     if "max_client_messages" in body.model_fields_set:
         value = body.max_client_messages
         cfg.max_client_messages = max(1, min(int(value), 500)) if value and int(value) > 0 else None
@@ -3904,6 +4182,14 @@ async def update_config(request: Request, body: ConfigUpdate):
         cfg.default_atomic_memory_limit = max(1, min(body.default_atomic_memory_limit, 8))
         changed.append("default_atomic_memory_limit")
         env_updates[env_names["default_atomic_memory_limit"]] = cfg.default_atomic_memory_limit
+    if body.atomic_memory_max_tokens is not None:
+        cfg.atomic_memory_max_tokens = max(512, min(body.atomic_memory_max_tokens, 65536))
+        changed.append("atomic_memory_max_tokens")
+        env_updates[env_names["atomic_memory_max_tokens"]] = cfg.atomic_memory_max_tokens
+    if body.atomic_memory_extract_every_turns is not None:
+        cfg.atomic_memory_extract_every_turns = max(1, min(body.atomic_memory_extract_every_turns, 50))
+        changed.append("atomic_memory_extract_every_turns")
+        env_updates[env_names["atomic_memory_extract_every_turns"]] = cfg.atomic_memory_extract_every_turns
     if body.atomic_memory_min_score is not None:
         cfg.atomic_memory_min_score = _clamp(float(body.atomic_memory_min_score), 0.0, 1.0)
         changed.append("atomic_memory_min_score")
@@ -3955,6 +4241,13 @@ async def gateway_overview():
     assert session_store is not None
     return {
         "overview": session_store.gateway_overview(),
+        "retention": {
+            "message_retention": cfg.gateway_message_retention,
+            "context_snapshot_retention": cfg.gateway_context_snapshot_retention,
+            "cold_start_retention": cfg.gateway_cold_start_retention,
+            "surface_event_retention": cfg.gateway_surface_event_retention,
+            "heartbeat_retention": "keep",
+        },
         "cold_start": {
             "enabled": cfg.enable_cold_start,
             "turns": cfg.cold_start_turns,
@@ -3962,6 +4255,20 @@ async def gateway_overview():
             "idle_minutes": cfg.cold_start_idle_minutes,
         },
     }
+
+
+@app.post("/api/gateway/prune")
+async def prune_gateway_runtime():
+    assert session_store is not None
+    deleted = _prune_runtime_state()
+    return {"ok": True, "deleted": deleted, "overview": session_store.gateway_overview()}
+
+
+@app.post("/api/gateway/dedupe-messages")
+async def dedupe_gateway_messages():
+    assert session_store is not None
+    deleted = session_store.dedupe_messages()
+    return {"ok": True, "deleted": deleted, "overview": session_store.gateway_overview()}
 
 
 @app.get("/api/gateway/cold-start/preview")
@@ -4034,11 +4341,47 @@ async def list_atomic_memories(status: str = "proposed", limit: int = 50, sessio
 async def review_atomic_memory(memory_id: str, body: AtomicMemoryReviewUpdate):
     if not supabase_client:
         raise HTTPException(status_code=400, detail="Supabase is not configured.")
-    allowed = {"proposed", "active", "deprecated", "superseded"}
+    allowed = {"proposed", "active", "deprecated", "superseded", "delete"}
     status = (body.status or "").strip()
     if status not in allowed:
         raise HTTPException(status_code=400, detail="Unsupported status.")
+    if status == "delete":
+        try:
+            rows = await supabase_client.delete("atomic_memories", {"id": memory_id})
+        except Exception as exc:
+            raise HTTPException(status_code=400, detail=f"atomic_memories delete failed: {exc}")
+        return {"ok": True, "memory_id": memory_id, "deleted": rows}
     update = {"status": status, "updated_at": _iso_now()}
+    text_fields = ["content_canonical", "content_surface", "quote", "time_hint", "subject", "owner", "memory_type"]
+    for field in text_fields:
+        if field in body.model_fields_set:
+            value = getattr(body, field)
+            update[field] = (value or "").strip()
+    if "subject" in update:
+        subject = update["subject"]
+        if subject not in {"圆圆", "沈予", "我们"}:
+            subject = "我们"
+            update["subject"] = subject
+        update["owner"] = {"圆圆": "user", "沈予": "assistant", "我们": "shared"}[subject]
+        update["applies_to"] = update["owner"]
+        update["speaker_perspective"] = update["owner"]
+    if "memory_type" in update:
+        memory_type = str(update["memory_type"] or "").strip()
+        memory_type = {"state": "emotion"}.get(memory_type, memory_type)
+        allowed_types = {
+            "preference",
+            "health",
+            "emotion",
+            "commitment",
+            "project",
+            "relation",
+            "boundary",
+            "routine",
+            "identity",
+            "event",
+            "other",
+        }
+        update["memory_type"] = memory_type if memory_type in allowed_types else "other"
     if body.tier is not None:
         update["tier"] = max(1, min(body.tier, 4))
     if body.importance is not None:
@@ -4058,17 +4401,69 @@ async def list_gateway_sessions(limit: int = 100, q: str = ""):
 
 
 @app.get("/api/gateway/sessions/{session_tag}")
-async def session_debug(session_tag: str):
+async def session_debug(session_tag: str, messages_limit: Optional[int] = None):
     assert session_store is not None
     session = session_store.get_or_create_session(session_tag, "debug")
-    messages = session_store.get_recent_messages(session["id"], limit=12)
+    message_limit = messages_limit if messages_limit is not None else 50
+    messages = session_store.get_recent_messages(
+        session["id"],
+        limit=max(1, min(int(message_limit or cfg.gateway_message_retention), cfg.gateway_message_retention)),
+    )
+    context_snapshots = session_store.get_recent_context_snapshots(session["id"], limit=5)
     cold_start = session_store.latest_cold_start_snapshot(session["id"])
+    cold_start_snapshots = session_store.recent_cold_start_snapshots(session["id"], limit=8)
+    heartbeats = session_store.get_recent_heartbeats(session["id"], limit=8)
     return {
         "session": session,
         "stats": session_store.get_session_stats(session["id"]),
         "latest_cold_start_snapshot": cold_start,
+        "context_snapshots": context_snapshots,
+        "cold_start_snapshots": cold_start_snapshots,
         "recent_messages": messages,
+        "recent_heartbeats": heartbeats,
     }
+
+
+@app.post("/api/gateway/sessions/{session_tag}/heartbeats")
+async def create_gateway_heartbeat(session_tag: str, body: HeartbeatCreateRequest):
+    assert session_store is not None
+    session = session_store.get_session_by_tag(session_tag)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    content = (body.content or "").strip()
+    content = content.replace("<heartbeat>", "").replace("</heartbeat>", "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="Heartbeat content is required.")
+    if len(content) > 4000:
+        raise HTTPException(status_code=400, detail="Heartbeat content is too long.")
+    turn_number = body.turn_number if body.turn_number is not None else int(session.get("message_count") or 0)
+    item = session_store.append_heartbeat(session["id"], content, turn_number=max(0, int(turn_number or 0)))
+    return {"ok": True, "heartbeat": item}
+
+
+@app.delete("/api/gateway/sessions/{session_tag}/heartbeats")
+async def delete_gateway_heartbeats(session_tag: str, body: HeartbeatDeleteRequest):
+    assert session_store is not None
+    session = session_store.get_session_by_tag(session_tag)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    if body.delete_all and body.confirm != session_tag:
+        raise HTTPException(status_code=400, detail="Confirmation must match session_tag for delete_all.")
+    deleted = session_store.delete_heartbeats(session["id"], heartbeat_ids=body.ids, delete_all=body.delete_all)
+    return {"ok": True, "deleted": deleted}
+
+
+@app.get("/api/gateway/sessions/{session_tag}/export")
+async def export_gateway_session(session_tag: str):
+    assert session_store is not None
+    bundle = session_store.export_session_bundle(session_tag)
+    if not bundle:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    filename = f"shenyu-session-{session_tag}-{_now().strftime('%Y%m%d-%H%M%S')}.json"
+    return JSONResponse(
+        content=bundle,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
+    )
 
 
 @app.delete("/api/gateway/sessions/{session_tag}")

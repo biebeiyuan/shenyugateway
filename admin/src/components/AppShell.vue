@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 
 const health = ref({ supabase: false, protocol: '', upstream: '', models: [] as string[] })
 const live = ref(true)
@@ -35,7 +35,9 @@ async function checkHealth() {
         {{ live ? '在线' : '离线' }}
       </span>
       <div class="health-tags">
-        <span class="ht" :class="health.supabase ? 'ok' : 'err'">Supabase {{ health.supabase ? '✓' : '✗' }}</span>
+        <span class="ht" :class="health.supabase ? 'ok' : 'err'">
+          Supabase {{ health.supabase ? '正常' : '异常' }}
+        </span>
         <span class="ht ok">{{ health.protocol }}</span>
         <span class="ht">{{ health.upstream }}</span>
       </div>
@@ -67,7 +69,7 @@ body {
   color: #1f1f1f;
 }
 
-/* naive-ui global overrides — light clean */
+/* naive-ui global overrides: light clean */
 :root {
   --n-color: #fff !important;
   --n-color-modal: #fff !important;
@@ -201,7 +203,6 @@ body {
   --n-border-color: #e0e0e0 !important;
 }
 
-/* scrollbar */
 ::-webkit-scrollbar {
   width: 8px;
   height: 8px;

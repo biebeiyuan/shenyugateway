@@ -15,6 +15,7 @@ import {
   NSwitch,
   NTag,
   useMessage,
+  useNotification,
 } from 'naive-ui'
 import {
   fetchConfig,
@@ -40,8 +41,10 @@ interface UpstreamPreset {
 }
 
 const PRESETS_KEY = 'shenyu_upstream_presets'
+const ATOMIC_PROMPT_PRESETS_KEY = 'shenyu_atomic_memory_prompt_presets'
 
 const message = useMessage()
+const notification = useNotification()
 const config = ref<GatewayConfig>({
   gateway_key: '',
   upstream_url: '',
@@ -64,11 +67,13 @@ const saving = ref(false)
 const switchingPreset = ref('')
 const presetName = ref('')
 const presets = ref<UpstreamPreset[]>([])
+const atomicPromptPresetName = ref('')
+const atomicPromptPresets = ref<Record<string, string>>({})
 const modelEntries = ref<[string, string][]>([])
 const overview = ref<GatewayOverview | null>(null)
 const coldPreview = ref<ColdStartPreview | null>(null)
 const atomicItems = ref<AtomicMemoryItem[]>([])
-const atomicReviewStatus = ref('proposed')
+const atomicReviewStatus = ref('all')
 const atomicReviewSessionTag = ref('')
 const atomicReviewLimit = ref(30)
 
@@ -99,6 +104,7 @@ let healthTimer: ReturnType<typeof setInterval> | null = null
 
 onMounted(async () => {
   loadPresets()
+  loadAtomicPromptPresets()
   await loadConfig()
   await checkHealth()
   await loadOverview()
@@ -141,6 +147,51 @@ function persistPresets() {
   localStorage.setItem(PRESETS_KEY, JSON.stringify(raw))
 }
 
+function loadAtomicPromptPresets() {
+  try {
+    const raw = JSON.parse(localStorage.getItem(ATOMIC_PROMPT_PRESETS_KEY) || '{}')
+    atomicPromptPresets.value = Object.fromEntries(
+      Object.entries(raw)
+        .map(([name, value]) => [name, String(value || '')])
+        .filter(([name]) => name.trim()),
+    )
+  } catch {
+    atomicPromptPresets.value = {}
+  }
+}
+
+function persistAtomicPromptPresets() {
+  localStorage.setItem(ATOMIC_PROMPT_PRESETS_KEY, JSON.stringify(atomicPromptPresets.value))
+}
+
+function saveAtomicPromptPreset() {
+  const name = atomicPromptPresetName.value.trim()
+  if (!name) {
+    message.warning('Name the prompt preset first')
+    return
+  }
+  atomicPromptPresets.value = {
+    ...atomicPromptPresets.value,
+    [name]: config.value.atomic_memory_prompt || '',
+  }
+  persistAtomicPromptPresets()
+  atomicPromptPresetName.value = ''
+  message.success(`Prompt preset saved: ${name}`)
+}
+
+function applyAtomicPromptPreset(name: string) {
+  config.value.atomic_memory_prompt = atomicPromptPresets.value[name] || ''
+  message.success(`Prompt preset loaded: ${name}`)
+}
+
+function deleteAtomicPromptPreset(name: string) {
+  const next = { ...atomicPromptPresets.value }
+  delete next[name]
+  atomicPromptPresets.value = next
+  persistAtomicPromptPresets()
+  message.success(`Prompt preset deleted: ${name}`)
+}
+
 async function loadConfig() {
   try {
     const data = await fetchConfig()
@@ -174,9 +225,12 @@ async function doSave() {
       atomic_memory_api_key: config.value.atomic_memory_api_key,
       atomic_memory_protocol: config.value.atomic_memory_protocol,
       atomic_memory_model: config.value.atomic_memory_model,
+      atomic_memory_prompt: config.value.atomic_memory_prompt,
       extract_atomic_memories: config.value.extract_atomic_memories,
       inject_atomic_memories: config.value.inject_atomic_memories,
       default_atomic_memory_limit: config.value.default_atomic_memory_limit,
+      atomic_memory_max_tokens: config.value.atomic_memory_max_tokens,
+      atomic_memory_extract_every_turns: config.value.atomic_memory_extract_every_turns,
       atomic_memory_min_score: config.value.atomic_memory_min_score,
       atomic_memory_auto_activate_min_confidence: config.value.atomic_memory_auto_activate_min_confidence,
       // feature toggles
@@ -243,9 +297,19 @@ async function applyPreset(name: string | null) {
     config.value = result.config
     modelEntries.value = Object.entries(result.config.model_mapping || {})
     message.success(`Switched to ${name}`)
+    notification.success({
+      title: '上游预设已切换',
+      content: `${name} · ${preset.protocol || 'auto'} · ${preset.url || '未填写 URL'}`,
+      duration: 4500,
+    })
     await checkHealth()
   } catch {
     message.error(`Failed to switch to ${name}`)
+    notification.error({
+      title: '上游预设切换失败',
+      content: name,
+      duration: 6000,
+    })
   } finally {
     switchingPreset.value = ''
   }
@@ -297,13 +361,38 @@ async function loadAtomicReview() {
   }
 }
 
-async function doReviewAtomic(memoryId: string, status: string) {
+function atomicReviewPatch(item: AtomicMemoryItem, status: string) {
+  return {
+    status,
+    content_canonical: item.content_canonical,
+    content_surface: item.content_surface,
+    quote: item.quote,
+    time_hint: item.time_hint,
+    subject: item.subject,
+    owner: item.owner,
+    memory_type: item.memory_type,
+    tier: item.tier,
+    importance: item.importance,
+  }
+}
+
+async function doReviewAtomic(item: AtomicMemoryItem, status: string) {
   try {
-    await reviewAtomicMemory(memoryId, status)
-    message.success(`Memory ${status}`)
+    await reviewAtomicMemory(item.id, atomicReviewPatch(item, status))
+    message.success(status === 'active' ? 'Memory approved' : `Memory ${status}`)
     await loadAtomicReview()
   } catch {
     message.error('Review failed')
+  }
+}
+
+async function deleteAtomic(item: AtomicMemoryItem) {
+  try {
+    await reviewAtomicMemory(item.id, { status: 'delete' })
+    message.success('Memory returned and deleted')
+    await loadAtomicReview()
+  } catch {
+    message.error('Delete failed')
   }
 }
 
@@ -409,6 +498,32 @@ function removeModel(index: number) {
               <NFormItem label="小模型名">
                 <NInput v-model:value="config.atomic_memory_model" placeholder="deepseek-chat / gpt-4.1-mini / claude-3-5-haiku" />
               </NFormItem>
+              <NFormItem label="mem0 提取提示词">
+                <NSpace vertical size="small">
+                  <div class="preset-bar">
+                    <span v-if="!Object.keys(atomicPromptPresets).length" style="font-size:11px;color:#484f58">暂无提示词预设</span>
+                    <div
+                      v-for="(_, name) in atomicPromptPresets"
+                      :key="name"
+                      class="preset-chip"
+                      @click="applyAtomicPromptPreset(String(name))"
+                    >
+                      {{ name }}
+                      <span class="del" @click.stop="deleteAtomicPromptPreset(String(name))">×</span>
+                    </div>
+                  </div>
+                  <div class="preset-save-row">
+                    <input v-model="atomicPromptPresetName" placeholder="输入名称保存当前提示词…" class="cal-input" style="flex:1">
+                    <NButton size="tiny" @click="saveAtomicPromptPreset">保存提示词预设</NButton>
+                  </div>
+                  <NInput
+                    v-model:value="config.atomic_memory_prompt"
+                    type="textarea"
+                    :autosize="{ minRows: 5, maxRows: 12 }"
+                    placeholder="留空使用内置默认提示词；填写后会完整替换发给 mem0/atomic memory 模型的 system prompt"
+                  />
+                </NSpace>
+              </NFormItem>
             </NForm>
           </div>
           <div>
@@ -427,6 +542,12 @@ function removeModel(index: number) {
                   <NInputNumber v-model:value="config.atomic_memory_min_score" :min="0" :max="1" :step="0.01" style="width:100%" />
                 </NFormItem>
               </div>
+              <NFormItem label="小模型输出预算">
+                <NInputNumber v-model:value="config.atomic_memory_max_tokens" :min="512" :max="65536" :step="512" style="width:100%" />
+              </NFormItem>
+              <NFormItem label="每 N 轮提取一次">
+                <NInputNumber v-model:value="config.atomic_memory_extract_every_turns" :min="1" :max="50" style="width:100%" />
+              </NFormItem>
               <NFormItem label="自动激活阈值 (0-1)">
                 <NInputNumber v-model:value="config.atomic_memory_auto_activate_min_confidence" :min="0" :max="1" :step="0.01" style="width:100%" />
               </NFormItem>
@@ -528,18 +649,71 @@ function removeModel(index: number) {
       <NCard title="原子记忆审核" size="small">
         <div class="rev-toolbar">
           <select v-model="atomicReviewStatus" class="cal-input" style="width:160px">
+            <option value="all">all</option>
             <option value="proposed">proposed</option>
             <option value="active">active</option>
             <option value="deprecated">deprecated</option>
-            <option value="all">all</option>
           </select>
           <input v-model="atomicReviewSessionTag" class="cal-input" style="width:180px" placeholder="session_tag（可选）">
           <input v-model="atomicReviewLimit" class="cal-input" style="width:100px" type="number" min="1" max="200">
           <NButton size="tiny" @click="loadAtomicReview">刷新</NButton>
         </div>
-        <div v-if="!atomicItems.length" class="rev-empty">这里还没有候选纸条</div>
+        <div v-if="!atomicItems.length" class="rev-empty">当前筛选没有纸条</div>
         <div v-for="item in atomicItems" :key="item.id" class="rev-card">
-          <h4>{{ item.content_canonical || '(empty)' }}</h4>
+          <NForm label-placement="top">
+            <NFormItem label="便签正文">
+              <NInput v-model:value="item.content_canonical" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" />
+            </NFormItem>
+            <NFormItem label="前端展示语气">
+              <NInput v-model:value="item.content_surface" type="textarea" :autosize="{ minRows: 1, maxRows: 4 }" />
+            </NFormItem>
+            <div class="cfg-inline">
+              <NFormItem label="主体">
+                <NSelect
+                  v-model:value="item.subject"
+                  :options="[
+                    { label: '圆圆', value: '圆圆' },
+                    { label: '沈予', value: '沈予' },
+                    { label: '我们', value: '我们' },
+                  ]"
+                />
+              </NFormItem>
+              <NFormItem label="类型">
+                <NSelect
+                  v-model:value="item.memory_type"
+                  :options="[
+                    { label: 'preference', value: 'preference' },
+                    { label: 'health', value: 'health' },
+                    { label: 'emotion', value: 'emotion' },
+                    { label: 'commitment', value: 'commitment' },
+                    { label: 'project', value: 'project' },
+                    { label: 'relation', value: 'relation' },
+                    { label: 'boundary', value: 'boundary' },
+                    { label: 'routine', value: 'routine' },
+                    { label: 'identity', value: 'identity' },
+                    { label: 'event', value: 'event' },
+                    { label: 'other', value: 'other' },
+                  ]"
+                />
+              </NFormItem>
+            </div>
+            <div class="cfg-inline">
+              <NFormItem label="tier">
+                <NInputNumber v-model:value="item.tier" :min="1" :max="4" style="width:100%" />
+              </NFormItem>
+              <NFormItem label="importance">
+                <NInputNumber v-model:value="item.importance" :min="1" :max="5" style="width:100%" />
+              </NFormItem>
+            </div>
+            <div class="cfg-inline">
+              <NFormItem label="quote">
+                <NInput v-model:value="item.quote" />
+              </NFormItem>
+              <NFormItem label="time">
+                <NInput v-model:value="item.time_hint" />
+              </NFormItem>
+            </div>
+          </NForm>
           <div class="rev-meta">
             <span class="rev-pill">{{ item.status }}</span>
             <span class="rev-pill">{{ item.subject || item.owner || '我们' }}</span>
@@ -550,15 +724,6 @@ function removeModel(index: number) {
             <span class="rev-pill">heat {{ item.heat?.toFixed(2) }}</span>
             <span class="rev-pill">{{ item.session_tag || 'default' }}</span>
           </div>
-          <div v-if="item.time_hint" class="rev-body">
-            <b>time:</b> {{ item.time_hint }}
-          </div>
-          <div v-if="item.quote" class="rev-body">
-            <b>quote:</b> {{ item.quote }}
-          </div>
-          <div v-if="item.content_surface && item.content_surface !== item.content_canonical" class="rev-body">
-            <b>surface:</b> {{ item.content_surface }}
-          </div>
           <div v-if="item.source_excerpt" class="rev-body">
             <b>source:</b><br>{{ item.source_excerpt }}
           </div>
@@ -566,9 +731,9 @@ function removeModel(index: number) {
             <b>tags/entities:</b> {{ (item.tags_json || []).join(', ') }}{{ item.tags_json?.length && item.entities_json?.length ? ' | ' : '' }}{{ (item.entities_json || []).join(', ') }}
           </div>
           <div class="rev-actions">
-            <NButton size="tiny" type="primary" @click="doReviewAtomic(item.id, 'active')">批准</NButton>
-            <NButton size="tiny" @click="doReviewAtomic(item.id, 'deprecated')" style="--n-border:1px solid #f85149;--n-text-color:#f85149">废弃</NButton>
-            <NButton size="tiny" @click="doReviewAtomic(item.id, 'proposed')">退回 proposed</NButton>
+            <NButton size="tiny" type="primary" @click="doReviewAtomic(item, 'active')">确认放行</NButton>
+            <NButton size="tiny" @click="deleteAtomic(item)" style="--n-border:1px solid #f85149;--n-text-color:#f85149">退回（删除）</NButton>
+            <NButton size="tiny" @click="doReviewAtomic(item, 'proposed')">重新写</NButton>
           </div>
         </div>
       </NCard>

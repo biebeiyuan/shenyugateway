@@ -24,9 +24,12 @@ export interface GatewayConfig {
   atomic_memory_api_key?: string
   atomic_memory_protocol?: string
   atomic_memory_model?: string
+  atomic_memory_prompt?: string
   extract_atomic_memories?: boolean
   inject_atomic_memories?: boolean
   default_atomic_memory_limit?: number
+  atomic_memory_max_tokens?: number
+  atomic_memory_extract_every_turns?: number
   atomic_memory_min_score?: number
   atomic_memory_auto_activate_min_confidence?: number
   // feature toggles
@@ -37,6 +40,11 @@ export interface GatewayConfig {
   expose_supabase_tools?: boolean
   max_internal_tool_rounds?: number
   default_surface_limit?: number
+  heartbeat_inject_every?: number
+  gateway_message_retention?: number
+  gateway_context_snapshot_retention?: number
+  gateway_cold_start_retention?: number
+  gateway_surface_event_retention?: number
   daily_briefing_ttl_minutes?: number
   // stats
   gateway_db_path?: string
@@ -71,6 +79,10 @@ export interface GatewayOverview {
   messages_today: number
   sessions_total: number
   cold_start_snapshots: number
+  context_snapshots?: number
+  surface_events?: number
+  heartbeats?: number
+  cache_entries?: number
   earliest_message_at: string | null
   latest_message_at: string | null
 }
@@ -144,6 +156,21 @@ export async function fetchAtomicMemories(params: {
   return data
 }
 
-export async function reviewAtomicMemory(memoryId: string, status: string): Promise<void> {
-  await api.post(`/api/gateway/atomic-memories/${encodeURIComponent(memoryId)}/review`, { status })
+export type AtomicMemoryReviewPatch = Partial<
+  Pick<
+    AtomicMemoryItem,
+    | 'content_canonical'
+    | 'content_surface'
+    | 'quote'
+    | 'time_hint'
+    | 'subject'
+    | 'owner'
+    | 'memory_type'
+    | 'tier'
+    | 'importance'
+  >
+> & { status: string }
+
+export async function reviewAtomicMemory(memoryId: string, patch: AtomicMemoryReviewPatch): Promise<void> {
+  await api.post(`/api/gateway/atomic-memories/${encodeURIComponent(memoryId)}/review`, patch)
 }

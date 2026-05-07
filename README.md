@@ -27,10 +27,9 @@ Context is assembled from low-change to high-change content:
 |---|---|---|---|
 | `tools` | request tools | client tools + `shenyu_*` / `supabase_*` tools | breakpoint at `tools[-1]` |
 | `stable` | first system message | stable charter, active meta summaries, gateway tool policy, heartbeat instructions | breakpoint |
-| `summary` | second system message when present | latest injected heartbeat digest | breakpoint |
-| `cold_start` | third system message when present | cross-window bridge snapshot for a new or stale window | breakpoint |
+| `slow` | second system message when present | calendar memory, latest frozen heartbeat batch, optional cold-start bridge | breakpoint |
 | client history | original messages | trimmed client messages when `MAX_CLIENT_MESSAGES` is set | fallback breakpoint only if one is free |
-| `volatile` | inserted before latest user message | first-turn briefing, surfaced primary text, active atomic memories | no breakpoint |
+| `volatile` | inserted before latest user message | first-turn briefing, fixed-pool diary surface, active atomic memories | no breakpoint |
 | current user | latest user message | current request | no breakpoint |
 
 The retired rolling and frozen context layers have been removed from the active flow. Their legacy SQLite tables are only cleaned up during session deletion when they exist in an older database.
@@ -42,11 +41,10 @@ The gateway adds Anthropic-compatible `cache_control` markers on stable prefixes
 ```text
 tools[-1]
 messages[0].stable
-messages[1].summary
-messages[2].cold_start
+messages[1].slow
 ```
 
-If `summary` or `cold_start` is empty, the gateway may use the remaining breakpoint on the previous stable conversation message. Volatile retrieval results are deliberately left uncached so random or query-dependent content does not poison the prefix cache.
+If `slow` is empty, the gateway may use the remaining breakpoint on the previous stable conversation message. Volatile retrieval results are deliberately left uncached so random or query-dependent content does not poison the prefix cache.
 
 Real cache hits still depend on the upstream or OpenAI-compatible relay honoring Anthropic `cache_control`. Check:
 
@@ -65,14 +63,46 @@ cache_usage.cache_read_input_tokens > 0
 SQLite stores only gateway runtime state:
 
 - `gateway_sessions`
-- `gateway_messages`
-- `request_context_snapshots`
-- `cold_start_snapshots`
-- `surface_events`
-- `cache_entries`
-- `heartbeat_entries`
+- `gateway_messages`: local message stream for inspection only. It is not the cold-start source of truth.
+- `request_context_snapshots`: recent client context windows. Calendar generation and cold-start both depend on this.
+- `cold_start_snapshots`: bounded bridge packages created from recent context snapshots.
+- `surface_events`: audit/debug records for surfaced passages.
+- `cache_entries`: short-lived gateway cache.
+- `heartbeat_entries`: private heartbeat notes captured from `<heartbeat>...</heartbeat>` or written manually in admin.
 
 `request_context_snapshots` is the replacement for the old rolling/frozen context path. Each request stores the prepared client window before gateway layers are inserted. Calendar generation and cold-start bridge both read these snapshots.
+
+### SQLite Retention And Cleanup
+
+SQLite is intentionally kept as a small online runtime database. Supabase remains the durable memory/content store.
+
+Default online retention:
+
+- `GATEWAY_MESSAGE_RETENTION=1500`: keep the newest local message rows per session. These rows are for admin inspection and export, not for cold-start injection.
+- `GATEWAY_CONTEXT_SNAPSHOT_RETENTION=3`: keep the newest context snapshots per session. Do not set this to `0`; cold-start and calendar source collection need recent snapshots.
+- `GATEWAY_COLD_START_RETENTION=20`: keep recent cold-start snapshots per session. Cleanup only removes old snapshots whose `injected_count >= max_injections`, so active cold-start bridges are preserved.
+- `GATEWAY_SURFACE_EVENT_RETENTION=500`: keep recent surface audit rows per session.
+- `heartbeat_entries` are not removed by automatic cleanup. They can be manually written/deleted from the admin session page.
+- expired `cache_entries` are removed during cleanup.
+
+Runtime cleanup APIs:
+
+- `POST /api/gateway/prune`: applies the retention policy above.
+- `POST /api/gateway/dedupe-messages`: removes exact duplicate local message rows within each session, keeping the newest row for each `session_id + role + content + tool_name`.
+- `GET /api/gateway/sessions/{session_tag}/export`: exports one session as JSON before manual deletion or migration.
+
+Admin page behavior:
+
+- The session page loads only the newest messages by default to avoid freezing mobile browsers.
+- Use `最新 50 / 最新 200 / 最新 1500` for inspection.
+- Use `导出此线程 JSON` for full local runtime backup instead of rendering large histories in the browser.
+
+Safe cleanup boundaries:
+
+- It is safe to prune/dedupe `gateway_messages`; cold-start does not read this table.
+- Be conservative with `request_context_snapshots`; cold-start and calendar generation read this table.
+- Do not delete active `cold_start_snapshots`; the retention cleanup already avoids active snapshots.
+- Heartbeats are independent from message cleanup and are only changed by explicit heartbeat actions.
 
 ## Supabase Long-Term State
 
@@ -95,6 +125,8 @@ Supabase remains the durable fact and content source:
 
 The short-lived notes table is no longer used by gateway code.
 
+The atomic-memory review UI reads and updates Supabase `atomic_memories`. It is not reviewing a SQLite buffer table. SQLite only provides local request/session context that can be referenced by extraction metadata.
+
 ## Cold Start Layer
 
 Cold start bridges context across windows without reintroducing the retired frozen context layer.
@@ -105,7 +137,7 @@ Flow:
 2. `_maybe_prepare_cold_start_snapshot()` checks whether the request is a new window or a stale window.
 3. It reads recent request snapshots from other sessions via `recent_cross_session_context()`.
 4. It writes a `cold_start_snapshot` with a bounded message budget.
-5. `ContextBuilder.render_layered_additions()` renders it as the `cold_start` system layer.
+5. `ContextBuilder.render_layered_additions()` renders it inside the `slow` system layer.
 6. The snapshot is marked injected until `COLD_START_TURNS` is exhausted.
 
 Config:
@@ -125,6 +157,8 @@ Debug endpoints:
 ## Calendar Layer
 
 The calendar layer writes private day/week/month memory pages. It is manually triggered from the admin/debug UI.
+Before ordinary chat replies, the gateway also injects a compact calendar memory block when Supabase is configured:
+latest 3 day pages, latest 1 week page, and latest 1 month page. Only `summary` and `digest` are included.
 
 Tables:
 
@@ -137,6 +171,12 @@ Source collection:
 - Day pages read recent `request_context_snapshots`, recent day/week/month pages, and a small surface pass.
 - Week pages read recent context snapshots plus recent day/week/month pages.
 - Month pages read recent day/week/month pages.
+
+Chat injection:
+
+- `ContextBuilder` reads latest calendar pages into the `slow` layer.
+- The rendered block uses short labels: `这几天`, `这周`, `这个月`.
+- Missing Supabase or empty pages are skipped silently.
 
 The active source renderer is snapshot-based. It no longer injects the retired summary/window blocks.
 
@@ -192,13 +232,9 @@ Endpoints:
 - recent medication records
 - tool usage guide
 
-Surface pass reads primary text candidates from:
+Automatic surface pass reads one fixed-pool diary entry from `_FIXED_JOURNAL_IDS`.
 
-- `journal`
-- `room`
-- `message_board`
-
-Surface results are randomized by score and inserted in `volatile`, so they do not affect stable cache breakpoints.
+The excerpt is trimmed to roughly 250-300 Chinese characters, preferring paragraph boundaries. It is inserted in `volatile`, so it does not affect stable cache breakpoints. The manual `shenyu_surface_passages` tool still supports broader primary-text lookup.
 
 ## Configuration
 
@@ -321,7 +357,7 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 ## Verification Checklist
 
 - Search the active code paths for retired summary/window env vars and the removed short-lived notes table; they should not appear.
-- `GET /api/gateway/context/preview` should show `stable`, optional `summary`, optional `cold_start`, and `volatile`.
+- `GET /api/gateway/context/preview` should show `stable`, optional `slow`, and `volatile`.
 - `GET /api/calendar/send-preview?...` should show `Current Client Context Snapshots`, not rolling/frozen blocks.
 - `GET /api/gateway/logs` should show prompt cache breakpoints and cold-start metadata.
 - Run `cd admin && npm run build` after admin UI edits.

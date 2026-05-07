@@ -37,6 +37,7 @@ class ConfigUpdate(BaseModel):
     atomic_memory_api_key: Optional[str] = None
     atomic_memory_protocol: Optional[str] = None
     atomic_memory_model: Optional[str] = None
+    atomic_memory_prompt: Optional[str] = None
     model_mapping: Optional[dict[str, str]] = None
     supabase_url: Optional[str] = None
     supabase_key: Optional[str] = None
@@ -57,12 +58,30 @@ class ConfigUpdate(BaseModel):
     cold_start_idle_minutes: Optional[int] = None
     default_surface_limit: Optional[int] = None
     default_atomic_memory_limit: Optional[int] = None
+    atomic_memory_max_tokens: Optional[int] = None
+    atomic_memory_extract_every_turns: Optional[int] = None
     atomic_memory_min_score: Optional[float] = None
     atomic_memory_auto_activate_min_confidence: Optional[float] = None
+    heartbeat_inject_every: Optional[int] = None
+    gateway_message_retention: Optional[int] = None
+    gateway_context_snapshot_retention: Optional[int] = None
+    gateway_cold_start_retention: Optional[int] = None
+    gateway_surface_event_retention: Optional[int] = None
 
 
 class SessionDeleteRequest(BaseModel):
     confirm: str
+
+
+class HeartbeatCreateRequest(BaseModel):
+    content: str
+    turn_number: Optional[int] = None
+
+
+class HeartbeatDeleteRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+    delete_all: bool = False
+    confirm: Optional[str] = None
 
 
 class CalendarPromptUpdate(BaseModel):
@@ -82,5 +101,12 @@ class CalendarGenerateRequest(BaseModel):
 
 class AtomicMemoryReviewUpdate(BaseModel):
     status: str
+    content_canonical: Optional[str] = None
+    content_surface: Optional[str] = None
+    quote: Optional[str] = None
+    time_hint: Optional[str] = None
+    subject: Optional[str] = None
+    owner: Optional[str] = None
+    memory_type: Optional[str] = None
     tier: Optional[int] = None
     importance: Optional[int] = None

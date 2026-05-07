@@ -37,6 +37,7 @@ class RuntimeConfig:
         self.atomic_memory_api_key: str = os.getenv("ATOMIC_MEMORY_API_KEY", "")
         self.atomic_memory_protocol: str = os.getenv("ATOMIC_MEMORY_PROTOCOL", "auto")
         self.atomic_memory_model: str = os.getenv("ATOMIC_MEMORY_MODEL", "")
+        self.atomic_memory_prompt: str = os.getenv("ATOMIC_MEMORY_PROMPT", "")
         self.model_mapping: dict[str, str] = self._load_model_mapping()
 
         self.inject_meta_summaries: bool = _env_bool("INJECT_META_SUMMARIES", True)
@@ -57,9 +58,15 @@ class RuntimeConfig:
         self.cold_start_idle_minutes: int = int(os.getenv("COLD_START_IDLE_MINUTES", "120"))
         self.default_surface_limit: int = int(os.getenv("DEFAULT_SURFACE_LIMIT", "3"))
         self.default_atomic_memory_limit: int = int(os.getenv("DEFAULT_ATOMIC_MEMORY_LIMIT", "3"))
+        self.atomic_memory_max_tokens: int = int(os.getenv("ATOMIC_MEMORY_MAX_TOKENS", "8192"))
+        self.atomic_memory_extract_every_turns: int = int(os.getenv("ATOMIC_MEMORY_EXTRACT_EVERY_TURNS", "1"))
         self.atomic_memory_min_score: float = float(os.getenv("ATOMIC_MEMORY_MIN_SCORE", "0.42"))
         self.atomic_memory_auto_activate_min_confidence: float = float(os.getenv("ATOMIC_MEMORY_AUTO_ACTIVATE_MIN_CONFIDENCE", "0.92"))
-        self.heartbeat_inject_every: int = int(os.getenv("HEARTBEAT_INJECT_EVERY", "10"))
+        self.heartbeat_inject_every: int = int(os.getenv("HEARTBEAT_INJECT_EVERY", "5"))
+        self.gateway_message_retention: int = int(os.getenv("GATEWAY_MESSAGE_RETENTION", "1500"))
+        self.gateway_context_snapshot_retention: int = int(os.getenv("GATEWAY_CONTEXT_SNAPSHOT_RETENTION", "3"))
+        self.gateway_cold_start_retention: int = int(os.getenv("GATEWAY_COLD_START_RETENTION", "20"))
+        self.gateway_surface_event_retention: int = int(os.getenv("GATEWAY_SURFACE_EVENT_RETENTION", "500"))
     def to_dict(self) -> dict[str, Any]:
         return {
             "supabase_url": mask(self.supabase_url, 30),
@@ -78,6 +85,7 @@ class RuntimeConfig:
             "atomic_memory_api_key": mask(self.atomic_memory_api_key),
             "atomic_memory_protocol": self.atomic_memory_protocol,
             "atomic_memory_model": self.atomic_memory_model,
+            "atomic_memory_prompt": self.atomic_memory_prompt,
             "model_mapping": self.model_mapping,
             "inject_meta_summaries": self.inject_meta_summaries,
             "inject_briefing": self.inject_briefing,
@@ -96,9 +104,15 @@ class RuntimeConfig:
             "cold_start_idle_minutes": self.cold_start_idle_minutes,
             "default_surface_limit": self.default_surface_limit,
             "default_atomic_memory_limit": self.default_atomic_memory_limit,
+            "atomic_memory_max_tokens": self.atomic_memory_max_tokens,
+            "atomic_memory_extract_every_turns": self.atomic_memory_extract_every_turns,
             "atomic_memory_min_score": self.atomic_memory_min_score,
             "atomic_memory_auto_activate_min_confidence": self.atomic_memory_auto_activate_min_confidence,
             "heartbeat_inject_every": self.heartbeat_inject_every,
+            "gateway_message_retention": self.gateway_message_retention,
+            "gateway_context_snapshot_retention": self.gateway_context_snapshot_retention,
+            "gateway_cold_start_retention": self.gateway_cold_start_retention,
+            "gateway_surface_event_retention": self.gateway_surface_event_retention,
         }
 
     def _load_model_mapping(self) -> dict[str, str]:

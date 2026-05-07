@@ -165,6 +165,14 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
         <div class="cfg-row"><label>小模型 API Key</label><input id="c_am_key" type="password" placeholder="留空继承上游 key"></div>
         <div class="cfg-row"><label>小模型协议</label><select id="c_am_proto"><option value="auto">自动检测</option><option value="openai">OpenAI</option><option value="anthropic">Anthropic</option></select></div>
         <div class="cfg-row"><label>小模型名</label><input id="c_am_model" placeholder="比如 deepseek-chat / gpt-4.1-mini / claude-3-5-haiku"></div>
+        <div class="cfg-row"><label>mem0 提取提示词</label>
+          <div class="preset-bar" id="amPromptPresetBar"></div>
+          <div class="preset-save-row">
+            <input id="amPromptPresetName" placeholder="输入名称保存当前提示词…">
+            <button class="btn" onclick="saveAmPromptPreset()">保存提示词预设</button>
+          </div>
+          <textarea id="c_am_prompt" rows="8" placeholder="留空使用内置默认提示词；填写后会完整替换发给 mem0/atomic memory 模型的 system prompt"></textarea>
+        </div>
       </div>
       <div>
         <div class="cfg-row"><label><input type="checkbox" id="c_am_extract" style="accent-color:#8b5cf6"> 回复后异步提取原子记忆</label></div>
@@ -173,6 +181,8 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
           <div class="cfg-row"><label>注入数量</label><input id="c_am_limit" type="number" min="1" max="8"></div>
           <div class="cfg-row"><label>命中阈值 (0-1)</label><input id="c_am_score" type="number" min="0" max="1" step="0.01"></div>
         </div>
+        <div class="cfg-row"><label>小模型输出预算</label><input id="c_am_tokens" type="number" min="512" max="65536" step="512"></div>
+        <div class="cfg-row"><label>每 N 轮提取一次</label><input id="c_am_every" type="number" min="1" max="50"></div>
         <div class="cfg-row"><label>自动激活阈值 (0-1)</label><input id="c_am_auto" type="number" min="0" max="1" step="0.01"></div>
         <div class="cfg-hint">建议先只开提取，观察 proposed 候选质量，再开注入。</div>
       </div>
@@ -210,10 +220,10 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
   <div class="cfg-card"><h3>原子记忆审核</h3>
     <div class="rev-toolbar">
       <select id="amReviewStatus" class="cal-input" style="width:160px" onchange="loadAtomicReview()">
+        <option value="all" selected>all</option>
         <option value="proposed">proposed</option>
         <option value="active">active</option>
         <option value="deprecated">deprecated</option>
-        <option value="all">all</option>
       </select>
       <input id="amReviewSessionTag" class="cal-input" style="width:180px" placeholder="session_tag（可选）">
       <input id="amReviewLimit" class="cal-input" style="width:100px" type="number" min="1" max="200" value="30">
@@ -287,8 +297,8 @@ function authFetch(url,opts={}){
   return fetch(url,opts);
 }
 
-const TAB_NAMES = ['system','messages','tools','response','meta','raw'];
-const TAB_LABELS = {system:'System',messages:'消息',tools:'工具',response:'响应',meta:'元信息',raw:'原始JSON'};
+const TAB_NAMES = ['system','messages','upstream','tools','response','meta','raw'];
+const TAB_LABELS = {system:'System',messages:'消息',upstream:'Upstream',tools:'工具',response:'响应',meta:'元信息',raw:'原始JSON'};
 
 // --- Tabs ---
 function showPanel(name){
@@ -449,6 +459,14 @@ function renderTabContent(l,t){
     return '<pre>'+esc(JSON.stringify(l,null,2))+'</pre>';
   }
 
+  if(t==='upstream'){
+    const payload=l.upstream_payload||{
+      note:'No upstream payload was captured for this log. New requests will include it.',
+      prepared_messages:l.prepared_messages||[],
+    };
+    return '<pre>'+esc(JSON.stringify(payload,null,2))+'</pre>';
+  }
+
   return '';
 }
 
@@ -484,6 +502,7 @@ async function loadCfg(){
     $('c_am_key').value=c.atomic_memory_api_key||'';
     $('c_am_proto').value=c.atomic_memory_protocol||'auto';
     $('c_am_model').value=c.atomic_memory_model||'';
+    $('c_am_prompt').value=c.atomic_memory_prompt||'';
     $('c_surl').value=c.supabase_url||'';$('c_skey').value=c.supabase_key||'';$('c_gkey').value=c.gateway_key||'';
     $('c_briefing').checked=c.inject_briefing!==false;$('c_meta').checked=c.inject_meta_summaries!==false;
     $('c_surface').checked=c.inject_surface_passages!==false;$('c_gtools').checked=c.enable_gateway_tools!==false;
@@ -497,16 +516,19 @@ async function loadCfg(){
     $('c_slimit').value=c.default_surface_limit||3;
     $('c_am_limit').value=c.default_atomic_memory_limit||3;
     $('c_am_score').value=(c.atomic_memory_min_score??0.42);
+    $('c_am_tokens').value=c.atomic_memory_max_tokens||8192;
+    $('c_am_every').value=c.atomic_memory_extract_every_turns||1;
     $('c_am_auto').value=(c.atomic_memory_auto_activate_min_confidence??0.92);
     $('c_bttl').value=c.daily_briefing_ttl_minutes||60;
     renderPresets();
+    renderAmPromptPresets();
   }catch(e){$('saveMsg').innerHTML='<span style="color:#f85149">加载失败</span>'}
 }
 async function saveConfig(){
   const maxClientRaw=($('c_clientmax').value||'').trim();
   const body={
     upstream_url:$('c_url').value,upstream_api_key:$('c_key').value,upstream_protocol:$('c_proto').value,
-    atomic_memory_upstream_url:$('c_am_url').value,atomic_memory_api_key:$('c_am_key').value,atomic_memory_protocol:$('c_am_proto').value,atomic_memory_model:$('c_am_model').value,
+    atomic_memory_upstream_url:$('c_am_url').value,atomic_memory_api_key:$('c_am_key').value,atomic_memory_protocol:$('c_am_proto').value,atomic_memory_model:$('c_am_model').value,atomic_memory_prompt:$('c_am_prompt').value,
     supabase_url:$('c_surl').value,supabase_key:$('c_skey').value,gateway_key:$('c_gkey').value,
     inject_briefing:$('c_briefing').checked,inject_meta_summaries:$('c_meta').checked,
     extract_atomic_memories:$('c_am_extract').checked,inject_atomic_memories:$('c_am_inject').checked,
@@ -517,6 +539,7 @@ async function saveConfig(){
     cold_start_turns:+$('c_cold_turns').value,cold_start_message_limit:+$('c_cold_limit').value,cold_start_idle_minutes:+$('c_cold_idle').value,
     default_surface_limit:+$('c_slimit').value,
     default_atomic_memory_limit:+$('c_am_limit').value,atomic_memory_min_score:+$('c_am_score').value,
+    atomic_memory_max_tokens:+$('c_am_tokens').value,atomic_memory_extract_every_turns:+$('c_am_every').value,
     atomic_memory_auto_activate_min_confidence:+$('c_am_auto').value,
     daily_briefing_ttl_minutes:+$('c_bttl').value
   };
@@ -555,7 +578,7 @@ async function loadColdPreview(){
 }
 
 async function loadAtomicReview(){
-  const status=$('amReviewStatus').value||'proposed';
+  const status=$('amReviewStatus').value||'all';
   const limit=Math.max(1,Math.min(200,+($('amReviewLimit').value||30)));
   const sessionTag=($('amReviewSessionTag').value||'').trim();
   const qs=new URLSearchParams({status,limit:String(limit)});
@@ -574,7 +597,7 @@ async function loadAtomicReview(){
 function renderAtomicReview(){
   const box=$('amReviewList');
   if(!atomicReviewItems.length){
-    box.innerHTML='<div class="rev-empty">这里还没有候选纸条</div>';
+    box.innerHTML='<div class="rev-empty">当前筛选没有纸条</div>';
     return;
   }
   box.innerHTML=atomicReviewItems.map(item=>{
@@ -583,7 +606,26 @@ function renderAtomicReview(){
     const conf=typeof item.confidence==='number'?item.confidence.toFixed(2):item.confidence;
     const heat=typeof item.heat==='number'?item.heat.toFixed(2):item.heat;
     return `<div class="rev-card">
-      <h4>${esc(item.content_canonical||'(empty)')}</h4>
+      <div class="cfg-row"><label>便签正文</label><textarea id="am_canonical_${esc(item.id)}" rows="3">${esc(item.content_canonical||'')}</textarea></div>
+      <div class="cfg-row"><label>前端展示语气</label><textarea id="am_surface_${esc(item.id)}" rows="2">${esc(item.content_surface||'')}</textarea></div>
+      <div class="cfg-inline">
+        <div class="cfg-row"><label>主体</label><select id="am_subject_${esc(item.id)}">
+          <option value="圆圆" ${item.subject==='圆圆'?'selected':''}>圆圆</option>
+          <option value="沈予" ${item.subject==='沈予'?'selected':''}>沈予</option>
+          <option value="我们" ${(!item.subject||item.subject==='我们')?'selected':''}>我们</option>
+        </select></div>
+        <div class="cfg-row"><label>类型</label><select id="am_type_${esc(item.id)}">
+          ${['preference','health','emotion','commitment','project','relation','boundary','routine','identity','event','other'].map(t=>`<option value="${t}" ${item.memory_type===t?'selected':''}>${t}</option>`).join('')}
+        </select></div>
+      </div>
+      <div class="cfg-inline">
+        <div class="cfg-row"><label>tier</label><input id="am_tier_${esc(item.id)}" type="number" min="1" max="4" value="${esc(item.tier||3)}"></div>
+        <div class="cfg-row"><label>importance</label><input id="am_importance_${esc(item.id)}" type="number" min="1" max="5" value="${esc(item.importance||2)}"></div>
+      </div>
+      <div class="cfg-inline">
+        <div class="cfg-row"><label>quote</label><input id="am_quote_${esc(item.id)}" value="${esc(item.quote||'')}"></div>
+        <div class="cfg-row"><label>time</label><input id="am_time_${esc(item.id)}" value="${esc(item.time_hint||'')}"></div>
+      </div>
       <div class="rev-meta">
         <span class="rev-pill">${esc(item.status||'')}</span>
         <span class="rev-pill">${esc(item.subject||item.owner||'我们')}</span>
@@ -594,15 +636,12 @@ function renderAtomicReview(){
         <span class="rev-pill">heat ${esc(heat)}</span>
         <span class="rev-pill">${esc(item.session_tag||'default')}</span>
       </div>
-      ${item.time_hint?`<div class="rev-body"><b>time:</b> ${esc(item.time_hint)}</div>`:''}
-      ${item.quote?`<div class="rev-body"><b>quote:</b> ${esc(item.quote)}</div>`:''}
-      ${item.content_surface&&item.content_surface!==item.content_canonical?`<div class="rev-body"><b>surface:</b> ${esc(item.content_surface)}</div>`:''}
       ${item.source_excerpt?`<div class="rev-body"><b>source:</b>\n${esc(item.source_excerpt)}</div>`:''}
       ${(tags.length||entities.length)?`<div class="rev-body"><b>tags/entities:</b> ${esc(tags.join(', '))}${tags.length&&entities.length?' | ':''}${esc(entities.join(', '))}</div>`:''}
       <div class="rev-actions">
-        <button class="btn" onclick="reviewAtomicMemory('${esc(item.id)}','active')">批准</button>
-        <button class="btn" onclick="reviewAtomicMemory('${esc(item.id)}','deprecated')">废弃</button>
-        <button class="btn" onclick="reviewAtomicMemory('${esc(item.id)}','proposed')">退回 proposed</button>
+        <button class="btn" onclick="reviewAtomicMemory('${esc(item.id)}','active')">确认放行</button>
+        <button class="btn" onclick="deleteAtomicMemory('${esc(item.id)}')">退回（删除）</button>
+        <button class="btn" onclick="reviewAtomicMemory('${esc(item.id)}','proposed')">重新写</button>
       </div>
     </div>`;
   }).join('');
@@ -610,9 +649,20 @@ function renderAtomicReview(){
 
 async function reviewAtomicMemory(id,status){
   try{
+    const body={
+      status,
+      content_canonical:$('am_canonical_'+id).value,
+      content_surface:$('am_surface_'+id).value,
+      quote:$('am_quote_'+id).value,
+      time_hint:$('am_time_'+id).value,
+      subject:$('am_subject_'+id).value,
+      memory_type:$('am_type_'+id).value,
+      tier:+$('am_tier_'+id).value,
+      importance:+$('am_importance_'+id).value
+    };
     const r=await authFetch('/api/gateway/atomic-memories/'+encodeURIComponent(id)+'/review',{
       method:'POST',
-      body:JSON.stringify({status})
+      body:JSON.stringify(body)
     });
     const d=await r.json();
     if(!r.ok)throw new Error(d.detail||d.error||'review failed');
@@ -622,14 +672,73 @@ async function reviewAtomicMemory(id,status){
   }
 }
 
+async function deleteAtomicMemory(id){
+  try{
+    const r=await authFetch('/api/gateway/atomic-memories/'+encodeURIComponent(id)+'/review',{
+      method:'POST',
+      body:JSON.stringify({status:'delete'})
+    });
+    const d=await r.json();
+    if(!r.ok)throw new Error(d.detail||d.error||'delete failed');
+    loadAtomicReview();
+  }catch(e){
+    alert('删除失败：'+(e.message||e));
+  }
+}
+
 // --- Presets ---
 const PRESETS_KEY='shenyu_upstream_presets';
+const AM_PROMPT_PRESETS_KEY='shenyu_atomic_memory_prompt_presets';
 let activePresetName='';
 
 function getPresets(){
   try{return JSON.parse(localStorage.getItem(PRESETS_KEY)||'{}');}catch(e){return {}}
 }
 function setPresets(p){localStorage.setItem(PRESETS_KEY,JSON.stringify(p))}
+
+function getAmPromptPresets(){
+  try{return JSON.parse(localStorage.getItem(AM_PROMPT_PRESETS_KEY)||'{}');}catch(e){return {}}
+}
+function setAmPromptPresets(p){localStorage.setItem(AM_PROMPT_PRESETS_KEY,JSON.stringify(p))}
+
+function renderAmPromptPresets(){
+  const bar=$('amPromptPresetBar');
+  if(!bar)return;
+  const presets=getAmPromptPresets();
+  const names=Object.keys(presets);
+  if(!names.length){
+    bar.innerHTML='<span style="font-size:11px;color:#484f58">暂无提示词预设</span>';
+    return;
+  }
+  bar.innerHTML=names.map(name=>`
+    <div class="preset-chip" onclick="loadAmPromptPreset('${esc(name)}')">
+      ${esc(name)}
+      <span class="del" onclick="event.stopPropagation();deleteAmPromptPreset('${esc(name)}')">×</span>
+    </div>
+  `).join('');
+}
+
+function saveAmPromptPreset(){
+  const name=($('amPromptPresetName').value||'').trim();
+  if(!name){$('amPromptPresetName').style.borderColor='#f85149';setTimeout(()=>$('amPromptPresetName').style.borderColor='',1500);return}
+  const presets=getAmPromptPresets();
+  presets[name]=$('c_am_prompt').value||'';
+  setAmPromptPresets(presets);
+  $('amPromptPresetName').value='';
+  renderAmPromptPresets();
+}
+
+function loadAmPromptPreset(name){
+  const presets=getAmPromptPresets();
+  $('c_am_prompt').value=presets[name]||'';
+}
+
+function deleteAmPromptPreset(name){
+  const presets=getAmPromptPresets();
+  delete presets[name];
+  setAmPromptPresets(presets);
+  renderAmPromptPresets();
+}
 
 function savePreset(){
   const name=($('presetName').value||'').trim();

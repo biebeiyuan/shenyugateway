@@ -43,23 +43,18 @@ class SessionManager:
         return int(session.get("message_count") or 0) == 0
 
     def log_input_messages(self, session_id: str, messages: list[dict]):
-        logged_count = 0
-        for msg in messages:
-            role = msg.get("role", "")
-            if role not in {"user", "assistant", "tool"}:
-                continue
-            content = normalize_text(msg.get("content"))
-            tool_name = msg.get("name") if role == "tool" else None
-            self.store.append_message(
-                session_id=session_id,
-                role=role,
-                content=content,
-                tool_name=tool_name,
-                tool_args=None,
-                tool_result_summary=shorten(content, 180) if role == "tool" else None,
-            )
-            logged_count += 1
-        self.store.touch_session(session_id, message_increment=logged_count)
+        latest_user = None
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                latest_user = msg
+                break
+        if latest_user is None:
+            self.store.touch_session(session_id, message_increment=0)
+            return
+
+        content = normalize_text(latest_user.get("content"))
+        self.store.append_message(session_id=session_id, role="user", content=content)
+        self.store.touch_session(session_id, message_increment=1)
 
     def log_tool_result(self, session_id: str, tool_name: str, args: dict, result: dict):
         content = json_dumps(result)

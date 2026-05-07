@@ -14,10 +14,16 @@ const loadingDet = ref(new Set<string>())
 const aTabs = ref<Record<string, string>>({})
 let timer: ReturnType<typeof setInterval> | null = null
 
-const TAB_NAMES = ['system', 'messages', 'tools', 'response', 'meta', 'raw'] as const
+const TAB_NAMES = ['system', 'messages', 'upstream', 'tools', 'response', 'meta', 'raw'] as const
 const TAB_LABELS: Record<string, string> = {
   system: 'System', messages: '消息', tools: '工具', response: '响应', meta: '元信息', raw: '原始JSON',
 }
+TAB_LABELS.messages = 'Messages'
+TAB_LABELS.upstream = 'Upstream'
+TAB_LABELS.tools = 'Tools'
+TAB_LABELS.response = 'Response'
+TAB_LABELS.meta = 'Meta'
+TAB_LABELS.raw = 'Raw JSON'
 
 onMounted(async () => {
   await loadLogs()
@@ -145,6 +151,14 @@ function renderContent(detail: LogDetail, tab: string): string {
     html += `\n\n总计 ${names.length} 个工具`
     if (detail.has_internal_tools) html += '\n含内部工具'
     return esc(html)
+  }
+
+  if (tab === 'upstream') {
+    const payload = detail.upstream_payload || {
+      note: 'No upstream payload was captured for this log. New requests will include it.',
+      prepared_messages: detail.prepared_messages || [],
+    }
+    return esc(JSON.stringify(payload, null, 2))
   }
 
   if (tab === 'response') {

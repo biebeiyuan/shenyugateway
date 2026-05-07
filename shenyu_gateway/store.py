@@ -151,6 +151,19 @@ class GatewayStore:
                 (iso_now(), message_increment, session_id),
             )
 
+    def sync_session_message_count(self, session_id: str):
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE gateway_sessions
+                SET message_count = (
+                    SELECT COUNT(*) FROM gateway_messages WHERE session_id = ?
+                )
+                WHERE id = ?
+                """,
+                (session_id, session_id),
+            )
+
     def append_message(
         self,
         session_id: str,
@@ -185,6 +198,7 @@ class GatewayStore:
             )
 
     def get_recent_messages(self, session_id: str, limit: int = 12) -> list[dict]:
+        limit = max(1, min(int(limit or 12), 5000))
         with self._connect() as conn:
             rows = conn.execute(
                 """
@@ -196,6 +210,116 @@ class GatewayStore:
                 (session_id, limit),
             ).fetchall()
             return [dict(row) for row in reversed(rows)]
+
+    def dedupe_messages(self, session_id: Optional[str] = None) -> dict[str, int]:
+        params: list[Any] = []
+        where = ""
+        if session_id:
+            where = "WHERE session_id = ?"
+            params.append(session_id)
+        with self._connect() as conn:
+            cursor = conn.execute(
+                f"""
+                DELETE FROM gateway_messages
+                WHERE id IN (
+                    SELECT id
+                    FROM (
+                        SELECT
+                            id,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY session_id, role, COALESCE(content, ''), COALESCE(tool_name, '')
+                                ORDER BY created_at DESC, id DESC
+                            ) AS rn
+                        FROM gateway_messages
+                        {where}
+                    )
+                    WHERE rn > 1
+                )
+                """,
+                params,
+            )
+            deleted = int(cursor.rowcount or 0)
+            session_filter = "WHERE id = ?" if session_id else ""
+            session_params: tuple[Any, ...] = (session_id,) if session_id else ()
+            rows = conn.execute(f"SELECT id FROM gateway_sessions {session_filter}", session_params).fetchall()
+            for row in rows:
+                sid = row["id"]
+                conn.execute(
+                    """
+                    UPDATE gateway_sessions
+                    SET message_count = (
+                        SELECT COUNT(*) FROM gateway_messages WHERE session_id = ?
+                    )
+                    WHERE id = ?
+                    """,
+                    (sid, sid),
+                )
+        return {"gateway_messages": deleted}
+
+    def get_all_messages(self, session_id: str, limit: int = 5000) -> list[dict]:
+        limit = max(1, min(int(limit or 5000), 50000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM gateway_messages
+                WHERE session_id = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def get_latest_message_by_role(self, session_id: str, role: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM gateway_messages
+                WHERE session_id = ? AND role = ?
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (session_id, role),
+            ).fetchone()
+            return dict(row) if row else None
+
+    def get_recent_context_snapshots(self, session_id: str, limit: int = 5) -> list[dict]:
+        limit = max(1, min(int(limit or 5), 50))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM request_context_snapshots
+                WHERE session_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        snapshots = []
+        for row in rows:
+            item = dict(row)
+            item["messages"] = json.loads(item.get("messages_json") or "[]")
+            snapshots.append(item)
+        return snapshots
+
+    def get_all_context_snapshots(self, session_id: str, limit: int = 1000) -> list[dict]:
+        limit = max(1, min(int(limit or 1000), 5000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM request_context_snapshots
+                WHERE session_id = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        snapshots = []
+        for row in rows:
+            item = dict(row)
+            item["messages"] = json.loads(item.get("messages_json") or "[]")
+            snapshots.append(item)
+        return snapshots
 
     def get_message_count(self, session_id: str) -> int:
         with self._connect() as conn:
@@ -215,15 +339,49 @@ class GatewayStore:
                 f"""
                 SELECT
                     s.*,
-                    COUNT(m.id) AS stored_message_count,
-                    MAX(m.created_at) AS last_message_at,
-                    SUM(CASE WHEN m.role = 'user' THEN 1 ELSE 0 END) AS user_message_count,
-                    SUM(CASE WHEN m.role = 'assistant' THEN 1 ELSE 0 END) AS assistant_message_count,
-                    SUM(CASE WHEN m.role = 'tool' THEN 1 ELSE 0 END) AS tool_message_count
+                    COALESCE(m.stored_message_count, 0) AS stored_message_count,
+                    m.last_message_at,
+                    COALESCE(m.user_message_count, 0) AS user_message_count,
+                    COALESCE(m.assistant_message_count, 0) AS assistant_message_count,
+                    COALESCE(m.tool_message_count, 0) AS tool_message_count,
+                    COALESCE(r.context_snapshot_count, 0) AS context_snapshot_count,
+                    COALESCE(c.cold_start_snapshot_count, 0) AS cold_start_snapshot_count,
+                    COALESCE(h.heartbeat_count, 0) AS heartbeat_count,
+                    latest_user.content AS latest_user_text
                 FROM gateway_sessions s
-                LEFT JOIN gateway_messages m ON m.session_id = s.id
+                LEFT JOIN (
+                    SELECT
+                        session_id,
+                        COUNT(id) AS stored_message_count,
+                        MAX(created_at) AS last_message_at,
+                        SUM(CASE WHEN role = 'user' THEN 1 ELSE 0 END) AS user_message_count,
+                        SUM(CASE WHEN role = 'assistant' THEN 1 ELSE 0 END) AS assistant_message_count,
+                        SUM(CASE WHEN role = 'tool' THEN 1 ELSE 0 END) AS tool_message_count
+                    FROM gateway_messages
+                    GROUP BY session_id
+                ) m ON m.session_id = s.id
+                LEFT JOIN (
+                    SELECT session_id, COUNT(id) AS context_snapshot_count
+                    FROM request_context_snapshots
+                    GROUP BY session_id
+                ) r ON r.session_id = s.id
+                LEFT JOIN (
+                    SELECT session_id, COUNT(id) AS cold_start_snapshot_count
+                    FROM cold_start_snapshots
+                    GROUP BY session_id
+                ) c ON c.session_id = s.id
+                LEFT JOIN (
+                    SELECT session_id, COUNT(id) AS heartbeat_count
+                    FROM heartbeat_entries
+                    GROUP BY session_id
+                ) h ON h.session_id = s.id
+                LEFT JOIN gateway_messages latest_user ON latest_user.id = (
+                    SELECT id FROM gateway_messages
+                    WHERE session_id = s.id AND role = 'user'
+                    ORDER BY created_at DESC
+                    LIMIT 1
+                )
                 {where if query.strip() else ""}
-                GROUP BY s.id
                 ORDER BY s.last_active_at DESC
                 LIMIT ?
                 """,
@@ -265,6 +423,10 @@ class GatewayStore:
                 "SELECT COUNT(*) AS count FROM cold_start_snapshots WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
+            snapshot_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM request_context_snapshots WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
             return {
                 "messages": int(message_counts["total"] or 0),
                 "user_messages": int(message_counts["user_count"] or 0),
@@ -273,6 +435,7 @@ class GatewayStore:
                 "surface_events": int(surface_count["count"] or 0),
                 "heartbeats": int(heartbeat_count["count"] or 0),
                 "cold_start_snapshots": int(cold_count["count"] or 0),
+                "context_snapshots": int(snapshot_count["count"] or 0),
             }
 
     def delete_session(self, session_id: str) -> dict:
@@ -547,6 +710,67 @@ class GatewayStore:
         item["source_session_tags"] = json.loads(item.get("source_session_tags_json") or "[]")
         return item
 
+    def recent_cold_start_snapshots(self, session_id: str, limit: int = 5) -> list[dict]:
+        limit = max(1, min(int(limit or 5), 50))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM cold_start_snapshots
+                WHERE session_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        snapshots = []
+        for row in rows:
+            item = dict(row)
+            item["sources"] = json.loads(item.get("sources_json") or "[]")
+            item["source_session_tags"] = json.loads(item.get("source_session_tags_json") or "[]")
+            snapshots.append(item)
+        return snapshots
+
+    def all_cold_start_snapshots(self, session_id: str, limit: int = 1000) -> list[dict]:
+        limit = max(1, min(int(limit or 1000), 5000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM cold_start_snapshots
+                WHERE session_id = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        snapshots = []
+        for row in rows:
+            item = dict(row)
+            item["sources"] = json.loads(item.get("sources_json") or "[]")
+            item["source_session_tags"] = json.loads(item.get("source_session_tags_json") or "[]")
+            snapshots.append(item)
+        return snapshots
+
+    def get_surface_events(self, session_id: str, limit: int = 1000) -> list[dict]:
+        limit = max(1, min(int(limit or 1000), 10000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM surface_events
+                WHERE session_id = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        events = []
+        for row in rows:
+            item = dict(row)
+            item["surfaced_ids"] = json.loads(item.get("surfaced_ids_json") or "[]")
+            item["chosen_ids"] = json.loads(item.get("chosen_ids_json") or "[]")
+            item["reasons"] = json.loads(item.get("reasons_json") or "[]")
+            events.append(item)
+        return events
+
     def gateway_overview(self) -> dict:
         today = now().date().isoformat()
         with self._connect() as conn:
@@ -563,6 +787,10 @@ class GatewayStore:
             ).fetchone()
             session_count = conn.execute("SELECT COUNT(*) AS count FROM gateway_sessions").fetchone()
             cold_count = conn.execute("SELECT COUNT(*) AS count FROM cold_start_snapshots").fetchone()
+            snapshot_count = conn.execute("SELECT COUNT(*) AS count FROM request_context_snapshots").fetchone()
+            surface_count = conn.execute("SELECT COUNT(*) AS count FROM surface_events").fetchone()
+            heartbeat_count = conn.execute("SELECT COUNT(*) AS count FROM heartbeat_entries").fetchone()
+            cache_count = conn.execute("SELECT COUNT(*) AS count FROM cache_entries").fetchone()
         return {
             "messages_total": int(message_counts["total"] or 0),
             "messages_today": int(message_counts["today"] or 0),
@@ -570,7 +798,111 @@ class GatewayStore:
             "latest_message_at": message_counts["latest"],
             "sessions_total": int(session_count["count"] or 0),
             "cold_start_snapshots": int(cold_count["count"] or 0),
+            "context_snapshots": int(snapshot_count["count"] or 0),
+            "surface_events": int(surface_count["count"] or 0),
+            "heartbeats": int(heartbeat_count["count"] or 0),
+            "cache_entries": int(cache_count["count"] or 0),
         }
+
+    def prune_runtime_state(
+        self,
+        session_id: Optional[str] = None,
+        message_retention: int = 2000,
+        context_snapshot_retention: int = 3,
+        cold_start_retention: int = 20,
+        surface_event_retention: int = 500,
+    ) -> dict[str, int]:
+        message_retention = max(1, int(message_retention or 2000))
+        context_snapshot_retention = max(1, int(context_snapshot_retention or 3))
+        cold_start_retention = max(1, int(cold_start_retention or 20))
+        surface_event_retention = max(1, int(surface_event_retention or 500))
+        deleted = {
+            "gateway_messages": 0,
+            "request_context_snapshots": 0,
+            "cold_start_snapshots": 0,
+            "surface_events": 0,
+            "cache_entries": 0,
+        }
+        session_filter = "WHERE id = ?" if session_id else ""
+        session_params: tuple[Any, ...] = (session_id,) if session_id else ()
+        with self._connect() as conn:
+            session_rows = conn.execute(f"SELECT id FROM gateway_sessions {session_filter}", session_params).fetchall()
+            for row in session_rows:
+                sid = row["id"]
+                cursor = conn.execute(
+                    """
+                    DELETE FROM gateway_messages
+                    WHERE session_id = ?
+                    AND id NOT IN (
+                        SELECT id FROM gateway_messages
+                        WHERE session_id = ?
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    )
+                    """,
+                    (sid, sid, message_retention),
+                )
+                deleted["gateway_messages"] += int(cursor.rowcount or 0)
+                conn.execute(
+                    """
+                    UPDATE gateway_sessions
+                    SET message_count = (
+                        SELECT COUNT(*) FROM gateway_messages WHERE session_id = ?
+                    )
+                    WHERE id = ?
+                    """,
+                    (sid, sid),
+                )
+
+                cursor = conn.execute(
+                    """
+                    DELETE FROM request_context_snapshots
+                    WHERE session_id = ?
+                    AND id NOT IN (
+                        SELECT id FROM request_context_snapshots
+                        WHERE session_id = ?
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    )
+                    """,
+                    (sid, sid, context_snapshot_retention),
+                )
+                deleted["request_context_snapshots"] += int(cursor.rowcount or 0)
+
+                cursor = conn.execute(
+                    """
+                    DELETE FROM cold_start_snapshots
+                    WHERE session_id = ?
+                    AND injected_count >= max_injections
+                    AND id NOT IN (
+                        SELECT id FROM cold_start_snapshots
+                        WHERE session_id = ?
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    )
+                    """,
+                    (sid, sid, cold_start_retention),
+                )
+                deleted["cold_start_snapshots"] += int(cursor.rowcount or 0)
+
+                cursor = conn.execute(
+                    """
+                    DELETE FROM surface_events
+                    WHERE session_id = ?
+                    AND id NOT IN (
+                        SELECT id FROM surface_events
+                        WHERE session_id = ?
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    )
+                    """,
+                    (sid, sid, surface_event_retention),
+                )
+                deleted["surface_events"] += int(cursor.rowcount or 0)
+
+            cursor = conn.execute("DELETE FROM cache_entries WHERE expires_at < ?", (iso_now(),))
+            deleted["cache_entries"] = int(cursor.rowcount or 0)
+        return deleted
 
     def write_surface_event(
         self,
@@ -642,15 +974,25 @@ class GatewayStore:
                 (key, cache_type, json_dumps(payload), dt_to_iso(expires_at), iso_now()),
             )
 
-    def append_heartbeat(self, session_id: str, content: str, turn_number: int = 0):
+    def append_heartbeat(self, session_id: str, content: str, turn_number: int = 0) -> dict:
+        heartbeat_id = f"hb_{uuid.uuid4().hex[:12]}"
+        created_at = iso_now()
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO heartbeat_entries (id, session_id, content, turn_number, created_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
-                (f"hb_{uuid.uuid4().hex[:12]}", session_id, content, turn_number, iso_now()),
+                (heartbeat_id, session_id, content, turn_number, created_at),
             )
+        return {
+            "id": heartbeat_id,
+            "session_id": session_id,
+            "content": content,
+            "turn_number": turn_number,
+            "created_at": created_at,
+            "injected_at": None,
+        }
 
     def get_pending_heartbeats(self, session_id: str, limit: int = 10) -> list[dict]:
         with self._connect() as conn:
@@ -658,22 +1000,26 @@ class GatewayStore:
                 """
                 SELECT * FROM heartbeat_entries
                 WHERE session_id = ? AND injected_at IS NULL
-                ORDER BY created_at DESC
+                ORDER BY created_at ASC
                 LIMIT ?
                 """,
                 (session_id, limit),
             ).fetchall()
-            return [dict(row) for row in reversed(rows)]
+            return [dict(row) for row in rows]
 
-    def mark_heartbeats_injected(self, session_id: str):
+    def mark_heartbeats_injected(self, session_id: str, heartbeat_ids: Optional[list[str]] = None):
+        heartbeat_ids = [item for item in (heartbeat_ids or []) if item]
+        if not heartbeat_ids:
+            return
+        placeholders = ",".join("?" for _ in heartbeat_ids)
         with self._connect() as conn:
             conn.execute(
-                """
+                f"""
                 UPDATE heartbeat_entries
                 SET injected_at = ?
-                WHERE session_id = ? AND injected_at IS NULL
+                WHERE session_id = ? AND injected_at IS NULL AND id IN ({placeholders})
                 """,
-                (iso_now(), session_id),
+                (iso_now(), session_id, *heartbeat_ids),
             )
 
     def get_latest_heartbeat_digest(self, session_id: str, limit: int = 10) -> str:
@@ -690,3 +1036,62 @@ class GatewayStore:
             if not rows:
                 return ""
             return "\n".join(row["content"] for row in reversed(rows))
+
+    def get_recent_heartbeats(self, session_id: str, limit: int = 8) -> list[dict]:
+        limit = max(1, min(int(limit or 8), 50))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM heartbeat_entries
+                WHERE session_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def delete_heartbeats(self, session_id: str, heartbeat_ids: Optional[list[str]] = None, delete_all: bool = False) -> int:
+        heartbeat_ids = [item for item in (heartbeat_ids or []) if item]
+        with self._connect() as conn:
+            if delete_all:
+                cursor = conn.execute("DELETE FROM heartbeat_entries WHERE session_id = ?", (session_id,))
+                return int(cursor.rowcount or 0)
+            if not heartbeat_ids:
+                return 0
+            placeholders = ",".join("?" for _ in heartbeat_ids)
+            cursor = conn.execute(
+                f"DELETE FROM heartbeat_entries WHERE session_id = ? AND id IN ({placeholders})",
+                (session_id, *heartbeat_ids),
+            )
+            return int(cursor.rowcount or 0)
+
+    def get_all_heartbeats(self, session_id: str, limit: int = 5000) -> list[dict]:
+        limit = max(1, min(int(limit or 5000), 50000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM heartbeat_entries
+                WHERE session_id = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def export_session_bundle(self, session_tag: str) -> Optional[dict]:
+        session = self.get_session_by_tag(session_tag)
+        if not session:
+            return None
+        session_id = session["id"]
+        return {
+            "exported_at": iso_now(),
+            "session": session,
+            "stats": self.get_session_stats(session_id),
+            "messages": self.get_all_messages(session_id),
+            "context_snapshots": self.get_all_context_snapshots(session_id),
+            "cold_start_snapshots": self.all_cold_start_snapshots(session_id),
+            "heartbeats": self.get_all_heartbeats(session_id),
+            "surface_events": self.get_surface_events(session_id),
+        }

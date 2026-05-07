@@ -26,6 +26,7 @@ export interface LogDetail extends LogEntry {
   system_additions_full: string | null
   system_additions_preview: string | null
   prepared_messages: any[] | null
+  upstream_payload: Record<string, any> | null
 }
 
 export interface LogsResponse {
