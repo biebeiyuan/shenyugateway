@@ -12,7 +12,7 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 ENV_PATH = BASE_DIR / ".env"
 
-load_dotenv(ENV_PATH)
+load_dotenv(ENV_PATH, override=True)
 
 logger = logging.getLogger("shenyu-gateway")
 
@@ -99,3 +99,6 @@ def persist_env(updates: dict[str, Any]) -> None:
         new_lines.append(f"{key}={value}")
 
     ENV_PATH.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+
+    for key, value in updates.items():
+        os.environ[key] = env_value(value)

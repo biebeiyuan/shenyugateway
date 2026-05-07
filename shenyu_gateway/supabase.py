@@ -16,46 +16,58 @@ class SupabaseClient:
             "Prefer": "return=representation",
         }
         self._client: Optional[httpx.AsyncClient] = None
+        self._fallback_client: Optional[httpx.AsyncClient] = None
 
     async def get_client(self) -> httpx.AsyncClient:
         if self._client is None or self._client.is_closed:
-            self._client = httpx.AsyncClient(headers=self.headers, timeout=30.0)
+            self._client = httpx.AsyncClient(headers=self.headers, timeout=30.0, proxy=None, trust_env=False)
         return self._client
+
+    async def get_fallback_client(self) -> httpx.AsyncClient:
+        if self._fallback_client is None or self._fallback_client.is_closed:
+            self._fallback_client = httpx.AsyncClient(headers=self.headers, timeout=30.0, trust_env=True)
+        return self._fallback_client
 
     async def close(self):
         if self._client and not self._client.is_closed:
             await self._client.aclose()
             self._client = None
+        if self._fallback_client and not self._fallback_client.is_closed:
+            await self._fallback_client.aclose()
+            self._fallback_client = None
+
+    async def _request(self, method: str, url: str, **kwargs) -> httpx.Response:
+        client = await self.get_client()
+        try:
+            return await client.request(method, url, **kwargs)
+        except httpx.ConnectError:
+            fallback = await self.get_fallback_client()
+            return await fallback.request(method, url, **kwargs)
 
     async def query(self, table: str, params: Optional[dict] = None) -> list:
-        client = await self.get_client()
-        response = await client.get(f"{self.base_url}/{table}", params=params or {})
+        response = await self._request("GET", f"{self.base_url}/{table}", params=params or {})
         response.raise_for_status()
         return response.json()
 
     async def insert(self, table: str, data: dict) -> dict:
-        client = await self.get_client()
-        response = await client.post(f"{self.base_url}/{table}", json=data)
+        response = await self._request("POST", f"{self.base_url}/{table}", json=data)
         response.raise_for_status()
         result = response.json()
         return result[0] if isinstance(result, list) and result else result
 
     async def update(self, table: str, match: dict, data: dict) -> list:
-        client = await self.get_client()
         params = {key: f"eq.{value}" for key, value in match.items()}
-        response = await client.patch(f"{self.base_url}/{table}", params=params, json=data)
+        response = await self._request("PATCH", f"{self.base_url}/{table}", params=params, json=data)
         response.raise_for_status()
         return response.json()
 
     async def delete(self, table: str, match: dict) -> list:
-        client = await self.get_client()
         params = {key: f"eq.{value}" for key, value in match.items()}
-        response = await client.delete(f"{self.base_url}/{table}", params=params)
+        response = await self._request("DELETE", f"{self.base_url}/{table}", params=params)
         response.raise_for_status()
         return response.json()
 
     async def rpc(self, fn: str, params: Optional[dict] = None) -> Any:
-        client = await self.get_client()
-        response = await client.post(f"{self.rpc_url}/{fn}", json=params or {})
+        response = await self._request("POST", f"{self.rpc_url}/{fn}", json=params or {})
         response.raise_for_status()
         return response.json()

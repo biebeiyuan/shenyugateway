@@ -35,6 +35,7 @@ class ConfigUpdate(BaseModel):
     atomic_memory_api_key: Optional[str] = None
     atomic_memory_protocol: Optional[str] = None
     atomic_memory_model: Optional[str] = None
+    model_mapping: Optional[dict[str, str]] = None
     supabase_url: Optional[str] = None
     supabase_key: Optional[str] = None
     inject_meta_summaries: Optional[bool] = None

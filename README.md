@@ -242,23 +242,68 @@ MAX_INTERNAL_TOOL_ROUNDS=3
 
 ## Running
 
-Install dependencies:
+The gateway defaults to port `8010`. Override it with `PORT` when needed.
+
+### Local development
 
 ```bash
-pip install -r requirements.txt
+# Terminal 1: Python backend
+python gateway.py
+
+# Terminal 2: Vue frontend with hot reload
+cd admin && npm run dev
 ```
 
-Start the gateway:
+Open `http://localhost:5173` for frontend dev — Vite proxies `/api` and `/health` to the backend on `8010`. Edit `.vue` files and see changes instantly.
+
+### Build for production (Coolify / server deploy)
 
 ```bash
+# Install backend dependencies
+pip install -r requirements.txt
+
+# Build the admin frontend
+cd admin && npm ci && npm run build && cd ..
+
+# Start the gateway (serves built admin from dist/)
 python gateway.py
 ```
 
-Admin/debug UI:
+UI routes:
 
 ```text
 http://localhost:8010/admin
 http://localhost:8010/debug
+```
+
+`/` redirects to `/admin`, so the admin login is the single main browser entrypoint. The same gateway key protects `/admin`, `/debug`, and `/api/*`.
+
+`/admin` is the formal Vue/Vite admin app. It is organized by feature:
+
+- `admin/src/api/config.ts`: gateway and upstream configuration.
+- `admin/src/api/sessions.ts`: local SQLite session browser.
+- `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
+- `admin/src/views/ConfigView.vue`: configuration page.
+- `admin/src/views/SessionsView.vue`: session inspection page.
+- `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
+- `admin/src/components/AppShell.vue`: shared admin navigation and layout.
+
+`/debug` is kept as the low-level single-file diagnostic console in `debug.html`. New user-facing admin features should go into `admin/src/views/*` and `admin/src/api/*`, not into `debug.html`.
+
+After backend or admin build changes, restart the running gateway process. The process serves files loaded from disk at startup, so an already-running server may still show the old `/admin` page until it is restarted.
+
+For frontend development, run Vite separately. Its proxy already targets the backend on `localhost:8010`:
+
+```bash
+cd admin
+npm run dev
+```
+
+Docker builds the admin UI first, then serves the Python gateway with the built `/admin` assets:
+
+```bash
+docker build -t shenyu-gateway .
+docker run --env-file .env -p 8010:8010 shenyu-gateway
 ```
 
 ## Verification Checklist
@@ -267,4 +312,34 @@ http://localhost:8010/debug
 - `GET /api/gateway/context/preview` should show `stable`, optional `summary`, optional `cold_start`, and `volatile`.
 - `GET /api/calendar/send-preview?...` should show `Current Client Context Snapshots`, not rolling/frozen blocks.
 - `GET /api/gateway/logs` should show prompt cache breakpoints and cold-start metadata.
+- Run `cd admin && npm run build` after admin UI edits.
 - Run `python -m py_compile gateway.py shenyu_gateway/*.py` after edits.
+
+## DevOps Plan | 部署计划
+
+### Deploy to Coolify
+
+1. Push this repo to a git remote (GitHub/GitLab).
+2. In Coolify, create a new service → select this repo.
+3. Use the `Dockerfile` — Coolify detects it automatically.
+4. Set environment variables in Coolify's dashboard (`.env` content).
+5. Port mapping: `8010:8010`.
+6. Coolify auto-deploys on every git push.
+
+### Frontend workflow
+
+| Environment | Command | URL |
+|---|---|---|
+| Local dev | `cd admin && npm run dev` | `http://localhost:5173` (hot reload) |
+| Production | `cd admin && npm run build` → served by Python from `dist/` | `https://your-domain/admin` |
+
+**Before each deploy to Coolify:**
+1. Make frontend changes in `.vue` files.
+2. Run `cd admin && npm run build` to update `dist/`.
+3. Commit and push — Coolify picks up the new built assets.
+
+### Future improvements (when needed)
+
+- GitHub Action to auto-build `admin/` on push, so `dist/` doesn't need to be committed.
+- Coolify build step to run `npm ci && npm run build` inside the Dockerfile instead of committing `dist/`.
+- Add `CALENDAR_UPSTREAM_URL` etc. env var passthrough to the admin config page.

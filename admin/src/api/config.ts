@@ -1,14 +1,4 @@
-import axios from 'axios'
-
-const api = axios.create({ baseURL: '/' })
-
-api.interceptors.request.use((config) => {
-  const token = localStorage.getItem('shenyu_token')
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`
-  }
-  return config
-})
+import { api } from './http'
 
 export interface GatewayConfig {
   gateway_key: string
@@ -23,6 +13,31 @@ export interface GatewayConfig {
   cold_start_message_limit: number
   cold_start_idle_minutes: number
   model_mapping: Record<string, string>
+  calendar_upstream_url?: string
+  calendar_api_key?: string
+  calendar_protocol?: string
+  calendar_model?: string
+  // atomic memory
+  atomic_memory_upstream_url?: string
+  atomic_memory_api_key?: string
+  atomic_memory_protocol?: string
+  atomic_memory_model?: string
+  extract_atomic_memories?: boolean
+  inject_atomic_memories?: boolean
+  default_atomic_memory_limit?: number
+  atomic_memory_min_score?: number
+  atomic_memory_auto_activate_min_confidence?: number
+  // feature toggles
+  inject_briefing?: boolean
+  inject_meta_summaries?: boolean
+  inject_surface_passages?: boolean
+  enable_gateway_tools?: boolean
+  expose_supabase_tools?: boolean
+  max_internal_tool_rounds?: number
+  default_surface_limit?: number
+  daily_briefing_ttl_minutes?: number
+  // stats
+  gateway_db_path?: string
 }
 
 export interface HealthStatus {
@@ -33,11 +48,60 @@ export interface HealthStatus {
   protocol: string
   store?: boolean
   gateway_db_path?: string
+  enable_gateway_tools?: boolean
+  expose_supabase_tools?: boolean
+  inject_meta_summaries?: boolean
+  inject_briefing?: boolean
+  inject_surface_passages?: boolean
+  inject_atomic_memories?: boolean
+  extract_atomic_memories?: boolean
+  enable_cold_start?: boolean
 }
 
 export interface SaveConfigResult {
   ok: boolean
   changed: string[]
+  config: GatewayConfig
+}
+
+export interface GatewayOverview {
+  messages_total: number
+  messages_today: number
+  sessions_total: number
+  cold_start_snapshots: number
+  earliest_message_at: string | null
+  latest_message_at: string | null
+}
+
+export interface AtomicMemoryItem {
+  id: string
+  subject: string | null
+  content_canonical: string
+  content_surface: string | null
+  quote: string | null
+  time_hint: string | null
+  status: string
+  owner: string | null
+  memory_type: string
+  tier: number
+  importance: number
+  confidence: number
+  heat: number
+  session_tag: string | null
+  tags_json: string[] | null
+  entities_json: string[] | null
+  source_excerpt: string | null
+}
+
+export interface ColdStartPreview {
+  would_inject: boolean
+  reason: string | null
+  sources: Array<{
+    session_tag: string
+    client_name: string
+    snapshot_at: string
+    messages: Array<{ role: string; content: string }>
+  }>
 }
 
 export async function fetchConfig(): Promise<GatewayConfig> {
@@ -55,67 +119,29 @@ export async function fetchHealth(): Promise<HealthStatus> {
   return data
 }
 
-export interface GatewaySession {
-  id: string
-  session_tag: string
-  client_name: string | null
-  started_at: string
-  last_active_at: string
-  first_message_at: string
-  message_count: number
-  context_state_json: string
-  stored_message_count: number
-  last_message_at: string | null
-  user_message_count: number
-  assistant_message_count: number
-  tool_message_count: number
+export async function fetchGatewayOverview(): Promise<GatewayOverview> {
+  const { data } = await api.get('/api/gateway/overview')
+  return data.overview || data
 }
 
-export interface GatewayMessage {
-  id: string
-  session_id: string
-  role: string
-  content: string | null
-  tool_name: string | null
-  tool_args_json: string | null
-  tool_result_summary: string | null
-  source_table: string | null
-  source_id: string | null
-  created_at: string
-}
-
-export interface GatewaySessionStats {
-  messages: number
-  user_messages: number
-  assistant_messages: number
-  tool_messages: number
-  surface_events: number
-  heartbeats: number
-  cold_start_snapshots: number
-}
-
-export interface GatewaySessionDetail {
-  session: GatewaySession
-  stats: GatewaySessionStats
-  latest_cold_start_snapshot: Record<string, unknown> | null
-  recent_messages: GatewayMessage[]
-}
-
-export async function fetchGatewaySessions(params: { limit?: number; q?: string } = {}) {
-  const { data } = await api.get<{ sessions: GatewaySession[]; limit: number; query: string }>('/api/gateway/sessions', {
-    params,
-  })
+export async function fetchColdStartPreview(): Promise<ColdStartPreview> {
+  const { data } = await api.get('/api/gateway/cold-start/preview')
   return data
 }
 
-export async function fetchGatewaySession(sessionTag: string): Promise<GatewaySessionDetail> {
-  const { data } = await api.get(`/api/gateway/sessions/${encodeURIComponent(sessionTag)}`)
+export async function fetchAtomicMemories(params: {
+  status?: string
+  limit?: number
+  session_tag?: string
+}): Promise<{ items: AtomicMemoryItem[] }> {
+  const qs = new URLSearchParams()
+  if (params.status) qs.set('status', params.status)
+  if (params.limit) qs.set('limit', String(params.limit))
+  if (params.session_tag) qs.set('session_tag', params.session_tag)
+  const { data } = await api.get(`/api/gateway/atomic-memories?${qs.toString()}`)
   return data
 }
 
-export async function deleteGatewaySession(sessionTag: string) {
-  const { data } = await api.delete(`/api/gateway/sessions/${encodeURIComponent(sessionTag)}`, {
-    data: { confirm: sessionTag },
-  })
-  return data
+export async function reviewAtomicMemory(memoryId: string, status: string): Promise<void> {
+  await api.post(`/api/gateway/atomic-memories/${encodeURIComponent(memoryId)}/review`, { status })
 }

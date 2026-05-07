@@ -13,6 +13,16 @@ const router = createRouter({
       name: 'sessions',
       component: () => import('@/views/SessionsView.vue'),
     },
+    {
+      path: '/calendar',
+      name: 'calendar',
+      component: () => import('@/views/CalendarView.vue'),
+    },
+    {
+      path: '/logs',
+      name: 'logs',
+      component: () => import('@/views/LogsView.vue'),
+    },
   ],
 })
 

@@ -8,9 +8,6 @@ import {
   NDescriptionsItem,
   NEmpty,
   NInput,
-  NLayout,
-  NLayoutContent,
-  NLayoutHeader,
   NPopconfirm,
   NSpace,
   NTag,
@@ -23,7 +20,7 @@ import {
   fetchGatewaySessions,
   type GatewaySession,
   type GatewaySessionDetail,
-} from '@/api/config'
+} from '@/api/sessions'
 
 const message = useMessage()
 const loading = ref(false)
@@ -38,7 +35,7 @@ const selectedSession = computed(() => detail.value?.session || sessions.value.f
 
 const columns: DataTableColumns<GatewaySession> = [
   {
-    title: 'Session',
+    title: '会话标识',
     key: 'session_tag',
     minWidth: 180,
     render(row) {
@@ -46,7 +43,7 @@ const columns: DataTableColumns<GatewaySession> = [
     },
   },
   {
-    title: 'Client',
+    title: '客户端',
     key: 'client_name',
     width: 150,
     render(row) {
@@ -54,7 +51,7 @@ const columns: DataTableColumns<GatewaySession> = [
     },
   },
   {
-    title: 'Messages',
+    title: '消息数',
     key: 'stored_message_count',
     width: 110,
     render(row) {
@@ -62,7 +59,7 @@ const columns: DataTableColumns<GatewaySession> = [
     },
   },
   {
-    title: 'Last Active',
+    title: '最后活跃',
     key: 'last_active_at',
     width: 190,
     render(row) {
@@ -70,12 +67,12 @@ const columns: DataTableColumns<GatewaySession> = [
     },
   },
   {
-    title: 'Action',
+    title: '操作',
     key: 'actions',
     width: 160,
     render(row) {
       return [
-        hButton('View', () => selectSession(row.session_tag)),
+        hButton('查看', () => selectSession(row.session_tag)),
         hDelete(row),
       ]
     },
@@ -96,7 +93,7 @@ async function loadSessions() {
       detail.value = null
     }
   } catch {
-    message.error('Failed to load sessions')
+    message.error('加载会话列表失败')
   } finally {
     loading.value = false
   }
@@ -109,7 +106,7 @@ async function selectSession(sessionTag: string) {
     detail.value = await fetchGatewaySession(sessionTag)
   } catch {
     detail.value = null
-    message.error('Failed to load session detail')
+    message.error('加载会话详情失败')
   } finally {
     detailLoading.value = false
   }
@@ -119,14 +116,14 @@ async function deleteSession(sessionTag: string) {
   deletingTag.value = sessionTag
   try {
     await deleteGatewaySession(sessionTag)
-    message.success(`Deleted session: ${sessionTag}`)
+    message.success(`已删除会话: ${sessionTag}`)
     if (selectedTag.value === sessionTag) {
       selectedTag.value = ''
       detail.value = null
     }
     await loadSessions()
   } catch {
-    message.error('Delete failed')
+    message.error('删除失败')
   } finally {
     deletingTag.value = ''
   }
@@ -141,7 +138,7 @@ function formatTime(value: string | null | undefined) {
 
 function shortText(value: string | null | undefined, limit = 180) {
   const text = (value || '').trim()
-  if (!text) return '(empty)'
+  if (!text) return '(空)'
   return text.length > limit ? `${text.slice(0, limit - 1).trim()}...` : text
 }
 
@@ -169,8 +166,8 @@ function hDelete(row: GatewaySession) {
   return h(
     NPopconfirm,
     {
-      positiveText: 'Delete',
-      negativeText: 'Cancel',
+      positiveText: '删除',
+      negativeText: '取消',
       onPositiveClick: () => deleteSession(row.session_tag),
     },
     {
@@ -183,40 +180,32 @@ function hDelete(row: GatewaySession) {
             type: 'error',
             loading: deletingTag.value === row.session_tag,
           },
-          { default: () => 'Delete' },
+          { default: () => '删除' },
         ),
-      default: () => `Delete ${row.session_tag} and its local SQLite data?`,
+      default: () => `确定删除 ${row.session_tag} 及其所有本地 SQLite 数据？`,
     },
   )
 }
 </script>
 
 <template>
-  <NLayout>
-    <NLayoutHeader bordered class="topbar">
-      <h1>Gateway Sessions</h1>
-      <NSpace class="status" align="center">
-        <RouterLink to="/" class="nav-link">Config</RouterLink>
-        <NButton size="small" :loading="loading" @click="loadSessions">Refresh</NButton>
-      </NSpace>
-    </NLayoutHeader>
-
-    <NLayoutContent content-style="padding: 20px 24px; max-width: 1180px; margin: 0 auto">
+  <main class="sessions-page">
       <NSpace vertical size="medium">
         <NSpace align="center">
           <NInput
             v-model:value="query"
-            placeholder="Search session tag or client"
+            placeholder="搜索会话标识或客户端名称"
             clearable
             style="max-width: 320px"
             @keyup.enter="loadSessions"
           />
-          <NButton type="primary" :loading="loading" @click="loadSessions">Search</NButton>
-          <NTag type="default">Classification: pending</NTag>
+          <NButton type="primary" :loading="loading" @click="loadSessions">搜索</NButton>
+          <NButton :loading="loading" @click="loadSessions">刷新</NButton>
+          <NTag type="default">分类: 待处理</NTag>
         </NSpace>
 
         <div class="grid">
-          <NCard title="Threads" size="small">
+          <NCard title="线程列表" size="small">
             <NDataTable
               :columns="columns"
               :data="sessions"
@@ -228,22 +217,22 @@ function hDelete(row: GatewaySession) {
             />
           </NCard>
 
-          <NCard title="Session Detail" size="small" :loading="detailLoading">
+          <NCard title="会话详情" size="small" :loading="detailLoading">
             <template v-if="selectedSession && detail">
               <NDescriptions :column="2" size="small" label-placement="left" bordered>
-                <NDescriptionsItem label="Session">{{ selectedSession.session_tag }}</NDescriptionsItem>
-                <NDescriptionsItem label="Client">{{ selectedSession.client_name || 'unknown' }}</NDescriptionsItem>
-                <NDescriptionsItem label="Started">{{ formatTime(selectedSession.started_at) }}</NDescriptionsItem>
-                <NDescriptionsItem label="Last Active">{{ formatTime(selectedSession.last_active_at) }}</NDescriptionsItem>
-                <NDescriptionsItem label="Messages">{{ detail.stats.messages }}</NDescriptionsItem>
-                <NDescriptionsItem label="Artifacts">
-                  {{ detail.stats.surface_events }} surface · {{ detail.stats.heartbeats }} heartbeats ·
-                  {{ detail.stats.cold_start_snapshots }} cold starts
+                <NDescriptionsItem label="会话标识">{{ selectedSession.session_tag }}</NDescriptionsItem>
+                <NDescriptionsItem label="客户端">{{ selectedSession.client_name || 'unknown' }}</NDescriptionsItem>
+                <NDescriptionsItem label="开始时间">{{ formatTime(selectedSession.started_at) }}</NDescriptionsItem>
+                <NDescriptionsItem label="最后活跃">{{ formatTime(selectedSession.last_active_at) }}</NDescriptionsItem>
+                <NDescriptionsItem label="消息总数">{{ detail.stats.messages }}</NDescriptionsItem>
+                <NDescriptionsItem label="产出物">
+                  {{ detail.stats.surface_events }} surface · {{ detail.stats.heartbeats }} 心跳 ·
+                  {{ detail.stats.cold_start_snapshots }} 冷启动
                 </NDescriptionsItem>
               </NDescriptions>
 
               <div class="section">
-                <h2>Recent Messages</h2>
+                <h2>最近消息</h2>
                 <div v-if="detail.recent_messages.length" class="messages">
                   <div v-for="item in detail.recent_messages" :key="item.id" class="message-row">
                     <NTag size="small" :type="roleType(item.role)">{{ item.role }}</NTag>
@@ -254,58 +243,33 @@ function hDelete(row: GatewaySession) {
                     </div>
                   </div>
                 </div>
-                <NEmpty v-else description="No messages" />
+                <NEmpty v-else description="暂无消息" />
               </div>
 
               <NPopconfirm
-                positive-text="Delete"
-                negative-text="Cancel"
+                positive-text="删除"
+                negative-text="取消"
                 @positive-click="deleteSession(selectedSession.session_tag)"
               >
                 <template #trigger>
                   <NButton type="error" :loading="deletingTag === selectedSession.session_tag">
-                    Delete This Thread
+                    删除此线程
                   </NButton>
                 </template>
-                Delete {{ selectedSession.session_tag }} and all related local SQLite rows?
+                删除 {{ selectedSession.session_tag }} 及其所有相关本地 SQLite 数据？
               </NPopconfirm>
             </template>
-            <NEmpty v-else description="Select a thread" />
+            <NEmpty v-else description="请选择一个线程" />
           </NCard>
         </div>
       </NSpace>
-    </NLayoutContent>
-  </NLayout>
+    </main>
 </template>
 
 <style>
-body {
-  margin: 0;
-  background: #f5f5f5;
-  font-family: -apple-system, 'Segoe UI', sans-serif;
-}
-
-.topbar {
-  align-items: center;
-  display: flex;
-  height: 56px;
-  padding: 0 24px;
-}
-
-.topbar h1 {
-  color: #4f46e5;
-  font-size: 18px;
-  margin: 0;
-}
-
-.status {
-  margin-left: auto;
-}
-
-.nav-link {
-  color: #4f46e5;
-  font-size: 13px;
-  text-decoration: none;
+.sessions-page {
+  margin: 0 auto;
+  max-width: 1180px;
 }
 
 .grid {
@@ -324,7 +288,7 @@ body {
 }
 
 .section p {
-  color: #555;
+  color: #666;
   line-height: 1.6;
   margin: 0;
   white-space: pre-wrap;
@@ -337,7 +301,7 @@ body {
 }
 
 .message-row {
-  border-bottom: 1px solid #ececec;
+  border-bottom: 1px solid #e8e8e8;
   display: grid;
   gap: 10px;
   grid-template-columns: 86px 1fr;
@@ -346,12 +310,12 @@ body {
 
 .message-time,
 .message-tool {
-  color: #999;
+  color: #bbb;
   font-size: 12px;
 }
 
 .message-text {
-  color: #333;
+  color: #1f1f1f;
   line-height: 1.5;
   margin-top: 2px;
   white-space: pre-wrap;

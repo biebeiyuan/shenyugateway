@@ -339,7 +339,8 @@ function renderLogs(){
   c.innerHTML=logs.map(l=>{
     const ex=expIds.has(l.id),tab=aTabs[l.id]||'system',t=(l.timestamp||'').substring(11,19);
     return `<div class="log-card ${l.status}"><div class="log-sum" onclick="togL('${l.id}')">
-      <span class="lt">${t}</span><span class="tag tag-m">${l.model||'?'}</span>
+      <span class="lt">${t}</span><span class="tag tag-m">${l.client_model||l.model||'?'}</span>
+      ${l.model_mapped?'<span class="tag tag-d">-&gt; '+esc(l.upstream_model||'?')+'</span>':''}
       ${l.is_first_turn?'<span class="tag tag-f">首轮</span>':''}
       ${l.stream?'<span class="tag tag-s">流式</span>':''}
       ${l.tools_count?'<span class="tag tag-t">'+l.tools_count+' tools</span>':''}
@@ -522,7 +523,7 @@ async function saveConfig(){
   try{
     const r=await authFetch('/api/config',{method:'POST',body:JSON.stringify(body)});
     const d=await r.json();$('saveMsg').innerHTML='<span style="color:#3fb950">已保存 ✓ ('+d.changed.join(', ')+')</span>';
-    loadHealth();setTimeout(()=>$('saveMsg').innerHTML='',3000);
+    await loadCfg();loadHealth();setTimeout(()=>$('saveMsg').innerHTML='',3000);
   }catch(e){$('saveMsg').innerHTML='<span style="color:#f85149">保存失败</span>'}
 }
 
@@ -585,7 +586,7 @@ function renderAtomicReview(){
       <h4>${esc(item.content_canonical||'(empty)')}</h4>
       <div class="rev-meta">
         <span class="rev-pill">${esc(item.status||'')}</span>
-        <span class="rev-pill">${esc(item.owner||'shared')}</span>
+        <span class="rev-pill">${esc(item.subject||item.owner||'我们')}</span>
         <span class="rev-pill">${esc(item.memory_type||'other')}</span>
         <span class="rev-pill">tier ${esc(item.tier)}</span>
         <span class="rev-pill">importance ${esc(item.importance)}</span>
@@ -593,6 +594,8 @@ function renderAtomicReview(){
         <span class="rev-pill">heat ${esc(heat)}</span>
         <span class="rev-pill">${esc(item.session_tag||'default')}</span>
       </div>
+      ${item.time_hint?`<div class="rev-body"><b>time:</b> ${esc(item.time_hint)}</div>`:''}
+      ${item.quote?`<div class="rev-body"><b>quote:</b> ${esc(item.quote)}</div>`:''}
       ${item.content_surface&&item.content_surface!==item.content_canonical?`<div class="rev-body"><b>surface:</b> ${esc(item.content_surface)}</div>`:''}
       ${item.source_excerpt?`<div class="rev-body"><b>source:</b>\n${esc(item.source_excerpt)}</div>`:''}
       ${(tags.length||entities.length)?`<div class="rev-body"><b>tags/entities:</b> ${esc(tags.join(', '))}${tags.length&&entities.length?' | ':''}${esc(entities.join(', '))}</div>`:''}

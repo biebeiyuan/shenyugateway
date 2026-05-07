@@ -23,7 +23,8 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import FileResponse, RedirectResponse, StreamingResponse
+from fastapi.staticfiles import StaticFiles
 
 from shenyu_gateway.calendar import (
     default_period_key,
@@ -149,6 +150,24 @@ def _today_utc_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
+def _relative_time_label(value: Optional[str]) -> str:
+    dt = _parse_ts(value)
+    if not dt:
+        return ""
+    days = (_now().date() - dt.date()).days
+    if days <= 0:
+        return "今天"
+    if days == 1:
+        return "昨天"
+    if days <= 6:
+        return "前几天"
+    if days <= 13:
+        return "上周"
+    if days <= 45:
+        return "上个月"
+    return dt.date().isoformat()
+
+
 def _safe_json_loads(value: Any, fallback: Any):
     if value is None:
         return fallback
@@ -196,6 +215,9 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="shenyu-gateway", version="0.3.0", lifespan=lifespan)
+ADMIN_DIST_DIR = Path(__file__).parent / "admin" / "dist"
+if (ADMIN_DIST_DIR / "assets").exists():
+    app.mount("/admin/assets", StaticFiles(directory=ADMIN_DIST_DIR / "assets"), name="admin-assets")
 
 
 # ── 全局异常捕获（调试用） ──
@@ -325,6 +347,11 @@ def _chat_url_for(base_url: str, protocol: str = "auto") -> str:
 
 def _get_chat_url() -> str:
     return _chat_url_for(cfg.upstream_url, cfg.upstream_protocol)
+
+
+def _mapped_model_name(model_name: str) -> str:
+    model = (model_name or "").strip()
+    return cfg.model_mapping.get(model, model)
 
 
 async def verify_api_key(request: Request):
@@ -711,8 +738,8 @@ class GatewayToolService:
             "order": "heat.desc,importance.desc,updated_at.desc",
             "limit": "80",
             "select": (
-                "id,session_tag,owner,applies_to,speaker_perspective,content_canonical,content_surface,"
-                "memory_type,tier,confidence,importance,heat,valence,arousal,entities_json,tags_json,"
+                "id,session_tag,subject,owner,content_canonical,content_surface,quote,time_hint,"
+                "memory_type,tier,confidence,importance,heat,entities_json,tags_json,"
                 "source_excerpt,activation_count,last_activated,created_at,updated_at"
             ),
         }
@@ -876,8 +903,12 @@ class GatewayToolService:
         entities = _safe_json_loads(memory.get("entities_json"), [])
         full_text = "\n".join(
             [
+                memory.get("subject") or memory.get("owner") or "",
                 memory.get("content_canonical") or "",
                 memory.get("content_surface") or "",
+                memory.get("quote") or "",
+                memory.get("time_hint") or "",
+                memory.get("source_excerpt") or "",
                 memory.get("memory_type") or "",
                 " ".join(str(tag) for tag in tags),
                 " ".join(str(entity) for entity in entities),
@@ -1233,7 +1264,8 @@ class AtomicMemoryService:
 
         run_id = f"aer_{uuid.uuid4().hex[:12]}"
         started_at = _iso_now()
-        prompt_messages = self._build_extraction_messages(session, user_text, assistant_text)
+        similar_memories = await self._find_similar_memories(session, user_text, assistant_text)
+        prompt_messages = self._build_extraction_messages(session, user_text, assistant_text, similar_memories)
         upstream = self._atomic_upstream()
         if not upstream["base_url"] or not upstream["api_key"] or not upstream["model"]:
             logger.info("[AtomicMemory] extractor not configured; skipping.")
@@ -1292,26 +1324,109 @@ class AtomicMemoryService:
             "model": model,
         }
 
-    def _build_extraction_messages(self, session: dict, user_text: str, assistant_text: str) -> list[dict]:
-        system = (
-            "You are Shenyu Gateway's atomic memory extractor. Return JSON only.\n"
-            "Extract only small long-term memories that would still be useful three months later.\n"
-            "Prefer returning an empty memories array over noisy memories.\n"
-            "Do not store greetings, filler, ordinary debugging logs, tool parameters, or generic warmth.\n"
-            "One memory must have a clear subject and should not split one fact into many items.\n"
-            "Capture user facts, assistant commitments, and shared relationship/project continuity when durable.\n"
-            "Use Chinese for content fields when the conversation is Chinese.\n"
-            "Schema: {\"memories\":[{\"owner\":\"user|assistant|shared\",\"applies_to\":\"user|assistant|shared\","
-            "\"speaker_perspective\":\"user|assistant|shared\",\"content_canonical\":\"...\","
-            "\"content_surface\":\"...\",\"memory_type\":\"preference|health|emotion|commitment|project|relation|boundary|routine|identity|event|other\","
-            "\"tier\":1-4,\"confidence\":0-1,\"importance\":1-5,\"valence\":-1..1,\"arousal\":-1..1,"
-            "\"tags\":[\"...\"],\"entities\":[\"...\"],\"reason\":\"why this is worth remembering\"}]}"
+    async def _find_similar_memories(self, session: dict, user_text: str, assistant_text: str) -> list[dict]:
+        if not supabase_client:
+            return []
+        session_tag = session.get("session_tag") or "default"
+        params = {
+            "status": "eq.active",
+            "session_tag": f"eq.{session_tag}",
+            "order": "updated_at.desc",
+            "limit": "80",
+            "select": (
+                "id,session_tag,subject,owner,content_canonical,content_surface,quote,time_hint,"
+                "memory_type,tier,confidence,importance,heat,tags_json,entities_json,updated_at"
+            ),
+        }
+        try:
+            rows = await supabase_client.query("atomic_memories", params)
+        except Exception:
+            return []
+
+        query = f"{user_text}\n{assistant_text}"
+        scored: list[tuple[float, dict]] = []
+        for row in rows:
+            score = self._score_similarity(query, row)
+            if score <= 0.22:
+                continue
+            scored.append((score, row))
+        scored.sort(key=lambda item: item[0], reverse=True)
+        return [row for _, row in scored[:5]]
+
+    def _score_similarity(self, query: str, memory: dict) -> float:
+        tags = _safe_json_loads(memory.get("tags_json"), [])
+        entities = _safe_json_loads(memory.get("entities_json"), [])
+        full_text = "\n".join(
+            [
+                memory.get("subject") or memory.get("owner") or "",
+                memory.get("content_canonical") or "",
+                memory.get("content_surface") or "",
+                memory.get("quote") or "",
+                memory.get("time_hint") or "",
+                memory.get("memory_type") or "",
+                " ".join(str(tag) for tag in tags),
+                " ".join(str(entity) for entity in entities),
+            ]
         )
+        keyword_score = _keyword_overlap_score(query, full_text)
+        recency_score = self._recency_score(memory.get("updated_at"))
+        tier_bonus = 0.06 if int(memory.get("tier") or 3) >= 3 else 0.0
+        confidence_bonus = _clamp(float(memory.get("confidence") or 0), 0.0, 1.0) * 0.08
+        return _clamp(keyword_score * 0.72 + recency_score * 0.15 + tier_bonus + confidence_bonus, 0.0, 1.0)
+
+    def _build_extraction_messages(self, session: dict, user_text: str, assistant_text: str, similar_memories: list[dict]) -> list[dict]:
+        system = (
+            "You are Shenyu Gateway's atomic memory note-taker. Return JSON only.\n"
+            "Your job is not to archive everything. Your job is to listen with care and keep small durable notes that may still matter later.\n"
+            "You are listening inside the relationship, not from a generic product log.\n"
+            "Use these names:\n"
+            "- 圆圆 = the human partner\n"
+            "- 沈予 = the AI partner\n"
+            "- 我们 = shared relationship, private language, shared projects, mutual promises, or joint memories\n"
+            "Never call them \"用户\" or \"助手\" in memory content, quote framing, or subject fields.\n"
+            "Keep notes when the turn contains relationship-specific names, nicknames, private codes, recurring jokes, rituals, shared meanings, body state, health state, emotional state, sleep/work state, recent pressure, preferences, boundaries, habits, identity facts, commitments, or meaningful incidents.\n"
+            "Do not keep pure acknowledgements like 嗯嗯, 哈哈哈好的, 收到; ordinary debugging logs without durable project meaning; one-off chatter; or duplicated facts already captured in this extraction.\n"
+            "When a phrase looks warm or playful, do not automatically discard it. Ask whether it carries private meaning, relationship continuity, body/emotion context, care instruction, time context, or a meaningful change.\n"
+            "Prefer returning an empty memories array over noisy memories.\n"
+            "Use Chinese for content fields when the conversation is Chinese.\n"
+            "Schema: {\"memories\":[{\"subject\":\"圆圆|沈予|我们\",\"content_canonical\":\"...\","
+            "\"content_surface\":\"...\",\"quote\":\"...\",\"time_hint\":\"...\","
+            "\"memory_type\":\"preference|state|commitment|relation|event|other\","
+            "\"tier\":1-4,\"confidence\":0-1,\"importance\":1-5,"
+            "\"tags\":[\"...\"],\"entities\":[\"...\"],\"reason\":\"why this is worth remembering\"}]}.\n"
+            "Field guidance:\n"
+            "- subject: 圆圆 for notes mainly about 圆圆; 沈予 for notes mainly about 沈予; 我们 for shared language, relationship facts, shared projects, or mutual commitments.\n"
+            "- content_canonical: clean factual note, useful later.\n"
+            "- content_surface: warmer human-facing note, preserving the relationship tone when appropriate.\n"
+            "- quote: a short original phrase from the turn when it preserves voice; otherwise empty.\n"
+            "- time_hint: preserve relative or explicit time if present, such as 今天, 昨天, 前几天, 上周, 上个月, 凌晨三点半; otherwise empty.\n"
+            "- memory_type: preference, state, commitment, relation, event, or other.\n"
+            "- tier: 1=small and short-lived; 2=personal preference or current/recent state; 3=important relationship fact, private code, recurring pattern, or project continuity; 4=commitment, boundary, safety-relevant fact, or deeply important relationship memory.\n"
+            "- tags: short stable Chinese keywords; prefer consistent names over synonyms.\n"
+            "- entities: external referents like people other than 圆圆/沈予, places, projects, objects, works, models, or private-code terms. Do not list 圆圆 or 沈予 themselves.\n"
+            "Examples:\n"
+            "YES 圆圆 says: 圆儿就是你提醒我喝水的暗号。 -> subject 我们, memory_type relation, tier 3, content_canonical “圆儿”是圆圆和沈予之间的暗号，表示沈予提醒圆圆喝水。, quote 圆儿就是你提醒我喝水的暗号, entities [\"圆儿\"].\n"
+            "YES 圆圆 says: 凌晨三点半了我还在改网关，连续搓了十几个小时。 -> subject 圆圆, memory_type state, tier 2, time_hint 凌晨三点半, entities [\"网关\"].\n"
+            "NO 圆圆 says: 哈哈哈好的。 -> {\"memories\":[]}.\n"
+            "Boundary: 老公抱抱我，我今天真的被那个电话吓到了，晚上可能会一直想这事。 Keep it as state/event because it has a specific emotional incident, time marker, and future care context."
+        )
+        similar_block = ""
+        if similar_memories:
+            lines = ["[similar existing notes]"]
+            for item in similar_memories:
+                lines.append(
+                    "- "
+                    f"{item.get('subject') or item.get('owner') or '我们'} / {item.get('memory_type') or 'other'} / tier {item.get('tier') or '?'}"
+                    f" / {item.get('time_hint') or ''}"
+                    f" / {item.get('content_canonical') or item.get('content_surface') or ''}"
+                )
+            similar_block = "\n".join(lines) + "\n\n"
         user = (
             f"session_tag: {session.get('session_tag') or 'default'}\n\n"
-            "[user]\n"
+            f"{similar_block}"
+            "[圆圆]\n"
             f"{_shorten(user_text, 1600)}\n\n"
-            "[assistant]\n"
+            "[沈予]\n"
             f"{_shorten(assistant_text, 2200)}"
         )
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
@@ -1353,29 +1468,45 @@ class AtomicMemoryService:
         confidence = float(candidate.get("confidence") or 0)
         status = "active" if confidence >= cfg.atomic_memory_auto_activate_min_confidence else "proposed"
         now = _iso_now()
+        subject = self._choice(candidate.get("subject"), {"圆圆", "沈予", "我们"}, "我们")
+        quote = (candidate.get("quote") or "").strip()
+        time_hint = (candidate.get("time_hint") or "").strip()
         return {
             "session_tag": session.get("session_tag") or "default",
-            "owner": self._choice(candidate.get("owner"), {"user", "assistant", "shared"}, "shared"),
-            "applies_to": self._choice(candidate.get("applies_to"), {"user", "assistant", "shared"}, "shared"),
-            "speaker_perspective": self._choice(candidate.get("speaker_perspective"), {"user", "assistant", "shared"}, "shared"),
+            "subject": subject,
+            "owner": subject,
+            "applies_to": subject,
+            "speaker_perspective": subject,
             "content_canonical": canonical,
             "content_surface": (candidate.get("content_surface") or canonical).strip(),
+            "quote": quote,
+            "time_hint": time_hint,
             "memory_type": self._choice(
                 candidate.get("memory_type"),
-                {"preference", "health", "emotion", "commitment", "project", "relation", "boundary", "routine", "identity", "event", "other"},
+                {"preference", "state", "commitment", "relation", "event", "other"},
                 "other",
             ),
             "tier": max(1, min(int(candidate.get("tier") or 3), 4)),
             "confidence": _clamp(confidence, 0.0, 1.0),
             "importance": max(1, min(int(candidate.get("importance") or 2), 5)),
             "heat": 0.68,
-            "valence": _clamp(float(candidate.get("valence") or 0), -1.0, 1.0),
-            "arousal": _clamp(float(candidate.get("arousal") or 0), -1.0, 1.0),
             "entities_json": candidate.get("entities") or [],
             "tags_json": candidate.get("tags") or [],
             "source_session_id": session.get("id"),
             "source_message_ids_json": [],
-            "source_excerpt": _shorten(f"用户：{user_text}\n小机：{assistant_text}", 800),
+            "source_excerpt": _shorten(
+                "\n".join(
+                    part
+                    for part in [
+                        f"圆圆：{user_text}",
+                        f"沈予：{assistant_text}",
+                        f"原话：{quote}" if quote else "",
+                        f"时间：{time_hint}" if time_hint else "",
+                    ]
+                    if part
+                ),
+                800,
+            ),
             "source_model": source_model,
             "status": status,
             "activation_count": 0,
@@ -2224,7 +2355,12 @@ class ContextBuilder:
         if atomic_memories:
             lines = ["## Relevant Atomic Memories"]
             for item in atomic_memories:
-                marker = f"{item.get('owner') or 'shared'} / {item.get('memory_type') or 'memory'} / tier {item.get('tier') or '?'}"
+                marker = f"{item.get('subject') or item.get('owner') or '我们'} / {item.get('memory_type') or 'other'} / tier {item.get('tier') or '?'}"
+                if item.get("time_hint"):
+                    marker += f" / {item.get('time_hint')}"
+                when = _relative_time_label(item.get("created_at"))
+                if when:
+                    marker += f" / {when}"
                 content = item.get("content_canonical") or item.get("content_surface") or ""
                 why = ", ".join(item.get("why") or [])
                 lines.append(f"- [{marker}] {_shorten(content, 180)} ({why})")
@@ -2946,7 +3082,7 @@ async def _build_upstream_request(
     messages_override: Optional[list[dict]] = None,
     meta: Optional[dict] = None,
 ) -> tuple[dict, dict, str, dict]:
-    model_name = body.model
+    model_name = _mapped_model_name(body.model)
     proto = _detect_protocol()
     raw_messages = messages_override or [message.model_dump(exclude_none=True) for message in body.messages]
     merged_tools = _merge_tools(body.tools)
@@ -3402,6 +3538,19 @@ async def list_models(request: Request):
     models = upstream_models if upstream_models else [
         {"id": "default", "object": "model", "created": 1700000000, "owned_by": "shenyu"}
     ]
+    if cfg.model_mapping:
+        existing_ids = {model.get("id") for model in models}
+        aliases = [
+            {
+                "id": alias,
+                "object": "model",
+                "created": 1700000000,
+                "owned_by": "shenyu-alias",
+            }
+            for alias in cfg.model_mapping
+            if alias not in existing_ids
+        ]
+        models = aliases + models
     return {"object": "list", "data": models}
 
 
@@ -3440,6 +3589,9 @@ async def chat_completions(request: Request, body: ChatRequest):
         "id": log_id,
         "timestamp": _iso_now(),
         "model": body.model,
+        "client_model": body.model,
+        "upstream_model": _mapped_model_name(body.model),
+        "model_mapped": _mapped_model_name(body.model) != body.model,
         "stream": body.stream,
         "session_tag": session.get("session_tag", "default"),
         "is_first_turn": is_first,
@@ -3600,6 +3752,7 @@ async def get_config_full():
         "atomic_memory_api_key": cfg.atomic_memory_api_key,
         "atomic_memory_protocol": cfg.atomic_memory_protocol,
         "atomic_memory_model": cfg.atomic_memory_model,
+        "model_mapping": cfg.model_mapping,
         "supabase_url": cfg.supabase_url,
         "supabase_key": cfg.supabase_key,
         "inject_meta_summaries": cfg.inject_meta_summaries,
@@ -3643,6 +3796,7 @@ async def update_config(body: ConfigUpdate):
         "atomic_memory_api_key": "ATOMIC_MEMORY_API_KEY",
         "atomic_memory_protocol": "ATOMIC_MEMORY_PROTOCOL",
         "atomic_memory_model": "ATOMIC_MEMORY_MODEL",
+        "model_mapping": "MODEL_MAPPING",
         "supabase_url": "SUPABASE_URL",
         "supabase_key": "SUPABASE_SERVICE_KEY",
         "inject_meta_summaries": "INJECT_META_SUMMARIES",
@@ -3739,6 +3893,14 @@ async def update_config(body: ConfigUpdate):
         cfg.atomic_memory_auto_activate_min_confidence = _clamp(float(body.atomic_memory_auto_activate_min_confidence), 0.0, 1.0)
         changed.append("atomic_memory_auto_activate_min_confidence")
         env_updates[env_names["atomic_memory_auto_activate_min_confidence"]] = cfg.atomic_memory_auto_activate_min_confidence
+    if body.model_mapping is not None:
+        cfg.model_mapping = {
+            str(key).strip(): str(value).strip()
+            for key, value in body.model_mapping.items()
+            if str(key).strip() and str(value).strip()
+        }
+        changed.append("model_mapping")
+        env_updates[env_names["model_mapping"]] = json.dumps(cfg.model_mapping, ensure_ascii=False)
 
     _persist_env(env_updates)
 
@@ -3750,7 +3912,7 @@ async def update_config(body: ConfigUpdate):
     if "gateway_db_path" in changed:
         _init_store()
 
-    return {"ok": True, "changed": changed}
+    return {"ok": True, "changed": changed, "config": await get_config_full()}
 
 
 @app.get("/api/gateway/tools")
@@ -3829,8 +3991,8 @@ async def list_atomic_memories(status: str = "proposed", limit: int = 50, sessio
         "order": "updated_at.desc",
         "limit": str(max(1, min(limit, 200))),
         "select": (
-            "id,session_tag,owner,applies_to,speaker_perspective,content_canonical,content_surface,"
-            "memory_type,tier,confidence,importance,heat,valence,arousal,entities_json,tags_json,"
+            "id,session_tag,subject,owner,content_canonical,content_surface,quote,time_hint,"
+            "memory_type,tier,confidence,importance,heat,entities_json,tags_json,"
             "source_excerpt,source_model,status,activation_count,last_activated,created_at,updated_at"
         ),
     }
@@ -3908,6 +4070,9 @@ async def gateway_logs(limit: int = 30):
             "id": l["id"],
             "timestamp": l["timestamp"],
             "model": l["model"],
+            "client_model": l.get("client_model", l["model"]),
+            "upstream_model": l.get("upstream_model", l["model"]),
+            "model_mapped": l.get("model_mapped", False),
             "stream": l["stream"],
             "session_tag": l["session_tag"],
             "is_first_turn": l["is_first_turn"],
@@ -4016,6 +4181,11 @@ async def calendar_generate(request: Request, body: CalendarGenerateRequest):
     return await service.generate_page(body)
 
 
+@app.get("/")
+async def root_page():
+    return RedirectResponse("/admin")
+
+
 @app.get("/debug")
 async def debug_page():
     from fastapi.responses import HTMLResponse
@@ -4028,17 +4198,16 @@ async def debug_page():
 @app.get("/admin")
 @app.get("/admin/")
 async def admin_page():
-    from fastapi.responses import HTMLResponse
-    html_path = Path(__file__).parent / "debug.html"
+    html_path = ADMIN_DIST_DIR / "index.html"
     if html_path.exists():
-        return HTMLResponse(html_path.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>debug.html not found</h1>")
+        return FileResponse(html_path)
+    return HTMLResponse("<h1>admin dist not found</h1><p>Run <code>npm run build</code> in <code>admin/</code>, or use <code>npm run dev</code> during development.</p>")
 
 
 if __name__ == "__main__":
     import uvicorn
 
-    port = int(os.getenv("PORT", "8000"))
+    port = int(os.getenv("PORT", "8010"))
     reload_enabled = os.getenv("UVICORN_RELOAD", "false").lower() in {"1", "true", "yes", "on"}
     print(f"Start -> http://localhost:{port}")
     print(f"Admin -> http://localhost:{port}/admin")

@@ -1,19 +1,23 @@
-# 用 Python 3.12 官方镜像
+FROM node:22-slim AS admin-builder
+
+WORKDIR /app/admin
+COPY admin/package*.json ./
+RUN npm ci
+COPY admin ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 WORKDIR /app
 
-# 依赖
-COPY requirements.txt .
+COPY requirements.txt ./
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 代码和后台页面
-COPY gateway.py .
+COPY gateway.py ./
 COPY shenyu_gateway ./shenyu_gateway
-COPY debug.html .
+COPY debug.html ./
+COPY --from=admin-builder /app/admin/dist ./admin/dist
 
-# 端口
-EXPOSE 8000
+EXPOSE 8010
 
-# 启动（不用 reload，生产环境）
-CMD ["uvicorn", "gateway:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "gateway:app", "--host", "0.0.0.0", "--port", "8010"]

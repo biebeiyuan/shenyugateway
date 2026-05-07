@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import json
 from typing import Any, Optional
 
 from .runtime import mask, _env_bool
@@ -34,6 +35,7 @@ class RuntimeConfig:
         self.atomic_memory_api_key: str = os.getenv("ATOMIC_MEMORY_API_KEY", "")
         self.atomic_memory_protocol: str = os.getenv("ATOMIC_MEMORY_PROTOCOL", "auto")
         self.atomic_memory_model: str = os.getenv("ATOMIC_MEMORY_MODEL", "")
+        self.model_mapping: dict[str, str] = self._load_model_mapping()
 
         self.inject_meta_summaries: bool = _env_bool("INJECT_META_SUMMARIES", True)
         self.inject_briefing: bool = _env_bool("INJECT_BRIEFING", True)
@@ -72,6 +74,7 @@ class RuntimeConfig:
             "atomic_memory_api_key": mask(self.atomic_memory_api_key),
             "atomic_memory_protocol": self.atomic_memory_protocol,
             "atomic_memory_model": self.atomic_memory_model,
+            "model_mapping": self.model_mapping,
             "inject_meta_summaries": self.inject_meta_summaries,
             "inject_briefing": self.inject_briefing,
             "inject_surface_passages": self.inject_surface_passages,
@@ -92,4 +95,20 @@ class RuntimeConfig:
             "atomic_memory_min_score": self.atomic_memory_min_score,
             "atomic_memory_auto_activate_min_confidence": self.atomic_memory_auto_activate_min_confidence,
             "heartbeat_inject_every": self.heartbeat_inject_every,
+        }
+
+    def _load_model_mapping(self) -> dict[str, str]:
+        raw = os.getenv("MODEL_MAPPING", "").strip()
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            str(key).strip(): str(value).strip()
+            for key, value in data.items()
+            if str(key).strip() and str(value).strip()
         }
