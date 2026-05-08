@@ -1672,6 +1672,21 @@ class AtomicMemoryService:
         confidence_bonus = _clamp(float(memory.get("confidence") or 0), 0.0, 1.0) * 0.08
         return _clamp(keyword_score * 0.72 + recency_score * 0.15 + tier_bonus + confidence_bonus, 0.0, 1.0)
 
+    def _recency_score(self, created_at: Optional[str]) -> float:
+        dt = _parse_ts(created_at)
+        if not dt:
+            return 0.2
+        days = max((_now() - dt).days, 0)
+        if days <= 1:
+            return 1.0
+        if days <= 3:
+            return 0.8
+        if days <= 7:
+            return 0.65
+        if days <= 14:
+            return 0.45
+        return 0.25
+
     def _build_extraction_messages(self, session: dict, dialogue_block: str, similar_memories: list[dict]) -> list[dict]:
         system = _active_atomic_prompt_content()
         similar_block = ""
