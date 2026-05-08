@@ -30,6 +30,7 @@ import {
   type GatewaySession,
   type GatewaySessionDetail,
   type GatewayMessage,
+  type GatewayRawRequestWindow,
 } from '@/api/sessions'
 
 const message = useMessage()
@@ -267,6 +268,10 @@ function snapshotTitle(item: GatewayContextSnapshot) {
   return `${formatTime(item.created_at)} / ${item.message_count} 条 / 最新圆圆：${shortText(item.latest_user_text, 80)}`
 }
 
+function rawWindowTitle(item: GatewayRawRequestWindow) {
+  return `${formatTime(item.created_at)} / ${item.message_count} 条 / 最新圆圆：${shortText(item.latest_user_text, 80)}`
+}
+
 function coldTitle(item: GatewayColdStartSnapshot) {
   return `${formatTime(item.created_at)} / ${item.reason} / ${item.injected_count}/${item.max_injections}`
 }
@@ -361,6 +366,21 @@ function messageKey(item: GatewayMessage, index: number) {
                 </section>
               </div>
               <NEmpty v-else description="暂无上下文快照" />
+            </NTabPane>
+
+            <NTabPane name="raw-windows" tab="原始窗口">
+              <div v-if="detail.raw_request_windows?.length" class="stack">
+                <section v-for="window in detail.raw_request_windows" :key="window.id" class="block">
+                  <h3>{{ rawWindowTitle(window) }}</h3>
+                  <div class="mini-list">
+                    <div v-for="(msg, index) in window.messages" :key="index" class="mini-row">
+                      <NTag size="small" :type="roleType(String(msg.role || ''))">{{ roleLabel(String(msg.role || '')) }}</NTag>
+                      <span>{{ shortText(msg.content, 260) }}</span>
+                    </div>
+                  </div>
+                </section>
+              </div>
+              <NEmpty v-else description="暂无原始请求窗口" />
             </NTabPane>
 
             <NTabPane name="cold-start" tab="冷启动">
