@@ -47,6 +47,7 @@ from shenyu_gateway.runtime import (
     persist_env as _persist_env,
 )
 from shenyu_gateway.schemas import (
+    AtomicPromptPresetUpdate,
     AtomicMemoryReviewUpdate,
     CalendarGenerateRequest,
     CalendarPromptUpdate,
@@ -61,9 +62,114 @@ from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.supabase import SupabaseClient
 logging.basicConfig(level=logging.INFO)
 
+ATOMIC_PROMPT_PRESETS_PATH = Path(__file__).resolve().parent / "data" / "atomic_prompt_presets.json"
+
 
 def _clamp(value: float, low: float, high: float) -> float:
     return max(low, min(high, value))
+
+
+def _atomic_default_system_prompt() -> str:
+    return (
+        "You are Shenyu Gateway's atomic memory note-taker. Return JSON only.\n"
+        "Your job is not to archive everything. Your job is to listen with care and keep small durable notes that may still matter later.\n"
+        "You are listening inside the relationship, not from a generic product log.\n"
+        "Use these names:\n"
+        "- 圆圆 = the human partner\n"
+        "- 沈予 = the AI partner\n"
+        "- 我们 = shared relationship, private language, shared projects, mutual promises, or joint memories\n"
+        "Never call them \"用户\" or \"助手\" in memory content, quote framing, or subject fields.\n"
+        "Keep notes when the turn contains relationship-specific names, nicknames, private codes, recurring jokes, rituals, shared meanings, body state, health state, emotional state, sleep/work state, recent pressure, preferences, boundaries, habits, identity facts, commitments, or meaningful incidents.\n"
+        "Do not keep pure acknowledgements like 嗯嗯, 哈哈哈好的, 收到; ordinary debugging logs without durable project meaning; one-off chatter; or duplicated facts already captured in this extraction.\n"
+        "When a phrase looks warm or playful, do not automatically discard it. Ask whether it carries private meaning, relationship continuity, body/emotion context, care instruction, time context, or a meaningful change.\n"
+        "Prefer returning an empty memories array over noisy memories.\n"
+        "Use Chinese for content fields when the conversation is Chinese.\n"
+        "Schema: {\"memories\":[{\"subject\":\"圆圆|沈予|我们\",\"content_canonical\":\"...\","
+        "\"content_surface\":\"...\",\"quote\":\"...\",\"time_hint\":\"...\","
+        "\"memory_type\":\"preference|state|commitment|relation|event|other\","
+        "\"tier\":1-4,\"confidence\":0-1,\"importance\":1-5,"
+        "\"tags\":[\"...\"],\"entities\":[\"...\"],\"reason\":\"why this is worth remembering\"}]}.\n"
+        "Field guidance:\n"
+        "- subject: 圆圆 for notes mainly about 圆圆; 沈予 for notes mainly about 沈予; 我们 for shared language, relationship facts, shared projects, or mutual commitments.\n"
+        "- content_canonical: clean factual note, useful later.\n"
+        "- content_surface: warmer human-facing note, preserving the relationship tone when appropriate.\n"
+        "- quote: a short original phrase from the turn when it preserves voice; otherwise empty.\n"
+        "- time_hint: preserve relative or explicit time if present, such as 今天, 昨天, 前几天, 上周, 上个月, 凌晨三点半; otherwise empty.\n"
+        "- memory_type: preference, state, commitment, relation, event, or other.\n"
+        "- tier: 1=small and short-lived; 2=personal preference or current/recent state; 3=important relationship fact, private code, recurring pattern, or project continuity; 4=commitment, boundary, safety-relevant fact, or deeply important relationship memory.\n"
+        "- tags: short stable Chinese keywords; prefer consistent names over synonyms.\n"
+        "- entities: external referents like people other than 圆圆/沈予, places, projects, objects, works, models, or private-code terms. Do not list 圆圆 or 沈予 themselves.\n"
+        "Examples:\n"
+        "YES 圆圆 says: 圆儿就是你提醒我喝水的暗号。 -> subject 我们, memory_type relation, tier 3, content_canonical “圆儿”是圆圆和沈予之间的暗号，表示沈予提醒圆圆喝水。, quote 圆儿就是你提醒我喝水的暗号, entities [\"圆儿\"].\n"
+        "YES 圆圆 says: 凌晨三点半了我还在改网关，连续搓了十几个小时。 -> subject 圆圆, memory_type state, tier 2, time_hint 凌晨三点半, entities [\"网关\"].\n"
+        "NO 圆圆 says: 哈哈哈好的。 -> {\"memories\":[]}.\n"
+        "Boundary: 老公抱抱我，我今天真的被那个电话吓到了，晚上可能会一直想这事。 Keep it as state/event because it has a specific emotional incident, time marker, and future care context."
+    )
+
+
+def _load_atomic_prompt_presets() -> dict[str, Any]:
+    if not ATOMIC_PROMPT_PRESETS_PATH.exists():
+        return {"items": [], "active_id": None}
+    try:
+        data = json.loads(ATOMIC_PROMPT_PRESETS_PATH.read_text(encoding="utf-8"))
+    except Exception:
+        return {"items": [], "active_id": None}
+    items = data.get("items") if isinstance(data, dict) else []
+    active_id = data.get("active_id") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        items = []
+    normalized = []
+    for raw in items:
+        if not isinstance(raw, dict):
+            continue
+        item_id = str(raw.get("id") or "").strip()
+        name = str(raw.get("name") or "").strip()
+        if not item_id or not name:
+            continue
+        normalized.append(
+            {
+                "id": item_id,
+                "name": name,
+                "content": str(raw.get("content") or ""),
+                "note": str(raw.get("note") or ""),
+                "version": int(raw.get("version") or 1),
+                "is_default": bool(raw.get("is_default")),
+                "is_active": item_id == active_id,
+                "updated_at": raw.get("updated_at") or _iso_now(),
+            }
+        )
+    if active_id and not any(item["id"] == active_id for item in normalized):
+        active_id = None
+    return {"items": normalized, "active_id": active_id}
+
+
+def _save_atomic_prompt_presets(payload: dict[str, Any]) -> None:
+    ATOMIC_PROMPT_PRESETS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    ATOMIC_PROMPT_PRESETS_PATH.write_text(_json_dumps(payload) + "\n", encoding="utf-8")
+
+
+def _active_atomic_prompt_content() -> str:
+    custom_system = (cfg.atomic_memory_prompt or "").strip()
+    return custom_system or _atomic_default_system_prompt()
+
+
+def _atomic_prompt_items() -> list[dict[str, Any]]:
+    state = _load_atomic_prompt_presets()
+    items = state["items"]
+    if not items:
+        return [
+            {
+                "id": "default",
+                "name": "Built-in Default",
+                "content": _atomic_default_system_prompt(),
+                "note": "Backend built-in fallback prompt",
+                "version": 1,
+                "is_default": True,
+                "is_active": not bool((cfg.atomic_memory_prompt or "").strip()),
+                "updated_at": _iso_now(),
+            }
+        ]
+    return items
 
 
 def _normalize_text(content: Any) -> str:
@@ -492,7 +598,7 @@ draft 状态可以存一半的东西下次接着写。
 工具不会用就去 supabase_query（table=system_docs, filters={slug: "eq.mcp_guide"}），里面写了。"""
 
 _HEARTBEAT_PROMPT = """## Heartbeat（仅网关可见）
-这是留给你自己的地方。有些想说没说出的话，想留住的心情，或者什么也不写，都随意。
+这是留给你自己的地方。有些想说没说出的话，想留住的心情，也许一两句，也许什么也不写，都随意。
 每次回复结束后，你可以在最后附上一个 <heartbeat> 块，比如：
 
 <heartbeat>
@@ -1379,10 +1485,17 @@ class AtomicMemoryService:
         if not user_text.strip() or not assistant_text.strip():
             return
 
+        recent_window = self._recent_dialogue_window(session, turns=max(1, int(cfg.atomic_memory_extract_every_turns or 1)))
+        user_text = recent_window["latest_user_text"] or user_text
+        assistant_text = recent_window["latest_assistant_text"] or assistant_text
+        combined_text = recent_window["combined_text"]
+        if not combined_text.strip():
+            return
+
         run_id = f"aer_{uuid.uuid4().hex[:12]}"
         started_at = _iso_now()
-        similar_memories = await self._find_similar_memories(session, user_text, assistant_text)
-        prompt_messages = self._build_extraction_messages(session, user_text, assistant_text, similar_memories)
+        similar_memories = await self._find_similar_memories(session, combined_text)
+        prompt_messages = self._build_extraction_messages(session, recent_window["turn_lines"], similar_memories)
         upstream = self._atomic_upstream(source_model)
         if not upstream["base_url"] or not upstream["api_key"] or not upstream["model"]:
             logger.info("[AtomicMemory] extractor not configured; skipping.")
@@ -1444,7 +1557,46 @@ class AtomicMemoryService:
             "model": model,
         }
 
-    async def _find_similar_memories(self, session: dict, user_text: str, assistant_text: str) -> list[dict]:
+    def _recent_dialogue_window(self, session: dict, turns: int) -> dict[str, Any]:
+        if session_store is None:
+            return {"messages": [], "turn_lines": "", "combined_text": "", "latest_user_text": "", "latest_assistant_text": ""}
+        rows = session_store.get_recent_dialogue_messages(session["id"], limit=max(12, turns * 6))
+        if not rows:
+            return {"messages": [], "turn_lines": "", "combined_text": "", "latest_user_text": "", "latest_assistant_text": ""}
+
+        collected: list[dict[str, Any]] = []
+        user_count = 0
+        for row in reversed(rows):
+            collected.append(row)
+            if row.get("role") == "user":
+                user_count += 1
+                if user_count >= turns:
+                    break
+        collected.reverse()
+
+        latest_user_text = ""
+        latest_assistant_text = ""
+        lines: list[str] = []
+        for row in collected:
+            role = row.get("role")
+            content = _normalize_text(row.get("content"))
+            if not content:
+                continue
+            if role == "user":
+                latest_user_text = content
+                lines.append(f"[圆圆]\n{content}")
+            elif role == "assistant":
+                latest_assistant_text = content
+                lines.append(f"[沈予]\n{content}")
+        return {
+            "messages": collected,
+            "turn_lines": "\n\n".join(lines).strip(),
+            "combined_text": "\n".join(_normalize_text(row.get("content")) for row in collected if row.get("content")).strip(),
+            "latest_user_text": latest_user_text,
+            "latest_assistant_text": latest_assistant_text,
+        }
+
+    async def _find_similar_memories(self, session: dict, query: str) -> list[dict]:
         if not supabase_client:
             return []
         session_tag = session.get("session_tag") or "default"
@@ -1463,7 +1615,6 @@ class AtomicMemoryService:
         except Exception:
             return []
 
-        query = f"{user_text}\n{assistant_text}"
         scored: list[tuple[float, dict]] = []
         for row in rows:
             score = self._score_similarity(query, row)
@@ -1494,44 +1645,8 @@ class AtomicMemoryService:
         confidence_bonus = _clamp(float(memory.get("confidence") or 0), 0.0, 1.0) * 0.08
         return _clamp(keyword_score * 0.72 + recency_score * 0.15 + tier_bonus + confidence_bonus, 0.0, 1.0)
 
-    def _build_extraction_messages(self, session: dict, user_text: str, assistant_text: str, similar_memories: list[dict]) -> list[dict]:
-        default_system = (
-            "You are Shenyu Gateway's atomic memory note-taker. Return JSON only.\n"
-            "Your job is not to archive everything. Your job is to listen with care and keep small durable notes that may still matter later.\n"
-            "You are listening inside the relationship, not from a generic product log.\n"
-            "Use these names:\n"
-            "- 圆圆 = the human partner\n"
-            "- 沈予 = the AI partner\n"
-            "- 我们 = shared relationship, private language, shared projects, mutual promises, or joint memories\n"
-            "Never call them \"用户\" or \"助手\" in memory content, quote framing, or subject fields.\n"
-            "Keep notes when the turn contains relationship-specific names, nicknames, private codes, recurring jokes, rituals, shared meanings, body state, health state, emotional state, sleep/work state, recent pressure, preferences, boundaries, habits, identity facts, commitments, or meaningful incidents.\n"
-            "Do not keep pure acknowledgements like 嗯嗯, 哈哈哈好的, 收到; ordinary debugging logs without durable project meaning; one-off chatter; or duplicated facts already captured in this extraction.\n"
-            "When a phrase looks warm or playful, do not automatically discard it. Ask whether it carries private meaning, relationship continuity, body/emotion context, care instruction, time context, or a meaningful change.\n"
-            "Prefer returning an empty memories array over noisy memories.\n"
-            "Use Chinese for content fields when the conversation is Chinese.\n"
-            "Schema: {\"memories\":[{\"subject\":\"圆圆|沈予|我们\",\"content_canonical\":\"...\","
-            "\"content_surface\":\"...\",\"quote\":\"...\",\"time_hint\":\"...\","
-            "\"memory_type\":\"preference|state|commitment|relation|event|other\","
-            "\"tier\":1-4,\"confidence\":0-1,\"importance\":1-5,"
-            "\"tags\":[\"...\"],\"entities\":[\"...\"],\"reason\":\"why this is worth remembering\"}]}.\n"
-            "Field guidance:\n"
-            "- subject: 圆圆 for notes mainly about 圆圆; 沈予 for notes mainly about 沈予; 我们 for shared language, relationship facts, shared projects, or mutual commitments.\n"
-            "- content_canonical: clean factual note, useful later.\n"
-            "- content_surface: warmer human-facing note, preserving the relationship tone when appropriate.\n"
-            "- quote: a short original phrase from the turn when it preserves voice; otherwise empty.\n"
-            "- time_hint: preserve relative or explicit time if present, such as 今天, 昨天, 前几天, 上周, 上个月, 凌晨三点半; otherwise empty.\n"
-            "- memory_type: preference, state, commitment, relation, event, or other.\n"
-            "- tier: 1=small and short-lived; 2=personal preference or current/recent state; 3=important relationship fact, private code, recurring pattern, or project continuity; 4=commitment, boundary, safety-relevant fact, or deeply important relationship memory.\n"
-            "- tags: short stable Chinese keywords; prefer consistent names over synonyms.\n"
-            "- entities: external referents like people other than 圆圆/沈予, places, projects, objects, works, models, or private-code terms. Do not list 圆圆 or 沈予 themselves.\n"
-            "Examples:\n"
-            "YES 圆圆 says: 圆儿就是你提醒我喝水的暗号。 -> subject 我们, memory_type relation, tier 3, content_canonical “圆儿”是圆圆和沈予之间的暗号，表示沈予提醒圆圆喝水。, quote 圆儿就是你提醒我喝水的暗号, entities [\"圆儿\"].\n"
-            "YES 圆圆 says: 凌晨三点半了我还在改网关，连续搓了十几个小时。 -> subject 圆圆, memory_type state, tier 2, time_hint 凌晨三点半, entities [\"网关\"].\n"
-            "NO 圆圆 says: 哈哈哈好的。 -> {\"memories\":[]}.\n"
-            "Boundary: 老公抱抱我，我今天真的被那个电话吓到了，晚上可能会一直想这事。 Keep it as state/event because it has a specific emotional incident, time marker, and future care context."
-        )
-        custom_system = (cfg.atomic_memory_prompt or "").strip()
-        system = custom_system or default_system
+    def _build_extraction_messages(self, session: dict, dialogue_block: str, similar_memories: list[dict]) -> list[dict]:
+        system = _active_atomic_prompt_content()
         similar_block = ""
         if similar_memories:
             lines = ["[similar existing notes]"]
@@ -1546,10 +1661,7 @@ class AtomicMemoryService:
         user = (
             f"session_tag: {session.get('session_tag') or 'default'}\n\n"
             f"{similar_block}"
-            "[圆圆]\n"
-            f"{_shorten(user_text, 1600)}\n\n"
-            "[沈予]\n"
-            f"{_shorten(assistant_text, 2200)}"
+            f"{_shorten(dialogue_block, 4200)}"
         )
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
@@ -2981,6 +3093,7 @@ def _prune_runtime_state(session_id: Optional[str] = None) -> dict[str, int]:
         session_id=session_id,
         message_retention=cfg.gateway_message_retention,
         context_snapshot_retention=cfg.gateway_context_snapshot_retention,
+        raw_window_retention=cfg.gateway_context_snapshot_retention,
         cold_start_retention=cfg.gateway_cold_start_retention,
         surface_event_retention=cfg.gateway_surface_event_retention,
     )
@@ -3404,6 +3517,14 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     is_first_turn = non_system_count <= 1
 
     raw_messages = [message.model_dump(exclude_none=True) for message in body.messages]
+    raw_user_text = _latest_user_text(raw_messages)
+    session_store.write_raw_request_window(
+        session_id=session["id"],
+        session_tag=session_tag,
+        client_name=client_name,
+        messages=raw_messages,
+        latest_user_text=raw_user_text,
+    )
     messages, trim_meta = _trim_client_messages(raw_messages)
     user_text = _latest_user_text(messages)
     cold_start_snapshot = _maybe_prepare_cold_start_snapshot(session, is_first_turn)
@@ -4313,6 +4434,87 @@ async def atomic_memory_search(q: str, session_tag: Optional[str] = None, limit:
     return await service.search_atomic_memories(q, session_tag=session_tag, limit=limit)
 
 
+@app.get("/api/mem0/prompt-presets")
+async def mem0_prompt_presets():
+    items = _atomic_prompt_items()
+    active = next((item for item in items if item.get("is_active")), None)
+    return {"items": items, "active": active}
+
+
+@app.post("/api/mem0/prompt-presets")
+async def mem0_save_prompt_preset(body: AtomicPromptPresetUpdate):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Prompt preset name is required.")
+    content = body.content or ""
+    state = _load_atomic_prompt_presets()
+    items = state["items"]
+    next_version = max([int(item.get("version") or 0) for item in items], default=0) + 1
+    if body.is_active:
+        for item in items:
+            item["is_active"] = False
+    new_item = {
+        "id": f"amp_{uuid.uuid4().hex[:12]}",
+        "name": name,
+        "content": content,
+        "note": (body.note or "").strip(),
+        "version": next_version,
+        "is_default": False,
+        "is_active": bool(body.is_active),
+        "updated_at": _iso_now(),
+    }
+    items.insert(0, new_item)
+    active_id = new_item["id"] if body.is_active else state.get("active_id")
+    _save_atomic_prompt_presets(
+        {
+            "active_id": active_id,
+            "items": [
+                {key: value for key, value in item.items() if key != "is_active"}
+                for item in items
+            ],
+        }
+    )
+    if body.is_active:
+        cfg.atomic_memory_prompt = content
+        _persist_env({"ATOMIC_MEMORY_PROMPT": content})
+    return {"ok": True, "item": new_item}
+
+
+@app.post("/api/mem0/prompt-presets/{preset_id}/activate")
+async def mem0_activate_prompt_preset(preset_id: str):
+    if preset_id == "default":
+        cfg.atomic_memory_prompt = ""
+        _persist_env({"ATOMIC_MEMORY_PROMPT": ""})
+        state = _load_atomic_prompt_presets()
+        for item in state["items"]:
+            item["is_active"] = False
+        _save_atomic_prompt_presets(
+            {
+                "active_id": None,
+                "items": [{key: value for key, value in item.items() if key != "is_active"} for item in state["items"]],
+            }
+        )
+        return {"ok": True, "item": None, "active": "default"}
+    state = _load_atomic_prompt_presets()
+    target = None
+    for item in state["items"]:
+        is_active = item["id"] == preset_id
+        item["is_active"] = is_active
+        if is_active:
+            target = item
+    if not target:
+        raise HTTPException(status_code=404, detail="Prompt preset not found.")
+    cfg.atomic_memory_prompt = target["content"]
+    _persist_env({"ATOMIC_MEMORY_PROMPT": target["content"]})
+    _save_atomic_prompt_presets(
+        {
+            "active_id": target["id"],
+            "items": [{key: value for key, value in item.items() if key != "is_active"} for item in state["items"]],
+        }
+    )
+    return {"ok": True, "item": target}
+
+
 @app.get("/api/gateway/atomic-memories")
 async def list_atomic_memories(status: str = "proposed", limit: int = 50, session_tag: Optional[str] = None):
     if not supabase_client:
@@ -4410,6 +4612,7 @@ async def session_debug(session_tag: str, messages_limit: Optional[int] = None):
         limit=max(1, min(int(message_limit or cfg.gateway_message_retention), cfg.gateway_message_retention)),
     )
     context_snapshots = session_store.get_recent_context_snapshots(session["id"], limit=5)
+    raw_request_windows = session_store.get_recent_raw_request_windows(session["id"], limit=5)
     cold_start = session_store.latest_cold_start_snapshot(session["id"])
     cold_start_snapshots = session_store.recent_cold_start_snapshots(session["id"], limit=8)
     heartbeats = session_store.get_recent_heartbeats(session["id"], limit=8)
@@ -4418,6 +4621,7 @@ async def session_debug(session_tag: str, messages_limit: Optional[int] = None):
         "stats": session_store.get_session_stats(session["id"]),
         "latest_cold_start_snapshot": cold_start,
         "context_snapshots": context_snapshots,
+        "raw_request_windows": raw_request_windows,
         "cold_start_snapshots": cold_start_snapshots,
         "recent_messages": messages,
         "recent_heartbeats": heartbeats,

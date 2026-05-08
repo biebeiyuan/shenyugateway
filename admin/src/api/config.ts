@@ -143,19 +143,6 @@ export async function fetchColdStartPreview(): Promise<ColdStartPreview> {
   return data
 }
 
-export async function fetchAtomicMemories(params: {
-  status?: string
-  limit?: number
-  session_tag?: string
-}): Promise<{ items: AtomicMemoryItem[] }> {
-  const qs = new URLSearchParams()
-  if (params.status) qs.set('status', params.status)
-  if (params.limit) qs.set('limit', String(params.limit))
-  if (params.session_tag) qs.set('session_tag', params.session_tag)
-  const { data } = await api.get(`/api/gateway/atomic-memories?${qs.toString()}`)
-  return data
-}
-
 export type AtomicMemoryReviewPatch = Partial<
   Pick<
     AtomicMemoryItem,
@@ -170,7 +157,3 @@ export type AtomicMemoryReviewPatch = Partial<
     | 'importance'
   >
 > & { status: string }
-
-export async function reviewAtomicMemory(memoryId: string, patch: AtomicMemoryReviewPatch): Promise<void> {
-  await api.post(`/api/gateway/atomic-memories/${encodeURIComponent(memoryId)}/review`, patch)
-}

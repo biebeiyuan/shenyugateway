@@ -65,12 +65,13 @@ SQLite stores only gateway runtime state:
 - `gateway_sessions`
 - `gateway_messages`: local message stream for inspection only. It is not the cold-start source of truth.
 - `request_context_snapshots`: recent client context windows. Calendar generation and cold-start both depend on this.
+- `raw_request_windows`: recent untrimmed client request windows for backup/export/debugging.
 - `cold_start_snapshots`: bounded bridge packages created from recent context snapshots.
 - `surface_events`: audit/debug records for surfaced passages.
 - `cache_entries`: short-lived gateway cache.
 - `heartbeat_entries`: private heartbeat notes captured from `<heartbeat>...</heartbeat>` or written manually in admin.
 
-`request_context_snapshots` is the replacement for the old rolling/frozen context path. Each request stores the prepared client window before gateway layers are inserted. Calendar generation and cold-start bridge both read these snapshots.
+`request_context_snapshots` is the replacement for the old rolling/frozen context path. Each request stores the trimmed client window before gateway layers are inserted. Calendar generation and cold-start bridge both read these snapshots. `raw_request_windows` stores the original client payload window before any gateway-side trimming and is kept separate so cold-start stays bounded.
 
 ### SQLite Retention And Cleanup
 
@@ -89,7 +90,7 @@ Runtime cleanup APIs:
 
 - `POST /api/gateway/prune`: applies the retention policy above.
 - `POST /api/gateway/dedupe-messages`: removes exact duplicate local message rows within each session, keeping the newest row for each `session_id + role + content + tool_name`.
-- `GET /api/gateway/sessions/{session_tag}/export`: exports one session as JSON before manual deletion or migration.
+- `GET /api/gateway/sessions/{session_tag}/export`: exports one session as JSON before manual deletion or migration, including raw request windows.
 
 Admin page behavior:
 
@@ -100,6 +101,7 @@ Admin page behavior:
 Safe cleanup boundaries:
 
 - It is safe to prune/dedupe `gateway_messages`; cold-start does not read this table.
+- It is safe to prune/dedupe `raw_request_windows`; they are backup/debug records and are not used for cold-start injection.
 - Be conservative with `request_context_snapshots`; cold-start and calendar generation read this table.
 - Do not delete active `cold_start_snapshots`; the retention cleanup already avoids active snapshots.
 - Heartbeats are independent from message cleanup and are only changed by explicit heartbeat actions.
@@ -205,10 +207,12 @@ Extraction flow:
 
 1. Assistant reply is logged.
 2. `_schedule_atomic_memory_extraction()` starts `AtomicMemoryService.process_turn()`.
-3. The extractor model returns JSON candidates.
-4. Candidates are written to `atomic_memories`.
-5. High-confidence candidates become `active`; others stay `proposed`.
-6. Runs are logged in `atomic_extraction_runs`.
+3. When the configured extraction turn is reached, the extractor reads the most recent `N` dialogue turns from local `gateway_messages`, where `N = ATOMIC_MEMORY_EXTRACT_EVERY_TURNS`.
+4. It also looks up similar `active` atomic memories in the same `session_tag` to help continuity and reduce duplicate notes.
+5. The extractor model returns JSON candidates.
+6. Candidates are written to `atomic_memories`.
+7. High-confidence candidates become `active`; others stay `proposed`.
+8. Runs are logged in `atomic_extraction_runs`.
 
 Search/injection flow:
 
@@ -221,6 +225,25 @@ Endpoints:
 - `GET /api/gateway/atomic-memories/search`
 - `GET /api/gateway/atomic-memories`
 - `POST /api/gateway/atomic-memories/{memory_id}/review`
+- `GET /api/mem0/prompt-presets`
+- `POST /api/mem0/prompt-presets`
+- `POST /api/mem0/prompt-presets/{preset_id}/activate`
+
+Admin UI notes:
+
+- Mem0 is now a standalone admin area instead of being embedded in the generic config page.
+- The Mem0 page includes:
+  - upstream/model/config controls for atomic extraction and injection
+  - server-persisted prompt presets stored in `data/atomic_prompt_presets.json`
+  - a built-in default prompt option that clears `ATOMIC_MEMORY_PROMPT`
+  - the atomic-memory review workflow for Supabase `atomic_memories`
+
+Current implementation details:
+
+- The active runtime prompt still comes from `ATOMIC_MEMORY_PROMPT` in `.env`.
+- Activating a Mem0 preset writes its content back to `ATOMIC_MEMORY_PROMPT` for runtime compatibility.
+- The built-in default prompt remains defined in backend code and is used whenever `ATOMIC_MEMORY_PROMPT` is empty.
+- `ATOMIC_MEMORY_EXTRACT_EVERY_TURNS` now controls both extraction frequency and extraction window size. For example, `4` means "trigger every 4 turns and send the most recent 4 user/assistant turns to the extractor."
 
 ## Briefing And Surface
 
@@ -329,9 +352,11 @@ http://localhost:8010/debug
 `/admin` is the formal Vue/Vite admin app. It is organized by feature:
 
 - `admin/src/api/config.ts`: gateway and upstream configuration.
+- `admin/src/api/mem0.ts`: Mem0 prompt presets, prompt preview, and atomic-memory review APIs.
 - `admin/src/api/sessions.ts`: local SQLite session browser.
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
 - `admin/src/views/ConfigView.vue`: configuration page.
+- `admin/src/views/Mem0View.vue`: Mem0 prompt management, preview, and atomic-memory review page.
 - `admin/src/views/SessionsView.vue`: session inspection page.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.

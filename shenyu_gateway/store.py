@@ -97,6 +97,23 @@ class GatewayStore:
                 CREATE INDEX IF NOT EXISTS idx_request_context_snapshots_tag_created
                     ON request_context_snapshots(session_tag, created_at DESC);
 
+                CREATE TABLE IF NOT EXISTS raw_request_windows (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    session_tag TEXT NOT NULL,
+                    client_name TEXT,
+                    messages_json TEXT NOT NULL,
+                    message_count INTEGER NOT NULL DEFAULT 0,
+                    latest_user_text TEXT,
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_raw_request_windows_session_created
+                    ON raw_request_windows(session_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_raw_request_windows_tag_created
+                    ON raw_request_windows(session_tag, created_at DESC);
+
                 CREATE TABLE IF NOT EXISTS cold_start_snapshots (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
@@ -211,6 +228,20 @@ class GatewayStore:
             ).fetchall()
             return [dict(row) for row in reversed(rows)]
 
+    def get_recent_dialogue_messages(self, session_id: str, limit: int = 100) -> list[dict]:
+        limit = max(1, min(int(limit or 100), 5000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM gateway_messages
+                WHERE session_id = ? AND role IN ('user', 'assistant')
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+            return [dict(row) for row in reversed(rows)]
+
     def dedupe_messages(self, session_id: Optional[str] = None) -> dict[str, int]:
         params: list[Any] = []
         where = ""
@@ -254,7 +285,29 @@ class GatewayStore:
                     """,
                     (sid, sid),
                 )
-        return {"gateway_messages": deleted}
+
+            raw_cursor = conn.execute(
+                f"""
+                DELETE FROM raw_request_windows
+                WHERE id IN (
+                    SELECT id
+                    FROM (
+                        SELECT
+                            id,
+                            ROW_NUMBER() OVER (
+                                PARTITION BY session_id, COALESCE(messages_json, '')
+                                ORDER BY created_at DESC, id DESC
+                            ) AS rn
+                        FROM raw_request_windows
+                        {where}
+                    )
+                    WHERE rn > 1
+                )
+                """,
+                params,
+            )
+            raw_deleted = int(raw_cursor.rowcount or 0)
+        return {"gateway_messages": deleted, "raw_request_windows": raw_deleted}
 
     def get_all_messages(self, session_id: str, limit: int = 5000) -> list[dict]:
         limit = max(1, min(int(limit or 5000), 50000))
@@ -345,6 +398,7 @@ class GatewayStore:
                     COALESCE(m.assistant_message_count, 0) AS assistant_message_count,
                     COALESCE(m.tool_message_count, 0) AS tool_message_count,
                     COALESCE(r.context_snapshot_count, 0) AS context_snapshot_count,
+                    COALESCE(rw.raw_request_window_count, 0) AS raw_request_window_count,
                     COALESCE(c.cold_start_snapshot_count, 0) AS cold_start_snapshot_count,
                     COALESCE(h.heartbeat_count, 0) AS heartbeat_count,
                     latest_user.content AS latest_user_text
@@ -365,6 +419,11 @@ class GatewayStore:
                     FROM request_context_snapshots
                     GROUP BY session_id
                 ) r ON r.session_id = s.id
+                LEFT JOIN (
+                    SELECT session_id, COUNT(id) AS raw_request_window_count
+                    FROM raw_request_windows
+                    GROUP BY session_id
+                ) rw ON rw.session_id = s.id
                 LEFT JOIN (
                     SELECT session_id, COUNT(id) AS cold_start_snapshot_count
                     FROM cold_start_snapshots
@@ -427,6 +486,10 @@ class GatewayStore:
                 "SELECT COUNT(*) AS count FROM request_context_snapshots WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
+            raw_window_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM raw_request_windows WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
             return {
                 "messages": int(message_counts["total"] or 0),
                 "user_messages": int(message_counts["user_count"] or 0),
@@ -436,12 +499,14 @@ class GatewayStore:
                 "heartbeats": int(heartbeat_count["count"] or 0),
                 "cold_start_snapshots": int(cold_count["count"] or 0),
                 "context_snapshots": int(snapshot_count["count"] or 0),
+                "raw_request_windows": int(raw_window_count["count"] or 0),
             }
 
     def delete_session(self, session_id: str) -> dict:
         tables = [
             "heartbeat_entries",
             "cold_start_snapshots",
+            "raw_request_windows",
             "request_context_snapshots",
             "surface_events",
             "gateway_messages",
@@ -466,6 +531,46 @@ class GatewayStore:
                     cursor = conn.execute(f"DELETE FROM {table} WHERE session_id = ?", (session_id,))
                 deleted[table] = int(cursor.rowcount or 0)
         return deleted
+
+    def write_raw_request_window(
+        self,
+        session_id: str,
+        session_tag: str,
+        client_name: Optional[str],
+        messages: list[dict],
+        latest_user_text: str,
+    ) -> dict:
+        window_id = f"rrw_{uuid.uuid4().hex[:12]}"
+        created_at = iso_now()
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO raw_request_windows (
+                    id, session_id, session_tag, client_name, messages_json,
+                    message_count, latest_user_text, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    window_id,
+                    session_id,
+                    session_tag,
+                    client_name,
+                    json_dumps(messages),
+                    len(messages),
+                    latest_user_text,
+                    created_at,
+                ),
+            )
+        return {
+            "id": window_id,
+            "session_id": session_id,
+            "session_tag": session_tag,
+            "client_name": client_name,
+            "messages": messages,
+            "message_count": len(messages),
+            "latest_user_text": latest_user_text,
+            "created_at": created_at,
+        }
 
     def write_request_context_snapshot(
         self,
@@ -506,6 +611,44 @@ class GatewayStore:
             "latest_user_text": latest_user_text,
             "created_at": created_at,
         }
+
+    def get_recent_raw_request_windows(self, session_id: str, limit: int = 5) -> list[dict]:
+        limit = max(1, min(int(limit or 5), 50))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM raw_request_windows
+                WHERE session_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        windows = []
+        for row in rows:
+            item = dict(row)
+            item["messages"] = json.loads(item.get("messages_json") or "[]")
+            windows.append(item)
+        return windows
+
+    def get_all_raw_request_windows(self, session_id: str, limit: int = 1000) -> list[dict]:
+        limit = max(1, min(int(limit or 1000), 5000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM raw_request_windows
+                WHERE session_id = ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (session_id, limit),
+            ).fetchall()
+        windows = []
+        for row in rows:
+            item = dict(row)
+            item["messages"] = json.loads(item.get("messages_json") or "[]")
+            windows.append(item)
+        return windows
 
     def latest_request_context_snapshots(self, limit: int = 5, session_tag: Optional[str] = None) -> list[dict]:
         limit = max(1, min(int(limit or 5), 50))
@@ -788,6 +931,7 @@ class GatewayStore:
             session_count = conn.execute("SELECT COUNT(*) AS count FROM gateway_sessions").fetchone()
             cold_count = conn.execute("SELECT COUNT(*) AS count FROM cold_start_snapshots").fetchone()
             snapshot_count = conn.execute("SELECT COUNT(*) AS count FROM request_context_snapshots").fetchone()
+            raw_window_count = conn.execute("SELECT COUNT(*) AS count FROM raw_request_windows").fetchone()
             surface_count = conn.execute("SELECT COUNT(*) AS count FROM surface_events").fetchone()
             heartbeat_count = conn.execute("SELECT COUNT(*) AS count FROM heartbeat_entries").fetchone()
             cache_count = conn.execute("SELECT COUNT(*) AS count FROM cache_entries").fetchone()
@@ -799,6 +943,7 @@ class GatewayStore:
             "sessions_total": int(session_count["count"] or 0),
             "cold_start_snapshots": int(cold_count["count"] or 0),
             "context_snapshots": int(snapshot_count["count"] or 0),
+            "raw_request_windows": int(raw_window_count["count"] or 0),
             "surface_events": int(surface_count["count"] or 0),
             "heartbeats": int(heartbeat_count["count"] or 0),
             "cache_entries": int(cache_count["count"] or 0),
@@ -809,16 +954,19 @@ class GatewayStore:
         session_id: Optional[str] = None,
         message_retention: int = 2000,
         context_snapshot_retention: int = 3,
+        raw_window_retention: Optional[int] = None,
         cold_start_retention: int = 20,
         surface_event_retention: int = 500,
     ) -> dict[str, int]:
         message_retention = max(1, int(message_retention or 2000))
         context_snapshot_retention = max(1, int(context_snapshot_retention or 3))
+        raw_window_retention = max(1, int(raw_window_retention or context_snapshot_retention))
         cold_start_retention = max(1, int(cold_start_retention or 20))
         surface_event_retention = max(1, int(surface_event_retention or 500))
         deleted = {
             "gateway_messages": 0,
             "request_context_snapshots": 0,
+            "raw_request_windows": 0,
             "cold_start_snapshots": 0,
             "surface_events": 0,
             "cache_entries": 0,
@@ -868,6 +1016,21 @@ class GatewayStore:
                     (sid, sid, context_snapshot_retention),
                 )
                 deleted["request_context_snapshots"] += int(cursor.rowcount or 0)
+
+                cursor = conn.execute(
+                    """
+                    DELETE FROM raw_request_windows
+                    WHERE session_id = ?
+                    AND id NOT IN (
+                        SELECT id FROM raw_request_windows
+                        WHERE session_id = ?
+                        ORDER BY created_at DESC
+                        LIMIT ?
+                    )
+                    """,
+                    (sid, sid, raw_window_retention),
+                )
+                deleted["raw_request_windows"] += int(cursor.rowcount or 0)
 
                 cursor = conn.execute(
                     """
@@ -1091,6 +1254,7 @@ class GatewayStore:
             "stats": self.get_session_stats(session_id),
             "messages": self.get_all_messages(session_id),
             "context_snapshots": self.get_all_context_snapshots(session_id),
+            "raw_request_windows": self.get_all_raw_request_windows(session_id),
             "cold_start_snapshots": self.all_cold_start_snapshots(session_id),
             "heartbeats": self.get_all_heartbeats(session_id),
             "surface_events": self.get_surface_events(session_id),

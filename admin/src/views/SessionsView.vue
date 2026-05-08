@@ -121,7 +121,7 @@ async function dedupeMessages() {
   try {
     const result = await dedupeGatewayMessages()
     const deleted = result?.deleted || {}
-    message.success(`已去重消息流水：${deleted.gateway_messages || 0} 条`)
+    message.success(`已去重：消息 ${deleted.gateway_messages || 0} 条，原始窗口 ${deleted.raw_request_windows || 0} 个`)
     await loadSessions()
   } catch (error) {
     message.error(errorText(error, '去重失败'))
@@ -135,7 +135,7 @@ async function pruneRuntime() {
   try {
     const result = await pruneGatewayRuntime()
     const deleted = result?.deleted || {}
-    message.success(`已清理：消息 ${deleted.gateway_messages || 0}，快照 ${deleted.request_context_snapshots || 0}`)
+    message.success(`已清理：消息 ${deleted.gateway_messages || 0}，快照 ${deleted.request_context_snapshots || 0}，原始窗口 ${deleted.raw_request_windows || 0}`)
     await loadSessions()
   } catch (error) {
     message.error(errorText(error, '清理失败'))
@@ -302,7 +302,7 @@ function messageKey(item: GatewayMessage, index: number) {
           @click="selectSession(item.session_tag)"
         >
           <strong>{{ item.session_tag }}</strong>
-          <span>{{ item.stored_message_count || item.message_count || 0 }} 条 / 快照 {{ item.context_snapshot_count || 0 }} / hb {{ item.heartbeat_count || 0 }}</span>
+          <span>{{ item.stored_message_count || item.message_count || 0 }} 条 / 快照 {{ item.context_snapshot_count || 0 }} / 原始 {{ item.raw_request_window_count || 0 }} / hb {{ item.heartbeat_count || 0 }}</span>
           <em>{{ shortText(item.latest_user_text, 90) }}</em>
         </button>
         <NEmpty v-if="!sessions.length && !loading" description="暂无线程" />
@@ -318,7 +318,8 @@ function messageKey(item: GatewayMessage, index: number) {
             <NDescriptionsItem label="本地消息流水">{{ detail.stats.messages }}</NDescriptionsItem>
             <NDescriptionsItem label="缓存层">
               {{ detail.stats.surface_events }} surface / {{ detail.stats.heartbeats }} heartbeat /
-              {{ detail.stats.context_snapshots || 0 }} snapshots / {{ detail.stats.cold_start_snapshots }} cold start
+              {{ detail.stats.context_snapshots || 0 }} snapshots / {{ detail.stats.raw_request_windows || 0 }} raw /
+              {{ detail.stats.cold_start_snapshots }} cold start
             </NDescriptionsItem>
             <NDescriptionsItem label="最新圆圆消息" :span="2">
               {{ shortText(selectedSession.latest_user_text, 220) }}

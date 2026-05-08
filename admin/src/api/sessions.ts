@@ -15,6 +15,7 @@ export interface GatewaySession {
   assistant_message_count: number
   tool_message_count: number
   context_snapshot_count?: number
+  raw_request_window_count?: number
   cold_start_snapshot_count?: number
   heartbeat_count?: number
   latest_user_text?: string | null
@@ -42,6 +43,7 @@ export interface GatewaySessionStats {
   heartbeats: number
   cold_start_snapshots: number
   context_snapshots?: number
+  raw_request_windows?: number
 }
 
 export interface GatewayHeartbeat {
@@ -54,6 +56,18 @@ export interface GatewayHeartbeat {
 }
 
 export interface GatewayContextSnapshot {
+  id: string
+  session_id: string
+  session_tag: string
+  client_name: string | null
+  messages_json: string
+  message_count: number
+  latest_user_text: string | null
+  created_at: string
+  messages: Array<{ role?: string; content?: unknown }>
+}
+
+export interface GatewayRawRequestWindow {
   id: string
   session_id: string
   session_tag: string
@@ -92,6 +106,7 @@ export interface GatewaySessionDetail {
   stats: GatewaySessionStats
   latest_cold_start_snapshot: GatewayColdStartSnapshot | null
   context_snapshots: GatewayContextSnapshot[]
+  raw_request_windows: GatewayRawRequestWindow[]
   cold_start_snapshots: GatewayColdStartSnapshot[]
   recent_messages: GatewayMessage[]
   recent_heartbeats: GatewayHeartbeat[]

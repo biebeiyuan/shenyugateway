@@ -48,6 +48,7 @@ async function checkHealth() {
       <RouterLink to="/sessions" class="tab" active-class="active">线程管理</RouterLink>
       <RouterLink to="/logs" class="tab" active-class="active">请求日志</RouterLink>
       <RouterLink to="/calendar" class="tab" active-class="active">日历记忆</RouterLink>
+      <RouterLink to="/mem0" class="tab" active-class="active">Mem0</RouterLink>
     </nav>
 
     <main class="main">

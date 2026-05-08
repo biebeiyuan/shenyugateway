@@ -99,6 +99,13 @@ class CalendarGenerateRequest(BaseModel):
     session_tag: Optional[str] = None
 
 
+class AtomicPromptPresetUpdate(BaseModel):
+    name: str
+    content: str
+    note: Optional[str] = None
+    is_active: bool = True
+
+
 class AtomicMemoryReviewUpdate(BaseModel):
     status: str
     content_canonical: Optional[str] = None
