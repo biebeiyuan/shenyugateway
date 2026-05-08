@@ -1529,7 +1529,7 @@ class AtomicMemoryService:
                     continue
                 row = await supabase_client.insert("atomic_memories", memory)
                 inserted.append(row.get("id") if isinstance(row, dict) else None)
-            await self._write_run(
+            run_warning = await self._try_write_run(
                 run_id,
                 session,
                 status="ok",
@@ -1541,29 +1541,31 @@ class AtomicMemoryService:
                 started_at=started_at,
             )
             logger.info("[AtomicMemory] extracted %d candidates, inserted %d", len(candidates), len([item for item in inserted if item]))
-            return {
+            response = {
                 "ok": True,
                 "run_id": run_id,
                 "candidate_count": len(candidates),
                 "inserted_count": len([item for item in inserted if item]),
                 "window_turns": max(1, int(cfg.atomic_memory_extract_every_turns or 1)),
             }
+            if run_warning:
+                response["warning"] = run_warning
+            return response
         except Exception as exc:
             logger.exception("[AtomicMemory] extraction failed")
-            try:
-                await self._write_run(
-                    run_id,
-                    session,
-                    status="error",
-                    prompt_messages=prompt_messages,
-                    raw_result=result if isinstance(result, dict) else {},
-                    candidate_count=0,
-                    inserted_count=0,
-                    error=str(exc)[:1000],
-                    started_at=started_at,
-                )
-            except Exception:
-                logger.exception("[AtomicMemory] failed to write extraction run")
+            run_warning = await self._try_write_run(
+                run_id,
+                session,
+                status="error",
+                prompt_messages=prompt_messages,
+                raw_result=result if isinstance(result, dict) else {},
+                candidate_count=0,
+                inserted_count=0,
+                error=str(exc)[:1000],
+                started_at=started_at,
+            )
+            if run_warning:
+                logger.warning("[AtomicMemory] failed to write extraction run: %s", run_warning)
             return {"ok": False, "run_id": run_id, "error": str(exc)[:1000]}
 
     def _atomic_upstream(self, source_model: str = "") -> dict[str, str]:
@@ -1862,6 +1864,35 @@ class AtomicMemoryService:
                 "finished_at": _iso_now(),
             },
         )
+
+    async def _try_write_run(
+        self,
+        run_id: str,
+        session: dict,
+        status: str,
+        prompt_messages: list[dict],
+        raw_result: dict,
+        candidate_count: int,
+        inserted_count: int,
+        error: Optional[str],
+        started_at: str,
+    ) -> str:
+        try:
+            await self._write_run(
+                run_id,
+                session,
+                status=status,
+                prompt_messages=prompt_messages,
+                raw_result=raw_result,
+                candidate_count=candidate_count,
+                inserted_count=inserted_count,
+                error=error,
+                started_at=started_at,
+            )
+            return ""
+        except Exception as exc:
+            logger.exception("[AtomicMemory] failed to write extraction run")
+            return f"atomic_extraction_runs write failed: {str(exc)[:300]}"
 
 
 def _schedule_atomic_memory_extraction(
