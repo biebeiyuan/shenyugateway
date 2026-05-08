@@ -12,7 +12,6 @@ import {
   NTabPane,
   NTabs,
   NTag,
-  NText,
   useMessage,
 } from 'naive-ui'
 import {
@@ -27,10 +26,9 @@ import {
   type GatewayColdStartSnapshot,
   type GatewayContextSnapshot,
   type GatewayHeartbeat,
+  type GatewayRawRequestWindow,
   type GatewaySession,
   type GatewaySessionDetail,
-  type GatewayMessage,
-  type GatewayRawRequestWindow,
 } from '@/api/sessions'
 
 const message = useMessage()
@@ -44,15 +42,11 @@ const query = ref('')
 const sessions = ref<GatewaySession[]>([])
 const selectedTag = ref('')
 const detail = ref<GatewaySessionDetail | null>(null)
-const loadedMessageLimit = ref(50)
 const heartbeatDraft = ref('')
 const savingHeartbeat = ref(false)
 const deletingHeartbeats = ref(false)
 
 const selectedSession = computed(() => detail.value?.session || sessions.value.find((item) => item.session_tag === selectedTag.value))
-const displayedMessages = computed(() => {
-  return detail.value?.recent_messages || []
-})
 
 onMounted(loadSessions)
 
@@ -78,26 +72,19 @@ async function loadSessions() {
 
 async function selectSession(sessionTag: string) {
   selectedTag.value = sessionTag
-  loadedMessageLimit.value = 50
-  await loadSessionDetail(sessionTag, 50)
+  await loadSessionDetail(sessionTag)
 }
 
-async function loadSessionDetail(sessionTag: string, messagesLimit = loadedMessageLimit.value) {
+async function loadSessionDetail(sessionTag: string) {
   detailLoading.value = true
   try {
-    loadedMessageLimit.value = messagesLimit
-    detail.value = await fetchGatewaySession(sessionTag, { messages_limit: messagesLimit })
+    detail.value = await fetchGatewaySession(sessionTag)
   } catch (error) {
     detail.value = null
     message.error(errorText(error, '加载线程详情失败'))
   } finally {
     detailLoading.value = false
   }
-}
-
-async function loadMoreMessages(limit: number) {
-  if (!selectedTag.value) return
-  await loadSessionDetail(selectedTag.value, limit)
 }
 
 async function deleteSession(sessionTag: string) {
@@ -275,10 +262,6 @@ function rawWindowTitle(item: GatewayRawRequestWindow) {
 function coldTitle(item: GatewayColdStartSnapshot) {
   return `${formatTime(item.created_at)} / ${item.reason} / ${item.injected_count}/${item.max_injections}`
 }
-
-function messageKey(item: GatewayMessage, index: number) {
-  return item.id || `${item.role}-${item.created_at}-${index}`
-}
 </script>
 
 <template>
@@ -307,7 +290,7 @@ function messageKey(item: GatewayMessage, index: number) {
           @click="selectSession(item.session_tag)"
         >
           <strong>{{ item.session_tag }}</strong>
-          <span>{{ item.stored_message_count || item.message_count || 0 }} 条 / 快照 {{ item.context_snapshot_count || 0 }} / 原始 {{ item.raw_request_window_count || 0 }} / hb {{ item.heartbeat_count || 0 }}</span>
+          <span>原始 {{ item.raw_request_window_count || 0 }} / 快照 {{ item.context_snapshot_count || 0 }} / hb {{ item.heartbeat_count || 0 }}</span>
           <em>{{ shortText(item.latest_user_text, 90) }}</em>
         </button>
         <NEmpty v-if="!sessions.length && !loading" description="暂无线程" />
@@ -320,7 +303,7 @@ function messageKey(item: GatewayMessage, index: number) {
             <NDescriptionsItem label="客户端">{{ selectedSession.client_name || 'unknown' }}</NDescriptionsItem>
             <NDescriptionsItem label="开始时间">{{ formatTime(selectedSession.started_at) }}</NDescriptionsItem>
             <NDescriptionsItem label="最后活跃">{{ formatTime(selectedSession.last_active_at) }}</NDescriptionsItem>
-            <NDescriptionsItem label="本地消息流水">{{ detail.stats.messages }}</NDescriptionsItem>
+            <NDescriptionsItem label="原始请求窗口">{{ detail.stats.raw_request_windows || 0 }}</NDescriptionsItem>
             <NDescriptionsItem label="缓存层">
               {{ detail.stats.surface_events }} surface / {{ detail.stats.heartbeats }} heartbeat /
               {{ detail.stats.context_snapshots || 0 }} snapshots / {{ detail.stats.raw_request_windows || 0 }} raw /
@@ -332,25 +315,19 @@ function messageKey(item: GatewayMessage, index: number) {
           </NDescriptions>
 
           <NTabs type="line" animated class="detail-tabs">
-            <NTabPane name="messages" tab="消息">
-              <div class="message-controls">
-                <span>已加载 {{ detail.recent_messages.length }} 条</span>
-                <NButton size="small" :type="loadedMessageLimit === 50 ? 'primary' : 'default'" @click="loadMoreMessages(50)">最新 50</NButton>
-                <NButton size="small" :type="loadedMessageLimit === 200 ? 'primary' : 'default'" @click="loadMoreMessages(200)">最新 200</NButton>
-                <NButton size="small" :type="loadedMessageLimit === 1500 ? 'primary' : 'default'" @click="loadMoreMessages(1500)">最新 1500</NButton>
-                <NText depth="3">完整备份请用导出 JSON，页面不默认加载大历史。</NText>
-              </div>
-              <div v-if="displayedMessages.length" class="chat-list">
-                <div v-for="(item, index) in displayedMessages" :key="messageKey(item, index)" class="chat-row" :class="item.role">
-                  <div class="chat-head">
-                    <NTag size="small" :type="roleType(item.role)">{{ roleLabel(item.role) }}</NTag>
-                    <span>{{ formatTime(item.created_at) }}</span>
-                    <span v-if="item.tool_name">{{ item.tool_name }}</span>
+            <NTabPane name="raw-windows" tab="消息">
+              <div v-if="detail.raw_request_windows?.length" class="stack">
+                <section v-for="window in detail.raw_request_windows" :key="window.id" class="block">
+                  <h3>{{ rawWindowTitle(window) }}</h3>
+                  <div class="mini-list">
+                    <div v-for="(msg, index) in window.messages" :key="index" class="mini-row">
+                      <NTag size="small" :type="roleType(String(msg.role || ''))">{{ roleLabel(String(msg.role || '')) }}</NTag>
+                      <span>{{ shortText(msg.content, 260) }}</span>
+                    </div>
                   </div>
-                  <div class="chat-body">{{ textValue(item.content) || '(空)' }}</div>
-                </div>
+                </section>
               </div>
-              <NEmpty v-else description="暂无消息" />
+              <NEmpty v-else description="暂无原始请求窗口" />
             </NTabPane>
 
             <NTabPane name="snapshots" tab="上下文快照">
@@ -366,21 +343,6 @@ function messageKey(item: GatewayMessage, index: number) {
                 </section>
               </div>
               <NEmpty v-else description="暂无上下文快照" />
-            </NTabPane>
-
-            <NTabPane name="raw-windows" tab="原始窗口">
-              <div v-if="detail.raw_request_windows?.length" class="stack">
-                <section v-for="window in detail.raw_request_windows" :key="window.id" class="block">
-                  <h3>{{ rawWindowTitle(window) }}</h3>
-                  <div class="mini-list">
-                    <div v-for="(msg, index) in window.messages" :key="index" class="mini-row">
-                      <NTag size="small" :type="roleType(String(msg.role || ''))">{{ roleLabel(String(msg.role || '')) }}</NTag>
-                      <span>{{ shortText(msg.content, 260) }}</span>
-                    </div>
-                  </div>
-                </section>
-              </div>
-              <NEmpty v-else description="暂无原始请求窗口" />
             </NTabPane>
 
             <NTabPane name="cold-start" tab="冷启动">
@@ -410,16 +372,12 @@ function messageKey(item: GatewayMessage, index: number) {
                 <NInput
                   v-model:value="heartbeatDraft"
                   type="textarea"
-                  placeholder="写给沈予自己的 heartbeat。只写正文，不需要 <heartbeat> 标签；建议 1-5 句，描述当下状态、未说出口的想法、下次想接住的线索。"
+                  placeholder="写给沈予自己的 heartbeat。只写正文，不需要标签。"
                   :autosize="{ minRows: 4, maxRows: 8 }"
                 />
                 <div class="heartbeat-actions">
                   <NButton type="primary" :loading="savingHeartbeat" @click="saveHeartbeat">写入 Heartbeat</NButton>
-                  <NPopconfirm
-                    positive-text="清空"
-                    negative-text="取消"
-                    @positive-click="deleteAllHeartbeats"
-                  >
+                  <NPopconfirm positive-text="清空" negative-text="取消" @positive-click="deleteAllHeartbeats">
                     <template #trigger>
                       <NButton type="error" :loading="deletingHeartbeats">清空此线程 Heartbeat</NButton>
                     </template>
@@ -446,17 +404,13 @@ function messageKey(item: GatewayMessage, index: number) {
             <NButton :loading="exporting" @click="exportSession(selectedSession.session_tag)">
               导出此线程 JSON
             </NButton>
-            <NPopconfirm
-              positive-text="删除"
-              negative-text="取消"
-              @positive-click="deleteSession(selectedSession.session_tag)"
-            >
+            <NPopconfirm positive-text="删除" negative-text="取消" @positive-click="deleteSession(selectedSession.session_tag)">
               <template #trigger>
                 <NButton type="error" :loading="deletingTag === selectedSession.session_tag">
                   删除此线程
                 </NButton>
               </template>
-              删除 {{ selectedSession.session_tag }} 及其所有相关本地 SQLite 数据？
+              删除 {{ selectedSession.session_tag }} 及其所有相关本地 SQLite 数据。
             </NPopconfirm>
           </div>
         </template>
@@ -516,7 +470,6 @@ function messageKey(item: GatewayMessage, index: number) {
 
 .thread-chip span,
 .thread-chip em,
-.message-controls span,
 .meta-line {
   color: #888;
   font-size: 12px;
@@ -529,14 +482,6 @@ function messageKey(item: GatewayMessage, index: number) {
 
 .detail-tabs {
   margin-top: 16px;
-}
-
-.message-controls {
-  align-items: center;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px;
-  margin-bottom: 10px;
 }
 
 .heartbeat-editor {
@@ -655,10 +600,10 @@ function messageKey(item: GatewayMessage, index: number) {
 }
 
 .danger-zone {
-  display: flex;
-  gap: 10px;
   border-top: 1px solid #e8e8e8;
+  display: flex;
   flex-wrap: wrap;
+  gap: 10px;
   margin-top: 18px;
   padding-top: 14px;
 }

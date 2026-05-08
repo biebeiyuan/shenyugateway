@@ -7,6 +7,7 @@ import {
   NFormItem,
   NInput,
   NInputNumber,
+  NPopconfirm,
   NSelect,
   NSpace,
   NSwitch,
@@ -15,6 +16,7 @@ import {
 import type { AtomicMemoryItem, AtomicMemoryReviewPatch, GatewayConfig } from '@/api/config'
 import {
   activateMem0PromptPreset,
+  extractMem0Now,
   fetchAtomicMemories,
   fetchMem0Config,
   fetchMem0PromptPresets,
@@ -44,9 +46,12 @@ const config = ref<GatewayConfig>({
 const presets = ref<AtomicPromptPreset[]>([])
 const savingConfig = ref(false)
 const savingPreset = ref(false)
+const extractingNow = ref(false)
 const loadingReview = ref(false)
+const deletingMemoryId = ref('')
 const presetName = ref('')
 const presetNote = ref('')
+const extractSessionTag = ref('')
 const atomicItems = ref<AtomicMemoryItem[]>([])
 const atomicReviewStatus = ref('all')
 const atomicReviewSessionTag = ref('')
@@ -159,6 +164,26 @@ async function activatePreset(item: AtomicPromptPreset) {
   }
 }
 
+async function doExtractNow() {
+  extractingNow.value = true
+  try {
+    const result = await extractMem0Now({
+      session_tag: extractSessionTag.value.trim() || undefined,
+      model: config.value.atomic_memory_model?.trim() || undefined,
+    })
+    if (result.ok) {
+      message.success(`Extraction finished: ${result.candidate_count || 0} candidates, ${result.inserted_count || 0} inserted`)
+      await loadAtomicReview()
+    } else {
+      message.warning(result.reason || result.error || 'Extraction did not run')
+    }
+  } catch (error: any) {
+    message.error(error?.response?.data?.detail || 'Manual extraction failed')
+  } finally {
+    extractingNow.value = false
+  }
+}
+
 async function loadAtomicReview() {
   loadingReview.value = true
   try {
@@ -202,12 +227,16 @@ async function doReviewAtomic(item: AtomicMemoryItem, status: string) {
 }
 
 async function deleteAtomic(item: AtomicMemoryItem) {
+  if (deletingMemoryId.value) return
+  deletingMemoryId.value = item.id
   try {
     await reviewAtomicMemory(item.id, { status: 'delete' })
     message.success('Memory deleted')
     await loadAtomicReview()
   } catch {
     message.error('Delete failed')
+  } finally {
+    deletingMemoryId.value = ''
   }
 }
 </script>
@@ -255,7 +284,13 @@ async function deleteAtomic(item: AtomicMemoryItem) {
             <NInputNumber v-model:value="config.atomic_memory_auto_activate_min_confidence" :min="0" :max="1" :step="0.01" style="width:100%" />
           </NFormItem>
         </NForm>
-        <NButton type="primary" :loading="savingConfig" block @click="doSaveConfig">保存 mem0 配置</NButton>
+        <NSpace vertical size="small">
+          <NButton type="primary" :loading="savingConfig" block @click="doSaveConfig">保存 mem0 配置</NButton>
+          <div class="extract-row">
+            <NInput v-model:value="extractSessionTag" placeholder="session_tag；留空使用 default" />
+            <NButton :loading="extractingNow" @click="doExtractNow">立即提取最近 N 轮</NButton>
+          </div>
+        </NSpace>
       </NCard>
 
       <NCard title="提示词管理" size="small">
@@ -375,7 +410,16 @@ async function deleteAtomic(item: AtomicMemoryItem) {
         <div class="rev-actions">
           <NButton size="small" type="primary" @click="doReviewAtomic(item, 'active')">确认放行</NButton>
           <NButton size="small" @click="doReviewAtomic(item, 'proposed')">重新挂起</NButton>
-          <NButton size="small" @click="deleteAtomic(item)">删除</NButton>
+          <NPopconfirm
+            positive-text="确认删除"
+            negative-text="取消"
+            @positive-click="deleteAtomic(item)"
+          >
+            <template #trigger>
+              <NButton size="small" :loading="deletingMemoryId === item.id">删除</NButton>
+            </template>
+            确定要删除这条原子记忆吗？这个操作会直接删除 Supabase 里的记录。
+          </NPopconfirm>
         </div>
       </div>
     </NCard>
@@ -443,6 +487,12 @@ async function deleteAtomic(item: AtomicMemoryItem) {
   color: #6b7280;
 }
 
+.extract-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
 .rev-toolbar {
   display: flex;
   gap: 8px;
@@ -498,7 +548,8 @@ async function deleteAtomic(item: AtomicMemoryItem) {
 
 @media (max-width: 980px) {
   .mem0-grid,
-  .cfg-inline {
+  .cfg-inline,
+  .extract-row {
     grid-template-columns: 1fr;
   }
 }

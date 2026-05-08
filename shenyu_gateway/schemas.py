@@ -106,6 +106,11 @@ class AtomicPromptPresetUpdate(BaseModel):
     is_active: bool = True
 
 
+class AtomicExtractNowRequest(BaseModel):
+    session_tag: Optional[str] = None
+    model: Optional[str] = None
+
+
 class AtomicMemoryReviewUpdate(BaseModel):
     status: str
     content_canonical: Optional[str] = None

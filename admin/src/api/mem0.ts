@@ -47,6 +47,14 @@ export async function activateMem0PromptPreset(presetId: string) {
   return data
 }
 
+export async function extractMem0Now(body: {
+  session_tag?: string
+  model?: string
+}): Promise<{ ok: boolean; run_id?: string; candidate_count?: number; inserted_count?: number; window_turns?: number; reason?: string; error?: string }> {
+  const { data } = await api.post('/api/mem0/extract-now', body)
+  return data
+}
+
 export async function fetchAtomicMemories(params: {
   status?: string
   limit?: number

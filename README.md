@@ -92,11 +92,11 @@ Runtime cleanup APIs:
 - `POST /api/gateway/dedupe-messages`: removes exact duplicate local message rows within each session, keeping the newest row for each `session_id + role + content + tool_name`.
 - `GET /api/gateway/sessions/{session_tag}/export`: exports one session as JSON before manual deletion or migration, including raw request windows.
 
-Admin page behavior:
+Admin page note:
 
-- The session page loads only the newest messages by default to avoid freezing mobile browsers.
-- Use `最新 50 / 最新 200 / 最新 1500` for inspection.
-- Use `导出此线程 JSON` for full local runtime backup instead of rendering large histories in the browser.
+- The session page's `消息` tab now renders `raw_request_windows`.
+- That tab shows the original client payload window captured before gateway-side trimming.
+- `gateway_messages` stays in the database for inspection and cleanup, but it is no longer the primary session-detail view.
 
 Safe cleanup boundaries:
 
@@ -228,6 +228,7 @@ Endpoints:
 - `GET /api/mem0/prompt-presets`
 - `POST /api/mem0/prompt-presets`
 - `POST /api/mem0/prompt-presets/{preset_id}/activate`
+- `POST /api/mem0/extract-now`
 
 Admin UI notes:
 
@@ -236,6 +237,7 @@ Admin UI notes:
   - upstream/model/config controls for atomic extraction and injection
   - server-persisted prompt presets stored in `data/atomic_prompt_presets.json`
   - a built-in default prompt option that clears `ATOMIC_MEMORY_PROMPT`
+  - a manual "extract now" action that uses the same latest-`N` dialogue window as scheduled extraction
   - the atomic-memory review workflow for Supabase `atomic_memories`
 
 Current implementation details:

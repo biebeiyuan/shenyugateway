@@ -48,6 +48,7 @@ from shenyu_gateway.runtime import (
 )
 from shenyu_gateway.schemas import (
     AtomicPromptPresetUpdate,
+    AtomicExtractNowRequest,
     AtomicMemoryReviewUpdate,
     CalendarGenerateRequest,
     CalendarPromptUpdate,
@@ -1473,6 +1474,22 @@ class AtomicMemoryService:
     def __init__(self, request: Request):
         self.request = request
 
+    async def extract_now(self, session_tag: Optional[str], source_model: str = "") -> dict[str, Any]:
+        if session_store is None:
+            raise HTTPException(status_code=400, detail="Session store is not configured.")
+        session = session_store.get_session_by_tag(session_tag or "default")
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        window = self._recent_dialogue_window(session, turns=max(1, int(cfg.atomic_memory_extract_every_turns or 1)))
+        if not window["latest_user_text"] or not window["latest_assistant_text"]:
+            raise HTTPException(status_code=400, detail="No complete recent dialogue window found for this session.")
+        return await self.process_turn(
+            session,
+            window["latest_user_text"],
+            window["latest_assistant_text"],
+            source_model or "manual",
+        )
+
     async def process_turn(
         self,
         session: dict,
@@ -1481,16 +1498,16 @@ class AtomicMemoryService:
         source_model: str,
     ):
         if not cfg.extract_atomic_memories or not supabase_client:
-            return
+            return {"ok": False, "reason": "atomic extraction disabled or Supabase not configured."}
         if not user_text.strip() or not assistant_text.strip():
-            return
+            return {"ok": False, "reason": "empty user or assistant text."}
 
         recent_window = self._recent_dialogue_window(session, turns=max(1, int(cfg.atomic_memory_extract_every_turns or 1)))
         user_text = recent_window["latest_user_text"] or user_text
         assistant_text = recent_window["latest_assistant_text"] or assistant_text
         combined_text = recent_window["combined_text"]
         if not combined_text.strip():
-            return
+            return {"ok": False, "reason": "empty dialogue window."}
 
         run_id = f"aer_{uuid.uuid4().hex[:12]}"
         started_at = _iso_now()
@@ -1524,6 +1541,13 @@ class AtomicMemoryService:
                 started_at=started_at,
             )
             logger.info("[AtomicMemory] extracted %d candidates, inserted %d", len(candidates), len([item for item in inserted if item]))
+            return {
+                "ok": True,
+                "run_id": run_id,
+                "candidate_count": len(candidates),
+                "inserted_count": len([item for item in inserted if item]),
+                "window_turns": max(1, int(cfg.atomic_memory_extract_every_turns or 1)),
+            }
         except Exception as exc:
             logger.exception("[AtomicMemory] extraction failed")
             try:
@@ -1540,6 +1564,7 @@ class AtomicMemoryService:
                 )
             except Exception:
                 logger.exception("[AtomicMemory] failed to write extraction run")
+            return {"ok": False, "run_id": run_id, "error": str(exc)[:1000]}
 
     def _atomic_upstream(self, source_model: str = "") -> dict[str, str]:
         atomic_url = (cfg.atomic_memory_upstream_url or "").strip()
@@ -4515,6 +4540,12 @@ async def mem0_activate_prompt_preset(preset_id: str):
     return {"ok": True, "item": target}
 
 
+@app.post("/api/mem0/extract-now")
+async def mem0_extract_now(request: Request, body: AtomicExtractNowRequest):
+    service = AtomicMemoryService(request)
+    return await service.extract_now(body.session_tag, body.model or "")
+
+
 @app.get("/api/gateway/atomic-memories")
 async def list_atomic_memories(status: str = "proposed", limit: int = 50, session_tag: Optional[str] = None):
     if not supabase_client:
@@ -4606,13 +4637,16 @@ async def list_gateway_sessions(limit: int = 100, q: str = ""):
 async def session_debug(session_tag: str, messages_limit: Optional[int] = None):
     assert session_store is not None
     session = session_store.get_or_create_session(session_tag, "debug")
-    message_limit = messages_limit if messages_limit is not None else 50
+    window_limit = messages_limit if messages_limit is not None else 50
     messages = session_store.get_recent_messages(
         session["id"],
-        limit=max(1, min(int(message_limit or cfg.gateway_message_retention), cfg.gateway_message_retention)),
+        limit=max(1, min(int(window_limit or cfg.gateway_message_retention), cfg.gateway_message_retention)),
+    )
+    raw_request_windows = session_store.get_recent_raw_request_windows(
+        session["id"],
+        limit=max(1, min(int(window_limit or cfg.gateway_message_retention), cfg.gateway_message_retention)),
     )
     context_snapshots = session_store.get_recent_context_snapshots(session["id"], limit=5)
-    raw_request_windows = session_store.get_recent_raw_request_windows(session["id"], limit=5)
     cold_start = session_store.latest_cold_start_snapshot(session["id"])
     cold_start_snapshots = session_store.recent_cold_start_snapshots(session["id"], limit=8)
     heartbeats = session_store.get_recent_heartbeats(session["id"], limit=8)
