@@ -6,7 +6,7 @@ This folder is the current chat gateway project:
 
 - Root: `C:\Users\曾\Desktop\shenyu-gateway`
 - Main backend entry: `gateway.py`
-- Active admin/debug UI: `debug.html`
+- Active admin UI: `admin/src/`
 - Local runtime config: `.env`
 - Local runtime data: `data/shenyu_gateway.db`
 
@@ -22,21 +22,16 @@ This folder is the current chat gateway project:
   - context injection
   - gateway-native tools
 
-- `debug.html`
-  - active admin and request log page
-  - richer than the Vue admin prototype
-  - primary backend UI for `/admin` and `/debug`
-
 - `admin/src/`
-  - retained Vue admin prototype source
-  - not the primary backend entry right now
+  - active Vue admin source for `/admin`
+  - configuration, sessions, logs, calendar, and Mem0 pages
 
 - `.env` / `.env.example`
   - runtime configuration
 
 - `data/shenyu_gateway.db`
   - local SQLite work layer
-  - sessions, summaries, frozen windows, caches, heartbeats
+  - sessions, context snapshots, raw request windows, caches, heartbeats
 
 - `README.md`
   - architecture and operating notes

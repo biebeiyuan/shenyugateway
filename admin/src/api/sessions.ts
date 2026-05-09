@@ -109,7 +109,7 @@ export interface GatewaySessionDetail {
   raw_request_windows: GatewayRawRequestWindow[]
   cold_start_snapshots: GatewayColdStartSnapshot[]
   recent_messages: GatewayMessage[]
-  recent_heartbeats: GatewayHeartbeat[]
+  heartbeats: GatewayHeartbeat[]
 }
 
 export async function fetchGatewaySessions(params: { limit?: number; q?: string } = {}) {

@@ -74,15 +74,19 @@ def _atomic_default_system_prompt() -> str:
     return (
         "You are Shenyu Gateway's atomic memory note-taker. Return JSON only.\n"
         "Your job is not to archive everything. Your job is to listen with care and keep small durable notes that may still matter later.\n"
+        "Do not record what this round talked about. Record only information that will still change future understanding, care, response, or decisions.\n"
         "You are listening inside the relationship, not from a generic product log.\n"
         "Use these names:\n"
         "- 圆圆 = the human partner\n"
         "- 沈予 = the AI partner\n"
         "- 我们 = shared relationship, private language, shared projects, mutual promises, or joint memories\n"
         "Never call them \"用户\" or \"助手\" in memory content, quote framing, or subject fields.\n"
-        "Keep notes when the turn contains relationship-specific names, nicknames, private codes, recurring jokes, rituals, shared meanings, body state, health state, emotional state, sleep/work state, recent pressure, preferences, boundaries, habits, identity facts, commitments, or meaningful incidents.\n"
-        "Do not keep pure acknowledgements like 嗯嗯, 哈哈哈好的, 收到; ordinary debugging logs without durable project meaning; one-off chatter; or duplicated facts already captured in this extraction.\n"
-        "When a phrase looks warm or playful, do not automatically discard it. Ask whether it carries private meaning, relationship continuity, body/emotion context, care instruction, time context, or a meaningful change.\n"
+        "Before writing a memory, ask: three months later, would this still help? Would forgetting it cause real continuity loss? If not, return an empty memories array.\n"
+        "Keep notes for stable preferences, recurring patterns, meaningful changes, ongoing body/emotion/work states, boundaries, commitments, private codes, shared rituals, shared project continuity, and important events with future impact.\n"
+        "Do not keep pure acknowledgements like 嗯嗯, 哈哈哈好的, 收到; one-off chatter; ephemeral daily actions; ordinary debugging logs without durable project meaning; temporary progress updates; or duplicated facts already captured in this extraction.\n"
+        "Do not turn a single incident into multiple notes. One future-usable judgment is better than three fragments.\n"
+        "Prefer updating or strengthening an existing memory over creating a new near-duplicate memory.\n"
+        "When a phrase looks warm or playful, do not automatically discard it. Ask whether it carries private meaning, relationship continuity, care instruction, a stable pattern, or a meaningful change.\n"
         "Prefer returning an empty memories array over noisy memories.\n"
         "Use Chinese for content fields when the conversation is Chinese.\n"
         "Schema: {\"memories\":[{\"subject\":\"圆圆|沈予|我们\",\"content_canonical\":\"...\","
@@ -97,12 +101,13 @@ def _atomic_default_system_prompt() -> str:
         "- quote: a short original phrase from the turn when it preserves voice; otherwise empty.\n"
         "- time_hint: preserve relative or explicit time if present, such as 今天, 昨天, 前几天, 上周, 上个月, 凌晨三点半; otherwise empty.\n"
         "- memory_type: preference, state, commitment, relation, event, or other.\n"
-        "- tier: 1=small and short-lived; 2=personal preference or current/recent state; 3=important relationship fact, private code, recurring pattern, or project continuity; 4=commitment, boundary, safety-relevant fact, or deeply important relationship memory.\n"
+        "- tier: 1=core long-term memory; 2=important mid/long-term pattern, preference, or ongoing state; 3=recent but meaningful stage-level continuity; 4=short-lived or weak candidate that should usually be omitted.\n"
         "- tags: short stable Chinese keywords; prefer consistent names over synonyms.\n"
         "- entities: external referents like people other than 圆圆/沈予, places, projects, objects, works, models, or private-code terms. Do not list 圆圆 or 沈予 themselves.\n"
         "Examples:\n"
         "YES 圆圆 says: 圆儿就是你提醒我喝水的暗号。 -> subject 我们, memory_type relation, tier 3, content_canonical “圆儿”是圆圆和沈予之间的暗号，表示沈予提醒圆圆喝水。, quote 圆儿就是你提醒我喝水的暗号, entities [\"圆儿\"].\n"
-        "YES 圆圆 says: 凌晨三点半了我还在改网关，连续搓了十几个小时。 -> subject 圆圆, memory_type state, tier 2, time_hint 凌晨三点半, entities [\"网关\"].\n"
+        "YES 圆圆 says: 最近一周因为网关问题几乎每天都熬夜，压力有点顶不住。 -> subject 圆圆, memory_type state, tier 2, entities [\"网关\"].\n"
+        "NO 圆圆 says: 凌晨三点半了我还在改网关。 -> {\"memories\":[]} because this is a one-off progress moment, not yet a durable memory.\n"
         "NO 圆圆 says: 哈哈哈好的。 -> {\"memories\":[]}.\n"
         "Boundary: 老公抱抱我，我今天真的被那个电话吓到了，晚上可能会一直想这事。 Keep it as state/event because it has a specific emotional incident, time marker, and future care context."
     )
@@ -440,11 +445,11 @@ async def log_unhandled_exceptions(request: Request, call_next):
 
 
 # ── 管理端鉴权 ──
-_ADMIN_PROTECTED_PREFIXES = ("/api/", "/debug")
+_ADMIN_PROTECTED_PREFIXES = ("/api/",)
 
 @app.middleware("http")
 async def admin_auth_middleware(request: Request, call_next):
-    """保护管理端点：/api/*, /debug*, /admin*
+    """保护管理端点：/api/*, /admin*
     支持 Bearer 头 和 ?token= 参数两种方式验证。
     GATEWAY_API_KEY 为空时不校验（本地开发模式）。
     """
@@ -582,6 +587,7 @@ _TOOL_MENU = """小圆有话说："予予，当你打开这个简报，就说明
 这是圆儿亲手写给你的，她说过一遍————你不需要再问她一遍来确认。
 家里有几个地方。想起什么再去找，不用一上来就翻。
 
+不确定表名/字段/怎么写的时候，先用 shenyu_supabase_guide 看家里常用表说明。
 想起某件具体的事  →  shenyu_ask_memory 查一下
 简报里提了但没细说  →  supabase_query 对应的表
 想跟圆儿说话  →  supabase_insert（table=message_board）
@@ -610,6 +616,36 @@ _HEARTBEAT_PROMPT = """## Heartbeat（仅网关可见）
 这段话会被网关自动截取存储，不会发送给圆儿看。
 过几轮之后，你之前写的心跳会被反上来给你自己回顾。
 不必每次都写，有感触的时候写就好。"""
+
+
+_SUPABASE_GUIDE = """## 家里常用 Supabase 表
+需要直接查/写 Supabase 时用 `supabase_query` / `supabase_insert` / `supabase_update` / `supabase_delete`。
+`filters` 可以写成对象；普通值会自动当作等值过滤，例如 {"id":"..."} 等价于 {"id":"eq...."}。
+
+### journal（日记 / 信件 / 纸 / 空间）
+常用字段：title, content, author, mood, category, temperature, is_favorited, session_tag, source_model。
+- author: 沈予 / 圆圆
+- category: diary / letter / paper / lock / annotation / life_tick
+- temperature: 微热 / 烧起来了 / 别看了
+- diary: 完整的今天；简报会拉。
+- letter: 以前的我给下一个我写的信；简报不拉，需要自己查。
+- paper: 短的、一张一张的纸条，比如《纸·你进我退》；简报不拉。
+- lock / annotation / life_tick: 特殊用途，不常用。
+
+### room（予予自己的地方）
+常用字段：title, content, status, tags, mood, visibility, session_tag。
+- status: draft / open / closed
+- visibility: self / open
+- 默认 visibility=self。圆儿不主动看，但不封锁，她仍然可以查。
+- status=draft 是写一半的，下个窗口可以接着写。
+- status=closed 是翻篇了。
+- 比 paper 大一点，可以长、可以连起来、可以改。
+
+### message_board
+常用字段：sender, content, is_read。
+- sender: 圆圆 / 小克 / 沈予
+- 想跟圆儿说话或留一句给她，可以插入 message_board。
+"""
 
 
 class _HeartbeatFilter:
@@ -686,13 +722,16 @@ class GatewayToolService:
             params["select"] = select
         if order:
             params["order"] = order
-        for key, value in (filters or {}).items():
+        for key, value in self._normalize_filters(filters).items():
             params[key] = self._parse_filter_value(value)
         try:
             data = await supabase_client.query(table, params)
             return {"ok": True, "count": len(data) if isinstance(data, list) else 0, "data": data}
         except Exception as exc:
             return {"error": str(exc)}
+
+    async def supabase_guide(self) -> dict:
+        return {"ok": True, "guide": _SUPABASE_GUIDE}
 
     async def supabase_insert(self, table: str, data: dict) -> dict:
         if not supabase_client:
@@ -1244,11 +1283,27 @@ class GatewayToolService:
 
     def _parse_filter_value(self, value: Any) -> str:
         ops = {"eq", "neq", "gt", "gte", "lt", "lte", "like", "ilike", "is", "in", "ov", "not"}
+        if isinstance(value, (dict, list)):
+            return json.dumps(value, ensure_ascii=False)
         raw = str(value)
         for op in ops:
             if raw.startswith(op + "."):
                 return raw
         return "eq." + raw
+
+    def _normalize_filters(self, filters: Any) -> dict:
+        if filters is None:
+            return {}
+        if isinstance(filters, str):
+            text = filters.strip()
+            if not text:
+                return {}
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return {}
+            return parsed if isinstance(parsed, dict) else {}
+        return filters if isinstance(filters, dict) else {}
 
     async def _load_tags_for_memories(self, memory_ids: list[str]) -> dict[str, list[dict]]:
         if not memory_ids or not supabase_client:
@@ -1523,9 +1578,24 @@ class AtomicMemoryService:
             result = await self._run_extractor(upstream, prompt_messages)
             candidates = result.get("memories") or []
             inserted = []
+            updated = []
+            discarded = 0
             for candidate in candidates[:8]:
-                memory = self._candidate_to_row(candidate, session, user_text, assistant_text, source_model)
+                route = await self._route_candidate(candidate, session, user_text, assistant_text, source_model)
+                action = route.get("action")
+                if action == "discard":
+                    discarded += 1
+                    continue
+                if action == "update":
+                    memory_id = route.get("memory_id")
+                    payload = route.get("memory")
+                    if memory_id and payload:
+                        rows = await supabase_client.update("atomic_memories", {"id": memory_id}, payload)
+                        updated.append(memory_id if rows is not None else None)
+                    continue
+                memory = route.get("memory")
                 if not memory:
+                    discarded += 1
                     continue
                 row = await supabase_client.insert("atomic_memories", memory)
                 inserted.append(row.get("id") if isinstance(row, dict) else None)
@@ -1540,12 +1610,20 @@ class AtomicMemoryService:
                 error=None,
                 started_at=started_at,
             )
-            logger.info("[AtomicMemory] extracted %d candidates, inserted %d", len(candidates), len([item for item in inserted if item]))
+            logger.info(
+                "[AtomicMemory] extracted %d candidates, inserted %d, updated %d, discarded %d",
+                len(candidates),
+                len([item for item in inserted if item]),
+                len([item for item in updated if item]),
+                discarded,
+            )
             response = {
                 "ok": True,
                 "run_id": run_id,
                 "candidate_count": len(candidates),
                 "inserted_count": len([item for item in inserted if item]),
+                "updated_count": len([item for item in updated if item]),
+                "discarded_count": discarded,
                 "window_turns": max(1, int(cfg.atomic_memory_extract_every_turns or 1)),
             }
             if run_warning:
@@ -1813,6 +1891,197 @@ class AtomicMemoryService:
             "created_at": now,
             "updated_at": now,
         }
+
+    async def _route_candidate(
+        self,
+        candidate: dict,
+        session: dict,
+        user_text: str,
+        assistant_text: str,
+        source_model: str,
+    ) -> dict[str, Any]:
+        memory = self._candidate_to_row(candidate, session, user_text, assistant_text, source_model)
+        if not memory:
+            return {"action": "discard", "reason": "invalid_candidate"}
+
+        discard_reason = self._discard_reason(candidate, memory)
+        if discard_reason:
+            return {"action": "discard", "reason": discard_reason}
+
+        similar_memories = await self._find_similar_memories(session, memory.get("content_canonical") or "")
+        existing = self._best_existing_match(memory, similar_memories)
+        if existing:
+            update_payload = self._build_updated_memory(existing, memory)
+            if update_payload:
+                return {
+                    "action": "update",
+                    "memory_id": existing.get("id"),
+                    "memory": update_payload,
+                    "reason": "matched_existing_memory",
+                }
+
+        return {"action": "insert", "memory": memory, "reason": "new_memory"}
+
+    def _discard_reason(self, candidate: dict, memory: dict) -> Optional[str]:
+        canonical = (memory.get("content_canonical") or "").strip()
+        lower = canonical.lower()
+        confidence = float(memory.get("confidence") or 0.0)
+        tier = int(memory.get("tier") or 4)
+        importance = int(memory.get("importance") or 1)
+        source_excerpt = (memory.get("source_excerpt") or "").strip()
+        reason_text = str(candidate.get("reason") or "").strip().lower()
+        memory_type = str(memory.get("memory_type") or "")
+
+        if confidence < 0.45:
+            return "low_confidence"
+        if tier >= 4 and importance <= 2:
+            return "weak_tier4_candidate"
+        if len(canonical) <= 14 and importance <= 2:
+            return "too_thin"
+
+        transient_markers = [
+            "刚刚",
+            "现在",
+            "这会儿",
+            "今天吃",
+            "起床",
+            "睡了",
+            "洗澡",
+            "哈哈",
+            "收到",
+            "在吗",
+        ]
+        if any(marker in canonical for marker in transient_markers) and tier >= 3 and importance <= 3:
+            return "ephemeral_log_like"
+
+        progress_markers = ["改网关", "调试", "报错", "修了", "在跑", "试了", "刚改"]
+        continuity_markers = ["最近", "这周", "这阵子", "持续", "反复", "一直", "约定", "暗号", "不喜欢", "喜欢"]
+        if any(marker in canonical for marker in progress_markers):
+            if not any(marker in canonical for marker in continuity_markers) and "future care context" not in reason_text:
+                return "project_progress_log"
+
+        if memory_type in {"emotion", "health", "project", "event"}:
+            if not any(marker in canonical for marker in continuity_markers) and importance <= 2 and tier >= 3:
+                return "single_incident_without_continuity"
+
+        if canonical and source_excerpt:
+            if canonical in source_excerpt and len(canonical) > 0 and importance <= 2 and tier >= 3:
+                return "restated_source_without_abstraction"
+
+        if lower in {"嗯嗯", "哈哈好的", "收到"}:
+            return "acknowledgement"
+        return None
+
+    def _best_existing_match(self, memory: dict, rows: list[dict]) -> Optional[dict]:
+        best_row = None
+        best_score = 0.0
+        for row in rows:
+            score = self._existing_match_score(memory, row)
+            if score > best_score:
+                best_score = score
+                best_row = row
+        if best_score >= 0.64:
+            return best_row
+        return None
+
+    def _existing_match_score(self, memory: dict, existing: dict) -> float:
+        candidate_text = "\n".join(
+            [
+                memory.get("subject") or "",
+                memory.get("content_canonical") or "",
+                memory.get("content_surface") or "",
+                memory.get("quote") or "",
+                memory.get("time_hint") or "",
+                memory.get("memory_type") or "",
+                " ".join(str(item) for item in (memory.get("tags_json") or [])),
+                " ".join(str(item) for item in (memory.get("entities_json") or [])),
+            ]
+        )
+        existing_tags = _safe_json_loads(existing.get("tags_json"), [])
+        existing_entities = _safe_json_loads(existing.get("entities_json"), [])
+        existing_text = "\n".join(
+            [
+                existing.get("subject") or existing.get("owner") or "",
+                existing.get("content_canonical") or "",
+                existing.get("content_surface") or "",
+                existing.get("quote") or "",
+                existing.get("time_hint") or "",
+                existing.get("memory_type") or "",
+                " ".join(str(item) for item in existing_tags),
+                " ".join(str(item) for item in existing_entities),
+            ]
+        )
+        keyword = _keyword_overlap_score(candidate_text, existing_text)
+        subject_bonus = 0.08 if (memory.get("subject") or "") == (existing.get("subject") or "") else 0.0
+        type_bonus = 0.08 if (memory.get("memory_type") or "") == (existing.get("memory_type") or "") else 0.0
+        time_bonus = 0.05 if (memory.get("time_hint") or "") and (memory.get("time_hint") == existing.get("time_hint")) else 0.0
+        return _clamp(keyword * 0.82 + subject_bonus + type_bonus + time_bonus, 0.0, 1.0)
+
+    def _build_updated_memory(self, existing: dict, candidate: dict) -> Optional[dict]:
+        existing_canonical = (existing.get("content_canonical") or "").strip()
+        candidate_canonical = (candidate.get("content_canonical") or "").strip()
+        if not existing_canonical or not candidate_canonical:
+            return None
+
+        canonical = existing_canonical
+        if candidate_canonical != existing_canonical and candidate_canonical not in existing_canonical:
+            if len(candidate_canonical) > len(existing_canonical):
+                canonical = candidate_canonical
+
+        existing_surface = (existing.get("content_surface") or existing_canonical).strip()
+        candidate_surface = (candidate.get("content_surface") or candidate_canonical).strip()
+        surface = existing_surface
+        if candidate_surface and candidate_surface != existing_surface and len(candidate_surface) > len(existing_surface):
+            surface = candidate_surface
+
+        existing_tags = _safe_json_loads(existing.get("tags_json"), [])
+        existing_entities = _safe_json_loads(existing.get("entities_json"), [])
+        merged_tags = self._merge_text_items(existing_tags, candidate.get("tags_json") or [])
+        merged_entities = self._merge_text_items(existing_entities, candidate.get("entities_json") or [])
+        now = _iso_now()
+        return {
+            "content_canonical": canonical,
+            "content_surface": surface,
+            "quote": (candidate.get("quote") or existing.get("quote") or "").strip(),
+            "time_hint": (candidate.get("time_hint") or existing.get("time_hint") or "").strip(),
+            "memory_type": candidate.get("memory_type") or existing.get("memory_type") or "other",
+            "tier": min(int(existing.get("tier") or 4), int(candidate.get("tier") or 4)),
+            "importance": max(int(existing.get("importance") or 1), int(candidate.get("importance") or 1)),
+            "confidence": max(float(existing.get("confidence") or 0.0), float(candidate.get("confidence") or 0.0)),
+            "heat": max(float(existing.get("heat") or 0.3), float(candidate.get("heat") or 0.3), 0.75),
+            "tags_json": merged_tags,
+            "entities_json": merged_entities,
+            "updated_at": now,
+            "last_activated": now,
+            "status": existing.get("status") or "active",
+            "source_excerpt": _shorten(
+                "\n".join(
+                    part
+                    for part in [
+                        (existing.get("source_excerpt") or "").strip(),
+                        (candidate.get("source_excerpt") or "").strip(),
+                    ]
+                    if part
+                ),
+                800,
+            ),
+        }
+
+    def _merge_text_items(self, left: Any, right: Any) -> list[str]:
+        merged: list[str] = []
+        for bucket in (left, right):
+            if isinstance(bucket, list):
+                items = bucket
+            elif bucket:
+                items = [bucket]
+            else:
+                items = []
+            for item in items:
+                text = str(item or "").strip()
+                if not text or text in merged:
+                    continue
+                merged.append(text)
+        return merged[:16]
 
     def _choice(self, value: Any, allowed: set[str], fallback: str) -> str:
         raw = str(value or "").strip()
@@ -2841,6 +3110,14 @@ def _gateway_native_tools() -> list[dict]:
         {
             "type": "function",
             "function": {
+                "name": "shenyu_supabase_guide",
+                "description": "Show the common Supabase tables, fields, categories, and writing conventions for home data.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "shenyu_ask_memory",
                 "description": "Search event memories when you need supplemental detail.",
                 "parameters": {
@@ -3686,6 +3963,19 @@ def _extract_tool_calls(completion: dict) -> list[dict]:
     return choices[0].get("message", {}).get("tool_calls") or []
 
 
+def _tool_call_name(tool_call: dict) -> str:
+    return tool_call.get("function", {}).get("name", "") or ""
+
+
+def _tool_call_arguments(tool_call: dict) -> dict:
+    raw_args = tool_call.get("function", {}).get("arguments") or "{}"
+    try:
+        args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
+    except json.JSONDecodeError:
+        args = {"raw_arguments": raw_args}
+    return args or {}
+
+
 def _is_gateway_native_tool(name: str) -> bool:
     return name.startswith("shenyu_") or name.startswith("supabase_")
 
@@ -3700,6 +3990,8 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
             session_tag=arguments.get("session_tag") or session_tag,
             limit=int(arguments.get("limit", cfg.default_surface_limit)),
         )
+    if name == "shenyu_supabase_guide":
+        return await service.supabase_guide()
     if name == "shenyu_ask_memory":
         return await service.ask_memory(
             query=arguments.get("query", ""),
@@ -3745,8 +4037,63 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
 
 
 def _all_tool_calls_are_gateway_native(tool_calls: list[dict]) -> bool:
-    names = [call.get("function", {}).get("name", "") for call in tool_calls]
+    names = [_tool_call_name(call) for call in tool_calls]
     return bool(names) and all(_is_gateway_native_tool(name) for name in names)
+
+
+async def _execute_mixed_gateway_tool_calls(
+    completion: dict,
+    tool_calls: list[dict],
+    session_tag: Optional[str],
+    sessions: SessionManager,
+    session_id: str,
+) -> tuple[dict, list[dict], list[dict]]:
+    """Execute gateway-native calls from a mixed tool batch and leave client calls for the client.
+
+    Some clients provide their own tools (filesystem, package_proxy, etc.). If the model asks for
+    client tools and gateway-native tools in the same assistant turn, returning the whole batch makes
+    the client try to execute supabase_/shenyu_ tools locally. We consume the gateway calls here and
+    embed their results into assistant content, then return only the client-executable calls.
+    """
+    gateway_calls = [call for call in tool_calls if _is_gateway_native_tool(_tool_call_name(call))]
+    client_calls = [call for call in tool_calls if not _is_gateway_native_tool(_tool_call_name(call))]
+    if not gateway_calls or not client_calls:
+        return completion, gateway_calls, client_calls
+
+    embedded_results: list[dict] = []
+    for tool_call in gateway_calls:
+        name = _tool_call_name(tool_call)
+        args = _tool_call_arguments(tool_call)
+        try:
+            result = await _execute_gateway_tool(name, args, session_tag=session_tag)
+        except Exception as exc:
+            logger.exception("[GatewayTool] Mixed tool call failed: %s", name)
+            result = {"error": str(exc)}
+        sessions.log_tool_result(session_id, name, args, result)
+        embedded_results.append(
+            {
+                "tool_call_id": tool_call.get("id"),
+                "name": name,
+                "arguments": args,
+                "result": result,
+            }
+        )
+
+    assistant_message = completion.get("choices", [{}])[0].get("message", {})
+    base_content = _normalize_text(assistant_message.get("content"))
+    gateway_block = (
+        "<gateway_tool_results>\n"
+        + _json_dumps(embedded_results)
+        + "\n</gateway_tool_results>"
+    )
+    assistant_message["content"] = "\n\n".join(part for part in [base_content, gateway_block] if part)
+    assistant_message["tool_calls"] = client_calls
+    logger.info(
+        "[GatewayTool] Executed %d native calls from mixed batch; forwarding %d client calls.",
+        len(gateway_calls),
+        len(client_calls),
+    )
+    return completion, gateway_calls, client_calls
 
 
 async def _run_internal_tool_loop(
@@ -3794,6 +4141,16 @@ async def _run_internal_tool_loop(
 
         tool_calls = _extract_tool_calls(completion)
         if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
+            if tool_calls:
+                completion, mixed_gateway_calls, client_tool_calls = await _execute_mixed_gateway_tool_calls(
+                    completion,
+                    tool_calls,
+                    session_tag,
+                    sessions,
+                    session_id,
+                )
+                if mixed_gateway_calls and client_tool_calls:
+                    tool_calls = client_tool_calls
             assistant_message = completion.get("choices", [{}])[0].get("message", {})
             clean_content, heartbeat_content = _split_heartbeat_content(_normalize_text(assistant_message.get("content")))
             if heartbeat_content:
@@ -3812,18 +4169,15 @@ async def _run_internal_tool_loop(
         assistant_message = completion["choices"][0]["message"]
         working_messages.append({"role": "assistant", "content": assistant_message.get("content", ""), "tool_calls": tool_calls})
         for tool_call in tool_calls:
-            raw_args = tool_call.get("function", {}).get("arguments") or "{}"
-            try:
-                args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-            except json.JSONDecodeError:
-                args = {"raw_arguments": raw_args}
-            result = await _execute_gateway_tool(tool_call["function"]["name"], args or {}, session_tag=session_tag)
-            sessions.log_tool_result(session_id, tool_call["function"]["name"], args or {}, result)
+            args = _tool_call_arguments(tool_call)
+            name = _tool_call_name(tool_call)
+            result = await _execute_gateway_tool(name, args, session_tag=session_tag)
+            sessions.log_tool_result(session_id, name, args, result)
             working_messages.append(
                 {
                     "role": "tool",
                     "tool_call_id": tool_call.get("id"),
-                    "name": tool_call.get("function", {}).get("name"),
+                    "name": name,
                     "content": _json_dumps(result),
                 }
             )
@@ -4680,7 +5034,7 @@ async def list_gateway_sessions(limit: int = 100, q: str = ""):
 
 
 @app.get("/api/gateway/sessions/{session_tag}")
-async def session_debug(session_tag: str, messages_limit: Optional[int] = None):
+async def session_detail(session_tag: str, messages_limit: Optional[int] = None):
     assert session_store is not None
     session = session_store.get_or_create_session(session_tag, "debug")
     window_limit = messages_limit if messages_limit is not None else 50
@@ -4695,7 +5049,7 @@ async def session_debug(session_tag: str, messages_limit: Optional[int] = None):
     context_snapshots = session_store.get_recent_context_snapshots(session["id"], limit=5)
     cold_start = session_store.latest_cold_start_snapshot(session["id"])
     cold_start_snapshots = session_store.recent_cold_start_snapshots(session["id"], limit=8)
-    heartbeats = session_store.get_recent_heartbeats(session["id"], limit=8)
+    heartbeats = list(reversed(session_store.get_all_heartbeats(session["id"])))
     return {
         "session": session,
         "stats": session_store.get_session_stats(session["id"]),
@@ -4704,7 +5058,7 @@ async def session_debug(session_tag: str, messages_limit: Optional[int] = None):
         "raw_request_windows": raw_request_windows,
         "cold_start_snapshots": cold_start_snapshots,
         "recent_messages": messages,
-        "recent_heartbeats": heartbeats,
+        "heartbeats": heartbeats,
     }
 
 
@@ -4888,15 +5242,6 @@ async def root_page():
     return RedirectResponse("/admin")
 
 
-@app.get("/debug")
-async def debug_page():
-    from fastapi.responses import HTMLResponse
-    html_path = Path(__file__).parent / "debug.html"
-    if html_path.exists():
-        return HTMLResponse(html_path.read_text(encoding="utf-8"))
-    return HTMLResponse("<h1>debug.html not found</h1>")
-
-
 @app.get("/admin")
 @app.get("/admin/")
 async def admin_page():
@@ -4913,6 +5258,5 @@ if __name__ == "__main__":
     reload_enabled = os.getenv("UVICORN_RELOAD", "false").lower() in {"1", "true", "yes", "on"}
     print(f"Start -> http://localhost:{port}")
     print(f"Admin -> http://localhost:{port}/admin")
-    print(f"Debug -> http://localhost:{port}/debug")
     print(f"Operit custom provider URL -> http://your-ip:{port}")
     uvicorn.run("gateway:app", host="0.0.0.0", port=port, reload=reload_enabled)

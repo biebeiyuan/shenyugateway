@@ -150,7 +150,7 @@ Config:
 - `COLD_START_IDLE_MINUTES`
 - `MAX_CLIENT_MESSAGES`
 
-Debug endpoints:
+Inspection endpoints:
 
 - `GET /api/gateway/overview`
 - `GET /api/gateway/cold-start/preview`
@@ -158,7 +158,7 @@ Debug endpoints:
 
 ## Calendar Layer
 
-The calendar layer writes private day/week/month memory pages. It is manually triggered from the admin/debug UI.
+The calendar layer writes private day/week/month memory pages. It is manually triggered from the admin UI.
 Before ordinary chat replies, the gateway also injects a compact calendar memory block when Supabase is configured:
 latest 3 day pages, latest 1 week page, and latest 1 month page. Only `summary` and `digest` are included.
 
@@ -346,10 +346,9 @@ UI routes:
 
 ```text
 http://localhost:8010/admin
-http://localhost:8010/debug
 ```
 
-`/` redirects to `/admin`, so the admin login is the single main browser entrypoint. The same gateway key protects `/admin`, `/debug`, and `/api/*`.
+`/` redirects to `/admin`, so the admin login is the single main browser entrypoint. The same gateway key protects `/admin` and `/api/*`.
 
 `/admin` is the formal Vue/Vite admin app. It is organized by feature:
 
@@ -363,7 +362,7 @@ http://localhost:8010/debug
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.
 
-`/debug` is kept as the low-level single-file diagnostic console in `debug.html`. New user-facing admin features should go into `admin/src/views/*` and `admin/src/api/*`, not into `debug.html`.
+The old single-file `/debug` console has been retired. User-facing admin features should go into `admin/src/views/*` and `admin/src/api/*`.
 
 After backend or admin build changes, restart the running gateway process. The process serves files loaded from disk at startup, so an already-running server may still show the old `/admin` page until it is restarted.
 

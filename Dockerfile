@@ -19,7 +19,6 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY gateway.py ./
 COPY shenyu_gateway ./shenyu_gateway
-COPY debug.html ./
 COPY --from=admin-builder /app/admin/dist ./admin/dist
 
 EXPOSE 8010

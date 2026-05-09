@@ -45,8 +45,12 @@ const detail = ref<GatewaySessionDetail | null>(null)
 const heartbeatDraft = ref('')
 const savingHeartbeat = ref(false)
 const deletingHeartbeats = ref(false)
+const heartbeatVisibleCount = ref(100)
 
 const selectedSession = computed(() => detail.value?.session || sessions.value.find((item) => item.session_tag === selectedTag.value))
+const heartbeats = computed(() => detail.value?.heartbeats || [])
+const visibleHeartbeats = computed(() => heartbeats.value.slice(0, heartbeatVisibleCount.value))
+const hiddenHeartbeatCount = computed(() => Math.max(heartbeats.value.length - visibleHeartbeats.value.length, 0))
 
 onMounted(loadSessions)
 
@@ -77,6 +81,7 @@ async function selectSession(sessionTag: string) {
 
 async function loadSessionDetail(sessionTag: string) {
   detailLoading.value = true
+  heartbeatVisibleCount.value = 100
   try {
     detail.value = await fetchGatewaySession(sessionTag)
   } catch (error) {
@@ -262,6 +267,10 @@ function rawWindowTitle(item: GatewayRawRequestWindow) {
 function coldTitle(item: GatewayColdStartSnapshot) {
   return `${formatTime(item.created_at)} / ${item.reason} / ${item.injected_count}/${item.max_injections}`
 }
+
+function showMoreHeartbeats() {
+  heartbeatVisibleCount.value += 100
+}
 </script>
 
 <template>
@@ -385,8 +394,8 @@ function coldTitle(item: GatewayColdStartSnapshot) {
                   </NPopconfirm>
                 </div>
               </div>
-              <div v-if="detail.recent_heartbeats.length" class="chat-list">
-                <div v-for="item in detail.recent_heartbeats" :key="item.id" class="chat-row heartbeat-row">
+              <div v-if="heartbeats.length" class="chat-list">
+                <div v-for="item in visibleHeartbeats" :key="item.id" class="chat-row heartbeat-row">
                   <div class="chat-head">
                     <NTag size="small" type="warning">Heartbeat</NTag>
                     <span>{{ formatTime(item.created_at) }}</span>
@@ -394,6 +403,9 @@ function coldTitle(item: GatewayColdStartSnapshot) {
                     <NButton size="tiny" quaternary type="error" :loading="deletingHeartbeats" @click="deleteHeartbeat(item.id)">删除</NButton>
                   </div>
                   <div class="chat-body">{{ item.content }}</div>
+                </div>
+                <div v-if="hiddenHeartbeatCount" class="load-more-row">
+                  <NButton secondary @click="showMoreHeartbeats">继续显示 {{ Math.min(hiddenHeartbeatCount, 100) }} 条 / 剩余 {{ hiddenHeartbeatCount }} 条</NButton>
                 </div>
               </div>
               <NEmpty v-else description="暂无 heartbeat" />
@@ -545,6 +557,12 @@ function coldTitle(item: GatewayColdStartSnapshot) {
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
+}
+
+.load-more-row {
+  display: flex;
+  justify-content: center;
+  padding: 4px 0;
 }
 
 .block {

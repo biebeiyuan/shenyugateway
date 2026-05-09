@@ -1200,20 +1200,6 @@ class GatewayStore:
                 return ""
             return "\n".join(row["content"] for row in reversed(rows))
 
-    def get_recent_heartbeats(self, session_id: str, limit: int = 8) -> list[dict]:
-        limit = max(1, min(int(limit or 8), 50))
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM heartbeat_entries
-                WHERE session_id = ?
-                ORDER BY created_at DESC
-                LIMIT ?
-                """,
-                (session_id, limit),
-            ).fetchall()
-            return [dict(row) for row in rows]
-
     def delete_heartbeats(self, session_id: str, heartbeat_ids: Optional[list[str]] = None, delete_all: bool = False) -> int:
         heartbeat_ids = [item for item in (heartbeat_ids or []) if item]
         with self._connect() as conn:
@@ -1229,17 +1215,15 @@ class GatewayStore:
             )
             return int(cursor.rowcount or 0)
 
-    def get_all_heartbeats(self, session_id: str, limit: int = 5000) -> list[dict]:
-        limit = max(1, min(int(limit or 5000), 50000))
+    def get_all_heartbeats(self, session_id: str) -> list[dict]:
         with self._connect() as conn:
             rows = conn.execute(
                 """
                 SELECT * FROM heartbeat_entries
                 WHERE session_id = ?
                 ORDER BY created_at ASC
-                LIMIT ?
                 """,
-                (session_id, limit),
+                (session_id,),
             ).fetchall()
             return [dict(row) for row in rows]
 
