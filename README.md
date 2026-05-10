@@ -213,7 +213,7 @@ Explicit inline memory flow:
 2. Only closed `[mem]...[/mem]` blocks are removed from visible text.
 3. Each captured note is inserted directly into `atomic_memories` as `active`.
 4. Inline notes are not rewritten, scored, or routed through `proposed`.
-5. Defaults are `tier=2`, `importance=3`, and `memory_type=fact` unless attributes override them.
+5. Defaults are `subject=沈予`, `tier=2`, `importance=3`, and `memory_type=fact` unless attributes override them.
 
 Search/injection flow:
 

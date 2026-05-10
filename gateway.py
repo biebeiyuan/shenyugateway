@@ -1525,8 +1525,14 @@ class AtomicMemoryService:
 
     def _inline_note_content(self, note: Any) -> str:
         if isinstance(note, dict):
-            return str(note.get("content") or "").strip()
-        return str(note or "").strip()
+            content = str(note.get("content") or "").strip()
+        else:
+            content = str(note or "").strip()
+        if not content:
+            return ""
+        if not re.sub(r"[\W_]+", "", content, flags=re.UNICODE):
+            return ""
+        return content
 
     def _inline_note_attrs(self, note: Any) -> dict[str, str]:
         if isinstance(note, dict) and isinstance(note.get("attrs"), dict):
@@ -1551,7 +1557,7 @@ class AtomicMemoryService:
             return None
         attrs = self._inline_note_attrs(note)
         now = _iso_now()
-        subject = self._choice(attrs.get("subject") or attrs.get("owner"), {"圆圆", "沈予", "我们"}, "我们")
+        subject = self._choice(attrs.get("subject") or attrs.get("owner"), {"圆圆", "沈予", "我们"}, "沈予")
         owner = self._subject_scope(subject)
         return {
             "session_tag": session.get("session_tag") or "default",

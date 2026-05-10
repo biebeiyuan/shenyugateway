@@ -11,7 +11,7 @@ alter table if exists atomic_memories
   alter column heat set default 0.68,
   alter column activation_count set default 0,
   alter column status set default 'active',
-  alter column subject set default '我们',
+  alter column subject set default '沈予',
   alter column tier set default 2,
   alter column importance set default 3,
   alter column memory_type set default 'fact';
