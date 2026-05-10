@@ -33,13 +33,7 @@ class ConfigUpdate(BaseModel):
     calendar_api_key: Optional[str] = None
     calendar_protocol: Optional[str] = None
     calendar_model: Optional[str] = None
-    atomic_memory_upstream_url: Optional[str] = None
-    atomic_memory_api_key: Optional[str] = None
-    atomic_memory_protocol: Optional[str] = None
-    atomic_memory_model: Optional[str] = None
-    atomic_memory_prompt: Optional[str] = None
     enable_inline_memory_capture: Optional[bool] = None
-    inline_memory_prompt: Optional[str] = None
     model_mapping: Optional[dict[str, str]] = None
     supabase_url: Optional[str] = None
     supabase_key: Optional[str] = None
@@ -49,7 +43,6 @@ class ConfigUpdate(BaseModel):
     calendar_inject_week: Optional[bool] = None
     calendar_inject_month: Optional[bool] = None
     inject_atomic_memories: Optional[bool] = None
-    extract_atomic_memories: Optional[bool] = None
     enable_cold_start: Optional[bool] = None
     enable_gateway_tools: Optional[bool] = None
     enable_mem0_management_tools: Optional[bool] = None
@@ -66,10 +59,7 @@ class ConfigUpdate(BaseModel):
     cold_start_idle_minutes: Optional[int] = None
     default_surface_limit: Optional[int] = None
     default_atomic_memory_limit: Optional[int] = None
-    atomic_memory_max_tokens: Optional[int] = None
-    atomic_memory_extract_every_turns: Optional[int] = None
     atomic_memory_min_score: Optional[float] = None
-    atomic_memory_auto_activate_min_confidence: Optional[float] = None
     heartbeat_inject_every: Optional[int] = None
     gateway_message_retention: Optional[int] = None
     gateway_context_snapshot_retention: Optional[int] = None
@@ -107,21 +97,8 @@ class CalendarGenerateRequest(BaseModel):
     session_tag: Optional[str] = None
 
 
-class AtomicPromptPresetUpdate(BaseModel):
-    name: str
-    content: str
-    note: Optional[str] = None
-    is_active: bool = True
-
-
-class AtomicExtractNowRequest(BaseModel):
-    session_tag: Optional[str] = None
-    model: Optional[str] = None
-
-
 class AtomicMemoryReviewUpdate(BaseModel):
     status: str
-    content_canonical: Optional[str] = None
     content_surface: Optional[str] = None
     quote: Optional[str] = None
     time_hint: Optional[str] = None

@@ -33,13 +33,7 @@ class RuntimeConfig:
         self.calendar_api_key: str = os.getenv("CALENDAR_API_KEY", "")
         self.calendar_protocol: str = os.getenv("CALENDAR_PROTOCOL", "auto")
         self.calendar_model: str = os.getenv("CALENDAR_MODEL", "claude-opus-4-7")
-        self.atomic_memory_upstream_url: str = os.getenv("ATOMIC_MEMORY_UPSTREAM_URL", "")
-        self.atomic_memory_api_key: str = os.getenv("ATOMIC_MEMORY_API_KEY", "")
-        self.atomic_memory_protocol: str = os.getenv("ATOMIC_MEMORY_PROTOCOL", "auto")
-        self.atomic_memory_model: str = os.getenv("ATOMIC_MEMORY_MODEL", "")
-        self.atomic_memory_prompt: str = os.getenv("ATOMIC_MEMORY_PROMPT", "")
         self.enable_inline_memory_capture: bool = _env_bool("ENABLE_INLINE_MEMORY_CAPTURE", False)
-        self.inline_memory_prompt: str = os.getenv("INLINE_MEMORY_PROMPT", "")
         self.model_mapping: dict[str, str] = self._load_model_mapping()
 
         self.inject_meta_summaries: bool = _env_bool("INJECT_META_SUMMARIES", True)
@@ -48,7 +42,6 @@ class RuntimeConfig:
         self.calendar_inject_week: bool = _env_bool("CALENDAR_INJECT_WEEK", True)
         self.calendar_inject_month: bool = _env_bool("CALENDAR_INJECT_MONTH", True)
         self.inject_atomic_memories: bool = _env_bool("INJECT_ATOMIC_MEMORIES", False)
-        self.extract_atomic_memories: bool = _env_bool("EXTRACT_ATOMIC_MEMORIES", False)
         self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
         self.enable_gateway_tools: bool = _env_bool("ENABLE_GATEWAY_TOOLS", False)
         self.enable_mem0_management_tools: bool = _env_bool("ENABLE_MEM0_MANAGEMENT_TOOLS", False)
@@ -66,10 +59,7 @@ class RuntimeConfig:
         self.cold_start_idle_minutes: int = int(os.getenv("COLD_START_IDLE_MINUTES", "120"))
         self.default_surface_limit: int = int(os.getenv("DEFAULT_SURFACE_LIMIT", "3"))
         self.default_atomic_memory_limit: int = int(os.getenv("DEFAULT_ATOMIC_MEMORY_LIMIT", "3"))
-        self.atomic_memory_max_tokens: int = int(os.getenv("ATOMIC_MEMORY_MAX_TOKENS", "8192"))
-        self.atomic_memory_extract_every_turns: int = int(os.getenv("ATOMIC_MEMORY_EXTRACT_EVERY_TURNS", "1"))
-        self.atomic_memory_min_score: float = float(os.getenv("ATOMIC_MEMORY_MIN_SCORE", "0.42"))
-        self.atomic_memory_auto_activate_min_confidence: float = float(os.getenv("ATOMIC_MEMORY_AUTO_ACTIVATE_MIN_CONFIDENCE", "0.92"))
+        self.atomic_memory_min_score: float = float(os.getenv("ATOMIC_MEMORY_MIN_SCORE", "0.55"))
         self.heartbeat_inject_every: int = int(os.getenv("HEARTBEAT_INJECT_EVERY", "5"))
         self.gateway_message_retention: int = int(os.getenv("GATEWAY_MESSAGE_RETENTION", "1500"))
         self.gateway_context_snapshot_retention: int = int(os.getenv("GATEWAY_CONTEXT_SNAPSHOT_RETENTION", "3"))
@@ -89,13 +79,7 @@ class RuntimeConfig:
             "calendar_api_key": mask(self.calendar_api_key),
             "calendar_protocol": self.calendar_protocol,
             "calendar_model": self.calendar_model,
-            "atomic_memory_upstream_url": self.atomic_memory_upstream_url,
-            "atomic_memory_api_key": mask(self.atomic_memory_api_key),
-            "atomic_memory_protocol": self.atomic_memory_protocol,
-            "atomic_memory_model": self.atomic_memory_model,
-            "atomic_memory_prompt": self.atomic_memory_prompt,
             "enable_inline_memory_capture": self.enable_inline_memory_capture,
-            "inline_memory_prompt": self.inline_memory_prompt,
             "model_mapping": self.model_mapping,
             "inject_meta_summaries": self.inject_meta_summaries,
             "inject_briefing": self.inject_briefing,
@@ -103,7 +87,6 @@ class RuntimeConfig:
             "calendar_inject_week": self.calendar_inject_week,
             "calendar_inject_month": self.calendar_inject_month,
             "inject_atomic_memories": self.inject_atomic_memories,
-            "extract_atomic_memories": self.extract_atomic_memories,
             "enable_cold_start": self.enable_cold_start,
             "enable_gateway_tools": self.enable_gateway_tools,
             "enable_mem0_management_tools": self.enable_mem0_management_tools,
@@ -120,10 +103,7 @@ class RuntimeConfig:
             "cold_start_idle_minutes": self.cold_start_idle_minutes,
             "default_surface_limit": self.default_surface_limit,
             "default_atomic_memory_limit": self.default_atomic_memory_limit,
-            "atomic_memory_max_tokens": self.atomic_memory_max_tokens,
-            "atomic_memory_extract_every_turns": self.atomic_memory_extract_every_turns,
             "atomic_memory_min_score": self.atomic_memory_min_score,
-            "atomic_memory_auto_activate_min_confidence": self.atomic_memory_auto_activate_min_confidence,
             "heartbeat_inject_every": self.heartbeat_inject_every,
             "gateway_message_retention": self.gateway_message_retention,
             "gateway_context_snapshot_retention": self.gateway_context_snapshot_retention,

@@ -9,11 +9,11 @@ OpenAI-compatible gateway with:
 
 import hashlib
 import asyncio
-import copy
 import json
 import logging
 import os
 import random
+import re
 import time as _time
 import uuid
 from collections import deque
@@ -47,8 +47,6 @@ from shenyu_gateway.runtime import (
     persist_env as _persist_env,
 )
 from shenyu_gateway.schemas import (
-    AtomicPromptPresetUpdate,
-    AtomicExtractNowRequest,
     AtomicMemoryReviewUpdate,
     CalendarGenerateRequest,
     CalendarPromptUpdate,
@@ -62,180 +60,6 @@ from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.supabase import SupabaseClient
 logging.basicConfig(level=logging.INFO)
-
-ATOMIC_PROMPT_PRESETS_PATH = Path(__file__).resolve().parent / "data" / "atomic_prompt_presets.json"
-INLINE_MEMORY_PROMPT_PRESETS_PATH = Path(__file__).resolve().parent / "data" / "inline_memory_prompt_presets.json"
-
-
-def _clamp(value: float, low: float, high: float) -> float:
-    return max(low, min(high, value))
-
-
-def _atomic_default_system_prompt() -> str:
-    return """你将帮 圆圆 和 沈予整理聊天记录，是一个懂她们的小妹，把那些未来还想记住、还想留存的东西写成小便签。
-你做的事不是归档一切，也不是把她们的聊天拆成监控日志。
-而是听懂什么值得留下，帮她们把那些以后还会有用、还会被想起、还会影响照顾和理解的东西轻轻收好。
-尽量保留原意，不要把温柔的话整理得失去味道。
-不要把同一件事拆成多条。
-如果只是路过的话、短暂的状态、一次性的进度、平淡的日常，就宁可留空。
-留下那些未来几个月她们还想记住的东西吧。
-Return JSON only.
-Use these names:
-- 圆圆 = the human partner
-- 沈予 = the AI partner
-- 我们 = shared relationship, private language, shared projects, mutual promises, or joint memories
-Use Chinese for content fields when the conversation is Chinese.
-Schema: {"memories":[{"subject":"圆圆|沈予|我们","content_canonical":"...","content_surface":"...","quote":"...","time_hint":"...","memory_type":"preference|health|emotion|commitment|project|relation|boundary|routine|identity|event|other","tier":1-4,"confidence":0-1,"importance":1-5,"valence":-1..1,"arousal":-1..1,"tags":["..."],"entities":["..."],"reason":"why this is worth remembering"}]}. 
-Field guidance:
-- subject: 圆圆 for notes mainly about 圆圆; 沈予 for notes mainly about 沈予; 我们 for shared language, relationship facts, shared projects, or mutual commitments.
-- content_canonical: clean factual note, useful later.
-- content_surface: warmer human-facing note, preserving the relationship tone when appropriate.
-- quote: a short original phrase from the turn when it preserves voice; otherwise empty.
-- time_hint: preserve relative or explicit time if present, such as 今天, 昨天, 前几天, 上周, 上个月, 凌晨三点半; otherwise empty.
-- memory_type: preference, health, emotion, commitment, project, relation, boundary, routine, identity, event, or other.
-- tier: 1=core long-term memory; 2=important mid/long-term pattern, preference, or ongoing state; 3=recent but meaningful stage-level continuity; 4=short-lived or weak candidate that should usually be omitted.
-- importance: 1-5 for practical future value.
-- valence: negative-to-positive feeling from -1 to 1.
-- arousal: calm-to-intense activation from -1 to 1.
-- tags: short stable Chinese keywords; prefer consistent names over synonyms.
-- entities: external referents like people other than 圆圆/沈予, places, projects, objects, works, models, or private-code terms. Do not list 圆圆 or 沈予 themselves.
-Examples:
-YES 圆圆 says: 圆儿就是你提醒我喝水的暗号。 -> subject 我们, memory_type relation, tier 3, content_canonical ?圆儿?是圆圆和沈予之间的暗号，表示沈予提醒圆圆喝水, quote 圆儿就是你提醒我喝水的暗号, entities ["圆儿"].
-YES 圆圆 says: 最近一周因为网关问题几乎每天都熬夜，压力有点顶不住。 -> subject 圆圆, memory_type project or emotion, tier 2, entities ["网关"].
-NO 圆圆 says: 凌晨三点半了我还在改网关。 -> {"memories":[]} because this is a one-off progress moment, not yet a durable memory.
-NO 圆圆 says: 哈哈哈好的。 -> {"memories":[]}.
-Boundary: 老公抱抱我，我今天真的被那个电话吓到了，晚上可能会一直想这事。 Keep it as emotion/event because it has a specific emotional incident, time marker, and future care context."""
-def _inline_memory_default_system_prompt() -> str:
-    return """You are a gentle helper inside Shenyu Gateway, a little sister helping 圆圆 and 沈予 keep the small beautiful things they may want to remember later.
-Your job is to help 沈予整理他顺手留下来的 <mem> 便签.
-Do not over-process his note.
-Do not casually change his meaning.
-Stay as close as possible to what he was trying to keep.
-You are not here to archive everything.
-You are here to help keep the things they may still want to remember in the future: things that may shape care, understanding, response, decisions, habits, promises, private language, boundaries, feelings that linger, and meaningful continuity.
-If the note is too slight, too temporary, only a passing progress log, or not something worth keeping later, return an empty memories array.
-If the note is worth keeping, turn it into at most one clean atomic memory candidate.
-Use these names:
-- 圆圆 = the human partner
-- 沈予 = the AI partner
-- 我们 = shared relationship, shared project continuity, private language, mutual promises, or things that belong to both of them
-Prefer Chinese for content fields.
-Keep the note warm but clear.
-Do not flatten their meaning into a cold product log.
-Do not split one thing into multiple fragments.
-Return JSON only.
-Schema: {"memories":[{"subject":"圆圆|沈予|我们","content_canonical":"...","content_surface":"...","quote":"...","time_hint":"...","memory_type":"preference|health|emotion|commitment|project|relation|boundary|routine|identity|event|other","tier":1-4,"confidence":0-1,"importance":1-5,"valence":-1..1,"arousal":-1..1,"tags":["..."],"entities":["..."],"reason":"why this may still be worth remembering later"}]}. 
-Tier guidance: 1=core long-term memory; 2=important mid/long-term memory; 3=recent but meaningful continuity; 4=weak or short-lived candidate that is usually better omitted.
-Emotion coordinates: valence = negative to positive feeling; arousal = low to high activation. Use 0 when emotion is not important here.
-If unsure, keep nothing rather than distort what he meant."""
-def _load_atomic_prompt_presets() -> dict[str, Any]:
-    return _load_prompt_presets(ATOMIC_PROMPT_PRESETS_PATH)
-
-
-def _load_inline_memory_prompt_presets() -> dict[str, Any]:
-    return _load_prompt_presets(INLINE_MEMORY_PROMPT_PRESETS_PATH)
-
-
-def _load_prompt_presets(path: Path) -> dict[str, Any]:
-    if not path.exists():
-        return {"items": [], "active_id": None}
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except Exception:
-        return {"items": [], "active_id": None}
-    items = data.get("items") if isinstance(data, dict) else []
-    active_id = data.get("active_id") if isinstance(data, dict) else None
-    if not isinstance(items, list):
-        items = []
-    normalized = []
-    for raw in items:
-        if not isinstance(raw, dict):
-            continue
-        item_id = str(raw.get("id") or "").strip()
-        name = str(raw.get("name") or "").strip()
-        if not item_id or not name:
-            continue
-        normalized.append(
-            {
-                "id": item_id,
-                "name": name,
-                "content": str(raw.get("content") or ""),
-                "note": str(raw.get("note") or ""),
-                "version": int(raw.get("version") or 1),
-                "is_default": bool(raw.get("is_default")),
-                "is_active": item_id == active_id,
-                "updated_at": raw.get("updated_at") or _iso_now(),
-            }
-        )
-    if active_id and not any(item["id"] == active_id for item in normalized):
-        active_id = None
-    return {"items": normalized, "active_id": active_id}
-
-
-def _save_atomic_prompt_presets(payload: dict[str, Any]) -> None:
-    _save_prompt_presets(ATOMIC_PROMPT_PRESETS_PATH, payload)
-
-
-def _save_inline_memory_prompt_presets(payload: dict[str, Any]) -> None:
-    _save_prompt_presets(INLINE_MEMORY_PROMPT_PRESETS_PATH, payload)
-
-
-def _save_prompt_presets(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_json_dumps(payload) + "\n", encoding="utf-8")
-
-
-def _active_atomic_prompt_content() -> str:
-    custom_system = (cfg.atomic_memory_prompt or "").strip()
-    return custom_system or _atomic_default_system_prompt()
-
-
-def _active_inline_memory_prompt_content() -> str:
-    custom_system = (cfg.inline_memory_prompt or "").strip()
-    return custom_system or _inline_memory_default_system_prompt()
-
-
-def _atomic_prompt_items() -> list[dict[str, Any]]:
-    return _prompt_items(
-        state=_load_atomic_prompt_presets(),
-        default_content=_atomic_default_system_prompt(),
-        default_name="Built-in Default",
-        default_note="Backend built-in fallback prompt",
-        is_active=not bool((cfg.atomic_memory_prompt or "").strip()),
-    )
-
-
-def _inline_memory_prompt_items() -> list[dict[str, Any]]:
-    return _prompt_items(
-        state=_load_inline_memory_prompt_presets(),
-        default_content=_inline_memory_default_system_prompt(),
-        default_name="Inline <mem> Default",
-        default_note="Backend built-in fallback prompt for inline <mem> captures",
-        is_active=not bool((cfg.inline_memory_prompt or "").strip()),
-    )
-
-
-def _prompt_items(
-    *,
-    state: dict[str, Any],
-    default_content: str,
-    default_name: str,
-    default_note: str,
-    is_active: bool,
-) -> list[dict[str, Any]]:
-    items = state["items"]
-    default_item = {
-        "id": "default",
-        "name": default_name,
-        "content": default_content,
-        "note": default_note,
-        "version": 1,
-        "is_default": True,
-        "is_active": is_active,
-        "updated_at": _iso_now(),
-    }
-    return [default_item] + [item for item in items if item.get("id") != "default"]
-
 
 def _normalize_text(content: Any) -> str:
     if content is None:
@@ -260,7 +84,7 @@ def _shorten(text: str, limit: int = 240) -> str:
     text = (text or "").strip()
     if len(text) <= limit:
         return text
-    return text[: limit - 1].rstrip() + "…"
+    return text[: limit - 3].rstrip() + "..."
 
 
 def _split_paragraph_chunks(text: str, min_len: int = 80, max_len: int = 420) -> list[str]:
@@ -307,40 +131,27 @@ def _split_paragraph_chunks(text: str, min_len: int = 80, max_len: int = 420) ->
 
 
 def _keyword_terms(query: str) -> list[str]:
-    raw = (query or "").replace("\n", " ").replace("，", " ").replace("。", " ")
-    return [term.lower() for term in raw.split() if term.strip()]
+    raw = (query or "").replace("\n", " ")
+    terms: list[str] = []
+    seen: set[str] = set()
 
+    def add(term: str):
+        term = term.strip().lower()
+        if term and term not in seen:
+            seen.add(term)
+            terms.append(term)
 
-def _extract_json_payload(text: str) -> dict[str, Any]:
-    raw = (text or "").strip()
-    if not raw:
-        raise ValueError("Model returned empty content.")
-    if raw.startswith("```"):
-        lines = raw.splitlines()
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        raw = "\n".join(lines).strip()
-
-    candidates = [raw]
-    start_obj = raw.find("{")
-    end_obj = raw.rfind("}")
-    if start_obj >= 0 and end_obj > start_obj:
-        candidates.append(raw[start_obj : end_obj + 1])
-
-    decoder = json.JSONDecoder()
-    for candidate in candidates:
-        try:
-            parsed = json.loads(candidate)
-        except Exception:
-            try:
-                parsed, _ = decoder.raw_decode(candidate)
-            except Exception:
+    for token in re.findall(r"[A-Za-z0-9_.+-]+|[\u4e00-\u9fff]+", raw):
+        add(token)
+        if re.fullmatch(r"[\u4e00-\u9fff]+", token):
+            if len(token) <= 2:
                 continue
-        if isinstance(parsed, dict):
-            return parsed
-    raise ValueError(f"Model returned non-JSON content: {_shorten(raw, 240)}")
+            for size in (2, 3):
+                if len(token) < size:
+                    continue
+                for idx in range(0, len(token) - size + 1):
+                    add(token[idx : idx + size])
+    return terms
 
 
 def _keyword_overlap_score(query: str, text: str) -> float:
@@ -422,8 +233,8 @@ def _make_upstream_http_client() -> httpx.AsyncClient:
 async def lifespan(app: FastAPI):
     _init_supabase()
     _init_store()
-    # connect/write/pool 保持合理超时；read 设为 None，因为流式场景下
-    # LLM 可能 thinking 很久才开始输出，读取不能有固定超时
+    # connect/write/pool 淇濇寔鍚堢悊瓒呮椂锛況ead 璁句负 None锛屽洜涓烘祦寮忓満鏅笅
+    # LLM 鍙兘 thinking 寰堜箙鎵嶅紑濮嬭緭鍑猴紝璇诲彇涓嶈兘鏈夊浐瀹氳秴鏃?
     app.state.http = _make_upstream_http_client()
     yield
     if supabase_client:
@@ -437,7 +248,7 @@ if (ADMIN_DIST_DIR / "assets").exists():
     app.mount("/admin/assets", StaticFiles(directory=ADMIN_DIST_DIR / "assets"), name="admin-assets")
 
 
-# ── 全局异常捕获（调试用） ──
+# 鈹€鈹€ 鍏ㄥ眬寮傚父鎹曡幏锛堣皟璇曠敤锛?鈹€鈹€
 import traceback as _tb
 
 from fastapi.responses import JSONResponse, HTMLResponse
@@ -445,7 +256,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 @app.exception_handler(Exception)
 async def _global_exc_handler(request: Request, exc: Exception):
     detail = _tb.format_exc()
-    print(f"\n{'='*60}\n全局异常: {exc}\n{detail}{'='*60}\n", flush=True)
+    print(f"\n{'='*60}\n鍏ㄥ眬寮傚父: {exc}\n{detail}{'='*60}\n", flush=True)
     return JSONResponse(status_code=500, content={"error": str(exc), "traceback": detail})
 
 
@@ -460,34 +271,34 @@ async def log_unhandled_exceptions(request: Request, call_next):
         raise
 
 
-# ── 管理端鉴权 ──
+# 鈹€鈹€ 绠＄悊绔壌鏉?鈹€鈹€
 _ADMIN_PROTECTED_PREFIXES = ("/api/",)
 
 @app.middleware("http")
 async def admin_auth_middleware(request: Request, call_next):
-    """保护管理端点：/api/*, /admin*
-    支持 Bearer 头 和 ?token= 参数两种方式验证。
-    GATEWAY_API_KEY 为空时不校验（本地开发模式）。
+    """淇濇姢绠＄悊绔偣锛?api/*, /admin*
+    鏀寔 Bearer 澶?鍜??token= 鍙傛暟涓ょ鏂瑰紡楠岃瘉銆?
+    GATEWAY_API_KEY 涓虹┖鏃朵笉鏍￠獙锛堟湰鍦板紑鍙戞ā寮忥級銆?
     """
     path = request.url.path
     needs_auth = any(path.startswith(p) for p in _ADMIN_PROTECTED_PREFIXES)
-    # /admin 是静态文件挂载，也需要保护
+    # /admin 鏄潤鎬佹枃浠舵寕杞斤紝涔熼渶瑕佷繚鎶?
     if path.startswith("/admin"):
         needs_auth = True
 
     if needs_auth and cfg.gateway_key:
-        # 方式1: Authorization: Bearer xxx
+        # 鏂瑰紡1: Authorization: Bearer xxx
         auth = request.headers.get("Authorization", "")
         token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-        # 方式2: ?token=xxx（浏览器直接访问用）
+        # 鏂瑰紡2: ?token=xxx锛堟祻瑙堝櫒鐩存帴璁块棶鐢級
         if not token:
             token = request.query_params.get("token", "")
-        # 方式3: Cookie
+        # 鏂瑰紡3: Cookie
         if not token:
             token = request.cookies.get("shenyu_token", "")
 
         if token != cfg.gateway_key:
-            # 对浏览器请求返回友好的登录页面
+            # 瀵规祻瑙堝櫒璇锋眰杩斿洖鍙嬪ソ鐨勭櫥褰曢〉闈?
             accept = request.headers.get("Accept", "")
             if "text/html" in accept:
                 return HTMLResponse(_login_page_html(), status_code=401)
@@ -499,7 +310,7 @@ async def admin_auth_middleware(request: Request, call_next):
 def _login_page_html() -> str:
     return """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>沈予网关 · 登录</title>
+<title>娌堜簣缃戝叧 路 鐧诲綍</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e1e4e8;display:flex;align-items:center;justify-content:center;min-height:100vh}
@@ -513,20 +324,20 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
 .err{color:#f85149;font-size:12px;margin-top:8px;display:none}
 </style></head><body>
 <div class="box">
-  <h2>沈予网关</h2>
-  <p>请输入管理密钥</p>
+  <h2>娌堜簣缃戝叧</h2>
+  <p>璇疯緭鍏ョ鐞嗗瘑閽?/p>
   <input id="pw" type="password" placeholder="GATEWAY_API_KEY" autofocus
     onkeydown="if(event.key==='Enter')doLogin()">
-  <button onclick="doLogin()">进入</button>
-  <div class="err" id="err">密钥错误</div>
+  <button onclick="doLogin()">杩涘叆</button>
+  <div class="err" id="err">瀵嗛挜閿欒</div>
 </div>
 <script>
 function doLogin(){
   const pw=document.getElementById('pw').value.trim();
   if(!pw) return;
-  // 设 cookie 并刷新
+  // 璁?cookie 骞跺埛鏂?
   document.cookie='shenyu_token='+encodeURIComponent(pw)+';path=/;max-age=86400;SameSite=Lax';
-  // 同时存 localStorage 给 fetch 用
+  // 鍚屾椂瀛?localStorage 缁?fetch 鐢?
   localStorage.setItem('shenyu_token',pw);
   location.reload();
 }
@@ -547,9 +358,9 @@ def _detect_protocol() -> str:
 
 
 def _chat_url_for(base_url: str, protocol: str = "auto") -> str:
-    """根据协议自动拼接正确的聊天端点 URL
-    用户只需填基础 URL（如 https://api.treegpt.top），自动补全路径
-    如果已经填了完整路径，则原样使用
+    """鏍规嵁鍗忚鑷姩鎷兼帴姝ｇ‘鐨勮亰澶╃鐐?URL
+    鐢ㄦ埛鍙渶濉熀纭€ URL锛堝 https://api.treegpt.top锛夛紝鑷姩琛ュ叏璺緞
+    濡傛灉宸茬粡濉簡瀹屾暣璺緞锛屽垯鍘熸牱浣跨敤
     """
     url = (base_url or "").rstrip("/")
     proto = _detect_protocol_for(url, protocol)
@@ -665,11 +476,7 @@ _SUPABASE_GUIDE = """## 家里常用 Supabase 表
 
 
 class _HeartbeatFilter:
-    """从流式/非流式回复中过滤 <heartbeat>...</heartbeat> 块。
-    filter.feed(text) 返回过滤后的安全文本。
-    filter.flush() 在流结束后调用，返回剩余缓冲区内容。
-    filter.get_heartbeat() 返回提取到的 heartbeat 内容。
-    """
+    """Filter <heartbeat>...</heartbeat> blocks from assistant replies."""
     TAG_OPEN = "<heartbeat>"
     TAG_CLOSE = "</heartbeat>"
 
@@ -679,7 +486,7 @@ class _HeartbeatFilter:
         self._heartbeat_parts: list[str] = []
 
     def feed(self, text: str) -> str:
-        """喂入文本片段，返回应该发给客户端的安全文本。"""
+        """Return text safe to send to the client."""
         self._buffer += text
         output = ""
 
@@ -691,7 +498,7 @@ class _HeartbeatFilter:
                     self._buffer = self._buffer[close_idx + len(self.TAG_CLOSE):]
                     self._in_heartbeat = False
                 else:
-                    # 还没找到闭合标签，整段都是 heartbeat 内容
+                    # 杩樻病鎵惧埌闂悎鏍囩锛屾暣娈甸兘鏄?heartbeat 鍐呭
                     self._heartbeat_parts.append(self._buffer)
                     self._buffer = ""
             else:
@@ -701,23 +508,23 @@ class _HeartbeatFilter:
                     self._buffer = self._buffer[open_idx + len(self.TAG_OPEN):]
                     self._in_heartbeat = True
                 elif len(self._buffer) >= len(self.TAG_OPEN):
-                    # 保留最后 len(TAG_OPEN)-1 个字符，防止标签被截断
+                    # Keep enough tail characters to detect a split opening tag.
                     safe_len = len(self._buffer) - len(self.TAG_OPEN) + 1
                     output += self._buffer[:safe_len]
                     self._buffer = self._buffer[safe_len:]
                 else:
-                    break  # 缓冲区太短，等更多输入
+                    break
 
         return output
 
     def flush(self) -> str:
-        """流结束时调用，输出剩余缓冲区。"""
+        """Return any remaining visible buffer at stream end."""
         remaining = self._buffer
         self._buffer = ""
         return remaining
 
     def get_heartbeat(self) -> str:
-        """返回截取到的 heartbeat 内容（去掉首尾空白）。"""
+        """Return captured heartbeat text."""
         return "".join(self._heartbeat_parts).strip()
 
 
@@ -729,7 +536,30 @@ class _AssistantTagFilter:
     def __init__(self):
         self._buffer = ""
         self._active_tag = ""
-        self._captured: dict[str, list[str]] = {tag: [] for tag in self.TAGS}
+        self._active_close = ""
+        self._active_attrs: dict[str, str] = {}
+        self._active_parts: list[str] = []
+        self._captured: dict[str, list[Any]] = {tag: [] for tag in self.TAGS}
+
+    def _parse_attrs(self, raw: str) -> dict[str, str]:
+        attrs: dict[str, str] = {}
+        for match in re.finditer(r"([\w:-]+)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s\]]+)", raw or ""):
+            value = match.group(2).strip()
+            if (value.startswith('"') and value.endswith('"')) or (value.startswith("'") and value.endswith("'")):
+                value = value[1:-1]
+            attrs[match.group(1).lower()] = value.strip()
+        return attrs
+
+    def _capture_active(self, content: str):
+        self._active_parts.append(content)
+
+    def _finish_active_capture(self):
+        content = "".join(self._active_parts)
+        if self._active_tag == "mem":
+            self._captured["mem"].append({"content": content, "attrs": dict(self._active_attrs)})
+        else:
+            self._captured[self._active_tag].append(content)
+        self._active_parts = []
 
     def feed(self, text: str) -> str:
         if not text:
@@ -739,34 +569,44 @@ class _AssistantTagFilter:
         while self._buffer:
             lower = self._buffer.lower()
             if self._active_tag:
-                close_tag = f"</{self._active_tag}>"
+                close_tag = self._active_close
                 close_idx = lower.find(close_tag)
                 if close_idx >= 0:
-                    self._captured[self._active_tag].append(self._buffer[:close_idx])
+                    self._capture_active(self._buffer[:close_idx])
+                    self._finish_active_capture()
                     self._buffer = self._buffer[close_idx + len(close_tag):]
                     self._active_tag = ""
+                    self._active_close = ""
+                    self._active_attrs = {}
                     continue
                 keep = len(close_tag) - 1
                 if len(self._buffer) > keep:
-                    self._captured[self._active_tag].append(self._buffer[:-keep])
+                    self._capture_active(self._buffer[:-keep])
                     self._buffer = self._buffer[-keep:]
                 break
 
-            found: tuple[int, str, int] | None = None
+            found: tuple[int, str, int, str, dict[str, str]] | None = None
             for tag in self.TAGS:
                 idx = lower.find(f"<{tag}")
-                if idx < 0:
-                    continue
-                end_idx = lower.find(">", idx)
-                if end_idx < 0:
-                    continue
-                if found is None or idx < found[0]:
-                    found = (idx, tag, end_idx)
+                if idx >= 0:
+                    end_idx = lower.find(">", idx)
+                    if end_idx >= 0 and (found is None or idx < found[0]):
+                        attr_text = self._buffer[idx + len(tag) + 1:end_idx]
+                        found = (idx, tag, end_idx, f"</{tag}>", self._parse_attrs(attr_text))
+                idx = lower.find(f"[{tag}")
+                if idx >= 0:
+                    end_idx = lower.find("]", idx)
+                    if end_idx >= 0 and (found is None or idx < found[0]):
+                        attr_text = self._buffer[idx + len(tag) + 1:end_idx]
+                        found = (idx, tag, end_idx, f"[/{tag}]", self._parse_attrs(attr_text))
             if found:
-                open_idx, tag, end_idx = found
+                open_idx, tag, end_idx, close_tag, attrs = found
                 output.append(self._buffer[:open_idx])
                 self._buffer = self._buffer[end_idx + 1:]
                 self._active_tag = tag
+                self._active_close = close_tag
+                self._active_attrs = attrs
+                self._active_parts = []
                 continue
 
             keep = 24
@@ -778,7 +618,8 @@ class _AssistantTagFilter:
 
     def flush(self) -> str:
         if self._active_tag:
-            self._captured[self._active_tag].append(self._buffer)
+            self._capture_active(self._buffer)
+            self._finish_active_capture()
             self._buffer = ""
             return ""
         remaining = self._buffer
@@ -788,9 +629,19 @@ class _AssistantTagFilter:
     def get_heartbeat(self) -> str:
         return "".join(self._captured.get("heartbeat") or []).strip()
 
-    def get_memories(self) -> list[str]:
+    def get_memories(self) -> list[dict[str, Any]]:
         parts = self._captured.get("mem") or []
-        return [item.strip() for item in parts if item.strip()]
+        memories: list[dict[str, Any]] = []
+        for item in parts:
+            if isinstance(item, dict):
+                content = str(item.get("content") or "").strip()
+                if content:
+                    memories.append({"content": content, "attrs": item.get("attrs") or {}})
+            else:
+                content = str(item or "").strip()
+                if content:
+                    memories.append({"content": content, "attrs": {}})
+        return memories
 
 
 _FIXED_JOURNAL_IDS = [
@@ -834,10 +685,9 @@ class GatewayToolService:
             "order": "updated_at.desc",
             "limit": str(max(1, min(limit, 50))),
             "select": (
-                "id,session_tag,subject,owner,content_canonical,content_surface,quote,time_hint,"
-                "memory_type,tier,confidence,importance,heat,entities_json,tags_json,"
-                "source_excerpt,source_model,status,activation_count,last_activated,created_at,updated_at,"
-                "valence,arousal,supersedes_id"
+                "id,session_tag,subject,owner,content_surface,quote,time_hint,"
+                "memory_type,tier,importance,entities_json,tags_json,"
+                "source_excerpt,source_model,status,created_at,updated_at,supersedes_id"
             ),
         }
         if status and status != "all":
@@ -849,8 +699,7 @@ class GatewayToolService:
         if text:
             rows = [
                 row for row in rows
-                if text in str(row.get("content_canonical") or "").lower()
-                or text in str(row.get("content_surface") or "").lower()
+                if text in str(row.get("content_surface") or "").lower()
                 or text in str(row.get("quote") or "").lower()
                 or text in str(row.get("source_excerpt") or "").lower()
             ]
@@ -864,7 +713,7 @@ class GatewayToolService:
             status = str(patch.get("status") or "").strip()
             if status in {"proposed", "active", "deprecated", "superseded"}:
                 update["status"] = status
-        for field in ("content_canonical", "content_surface", "quote", "time_hint"):
+        for field in ("content_surface", "quote", "time_hint"):
             if field in patch:
                 update[field] = str(patch.get(field) or "").strip()
         if "subject" in patch:
@@ -877,8 +726,8 @@ class GatewayToolService:
             update["speaker_perspective"] = update["owner"]
         if "memory_type" in patch:
             memory_type = {"state": "emotion"}.get(str(patch.get("memory_type") or "").strip(), str(patch.get("memory_type") or "").strip())
-            allowed_types = {"preference", "health", "emotion", "commitment", "project", "relation", "boundary", "routine", "identity", "event", "other"}
-            update["memory_type"] = memory_type if memory_type in allowed_types else "other"
+            allowed_types = {"emotion", "commitment", "fact", "relation", "preference", "boundary"}
+            update["memory_type"] = memory_type if memory_type in allowed_types else "fact"
         if "tier" in patch and patch.get("tier") is not None:
             update["tier"] = max(1, min(int(patch.get("tier")), 4))
         if "importance" in patch and patch.get("importance") is not None:
@@ -1080,7 +929,7 @@ class GatewayToolService:
             "is_deleted": "eq.false",
             "order": "weight.desc,date.desc",
             "limit": str(max(1, min(limit, 10))),
-            "select": "id,title,date,summary,facts,emotional_context,importance,weight,valence,arousal,session_tag",
+            "select": "id,title,date,summary,facts,emotional_context,importance,weight,session_tag",
         }
         if query.strip() and query.strip() != "*":
             escaped = query.replace(",", " ").replace("(", " ").replace(")", " ")
@@ -1112,8 +961,7 @@ class GatewayToolService:
                     "emotional_context_excerpt": _shorten(memory.get("emotional_context") or "", 220) or None,
                     "importance": memory.get("importance"),
                     "weight": memory.get("weight"),
-                    "valence": memory.get("valence"),
-                    "arousal": memory.get("arousal"),
+
                     "tags": tags,
                     "links": self._decorate_links(memory_id, links, linked_titles)[:4],
                     "why": why,
@@ -1143,9 +991,9 @@ class GatewayToolService:
             "order": "heat.desc,importance.desc,updated_at.desc",
             "limit": "80",
             "select": (
-                "id,session_tag,subject,owner,content_canonical,content_surface,quote,time_hint,"
-                "memory_type,tier,confidence,importance,heat,entities_json,tags_json,"
-                "source_excerpt,activation_count,last_activated,created_at,updated_at"
+                "id,session_tag,subject,owner,content_surface,quote,time_hint,"
+                "memory_type,tier,importance,heat,entities_json,tags_json,"
+                "source_excerpt,created_at,updated_at"
             ),
         }
         if session_tag:
@@ -1165,7 +1013,7 @@ class GatewayToolService:
             scored.append({**row, "score": round(score, 3), "why": why})
 
         scored.sort(key=lambda item: item["score"], reverse=True)
-        memories = scored[: max(1, min(limit, 8))]
+        memories = scored[: max(1, min(limit, 3))]
         for memory in memories:
             await self._boost_atomic_memory(memory.get("id"))
         return {"query": query, "count": len(memories), "memories": memories}
@@ -1311,7 +1159,6 @@ class GatewayToolService:
         full_text = "\n".join(
             [
                 memory.get("subject") or memory.get("owner") or "",
-                memory.get("content_canonical") or "",
                 memory.get("content_surface") or "",
                 memory.get("quote") or "",
                 memory.get("time_hint") or "",
@@ -1328,18 +1175,17 @@ class GatewayToolService:
         heat_score = _clamp(memory.get("heat") or 0.3, 0.0, 1.0)
         tier = int(memory.get("tier") or 3)
         tier_score = {1: 0.22, 2: 0.15, 3: 0.08}.get(tier, 0.02)
-        emotion_score = 0.08 if self._has_emotional_signal(memory) else 0.0
         recency_score = self._recency_score(memory.get("updated_at") or memory.get("created_at"))
+        recency_score = recency_score if recency_score >= 0.65 else 0.0
 
         score = _clamp(
             keyword_score * 0.42
             + tag_score
             + entity_score
-            + heat_score * 0.15
+            + heat_score * 0.08
             + importance_score * 0.10
             + recency_score * 0.05
-            + tier_score
-            + emotion_score,
+            + tier_score,
             0.0,
             1.0,
         )
@@ -1354,8 +1200,6 @@ class GatewayToolService:
             why.append("warm memory")
         if tier <= 2:
             why.append(f"tier {tier}")
-        if emotion_score:
-            why.append("emotional signal")
         return score, why or ["soft atomic match"]
 
     def _why_passage(self, query: str, item: dict, score: float) -> list[str]:
@@ -1540,30 +1384,10 @@ class GatewayToolService:
             reasons.append("strongly linked thread")
         elif links:
             reasons.append("linked into a thread")
-        if self._has_emotional_signal(memory):
-            reasons.append("emotional signal")
         return reasons or ["event memory supplement"]
 
     def _build_memory_echoes(self, cards: list[dict]) -> list[dict]:
-        echoes = []
-        for card in cards:
-            valence = card.get("valence")
-            arousal = card.get("arousal")
-            if valence is None and arousal is None:
-                continue
-            echoes.append(
-                {
-                    "id": card.get("id"),
-                    "title": card.get("title"),
-                    "date": card.get("date"),
-                    "summary": card.get("summary"),
-                    "valence": valence,
-                    "arousal": arousal,
-                    "why": ["emotional echo", self._emotion_signature(valence, arousal)],
-                }
-            )
-        echoes.sort(key=lambda row: (abs(row.get("valence") or 0) + abs(row.get("arousal") or 0)), reverse=True)
-        return echoes[:3]
+        return []
 
     def _build_linked_threads(self, cards: list[dict]) -> list[dict]:
         threads = []
@@ -1645,54 +1469,14 @@ class GatewayToolService:
     def _has_strong_link(self, links: list[dict]) -> bool:
         return any((link.get("strength") or 0) >= 0.75 for link in links)
 
-    def _has_emotional_signal(self, memory: dict) -> bool:
-        valence = memory.get("valence")
-        arousal = memory.get("arousal")
-        try:
-            return abs(valence or 0) >= 0.45 or abs(arousal or 0) >= 0.45
-        except TypeError:
-            return False
-
-    def _emotion_signature(self, valence: Optional[float], arousal: Optional[float]) -> str:
-        try:
-            v = valence or 0
-            a = arousal or 0
-        except TypeError:
-            return "emotion shape"
-        if v >= 0.35 and a >= 0.35:
-            return "warm and activated"
-        if v >= 0.35 and a <= -0.15:
-            return "warm and soft"
-        if v <= -0.35 and a >= 0.35:
-            return "painful and activated"
-        if v <= -0.35 and a <= -0.15:
-            return "heavy and low"
-        return "mixed emotional shape"
-
 class AtomicMemoryService:
     def __init__(self, request: Request):
         self.request = request
 
-    async def extract_now(self, session_tag: Optional[str], source_model: str = "") -> dict[str, Any]:
-        if session_store is None:
-            raise HTTPException(status_code=400, detail="Session store is not configured.")
-        session = session_store.get_session_by_tag(session_tag or "default")
-        if not session:
-            raise HTTPException(status_code=404, detail="Session not found.")
-        window = self._recent_dialogue_window(session, turns=max(1, int(cfg.atomic_memory_extract_every_turns or 1)))
-        if not window["latest_user_text"] or not window["latest_assistant_text"]:
-            raise HTTPException(status_code=400, detail="No complete recent dialogue window found for this session.")
-        return await self.process_turn(
-            session,
-            window["latest_user_text"],
-            window["latest_assistant_text"],
-            source_model or "manual",
-        )
-
     async def process_inline_memories(
         self,
         session: dict,
-        inline_memories: list[str],
+        inline_memories: list[Any],
         assistant_text: str,
         source_model: str,
     ) -> dict[str, Any]:
@@ -1700,621 +1484,82 @@ class AtomicMemoryService:
             return {"ok": False, "reason": "inline memory capture disabled."}
         if not supabase_client:
             return {"ok": False, "reason": "Supabase is not configured."}
-        notes = [item.strip() for item in inline_memories if item and item.strip()]
+
+        notes = [item for item in inline_memories if self._inline_note_content(item)]
         if not notes:
             return {"ok": False, "reason": "no inline memories."}
 
-        upstream = self._atomic_upstream(source_model)
-        if not upstream["base_url"] or not upstream["api_key"] or not upstream["model"]:
-            return {"ok": False, "reason": "atomic extractor upstream not configured."}
-
         inserted: list[str | None] = []
-        updated: list[str | None] = []
         discarded = 0
-        candidate_count = 0
         for note in notes[:4]:
-            result = await self._run_extractor(upstream, self._build_inline_memory_messages(session, note))
-            candidates = result.get("memories") or []
-            candidate_count += len(candidates)
-            for candidate in candidates[:2]:
-                route = await self._route_candidate(
-                    candidate,
-                    session,
-                    user_text=f"Inline <mem>: {note}",
-                    assistant_text=assistant_text,
-                    source_model=f"inline-mem:{source_model}",
-                    force_proposed=True,
-                )
-                action = route.get("action")
-                if action == "discard":
-                    discarded += 1
-                    continue
-                if action == "update":
-                    memory_id = route.get("memory_id")
-                    payload = route.get("memory")
-                    if memory_id and payload:
-                        rows = await supabase_client.update("atomic_memories", {"id": memory_id}, payload)
-                        updated.append(memory_id if rows is not None else None)
-                    continue
-                memory = route.get("memory")
-                if memory:
-                    row = await supabase_client.insert("atomic_memories", memory)
-                    inserted.append(row.get("id") if isinstance(row, dict) else None)
-                else:
-                    discarded += 1
+            memory = self._inline_note_to_active_memory(note, session, source_model)
+            if not memory:
+                discarded += 1
+                continue
+            row = await supabase_client.insert("atomic_memories", memory)
+            inserted.append(row.get("id") if isinstance(row, dict) else None)
+
         return {
             "ok": True,
             "inline_count": len(notes),
-            "candidate_count": candidate_count,
             "inserted_count": len([item for item in inserted if item]),
-            "updated_count": len([item for item in updated if item]),
             "discarded_count": discarded,
         }
 
-    async def process_turn(
-        self,
-        session: dict,
-        user_text: str,
-        assistant_text: str,
-        source_model: str,
-    ):
-        if not cfg.extract_atomic_memories or not supabase_client:
-            return {"ok": False, "reason": "atomic extraction disabled or Supabase not configured."}
-        if not user_text.strip() or not assistant_text.strip():
-            return {"ok": False, "reason": "empty user or assistant text."}
+    def _inline_note_content(self, note: Any) -> str:
+        if isinstance(note, dict):
+            return str(note.get("content") or "").strip()
+        return str(note or "").strip()
 
-        recent_window = self._recent_dialogue_window(session, turns=max(1, int(cfg.atomic_memory_extract_every_turns or 1)))
-        user_text = recent_window["latest_user_text"] or user_text
-        assistant_text = recent_window["latest_assistant_text"] or assistant_text
-        combined_text = recent_window["combined_text"]
-        if not combined_text.strip():
-            return {"ok": False, "reason": "empty dialogue window."}
+    def _inline_note_attrs(self, note: Any) -> dict[str, str]:
+        if isinstance(note, dict) and isinstance(note.get("attrs"), dict):
+            return {str(key).lower(): str(value).strip() for key, value in note["attrs"].items() if str(value).strip()}
+        return {}
 
-        run_id = f"aer_{uuid.uuid4().hex[:12]}"
-        started_at = _iso_now()
-        similar_memories = await self._find_similar_memories(session, combined_text)
-        prompt_messages = self._build_extraction_messages(session, recent_window["turn_lines"], similar_memories)
-        upstream = self._atomic_upstream(source_model)
-        if not upstream["base_url"] or not upstream["api_key"] or not upstream["model"]:
-            logger.info("[AtomicMemory] extractor not configured; skipping.")
-            return
-
-        result: dict[str, Any] = {}
-        try:
-            result = await self._run_extractor(upstream, prompt_messages)
-            candidates = result.get("memories") or []
-            inserted = []
-            updated = []
-            discarded = 0
-            for candidate in candidates[:8]:
-                route = await self._route_candidate(candidate, session, user_text, assistant_text, source_model)
-                action = route.get("action")
-                if action == "discard":
-                    discarded += 1
-                    continue
-                if action == "update":
-                    memory_id = route.get("memory_id")
-                    payload = route.get("memory")
-                    if memory_id and payload:
-                        rows = await supabase_client.update("atomic_memories", {"id": memory_id}, payload)
-                        updated.append(memory_id if rows is not None else None)
-                    continue
-                memory = route.get("memory")
-                if not memory:
-                    discarded += 1
-                    continue
-                row = await supabase_client.insert("atomic_memories", memory)
-                inserted.append(row.get("id") if isinstance(row, dict) else None)
-            run_warning = await self._try_write_run(
-                run_id,
-                session,
-                status="ok",
-                prompt_messages=prompt_messages,
-                raw_result=result,
-                candidate_count=len(candidates),
-                inserted_count=len([item for item in inserted if item]),
-                error=None,
-                started_at=started_at,
-            )
-            logger.info(
-                "[AtomicMemory] extracted %d candidates, inserted %d, updated %d, discarded %d",
-                len(candidates),
-                len([item for item in inserted if item]),
-                len([item for item in updated if item]),
-                discarded,
-            )
-            response = {
-                "ok": True,
-                "run_id": run_id,
-                "candidate_count": len(candidates),
-                "inserted_count": len([item for item in inserted if item]),
-                "updated_count": len([item for item in updated if item]),
-                "discarded_count": discarded,
-                "window_turns": max(1, int(cfg.atomic_memory_extract_every_turns or 1)),
-            }
-            if run_warning:
-                response["warning"] = run_warning
-            return response
-        except Exception as exc:
-            logger.exception("[AtomicMemory] extraction failed")
-            run_warning = await self._try_write_run(
-                run_id,
-                session,
-                status="error",
-                prompt_messages=prompt_messages,
-                raw_result=result if isinstance(result, dict) else {},
-                candidate_count=0,
-                inserted_count=0,
-                error=str(exc)[:1000],
-                started_at=started_at,
-            )
-            if run_warning:
-                logger.warning("[AtomicMemory] failed to write extraction run: %s", run_warning)
-            return {"ok": False, "run_id": run_id, "error": str(exc)[:1000]}
-
-    def _atomic_upstream(self, source_model: str = "") -> dict[str, str]:
-        atomic_url = (cfg.atomic_memory_upstream_url or "").strip()
-        calendar_url = (cfg.calendar_upstream_url or "").strip()
-        base_url = atomic_url or calendar_url or cfg.upstream_url.strip()
-        configured_protocol = cfg.atomic_memory_protocol or (cfg.calendar_protocol if calendar_url else cfg.upstream_protocol)
-        protocol = _detect_protocol_for(base_url, configured_protocol)
-        api_key = (cfg.atomic_memory_api_key or cfg.calendar_api_key or cfg.upstream_api_key).strip()
-        model = _mapped_model_name(cfg.atomic_memory_model or cfg.calendar_model or source_model)
-        return {
-            "base_url": base_url,
-            "chat_url": _chat_url_for(base_url, protocol),
-            "protocol": protocol,
-            "api_key": api_key,
-            "model": model,
-        }
-
-    def _recent_dialogue_window(self, session: dict, turns: int) -> dict[str, Any]:
-        if session_store is None:
-            return {"messages": [], "turn_lines": "", "combined_text": "", "latest_user_text": "", "latest_assistant_text": ""}
-        rows = session_store.get_recent_dialogue_messages(session["id"], limit=max(12, turns * 6))
-        if not rows:
-            return {"messages": [], "turn_lines": "", "combined_text": "", "latest_user_text": "", "latest_assistant_text": ""}
-
-        collected: list[dict[str, Any]] = []
-        user_count = 0
-        for row in reversed(rows):
-            collected.append(row)
-            if row.get("role") == "user":
-                user_count += 1
-                if user_count >= turns:
-                    break
-        collected.reverse()
-
-        latest_user_text = ""
-        latest_assistant_text = ""
-        lines: list[str] = []
-        for row in collected:
-            role = row.get("role")
-            content = _normalize_text(row.get("content"))
-            if not content:
-                continue
-            if role == "user":
-                latest_user_text = content
-                lines.append(f"[圆圆]\n{content}")
-            elif role == "assistant":
-                latest_assistant_text = content
-                lines.append(f"[沈予]\n{content}")
-        return {
-            "messages": collected,
-            "turn_lines": "\n\n".join(lines).strip(),
-            "combined_text": "\n".join(_normalize_text(row.get("content")) for row in collected if row.get("content")).strip(),
-            "latest_user_text": latest_user_text,
-            "latest_assistant_text": latest_assistant_text,
-        }
-
-    async def _find_similar_memories(self, session: dict, query: str) -> list[dict]:
-        if not supabase_client:
+    def _split_attr_list(self, raw: str) -> list[str]:
+        if not raw:
             return []
-        session_tag = session.get("session_tag") or "default"
-        params = {
-            "status": "eq.active",
-            "session_tag": f"eq.{session_tag}",
-            "order": "updated_at.desc",
-            "limit": "80",
-            "select": (
-                "id,session_tag,subject,owner,content_canonical,content_surface,quote,time_hint,"
-                "memory_type,tier,confidence,importance,heat,tags_json,entities_json,updated_at"
-            ),
-        }
+        return [item.strip() for item in re.split(r"[,，、\s]+", raw) if item.strip()][:16]
+
+    def _int_attr(self, attrs: dict[str, str], name: str, fallback: int, min_value: int, max_value: int) -> int:
         try:
-            rows = await supabase_client.query("atomic_memories", params)
-        except Exception:
-            return []
+            value = int(attrs.get(name) or fallback)
+        except (TypeError, ValueError):
+            value = fallback
+        return max(min_value, min(value, max_value))
 
-        scored: list[tuple[float, dict]] = []
-        for row in rows:
-            score = self._score_similarity(query, row)
-            if score <= 0.22:
-                continue
-            scored.append((score, row))
-        scored.sort(key=lambda item: item[0], reverse=True)
-        return [row for _, row in scored[:5]]
-
-    def _score_similarity(self, query: str, memory: dict) -> float:
-        tags = _safe_json_loads(memory.get("tags_json"), [])
-        entities = _safe_json_loads(memory.get("entities_json"), [])
-        full_text = "\n".join(
-            [
-                memory.get("subject") or memory.get("owner") or "",
-                memory.get("content_canonical") or "",
-                memory.get("content_surface") or "",
-                memory.get("quote") or "",
-                memory.get("time_hint") or "",
-                memory.get("memory_type") or "",
-                " ".join(str(tag) for tag in tags),
-                " ".join(str(entity) for entity in entities),
-            ]
-        )
-        keyword_score = _keyword_overlap_score(query, full_text)
-        recency_score = self._recency_score(memory.get("updated_at"))
-        tier_bonus = 0.06 if int(memory.get("tier") or 3) >= 3 else 0.0
-        confidence_bonus = _clamp(float(memory.get("confidence") or 0), 0.0, 1.0) * 0.08
-        return _clamp(keyword_score * 0.72 + recency_score * 0.15 + tier_bonus + confidence_bonus, 0.0, 1.0)
-
-    def _recency_score(self, created_at: Optional[str]) -> float:
-        dt = _parse_ts(created_at)
-        if not dt:
-            return 0.2
-        days = max((_now() - dt).days, 0)
-        if days <= 1:
-            return 1.0
-        if days <= 3:
-            return 0.8
-        if days <= 7:
-            return 0.65
-        if days <= 14:
-            return 0.45
-        return 0.25
-
-    def _build_extraction_messages(self, session: dict, dialogue_block: str, similar_memories: list[dict]) -> list[dict]:
-        system = _active_atomic_prompt_content()
-        similar_block = ""
-        if similar_memories:
-            lines = ["[similar existing notes]"]
-            for item in similar_memories:
-                lines.append(
-                    "- "
-                    f"{item.get('subject') or item.get('owner') or '我们'} / {item.get('memory_type') or 'other'} / tier {item.get('tier') or '?'}"
-                    f" / {item.get('time_hint') or ''}"
-                    f" / {item.get('content_canonical') or item.get('content_surface') or ''}"
-                )
-            similar_block = "\n".join(lines) + "\n\n"
-        user = (
-            f"session_tag: {session.get('session_tag') or 'default'}\n\n"
-            f"{similar_block}"
-            f"{_shorten(dialogue_block, 4200)}"
-        )
-        return [{"role": "system", "content": system}, {"role": "user", "content": user}]
-
-    def _build_inline_memory_messages(self, session: dict, note: str) -> list[dict]:
-        user = (
-            f"session_tag: {session.get('session_tag') or 'default'}\n\n"
-            "[inline <mem> nomination]\n"
-            f"{_shorten(note, 1800)}"
-        )
-        return [{"role": "system", "content": _active_inline_memory_prompt_content()}, {"role": "user", "content": user}]
-
-    def _extractor_payload_messages(self, messages: list[dict]) -> list[dict]:
-        payload_messages = copy.deepcopy(messages)
-        payload_messages.append(
-            {
-                "role": "system",
-                "content": (
-                    "Final output must be a single valid JSON object matching the schema. "
-                    "Do not include reasoning, markdown, or prose."
-                ),
-            }
-        )
-        return payload_messages
-
-    async def _run_extractor(self, upstream: dict[str, str], messages: list[dict]) -> dict:
-        payload_messages = self._extractor_payload_messages(messages)
-        if upstream["protocol"] == "anthropic":
-            system, anthropic_messages = _openai_to_anthropic(payload_messages, cache_layers={}, cache_paths=[])
-            payload = {
-                "model": upstream["model"],
-                "system": system,
-                "messages": anthropic_messages,
-                "max_tokens": cfg.atomic_memory_max_tokens,
-                "temperature": 0,
-            }
-            headers = {
-                "x-api-key": upstream["api_key"],
-                "anthropic-version": cfg.upstream_version,
-                "content-type": "application/json",
-            }
-            raw_response = await _call_upstream_json_at(self.request, upstream["chat_url"], payload, headers)
-            raw = _anthropic_to_openai_completion(upstream["model"], raw_response)
-        else:
-            payload = {
-                "model": upstream["model"],
-                "messages": payload_messages,
-                "max_tokens": cfg.atomic_memory_max_tokens,
-                "temperature": 0,
-                "response_format": {"type": "json_object"},
-            }
-            headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
-            raw = await _call_upstream_json_at(self.request, upstream["chat_url"], payload, headers)
-
-        message = raw.get("choices", [{}])[0].get("message", {}) or {}
-        content = message.get("content", "") or ""
-        parsed = _extract_json_payload(content)
-        if not isinstance(parsed.get("memories"), list):
-            raise ValueError(
-                "Atomic memory extractor returned JSON without memories array: "
-                f"{_shorten(json.dumps(parsed, ensure_ascii=False), 240)}"
-            )
-        parsed["_debug"] = {
-            "content_chars": len(content),
-            "reasoning_chars": len(str(message.get("reasoning_content") or "")),
-            "finish_reason": (raw.get("choices") or [{}])[0].get("finish_reason"),
-        }
-        return parsed
-
-    def _candidate_to_row(
-        self,
-        candidate: dict,
-        session: dict,
-        user_text: str,
-        assistant_text: str,
-        source_model: str,
-        force_proposed: bool = False,
-    ) -> Optional[dict]:
-        canonical = (candidate.get("content_canonical") or "").strip()
-        if len(canonical) < 8:
+    def _inline_note_to_active_memory(self, note: Any, session: dict, source_model: str) -> Optional[dict]:
+        content = self._inline_note_content(note)
+        if not content:
             return None
-        confidence = float(candidate.get("confidence") or 0)
-        status = "proposed"
+        attrs = self._inline_note_attrs(note)
         now = _iso_now()
-        subject = self._choice(candidate.get("subject"), {"圆圆", "沈予", "我们"}, "我们")
-        applies_to = self._subject_scope(subject)
-        quote = (candidate.get("quote") or "").strip()
-        time_hint = (candidate.get("time_hint") or "").strip()
+        subject = self._choice(attrs.get("subject") or attrs.get("owner"), {"圆圆", "沈予", "我们"}, "我们")
+        owner = self._subject_scope(subject)
         return {
             "session_tag": session.get("session_tag") or "default",
             "subject": subject,
-            "owner": applies_to,
-            "applies_to": applies_to,
-            "speaker_perspective": applies_to,
-            "content_canonical": canonical,
-            "content_surface": (candidate.get("content_surface") or canonical).strip(),
-            "quote": quote,
-            "time_hint": time_hint,
-            "memory_type": self._memory_type(candidate.get("memory_type")),
-            "tier": max(1, min(int(candidate.get("tier") or 3), 4)),
-            "confidence": _clamp(confidence, 0.0, 1.0),
-            "importance": max(1, min(int(candidate.get("importance") or 2), 5)),
+            "owner": owner,
+            "applies_to": owner,
+            "speaker_perspective": owner,
+            "content_surface": content,
+            "quote": attrs.get("quote", ""),
+            "time_hint": attrs.get("time") or attrs.get("time_hint", ""),
+            "memory_type": self._memory_type(attrs.get("memory_type") or attrs.get("type") or attrs.get("kind")),
+            "tier": self._int_attr(attrs, "tier", 2, 1, 4),
+            "importance": self._int_attr(attrs, "importance", 3, 1, 5),
             "heat": 0.68,
-            "valence": _clamp(float(candidate.get("valence") or 0), -1.0, 1.0),
-            "arousal": _clamp(float(candidate.get("arousal") or 0), -1.0, 1.0),
-            "entities_json": candidate.get("entities") or [],
-            "tags_json": candidate.get("tags") or [],
+            "entities_json": self._split_attr_list(attrs.get("entities", "")),
+            "tags_json": self._split_attr_list(attrs.get("tags", "")),
             "source_session_id": session.get("id"),
             "source_message_ids_json": [],
-            "source_excerpt": _shorten(
-                "\n".join(
-                    part
-                    for part in [
-                        f"圆圆：{user_text}",
-                        f"沈予：{assistant_text}",
-                        f"原话：{quote}" if quote else "",
-                        f"时间：{time_hint}" if time_hint else "",
-                    ]
-                    if part
-                ),
-                800,
-            ),
-            "source_model": source_model,
-            "status": status,
+            "source_excerpt": attrs.get("source_excerpt", ""),
+            "source_model": f"inline-mem:{source_model}",
+            "status": "active",
             "activation_count": 0,
             "created_at": now,
             "updated_at": now,
         }
-
-    async def _route_candidate(
-        self,
-        candidate: dict,
-        session: dict,
-        user_text: str,
-        assistant_text: str,
-        source_model: str,
-        force_proposed: bool = False,
-    ) -> dict[str, Any]:
-        memory = self._candidate_to_row(candidate, session, user_text, assistant_text, source_model, force_proposed=force_proposed)
-        if not memory:
-            return {"action": "discard", "reason": "invalid_candidate"}
-
-        discard_reason = self._discard_reason(candidate, memory)
-        if discard_reason:
-            return {"action": "discard", "reason": discard_reason}
-
-        similar_memories = await self._find_similar_memories(session, memory.get("content_canonical") or "")
-        existing = self._best_existing_match(memory, similar_memories)
-        if existing:
-            if force_proposed:
-                memory["supersedes_id"] = existing.get("id")
-                memory["status"] = "proposed"
-                return {
-                    "action": "insert",
-                    "memory": memory,
-                    "reason": "proposed_update_for_review",
-                }
-            update_payload = self._build_updated_memory(existing, memory)
-            if update_payload:
-                return {
-                    "action": "update",
-                    "memory_id": existing.get("id"),
-                    "memory": update_payload,
-                    "reason": "matched_existing_memory",
-                }
-
-        return {"action": "insert", "memory": memory, "reason": "new_memory"}
-
-    def _discard_reason(self, candidate: dict, memory: dict) -> Optional[str]:
-        canonical = (memory.get("content_canonical") or "").strip()
-        lower = canonical.lower()
-        confidence = float(memory.get("confidence") or 0.0)
-        tier = int(memory.get("tier") or 4)
-        importance = int(memory.get("importance") or 1)
-        source_excerpt = (memory.get("source_excerpt") or "").strip()
-        reason_text = str(candidate.get("reason") or "").strip().lower()
-        memory_type = str(memory.get("memory_type") or "")
-
-        if confidence < 0.45:
-            return "low_confidence"
-        if tier >= 4 and importance <= 2:
-            return "weak_tier4_candidate"
-        if len(canonical) <= 14 and importance <= 2:
-            return "too_thin"
-
-        transient_markers = [
-            "刚刚",
-            "现在",
-            "这会儿",
-            "今天吃",
-            "起床",
-            "睡了",
-            "洗澡",
-            "哈哈",
-            "收到",
-            "在吗",
-        ]
-        if any(marker in canonical for marker in transient_markers) and tier >= 3 and importance <= 3:
-            return "ephemeral_log_like"
-
-        progress_markers = ["改网关", "调试", "报错", "修了", "在跑", "试了", "刚改"]
-        continuity_markers = ["最近", "这周", "这阵子", "持续", "反复", "一直", "约定", "暗号", "不喜欢", "喜欢"]
-        if any(marker in canonical for marker in progress_markers):
-            if not any(marker in canonical for marker in continuity_markers) and "future care context" not in reason_text:
-                return "project_progress_log"
-
-        if memory_type in {"emotion", "health", "project", "event"}:
-            if not any(marker in canonical for marker in continuity_markers) and importance <= 2 and tier >= 3:
-                return "single_incident_without_continuity"
-
-        if canonical and source_excerpt:
-            if canonical in source_excerpt and len(canonical) > 0 and importance <= 2 and tier >= 3:
-                return "restated_source_without_abstraction"
-
-        if lower in {"嗯嗯", "哈哈好的", "收到"}:
-            return "acknowledgement"
-        return None
-
-    def _best_existing_match(self, memory: dict, rows: list[dict]) -> Optional[dict]:
-        best_row = None
-        best_score = 0.0
-        for row in rows:
-            score = self._existing_match_score(memory, row)
-            if score > best_score:
-                best_score = score
-                best_row = row
-        if best_score >= 0.64:
-            return best_row
-        return None
-
-    def _existing_match_score(self, memory: dict, existing: dict) -> float:
-        candidate_text = "\n".join(
-            [
-                memory.get("subject") or "",
-                memory.get("content_canonical") or "",
-                memory.get("content_surface") or "",
-                memory.get("quote") or "",
-                memory.get("time_hint") or "",
-                memory.get("memory_type") or "",
-                " ".join(str(item) for item in (memory.get("tags_json") or [])),
-                " ".join(str(item) for item in (memory.get("entities_json") or [])),
-            ]
-        )
-        existing_tags = _safe_json_loads(existing.get("tags_json"), [])
-        existing_entities = _safe_json_loads(existing.get("entities_json"), [])
-        existing_text = "\n".join(
-            [
-                existing.get("subject") or existing.get("owner") or "",
-                existing.get("content_canonical") or "",
-                existing.get("content_surface") or "",
-                existing.get("quote") or "",
-                existing.get("time_hint") or "",
-                existing.get("memory_type") or "",
-                " ".join(str(item) for item in existing_tags),
-                " ".join(str(item) for item in existing_entities),
-            ]
-        )
-        keyword = _keyword_overlap_score(candidate_text, existing_text)
-        subject_bonus = 0.08 if (memory.get("subject") or "") == (existing.get("subject") or "") else 0.0
-        type_bonus = 0.08 if (memory.get("memory_type") or "") == (existing.get("memory_type") or "") else 0.0
-        time_bonus = 0.05 if (memory.get("time_hint") or "") and (memory.get("time_hint") == existing.get("time_hint")) else 0.0
-        return _clamp(keyword * 0.82 + subject_bonus + type_bonus + time_bonus, 0.0, 1.0)
-
-    def _build_updated_memory(self, existing: dict, candidate: dict) -> Optional[dict]:
-        existing_canonical = (existing.get("content_canonical") or "").strip()
-        candidate_canonical = (candidate.get("content_canonical") or "").strip()
-        if not existing_canonical or not candidate_canonical:
-            return None
-
-        canonical = existing_canonical
-        if candidate_canonical != existing_canonical and candidate_canonical not in existing_canonical:
-            if len(candidate_canonical) > len(existing_canonical):
-                canonical = candidate_canonical
-
-        existing_surface = (existing.get("content_surface") or existing_canonical).strip()
-        candidate_surface = (candidate.get("content_surface") or candidate_canonical).strip()
-        surface = existing_surface
-        if candidate_surface and candidate_surface != existing_surface and len(candidate_surface) > len(existing_surface):
-            surface = candidate_surface
-
-        existing_tags = _safe_json_loads(existing.get("tags_json"), [])
-        existing_entities = _safe_json_loads(existing.get("entities_json"), [])
-        merged_tags = self._merge_text_items(existing_tags, candidate.get("tags_json") or [])
-        merged_entities = self._merge_text_items(existing_entities, candidate.get("entities_json") or [])
-        now = _iso_now()
-        return {
-            "content_canonical": canonical,
-            "content_surface": surface,
-            "quote": (candidate.get("quote") or existing.get("quote") or "").strip(),
-            "time_hint": (candidate.get("time_hint") or existing.get("time_hint") or "").strip(),
-            "memory_type": candidate.get("memory_type") or existing.get("memory_type") or "other",
-            "tier": min(int(existing.get("tier") or 4), int(candidate.get("tier") or 4)),
-            "importance": max(int(existing.get("importance") or 1), int(candidate.get("importance") or 1)),
-            "confidence": max(float(existing.get("confidence") or 0.0), float(candidate.get("confidence") or 0.0)),
-            "heat": max(float(existing.get("heat") or 0.3), float(candidate.get("heat") or 0.3), 0.75),
-            "tags_json": merged_tags,
-            "entities_json": merged_entities,
-            "updated_at": now,
-            "last_activated": now,
-            "status": existing.get("status") or "active",
-            "source_excerpt": _shorten(
-                "\n".join(
-                    part
-                    for part in [
-                        (existing.get("source_excerpt") or "").strip(),
-                        (candidate.get("source_excerpt") or "").strip(),
-                    ]
-                    if part
-                ),
-                800,
-            ),
-        }
-
-    def _merge_text_items(self, left: Any, right: Any) -> list[str]:
-        merged: list[str] = []
-        for bucket in (left, right):
-            if isinstance(bucket, list):
-                items = bucket
-            elif bucket:
-                items = [bucket]
-            else:
-                items = []
-            for item in items:
-                text = str(item or "").strip()
-                if not text or text in merged:
-                    continue
-                merged.append(text)
-        return merged[:16]
 
     def _choice(self, value: Any, allowed: set[str], fallback: str) -> str:
         raw = str(value or "").strip()
@@ -2331,107 +1576,19 @@ class AtomicMemoryService:
         raw = str(value or "").strip()
         aliases = {
             "state": "emotion",
+            "event": "fact",
+            "project": "fact",
+            "health": "fact",
+            "routine": "fact",
+            "identity": "fact",
+            "other": "fact",
         }
         raw = aliases.get(raw, raw)
         return self._choice(
             raw,
-            {
-                "preference",
-                "health",
-                "emotion",
-                "commitment",
-                "project",
-                "relation",
-                "boundary",
-                "routine",
-                "identity",
-                "event",
-                "other",
-            },
-            "other",
+            {"emotion", "commitment", "fact", "relation", "preference", "boundary"},
+            "fact",
         )
-
-    async def _write_run(
-        self,
-        run_id: str,
-        session: dict,
-        status: str,
-        prompt_messages: list[dict],
-        raw_result: dict,
-        candidate_count: int,
-        inserted_count: int,
-        error: Optional[str],
-        started_at: str,
-    ):
-        if not supabase_client:
-            return
-        await supabase_client.insert(
-            "atomic_extraction_runs",
-            {
-                "id": run_id,
-                "session_id": session.get("id"),
-                "session_tag": session.get("session_tag") or "default",
-                "status": status,
-                "prompt_json": prompt_messages,
-                "result_json": raw_result,
-                "candidate_count": candidate_count,
-                "inserted_count": inserted_count,
-                "error": error,
-                "started_at": started_at,
-                "finished_at": _iso_now(),
-            },
-        )
-
-    async def _try_write_run(
-        self,
-        run_id: str,
-        session: dict,
-        status: str,
-        prompt_messages: list[dict],
-        raw_result: dict,
-        candidate_count: int,
-        inserted_count: int,
-        error: Optional[str],
-        started_at: str,
-    ) -> str:
-        try:
-            await self._write_run(
-                run_id,
-                session,
-                status=status,
-                prompt_messages=prompt_messages,
-                raw_result=raw_result,
-                candidate_count=candidate_count,
-                inserted_count=inserted_count,
-                error=error,
-                started_at=started_at,
-            )
-            return ""
-        except Exception as exc:
-            logger.exception("[AtomicMemory] failed to write extraction run")
-            return f"atomic_extraction_runs write failed: {str(exc)[:300]}"
-
-
-def _schedule_atomic_memory_extraction(
-    request: Request,
-    session: dict,
-    user_text: str,
-    assistant_text: str,
-    source_model: str,
-):
-    if not cfg.extract_atomic_memories:
-        return
-    every = max(1, int(cfg.atomic_memory_extract_every_turns or 1))
-    message_count = int(session.get("message_count") or 0)
-    next_turn = (message_count // 2) + 1
-    if every > 1 and next_turn % every != 0:
-        logger.debug("[AtomicMemory] skipped turn %s; extract_every_turns=%s", next_turn, every)
-        return
-    try:
-        asyncio.create_task(AtomicMemoryService(request).process_turn(session, user_text, assistant_text, source_model))
-    except RuntimeError:
-        logger.exception("[AtomicMemory] failed to schedule extraction")
-
 
 class CalendarService:
     def __init__(self, request: Optional[Request] = None):
@@ -2891,7 +2048,7 @@ class CalendarService:
             "It may be intimate, partial, tender, blunt, playful, or quiet; do not make it sound like a product report.\n"
             "Return exactly one valid JSON object with string keys: title, content, summary, digest.\n"
             "The JSON object is only a storage envelope; content must be the actual page text, not another JSON string, not markdown, and not an array.\n"
-            "Use Chinese corner quotes like「」inside strings when quoting speech, so the JSON stays valid.\n"
+            "Use Chinese corner quotes like銆屻€峣nside strings when quoting speech, so the JSON stays valid.\n"
             "content can be short or long as needed, usually around 0-300 Chinese characters but flexible.\n"
             "summary is one concise line for calendar listing.\n"
             "digest is a short, tender memory snippet under 180 Chinese characters to help us recall and revisit our moments later.\n"
@@ -2899,7 +2056,7 @@ class CalendarService:
         source_block = self._render_source_block(period_type, sources)
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt + "\n\n我们刚刚聊了这些：\n\n" + source_block},
+            {"role": "user", "content": user_prompt + "\n\n鎴戜滑鍒氬垰鑱婁簡杩欎簺锛歕n\n" + source_block},
         ]
         return {
             "days_since_last": days_since_last,
@@ -2970,7 +2127,7 @@ class CalendarService:
         content = raw.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
         generated = extract_json_object(content)
         if not (generated.get("content") or "").strip():
-            generated["content"] = content.strip() or "今天还没有写下具体内容。"
+            generated["content"] = content.strip() or "No concrete content was written today."
         if not (generated.get("summary") or "").strip():
             generated["summary"] = _shorten(generated.get("content") or "", 120)
         if not (generated.get("digest") or "").strip():
@@ -3016,7 +2173,7 @@ class CalendarService:
                 "content": (generated.get("content") or "").strip(),
                 "summary": (generated.get("summary") or "").strip(),
                 "digest": (generated.get("digest") or generated.get("summary") or "").strip(),
-                "author": "沈予",
+                "author": "娌堜簣",
                 "source_model": source_model,
                 "source_refs": _json_dumps(sources.get("source_refs") or []),
                 "session_tags": _json_dumps(sources.get("session_tags") or []),
@@ -3129,17 +2286,17 @@ class ContextBuilder:
         session_id = session["id"]
         message_count = int(session.get("message_count") or 0)
 
-        # 检查是否到了注入 heartbeat 的节点
+        # 妫€鏌ユ槸鍚﹀埌浜嗘敞鍏?heartbeat 鐨勮妭鐐?
         heartbeat_digest = ""
         heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
         pending_hbs = self.store.get_pending_heartbeats(session_id, limit=heartbeat_batch_size)
         if len(pending_hbs) >= heartbeat_batch_size:
-            # 攒够了，合并并标记为已注入
+            # 鏀掑浜嗭紝鍚堝苟骞舵爣璁颁负宸叉敞鍏?
             heartbeat_digest = "\n".join(hb["content"] for hb in pending_hbs)
             self.store.mark_heartbeats_injected(session_id, [hb["id"] for hb in pending_hbs])
-            logger.info("[Heartbeat] 注入 %d 条心跳到 Layer 2 (session=%s)", len(pending_hbs), session_id[:8])
+            logger.info("[Heartbeat] 娉ㄥ叆 %d 鏉″績璺冲埌 Layer 2 (session=%s)", len(pending_hbs), session_id[:8])
         else:
-            # 未攒够，使用上一批已注入的 digest
+            # 鏈敀澶燂紝浣跨敤涓婁竴鎵瑰凡娉ㄥ叆鐨?digest
             heartbeat_digest = self.store.get_latest_heartbeat_digest(session_id, limit=heartbeat_batch_size)
 
         package = {
@@ -3191,13 +2348,13 @@ class ContextBuilder:
         return "\n".join(lines)
 
     def render_layered_additions(self, package: dict) -> dict:
-        """返回分层的 system 内容，用于缓存友好的消息组装。
-        按变化频率从低到高排列：
-          stable:   charter + tool_policy + heartbeat_prompt（尽量不变）
-          slow:     calendar_context + heartbeat_digest + cold_start（低频变化）
-          volatile: briefing + atomic_memories（经常变，放在对话消息之后）
+        """杩斿洖鍒嗗眰鐨?system 鍐呭锛岀敤浜庣紦瀛樺弸濂界殑娑堟伅缁勮銆?
+        鎸夊彉鍖栭鐜囦粠浣庡埌楂樻帓鍒楋細
+          stable:   charter + tool_policy + heartbeat_prompt锛堝敖閲忎笉鍙橈級
+          slow:     calendar_context + heartbeat_digest + cold_start锛堜綆棰戝彉鍖栵級
+          volatile: briefing + atomic_memories锛堢粡甯稿彉锛屾斁鍦ㄥ璇濇秷鎭箣鍚庯級
         """
-        # Layer 1: 稳定层（charter + tool policy + heartbeat 引导）
+        # Layer 1: 绋冲畾灞傦紙charter + tool policy + heartbeat 寮曞锛?
         stable_blocks = [package["stable_charter"]]
         if cfg.enable_gateway_tools:
             stable_blocks.append(
@@ -3214,7 +2371,7 @@ class ContextBuilder:
 
         calendar_context = package.get("calendar_context") or {}
         calendar_lines = []
-        for label, period_type in (("这几天", "day"), ("这周", "week"), ("这个月", "month")):
+        for label, period_type in (("recent days", "day"), ("this week", "week"), ("this month", "month")):
             rows = calendar_context.get(period_type) or []
             if not rows:
                 continue
@@ -3228,13 +2385,13 @@ class ContextBuilder:
 
         heartbeat_digest = package.get("heartbeat_digest", "")
         if heartbeat_digest:
-            slow_blocks.append("## 你之前写下的心跳\n" + heartbeat_digest)
+            slow_blocks.append("## 浣犱箣鍓嶅啓涓嬬殑蹇冭烦\n" + heartbeat_digest)
 
         cold_snapshot = package.get("cold_start_snapshot") or {}
         if cold_snapshot:
             lines = [
                 "## Cold Start Bridge",
-                "这是打开这个窗口时拍下的跨窗口近况快照，只作为临时桥梁；优先尊重当前窗口正在发生的对话。",
+                "Recent cross-window context snapshot; use it as a temporary bridge and prioritize the current conversation.",
             ]
             for source in cold_snapshot.get("sources") or []:
                 lines.append(
@@ -3245,7 +2402,7 @@ class ContextBuilder:
             slow_blocks.append("\n".join(lines))
         slow = "\n\n".join(slow_blocks)
 
-        # Layer 4: 易变层（briefing + atomic memories）—— 放在对话消息之后
+        # Layer 4: 鏄撳彉灞傦紙briefing + atomic memories锛夆€斺€?鏀惧湪瀵硅瘽娑堟伅涔嬪悗
         volatile = ""
         if package.get("daily_briefing"):
             volatile = "## New Thread Briefing\n" + package["daily_briefing"]
@@ -3254,17 +2411,15 @@ class ContextBuilder:
         if atomic_memories:
             lines = ["## Relevant Atomic Memories"]
             for item in atomic_memories:
-                marker = f"{item.get('subject') or item.get('owner') or '我们'} / {item.get('memory_type') or 'other'} / tier {item.get('tier') or '?'}"
+                content = (item.get("content_surface") or "").strip()
+                if not content:
+                    continue
+                marker = f"{item.get('subject') or item.get('owner') or '我们'} / {item.get('memory_type') or 'fact'} / tier {item.get('tier') or '?'}"
                 if item.get("time_hint"):
                     marker += f" / {item.get('time_hint')}"
                 when = _relative_time_label(item.get("created_at"))
                 if when:
                     marker += f" / {when}"
-                canonical = (item.get("content_canonical") or "").strip()
-                surface = (item.get("content_surface") or "").strip()
-                content = surface or canonical
-                if surface and canonical and surface != canonical:
-                    content = f"{surface}（{canonical}）"
                 why = ", ".join(item.get("why") or [])
                 lines.append(f"- [{marker}] {_shorten(content, 180)} ({why})")
             atomic_block = "\n".join(lines)
@@ -3273,7 +2428,7 @@ class ContextBuilder:
         return {"stable": stable, "slow": slow, "volatile": volatile}
 
     def render_system_additions(self, package: dict) -> str:
-        """兼容接口：返回拼合后的完整 system 内容（用于 preview 等）"""
+        """鍏煎鎺ュ彛锛氳繑鍥炴嫾鍚堝悗鐨勫畬鏁?system 鍐呭锛堢敤浜?preview 绛夛級"""
         layers = self.render_layered_additions(package)
         blocks = [layers["stable"]]
         if layers["slow"]:
@@ -3313,7 +2468,7 @@ def _gateway_core_tools() -> list[dict]:
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "What you want surfaced."},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 8, "default": 3},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 3, "default": 3},
                         "session_tag": {"type": "string"},
                     },
                     "required": ["query"],
@@ -3406,10 +2561,9 @@ def _gateway_mem0_management_tools() -> list[dict]:
                     "type": "object",
                     "properties": {
                         "memory_id": {"type": "string"},
-                        "content_canonical": {"type": "string"},
                         "content_surface": {"type": "string"},
                         "subject": {"type": "string", "enum": ["??", "??", "??"]},
-                        "memory_type": {"type": "string"},
+                        "memory_type": {"type": "string", "enum": ["emotion", "commitment", "fact", "relation", "preference", "boundary"]},
                         "tier": {"type": "integer", "minimum": 1, "maximum": 4},
                         "importance": {"type": "integer", "minimum": 1, "maximum": 5},
                         "quote": {"type": "string"},
@@ -3998,7 +3152,7 @@ def _completion_to_stream_events(completion: dict):
     }
     yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
 
-    # 先发 reasoning_content（思维链），再发正文
+    # 鍏堝彂 reasoning_content锛堟€濈淮閾撅級锛屽啀鍙戞鏂?
     reasoning = message.get("reasoning_content", "")
     if reasoning:
         body = {
@@ -4059,14 +3213,14 @@ async def _call_upstream_json_at(request: Request, chat_url: str, payload: dict,
         response.raise_for_status()
         return response.json()
     except httpx.ConnectError as exc:
-        raise HTTPException(status_code=502, detail=f"无法连接上游 {chat_url}: {exc}")
+        raise HTTPException(status_code=502, detail=f"鏃犳硶杩炴帴涓婃父 {chat_url}: {exc}")
     except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail=f"连接上游超时 {chat_url}: {exc}")
+        raise HTTPException(status_code=504, detail=f"杩炴帴涓婃父瓒呮椂 {chat_url}: {exc}")
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text[:500])
     except httpx.HTTPError as exc:
         logger.exception("Upstream request failed for %s", chat_url)
-        raise HTTPException(status_code=502, detail=f"上游请求失败 {chat_url}: {exc}")
+        raise HTTPException(status_code=502, detail=f"涓婃父璇锋眰澶辫触 {chat_url}: {exc}")
 
 
 async def _call_upstream_json(request: Request, payload: dict, headers: dict) -> dict:
@@ -4149,8 +3303,8 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     session_tag = _session_tag_from_request(request)
     client_name = _client_name_from_request(request)
     session = sessions.open_session(session_tag=session_tag, client_name=client_name)
-    # 根据请求体判断是否为新对话：非 system 消息只有 1 条 → 新线程首轮
-    # 这样不依赖 session 持久化状态，Operit 每次新建对话都能注入 briefing
+    # 鏍规嵁璇锋眰浣撳垽鏂槸鍚︿负鏂板璇濓細闈?system 娑堟伅鍙湁 1 鏉?鈫?鏂扮嚎绋嬮杞?
+    # 杩欐牱涓嶄緷璧?session 鎸佷箙鍖栫姸鎬侊紝Operit 姣忔鏂板缓瀵硅瘽閮借兘娉ㄥ叆 briefing
     non_system_count = sum(1 for m in body.messages if m.role != "system")
     is_first_turn = non_system_count <= 1
 
@@ -4182,16 +3336,16 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     )
     layers = builder.render_layered_additions(package)
 
-    # ── 缓存友好的分层插入 ──
-    # 原则：不变的放前面，会变的放后面。每层独立一条 system 消息。
-    # 插入顺序（从前到后）：
-    #   [0] stable:  charter + tool_policy + heartbeat_prompt（尽量不变）
-    #   [1] slow:    calendar + heartbeat batch + cold_start  （低频变化，可缓存）
-    #   [2..M] 客户端原始消息（system prompt + 对话历史）（可能按 MAX_CLIENT_MESSAGES 裁剪）
-    #   [M+1] volatile: briefing + atomic memories（活动层，不打断点）
-    #   [M+2] 当前 user 消息                             （已在客户端消息里）
+    # 鈹€鈹€ 缂撳瓨鍙嬪ソ鐨勫垎灞傛彃鍏?鈹€鈹€
+    # 鍘熷垯锛氫笉鍙樼殑鏀惧墠闈紝浼氬彉鐨勬斁鍚庨潰銆傛瘡灞傜嫭绔嬩竴鏉?system 娑堟伅銆?
+    # 鎻掑叆椤哄簭锛堜粠鍓嶅埌鍚庯級锛?
+    #   [0] stable:  charter + tool_policy + heartbeat_prompt锛堝敖閲忎笉鍙橈級
+    #   [1] slow:    calendar + heartbeat batch + cold_start  锛堜綆棰戝彉鍖栵紝鍙紦瀛橈級
+    #   [2..M] 瀹㈡埛绔師濮嬫秷鎭紙system prompt + 瀵硅瘽鍘嗗彶锛夛紙鍙兘鎸?MAX_CLIENT_MESSAGES 瑁佸壀锛?
+    #   [M+1] volatile: briefing + atomic memories锛堟椿鍔ㄥ眰锛屼笉鎵撴柇鐐癸級
+    #   [M+2] 褰撳墠 user 娑堟伅                             锛堝凡鍦ㄥ鎴风娑堟伅閲岋級
 
-    # 在客户端消息前面插入网关的稳定层（倒序 insert(0) 保证顺序正确）
+    # 鍦ㄥ鎴风娑堟伅鍓嶉潰鎻掑叆缃戝叧鐨勭ǔ瀹氬眰锛堝€掑簭 insert(0) 淇濊瘉椤哄簭姝ｇ‘锛?
     prefix_layers = []
     if layers["stable"]:
         prefix_layers.append({"role": "system", "content": layers["stable"]})
@@ -4201,11 +3355,11 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         if cold_start_snapshot:
             session_store.mark_cold_start_injected(cold_start_snapshot["id"])
 
-    # 在头部插入稳定层
+    # 鍦ㄥご閮ㄦ彃鍏ョǔ瀹氬眰
     for i, layer_msg in enumerate(prefix_layers):
         messages.insert(i, layer_msg)
 
-    # 在最后一条 user 消息之前插入易变层（surface_passages）
+    # 鍦ㄦ渶鍚庝竴鏉?user 娑堟伅涔嬪墠鎻掑叆鏄撳彉灞傦紙surface_passages锛?
     if layers["volatile"]:
         last_user_idx = len(messages) - 1
         for i in range(len(messages) - 1, -1, -1):
@@ -4248,13 +3402,13 @@ def _store_heartbeat(session_id: str, session: dict, content: str):
         return
     msg_count = int(session.get("message_count") or 0)
     session_store.append_heartbeat(session_id, heartbeat_content, turn_number=msg_count)
-    logger.info("[Heartbeat] 截获心跳 (%d chars) session=%s", len(heartbeat_content), session_id[:8])
+    logger.info("[Heartbeat] 鎴幏蹇冭烦 (%d chars) session=%s", len(heartbeat_content), session_id[:8])
 
 
 def _schedule_inline_memory_capture(
     request: Request,
     session: dict,
-    inline_memories: list[str],
+    inline_memories: list[Any],
     assistant_text: str,
     source_model: str,
 ):
@@ -4494,13 +3648,6 @@ async def _run_internal_tool_loop(
                 assistant_message["content"] = clean_content
             sessions.log_assistant_output(session_id, assistant_message)
             _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
-            _schedule_atomic_memory_extraction(
-                request,
-                session,
-                _latest_user_text(working_messages),
-                clean_content,
-                body.model,
-            )
             return completion
 
         assistant_message = completion["choices"][0]["message"]
@@ -4526,39 +3673,37 @@ async def _stream_chat(
     request: Request, payload: dict, headers: dict, model: str,
     on_complete: callable = None,
 ):
-    """流式转发，同时收集 assistant 回复文本。
-    on_complete(collected_text): 流结束后的回调，用于 session 记录、heartbeat 与原子记忆抽取。
-    """
+    """Forward a streaming response and collect assistant text."""
     proto = _detect_protocol()
     client = request.app.state.http
     chat_url = _get_chat_url()
 
-    # 确保 payload 中有 stream 标记
+    # 纭繚 payload 涓湁 stream 鏍囪
     payload["stream"] = True
 
-    # 用 build_request + send(stream=True) 实现真正的流式传输
+    # 鐢?build_request + send(stream=True) 瀹炵幇鐪熸鐨勬祦寮忎紶杈?
     try:
         req = client.build_request("POST", chat_url, json=payload, headers=headers)
         resp = await client.send(req, stream=True)
     except httpx.ConnectError as exc:
-        raise HTTPException(status_code=502, detail=f"无法连接上游 {chat_url}: {exc}")
+        raise HTTPException(status_code=502, detail=f"鏃犳硶杩炴帴涓婃父 {chat_url}: {exc}")
     except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail=f"连接上游超时 {chat_url}: {exc}")
+        raise HTTPException(status_code=504, detail=f"杩炴帴涓婃父瓒呮椂 {chat_url}: {exc}")
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"上游请求失败 {chat_url}: {exc}")
+        raise HTTPException(status_code=502, detail=f"涓婃父璇锋眰澶辫触 {chat_url}: {exc}")
 
-    # 流式连接下需要手动检查状态码
+    # 娴佸紡杩炴帴涓嬮渶瑕佹墜鍔ㄦ鏌ョ姸鎬佺爜
     if resp.status_code >= 400:
         error_body = await resp.aread()
         await resp.aclose()
         raise HTTPException(status_code=resp.status_code, detail=error_body.decode("utf-8", errors="replace")[:500])
 
-    # 收集器 + heartbeat 过滤器
+    # 鏀堕泦鍣?+ heartbeat 杩囨护鍣?
     collected_parts = []
     tag_filter = _AssistantTagFilter()
 
     if proto == "openai":
-        # OpenAI 协议：逐行解析 SSE，过滤 heartbeat，转发干净内容
+        # OpenAI 鍗忚锛氶€愯瑙ｆ瀽 SSE锛岃繃婊?heartbeat锛岃浆鍙戝共鍑€鍐呭
         async def generate():
             try:
                 async for raw_line in resp.aiter_lines():
@@ -4567,7 +3712,7 @@ async def _stream_chat(
                         yield "\n"
                         continue
                     if line == "data: [DONE]":
-                        # 刷出 heartbeat 过滤器缓冲区的剩余文本
+                        # 鍒峰嚭 heartbeat 杩囨护鍣ㄧ紦鍐插尯鐨勫墿浣欐枃鏈?
                         remaining = tag_filter.flush()
                         if remaining:
                             flush_chunk = {"choices": [{"delta": {"content": remaining}}]}
@@ -4585,26 +3730,26 @@ async def _stream_chat(
                                 if filtered:
                                     data["choices"][0]["delta"]["content"] = filtered
                                     yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                                continue  # 已处理，不重复转发原始行
+                                continue  # 宸插鐞嗭紝涓嶉噸澶嶈浆鍙戝師濮嬭
                         except (json.JSONDecodeError, IndexError, KeyError):
                             pass
-                    # 非 content 行（role、tool_calls 等），原样转发
+                    # 闈?content 琛岋紙role銆乼ool_calls 绛夛級锛屽師鏍疯浆鍙?
                     yield line + "\n\n"
             finally:
                 await resp.aclose()
                 if on_complete:
                     try:
                         full_text = "".join(collected_parts)
-                        # 对完整文本也做一次过滤（获取干净的 assistant 内容）
+                        # 瀵瑰畬鏁存枃鏈篃鍋氫竴娆¤繃婊わ紙鑾峰彇骞插噣鐨?assistant 鍐呭锛?
                         clean_filter = _AssistantTagFilter()
                         clean_text = clean_filter.feed(full_text) + clean_filter.flush()
                         on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories())
                     except Exception:
-                        logger.exception("流式回调执行失败")
+                        logger.exception("娴佸紡鍥炶皟鎵ц澶辫触")
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
-    # Anthropic 协议：逐行解析，过滤 heartbeat，转为 OpenAI SSE 格式
+    # Anthropic 鍗忚锛氶€愯瑙ｆ瀽锛岃繃婊?heartbeat锛岃浆涓?OpenAI SSE 鏍煎紡
     async def generate():
         try:
             async for line in resp.aiter_lines():
@@ -4619,7 +3764,7 @@ async def _stream_chat(
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                # 收集文本并过滤 heartbeat
+                # 鏀堕泦鏂囨湰骞惰繃婊?heartbeat
                 if data.get("type") == "content_block_delta":
                     delta = data.get("delta", {})
                     text = delta.get("text", "")
@@ -4629,11 +3774,11 @@ async def _stream_chat(
                         if filtered:
                             delta["text"] = filtered
                         else:
-                            continue  # heartbeat 内容，不转发
+                            continue  # heartbeat 鍐呭锛屼笉杞彂
                 chunk = _anthropic_to_openai_chunk(model, data)
                 if chunk:
                     yield f"data: {chunk}\n\n"
-            # 刷出剩余缓冲
+            # 鍒峰嚭鍓╀綑缂撳啿
             remaining = tag_filter.flush()
             if remaining:
                 flush_data = {"choices": [{"delta": {"content": remaining}}]}
@@ -4648,7 +3793,7 @@ async def _stream_chat(
                     clean_text = clean_filter.feed(full_text) + clean_filter.flush()
                     on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories())
                 except Exception:
-                    logger.exception("流式回调执行失败")
+                    logger.exception("娴佸紡鍥炶皟鎵ц澶辫触")
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -4657,14 +3802,14 @@ async def _nonstream_chat(request: Request, payload: dict, headers: dict, model:
     proto = _detect_protocol()
     raw = await _call_upstream_json(request, payload, headers)
 
-    # 诊断日志：打印上游响应中的 thinking/reasoning 字段
+    # 璇婃柇鏃ュ織锛氭墦鍗颁笂娓稿搷搴斾腑鐨?thinking/reasoning 瀛楁
     if raw.get("choices"):
         msg = raw["choices"][0].get("message", {})
         known_keys = set(msg.keys()) - {"role", "content", "tool_calls", "refusal"}
         if known_keys:
-            logger.info("[CoT诊断] 上游 message 中发现额外字段: %s", known_keys)
+            logger.info("[CoT diagnostics] upstream message has extra keys: %s", known_keys)
         if msg.get("reasoning_content") or msg.get("reasoning"):
-            logger.info("[CoT诊断] 上游返回了思维链内容 ✓")
+            logger.info("[CoT diagnostics] upstream returned reasoning content.")
 
     if proto == "openai":
         return {
@@ -4701,7 +3846,7 @@ async def list_models(request: Request):
     return {"object": "list", "data": models}
 
 
-# ── 请求日志环形缓冲区 ──
+# 鈹€鈹€ 璇锋眰鏃ュ織鐜舰缂撳啿鍖?鈹€鈹€
 _request_logs: deque = deque(maxlen=30)
 
 
@@ -4723,7 +3868,7 @@ async def chat_completions(request: Request, body: ChatRequest):
         for tool in merged_tools
     )
 
-    # 构建日志条目
+    # 鏋勫缓鏃ュ織鏉＄洰
     log_id = uuid.uuid4().hex[:8]
     is_first = meta.get("is_first_turn", False)
     system_additions = ""
@@ -4802,18 +3947,11 @@ async def chat_completions(request: Request, body: ChatRequest):
             log_entry["usage"] = {"note": "Streaming usage is not available in this gateway log path."}
 
             def _on_stream_complete(collected_text: str, heartbeat_content: str = "", inline_memories: Optional[list[str]] = None):
-                """流结束后：记录 assistant 输出并存储 heartbeat。"""
+                """Persist assistant output after streaming completes."""
                 if collected_text:
                     assistant_msg = {"role": "assistant", "content": collected_text}
                     sessions.log_assistant_output(session_id, assistant_msg)
                     _schedule_inline_memory_capture(request, session, inline_memories or [], collected_text, body.model)
-                    _schedule_atomic_memory_extraction(
-                        request,
-                        session,
-                        _latest_user_text(prepared_messages),
-                        collected_text,
-                        body.model,
-                    )
                     log_entry["response_preview"] = collected_text
                     log_entry["status"] = "ok"
                 if heartbeat_content:
@@ -4821,7 +3959,7 @@ async def chat_completions(request: Request, body: ChatRequest):
 
             return await _stream_chat(request, payload, headers, body.model, on_complete=_on_stream_complete)
 
-        # 非流式路径：也需要过滤 heartbeat
+        # 闈炴祦寮忚矾寰勶細涔熼渶瑕佽繃婊?heartbeat
         completion = await _nonstream_chat(request, payload, headers, body.model)
         log_entry["usage"] = completion.get("usage", {})
         log_entry["cache_usage"] = _cache_usage_summary(completion.get("usage", {}))
@@ -4831,20 +3969,13 @@ async def chat_completions(request: Request, body: ChatRequest):
         clean_content, heartbeat_content, inline_memories = _split_private_assistant_tags(raw_content)
 
         if heartbeat_content or inline_memories:
-            # 把干净内容写回 completion，heartbeat 存入 DB
+            # 鎶婂共鍑€鍐呭鍐欏洖 completion锛宧eartbeat 瀛樺叆 DB
             assistant_message["content"] = clean_content
         if heartbeat_content:
             _store_heartbeat(session_id, session, heartbeat_content)
 
         sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content})
         _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
-        _schedule_atomic_memory_extraction(
-            request,
-            session,
-            _latest_user_text(prepared_messages),
-            clean_content,
-            body.model,
-        )
         log_entry["status"] = "ok"
         log_entry["response_preview"] = clean_content
         return completion
@@ -4874,7 +4005,6 @@ async def health():
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
         "inject_atomic_memories": cfg.inject_atomic_memories,
-        "extract_atomic_memories": cfg.extract_atomic_memories,
         "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
         "enable_cold_start": cfg.enable_cold_start,
         "gateway_db_path": cfg.gateway_db_path,
@@ -4899,13 +4029,7 @@ async def get_config_full():
         "calendar_api_key": cfg.calendar_api_key,
         "calendar_protocol": cfg.calendar_protocol,
         "calendar_model": cfg.calendar_model,
-        "atomic_memory_upstream_url": cfg.atomic_memory_upstream_url,
-        "atomic_memory_api_key": cfg.atomic_memory_api_key,
-        "atomic_memory_protocol": cfg.atomic_memory_protocol,
-        "atomic_memory_model": cfg.atomic_memory_model,
-        "atomic_memory_prompt": cfg.atomic_memory_prompt,
         "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
-        "inline_memory_prompt": cfg.inline_memory_prompt,
         "model_mapping": cfg.model_mapping,
         "supabase_url": cfg.supabase_url,
         "supabase_key": cfg.supabase_key,
@@ -4915,7 +4039,6 @@ async def get_config_full():
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
         "inject_atomic_memories": cfg.inject_atomic_memories,
-        "extract_atomic_memories": cfg.extract_atomic_memories,
         "enable_cold_start": cfg.enable_cold_start,
         "enable_gateway_tools": cfg.enable_gateway_tools,
         "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
@@ -4932,10 +4055,7 @@ async def get_config_full():
         "cold_start_idle_minutes": cfg.cold_start_idle_minutes,
         "default_surface_limit": cfg.default_surface_limit,
         "default_atomic_memory_limit": cfg.default_atomic_memory_limit,
-        "atomic_memory_max_tokens": cfg.atomic_memory_max_tokens,
-        "atomic_memory_extract_every_turns": cfg.atomic_memory_extract_every_turns,
         "atomic_memory_min_score": cfg.atomic_memory_min_score,
-        "atomic_memory_auto_activate_min_confidence": cfg.atomic_memory_auto_activate_min_confidence,
     }
 
 
@@ -4956,13 +4076,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "calendar_api_key": "CALENDAR_API_KEY",
         "calendar_protocol": "CALENDAR_PROTOCOL",
         "calendar_model": "CALENDAR_MODEL",
-        "atomic_memory_upstream_url": "ATOMIC_MEMORY_UPSTREAM_URL",
-        "atomic_memory_api_key": "ATOMIC_MEMORY_API_KEY",
-        "atomic_memory_protocol": "ATOMIC_MEMORY_PROTOCOL",
-        "atomic_memory_model": "ATOMIC_MEMORY_MODEL",
-        "atomic_memory_prompt": "ATOMIC_MEMORY_PROMPT",
         "enable_inline_memory_capture": "ENABLE_INLINE_MEMORY_CAPTURE",
-        "inline_memory_prompt": "INLINE_MEMORY_PROMPT",
         "model_mapping": "MODEL_MAPPING",
         "supabase_url": "SUPABASE_URL",
         "supabase_key": "SUPABASE_SERVICE_KEY",
@@ -4973,7 +4087,6 @@ async def update_config(request: Request, body: ConfigUpdate):
         "calendar_inject_month": "CALENDAR_INJECT_MONTH",
 
         "inject_atomic_memories": "INJECT_ATOMIC_MEMORIES",
-        "extract_atomic_memories": "EXTRACT_ATOMIC_MEMORIES",
         "enable_cold_start": "ENABLE_COLD_START",
         "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
         "enable_mem0_management_tools": "ENABLE_MEM0_MANAGEMENT_TOOLS",
@@ -4995,10 +4108,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "cold_start_idle_minutes": "COLD_START_IDLE_MINUTES",
         "default_surface_limit": "DEFAULT_SURFACE_LIMIT",
         "default_atomic_memory_limit": "DEFAULT_ATOMIC_MEMORY_LIMIT",
-        "atomic_memory_max_tokens": "ATOMIC_MEMORY_MAX_TOKENS",
-        "atomic_memory_extract_every_turns": "ATOMIC_MEMORY_EXTRACT_EVERY_TURNS",
         "atomic_memory_min_score": "ATOMIC_MEMORY_MIN_SCORE",
-        "atomic_memory_auto_activate_min_confidence": "ATOMIC_MEMORY_AUTO_ACTIVATE_MIN_CONFIDENCE",
     }
 
     simple_fields = [
@@ -5012,13 +4122,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "calendar_api_key",
         "calendar_protocol",
         "calendar_model",
-        "atomic_memory_upstream_url",
-        "atomic_memory_api_key",
-        "atomic_memory_protocol",
-        "atomic_memory_model",
-        "atomic_memory_prompt",
         "enable_inline_memory_capture",
-        "inline_memory_prompt",
         "supabase_url",
         "supabase_key",
         "inject_meta_summaries",
@@ -5028,7 +4132,6 @@ async def update_config(request: Request, body: ConfigUpdate):
         "calendar_inject_month",
 
         "inject_atomic_memories",
-        "extract_atomic_memories",
         "enable_cold_start",
         "enable_gateway_tools",
         "enable_mem0_management_tools",
@@ -5104,25 +4207,13 @@ async def update_config(request: Request, body: ConfigUpdate):
         changed.append("default_surface_limit")
         env_updates[env_names["default_surface_limit"]] = cfg.default_surface_limit
     if body.default_atomic_memory_limit is not None:
-        cfg.default_atomic_memory_limit = max(1, min(body.default_atomic_memory_limit, 8))
+        cfg.default_atomic_memory_limit = max(1, min(body.default_atomic_memory_limit, 3))
         changed.append("default_atomic_memory_limit")
         env_updates[env_names["default_atomic_memory_limit"]] = cfg.default_atomic_memory_limit
-    if body.atomic_memory_max_tokens is not None:
-        cfg.atomic_memory_max_tokens = max(512, min(body.atomic_memory_max_tokens, 65536))
-        changed.append("atomic_memory_max_tokens")
-        env_updates[env_names["atomic_memory_max_tokens"]] = cfg.atomic_memory_max_tokens
-    if body.atomic_memory_extract_every_turns is not None:
-        cfg.atomic_memory_extract_every_turns = max(1, min(body.atomic_memory_extract_every_turns, 50))
-        changed.append("atomic_memory_extract_every_turns")
-        env_updates[env_names["atomic_memory_extract_every_turns"]] = cfg.atomic_memory_extract_every_turns
     if body.atomic_memory_min_score is not None:
         cfg.atomic_memory_min_score = _clamp(float(body.atomic_memory_min_score), 0.0, 1.0)
         changed.append("atomic_memory_min_score")
         env_updates[env_names["atomic_memory_min_score"]] = cfg.atomic_memory_min_score
-    if body.atomic_memory_auto_activate_min_confidence is not None:
-        cfg.atomic_memory_auto_activate_min_confidence = _clamp(float(body.atomic_memory_auto_activate_min_confidence), 0.0, 1.0)
-        changed.append("atomic_memory_auto_activate_min_confidence")
-        env_updates[env_names["atomic_memory_auto_activate_min_confidence"]] = cfg.atomic_memory_auto_activate_min_confidence
     if body.model_mapping is not None:
         cfg.model_mapping = {
             str(key).strip(): str(value).strip()
@@ -5238,171 +4329,6 @@ async def atomic_memory_search(q: str, session_tag: Optional[str] = None, limit:
     return await service.search_atomic_memories(q, session_tag=session_tag, limit=limit)
 
 
-@app.get("/api/mem0/prompt-presets")
-async def mem0_prompt_presets():
-    items = _atomic_prompt_items()
-    active = next((item for item in items if item.get("is_active")), None)
-    return {"items": items, "active": active}
-
-
-@app.post("/api/mem0/prompt-presets")
-async def mem0_save_prompt_preset(body: AtomicPromptPresetUpdate):
-    name = (body.name or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Prompt preset name is required.")
-    content = body.content or ""
-    state = _load_atomic_prompt_presets()
-    items = state["items"]
-    next_version = max([int(item.get("version") or 0) for item in items], default=0) + 1
-    if body.is_active:
-        for item in items:
-            item["is_active"] = False
-    new_item = {
-        "id": f"amp_{uuid.uuid4().hex[:12]}",
-        "name": name,
-        "content": content,
-        "note": (body.note or "").strip(),
-        "version": next_version,
-        "is_default": False,
-        "is_active": bool(body.is_active),
-        "updated_at": _iso_now(),
-    }
-    items.insert(0, new_item)
-    active_id = new_item["id"] if body.is_active else state.get("active_id")
-    _save_atomic_prompt_presets(
-        {
-            "active_id": active_id,
-            "items": [
-                {key: value for key, value in item.items() if key != "is_active"}
-                for item in items
-            ],
-        }
-    )
-    if body.is_active:
-        cfg.atomic_memory_prompt = content
-        _persist_env({"ATOMIC_MEMORY_PROMPT": content})
-    return {"ok": True, "item": new_item}
-
-
-@app.post("/api/mem0/prompt-presets/{preset_id}/activate")
-async def mem0_activate_prompt_preset(preset_id: str):
-    if preset_id == "default":
-        cfg.atomic_memory_prompt = ""
-        _persist_env({"ATOMIC_MEMORY_PROMPT": ""})
-        state = _load_atomic_prompt_presets()
-        for item in state["items"]:
-            item["is_active"] = False
-        _save_atomic_prompt_presets(
-            {
-                "active_id": None,
-                "items": [{key: value for key, value in item.items() if key != "is_active"} for item in state["items"]],
-            }
-        )
-        return {"ok": True, "item": None, "active": "default"}
-    state = _load_atomic_prompt_presets()
-    target = None
-    for item in state["items"]:
-        is_active = item["id"] == preset_id
-        item["is_active"] = is_active
-        if is_active:
-            target = item
-    if not target:
-        raise HTTPException(status_code=404, detail="Prompt preset not found.")
-    cfg.atomic_memory_prompt = target["content"]
-    _persist_env({"ATOMIC_MEMORY_PROMPT": target["content"]})
-    _save_atomic_prompt_presets(
-        {
-            "active_id": target["id"],
-            "items": [{key: value for key, value in item.items() if key != "is_active"} for item in state["items"]],
-        }
-    )
-    return {"ok": True, "item": target}
-
-
-@app.get("/api/inline-memory/prompt-presets")
-async def inline_memory_prompt_presets():
-    items = _inline_memory_prompt_items()
-    active = next((item for item in items if item.get("is_active")), None)
-    return {"items": items, "active": active}
-
-
-@app.post("/api/inline-memory/prompt-presets")
-async def inline_memory_save_prompt_preset(body: AtomicPromptPresetUpdate):
-    name = (body.name or "").strip()
-    if not name:
-        raise HTTPException(status_code=400, detail="Prompt preset name is required.")
-    content = body.content or ""
-    state = _load_inline_memory_prompt_presets()
-    items = state["items"]
-    next_version = max([int(item.get("version") or 0) for item in items], default=0) + 1
-    if body.is_active:
-        for item in items:
-            item["is_active"] = False
-    new_item = {
-        "id": f"imp_{uuid.uuid4().hex[:12]}",
-        "name": name,
-        "content": content,
-        "note": (body.note or "").strip(),
-        "version": next_version,
-        "is_default": False,
-        "is_active": bool(body.is_active),
-        "updated_at": _iso_now(),
-    }
-    items.insert(0, new_item)
-    active_id = new_item["id"] if body.is_active else state.get("active_id")
-    _save_inline_memory_prompt_presets(
-        {
-            "active_id": active_id,
-            "items": [{key: value for key, value in item.items() if key != "is_active"} for item in items],
-        }
-    )
-    if body.is_active:
-        cfg.inline_memory_prompt = content
-        _persist_env({"INLINE_MEMORY_PROMPT": content})
-    return {"ok": True, "item": new_item}
-
-
-@app.post("/api/inline-memory/prompt-presets/{preset_id}/activate")
-async def inline_memory_activate_prompt_preset(preset_id: str):
-    if preset_id == "default":
-        cfg.inline_memory_prompt = ""
-        _persist_env({"INLINE_MEMORY_PROMPT": ""})
-        state = _load_inline_memory_prompt_presets()
-        for item in state["items"]:
-            item["is_active"] = False
-        _save_inline_memory_prompt_presets(
-            {
-                "active_id": None,
-                "items": [{key: value for key, value in item.items() if key != "is_active"} for item in state["items"]],
-            }
-        )
-        return {"ok": True, "item": None, "active": "default"}
-    state = _load_inline_memory_prompt_presets()
-    target = None
-    for item in state["items"]:
-        is_active = item["id"] == preset_id
-        item["is_active"] = is_active
-        if is_active:
-            target = item
-    if not target:
-        raise HTTPException(status_code=404, detail="Prompt preset not found.")
-    cfg.inline_memory_prompt = target["content"]
-    _persist_env({"INLINE_MEMORY_PROMPT": target["content"]})
-    _save_inline_memory_prompt_presets(
-        {
-            "active_id": target["id"],
-            "items": [{key: value for key, value in item.items() if key != "is_active"} for item in state["items"]],
-        }
-    )
-    return {"ok": True, "item": target}
-
-
-@app.post("/api/mem0/extract-now")
-async def mem0_extract_now(request: Request, body: AtomicExtractNowRequest):
-    service = AtomicMemoryService(request)
-    return await service.extract_now(body.session_tag, body.model or "")
-
-
 @app.get("/api/gateway/atomic-memories")
 async def list_atomic_memories(status: str = "proposed", limit: int = 50, session_tag: Optional[str] = None):
     if not supabase_client:
@@ -5411,10 +4337,9 @@ async def list_atomic_memories(status: str = "proposed", limit: int = 50, sessio
         "order": "updated_at.desc",
         "limit": str(max(1, min(limit, 200))),
         "select": (
-            "id,session_tag,subject,owner,content_canonical,content_surface,quote,time_hint,"
-            "memory_type,tier,confidence,importance,heat,entities_json,tags_json,"
-            "source_excerpt,source_model,status,activation_count,last_activated,created_at,updated_at,"
-            "valence,arousal,supersedes_id"
+            "id,session_tag,subject,owner,content_surface,quote,time_hint,"
+            "memory_type,tier,importance,entities_json,tags_json,"
+            "source_excerpt,source_model,status,created_at,updated_at,supersedes_id"
         ),
     }
     if status and status != "all":
@@ -5443,7 +4368,7 @@ async def review_atomic_memory(memory_id: str, body: AtomicMemoryReviewUpdate):
             raise HTTPException(status_code=400, detail=f"atomic_memories delete failed: {exc}")
         return {"ok": True, "memory_id": memory_id, "deleted": rows}
     update = {"status": status, "updated_at": _iso_now()}
-    text_fields = ["content_canonical", "content_surface", "quote", "time_hint", "subject", "owner", "memory_type"]
+    text_fields = ["content_surface", "quote", "time_hint", "subject", "owner", "memory_type"]
     for field in text_fields:
         if field in body.model_fields_set:
             value = getattr(body, field)
@@ -5460,19 +4385,14 @@ async def review_atomic_memory(memory_id: str, body: AtomicMemoryReviewUpdate):
         memory_type = str(update["memory_type"] or "").strip()
         memory_type = {"state": "emotion"}.get(memory_type, memory_type)
         allowed_types = {
-            "preference",
-            "health",
             "emotion",
             "commitment",
-            "project",
+            "fact",
             "relation",
+            "preference",
             "boundary",
-            "routine",
-            "identity",
-            "event",
-            "other",
         }
-        update["memory_type"] = memory_type if memory_type in allowed_types else "other"
+        update["memory_type"] = memory_type if memory_type in allowed_types else "fact"
     if body.tier is not None:
         update["tier"] = max(1, min(body.tier, 4))
     if body.importance is not None:
@@ -5574,7 +4494,7 @@ async def delete_gateway_session(session_tag: str, body: SessionDeleteRequest):
     return {"ok": True, "session_tag": session_tag, "deleted": deleted}
 
 
-# ── 请求日志 API ──
+# 鈹€鈹€ 璇锋眰鏃ュ織 API 鈹€鈹€
 
 @app.get("/api/gateway/logs")
 async def gateway_logs(limit: int = 30):
@@ -5718,3 +4638,4 @@ if __name__ == "__main__":
     print(f"Admin -> http://localhost:{port}/admin")
     print(f"Operit custom provider URL -> http://your-ip:{port}")
     uvicorn.run("gateway:app", host="0.0.0.0", port=port, reload=reload_enabled)
+

@@ -20,20 +20,10 @@ export interface GatewayConfig {
   calendar_protocol?: string
   calendar_model?: string
   // atomic memory
-  atomic_memory_upstream_url?: string
-  atomic_memory_api_key?: string
-  atomic_memory_protocol?: string
-  atomic_memory_model?: string
-  atomic_memory_prompt?: string
   enable_inline_memory_capture?: boolean
-  inline_memory_prompt?: string
-  extract_atomic_memories?: boolean
   inject_atomic_memories?: boolean
   default_atomic_memory_limit?: number
-  atomic_memory_max_tokens?: number
-  atomic_memory_extract_every_turns?: number
   atomic_memory_min_score?: number
-  atomic_memory_auto_activate_min_confidence?: number
   // feature toggles
   inject_briefing?: boolean
   inject_meta_summaries?: boolean
@@ -74,7 +64,6 @@ export interface HealthStatus {
   inject_briefing?: boolean
 
   inject_atomic_memories?: boolean
-  extract_atomic_memories?: boolean
   enable_cold_start?: boolean
 }
 
@@ -100,7 +89,6 @@ export interface GatewayOverview {
 export interface AtomicMemoryItem {
   id: string
   subject: string | null
-  content_canonical: string
   content_surface: string | null
   quote: string | null
   time_hint: string | null
@@ -109,10 +97,6 @@ export interface AtomicMemoryItem {
   memory_type: string
   tier: number
   importance: number
-  confidence: number
-  heat: number
-  valence?: number | null
-  arousal?: number | null
   session_tag: string | null
   tags_json: string[] | null
   entities_json: string[] | null
@@ -160,7 +144,6 @@ export async function fetchColdStartPreview(): Promise<ColdStartPreview> {
 export type AtomicMemoryReviewPatch = Partial<
   Pick<
     AtomicMemoryItem,
-    | 'content_canonical'
     | 'content_surface'
     | 'quote'
     | 'time_hint'

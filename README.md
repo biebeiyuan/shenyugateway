@@ -123,11 +123,10 @@ Supabase remains the durable fact and content source:
 - `calendar_pages`
 - `calendar_generation_runs`
 - `atomic_memories`
-- `atomic_extraction_runs`
 
 The short-lived notes table is no longer used by gateway code.
 
-The atomic-memory review UI reads and updates Supabase `atomic_memories`. It is not reviewing a SQLite buffer table. SQLite only provides local request/session context that can be referenced by extraction metadata.
+The atomic-memory review UI reads and updates Supabase `atomic_memories`. It is not reviewing a SQLite buffer table. SQLite only provides local request/session context.
 
 ## Cold Start Layer
 
@@ -203,26 +202,23 @@ Endpoints:
 
 Atomic memories are small durable notes, separate from event memories and calendar pages.
 
-Two independent switches control it:
+Two switches control it:
 
-- `EXTRACT_ATOMIC_MEMORIES`: after a reply, schedule a background extraction run.
 - `INJECT_ATOMIC_MEMORIES`: before a reply, search active atomic memories and inject relevant hits in `volatile`.
+- `ENABLE_INLINE_MEMORY_CAPTURE`: after a reply, capture explicit `[mem]...[/mem]` notes.
 
-Extraction flow:
+Explicit inline memory flow:
 
-1. Assistant reply is logged.
-2. `_schedule_atomic_memory_extraction()` starts `AtomicMemoryService.process_turn()`.
-3. When the configured extraction turn is reached, the extractor reads the most recent `N` dialogue turns from local `gateway_messages`, where `N = ATOMIC_MEMORY_EXTRACT_EVERY_TURNS`.
-4. It also looks up similar `active` atomic memories in the same `session_tag` to help continuity and reduce duplicate notes.
-5. The extractor model returns JSON candidates.
-6. Candidates are written to `atomic_memories`.
-7. High-confidence candidates become `active`; others stay `proposed`.
-8. Runs are logged in `atomic_extraction_runs`.
+1. Assistant reply is filtered before it reaches the client.
+2. `[mem]...[/mem]` and legacy `<mem>...</mem>` blocks are removed from visible text.
+3. Each captured note is inserted directly into `atomic_memories` as `active`.
+4. Inline notes are not rewritten, scored, or routed through `proposed`.
+5. Defaults are `tier=2`, `importance=3`, and `memory_type=fact` unless attributes override them.
 
 Search/injection flow:
 
 1. `ContextBuilder` calls `search_atomic_memories()` when enabled.
-2. Active rows are scored by keyword overlap, tags/entities, importance, heat, tier, emotion signal, and recency.
+2. Active rows are scored by keyword overlap, tags/entities, importance, heat, tier, and a 7-day recency bonus.
 3. Relevant hits are rendered in `volatile`.
 
 Endpoints:
@@ -230,27 +226,19 @@ Endpoints:
 - `GET /api/gateway/atomic-memories/search`
 - `GET /api/gateway/atomic-memories`
 - `POST /api/gateway/atomic-memories/{memory_id}/review`
-- `GET /api/mem0/prompt-presets`
-- `POST /api/mem0/prompt-presets`
-- `POST /api/mem0/prompt-presets/{preset_id}/activate`
-- `POST /api/mem0/extract-now`
 
 Admin UI notes:
 
 - Mem0 is now a standalone admin area instead of being embedded in the generic config page.
 - The Mem0 page includes:
-  - upstream/model/config controls for atomic extraction and injection
-  - server-persisted prompt presets stored in `data/atomic_prompt_presets.json`
-  - a built-in default prompt option that clears `ATOMIC_MEMORY_PROMPT`
-  - a manual "extract now" action that uses the same latest-`N` dialogue window as scheduled extraction
+  - controls for explicit `[mem]` capture and active-memory injection
   - the atomic-memory review workflow for Supabase `atomic_memories`
 
 Current implementation details:
 
-- The active runtime prompt still comes from `ATOMIC_MEMORY_PROMPT` in `.env`.
-- Activating a Mem0 preset writes its content back to `ATOMIC_MEMORY_PROMPT` for runtime compatibility.
-- The built-in default prompt remains defined in backend code and is used whenever `ATOMIC_MEMORY_PROMPT` is empty.
-- `ATOMIC_MEMORY_EXTRACT_EVERY_TURNS` now controls both extraction frequency and extraction window size. For example, `4` means "trigger every 4 turns and send the most recent 4 user/assistant turns to the extractor."
+- Automatic/model-based atomic extraction is disabled.
+- `[mem]` notes are stored verbatim as `active` rows.
+- Prompt-preset and manual-extract endpoints have been removed.
 
 ## Briefing
 
@@ -287,14 +275,9 @@ COLD_START_IDLE_MINUTES=120
 MAX_CLIENT_MESSAGES=
 
 INJECT_ATOMIC_MEMORIES=false
-EXTRACT_ATOMIC_MEMORIES=false
-ATOMIC_MEMORY_UPSTREAM_URL=
-ATOMIC_MEMORY_API_KEY=
-ATOMIC_MEMORY_PROTOCOL=auto
-ATOMIC_MEMORY_MODEL=
+ENABLE_INLINE_MEMORY_CAPTURE=false
 DEFAULT_ATOMIC_MEMORY_LIMIT=3
-ATOMIC_MEMORY_MIN_SCORE=0.42
-ATOMIC_MEMORY_AUTO_ACTIVATE_MIN_CONFIDENCE=0.92
+ATOMIC_MEMORY_MIN_SCORE=0.55
 
 INJECT_BRIEFING=true
 DEFAULT_SURFACE_LIMIT=3
@@ -355,11 +338,11 @@ http://localhost:8010/admin
 `/admin` is the formal Vue/Vite admin app. It is organized by feature:
 
 - `admin/src/api/config.ts`: gateway and upstream configuration.
-- `admin/src/api/mem0.ts`: Mem0 prompt presets, prompt preview, and atomic-memory review APIs.
+- `admin/src/api/mem0.ts`: Mem0 config and atomic-memory review APIs.
 - `admin/src/api/sessions.ts`: local SQLite session browser.
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
 - `admin/src/views/ConfigView.vue`: configuration page.
-- `admin/src/views/Mem0View.vue`: Mem0 prompt management, preview, and atomic-memory review page.
+- `admin/src/views/Mem0View.vue`: Mem0 capture/injection controls and atomic-memory review page.
 - `admin/src/views/SessionsView.vue`: session inspection page.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.
