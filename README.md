@@ -210,7 +210,7 @@ Two switches control it:
 Explicit inline memory flow:
 
 1. Assistant reply is filtered before it reaches the client.
-2. `[mem]...[/mem]` and legacy `<mem>...</mem>` blocks are removed from visible text.
+2. Only closed `[mem]...[/mem]` blocks are removed from visible text.
 3. Each captured note is inserted directly into `atomic_memories` as `active`.
 4. Inline notes are not rewritten, scored, or routed through `proposed`.
 5. Defaults are `tier=2`, `importance=3`, and `memory_type=fact` unless attributes override them.

@@ -2,13 +2,9 @@
 -- New gateway behavior:
 --   required: content_surface, subject
 --   defaults: status=active, tier=2, importance=3, memory_type=fact
---   legacy scoring/extractor fields stay nullable for old rows, but are no longer used by the app.
+--   legacy scoring/extractor fields are dropped after backfill.
 
 alter table if exists atomic_memories
-  alter column content_canonical drop not null,
-  alter column confidence drop not null,
-  alter column valence drop not null,
-  alter column arousal drop not null,
   alter column quote drop not null,
   alter column time_hint drop not null,
   alter column source_excerpt drop not null,
@@ -42,15 +38,38 @@ begin
   end loop;
 end $$;
 
-update atomic_memories
-set content_surface = coalesce(
-  nullif(content_surface, ''),
-  nullif(content_canonical, ''),
-  nullif(quote, ''),
-  nullif(source_excerpt, ''),
-  '[empty memory]'
-)
-where content_surface is null or content_surface = '';
+do $$
+begin
+  if exists (
+    select 1
+    from information_schema.columns
+    where table_name = 'atomic_memories'
+      and column_name = 'content_canonical'
+  ) then
+    execute $q$
+      update atomic_memories
+      set content_surface = coalesce(
+        nullif(content_surface, ''),
+        nullif(content_canonical, ''),
+        nullif(quote, ''),
+        nullif(source_excerpt, ''),
+        '[empty memory]'
+      )
+      where content_surface is null or content_surface = ''
+    $q$;
+  else
+    execute $q$
+      update atomic_memories
+      set content_surface = coalesce(
+        nullif(content_surface, ''),
+        nullif(quote, ''),
+        nullif(source_excerpt, ''),
+        '[empty memory]'
+      )
+      where content_surface is null or content_surface = ''
+    $q$;
+  end if;
+end $$;
 
 update atomic_memories
 set subject = '我们'
@@ -70,6 +89,12 @@ alter table if exists atomic_memories
   alter column subject set not null,
   add constraint atomic_memories_memory_type_simple
     check (memory_type in ('emotion', 'commitment', 'fact', 'relation', 'preference', 'boundary'));
+
+alter table if exists atomic_memories
+  drop column if exists content_canonical,
+  drop column if exists confidence,
+  drop column if exists valence,
+  drop column if exists arousal;
 
 create index if not exists atomic_memories_active_lookup_idx
   on atomic_memories (status, session_tag, heat desc, importance desc, updated_at desc);

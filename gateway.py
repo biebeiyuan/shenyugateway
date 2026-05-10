@@ -537,6 +537,7 @@ class _AssistantTagFilter:
         self._buffer = ""
         self._active_tag = ""
         self._active_close = ""
+        self._active_open = ""
         self._active_attrs: dict[str, str] = {}
         self._active_parts: list[str] = []
         self._captured: dict[str, list[Any]] = {tag: [] for tag in self.TAGS}
@@ -577,6 +578,7 @@ class _AssistantTagFilter:
                     self._buffer = self._buffer[close_idx + len(close_tag):]
                     self._active_tag = ""
                     self._active_close = ""
+                    self._active_open = ""
                     self._active_attrs = {}
                     continue
                 keep = len(close_tag) - 1
@@ -586,25 +588,31 @@ class _AssistantTagFilter:
                 break
 
             found: tuple[int, str, int, str, dict[str, str]] | None = None
-            for tag in self.TAGS:
-                idx = lower.find(f"<{tag}")
+
+            mem_open = re.search(r"(^|\n)[ \t]*\[mem(?:\s[^\]]*)?\]", self._buffer, flags=re.I)
+            if mem_open:
+                idx = mem_open.start()
+                end_idx = mem_open.end() - 1
+                open_text = self._buffer[mem_open.start():mem_open.end()]
+                tag_start = open_text.lower().find("[mem")
+                attr_text = open_text[tag_start + 4:-1] if tag_start >= 0 else ""
+                found = (idx, "mem", end_idx, "[/mem]", self._parse_attrs(attr_text))
+
+            if found is None:
+                idx = lower.find("<heartbeat>")
                 if idx >= 0:
-                    end_idx = lower.find(">", idx)
-                    if end_idx >= 0 and (found is None or idx < found[0]):
-                        attr_text = self._buffer[idx + len(tag) + 1:end_idx]
-                        found = (idx, tag, end_idx, f"</{tag}>", self._parse_attrs(attr_text))
-                idx = lower.find(f"[{tag}")
-                if idx >= 0:
-                    end_idx = lower.find("]", idx)
-                    if end_idx >= 0 and (found is None or idx < found[0]):
-                        attr_text = self._buffer[idx + len(tag) + 1:end_idx]
-                        found = (idx, tag, end_idx, f"[/{tag}]", self._parse_attrs(attr_text))
+                    end_idx = idx + len("<heartbeat>") - 1
+                    close_idx = lower.find("</heartbeat>", end_idx + 1)
+                    if close_idx >= 0:
+                        found = (idx, "heartbeat", end_idx, "</heartbeat>", {})
             if found:
                 open_idx, tag, end_idx, close_tag, attrs = found
+                open_text = self._buffer[open_idx:end_idx + 1]
                 output.append(self._buffer[:open_idx])
                 self._buffer = self._buffer[end_idx + 1:]
                 self._active_tag = tag
                 self._active_close = close_tag
+                self._active_open = open_text if tag == "mem" else ""
                 self._active_attrs = attrs
                 self._active_parts = []
                 continue
@@ -618,6 +626,15 @@ class _AssistantTagFilter:
 
     def flush(self) -> str:
         if self._active_tag:
+            if self._active_tag == "mem":
+                visible = self._active_open + "".join(self._active_parts) + self._buffer
+                self._active_tag = ""
+                self._active_close = ""
+                self._active_open = ""
+                self._active_attrs = {}
+                self._active_parts = []
+                self._buffer = ""
+                return visible
             self._capture_active(self._buffer)
             self._finish_active_capture()
             self._buffer = ""
