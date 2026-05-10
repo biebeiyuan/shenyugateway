@@ -157,7 +157,7 @@ async function doSave() {
       model_mapping: Object.fromEntries(modelEntries.value.filter(([key, value]) => key && value)),
       inject_briefing: config.value.inject_briefing,
       inject_meta_summaries: config.value.inject_meta_summaries,
-      inject_surface_passages: config.value.inject_surface_passages,
+
       enable_gateway_tools: config.value.enable_gateway_tools,
       expose_supabase_tools: config.value.expose_supabase_tools,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
@@ -359,9 +359,7 @@ function removeModel(index: number) {
           <NFormItem label="注入元摘要">
             <NSwitch v-model:value="config.inject_meta_summaries" />
           </NFormItem>
-          <NFormItem label="自动浮现正文">
-            <NSwitch v-model:value="config.inject_surface_passages" />
-          </NFormItem>
+
           <NFormItem label="启用 shenyu_* 工具">
             <NSwitch v-model:value="config.enable_gateway_tools" />
           </NFormItem>

@@ -38,12 +38,16 @@ class ConfigUpdate(BaseModel):
     atomic_memory_protocol: Optional[str] = None
     atomic_memory_model: Optional[str] = None
     atomic_memory_prompt: Optional[str] = None
+    enable_inline_memory_capture: Optional[bool] = None
+    inline_memory_prompt: Optional[str] = None
     model_mapping: Optional[dict[str, str]] = None
     supabase_url: Optional[str] = None
     supabase_key: Optional[str] = None
     inject_meta_summaries: Optional[bool] = None
     inject_briefing: Optional[bool] = None
-    inject_surface_passages: Optional[bool] = None
+    calendar_inject_day: Optional[bool] = None
+    calendar_inject_week: Optional[bool] = None
+    calendar_inject_month: Optional[bool] = None
     inject_atomic_memories: Optional[bool] = None
     extract_atomic_memories: Optional[bool] = None
     enable_cold_start: Optional[bool] = None
@@ -52,6 +56,9 @@ class ConfigUpdate(BaseModel):
     max_internal_tool_rounds: Optional[int] = None
     gateway_db_path: Optional[str] = None
     daily_briefing_ttl_minutes: Optional[int] = None
+    calendar_context_day_limit: Optional[int] = None
+    calendar_context_week_limit: Optional[int] = None
+    calendar_context_month_limit: Optional[int] = None
     max_client_messages: Optional[int] = None
     cold_start_turns: Optional[int] = None
     cold_start_message_limit: Optional[int] = None

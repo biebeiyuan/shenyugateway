@@ -25,6 +25,8 @@ export interface GatewayConfig {
   atomic_memory_protocol?: string
   atomic_memory_model?: string
   atomic_memory_prompt?: string
+  enable_inline_memory_capture?: boolean
+  inline_memory_prompt?: string
   extract_atomic_memories?: boolean
   inject_atomic_memories?: boolean
   default_atomic_memory_limit?: number
@@ -35,7 +37,13 @@ export interface GatewayConfig {
   // feature toggles
   inject_briefing?: boolean
   inject_meta_summaries?: boolean
-  inject_surface_passages?: boolean
+  calendar_inject_day?: boolean
+  calendar_inject_week?: boolean
+  calendar_inject_month?: boolean
+  calendar_context_day_limit?: number
+  calendar_context_week_limit?: number
+  calendar_context_month_limit?: number
+
   enable_gateway_tools?: boolean
   expose_supabase_tools?: boolean
   max_internal_tool_rounds?: number
@@ -62,7 +70,7 @@ export interface HealthStatus {
   expose_supabase_tools?: boolean
   inject_meta_summaries?: boolean
   inject_briefing?: boolean
-  inject_surface_passages?: boolean
+
   inject_atomic_memories?: boolean
   extract_atomic_memories?: boolean
   enable_cold_start?: boolean
@@ -101,10 +109,14 @@ export interface AtomicMemoryItem {
   importance: number
   confidence: number
   heat: number
+  valence?: number | null
+  arousal?: number | null
   session_tag: string | null
   tags_json: string[] | null
   entities_json: string[] | null
   source_excerpt: string | null
+  source_model?: string | null
+  supersedes_id?: string | null
 }
 
 export interface ColdStartPreview {

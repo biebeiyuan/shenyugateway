@@ -47,6 +47,26 @@ export async function activateMem0PromptPreset(presetId: string) {
   return data
 }
 
+export async function fetchInlineMemoryPromptPresets(): Promise<AtomicPromptPresetResponse> {
+  const { data } = await api.get('/api/inline-memory/prompt-presets')
+  return data
+}
+
+export async function saveInlineMemoryPromptPreset(body: {
+  name: string
+  content: string
+  note?: string
+  is_active?: boolean
+}) {
+  const { data } = await api.post('/api/inline-memory/prompt-presets', body)
+  return data
+}
+
+export async function activateInlineMemoryPromptPreset(presetId: string) {
+  const { data } = await api.post(`/api/inline-memory/prompt-presets/${encodeURIComponent(presetId)}/activate`)
+  return data
+}
+
 export async function extractMem0Now(body: {
   session_tag?: string
   model?: string

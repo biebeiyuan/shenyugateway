@@ -38,11 +38,15 @@ class RuntimeConfig:
         self.atomic_memory_protocol: str = os.getenv("ATOMIC_MEMORY_PROTOCOL", "auto")
         self.atomic_memory_model: str = os.getenv("ATOMIC_MEMORY_MODEL", "")
         self.atomic_memory_prompt: str = os.getenv("ATOMIC_MEMORY_PROMPT", "")
+        self.enable_inline_memory_capture: bool = _env_bool("ENABLE_INLINE_MEMORY_CAPTURE", False)
+        self.inline_memory_prompt: str = os.getenv("INLINE_MEMORY_PROMPT", "")
         self.model_mapping: dict[str, str] = self._load_model_mapping()
 
         self.inject_meta_summaries: bool = _env_bool("INJECT_META_SUMMARIES", True)
         self.inject_briefing: bool = _env_bool("INJECT_BRIEFING", True)
-        self.inject_surface_passages: bool = _env_bool("INJECT_SURFACE_PASSAGES", True)
+        self.calendar_inject_day: bool = _env_bool("CALENDAR_INJECT_DAY", True)
+        self.calendar_inject_week: bool = _env_bool("CALENDAR_INJECT_WEEK", True)
+        self.calendar_inject_month: bool = _env_bool("CALENDAR_INJECT_MONTH", True)
         self.inject_atomic_memories: bool = _env_bool("INJECT_ATOMIC_MEMORIES", False)
         self.extract_atomic_memories: bool = _env_bool("EXTRACT_ATOMIC_MEMORIES", False)
         self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
@@ -52,6 +56,9 @@ class RuntimeConfig:
 
         self.gateway_db_path: str = os.getenv("GATEWAY_DB_PATH", "./data/shenyu_gateway.db")
         self.daily_briefing_ttl_minutes: int = int(os.getenv("DAILY_BRIEFING_TTL_MINUTES", "60"))
+        self.calendar_context_day_limit: int = int(os.getenv("CALENDAR_CONTEXT_DAY_LIMIT", "3"))
+        self.calendar_context_week_limit: int = int(os.getenv("CALENDAR_CONTEXT_WEEK_LIMIT", "1"))
+        self.calendar_context_month_limit: int = int(os.getenv("CALENDAR_CONTEXT_MONTH_LIMIT", "1"))
         self.max_client_messages: Optional[int] = _env_optional_int("MAX_CLIENT_MESSAGES")
         self.cold_start_turns: int = int(os.getenv("COLD_START_TURNS", "3"))
         self.cold_start_message_limit: int = int(os.getenv("COLD_START_MESSAGE_LIMIT", "8"))
@@ -86,10 +93,14 @@ class RuntimeConfig:
             "atomic_memory_protocol": self.atomic_memory_protocol,
             "atomic_memory_model": self.atomic_memory_model,
             "atomic_memory_prompt": self.atomic_memory_prompt,
+            "enable_inline_memory_capture": self.enable_inline_memory_capture,
+            "inline_memory_prompt": self.inline_memory_prompt,
             "model_mapping": self.model_mapping,
             "inject_meta_summaries": self.inject_meta_summaries,
             "inject_briefing": self.inject_briefing,
-            "inject_surface_passages": self.inject_surface_passages,
+            "calendar_inject_day": self.calendar_inject_day,
+            "calendar_inject_week": self.calendar_inject_week,
+            "calendar_inject_month": self.calendar_inject_month,
             "inject_atomic_memories": self.inject_atomic_memories,
             "extract_atomic_memories": self.extract_atomic_memories,
             "enable_cold_start": self.enable_cold_start,
@@ -98,6 +109,9 @@ class RuntimeConfig:
             "max_internal_tool_rounds": self.max_internal_tool_rounds,
             "gateway_db_path": self.gateway_db_path,
             "daily_briefing_ttl_minutes": self.daily_briefing_ttl_minutes,
+            "calendar_context_day_limit": self.calendar_context_day_limit,
+            "calendar_context_week_limit": self.calendar_context_week_limit,
+            "calendar_context_month_limit": self.calendar_context_month_limit,
             "max_client_messages": self.max_client_messages,
             "cold_start_turns": self.cold_start_turns,
             "cold_start_message_limit": self.cold_start_message_limit,

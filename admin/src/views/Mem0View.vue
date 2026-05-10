@@ -15,12 +15,15 @@ import {
 } from 'naive-ui'
 import type { AtomicMemoryItem, AtomicMemoryReviewPatch, GatewayConfig } from '@/api/config'
 import {
+  activateInlineMemoryPromptPreset,
   activateMem0PromptPreset,
   extractMem0Now,
   fetchAtomicMemories,
+  fetchInlineMemoryPromptPresets,
   fetchMem0Config,
   fetchMem0PromptPresets,
   reviewAtomicMemory,
+  saveInlineMemoryPromptPreset,
   saveMem0Config,
   saveMem0PromptPreset,
   type AtomicPromptPreset,
@@ -44,13 +47,17 @@ const config = ref<GatewayConfig>({
 })
 
 const presets = ref<AtomicPromptPreset[]>([])
+const inlinePresets = ref<AtomicPromptPreset[]>([])
 const savingConfig = ref(false)
 const savingPreset = ref(false)
+const savingInlinePreset = ref(false)
 const extractingNow = ref(false)
 const loadingReview = ref(false)
 const deletingMemoryId = ref('')
 const presetName = ref('')
 const presetNote = ref('')
+const inlinePresetName = ref('')
+const inlinePresetNote = ref('')
 const extractSessionTag = ref('')
 const atomicItems = ref<AtomicMemoryItem[]>([])
 const atomicReviewStatus = ref('all')
@@ -64,15 +71,24 @@ const protocolOptions = [
 ]
 
 const activePresetId = computed(() => presets.value.find((item) => item.is_active)?.id || 'default')
+const activeInlinePresetId = computed(() => inlinePresets.value.find((item) => item.is_active)?.id || 'default')
+const activePresetContent = computed(() => presets.value.find((item) => item.id === activePresetId.value)?.content || '')
+const activeInlinePresetContent = computed(() => inlinePresets.value.find((item) => item.id === activeInlinePresetId.value)?.content || '')
 const promptDraft = computed({
   get: () => config.value.atomic_memory_prompt || '',
   set: (value: string) => {
     config.value.atomic_memory_prompt = value
   },
 })
+const inlinePromptDraft = computed({
+  get: () => config.value.inline_memory_prompt || '',
+  set: (value: string) => {
+    config.value.inline_memory_prompt = value
+  },
+})
 
 onMounted(async () => {
-  await Promise.all([loadConfig(), loadPresets(), loadAtomicReview()])
+  await Promise.all([loadConfig(), loadPresets(), loadInlinePresets(), loadAtomicReview()])
 })
 
 async function loadConfig() {
@@ -93,6 +109,16 @@ async function loadPresets() {
   }
 }
 
+async function loadInlinePresets() {
+  try {
+    const data = await fetchInlineMemoryPromptPresets()
+    inlinePresets.value = data.items || []
+  } catch {
+    inlinePresets.value = []
+    message.error('Failed to load inline prompt presets')
+  }
+}
+
 async function doSaveConfig() {
   savingConfig.value = true
   try {
@@ -102,6 +128,8 @@ async function doSaveConfig() {
       atomic_memory_protocol: config.value.atomic_memory_protocol,
       atomic_memory_model: config.value.atomic_memory_model,
       atomic_memory_prompt: config.value.atomic_memory_prompt,
+      enable_inline_memory_capture: config.value.enable_inline_memory_capture,
+      inline_memory_prompt: config.value.inline_memory_prompt,
       extract_atomic_memories: config.value.extract_atomic_memories,
       inject_atomic_memories: config.value.inject_atomic_memories,
       default_atomic_memory_limit: config.value.default_atomic_memory_limit,
@@ -161,6 +189,51 @@ async function activatePreset(item: AtomicPromptPreset) {
     message.success(`Activated ${item.name}`)
   } catch {
     message.error(`Failed to activate ${item.name}`)
+  }
+}
+
+async function useInlineBuiltInDefault() {
+  try {
+    await activateInlineMemoryPromptPreset('default')
+    await Promise.all([loadConfig(), loadInlinePresets()])
+    message.success('Inline default prompt activated')
+  } catch {
+    message.error('Failed to activate inline default')
+  }
+}
+
+async function activateInlinePreset(item: AtomicPromptPreset) {
+  try {
+    await activateInlineMemoryPromptPreset(item.id)
+    await Promise.all([loadConfig(), loadInlinePresets()])
+    message.success(`Activated ${item.name}`)
+  } catch {
+    message.error(`Failed to activate ${item.name}`)
+  }
+}
+
+async function doSaveInlinePreset() {
+  const name = inlinePresetName.value.trim()
+  if (!name) {
+    message.warning('Name the inline prompt preset first')
+    return
+  }
+  savingInlinePreset.value = true
+  try {
+    await saveInlineMemoryPromptPreset({
+      name,
+      note: inlinePresetNote.value.trim(),
+      content: config.value.inline_memory_prompt || '',
+      is_active: true,
+    })
+    inlinePresetName.value = ''
+    inlinePresetNote.value = ''
+    message.success('Inline prompt preset saved and activated')
+    await Promise.all([loadConfig(), loadInlinePresets()])
+  } catch {
+    message.error('Failed to save inline prompt preset')
+  } finally {
+    savingInlinePreset.value = false
   }
 }
 
@@ -264,6 +337,9 @@ async function deleteAtomic(item: AtomicMemoryItem) {
           <NFormItem label="聊天前注入 active 原子记忆">
             <NSwitch v-model:value="config.inject_atomic_memories" />
           </NFormItem>
+          <NFormItem label="捕获回复里的 <mem> 内联便签">
+            <NSwitch v-model:value="config.enable_inline_memory_capture" />
+          </NFormItem>
           <div class="cfg-inline">
             <NFormItem label="注入数量">
               <NInputNumber v-model:value="config.default_atomic_memory_limit" :min="1" :max="8" style="width:100%" />
@@ -280,7 +356,7 @@ async function deleteAtomic(item: AtomicMemoryItem) {
               <NInputNumber v-model:value="config.atomic_memory_extract_every_turns" :min="1" :max="50" style="width:100%" />
             </NFormItem>
           </div>
-          <NFormItem label="自动激活阈值">
+          <NFormItem label="自动激活阈值（当前后端默认进 proposed）">
             <NInputNumber v-model:value="config.atomic_memory_auto_activate_min_confidence" :min="0" :max="1" :step="0.01" style="width:100%" />
           </NFormItem>
         </NForm>
@@ -315,6 +391,14 @@ async function deleteAtomic(item: AtomicMemoryItem) {
             :autosize="{ minRows: 8, maxRows: 16 }"
             placeholder="留空时使用内置默认提示词；填写后会覆盖 mem0 system prompt"
           />
+          <NInput
+            v-if="!promptDraft && activePresetContent"
+            :value="activePresetContent"
+            type="textarea"
+            readonly
+            :autosize="{ minRows: 6, maxRows: 10 }"
+            placeholder="当前生效的内置默认提示词"
+          />
           <div class="preset-save-row">
             <input v-model="presetName" class="cal-input" placeholder="输入名称保存当前提示词…" style="flex:1">
             <input v-model="presetNote" class="cal-input" placeholder="备注（可选）" style="flex:1">
@@ -322,6 +406,47 @@ async function deleteAtomic(item: AtomicMemoryItem) {
           </div>
           <div class="hint-text">
             当前编辑框就是实时生效草稿。保存 mem0 配置会直接写入当前 prompt；保存为预设会顺便激活该预设。
+          </div>
+        </NSpace>
+      </NCard>
+
+      <NCard title="Inline <mem> 提示词管理" size="small">
+        <NSpace vertical size="small">
+          <div class="hint-text">
+            沈予回复里的 &lt;mem&gt;...&lt;/mem&gt; 会被过滤，不展示给圆圆；开启后进入后台清洗并默认生成 proposed 候选。
+          </div>
+          <div class="preset-bar">
+            <div class="preset-chip" :class="{ active: activeInlinePresetId === 'default' }" @click="useInlineBuiltInDefault">
+              Inline Default
+            </div>
+            <div
+              v-for="item in inlinePresets"
+              :key="item.id"
+              class="preset-chip"
+              :class="{ active: item.id === activeInlinePresetId }"
+              @click="activateInlinePreset(item)"
+            >
+              {{ item.name }} v{{ item.version }}
+            </div>
+          </div>
+          <NInput
+            v-model:value="inlinePromptDraft"
+            type="textarea"
+            :autosize="{ minRows: 8, maxRows: 16 }"
+            placeholder="留空时使用内置 inline <mem> 默认提示词"
+          />
+          <NInput
+            v-if="!inlinePromptDraft && activeInlinePresetContent"
+            :value="activeInlinePresetContent"
+            type="textarea"
+            readonly
+            :autosize="{ minRows: 6, maxRows: 10 }"
+            placeholder="当前生效的 inline 默认提示词"
+          />
+          <div class="preset-save-row">
+            <input v-model="inlinePresetName" class="cal-input" placeholder="输入名称保存 inline prompt" style="flex:1">
+            <input v-model="inlinePresetNote" class="cal-input" placeholder="备注（可选）" style="flex:1">
+            <NButton size="small" :loading="savingInlinePreset" @click="doSaveInlinePreset">保存 inline 预设</NButton>
           </div>
         </NSpace>
       </NCard>
@@ -342,6 +467,12 @@ async function deleteAtomic(item: AtomicMemoryItem) {
       <div v-if="!atomicItems.length" class="rev-empty">当前筛选没有纸条</div>
       <div v-for="item in atomicItems" :key="item.id" class="rev-card">
         <NForm label-placement="top">
+          <div class="hint-text" style="margin-bottom:8px">
+            <span v-if="item.source_model">???{{ item.source_model }}</span>
+            <span v-if="item.supersedes_id" style="margin-left:12px">??????{{ item.supersedes_id }}</span>
+            <span v-if="item.valence !== null && item.valence !== undefined" style="margin-left:12px">valence?{{ item.valence }}</span>
+            <span v-if="item.arousal !== null && item.arousal !== undefined" style="margin-left:12px">arousal?{{ item.arousal }}</span>
+          </div>
           <NFormItem label="便签正文">
             <NInput v-model:value="item.content_canonical" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" />
           </NFormItem>

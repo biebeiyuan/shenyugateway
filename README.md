@@ -29,7 +29,7 @@ Context is assembled from low-change to high-change content:
 | `stable` | first system message | stable charter, active meta summaries, gateway tool policy, heartbeat instructions | breakpoint |
 | `slow` | second system message when present | calendar memory, latest frozen heartbeat batch, optional cold-start bridge | breakpoint |
 | client history | original messages | trimmed client messages when `MAX_CLIENT_MESSAGES` is set | fallback breakpoint only if one is free |
-| `volatile` | inserted before latest user message | first-turn briefing, fixed-pool diary surface, active atomic memories | no breakpoint |
+| `volatile` | inserted before latest user message | first-turn briefing, active atomic memories | no breakpoint |
 | current user | latest user message | current request | no breakpoint |
 
 The retired rolling and frozen context layers have been removed from the active flow. Their legacy SQLite tables are only cleaned up during session deletion when they exist in an older database.
@@ -160,7 +160,9 @@ Inspection endpoints:
 
 The calendar layer writes private day/week/month memory pages. It is manually triggered from the admin UI.
 Before ordinary chat replies, the gateway also injects a compact calendar memory block when Supabase is configured:
-latest 3 day pages, latest 1 week page, and latest 1 month page. Only `summary` and `digest` are included.
+by default latest 3 day pages, latest 1 week page, and latest 1 month page. Day/week/month injection can be
+enabled or disabled independently, and each period has its own injected-page limit. Chat context injection includes
+the stored `digest` only, without the listing `summary` and without additional digest truncation.
 
 Tables:
 
@@ -177,6 +179,9 @@ Source collection:
 Chat injection:
 
 - `ContextBuilder` reads latest calendar pages into the `slow` layer.
+- `CALENDAR_INJECT_DAY`, `CALENDAR_INJECT_WEEK`, and `CALENDAR_INJECT_MONTH` toggle period injection.
+- `CALENDAR_CONTEXT_DAY_LIMIT`, `CALENDAR_CONTEXT_WEEK_LIMIT`, and `CALENDAR_CONTEXT_MONTH_LIMIT` set injected counts.
+- Only full stored `digest` values are rendered into chat context; `summary` remains for calendar listings.
 - The rendered block uses short labels: `这几天`, `这周`, `这个月`.
 - Missing Supabase or empty pages are skipped silently.
 
@@ -247,7 +252,7 @@ Current implementation details:
 - The built-in default prompt remains defined in backend code and is used whenever `ATOMIC_MEMORY_PROMPT` is empty.
 - `ATOMIC_MEMORY_EXTRACT_EVERY_TURNS` now controls both extraction frequency and extraction window size. For example, `4` means "trigger every 4 turns and send the most recent 4 user/assistant turns to the extractor."
 
-## Briefing And Surface
+## Briefing
 
 `build_briefing()` still exists as a first-turn briefing, but it is volatile and not part of the stable cache prefix. It includes:
 
@@ -257,9 +262,7 @@ Current implementation details:
 - recent medication records
 - tool usage guide
 
-Automatic surface pass reads one fixed-pool diary entry from `_FIXED_JOURNAL_IDS`.
-
-The excerpt is trimmed to roughly 250-300 Chinese characters, preferring paragraph boundaries. It is inserted in `volatile`, so it does not affect stable cache breakpoints. The manual `shenyu_surface_passages` tool still supports broader primary-text lookup.
+The manual `shenyu_surface_passages` tool still supports broader primary-text lookup.
 
 ## Configuration
 
@@ -294,7 +297,6 @@ ATOMIC_MEMORY_MIN_SCORE=0.42
 ATOMIC_MEMORY_AUTO_ACTIVATE_MIN_CONFIDENCE=0.92
 
 INJECT_BRIEFING=true
-INJECT_SURFACE_PASSAGES=true
 DEFAULT_SURFACE_LIMIT=3
 DAILY_BRIEFING_TTL_MINUTES=60
 

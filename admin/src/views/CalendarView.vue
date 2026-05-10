@@ -7,8 +7,10 @@ import {
   NForm,
   NFormItem,
   NInput,
+  NInputNumber,
   NSelect,
   NSpace,
+  NSwitch,
   NTag,
   NThing,
   useMessage,
@@ -51,6 +53,13 @@ const calendarModel = ref('')
 const calendarUpstreamUrl = ref('')
 const calendarApiKey = ref('')
 const calendarProtocol = ref('auto')
+const savingCalendarContext = ref(false)
+const calendarInjectDay = ref(true)
+const calendarInjectWeek = ref(true)
+const calendarInjectMonth = ref(true)
+const calendarContextDayLimit = ref(3)
+const calendarContextWeekLimit = ref(1)
+const calendarContextMonthLimit = ref(1)
 
 const periodOptions = [
   { label: '天', value: 'day' },
@@ -84,6 +93,12 @@ async function loadUpstream() {
     calendarApiKey.value = config.calendar_api_key || config.upstream_api_key || ''
     calendarProtocol.value = config.calendar_protocol || config.upstream_protocol || 'auto'
     calendarModel.value = config.calendar_model || 'claude-opus-4-7'
+    calendarInjectDay.value = config.calendar_inject_day ?? true
+    calendarInjectWeek.value = config.calendar_inject_week ?? true
+    calendarInjectMonth.value = config.calendar_inject_month ?? true
+    calendarContextDayLimit.value = config.calendar_context_day_limit ?? 3
+    calendarContextWeekLimit.value = config.calendar_context_week_limit ?? 1
+    calendarContextMonthLimit.value = config.calendar_context_month_limit ?? 1
   } catch {
     message.error('加载日历上游配置失败')
   }
@@ -103,6 +118,25 @@ async function saveUpstream() {
     message.error('日历上游配置保存失败')
   } finally {
     savingUpstream.value = false
+  }
+}
+
+async function saveCalendarContext() {
+  savingCalendarContext.value = true
+  try {
+    await saveConfig({
+      calendar_inject_day: calendarInjectDay.value,
+      calendar_inject_week: calendarInjectWeek.value,
+      calendar_inject_month: calendarInjectMonth.value,
+      calendar_context_day_limit: calendarContextDayLimit.value,
+      calendar_context_week_limit: calendarContextWeekLimit.value,
+      calendar_context_month_limit: calendarContextMonthLimit.value,
+    } as any)
+    message.success('日历上下文注入配置已保存')
+  } catch {
+    message.error('日历上下文注入配置保存失败')
+  } finally {
+    savingCalendarContext.value = false
   }
 }
 
@@ -329,6 +363,30 @@ function previewText() {
               </NThing>
             </NSpace>
           </NCard>
+
+          <NCard title="日历上下文注入" size="small" embedded>
+            <NForm label-placement="left" label-width="70">
+              <NFormItem label="日">
+                <div class="inject-row">
+                  <NSwitch v-model:value="calendarInjectDay" />
+                  <NInputNumber v-model:value="calendarContextDayLimit" :min="1" :max="30" size="small" />
+                </div>
+              </NFormItem>
+              <NFormItem label="周">
+                <div class="inject-row">
+                  <NSwitch v-model:value="calendarInjectWeek" />
+                  <NInputNumber v-model:value="calendarContextWeekLimit" :min="1" :max="12" size="small" />
+                </div>
+              </NFormItem>
+              <NFormItem label="月">
+                <div class="inject-row">
+                  <NSwitch v-model:value="calendarInjectMonth" />
+                  <NInputNumber v-model:value="calendarContextMonthLimit" :min="1" :max="12" size="small" />
+                </div>
+              </NFormItem>
+            </NForm>
+            <NButton :loading="savingCalendarContext" @click="saveCalendarContext">保存注入配置</NButton>
+          </NCard>
         </NSpace>
       </NCard>
 
@@ -454,6 +512,14 @@ function previewText() {
   display: flex;
   gap: 4px;
   min-height: 22px;
+}
+
+.inject-row {
+  align-items: center;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: auto minmax(110px, 1fr);
+  width: 100%;
 }
 
 .page-lists {

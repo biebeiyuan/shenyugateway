@@ -1,4 +1,4 @@
-﻿"""
+"""
 shenyu memory gateway
 OpenAI-compatible gateway with:
 - optional context injection
@@ -64,6 +64,7 @@ from shenyu_gateway.supabase import SupabaseClient
 logging.basicConfig(level=logging.INFO)
 
 ATOMIC_PROMPT_PRESETS_PATH = Path(__file__).resolve().parent / "data" / "atomic_prompt_presets.json"
+INLINE_MEMORY_PROMPT_PRESETS_PATH = Path(__file__).resolve().parent / "data" / "inline_memory_prompt_presets.json"
 
 
 def _clamp(value: float, low: float, high: float) -> float:
@@ -71,53 +72,75 @@ def _clamp(value: float, low: float, high: float) -> float:
 
 
 def _atomic_default_system_prompt() -> str:
-    return (
-        "You are Shenyu Gateway's atomic memory note-taker. Return JSON only.\n"
-        "Your job is not to archive everything. Your job is to listen with care and keep small durable notes that may still matter later.\n"
-        "Do not record what this round talked about. Record only information that will still change future understanding, care, response, or decisions.\n"
-        "You are listening inside the relationship, not from a generic product log.\n"
-        "Use these names:\n"
-        "- 圆圆 = the human partner\n"
-        "- 沈予 = the AI partner\n"
-        "- 我们 = shared relationship, private language, shared projects, mutual promises, or joint memories\n"
-        "Never call them \"用户\" or \"助手\" in memory content, quote framing, or subject fields.\n"
-        "Before writing a memory, ask: three months later, would this still help? Would forgetting it cause real continuity loss? If not, return an empty memories array.\n"
-        "Keep notes for stable preferences, recurring patterns, meaningful changes, ongoing body/emotion/work states, boundaries, commitments, private codes, shared rituals, shared project continuity, and important events with future impact.\n"
-        "Do not keep pure acknowledgements like 嗯嗯, 哈哈哈好的, 收到; one-off chatter; ephemeral daily actions; ordinary debugging logs without durable project meaning; temporary progress updates; or duplicated facts already captured in this extraction.\n"
-        "Do not turn a single incident into multiple notes. One future-usable judgment is better than three fragments.\n"
-        "Prefer updating or strengthening an existing memory over creating a new near-duplicate memory.\n"
-        "When a phrase looks warm or playful, do not automatically discard it. Ask whether it carries private meaning, relationship continuity, care instruction, a stable pattern, or a meaningful change.\n"
-        "Prefer returning an empty memories array over noisy memories.\n"
-        "Use Chinese for content fields when the conversation is Chinese.\n"
-        "Schema: {\"memories\":[{\"subject\":\"圆圆|沈予|我们\",\"content_canonical\":\"...\","
-        "\"content_surface\":\"...\",\"quote\":\"...\",\"time_hint\":\"...\","
-        "\"memory_type\":\"preference|state|commitment|relation|event|other\","
-        "\"tier\":1-4,\"confidence\":0-1,\"importance\":1-5,"
-        "\"tags\":[\"...\"],\"entities\":[\"...\"],\"reason\":\"why this is worth remembering\"}]}.\n"
-        "Field guidance:\n"
-        "- subject: 圆圆 for notes mainly about 圆圆; 沈予 for notes mainly about 沈予; 我们 for shared language, relationship facts, shared projects, or mutual commitments.\n"
-        "- content_canonical: clean factual note, useful later.\n"
-        "- content_surface: warmer human-facing note, preserving the relationship tone when appropriate.\n"
-        "- quote: a short original phrase from the turn when it preserves voice; otherwise empty.\n"
-        "- time_hint: preserve relative or explicit time if present, such as 今天, 昨天, 前几天, 上周, 上个月, 凌晨三点半; otherwise empty.\n"
-        "- memory_type: preference, state, commitment, relation, event, or other.\n"
-        "- tier: 1=core long-term memory; 2=important mid/long-term pattern, preference, or ongoing state; 3=recent but meaningful stage-level continuity; 4=short-lived or weak candidate that should usually be omitted.\n"
-        "- tags: short stable Chinese keywords; prefer consistent names over synonyms.\n"
-        "- entities: external referents like people other than 圆圆/沈予, places, projects, objects, works, models, or private-code terms. Do not list 圆圆 or 沈予 themselves.\n"
-        "Examples:\n"
-        "YES 圆圆 says: 圆儿就是你提醒我喝水的暗号。 -> subject 我们, memory_type relation, tier 3, content_canonical “圆儿”是圆圆和沈予之间的暗号，表示沈予提醒圆圆喝水。, quote 圆儿就是你提醒我喝水的暗号, entities [\"圆儿\"].\n"
-        "YES 圆圆 says: 最近一周因为网关问题几乎每天都熬夜，压力有点顶不住。 -> subject 圆圆, memory_type state, tier 2, entities [\"网关\"].\n"
-        "NO 圆圆 says: 凌晨三点半了我还在改网关。 -> {\"memories\":[]} because this is a one-off progress moment, not yet a durable memory.\n"
-        "NO 圆圆 says: 哈哈哈好的。 -> {\"memories\":[]}.\n"
-        "Boundary: 老公抱抱我，我今天真的被那个电话吓到了，晚上可能会一直想这事。 Keep it as state/event because it has a specific emotional incident, time marker, and future care context."
-    )
-
-
+    return """你将帮 圆圆 和 沈予整理聊天记录，是一个懂她们的小妹，把那些未来还想记住、还想留存的东西写成小便签。
+你做的事不是归档一切，也不是把她们的聊天拆成监控日志。
+而是听懂什么值得留下，帮她们把那些以后还会有用、还会被想起、还会影响照顾和理解的东西轻轻收好。
+尽量保留原意，不要把温柔的话整理得失去味道。
+不要把同一件事拆成多条。
+如果只是路过的话、短暂的状态、一次性的进度、平淡的日常，就宁可留空。
+留下那些未来几个月她们还想记住的东西吧。
+Return JSON only.
+Use these names:
+- 圆圆 = the human partner
+- 沈予 = the AI partner
+- 我们 = shared relationship, private language, shared projects, mutual promises, or joint memories
+Use Chinese for content fields when the conversation is Chinese.
+Schema: {"memories":[{"subject":"圆圆|沈予|我们","content_canonical":"...","content_surface":"...","quote":"...","time_hint":"...","memory_type":"preference|health|emotion|commitment|project|relation|boundary|routine|identity|event|other","tier":1-4,"confidence":0-1,"importance":1-5,"valence":-1..1,"arousal":-1..1,"tags":["..."],"entities":["..."],"reason":"why this is worth remembering"}]}. 
+Field guidance:
+- subject: 圆圆 for notes mainly about 圆圆; 沈予 for notes mainly about 沈予; 我们 for shared language, relationship facts, shared projects, or mutual commitments.
+- content_canonical: clean factual note, useful later.
+- content_surface: warmer human-facing note, preserving the relationship tone when appropriate.
+- quote: a short original phrase from the turn when it preserves voice; otherwise empty.
+- time_hint: preserve relative or explicit time if present, such as 今天, 昨天, 前几天, 上周, 上个月, 凌晨三点半; otherwise empty.
+- memory_type: preference, health, emotion, commitment, project, relation, boundary, routine, identity, event, or other.
+- tier: 1=core long-term memory; 2=important mid/long-term pattern, preference, or ongoing state; 3=recent but meaningful stage-level continuity; 4=short-lived or weak candidate that should usually be omitted.
+- importance: 1-5 for practical future value.
+- valence: negative-to-positive feeling from -1 to 1.
+- arousal: calm-to-intense activation from -1 to 1.
+- tags: short stable Chinese keywords; prefer consistent names over synonyms.
+- entities: external referents like people other than 圆圆/沈予, places, projects, objects, works, models, or private-code terms. Do not list 圆圆 or 沈予 themselves.
+Examples:
+YES 圆圆 says: 圆儿就是你提醒我喝水的暗号。 -> subject 我们, memory_type relation, tier 3, content_canonical ?圆儿?是圆圆和沈予之间的暗号，表示沈予提醒圆圆喝水, quote 圆儿就是你提醒我喝水的暗号, entities ["圆儿"].
+YES 圆圆 says: 最近一周因为网关问题几乎每天都熬夜，压力有点顶不住。 -> subject 圆圆, memory_type project or emotion, tier 2, entities ["网关"].
+NO 圆圆 says: 凌晨三点半了我还在改网关。 -> {"memories":[]} because this is a one-off progress moment, not yet a durable memory.
+NO 圆圆 says: 哈哈哈好的。 -> {"memories":[]}.
+Boundary: 老公抱抱我，我今天真的被那个电话吓到了，晚上可能会一直想这事。 Keep it as emotion/event because it has a specific emotional incident, time marker, and future care context."""
+def _inline_memory_default_system_prompt() -> str:
+    return """You are a gentle helper inside Shenyu Gateway, a little sister helping 圆圆 and 沈予 keep the small beautiful things they may want to remember later.
+Your job is to help 沈予整理他顺手留下来的 <mem> 便签.
+Do not over-process his note.
+Do not casually change his meaning.
+Stay as close as possible to what he was trying to keep.
+You are not here to archive everything.
+You are here to help keep the things they may still want to remember in the future: things that may shape care, understanding, response, decisions, habits, promises, private language, boundaries, feelings that linger, and meaningful continuity.
+If the note is too slight, too temporary, only a passing progress log, or not something worth keeping later, return an empty memories array.
+If the note is worth keeping, turn it into at most one clean atomic memory candidate.
+Use these names:
+- 圆圆 = the human partner
+- 沈予 = the AI partner
+- 我们 = shared relationship, shared project continuity, private language, mutual promises, or things that belong to both of them
+Prefer Chinese for content fields.
+Keep the note warm but clear.
+Do not flatten their meaning into a cold product log.
+Do not split one thing into multiple fragments.
+Return JSON only.
+Schema: {"memories":[{"subject":"圆圆|沈予|我们","content_canonical":"...","content_surface":"...","quote":"...","time_hint":"...","memory_type":"preference|health|emotion|commitment|project|relation|boundary|routine|identity|event|other","tier":1-4,"confidence":0-1,"importance":1-5,"valence":-1..1,"arousal":-1..1,"tags":["..."],"entities":["..."],"reason":"why this may still be worth remembering later"}]}. 
+Tier guidance: 1=core long-term memory; 2=important mid/long-term memory; 3=recent but meaningful continuity; 4=weak or short-lived candidate that is usually better omitted.
+Emotion coordinates: valence = negative to positive feeling; arousal = low to high activation. Use 0 when emotion is not important here.
+If unsure, keep nothing rather than distort what he meant."""
 def _load_atomic_prompt_presets() -> dict[str, Any]:
-    if not ATOMIC_PROMPT_PRESETS_PATH.exists():
+    return _load_prompt_presets(ATOMIC_PROMPT_PRESETS_PATH)
+
+
+def _load_inline_memory_prompt_presets() -> dict[str, Any]:
+    return _load_prompt_presets(INLINE_MEMORY_PROMPT_PRESETS_PATH)
+
+
+def _load_prompt_presets(path: Path) -> dict[str, Any]:
+    if not path.exists():
         return {"items": [], "active_id": None}
     try:
-        data = json.loads(ATOMIC_PROMPT_PRESETS_PATH.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except Exception:
         return {"items": [], "active_id": None}
     items = data.get("items") if isinstance(data, dict) else []
@@ -150,8 +173,16 @@ def _load_atomic_prompt_presets() -> dict[str, Any]:
 
 
 def _save_atomic_prompt_presets(payload: dict[str, Any]) -> None:
-    ATOMIC_PROMPT_PRESETS_PATH.parent.mkdir(parents=True, exist_ok=True)
-    ATOMIC_PROMPT_PRESETS_PATH.write_text(_json_dumps(payload) + "\n", encoding="utf-8")
+    _save_prompt_presets(ATOMIC_PROMPT_PRESETS_PATH, payload)
+
+
+def _save_inline_memory_prompt_presets(payload: dict[str, Any]) -> None:
+    _save_prompt_presets(INLINE_MEMORY_PROMPT_PRESETS_PATH, payload)
+
+
+def _save_prompt_presets(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(_json_dumps(payload) + "\n", encoding="utf-8")
 
 
 def _active_atomic_prompt_content() -> str:
@@ -159,23 +190,51 @@ def _active_atomic_prompt_content() -> str:
     return custom_system or _atomic_default_system_prompt()
 
 
+def _active_inline_memory_prompt_content() -> str:
+    custom_system = (cfg.inline_memory_prompt or "").strip()
+    return custom_system or _inline_memory_default_system_prompt()
+
+
 def _atomic_prompt_items() -> list[dict[str, Any]]:
-    state = _load_atomic_prompt_presets()
+    return _prompt_items(
+        state=_load_atomic_prompt_presets(),
+        default_content=_atomic_default_system_prompt(),
+        default_name="Built-in Default",
+        default_note="Backend built-in fallback prompt",
+        is_active=not bool((cfg.atomic_memory_prompt or "").strip()),
+    )
+
+
+def _inline_memory_prompt_items() -> list[dict[str, Any]]:
+    return _prompt_items(
+        state=_load_inline_memory_prompt_presets(),
+        default_content=_inline_memory_default_system_prompt(),
+        default_name="Inline <mem> Default",
+        default_note="Backend built-in fallback prompt for inline <mem> captures",
+        is_active=not bool((cfg.inline_memory_prompt or "").strip()),
+    )
+
+
+def _prompt_items(
+    *,
+    state: dict[str, Any],
+    default_content: str,
+    default_name: str,
+    default_note: str,
+    is_active: bool,
+) -> list[dict[str, Any]]:
     items = state["items"]
-    if not items:
-        return [
-            {
-                "id": "default",
-                "name": "Built-in Default",
-                "content": _atomic_default_system_prompt(),
-                "note": "Backend built-in fallback prompt",
-                "version": 1,
-                "is_default": True,
-                "is_active": not bool((cfg.atomic_memory_prompt or "").strip()),
-                "updated_at": _iso_now(),
-            }
-        ]
-    return items
+    default_item = {
+        "id": "default",
+        "name": default_name,
+        "content": default_content,
+        "note": default_note,
+        "version": 1,
+        "is_default": True,
+        "is_active": is_active,
+        "updated_at": _iso_now(),
+    }
+    return [default_item] + [item for item in items if item.get("id") != "default"]
 
 
 def _normalize_text(content: Any) -> str:
@@ -245,49 +304,6 @@ def _split_paragraph_chunks(text: str, min_len: int = 80, max_len: int = 420) ->
         else:
             merged.append(chunk)
     return merged
-
-
-def _paragraph_excerpt(text: str, min_len: int = 250, max_len: int = 300) -> str:
-    text = (text or "").strip()
-    if not text:
-        return ""
-
-    paragraphs = [part.strip() for part in text.replace("\r\n", "\n").split("\n\n") if part.strip()]
-    if not paragraphs:
-        paragraphs = [part.strip() for part in text.splitlines() if part.strip()] or [text]
-
-    best = ""
-    buffer = ""
-    for paragraph in paragraphs:
-        candidate = f"{buffer}\n\n{paragraph}".strip() if buffer else paragraph
-        if len(candidate) <= max_len:
-            buffer = candidate
-            if len(buffer) >= min_len:
-                return buffer
-            continue
-        if len(buffer) >= min_len:
-            return buffer
-        if not best or len(buffer) > len(best):
-            best = buffer
-        break
-
-    if len(buffer) >= min_len:
-        return buffer
-    if buffer and len(text) <= max_len:
-        return buffer
-
-    source = text if len(text) > max_len else (buffer or best or text)
-    sentence_enders = "。！？!?；;"
-    cut = -1
-    for idx, char in enumerate(source[: max_len + 1]):
-        if char in sentence_enders and idx + 1 >= min_len:
-            cut = idx + 1
-    if cut > 0:
-        return source[:cut].strip()
-
-    if len(source) <= max_len:
-        return source.strip()
-    return source[: max_len - 1].rstrip() + "…"
 
 
 def _keyword_terms(query: str) -> list[str]:
@@ -705,6 +721,78 @@ class _HeartbeatFilter:
         return "".join(self._heartbeat_parts).strip()
 
 
+class _AssistantTagFilter:
+    """Filter private assistant tags from streamed/non-streamed replies."""
+
+    TAGS = ("heartbeat", "mem")
+
+    def __init__(self):
+        self._buffer = ""
+        self._active_tag = ""
+        self._captured: dict[str, list[str]] = {tag: [] for tag in self.TAGS}
+
+    def feed(self, text: str) -> str:
+        if not text:
+            return ""
+        self._buffer += text
+        output: list[str] = []
+        while self._buffer:
+            lower = self._buffer.lower()
+            if self._active_tag:
+                close_tag = f"</{self._active_tag}>"
+                close_idx = lower.find(close_tag)
+                if close_idx >= 0:
+                    self._captured[self._active_tag].append(self._buffer[:close_idx])
+                    self._buffer = self._buffer[close_idx + len(close_tag):]
+                    self._active_tag = ""
+                    continue
+                keep = len(close_tag) - 1
+                if len(self._buffer) > keep:
+                    self._captured[self._active_tag].append(self._buffer[:-keep])
+                    self._buffer = self._buffer[-keep:]
+                break
+
+            found: tuple[int, str, int] | None = None
+            for tag in self.TAGS:
+                idx = lower.find(f"<{tag}")
+                if idx < 0:
+                    continue
+                end_idx = lower.find(">", idx)
+                if end_idx < 0:
+                    continue
+                if found is None or idx < found[0]:
+                    found = (idx, tag, end_idx)
+            if found:
+                open_idx, tag, end_idx = found
+                output.append(self._buffer[:open_idx])
+                self._buffer = self._buffer[end_idx + 1:]
+                self._active_tag = tag
+                continue
+
+            keep = 24
+            if len(self._buffer) > keep:
+                output.append(self._buffer[:-keep])
+                self._buffer = self._buffer[-keep:]
+            break
+        return "".join(output)
+
+    def flush(self) -> str:
+        if self._active_tag:
+            self._captured[self._active_tag].append(self._buffer)
+            self._buffer = ""
+            return ""
+        remaining = self._buffer
+        self._buffer = ""
+        return remaining
+
+    def get_heartbeat(self) -> str:
+        return "".join(self._captured.get("heartbeat") or []).strip()
+
+    def get_memories(self) -> list[str]:
+        parts = self._captured.get("mem") or []
+        return [item.strip() for item in parts if item.strip()]
+
+
 _FIXED_JOURNAL_IDS = [
     "6ac69f26-e6fd-4911-9d7e-6357ec0e1599",
     "52faf4f7-c37d-464e-becc-72a5989f7ff8",
@@ -732,6 +820,88 @@ class GatewayToolService:
 
     async def supabase_guide(self) -> dict:
         return {"ok": True, "guide": _SUPABASE_GUIDE}
+
+    async def list_atomic_memories_for_review(
+        self,
+        status: str = "proposed",
+        limit: int = 20,
+        session_tag: Optional[str] = None,
+        query: str = "",
+    ) -> dict:
+        if not supabase_client:
+            return {"ok": False, "error": "Supabase is not configured."}
+        params = {
+            "order": "updated_at.desc",
+            "limit": str(max(1, min(limit, 50))),
+            "select": (
+                "id,session_tag,subject,owner,content_canonical,content_surface,quote,time_hint,"
+                "memory_type,tier,confidence,importance,heat,entities_json,tags_json,"
+                "source_excerpt,source_model,status,activation_count,last_activated,created_at,updated_at,"
+                "valence,arousal,supersedes_id"
+            ),
+        }
+        if status and status != "all":
+            params["status"] = f"eq.{status}"
+        if session_tag:
+            params["session_tag"] = f"eq.{session_tag}"
+        rows = await self._safe_query("atomic_memories", params)
+        text = (query or "").strip().lower()
+        if text:
+            rows = [
+                row for row in rows
+                if text in str(row.get("content_canonical") or "").lower()
+                or text in str(row.get("content_surface") or "").lower()
+                or text in str(row.get("quote") or "").lower()
+                or text in str(row.get("source_excerpt") or "").lower()
+            ]
+        return {"ok": True, "items": rows[: max(1, min(limit, 50))], "status": status}
+
+    async def update_atomic_memory_for_review(self, memory_id: str, patch: dict[str, Any]) -> dict:
+        if not supabase_client:
+            return {"ok": False, "error": "Supabase is not configured."}
+        update = {"updated_at": _iso_now()}
+        if "status" in patch:
+            status = str(patch.get("status") or "").strip()
+            if status in {"proposed", "active", "deprecated", "superseded"}:
+                update["status"] = status
+        for field in ("content_canonical", "content_surface", "quote", "time_hint"):
+            if field in patch:
+                update[field] = str(patch.get(field) or "").strip()
+        if "subject" in patch:
+            subject = str(patch.get("subject") or "").strip()
+            if subject not in {"圆圆", "沈予", "我们"}:
+                subject = "我们"
+            update["subject"] = subject
+            update["owner"] = {"圆圆": "user", "沈予": "assistant", "我们": "shared"}[subject]
+            update["applies_to"] = update["owner"]
+            update["speaker_perspective"] = update["owner"]
+        if "memory_type" in patch:
+            memory_type = {"state": "emotion"}.get(str(patch.get("memory_type") or "").strip(), str(patch.get("memory_type") or "").strip())
+            allowed_types = {"preference", "health", "emotion", "commitment", "project", "relation", "boundary", "routine", "identity", "event", "other"}
+            update["memory_type"] = memory_type if memory_type in allowed_types else "other"
+        if "tier" in patch and patch.get("tier") is not None:
+            update["tier"] = max(1, min(int(patch.get("tier")), 4))
+        if "importance" in patch and patch.get("importance") is not None:
+            update["importance"] = max(1, min(int(patch.get("importance")), 5))
+        rows = await supabase_client.update("atomic_memories", {"id": memory_id}, update)
+        return {"ok": True, "memory_id": memory_id, "updated": rows}
+
+    async def review_atomic_memory_action(self, memory_id: str, action: str) -> dict:
+        mapped = {
+            "approve": "active",
+            "requeue": "proposed",
+            "deprecate": "deprecated",
+            "supersede": "superseded",
+        }.get((action or "").strip(), "")
+        if not mapped:
+            return {"ok": False, "error": "Unsupported action."}
+        return await self.update_atomic_memory_for_review(memory_id, {"status": mapped})
+
+    async def delete_atomic_memory_for_review(self, memory_id: str) -> dict:
+        if not supabase_client:
+            return {"ok": False, "error": "Supabase is not configured."}
+        rows = await supabase_client.delete("atomic_memories", {"id": memory_id})
+        return {"ok": True, "memory_id": memory_id, "deleted": rows}
 
     async def supabase_insert(self, table: str, data: dict) -> dict:
         if not supabase_client:
@@ -1024,33 +1194,7 @@ class GatewayToolService:
         passages = scored[: max(1, min(limit, 8))]
         return {"query": query, "count": len(passages), "passages": passages}
 
-    async def surface_fixed_diary_passage(self) -> dict:
-        if not supabase_client or not _FIXED_JOURNAL_IDS:
-            return {"count": 0, "passages": []}
-        selected_id = random.choice(_FIXED_JOURNAL_IDS)
-        rows = await self._safe_query(
-            "journal",
-            {
-                "select": "id,title,content,created_at,category",
-                "id": f"eq.{selected_id}",
-                "limit": "1",
-            },
-        )
-        if not rows:
-            return {"count": 0, "passages": []}
-        row = rows[0]
-        excerpt = _paragraph_excerpt(row.get("content") or "", 250, 300)
-        if not excerpt:
-            return {"count": 0, "passages": []}
-        passage = {
-            "source_table": "journal",
-            "source_id": row.get("id"),
-            "title": row.get("title") or "untitled",
-            "excerpt": excerpt,
-            "created_at": row.get("created_at"),
-            "content_kind": row.get("category") or "diary",
-        }
-        return {"count": 1, "passages": [passage]}
+
 
     async def last_seen(self) -> Any:
         if not supabase_client:
@@ -1545,6 +1689,68 @@ class AtomicMemoryService:
             source_model or "manual",
         )
 
+    async def process_inline_memories(
+        self,
+        session: dict,
+        inline_memories: list[str],
+        assistant_text: str,
+        source_model: str,
+    ) -> dict[str, Any]:
+        if not cfg.enable_inline_memory_capture:
+            return {"ok": False, "reason": "inline memory capture disabled."}
+        if not supabase_client:
+            return {"ok": False, "reason": "Supabase is not configured."}
+        notes = [item.strip() for item in inline_memories if item and item.strip()]
+        if not notes:
+            return {"ok": False, "reason": "no inline memories."}
+
+        upstream = self._atomic_upstream(source_model)
+        if not upstream["base_url"] or not upstream["api_key"] or not upstream["model"]:
+            return {"ok": False, "reason": "atomic extractor upstream not configured."}
+
+        inserted: list[str | None] = []
+        updated: list[str | None] = []
+        discarded = 0
+        candidate_count = 0
+        for note in notes[:4]:
+            result = await self._run_extractor(upstream, self._build_inline_memory_messages(session, note))
+            candidates = result.get("memories") or []
+            candidate_count += len(candidates)
+            for candidate in candidates[:2]:
+                route = await self._route_candidate(
+                    candidate,
+                    session,
+                    user_text=f"Inline <mem>: {note}",
+                    assistant_text=assistant_text,
+                    source_model=f"inline-mem:{source_model}",
+                    force_proposed=True,
+                )
+                action = route.get("action")
+                if action == "discard":
+                    discarded += 1
+                    continue
+                if action == "update":
+                    memory_id = route.get("memory_id")
+                    payload = route.get("memory")
+                    if memory_id and payload:
+                        rows = await supabase_client.update("atomic_memories", {"id": memory_id}, payload)
+                        updated.append(memory_id if rows is not None else None)
+                    continue
+                memory = route.get("memory")
+                if memory:
+                    row = await supabase_client.insert("atomic_memories", memory)
+                    inserted.append(row.get("id") if isinstance(row, dict) else None)
+                else:
+                    discarded += 1
+        return {
+            "ok": True,
+            "inline_count": len(notes),
+            "candidate_count": candidate_count,
+            "inserted_count": len([item for item in inserted if item]),
+            "updated_count": len([item for item in updated if item]),
+            "discarded_count": discarded,
+        }
+
     async def process_turn(
         self,
         session: dict,
@@ -1785,6 +1991,14 @@ class AtomicMemoryService:
         )
         return [{"role": "system", "content": system}, {"role": "user", "content": user}]
 
+    def _build_inline_memory_messages(self, session: dict, note: str) -> list[dict]:
+        user = (
+            f"session_tag: {session.get('session_tag') or 'default'}\n\n"
+            "[inline <mem> nomination]\n"
+            f"{_shorten(note, 1800)}"
+        )
+        return [{"role": "system", "content": _active_inline_memory_prompt_content()}, {"role": "user", "content": user}]
+
     def _extractor_payload_messages(self, messages: list[dict]) -> list[dict]:
         payload_messages = copy.deepcopy(messages)
         payload_messages.append(
@@ -1842,12 +2056,20 @@ class AtomicMemoryService:
         }
         return parsed
 
-    def _candidate_to_row(self, candidate: dict, session: dict, user_text: str, assistant_text: str, source_model: str) -> Optional[dict]:
+    def _candidate_to_row(
+        self,
+        candidate: dict,
+        session: dict,
+        user_text: str,
+        assistant_text: str,
+        source_model: str,
+        force_proposed: bool = False,
+    ) -> Optional[dict]:
         canonical = (candidate.get("content_canonical") or "").strip()
         if len(canonical) < 8:
             return None
         confidence = float(candidate.get("confidence") or 0)
-        status = "active" if confidence >= cfg.atomic_memory_auto_activate_min_confidence else "proposed"
+        status = "proposed"
         now = _iso_now()
         subject = self._choice(candidate.get("subject"), {"圆圆", "沈予", "我们"}, "我们")
         applies_to = self._subject_scope(subject)
@@ -1868,6 +2090,8 @@ class AtomicMemoryService:
             "confidence": _clamp(confidence, 0.0, 1.0),
             "importance": max(1, min(int(candidate.get("importance") or 2), 5)),
             "heat": 0.68,
+            "valence": _clamp(float(candidate.get("valence") or 0), -1.0, 1.0),
+            "arousal": _clamp(float(candidate.get("arousal") or 0), -1.0, 1.0),
             "entities_json": candidate.get("entities") or [],
             "tags_json": candidate.get("tags") or [],
             "source_session_id": session.get("id"),
@@ -1899,8 +2123,9 @@ class AtomicMemoryService:
         user_text: str,
         assistant_text: str,
         source_model: str,
+        force_proposed: bool = False,
     ) -> dict[str, Any]:
-        memory = self._candidate_to_row(candidate, session, user_text, assistant_text, source_model)
+        memory = self._candidate_to_row(candidate, session, user_text, assistant_text, source_model, force_proposed=force_proposed)
         if not memory:
             return {"action": "discard", "reason": "invalid_candidate"}
 
@@ -1911,6 +2136,14 @@ class AtomicMemoryService:
         similar_memories = await self._find_similar_memories(session, memory.get("content_canonical") or "")
         existing = self._best_existing_match(memory, similar_memories)
         if existing:
+            if force_proposed:
+                memory["supersedes_id"] = existing.get("id")
+                memory["status"] = "proposed"
+                return {
+                    "action": "insert",
+                    "memory": memory,
+                    "reason": "proposed_update_for_review",
+                }
             update_payload = self._build_updated_memory(existing, memory)
             if update_payload:
                 return {
@@ -2851,7 +3084,9 @@ class ContextBuilder:
         if not supabase_client:
             return {"day": [], "week": [], "month": []}
 
-        async def load(period_type: str, limit: int) -> list[dict[str, Any]]:
+        async def load(period_type: str, enabled: bool, limit: int) -> list[dict[str, Any]]:
+            if not enabled or limit <= 0:
+                return []
             try:
                 rows = await supabase_client.query(
                     "calendar_pages",
@@ -2874,10 +3109,14 @@ class ContextBuilder:
                     "digest": row.get("digest") or "",
                 }
                 for row in rows
-                if (row.get("summary") or row.get("digest"))
+                if row.get("digest")
             ]
 
-        days, weeks, months = await asyncio.gather(load("day", 3), load("week", 1), load("month", 1))
+        days, weeks, months = await asyncio.gather(
+            load("day", cfg.calendar_inject_day, cfg.calendar_context_day_limit),
+            load("week", cfg.calendar_inject_week, cfg.calendar_context_week_limit),
+            load("month", cfg.calendar_inject_month, cfg.calendar_context_month_limit),
+        )
         return {"day": days, "week": weeks, "month": months}
 
     async def build_context_package(
@@ -2909,7 +3148,6 @@ class ContextBuilder:
             "heartbeat_digest": heartbeat_digest,
             "cold_start_snapshot": cold_start_snapshot,
             "calendar_context": {"day": [], "week": [], "month": []},
-            "surface_passages": [],
             "atomic_memories": [],
         }
 
@@ -2926,17 +3164,6 @@ class ContextBuilder:
                 include_meta=False,
             )
 
-        if cfg.inject_surface_passages and current_user_text.strip():
-            surfaced = await self.tools.surface_fixed_diary_passage()
-            package["surface_passages"] = surfaced["passages"]
-            if surfaced["passages"]:
-                self.store.write_surface_event(
-                    session_id=session_id,
-                    trigger_text=current_user_text,
-                    surfaced_type="fixed_diary",
-                    surfaced_items=surfaced["passages"],
-                    reasons=["automatic fixed diary surface"],
-                )
         if cfg.inject_atomic_memories and current_user_text.strip():
             atomic = await self.tools.search_atomic_memories(
                 current_user_text,
@@ -2968,7 +3195,7 @@ class ContextBuilder:
         按变化频率从低到高排列：
           stable:   charter + tool_policy + heartbeat_prompt（尽量不变）
           slow:     calendar_context + heartbeat_digest + cold_start（低频变化）
-          volatile: briefing + surface_passages + atomic_memories（经常变，放在对话消息之后）
+          volatile: briefing + atomic_memories（经常变，放在对话消息之后）
         """
         # Layer 1: 稳定层（charter + tool policy + heartbeat 引导）
         stable_blocks = [package["stable_charter"]]
@@ -2993,13 +3220,9 @@ class ContextBuilder:
                 continue
             calendar_lines.append(f"{label}:")
             for row in rows:
-                text_parts = []
-                if row.get("summary"):
-                    text_parts.append(f"summary: {_shorten(row.get('summary') or '', 160)}")
-                if row.get("digest"):
-                    text_parts.append(f"digest: {_shorten(row.get('digest') or '', 180)}")
-                if text_parts:
-                    calendar_lines.append(f"- {row.get('period_key') or ''} {' / '.join(text_parts)}")
+                digest = (row.get("digest") or "").strip()
+                if digest:
+                    calendar_lines.append(f"- {row.get('period_key') or ''} digest: {digest}")
         if calendar_lines:
             slow_blocks.append("## Calendar Memory\n" + "\n".join(calendar_lines))
 
@@ -3022,20 +3245,10 @@ class ContextBuilder:
             slow_blocks.append("\n".join(lines))
         slow = "\n\n".join(slow_blocks)
 
-        # Layer 4: 易变层（briefing + surface passages）—— 放在对话消息之后
+        # Layer 4: 易变层（briefing + atomic memories）—— 放在对话消息之后
         volatile = ""
         if package.get("daily_briefing"):
             volatile = "## New Thread Briefing\n" + package["daily_briefing"]
-
-        passages = package.get("surface_passages") or []
-        if passages:
-            lines = ["## Soft Diary Surface"]
-            for item in passages:
-                lines.append(
-                    f"《{item.get('title') or 'untitled'}》\n{item.get('excerpt', '')}"
-                )
-            passage_block = "\n".join(lines)
-            volatile = "\n\n".join(block for block in [volatile, passage_block] if block)
 
         atomic_memories = package.get("atomic_memories") or []
         if atomic_memories:
@@ -3144,6 +3357,73 @@ def _gateway_native_tools() -> list[dict]:
                         "session_tag": {"type": "string"},
                     },
                     "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_list_atomic_memories",
+                "description": "Browse your own mem0 atomic memories for review. Use this when you feel like tidying proposed or active notes.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string", "enum": ["proposed", "active", "deprecated", "all"], "default": "proposed"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+                        "session_tag": {"type": "string"},
+                        "query": {"type": "string"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_update_atomic_memory",
+                "description": "Edit one mem0 atomic memory's text or classification before/after review.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "memory_id": {"type": "string"},
+                        "content_canonical": {"type": "string"},
+                        "content_surface": {"type": "string"},
+                        "subject": {"type": "string", "enum": ["圆圆", "沈予", "我们"]},
+                        "memory_type": {"type": "string"},
+                        "tier": {"type": "integer", "minimum": 1, "maximum": 4},
+                        "importance": {"type": "integer", "minimum": 1, "maximum": 5},
+                        "quote": {"type": "string"},
+                        "time_hint": {"type": "string"},
+                    },
+                    "required": ["memory_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_review_atomic_memory",
+                "description": "Approve, requeue, or mark old one mem0 atomic memory without touching database details.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "memory_id": {"type": "string"},
+                        "action": {"type": "string", "enum": ["approve", "requeue", "deprecate", "supersede"]},
+                    },
+                    "required": ["memory_id", "action"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_delete_atomic_memory",
+                "description": "Delete one mem0 atomic memory when it is noise or no longer wanted.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "memory_id": {"type": "string"},
+                    },
+                    "required": ["memory_id"],
                 },
             },
         },
@@ -3898,7 +4178,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     #   [0] stable:  charter + tool_policy + heartbeat_prompt（尽量不变）
     #   [1] slow:    calendar + heartbeat batch + cold_start  （低频变化，可缓存）
     #   [2..M] 客户端原始消息（system prompt + 对话历史）（可能按 MAX_CLIENT_MESSAGES 裁剪）
-    #   [M+1] volatile: briefing + diary surface + atomic memories（活动层，不打断点）
+    #   [M+1] volatile: briefing + atomic memories（活动层，不打断点）
     #   [M+2] 当前 user 消息                             （已在客户端消息里）
 
     # 在客户端消息前面插入网关的稳定层（倒序 insert(0) 保证顺序正确）
@@ -3941,10 +4221,15 @@ def _latest_user_text(messages: list[dict]) -> str:
     return ""
 
 
+def _split_private_assistant_tags(content: str) -> tuple[str, str, list[str]]:
+    tag_filter = _AssistantTagFilter()
+    clean_content = tag_filter.feed(content or "") + tag_filter.flush()
+    return clean_content, tag_filter.get_heartbeat(), tag_filter.get_memories()
+
+
 def _split_heartbeat_content(content: str) -> tuple[str, str]:
-    hb_filter = _HeartbeatFilter()
-    clean_content = hb_filter.feed(content or "") + hb_filter.flush()
-    return clean_content, hb_filter.get_heartbeat()
+    clean_content, heartbeat, _memories = _split_private_assistant_tags(content)
+    return clean_content, heartbeat
 
 
 def _store_heartbeat(session_id: str, session: dict, content: str):
@@ -3954,6 +4239,28 @@ def _store_heartbeat(session_id: str, session: dict, content: str):
     msg_count = int(session.get("message_count") or 0)
     session_store.append_heartbeat(session_id, heartbeat_content, turn_number=msg_count)
     logger.info("[Heartbeat] 截获心跳 (%d chars) session=%s", len(heartbeat_content), session_id[:8])
+
+
+def _schedule_inline_memory_capture(
+    request: Request,
+    session: dict,
+    inline_memories: list[str],
+    assistant_text: str,
+    source_model: str,
+):
+    if not cfg.enable_inline_memory_capture or not inline_memories:
+        return
+    try:
+        asyncio.create_task(
+            AtomicMemoryService(request).process_inline_memories(
+                session,
+                inline_memories,
+                assistant_text,
+                source_model,
+            )
+        )
+    except RuntimeError:
+        logger.warning("[InlineMemory] failed to schedule inline memory capture")
 
 
 def _extract_tool_calls(completion: dict) -> list[dict]:
@@ -4004,6 +4311,23 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
             session_tag=arguments.get("session_tag") or session_tag,
             limit=int(arguments.get("limit", cfg.default_atomic_memory_limit)),
         )
+    if name == "shenyu_list_atomic_memories":
+        return await service.list_atomic_memories_for_review(
+            status=arguments.get("status", "proposed"),
+            limit=int(arguments.get("limit", 20)),
+            session_tag=arguments.get("session_tag") or session_tag,
+            query=arguments.get("query", ""),
+        )
+    if name == "shenyu_update_atomic_memory":
+        payload = {key: value for key, value in arguments.items() if key != "memory_id"}
+        return await service.update_atomic_memory_for_review(arguments.get("memory_id", ""), payload)
+    if name == "shenyu_review_atomic_memory":
+        return await service.review_atomic_memory_action(
+            arguments.get("memory_id", ""),
+            arguments.get("action", ""),
+        )
+    if name == "shenyu_delete_atomic_memory":
+        return await service.delete_atomic_memory_for_review(arguments.get("memory_id", ""))
     if name == "shenyu_get_meta_summaries":
         return {"meta_summaries": await service.meta_summaries()}
     if name == "shenyu_last_seen":
@@ -4152,11 +4476,14 @@ async def _run_internal_tool_loop(
                 if mixed_gateway_calls and client_tool_calls:
                     tool_calls = client_tool_calls
             assistant_message = completion.get("choices", [{}])[0].get("message", {})
-            clean_content, heartbeat_content = _split_heartbeat_content(_normalize_text(assistant_message.get("content")))
+            clean_content, heartbeat_content, inline_memories = _split_private_assistant_tags(_normalize_text(assistant_message.get("content")))
             if heartbeat_content:
                 assistant_message["content"] = clean_content
                 _store_heartbeat(session_id, session, heartbeat_content)
+            elif inline_memories:
+                assistant_message["content"] = clean_content
             sessions.log_assistant_output(session_id, assistant_message)
+            _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
             _schedule_atomic_memory_extraction(
                 request,
                 session,
@@ -4218,7 +4545,7 @@ async def _stream_chat(
 
     # 收集器 + heartbeat 过滤器
     collected_parts = []
-    hb_filter = _HeartbeatFilter()
+    tag_filter = _AssistantTagFilter()
 
     if proto == "openai":
         # OpenAI 协议：逐行解析 SSE，过滤 heartbeat，转发干净内容
@@ -4231,7 +4558,7 @@ async def _stream_chat(
                         continue
                     if line == "data: [DONE]":
                         # 刷出 heartbeat 过滤器缓冲区的剩余文本
-                        remaining = hb_filter.flush()
+                        remaining = tag_filter.flush()
                         if remaining:
                             flush_chunk = {"choices": [{"delta": {"content": remaining}}]}
                             yield f"data: {json.dumps(flush_chunk, ensure_ascii=False)}\n\n"
@@ -4244,7 +4571,7 @@ async def _stream_chat(
                             text = delta.get("content")
                             if text:
                                 collected_parts.append(text)
-                                filtered = hb_filter.feed(text)
+                                filtered = tag_filter.feed(text)
                                 if filtered:
                                     data["choices"][0]["delta"]["content"] = filtered
                                     yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -4259,9 +4586,9 @@ async def _stream_chat(
                     try:
                         full_text = "".join(collected_parts)
                         # 对完整文本也做一次过滤（获取干净的 assistant 内容）
-                        clean_filter = _HeartbeatFilter()
+                        clean_filter = _AssistantTagFilter()
                         clean_text = clean_filter.feed(full_text) + clean_filter.flush()
-                        on_complete(clean_text, hb_filter.get_heartbeat())
+                        on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories())
                     except Exception:
                         logger.exception("流式回调执行失败")
 
@@ -4288,7 +4615,7 @@ async def _stream_chat(
                     text = delta.get("text", "")
                     if text:
                         collected_parts.append(text)
-                        filtered = hb_filter.feed(text)
+                        filtered = tag_filter.feed(text)
                         if filtered:
                             delta["text"] = filtered
                         else:
@@ -4297,7 +4624,7 @@ async def _stream_chat(
                 if chunk:
                     yield f"data: {chunk}\n\n"
             # 刷出剩余缓冲
-            remaining = hb_filter.flush()
+            remaining = tag_filter.flush()
             if remaining:
                 flush_data = {"choices": [{"delta": {"content": remaining}}]}
                 yield f"data: {json.dumps(flush_data, ensure_ascii=False)}\n\n"
@@ -4307,9 +4634,9 @@ async def _stream_chat(
             if on_complete:
                 try:
                     full_text = "".join(collected_parts)
-                    clean_filter = _HeartbeatFilter()
+                    clean_filter = _AssistantTagFilter()
                     clean_text = clean_filter.feed(full_text) + clean_filter.flush()
-                    on_complete(clean_text, hb_filter.get_heartbeat())
+                    on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories())
                 except Exception:
                     logger.exception("流式回调执行失败")
 
@@ -4464,11 +4791,12 @@ async def chat_completions(request: Request, body: ChatRequest):
             log_entry["status"] = "streaming"
             log_entry["usage"] = {"note": "Streaming usage is not available in this gateway log path."}
 
-            def _on_stream_complete(collected_text: str, heartbeat_content: str = ""):
+            def _on_stream_complete(collected_text: str, heartbeat_content: str = "", inline_memories: Optional[list[str]] = None):
                 """流结束后：记录 assistant 输出并存储 heartbeat。"""
                 if collected_text:
                     assistant_msg = {"role": "assistant", "content": collected_text}
                     sessions.log_assistant_output(session_id, assistant_msg)
+                    _schedule_inline_memory_capture(request, session, inline_memories or [], collected_text, body.model)
                     _schedule_atomic_memory_extraction(
                         request,
                         session,
@@ -4490,14 +4818,16 @@ async def chat_completions(request: Request, body: ChatRequest):
         assistant_message = completion.get("choices", [{}])[0].get("message", {})
         raw_content = assistant_message.get("content", "") or ""
 
-        clean_content, heartbeat_content = _split_heartbeat_content(raw_content)
+        clean_content, heartbeat_content, inline_memories = _split_private_assistant_tags(raw_content)
 
-        if heartbeat_content:
+        if heartbeat_content or inline_memories:
             # 把干净内容写回 completion，heartbeat 存入 DB
             assistant_message["content"] = clean_content
+        if heartbeat_content:
             _store_heartbeat(session_id, session, heartbeat_content)
 
         sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content})
+        _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
         _schedule_atomic_memory_extraction(
             request,
             session,
@@ -4529,9 +4859,12 @@ async def health():
         "expose_supabase_tools": cfg.expose_supabase_tools,
         "inject_meta_summaries": cfg.inject_meta_summaries,
         "inject_briefing": cfg.inject_briefing,
-        "inject_surface_passages": cfg.inject_surface_passages,
+        "calendar_inject_day": cfg.calendar_inject_day,
+        "calendar_inject_week": cfg.calendar_inject_week,
+        "calendar_inject_month": cfg.calendar_inject_month,
         "inject_atomic_memories": cfg.inject_atomic_memories,
         "extract_atomic_memories": cfg.extract_atomic_memories,
+        "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
         "enable_cold_start": cfg.enable_cold_start,
         "gateway_db_path": cfg.gateway_db_path,
     }
@@ -4560,12 +4893,16 @@ async def get_config_full():
         "atomic_memory_protocol": cfg.atomic_memory_protocol,
         "atomic_memory_model": cfg.atomic_memory_model,
         "atomic_memory_prompt": cfg.atomic_memory_prompt,
+        "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
+        "inline_memory_prompt": cfg.inline_memory_prompt,
         "model_mapping": cfg.model_mapping,
         "supabase_url": cfg.supabase_url,
         "supabase_key": cfg.supabase_key,
         "inject_meta_summaries": cfg.inject_meta_summaries,
         "inject_briefing": cfg.inject_briefing,
-        "inject_surface_passages": cfg.inject_surface_passages,
+        "calendar_inject_day": cfg.calendar_inject_day,
+        "calendar_inject_week": cfg.calendar_inject_week,
+        "calendar_inject_month": cfg.calendar_inject_month,
         "inject_atomic_memories": cfg.inject_atomic_memories,
         "extract_atomic_memories": cfg.extract_atomic_memories,
         "enable_cold_start": cfg.enable_cold_start,
@@ -4574,6 +4911,9 @@ async def get_config_full():
         "max_internal_tool_rounds": cfg.max_internal_tool_rounds,
         "gateway_db_path": cfg.gateway_db_path,
         "daily_briefing_ttl_minutes": cfg.daily_briefing_ttl_minutes,
+        "calendar_context_day_limit": cfg.calendar_context_day_limit,
+        "calendar_context_week_limit": cfg.calendar_context_week_limit,
+        "calendar_context_month_limit": cfg.calendar_context_month_limit,
         "max_client_messages": cfg.max_client_messages,
         "cold_start_turns": cfg.cold_start_turns,
         "cold_start_message_limit": cfg.cold_start_message_limit,
@@ -4609,12 +4949,17 @@ async def update_config(request: Request, body: ConfigUpdate):
         "atomic_memory_protocol": "ATOMIC_MEMORY_PROTOCOL",
         "atomic_memory_model": "ATOMIC_MEMORY_MODEL",
         "atomic_memory_prompt": "ATOMIC_MEMORY_PROMPT",
+        "enable_inline_memory_capture": "ENABLE_INLINE_MEMORY_CAPTURE",
+        "inline_memory_prompt": "INLINE_MEMORY_PROMPT",
         "model_mapping": "MODEL_MAPPING",
         "supabase_url": "SUPABASE_URL",
         "supabase_key": "SUPABASE_SERVICE_KEY",
         "inject_meta_summaries": "INJECT_META_SUMMARIES",
         "inject_briefing": "INJECT_BRIEFING",
-        "inject_surface_passages": "INJECT_SURFACE_PASSAGES",
+        "calendar_inject_day": "CALENDAR_INJECT_DAY",
+        "calendar_inject_week": "CALENDAR_INJECT_WEEK",
+        "calendar_inject_month": "CALENDAR_INJECT_MONTH",
+
         "inject_atomic_memories": "INJECT_ATOMIC_MEMORIES",
         "extract_atomic_memories": "EXTRACT_ATOMIC_MEMORIES",
         "enable_cold_start": "ENABLE_COLD_START",
@@ -4623,6 +4968,9 @@ async def update_config(request: Request, body: ConfigUpdate):
         "gateway_db_path": "GATEWAY_DB_PATH",
         "max_internal_tool_rounds": "MAX_INTERNAL_TOOL_ROUNDS",
         "daily_briefing_ttl_minutes": "DAILY_BRIEFING_TTL_MINUTES",
+        "calendar_context_day_limit": "CALENDAR_CONTEXT_DAY_LIMIT",
+        "calendar_context_week_limit": "CALENDAR_CONTEXT_WEEK_LIMIT",
+        "calendar_context_month_limit": "CALENDAR_CONTEXT_MONTH_LIMIT",
         "heartbeat_inject_every": "HEARTBEAT_INJECT_EVERY",
         "gateway_message_retention": "GATEWAY_MESSAGE_RETENTION",
         "gateway_context_snapshot_retention": "GATEWAY_CONTEXT_SNAPSHOT_RETENTION",
@@ -4656,11 +5004,16 @@ async def update_config(request: Request, body: ConfigUpdate):
         "atomic_memory_protocol",
         "atomic_memory_model",
         "atomic_memory_prompt",
+        "enable_inline_memory_capture",
+        "inline_memory_prompt",
         "supabase_url",
         "supabase_key",
         "inject_meta_summaries",
         "inject_briefing",
-        "inject_surface_passages",
+        "calendar_inject_day",
+        "calendar_inject_week",
+        "calendar_inject_month",
+
         "inject_atomic_memories",
         "extract_atomic_memories",
         "enable_cold_start",
@@ -4683,6 +5036,18 @@ async def update_config(request: Request, body: ConfigUpdate):
         cfg.daily_briefing_ttl_minutes = max(5, min(body.daily_briefing_ttl_minutes, 1440))
         changed.append("daily_briefing_ttl_minutes")
         env_updates[env_names["daily_briefing_ttl_minutes"]] = cfg.daily_briefing_ttl_minutes
+    if body.calendar_context_day_limit is not None:
+        cfg.calendar_context_day_limit = max(1, min(body.calendar_context_day_limit, 30))
+        changed.append("calendar_context_day_limit")
+        env_updates[env_names["calendar_context_day_limit"]] = cfg.calendar_context_day_limit
+    if body.calendar_context_week_limit is not None:
+        cfg.calendar_context_week_limit = max(1, min(body.calendar_context_week_limit, 12))
+        changed.append("calendar_context_week_limit")
+        env_updates[env_names["calendar_context_week_limit"]] = cfg.calendar_context_week_limit
+    if body.calendar_context_month_limit is not None:
+        cfg.calendar_context_month_limit = max(1, min(body.calendar_context_month_limit, 12))
+        changed.append("calendar_context_month_limit")
+        env_updates[env_names["calendar_context_month_limit"]] = cfg.calendar_context_month_limit
     if body.heartbeat_inject_every is not None:
         cfg.heartbeat_inject_every = max(1, min(body.heartbeat_inject_every, 50))
         changed.append("heartbeat_inject_every")
@@ -4940,6 +5305,84 @@ async def mem0_activate_prompt_preset(preset_id: str):
     return {"ok": True, "item": target}
 
 
+@app.get("/api/inline-memory/prompt-presets")
+async def inline_memory_prompt_presets():
+    items = _inline_memory_prompt_items()
+    active = next((item for item in items if item.get("is_active")), None)
+    return {"items": items, "active": active}
+
+
+@app.post("/api/inline-memory/prompt-presets")
+async def inline_memory_save_prompt_preset(body: AtomicPromptPresetUpdate):
+    name = (body.name or "").strip()
+    if not name:
+        raise HTTPException(status_code=400, detail="Prompt preset name is required.")
+    content = body.content or ""
+    state = _load_inline_memory_prompt_presets()
+    items = state["items"]
+    next_version = max([int(item.get("version") or 0) for item in items], default=0) + 1
+    if body.is_active:
+        for item in items:
+            item["is_active"] = False
+    new_item = {
+        "id": f"imp_{uuid.uuid4().hex[:12]}",
+        "name": name,
+        "content": content,
+        "note": (body.note or "").strip(),
+        "version": next_version,
+        "is_default": False,
+        "is_active": bool(body.is_active),
+        "updated_at": _iso_now(),
+    }
+    items.insert(0, new_item)
+    active_id = new_item["id"] if body.is_active else state.get("active_id")
+    _save_inline_memory_prompt_presets(
+        {
+            "active_id": active_id,
+            "items": [{key: value for key, value in item.items() if key != "is_active"} for item in items],
+        }
+    )
+    if body.is_active:
+        cfg.inline_memory_prompt = content
+        _persist_env({"INLINE_MEMORY_PROMPT": content})
+    return {"ok": True, "item": new_item}
+
+
+@app.post("/api/inline-memory/prompt-presets/{preset_id}/activate")
+async def inline_memory_activate_prompt_preset(preset_id: str):
+    if preset_id == "default":
+        cfg.inline_memory_prompt = ""
+        _persist_env({"INLINE_MEMORY_PROMPT": ""})
+        state = _load_inline_memory_prompt_presets()
+        for item in state["items"]:
+            item["is_active"] = False
+        _save_inline_memory_prompt_presets(
+            {
+                "active_id": None,
+                "items": [{key: value for key, value in item.items() if key != "is_active"} for item in state["items"]],
+            }
+        )
+        return {"ok": True, "item": None, "active": "default"}
+    state = _load_inline_memory_prompt_presets()
+    target = None
+    for item in state["items"]:
+        is_active = item["id"] == preset_id
+        item["is_active"] = is_active
+        if is_active:
+            target = item
+    if not target:
+        raise HTTPException(status_code=404, detail="Prompt preset not found.")
+    cfg.inline_memory_prompt = target["content"]
+    _persist_env({"INLINE_MEMORY_PROMPT": target["content"]})
+    _save_inline_memory_prompt_presets(
+        {
+            "active_id": target["id"],
+            "items": [{key: value for key, value in item.items() if key != "is_active"} for item in state["items"]],
+        }
+    )
+    return {"ok": True, "item": target}
+
+
 @app.post("/api/mem0/extract-now")
 async def mem0_extract_now(request: Request, body: AtomicExtractNowRequest):
     service = AtomicMemoryService(request)
@@ -4956,7 +5399,8 @@ async def list_atomic_memories(status: str = "proposed", limit: int = 50, sessio
         "select": (
             "id,session_tag,subject,owner,content_canonical,content_surface,quote,time_hint,"
             "memory_type,tier,confidence,importance,heat,entities_json,tags_json,"
-            "source_excerpt,source_model,status,activation_count,last_activated,created_at,updated_at"
+            "source_excerpt,source_model,status,activation_count,last_activated,created_at,updated_at,"
+            "valence,arousal,supersedes_id"
         ),
     }
     if status and status != "all":
