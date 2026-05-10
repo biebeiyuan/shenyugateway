@@ -3294,8 +3294,8 @@ class ContextBuilder:
         }
 
 
-def _gateway_native_tools() -> list[dict]:
-    tools = [
+def _gateway_core_tools() -> list[dict]:
+    return [
         {
             "type": "function",
             "function": {
@@ -3363,6 +3363,27 @@ def _gateway_native_tools() -> list[dict]:
         {
             "type": "function",
             "function": {
+                "name": "shenyu_get_meta_summaries",
+                "description": "Load active context summaries from Supabase.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_last_seen",
+                "description": "Load the latest heartbeat / interaction summary.",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+    ]
+
+
+def _gateway_mem0_management_tools() -> list[dict]:
+    return [
+        {
+            "type": "function",
+            "function": {
                 "name": "shenyu_list_atomic_memories",
                 "description": "Browse your own mem0 atomic memories for review. Use this when you feel like tidying proposed or active notes.",
                 "parameters": {
@@ -3387,7 +3408,7 @@ def _gateway_native_tools() -> list[dict]:
                         "memory_id": {"type": "string"},
                         "content_canonical": {"type": "string"},
                         "content_surface": {"type": "string"},
-                        "subject": {"type": "string", "enum": ["圆圆", "沈予", "我们"]},
+                        "subject": {"type": "string", "enum": ["??", "??", "??"]},
                         "memory_type": {"type": "string"},
                         "tier": {"type": "integer", "minimum": 1, "maximum": 4},
                         "importance": {"type": "integer", "minimum": 1, "maximum": 5},
@@ -3427,24 +3448,15 @@ def _gateway_native_tools() -> list[dict]:
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_get_meta_summaries",
-                "description": "Load active context summaries from Supabase.",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_last_seen",
-                "description": "Load the latest heartbeat / interaction summary.",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        },
     ]
 
+
+def _gateway_native_tools() -> list[dict]:
+    tools = []
+    if cfg.enable_gateway_tools:
+        tools.extend(_gateway_core_tools())
+    if cfg.enable_mem0_management_tools:
+        tools.extend(_gateway_mem0_management_tools())
     if cfg.expose_supabase_tools:
         tools.extend(
             [
@@ -3512,13 +3524,11 @@ def _gateway_native_tools() -> list[dict]:
                 },
             ]
         )
-
     return tools
-
 
 def _merge_tools(client_tools: Optional[list[dict]]) -> list[dict]:
     merged = list(client_tools or [])
-    if not cfg.enable_gateway_tools and not cfg.expose_supabase_tools:
+    if not cfg.enable_gateway_tools and not cfg.enable_mem0_management_tools and not cfg.expose_supabase_tools:
         return merged
     existing = {tool.get("function", {}).get("name") for tool in merged if isinstance(tool, dict)}
     for tool in _gateway_native_tools():
@@ -4856,6 +4866,7 @@ async def health():
         "upstream": cfg.upstream_url,
         "protocol": _detect_protocol(),
         "enable_gateway_tools": cfg.enable_gateway_tools,
+        "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
         "expose_supabase_tools": cfg.expose_supabase_tools,
         "inject_meta_summaries": cfg.inject_meta_summaries,
         "inject_briefing": cfg.inject_briefing,
@@ -4907,6 +4918,7 @@ async def get_config_full():
         "extract_atomic_memories": cfg.extract_atomic_memories,
         "enable_cold_start": cfg.enable_cold_start,
         "enable_gateway_tools": cfg.enable_gateway_tools,
+        "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
         "expose_supabase_tools": cfg.expose_supabase_tools,
         "max_internal_tool_rounds": cfg.max_internal_tool_rounds,
         "gateway_db_path": cfg.gateway_db_path,
@@ -4964,6 +4976,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "extract_atomic_memories": "EXTRACT_ATOMIC_MEMORIES",
         "enable_cold_start": "ENABLE_COLD_START",
         "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
+        "enable_mem0_management_tools": "ENABLE_MEM0_MANAGEMENT_TOOLS",
         "expose_supabase_tools": "EXPOSE_SUPABASE_TOOLS",
         "gateway_db_path": "GATEWAY_DB_PATH",
         "max_internal_tool_rounds": "MAX_INTERNAL_TOOL_ROUNDS",
@@ -5018,6 +5031,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "extract_atomic_memories",
         "enable_cold_start",
         "enable_gateway_tools",
+        "enable_mem0_management_tools",
         "expose_supabase_tools",
         "gateway_db_path",
     ]

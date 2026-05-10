@@ -52,6 +52,7 @@ class ConfigUpdate(BaseModel):
     extract_atomic_memories: Optional[bool] = None
     enable_cold_start: Optional[bool] = None
     enable_gateway_tools: Optional[bool] = None
+    enable_mem0_management_tools: Optional[bool] = None
     expose_supabase_tools: Optional[bool] = None
     max_internal_tool_rounds: Optional[int] = None
     gateway_db_path: Optional[str] = None

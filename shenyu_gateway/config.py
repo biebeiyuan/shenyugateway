@@ -51,6 +51,7 @@ class RuntimeConfig:
         self.extract_atomic_memories: bool = _env_bool("EXTRACT_ATOMIC_MEMORIES", False)
         self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
         self.enable_gateway_tools: bool = _env_bool("ENABLE_GATEWAY_TOOLS", False)
+        self.enable_mem0_management_tools: bool = _env_bool("ENABLE_MEM0_MANAGEMENT_TOOLS", False)
         self.expose_supabase_tools: bool = _env_bool("EXPOSE_SUPABASE_TOOLS", True)
         self.max_internal_tool_rounds: int = int(os.getenv("MAX_INTERNAL_TOOL_ROUNDS", "3"))
 
@@ -105,6 +106,7 @@ class RuntimeConfig:
             "extract_atomic_memories": self.extract_atomic_memories,
             "enable_cold_start": self.enable_cold_start,
             "enable_gateway_tools": self.enable_gateway_tools,
+            "enable_mem0_management_tools": self.enable_mem0_management_tools,
             "expose_supabase_tools": self.expose_supabase_tools,
             "max_internal_tool_rounds": self.max_internal_tool_rounds,
             "gateway_db_path": self.gateway_db_path,

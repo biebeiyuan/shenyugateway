@@ -45,6 +45,7 @@ export interface GatewayConfig {
   calendar_context_month_limit?: number
 
   enable_gateway_tools?: boolean
+  enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
   max_internal_tool_rounds?: number
   default_surface_limit?: number
@@ -67,6 +68,7 @@ export interface HealthStatus {
   store?: boolean
   gateway_db_path?: string
   enable_gateway_tools?: boolean
+  enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
   inject_meta_summaries?: boolean
   inject_briefing?: boolean
