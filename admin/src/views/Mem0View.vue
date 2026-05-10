@@ -468,10 +468,10 @@ async function deleteAtomic(item: AtomicMemoryItem) {
       <div v-for="item in atomicItems" :key="item.id" class="rev-card">
         <NForm label-placement="top">
           <div class="hint-text" style="margin-bottom:8px">
-            <span v-if="item.source_model">???{{ item.source_model }}</span>
-            <span v-if="item.supersedes_id" style="margin-left:12px">??????{{ item.supersedes_id }}</span>
-            <span v-if="item.valence !== null && item.valence !== undefined" style="margin-left:12px">valence?{{ item.valence }}</span>
-            <span v-if="item.arousal !== null && item.arousal !== undefined" style="margin-left:12px">arousal?{{ item.arousal }}</span>
+            <span v-if="item.source_model">🤖 {{ item.source_model }}</span>
+            <span v-if="item.supersedes_id" style="margin-left:12px">🔄 替代 {{ item.supersedes_id }}</span>
+            <span v-if="item.valence !== null && item.valence !== undefined" style="margin-left:12px">效价 {{ item.valence }}</span>
+            <span v-if="item.arousal !== null && item.arousal !== undefined" style="margin-left:12px">唤起 {{ item.arousal }}</span>
           </div>
           <NFormItem label="便签正文">
             <NInput v-model:value="item.content_canonical" type="textarea" :autosize="{ minRows: 2, maxRows: 6 }" />

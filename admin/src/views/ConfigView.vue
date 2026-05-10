@@ -494,24 +494,24 @@ function removeModel(index: number) {
   align-items: center;
   gap: 4px;
   padding: 4px 10px;
-  border-radius: 14px;
+  border-radius: 999px;
   font-size: 11px;
-  background: #21262d;
-  color: #7d8590;
+  background: #fff;
+  color: #4b5563;
   cursor: pointer;
-  border: 1px solid #30363d;
+  border: 1px solid #d0d7de;
   transition: 0.15s;
 }
 
 .preset-chip:hover {
-  background: #30363d;
-  color: #e1e4e8;
+  background: #f5f5f5;
+  color: #1f1f1f;
 }
 
 .preset-chip.active {
-  background: #8b5cf630;
-  color: #a78bfa;
-  border-color: #8b5cf6;
+  background: #eef2ff;
+  color: #4f46e5;
+  border-color: #4f46e5;
 }
 
 .preset-chip .del {
@@ -523,7 +523,7 @@ function removeModel(index: number) {
 
 .preset-chip .del:hover {
   opacity: 1;
-  color: #f85149;
+  color: #e53e3e;
 }
 
 .preset-save-row {
@@ -533,9 +533,9 @@ function removeModel(index: number) {
 }
 
 .cal-input {
-  background: #0d1117;
-  border: 1px solid #30363d;
-  color: #e1e4e8;
+  background: #fff;
+  border: 1px solid #d0d7de;
+  color: #1f1f1f;
   padding: 4px 8px;
   border-radius: 6px;
   font-size: 12px;
@@ -543,7 +543,7 @@ function removeModel(index: number) {
 
 .cal-input:focus {
   outline: none;
-  border-color: #8b5cf6;
+  border-color: #4f46e5;
 }
 
 .rev-toolbar {
@@ -564,7 +564,7 @@ function removeModel(index: number) {
 .rev-empty {
   padding: 18px 0;
   text-align: center;
-  color: #484f58;
+  color: #6b7280;
   font-size: 12px;
 }
 
@@ -574,15 +574,15 @@ function removeModel(index: number) {
 }
 
 .rev-card {
-  background: #0d1117;
-  border: 1px solid #21262d;
+  background: #fafafa;
+  border: 1px solid #e8e8e8;
   border-radius: 8px;
   padding: 10px;
 }
 
 .rev-card h4 {
   font-size: 13px;
-  color: #e1e4e8;
+  color: #333;
   margin-bottom: 6px;
 }
 
@@ -594,9 +594,9 @@ function removeModel(index: number) {
 }
 
 .rev-pill {
-  background: #161b22;
-  border: 1px solid #30363d;
-  color: #8b949e;
+  background: #f3f4f6;
+  border: 1px solid #e5e7eb;
+  color: #4b5563;
   border-radius: 999px;
   padding: 2px 8px;
   font-size: 11px;
@@ -605,7 +605,7 @@ function removeModel(index: number) {
 .rev-body {
   font-size: 12px;
   line-height: 1.55;
-  color: #c9d1d9;
+  color: #1f1f1f;
   white-space: pre-wrap;
 }
 

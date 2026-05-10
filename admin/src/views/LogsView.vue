@@ -250,7 +250,7 @@ function renderContent(detail: LogDetail, tab: string): string {
         </div>
         <div class="dcont">
           <div v-if="loadingDet.has(log.id)" style="color:#484f58;font-size:11px">加载中...</div>
-          <pre v-else-if="detCache[log.id]">{{ renderContent(detCache[log.id], aTabs[log.id] || 'system') }}</pre>
+          <pre v-else-if="detCache[log.id]" v-html="renderContent(detCache[log.id], aTabs[log.id] || 'system')"></pre>
           <div v-else style="color:#484f58;font-size:11px">点击标签加载</div>
         </div>
       </div>
