@@ -52,8 +52,7 @@ begin
         nullif(content_surface, ''),
         nullif(content_canonical, ''),
         nullif(quote, ''),
-        nullif(source_excerpt, ''),
-        '[empty memory]'
+        nullif(source_excerpt, '')
       )
       where content_surface is null or content_surface = ''
     $q$;
@@ -63,16 +62,20 @@ begin
       set content_surface = coalesce(
         nullif(content_surface, ''),
         nullif(quote, ''),
-        nullif(source_excerpt, ''),
-        '[empty memory]'
+        nullif(source_excerpt, '')
       )
       where content_surface is null or content_surface = ''
     $q$;
   end if;
 end $$;
 
+delete from atomic_memories
+where content_surface is null
+   or btrim(content_surface) = ''
+   or btrim(content_surface) in ('…', '...', '。。', '。。。');
+
 update atomic_memories
-set subject = '我们'
+set subject = '沈予'
 where subject is null or subject = '';
 
 update atomic_memories

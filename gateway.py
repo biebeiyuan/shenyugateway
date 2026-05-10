@@ -551,6 +551,14 @@ class _AssistantTagFilter:
             attrs[match.group(1).lower()] = value.strip()
         return attrs
 
+    def _meaningful_mem_content(self, content: Any) -> str:
+        text = str(content or "").strip()
+        if not text:
+            return ""
+        if not re.sub(r"[\W_]+", "", text, flags=re.UNICODE):
+            return ""
+        return text
+
     def _capture_active(self, content: str):
         self._active_parts.append(content)
 
@@ -651,11 +659,11 @@ class _AssistantTagFilter:
         memories: list[dict[str, Any]] = []
         for item in parts:
             if isinstance(item, dict):
-                content = str(item.get("content") or "").strip()
+                content = self._meaningful_mem_content(item.get("content"))
                 if content:
                     memories.append({"content": content, "attrs": item.get("attrs") or {}})
             else:
-                content = str(item or "").strip()
+                content = self._meaningful_mem_content(item)
                 if content:
                     memories.append({"content": content, "attrs": {}})
         return memories
@@ -736,7 +744,7 @@ class GatewayToolService:
         if "subject" in patch:
             subject = str(patch.get("subject") or "").strip()
             if subject not in {"圆圆", "沈予", "我们"}:
-                subject = "我们"
+                subject = "沈予"
             update["subject"] = subject
             update["owner"] = {"圆圆": "user", "沈予": "assistant", "我们": "shared"}[subject]
             update["applies_to"] = update["owner"]
@@ -1593,7 +1601,7 @@ class AtomicMemoryService:
             "圆圆": "user",
             "沈予": "assistant",
             "我们": "shared",
-        }.get(subject, "shared")
+        }.get(subject, "assistant")
 
     def _memory_type(self, value: Any) -> str:
         raw = str(value or "").strip()
@@ -4399,7 +4407,7 @@ async def review_atomic_memory(memory_id: str, body: AtomicMemoryReviewUpdate):
     if "subject" in update:
         subject = update["subject"]
         if subject not in {"圆圆", "沈予", "我们"}:
-            subject = "我们"
+            subject = "沈予"
             update["subject"] = subject
         update["owner"] = {"圆圆": "user", "沈予": "assistant", "我们": "shared"}[subject]
         update["applies_to"] = update["owner"]

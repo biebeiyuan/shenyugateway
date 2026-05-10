@@ -224,7 +224,7 @@ async function deleteAtomic(item: AtomicMemoryItem) {
         </NForm>
         <div class="rev-meta">
           <span class="rev-pill">{{ item.status }}</span>
-          <span class="rev-pill">{{ item.subject || item.owner || '我们' }}</span>
+          <span class="rev-pill">{{ item.subject || item.owner || '沈予' }}</span>
           <span class="rev-pill">{{ item.memory_type }}</span>
           <span class="rev-pill">tier {{ item.tier }}</span>
           <span class="rev-pill">importance {{ item.importance }}</span>
