@@ -1200,6 +1200,28 @@ class GatewayStore:
                 return ""
             return "\n".join(row["content"] for row in reversed(rows))
 
+    def read_heartbeats(self, session_id: str, state: str = "all", limit: int = 10, order: str = "desc") -> list[dict]:
+        state = (state or "all").strip().lower()
+        order_sql = "ASC" if (order or "").strip().lower() == "asc" else "DESC"
+        where = "session_id = ?"
+        params: list[Any] = [session_id]
+        if state == "pending":
+            where += " AND injected_at IS NULL"
+        elif state == "injected":
+            where += " AND injected_at IS NOT NULL"
+        limit = max(1, min(int(limit or 10), 100))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM heartbeat_entries
+                WHERE {where}
+                ORDER BY created_at {order_sql}
+                LIMIT ?
+                """,
+                (*params, limit),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
     def delete_heartbeats(self, session_id: str, heartbeat_ids: Optional[list[str]] = None, delete_all: bool = False) -> int:
         heartbeat_ids = [item for item in (heartbeat_ids or []) if item]
         with self._connect() as conn:
