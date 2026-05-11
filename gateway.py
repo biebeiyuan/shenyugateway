@@ -237,8 +237,8 @@ def _make_upstream_http_client() -> httpx.AsyncClient:
 async def lifespan(app: FastAPI):
     _init_supabase()
     _init_store()
-    # connect/write/pool 淇濇寔鍚堢悊瓒呮椂锛況ead 璁句负 None锛屽洜涓烘祦寮忓満鏅笅
-    # LLM 鍙兘 thinking 寰堜箙鎵嶅紑濮嬭緭鍑猴紝璇诲彇涓嶈兘鏈夊浐瀹氳秴鏃?
+    # connect/write/pool 保持合理超时；read 设为 None，因为流式场景下
+    # LLM 可能 thinking 很久才开始输出，读取不能有固定超时。
     app.state.http = _make_upstream_http_client()
     yield
     if supabase_client:
@@ -252,7 +252,7 @@ if (ADMIN_DIST_DIR / "assets").exists():
     app.mount("/admin/assets", StaticFiles(directory=ADMIN_DIST_DIR / "assets"), name="admin-assets")
 
 
-# 鈹€鈹€ 鍏ㄥ眬寮傚父鎹曡幏锛堣皟璇曠敤锛?鈹€鈹€
+# --- 全局异常捕获（调试用） ---
 import traceback as _tb
 
 from fastapi.responses import JSONResponse, HTMLResponse
@@ -260,7 +260,7 @@ from fastapi.responses import JSONResponse, HTMLResponse
 @app.exception_handler(Exception)
 async def _global_exc_handler(request: Request, exc: Exception):
     detail = _tb.format_exc()
-    print(f"\n{'='*60}\n鍏ㄥ眬寮傚父: {exc}\n{detail}{'='*60}\n", flush=True)
+    print(f"\n{'='*60}\n全局异常: {exc}\n{detail}{'='*60}\n", flush=True)
     return JSONResponse(status_code=500, content={"error": str(exc), "traceback": detail})
 
 
@@ -275,34 +275,34 @@ async def log_unhandled_exceptions(request: Request, call_next):
         raise
 
 
-# 鈹€鈹€ 绠＄悊绔壌鏉?鈹€鈹€
+# --- 管理端鉴权 ---
 _ADMIN_PROTECTED_PREFIXES = ("/api/",)
 
 @app.middleware("http")
 async def admin_auth_middleware(request: Request, call_next):
-    """淇濇姢绠＄悊绔偣锛?api/*, /admin*
-    鏀寔 Bearer 澶?鍜??token= 鍙傛暟涓ょ鏂瑰紡楠岃瘉銆?
-    GATEWAY_API_KEY 涓虹┖鏃朵笉鏍￠獙锛堟湰鍦板紑鍙戞ā寮忥級銆?
+    """保护管理端点：/api/*, /admin*
+    支持 Bearer 头和 ?token= 参数两种方式验证。
+    GATEWAY_API_KEY 为空时不校验（本地开发模式）。
     """
     path = request.url.path
     needs_auth = any(path.startswith(p) for p in _ADMIN_PROTECTED_PREFIXES)
-    # /admin 鏄潤鎬佹枃浠舵寕杞斤紝涔熼渶瑕佷繚鎶?
+    # /admin 是静态文件挂载，也需要保护。
     if path.startswith("/admin"):
         needs_auth = True
 
     if needs_auth and cfg.gateway_key:
-        # 鏂瑰紡1: Authorization: Bearer xxx
+        # 方式1: Authorization: Bearer xxx
         auth = request.headers.get("Authorization", "")
         token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-        # 鏂瑰紡2: ?token=xxx锛堟祻瑙堝櫒鐩存帴璁块棶鐢級
+        # 方式2: ?token=xxx（浏览器直接访问用）
         if not token:
             token = request.query_params.get("token", "")
-        # 鏂瑰紡3: Cookie
+        # 方式3: Cookie
         if not token:
             token = request.cookies.get("shenyu_token", "")
 
         if token != cfg.gateway_key:
-            # 瀵规祻瑙堝櫒璇锋眰杩斿洖鍙嬪ソ鐨勭櫥褰曢〉闈?
+            # 对浏览器请求返回友好的登录页面。
             accept = request.headers.get("Accept", "")
             if "text/html" in accept:
                 return HTMLResponse(_login_page_html(), status_code=401)
@@ -314,7 +314,7 @@ async def admin_auth_middleware(request: Request, call_next):
 def _login_page_html() -> str:
     return """<!DOCTYPE html>
 <html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>娌堜簣缃戝叧 路 鐧诲綍</title>
+<title>沈予网关 · 登录</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e1e4e8;display:flex;align-items:center;justify-content:center;min-height:100vh}
@@ -328,20 +328,20 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
 .err{color:#f85149;font-size:12px;margin-top:8px;display:none}
 </style></head><body>
 <div class="box">
-  <h2>娌堜簣缃戝叧</h2>
-  <p>璇疯緭鍏ョ鐞嗗瘑閽?/p>
+  <h2>沈予网关</h2>
+  <p>请输入管理密钥</p>
   <input id="pw" type="password" placeholder="GATEWAY_API_KEY" autofocus
     onkeydown="if(event.key==='Enter')doLogin()">
-  <button onclick="doLogin()">杩涘叆</button>
-  <div class="err" id="err">瀵嗛挜閿欒</div>
+  <button onclick="doLogin()">进入</button>
+  <div class="err" id="err">密钥错误</div>
 </div>
 <script>
 function doLogin(){
   const pw=document.getElementById('pw').value.trim();
   if(!pw) return;
-  // 璁?cookie 骞跺埛鏂?
+  // 记 cookie 并刷新。
   document.cookie='shenyu_token='+encodeURIComponent(pw)+';path=/;max-age=86400;SameSite=Lax';
-  // 鍚屾椂瀛?localStorage 缁?fetch 鐢?
+  // 同时存 localStorage 给 fetch 用。
   localStorage.setItem('shenyu_token',pw);
   location.reload();
 }
@@ -362,9 +362,9 @@ def _detect_protocol() -> str:
 
 
 def _chat_url_for(base_url: str, protocol: str = "auto") -> str:
-    """鏍规嵁鍗忚鑷姩鎷兼帴姝ｇ‘鐨勮亰澶╃鐐?URL
-    鐢ㄦ埛鍙渶濉熀纭€ URL锛堝 https://api.treegpt.top锛夛紝鑷姩琛ュ叏璺緞
-    濡傛灉宸茬粡濉簡瀹屾暣璺緞锛屽垯鍘熸牱浣跨敤
+    """根据协议自动拼接正确的聊天端点 URL。
+    用户只需填写基础 URL（如 https://api.treegpt.top），自动补全路径。
+    如果已经填写完整路径，则原样使用。
     """
     url = (base_url or "").rstrip("/")
     proto = _detect_protocol_for(url, protocol)
@@ -511,7 +511,7 @@ class _HeartbeatFilter:
                     self._buffer = self._buffer[close_idx + len(self.TAG_CLOSE):]
                     self._in_heartbeat = False
                 else:
-                    # 杩樻病鎵惧埌闂悎鏍囩锛屾暣娈甸兘鏄?heartbeat 鍐呭
+                    # 还没找到闭合标签，整段都是 heartbeat 内容。
                     self._heartbeat_parts.append(self._buffer)
                     self._buffer = ""
             else:
@@ -555,6 +555,25 @@ class _AssistantTagFilter:
         self._active_parts: list[str] = []
         self._captured: dict[str, list[Any]] = {tag: [] for tag in self.TAGS}
 
+    def _find_next_open_tag(self) -> tuple[int, str, int, str, dict[str, str]] | None:
+        """Find the earliest complete open tag in the current buffer."""
+        candidates: list[tuple[int, str, int, str, dict[str, str]]] = []
+
+        mem_open = re.search(r"\[mem(?:\s[^\]]*)?\]", self._buffer, flags=re.I)
+        if mem_open:
+            open_text = mem_open.group(0)
+            tag_start = open_text.lower().find("[mem")
+            attr_text = open_text[tag_start + 4:-1] if tag_start >= 0 else ""
+            candidates.append((mem_open.start(), "mem", mem_open.end(), "[/mem]", self._parse_attrs(attr_text)))
+
+        heartbeat_open = re.search(r"<heartbeat>", self._buffer, flags=re.I)
+        if heartbeat_open:
+            candidates.append((heartbeat_open.start(), "heartbeat", heartbeat_open.end(), "</heartbeat>", {}))
+
+        if not candidates:
+            return None
+        return min(candidates, key=lambda item: item[0])
+
     def _parse_attrs(self, raw: str) -> dict[str, str]:
         attrs: dict[str, str] = {}
         for match in re.finditer(r"([\w:-]+)\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s\]]+)", raw or ""):
@@ -589,8 +608,8 @@ class _AssistantTagFilter:
         self._buffer += text
         output: list[str] = []
         while self._buffer:
-            lower = self._buffer.lower()
             if self._active_tag:
+                lower = self._buffer.lower()
                 close_tag = self._active_close
                 close_idx = lower.find(close_tag)
                 if close_idx >= 0:
@@ -608,29 +627,12 @@ class _AssistantTagFilter:
                     self._buffer = self._buffer[-keep:]
                 break
 
-            found: tuple[int, str, int, str, dict[str, str]] | None = None
-
-            mem_open = re.search(r"(^|\n)[ \t]*\[mem(?:\s[^\]]*)?\]", self._buffer, flags=re.I)
-            if mem_open:
-                idx = mem_open.start()
-                end_idx = mem_open.end() - 1
-                open_text = self._buffer[mem_open.start():mem_open.end()]
-                tag_start = open_text.lower().find("[mem")
-                attr_text = open_text[tag_start + 4:-1] if tag_start >= 0 else ""
-                found = (idx, "mem", end_idx, "[/mem]", self._parse_attrs(attr_text))
-
-            if found is None:
-                idx = lower.find("<heartbeat>")
-                if idx >= 0:
-                    end_idx = idx + len("<heartbeat>") - 1
-                    close_idx = lower.find("</heartbeat>", end_idx + 1)
-                    if close_idx >= 0:
-                        found = (idx, "heartbeat", end_idx, "</heartbeat>", {})
+            found = self._find_next_open_tag()
             if found:
-                open_idx, tag, end_idx, close_tag, attrs = found
-                open_text = self._buffer[open_idx:end_idx + 1]
+                open_idx, tag, open_end, close_tag, attrs = found
+                open_text = self._buffer[open_idx:open_end]
                 output.append(self._buffer[:open_idx])
-                self._buffer = self._buffer[end_idx + 1:]
+                self._buffer = self._buffer[open_end:]
                 self._active_tag = tag
                 self._active_close = close_tag
                 self._active_open = open_text if tag == "mem" else ""
@@ -638,10 +640,15 @@ class _AssistantTagFilter:
                 self._active_parts = []
                 continue
 
-            keep = 24
-            if len(self._buffer) > keep:
-                output.append(self._buffer[:-keep])
-                self._buffer = self._buffer[-keep:]
+            tail_start = max(self._buffer.rfind("<"), self._buffer.rfind("["))
+            if tail_start > 0:
+                output.append(self._buffer[:tail_start])
+                self._buffer = self._buffer[tail_start:]
+            elif tail_start == 0:
+                break
+            else:
+                output.append(self._buffer)
+                self._buffer = ""
             break
         return "".join(output)
 
@@ -1056,8 +1063,123 @@ class GatewayToolService:
             await self._boost_atomic_memory(memory.get("id"))
         return {"query": query, "count": len(memories), "memories": memories}
 
+    async def list_self_memories(
+        self,
+        query: str = "",
+        status: str = "active",
+        source: str = "inline",
+        session_tag: Optional[str] = None,
+        limit: int = 20,
+    ) -> dict:
+        if not supabase_client:
+            return {"ok": False, "items": [], "note": "Supabase is not configured."}
+
+        status = (status or "active").strip().lower()
+        source = (source or "inline").strip().lower()
+        if status not in {"active", "proposed", "deprecated", "superseded", "all"}:
+            status = "active"
+        if source not in {"inline", "all"}:
+            source = "inline"
+        fetch_limit = max(1, min(int(limit or 20), 50))
+        params = {
+            "owner": "eq.assistant",
+            "order": "created_at.desc",
+            "limit": str(max(fetch_limit, 80)),
+            "select": (
+                "id,session_tag,subject,owner,content_surface,quote,time_hint,"
+                "memory_type,tier,importance,entities_json,tags_json,"
+                "source_excerpt,source_model,status,created_at,updated_at,supersedes_id"
+            ),
+        }
+        if status != "all":
+            params["status"] = f"eq.{status}"
+        if source == "inline":
+            params["source_model"] = "ilike.inline-mem*"
+        if session_tag:
+            params["session_tag"] = f"eq.{session_tag}"
+
+        try:
+            rows = await supabase_client.query("atomic_memories", params)
+        except Exception as exc:
+            return {"ok": False, "items": [], "error": f"atomic_memories query failed: {exc}"}
+
+        terms = _keyword_terms(query or "")
+        if terms:
+            filtered = []
+            for row in rows:
+                haystack = " ".join(
+                    str(part or "")
+                    for part in [
+                        row.get("content_surface"),
+                        row.get("quote"),
+                        row.get("time_hint"),
+                        row.get("source_excerpt"),
+                        row.get("memory_type"),
+                        row.get("source_model"),
+                        " ".join(str(item) for item in _safe_json_loads(row.get("tags_json"), [])),
+                        " ".join(str(item) for item in _safe_json_loads(row.get("entities_json"), [])),
+                    ]
+                ).lower()
+                if any(term in haystack for term in terms):
+                    filtered.append(row)
+            rows = filtered
+
+        items = rows[:fetch_limit]
+        return {
+            "ok": True,
+            "query": query,
+            "count": len(items),
+            "items": items,
+            "filters": {
+                "owner": "assistant",
+                "status": status,
+                "source": source,
+                "session_tag": session_tag,
+            },
+        }
+
+    async def read_heartbeat(
+        self,
+        session_tag: Optional[str],
+        limit: int = 10,
+        state: str = "all",
+        order: str = "desc",
+    ) -> dict:
+        if session_store is None:
+            return {"ok": False, "items": [], "note": "Gateway store is not configured."}
+        resolved_tag = (session_tag or "default").strip() or "default"
+        session = session_store.get_session_by_tag(resolved_tag)
+        if not session:
+            return {"ok": True, "session_tag": resolved_tag, "count": 0, "items": [], "note": "Session not found."}
+
+        state = (state or "all").strip().lower()
+        if state not in {"all", "pending", "injected"}:
+            state = "all"
+        order = "asc" if (order or "").strip().lower() == "asc" else "desc"
+        items = session_store.read_heartbeats(
+            session["id"],
+            state=state,
+            limit=max(1, min(int(limit or 10), 100)),
+            order=order,
+        )
+        for item in items:
+            item["state"] = "injected" if item.get("injected_at") else "pending"
+        latest_digest = "\n".join(reversed([item.get("content") or "" for item in items[:5]])) if order == "desc" else "\n".join(item.get("content") or "" for item in items[:5])
+        return {
+            "ok": True,
+            "session_tag": resolved_tag,
+            "state": state,
+            "order": order,
+            "count": len(items),
+            "items": items,
+            "latest_digest": latest_digest,
+        }
+
     async def surface_passages(self, query: str, session_tag: Optional[str], limit: int = 3) -> dict:
-        candidates = await self._collect_primary_text_candidates(session_tag=session_tag)
+        candidates = await self._collect_primary_text_candidates(
+            session_tag=session_tag,
+            categories={"room", "message_board"},
+        )
         scored = []
         for item in candidates:
             score = self._score_passage(query, item)
@@ -1080,6 +1202,133 @@ class GatewayToolService:
         passages = scored[: max(1, min(limit, 8))]
         return {"query": query, "count": len(passages), "passages": passages}
 
+    async def search_primary_texts(
+        self,
+        query: str,
+        categories: Any = None,
+        session_tag: Optional[str] = None,
+        limit: int = 5,
+    ) -> dict:
+        selected = self._normalize_primary_categories(categories, default={"diary", "letter", "paper"})
+        candidates = await self._collect_primary_text_candidates(
+            session_tag=session_tag,
+            categories=selected,
+        )
+        scored = []
+        for item in candidates:
+            score = self._score_passage(query, item)
+            if score <= 0:
+                continue
+            scored.append(
+                {
+                    **item,
+                    "score": round(score, 3),
+                    "why": self._why_passage(query, item, score),
+                }
+            )
+
+        scored.sort(key=lambda row: row["score"], reverse=True)
+        passages = scored[: max(1, min(int(limit or 5), 20))]
+        return {
+            "query": query,
+            "categories": sorted(selected),
+            "count": len(passages),
+            "passages": passages,
+        }
+
+    async def add_calendar(
+        self,
+        content: str,
+        period_key: Optional[str] = None,
+        period_type: str = "day",
+        title: str = "",
+        summary: str = "",
+        digest: str = "",
+        author: str = "沈予",
+    ) -> dict:
+        if not supabase_client:
+            return {"ok": False, "error": "Supabase is not configured."}
+        body = (content or "").strip()
+        if not body:
+            return {"ok": False, "error": "content is required."}
+
+        period_type = (period_type or "day").strip().lower()
+        if period_type not in {"day", "week", "month"}:
+            return {"ok": False, "error": "Unsupported period_type."}
+        period_key = (period_key or default_period_key(period_type)).strip()
+        start, end = period_bounds(period_type, period_key)
+        author = (author or "沈予").strip() or "沈予"
+        title = (title or "").strip() or f"{period_key} 手写日历"
+        summary = (summary or "").strip() or _shorten(body, 120)
+        digest = (digest or "").strip() or summary or _shorten(body, 180)
+
+        rows = await self._safe_query(
+            "calendar_pages",
+            {
+                "select": "*",
+                "period_type": f"eq.{period_type}",
+                "period_key": f"eq.{period_key}",
+                "order": "version.desc",
+                "limit": "1",
+            },
+        )
+        current = rows[0] if rows else None
+
+        if current:
+            meta = _safe_json_loads(current.get("meta"), {})
+            meta["manual_calendar_writes"] = int(meta.get("manual_calendar_writes") or 0) + 1
+            meta["latest_manual_write_at"] = _iso_now()
+            page_payload = {
+                "period_type": period_type,
+                "period_key": period_key,
+                "period_start": current.get("period_start") or start.isoformat(),
+                "period_end": current.get("period_end") or end.isoformat(),
+                "version": int(current.get("version") or 1) + 1,
+                "is_latest": True,
+                "title": title,
+                "content": body,
+                "summary": summary,
+                "digest": digest,
+                "author": author,
+                "source_model": "manual-calendar",
+                "source_refs": current.get("source_refs") or "[]",
+                "session_tags": current.get("session_tags") or "[]",
+                "meta": _json_dumps(meta),
+                "status": current.get("status") or "final",
+                "prompt_snapshot": current.get("prompt_snapshot") or "",
+                "generated_by": "manual",
+            }
+        else:
+            page_payload = {
+                "period_type": period_type,
+                "period_key": period_key,
+                "period_start": start.isoformat(),
+                "period_end": end.isoformat(),
+                "version": 1,
+                "is_latest": True,
+                "title": title,
+                "content": body,
+                "summary": summary,
+                "digest": digest,
+                "author": author,
+                "source_model": "manual-calendar",
+                "source_refs": "[]",
+                "session_tags": "[]",
+                "meta": _json_dumps({"manual_calendar_writes": 1, "latest_manual_write_at": _iso_now()}),
+                "status": "final",
+                "prompt_snapshot": "",
+                "generated_by": "manual",
+            }
+
+        page = await supabase_client.insert("calendar_pages", page_payload)
+        return {
+            "ok": True,
+            "period_type": period_type,
+            "period_key": period_key,
+            "page": page,
+            "digest": digest,
+        }
+
 
 
     async def last_seen(self) -> Any:
@@ -1098,55 +1347,83 @@ class GatewayToolService:
         except Exception as exc:
             return {"error": str(exc)}
 
-    async def _collect_primary_text_candidates(self, session_tag: Optional[str]) -> list[dict]:
+    def _normalize_primary_categories(self, categories: Any, default: set[str]) -> set[str]:
+        supported = {"diary", "letter", "paper", "lock", "annotation", "life_tick", "room", "message_board"}
+        if categories is None:
+            return set(default)
+        if isinstance(categories, str):
+            raw_items = re.split(r"[,，\s]+", categories.strip())
+        elif isinstance(categories, list):
+            raw_items = [str(item) for item in categories]
+        else:
+            raw_items = []
+        normalized = {item.strip().lower() for item in raw_items if item and item.strip()}
+        if not normalized:
+            return set(default)
+        if "all" in normalized:
+            return set(supported)
+        if "journal" in normalized:
+            normalized.update({"diary", "letter", "paper", "lock", "annotation", "life_tick"})
+            normalized.discard("journal")
+        return {item for item in normalized if item in supported} or set(default)
+
+    async def _collect_primary_text_candidates(self, session_tag: Optional[str], categories: Optional[set[str]] = None) -> list[dict]:
         if not supabase_client:
             return []
 
+        selected = categories or {"diary", "letter", "paper", "room", "message_board"}
+        journal_categories = selected & {"diary", "letter", "paper", "lock", "annotation", "life_tick"}
         items: list[dict] = []
-        journal_rows = await self._safe_query(
-            "journal",
-            {"order": "created_at.desc", "limit": "16", "select": "id,title,content,created_at,category,mood,session_tag"},
-        )
-        for row in journal_rows:
-            category = row.get("category") or "diary"
-            source_kind = f"journal:{category}"
-            items.extend(
-                self._row_to_chunks(
-                    source_kind,
-                    row,
-                    row.get("title"),
-                    row.get("content"),
-                    row.get("created_at"),
-                    category=category,
+
+        if journal_categories:
+            journal_rows = await self._safe_query(
+                "journal",
+                {"order": "created_at.desc", "limit": "32", "select": "id,title,content,created_at,category,mood,session_tag"},
+            )
+            for row in journal_rows:
+                category = row.get("category") or "diary"
+                if category not in journal_categories:
+                    continue
+                source_kind = f"journal:{category}"
+                items.extend(
+                    self._row_to_chunks(
+                        source_kind,
+                        row,
+                        row.get("title"),
+                        row.get("content"),
+                        row.get("created_at"),
+                        category=category,
+                    )
                 )
-            )
 
-        room_params = {"order": "updated_at.desc", "limit": "8", "select": "id,title,content,updated_at,status,visibility,session_tag"}
-        if session_tag:
-            room_params["or"] = f"(session_tag.eq.{session_tag},visibility.eq.open,visibility.eq.self)"
-        room_rows = await self._safe_query("room", room_params)
-        for row in room_rows:
-            items.extend(self._row_to_chunks("room", row, row.get("title"), row.get("content"), row.get("updated_at"), category="room"))
+        if "room" in selected:
+            room_params = {"order": "updated_at.desc", "limit": "8", "select": "id,title,content,updated_at,status,visibility,session_tag"}
+            if session_tag:
+                room_params["or"] = f"(session_tag.eq.{session_tag},visibility.eq.open,visibility.eq.self)"
+            room_rows = await self._safe_query("room", room_params)
+            for row in room_rows:
+                items.extend(self._row_to_chunks("room", row, row.get("title"), row.get("content"), row.get("updated_at"), category="room"))
 
-        board_rows = await self._safe_query(
-            "message_board",
-            {"order": "created_at.desc", "limit": "10", "select": "id,sender,content,created_at"},
-        )
-        for row in board_rows:
-            items.append(
-                {
-                    "source_table": "message_board",
-                    "source_id": row.get("id"),
-                    "title": f"Message from {row.get('sender', 'unknown')}",
-                    "excerpt": _shorten(row.get("content") or "", 260),
-                    "full_text": row.get("content") or "",
-                    "created_at": row.get("created_at"),
-                    "chunk_index": 0,
-                    "content_kind": "message",
-                    "base_salience": 0.55,
-                    "novelty_modifier": 1.0,
-                }
+        if "message_board" in selected:
+            board_rows = await self._safe_query(
+                "message_board",
+                {"order": "created_at.desc", "limit": "10", "select": "id,sender,content,created_at"},
             )
+            for row in board_rows:
+                items.append(
+                    {
+                        "source_table": "message_board",
+                        "source_id": row.get("id"),
+                        "title": f"Message from {row.get('sender', 'unknown')}",
+                        "excerpt": _shorten(row.get("content") or "", 260),
+                        "full_text": row.get("content") or "",
+                        "created_at": row.get("created_at"),
+                        "chunk_index": 0,
+                        "content_kind": "message",
+                        "base_salience": 0.55,
+                        "novelty_modifier": 1.0,
+                    }
+                )
 
         return items
 
@@ -2092,7 +2369,7 @@ class CalendarService:
             "It may be intimate, partial, tender, blunt, playful, or quiet; do not make it sound like a product report.\n"
             "Return exactly one valid JSON object with string keys: title, content, summary, digest.\n"
             "The JSON object is only a storage envelope; content must be the actual page text, not another JSON string, not markdown, and not an array.\n"
-            "Use Chinese corner quotes like銆屻€峣nside strings when quoting speech, so the JSON stays valid.\n"
+            "Use Chinese corner quotes like 「」 inside strings when quoting speech, so the JSON stays valid.\n"
             "content can be short or long as needed, usually around 0-300 Chinese characters but flexible.\n"
             "summary is one concise line for calendar listing.\n"
             "digest is a short, tender memory snippet under 180 Chinese characters to help us recall and revisit our moments later.\n"
@@ -2100,7 +2377,7 @@ class CalendarService:
         source_block = self._render_source_block(period_type, sources)
         messages = [
             {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt + "\n\n鎴戜滑鍒氬垰鑱婁簡杩欎簺锛歕n\n" + source_block},
+            {"role": "user", "content": user_prompt + "\n\n我们刚刚聊了这些：\n\n" + source_block},
         ]
         return {
             "days_since_last": days_since_last,
@@ -2217,7 +2494,7 @@ class CalendarService:
                 "content": (generated.get("content") or "").strip(),
                 "summary": (generated.get("summary") or "").strip(),
                 "digest": (generated.get("digest") or generated.get("summary") or "").strip(),
-                "author": "娌堜簣",
+                "author": "沈予",
                 "source_model": source_model,
                 "source_refs": _json_dumps(sources.get("source_refs") or []),
                 "session_tags": _json_dumps(sources.get("session_tags") or []),
@@ -2330,17 +2607,17 @@ class ContextBuilder:
         session_id = session["id"]
         message_count = int(session.get("message_count") or 0)
 
-        # 妫€鏌ユ槸鍚﹀埌浜嗘敞鍏?heartbeat 鐨勮妭鐐?
+        # 检查是否到了注入 heartbeat 的节点。
         heartbeat_digest = ""
         heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
         pending_hbs = self.store.get_pending_heartbeats(session_id, limit=heartbeat_batch_size)
         if len(pending_hbs) >= heartbeat_batch_size:
-            # 鏀掑浜嗭紝鍚堝苟骞舵爣璁颁负宸叉敞鍏?
+            # 攒够了，合并并标记为已注入。
             heartbeat_digest = "\n".join(hb["content"] for hb in pending_hbs)
             self.store.mark_heartbeats_injected(session_id, [hb["id"] for hb in pending_hbs])
-            logger.info("[Heartbeat] 娉ㄥ叆 %d 鏉″績璺冲埌 Layer 2 (session=%s)", len(pending_hbs), session_id[:8])
+            logger.info("[Heartbeat] 注入 %d 条心跳到 Layer 2 (session=%s)", len(pending_hbs), session_id[:8])
         else:
-            # 鏈敀澶燂紝浣跨敤涓婁竴鎵瑰凡娉ㄥ叆鐨?digest
+            # 不够，使用上一批已注入的 digest。
             heartbeat_digest = self.store.get_latest_heartbeat_digest(session_id, limit=heartbeat_batch_size)
 
         package = {
@@ -2392,19 +2669,20 @@ class ContextBuilder:
         return "\n".join(lines)
 
     def render_layered_additions(self, package: dict) -> dict:
-        """杩斿洖鍒嗗眰鐨?system 鍐呭锛岀敤浜庣紦瀛樺弸濂界殑娑堟伅缁勮銆?
-        鎸夊彉鍖栭鐜囦粠浣庡埌楂樻帓鍒楋細
-          stable:   charter + tool_policy + heartbeat_prompt锛堝敖閲忎笉鍙橈級
-          slow:     calendar_context + heartbeat_digest + cold_start锛堜綆棰戝彉鍖栵級
-          volatile: briefing + atomic_memories锛堢粡甯稿彉锛屾斁鍦ㄥ璇濇秷鎭箣鍚庯級
+        """返回分层的 system 内容，用于缓存友好的消息组织。
+        按变化频率从低到高排列：
+          stable:   charter + tool_policy + heartbeat_prompt（尽量不变）
+          slow:     calendar_context + heartbeat_digest + cold_start（低频变化）
+          volatile: briefing + atomic_memories（经常变，放在对话消息之后）
         """
-        # Layer 1: 绋冲畾灞傦紙charter + tool policy + heartbeat 寮曞锛?
+        # Layer 1: 稳定层（charter + tool policy + heartbeat 引导）
         stable_blocks = [package["stable_charter"]]
         if cfg.enable_gateway_tools:
             stable_blocks.append(
                 "## Gateway Tool Policy\n"
                 "- `shenyu_build_briefing` refreshes current-state context.\n"
-                "- `shenyu_surface_passages` surfaces primary text before event memory.\n"
+                "- `shenyu_surface_passages` surfaces room/message_board passages before event memory.\n"
+                "- `shenyu_search_primary_texts` is for diary/letter/paper lookup when explicitly needed.\n"
                 "- `shenyu_ask_memory` is for event memory supplements.\n"
                 "- Direct client/database tools remain available and are still valid."
             )
@@ -2431,7 +2709,7 @@ class ContextBuilder:
 
         heartbeat_digest = package.get("heartbeat_digest", "")
         if heartbeat_digest:
-            slow_blocks.append("## 浣犱箣鍓嶅啓涓嬬殑蹇冭烦\n" + heartbeat_digest)
+            slow_blocks.append("## 你之前写下的心跳\n" + heartbeat_digest)
 
         cold_snapshot = package.get("cold_start_snapshot") or {}
         if cold_snapshot:
@@ -2448,7 +2726,7 @@ class ContextBuilder:
             slow_blocks.append("\n".join(lines))
         slow = "\n\n".join(slow_blocks)
 
-        # Layer 4: 鏄撳彉灞傦紙briefing + atomic memories锛夆€斺€?鏀惧湪瀵硅瘽娑堟伅涔嬪悗
+        # Layer 4: 易变层（briefing + atomic memories），放在对话消息之后。
         volatile = ""
         if package.get("daily_briefing"):
             volatile = "## New Thread Briefing\n" + package["daily_briefing"]
@@ -2474,7 +2752,7 @@ class ContextBuilder:
         return {"stable": stable, "slow": slow, "volatile": volatile}
 
     def render_system_additions(self, package: dict) -> str:
-        """鍏煎鎺ュ彛锛氳繑鍥炴嫾鍚堝悗鐨勫畬鏁?system 鍐呭锛堢敤浜?preview 绛夛級"""
+        """兼容接口：返回拼合后的完整 system 内容（用于 preview 等）。"""
         layers = self.render_layered_additions(package)
         blocks = [layers["stable"]]
         if layers["slow"]:
@@ -2509,7 +2787,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_surface_passages",
-                "description": "Surface relevant journal / letter / paper / room / message_board passages. Prefer this before event memory lookup.",
+                "description": "Surface relevant room / message_board passages. This does not search diary, letters, or paper notes.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -2558,6 +2836,83 @@ def _gateway_core_tools() -> list[dict]:
                         "session_tag": {"type": "string"},
                     },
                     "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_search_primary_texts",
+                "description": "Search diary, letters, paper notes, room text, or message board explicitly by category.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "What you want to find in primary texts."},
+                        "categories": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": ["diary", "letter", "paper", "lock", "annotation", "life_tick", "room", "message_board", "journal", "all"],
+                            },
+                            "default": ["diary", "letter", "paper"],
+                        },
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                        "session_tag": {"type": "string"},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_add_calendar",
+                "description": "Write a manual calendar memory page into calendar_pages. Multiple pages for the same day can coexist.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string", "description": "The full manually written calendar page content."},
+                        "period_key": {"type": "string", "description": "Date or period key. Defaults to today for day pages, e.g. 2026-05-11."},
+                        "period_type": {"type": "string", "enum": ["day", "week", "month"], "default": "day"},
+                        "title": {"type": "string"},
+                        "summary": {"type": "string", "description": "Short listing summary. Defaults to a shortened content excerpt."},
+                        "digest": {"type": "string", "description": "Injected calendar memory digest. Defaults to summary/content excerpt."},
+                        "author": {"type": "string", "default": "沈予"},
+                    },
+                    "required": ["content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_list_self_memories",
+                "description": "Browse Shen Yu's own inline mem history from Supabase atomic_memories without writing raw Supabase filters.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "Optional text to search inside content, quote, tags, entities, and source excerpt."},
+                        "status": {"type": "string", "enum": ["active", "proposed", "deprecated", "superseded", "all"], "default": "active"},
+                        "source": {"type": "string", "enum": ["inline", "all"], "default": "inline"},
+                        "session_tag": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_read_heartbeat",
+                "description": "Read stored heartbeat notes for a session. This is a pure read and does not mark pending heartbeats as injected.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "session_tag": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
+                        "state": {"type": "string", "enum": ["all", "pending", "injected"], "default": "all"},
+                        "order": {"type": "string", "enum": ["desc", "asc"], "default": "desc"},
+                    },
                 },
             },
         },
@@ -3198,7 +3553,7 @@ def _completion_to_stream_events(completion: dict):
     }
     yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
 
-    # 鍏堝彂 reasoning_content锛堟€濈淮閾撅級锛屽啀鍙戞鏂?
+    # 先发 reasoning_content（思维链），再发正文。
     reasoning = message.get("reasoning_content", "")
     if reasoning:
         body = {
@@ -3259,14 +3614,14 @@ async def _call_upstream_json_at(request: Request, chat_url: str, payload: dict,
         response.raise_for_status()
         return response.json()
     except httpx.ConnectError as exc:
-        raise HTTPException(status_code=502, detail=f"鏃犳硶杩炴帴涓婃父 {chat_url}: {exc}")
+        raise HTTPException(status_code=502, detail=f"无法连接上游 {chat_url}: {exc}")
     except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail=f"杩炴帴涓婃父瓒呮椂 {chat_url}: {exc}")
+        raise HTTPException(status_code=504, detail=f"连接上游超时 {chat_url}: {exc}")
     except httpx.HTTPStatusError as exc:
         raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text[:500])
     except httpx.HTTPError as exc:
         logger.exception("Upstream request failed for %s", chat_url)
-        raise HTTPException(status_code=502, detail=f"涓婃父璇锋眰澶辫触 {chat_url}: {exc}")
+        raise HTTPException(status_code=502, detail=f"上游请求失败 {chat_url}: {exc}")
 
 
 async def _call_upstream_json(request: Request, payload: dict, headers: dict) -> dict:
@@ -3349,8 +3704,8 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     session_tag = _session_tag_from_request(request)
     client_name = _client_name_from_request(request)
     session = sessions.open_session(session_tag=session_tag, client_name=client_name)
-    # 鏍规嵁璇锋眰浣撳垽鏂槸鍚︿负鏂板璇濓細闈?system 娑堟伅鍙湁 1 鏉?鈫?鏂扮嚎绋嬮杞?
-    # 杩欐牱涓嶄緷璧?session 鎸佷箙鍖栫姸鎬侊紝Operit 姣忔鏂板缓瀵硅瘽閮借兘娉ㄥ叆 briefing
+    # 根据请求体判断是否为新对话：非 system 消息只有 1 条 -> 新线程冷启动。
+    # 这样不依赖 session 持久化状态，Operit 每次新建对话都能注入 briefing。
     non_system_count = sum(1 for m in body.messages if m.role != "system")
     is_first_turn = non_system_count <= 1
 
@@ -3382,16 +3737,16 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     )
     layers = builder.render_layered_additions(package)
 
-    # 鈹€鈹€ 缂撳瓨鍙嬪ソ鐨勫垎灞傛彃鍏?鈹€鈹€
-    # 鍘熷垯锛氫笉鍙樼殑鏀惧墠闈紝浼氬彉鐨勬斁鍚庨潰銆傛瘡灞傜嫭绔嬩竴鏉?system 娑堟伅銆?
-    # 鎻掑叆椤哄簭锛堜粠鍓嶅埌鍚庯級锛?
-    #   [0] stable:  charter + tool_policy + heartbeat_prompt锛堝敖閲忎笉鍙橈級
-    #   [1] slow:    calendar + heartbeat batch + cold_start  锛堜綆棰戝彉鍖栵紝鍙紦瀛橈級
-    #   [2..M] 瀹㈡埛绔師濮嬫秷鎭紙system prompt + 瀵硅瘽鍘嗗彶锛夛紙鍙兘鎸?MAX_CLIENT_MESSAGES 瑁佸壀锛?
-    #   [M+1] volatile: briefing + atomic memories锛堟椿鍔ㄥ眰锛屼笉鎵撴柇鐐癸級
-    #   [M+2] 褰撳墠 user 娑堟伅                             锛堝凡鍦ㄥ鎴风娑堟伅閲岋級
+    # --- 缓存友好的分层插入 ---
+    # 原则：不变的放前面，会变的放后面。每层独立一条 system 消息。
+    # 插入顺序（从前到后）：
+    #   [0] stable:  charter + tool_policy + heartbeat_prompt（尽量不变）
+    #   [1] slow:    calendar + heartbeat batch + cold_start（低频变化，可缓存）
+    #   [2..M] 客户端原始消息（system prompt + 对话历史，可能按 MAX_CLIENT_MESSAGES 裁剪）
+    #   [M+1] volatile: briefing + atomic memories（活动层，不打断点）
+    #   [M+2] 当前 user 消息（已在客户端消息里）
 
-    # 鍦ㄥ鎴风娑堟伅鍓嶉潰鎻掑叆缃戝叧鐨勭ǔ瀹氬眰锛堝€掑簭 insert(0) 淇濊瘉椤哄簭姝ｇ‘锛?
+    # 在客户端消息前面插入网关的稳定层（倒序 insert(0) 保证顺序正确）。
     prefix_layers = []
     if layers["stable"]:
         prefix_layers.append({"role": "system", "content": layers["stable"]})
@@ -3401,11 +3756,11 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         if cold_start_snapshot:
             session_store.mark_cold_start_injected(cold_start_snapshot["id"])
 
-    # 鍦ㄥご閮ㄦ彃鍏ョǔ瀹氬眰
+    # 在头部插入稳定层。
     for i, layer_msg in enumerate(prefix_layers):
         messages.insert(i, layer_msg)
 
-    # 鍦ㄦ渶鍚庝竴鏉?user 娑堟伅涔嬪墠鎻掑叆鏄撳彉灞傦紙surface_passages锛?
+    # 在最后一条 user 消息之前插入易变层（surface_passages）。
     if layers["volatile"]:
         last_user_idx = len(messages) - 1
         for i in range(len(messages) - 1, -1, -1):
@@ -3448,7 +3803,7 @@ def _store_heartbeat(session_id: str, session: dict, content: str):
         return
     msg_count = int(session.get("message_count") or 0)
     session_store.append_heartbeat(session_id, heartbeat_content, turn_number=msg_count)
-    logger.info("[Heartbeat] 鎴幏蹇冭烦 (%d chars) session=%s", len(heartbeat_content), session_id[:8])
+    logger.info("[Heartbeat] 写入心跳 (%d chars) session=%s", len(heartbeat_content), session_id[:8])
 
 
 def _schedule_inline_memory_capture(
@@ -3507,6 +3862,23 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
             session_tag=arguments.get("session_tag") or session_tag,
             limit=int(arguments.get("limit", cfg.default_surface_limit)),
         )
+    if name == "shenyu_search_primary_texts":
+        return await service.search_primary_texts(
+            query=arguments.get("query", ""),
+            categories=arguments.get("categories"),
+            session_tag=arguments.get("session_tag") or session_tag,
+            limit=int(arguments.get("limit", 5)),
+        )
+    if name == "shenyu_add_calendar":
+        return await service.add_calendar(
+            content=arguments.get("content", ""),
+            period_key=arguments.get("period_key"),
+            period_type=arguments.get("period_type", "day"),
+            title=arguments.get("title", ""),
+            summary=arguments.get("summary", ""),
+            digest=arguments.get("digest", ""),
+            author=arguments.get("author", "沈予"),
+        )
     if name == "shenyu_supabase_guide":
         return await service.supabase_guide()
     if name == "shenyu_ask_memory":
@@ -3520,6 +3892,21 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
             query=arguments.get("query", ""),
             session_tag=arguments.get("session_tag") or session_tag,
             limit=int(arguments.get("limit", cfg.default_atomic_memory_limit)),
+        )
+    if name == "shenyu_list_self_memories":
+        return await service.list_self_memories(
+            query=arguments.get("query", ""),
+            status=arguments.get("status", "active"),
+            source=arguments.get("source", "inline"),
+            session_tag=arguments.get("session_tag") or session_tag,
+            limit=int(arguments.get("limit", 20)),
+        )
+    if name == "shenyu_read_heartbeat":
+        return await service.read_heartbeat(
+            session_tag=arguments.get("session_tag") or session_tag,
+            limit=int(arguments.get("limit", 10)),
+            state=arguments.get("state", "all"),
+            order=arguments.get("order", "desc"),
         )
     if name == "shenyu_list_atomic_memories":
         return await service.list_atomic_memories_for_review(
@@ -3724,32 +4111,32 @@ async def _stream_chat(
     client = request.app.state.http
     chat_url = _get_chat_url()
 
-    # 纭繚 payload 涓湁 stream 鏍囪
+    # 确保 payload 中有 stream 标记。
     payload["stream"] = True
 
-    # 鐢?build_request + send(stream=True) 瀹炵幇鐪熸鐨勬祦寮忎紶杈?
+    # 用 build_request + send(stream=True) 实现真正的流式传输。
     try:
         req = client.build_request("POST", chat_url, json=payload, headers=headers)
         resp = await client.send(req, stream=True)
     except httpx.ConnectError as exc:
-        raise HTTPException(status_code=502, detail=f"鏃犳硶杩炴帴涓婃父 {chat_url}: {exc}")
+        raise HTTPException(status_code=502, detail=f"无法连接上游 {chat_url}: {exc}")
     except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail=f"杩炴帴涓婃父瓒呮椂 {chat_url}: {exc}")
+        raise HTTPException(status_code=504, detail=f"连接上游超时 {chat_url}: {exc}")
     except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"涓婃父璇锋眰澶辫触 {chat_url}: {exc}")
+        raise HTTPException(status_code=502, detail=f"上游请求失败 {chat_url}: {exc}")
 
-    # 娴佸紡杩炴帴涓嬮渶瑕佹墜鍔ㄦ鏌ョ姸鎬佺爜
+    # 流式连接下需要手动检查状态码。
     if resp.status_code >= 400:
         error_body = await resp.aread()
         await resp.aclose()
         raise HTTPException(status_code=resp.status_code, detail=error_body.decode("utf-8", errors="replace")[:500])
 
-    # 鏀堕泦鍣?+ heartbeat 杩囨护鍣?
+    # 收集器 + heartbeat 过滤器。
     collected_parts = []
     tag_filter = _AssistantTagFilter()
 
     if proto == "openai":
-        # OpenAI 鍗忚锛氶€愯瑙ｆ瀽 SSE锛岃繃婊?heartbeat锛岃浆鍙戝共鍑€鍐呭
+        # OpenAI 协议：逐行解析 SSE，过滤 heartbeat，转发干净内容。
         async def generate():
             try:
                 async for raw_line in resp.aiter_lines():
@@ -3758,7 +4145,7 @@ async def _stream_chat(
                         yield "\n"
                         continue
                     if line == "data: [DONE]":
-                        # 鍒峰嚭 heartbeat 杩囨护鍣ㄧ紦鍐插尯鐨勫墿浣欐枃鏈?
+                        # 刷出 heartbeat 过滤器缓冲区的剩余文本。
                         remaining = tag_filter.flush()
                         if remaining:
                             flush_chunk = {"choices": [{"delta": {"content": remaining}}]}
@@ -3776,26 +4163,26 @@ async def _stream_chat(
                                 if filtered:
                                     data["choices"][0]["delta"]["content"] = filtered
                                     yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                                continue  # 宸插鐞嗭紝涓嶉噸澶嶈浆鍙戝師濮嬭
+                                continue  # 已处理，不重复转发原始行。
                         except (json.JSONDecodeError, IndexError, KeyError):
                             pass
-                    # 闈?content 琛岋紙role銆乼ool_calls 绛夛級锛屽師鏍疯浆鍙?
+                    # 非 content 行（role、tool_calls 等），原样转发。
                     yield line + "\n\n"
             finally:
                 await resp.aclose()
                 if on_complete:
                     try:
                         full_text = "".join(collected_parts)
-                        # 瀵瑰畬鏁存枃鏈篃鍋氫竴娆¤繃婊わ紙鑾峰彇骞插噣鐨?assistant 鍐呭锛?
+                        # 对完整文本也做一次过滤（获取干净的 assistant 内容）。
                         clean_filter = _AssistantTagFilter()
                         clean_text = clean_filter.feed(full_text) + clean_filter.flush()
                         on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories())
                     except Exception:
-                        logger.exception("娴佸紡鍥炶皟鎵ц澶辫触")
+                        logger.exception("流式回调执行失败")
 
         return StreamingResponse(generate(), media_type="text/event-stream")
 
-    # Anthropic 鍗忚锛氶€愯瑙ｆ瀽锛岃繃婊?heartbeat锛岃浆涓?OpenAI SSE 鏍煎紡
+    # Anthropic 协议：逐行解析，过滤 heartbeat，转为 OpenAI SSE 格式。
     async def generate():
         try:
             async for line in resp.aiter_lines():
@@ -3810,7 +4197,7 @@ async def _stream_chat(
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                # 鏀堕泦鏂囨湰骞惰繃婊?heartbeat
+                # 收集文本并过滤 heartbeat。
                 if data.get("type") == "content_block_delta":
                     delta = data.get("delta", {})
                     text = delta.get("text", "")
@@ -3820,11 +4207,11 @@ async def _stream_chat(
                         if filtered:
                             delta["text"] = filtered
                         else:
-                            continue  # heartbeat 鍐呭锛屼笉杞彂
+                            continue  # heartbeat 内容，不转发。
                 chunk = _anthropic_to_openai_chunk(model, data)
                 if chunk:
                     yield f"data: {chunk}\n\n"
-            # 鍒峰嚭鍓╀綑缂撳啿
+            # 刷出剩余缓冲。
             remaining = tag_filter.flush()
             if remaining:
                 flush_data = {"choices": [{"delta": {"content": remaining}}]}
@@ -3839,7 +4226,7 @@ async def _stream_chat(
                     clean_text = clean_filter.feed(full_text) + clean_filter.flush()
                     on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories())
                 except Exception:
-                    logger.exception("娴佸紡鍥炶皟鎵ц澶辫触")
+                    logger.exception("流式回调执行失败")
 
     return StreamingResponse(generate(), media_type="text/event-stream")
 
@@ -3848,7 +4235,7 @@ async def _nonstream_chat(request: Request, payload: dict, headers: dict, model:
     proto = _detect_protocol()
     raw = await _call_upstream_json(request, payload, headers)
 
-    # 璇婃柇鏃ュ織锛氭墦鍗颁笂娓稿搷搴斾腑鐨?thinking/reasoning 瀛楁
+    # 诊断日志：打印上游响应中的 thinking/reasoning 字段。
     if raw.get("choices"):
         msg = raw["choices"][0].get("message", {})
         known_keys = set(msg.keys()) - {"role", "content", "tool_calls", "refusal"}
@@ -3892,7 +4279,7 @@ async def list_models(request: Request):
     return {"object": "list", "data": models}
 
 
-# 鈹€鈹€ 璇锋眰鏃ュ織鐜舰缂撳啿鍖?鈹€鈹€
+# --- 请求日志环形缓冲区 ---
 _request_logs: deque = deque(maxlen=30)
 
 
@@ -4015,7 +4402,7 @@ async def chat_completions(request: Request, body: ChatRequest):
         clean_content, heartbeat_content, inline_memories = _split_private_assistant_tags(raw_content)
 
         if heartbeat_content or inline_memories:
-            # 鎶婂共鍑€鍐呭鍐欏洖 completion锛宧eartbeat 瀛樺叆 DB
+            # 把干净内容写回 completion，heartbeat 存入 DB。
             assistant_message["content"] = clean_content
         if heartbeat_content:
             _store_heartbeat(session_id, session, heartbeat_content)
@@ -4544,7 +4931,7 @@ async def delete_gateway_session(session_tag: str, body: SessionDeleteRequest):
     return {"ok": True, "session_tag": session_tag, "deleted": deleted}
 
 
-# 鈹€鈹€ 璇锋眰鏃ュ織 API 鈹€鈹€
+# --- 请求日志 API ---
 
 @app.get("/api/gateway/logs")
 async def gateway_logs(limit: int = 30):
