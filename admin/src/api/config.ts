@@ -20,6 +20,7 @@ export interface GatewayConfig {
   calendar_protocol?: string
   calendar_model?: string
   // atomic memory
+  inject_inline_memory_prompt?: boolean
   enable_inline_memory_capture?: boolean
   inject_atomic_memories?: boolean
   default_atomic_memory_limit?: number

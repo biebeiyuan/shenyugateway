@@ -87,6 +87,10 @@ def _shorten(text: str, limit: int = 240) -> str:
     return text[: limit - 3].rstrip() + "..."
 
 
+def _clamp(value: float, min_value: float, max_value: float) -> float:
+    return max(min_value, min(value, max_value))
+
+
 def _split_paragraph_chunks(text: str, min_len: int = 80, max_len: int = 420) -> list[str]:
     text = (text or "").strip()
     if not text:
@@ -2405,7 +2409,7 @@ class ContextBuilder:
                 "- Direct client/database tools remain available and are still valid."
             )
         stable_blocks.append(_HEARTBEAT_PROMPT)
-        if cfg.enable_inline_memory_capture:
+        if cfg.inject_inline_memory_prompt:
             stable_blocks.append(_INLINE_MEM_PROMPT)
         stable = "\n\n".join(stable_blocks)
 
@@ -4047,6 +4051,7 @@ async def health():
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
         "inject_atomic_memories": cfg.inject_atomic_memories,
+        "inject_inline_memory_prompt": cfg.inject_inline_memory_prompt,
         "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
         "enable_cold_start": cfg.enable_cold_start,
         "gateway_db_path": cfg.gateway_db_path,
@@ -4071,6 +4076,7 @@ async def get_config_full():
         "calendar_api_key": cfg.calendar_api_key,
         "calendar_protocol": cfg.calendar_protocol,
         "calendar_model": cfg.calendar_model,
+        "inject_inline_memory_prompt": cfg.inject_inline_memory_prompt,
         "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
         "model_mapping": cfg.model_mapping,
         "supabase_url": cfg.supabase_url,
@@ -4118,6 +4124,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "calendar_api_key": "CALENDAR_API_KEY",
         "calendar_protocol": "CALENDAR_PROTOCOL",
         "calendar_model": "CALENDAR_MODEL",
+        "inject_inline_memory_prompt": "INJECT_INLINE_MEMORY_PROMPT",
         "enable_inline_memory_capture": "ENABLE_INLINE_MEMORY_CAPTURE",
         "model_mapping": "MODEL_MAPPING",
         "supabase_url": "SUPABASE_URL",
@@ -4164,6 +4171,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "calendar_api_key",
         "calendar_protocol",
         "calendar_model",
+        "inject_inline_memory_prompt",
         "enable_inline_memory_capture",
         "supabase_url",
         "supabase_key",

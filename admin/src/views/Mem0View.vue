@@ -62,8 +62,7 @@ async function doSaveConfig() {
   savingConfig.value = true
   try {
     const result = await saveMem0Config({
-      enable_inline_memory_capture: config.value.enable_inline_memory_capture,
-      inject_atomic_memories: config.value.inject_atomic_memories,
+      inject_inline_memory_prompt: config.value.inject_inline_memory_prompt,
       default_atomic_memory_limit: config.value.default_atomic_memory_limit,
       atomic_memory_min_score: config.value.atomic_memory_min_score,
     })
@@ -135,13 +134,10 @@ async function deleteAtomic(item: AtomicMemoryItem) {
 <template>
   <div class="mem0-page">
     <div class="mem0-grid">
-      <NCard title="Mem0 开关" size="small">
+      <NCard title="Mem0 设置" size="small">
         <NForm label-placement="top">
-          <NFormItem label="聊天前注入 active 原子记忆">
-            <NSwitch v-model:value="config.inject_atomic_memories" />
-          </NFormItem>
-          <NFormItem label="捕获回复里的 [mem] 内联便签">
-            <NSwitch v-model:value="config.enable_inline_memory_capture" />
+          <NFormItem label="聊天前注入 [mem] 标签提示">
+            <NSwitch v-model:value="config.inject_inline_memory_prompt" />
           </NFormItem>
           <div class="cfg-inline">
             <NFormItem label="注入数量">

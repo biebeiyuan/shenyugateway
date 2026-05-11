@@ -34,6 +34,10 @@ class RuntimeConfig:
         self.calendar_protocol: str = os.getenv("CALENDAR_PROTOCOL", "auto")
         self.calendar_model: str = os.getenv("CALENDAR_MODEL", "claude-opus-4-7")
         self.enable_inline_memory_capture: bool = _env_bool("ENABLE_INLINE_MEMORY_CAPTURE", False)
+        self.inject_inline_memory_prompt: bool = _env_bool(
+            "INJECT_INLINE_MEMORY_PROMPT",
+            self.enable_inline_memory_capture,
+        )
         self.model_mapping: dict[str, str] = self._load_model_mapping()
 
         self.inject_meta_summaries: bool = _env_bool("INJECT_META_SUMMARIES", True)
@@ -79,6 +83,7 @@ class RuntimeConfig:
             "calendar_api_key": mask(self.calendar_api_key),
             "calendar_protocol": self.calendar_protocol,
             "calendar_model": self.calendar_model,
+            "inject_inline_memory_prompt": self.inject_inline_memory_prompt,
             "enable_inline_memory_capture": self.enable_inline_memory_capture,
             "model_mapping": self.model_mapping,
             "inject_meta_summaries": self.inject_meta_summaries,
