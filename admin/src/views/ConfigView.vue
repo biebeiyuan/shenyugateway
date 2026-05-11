@@ -159,7 +159,7 @@ async function doSave() {
       inject_meta_summaries: config.value.inject_meta_summaries,
 
       enable_gateway_tools: config.value.enable_gateway_tools,
-      enable_mem0_management_tools: config.value.enable_mem0_management_tools,
+      enable_inline_memory_capture: config.value.enable_inline_memory_capture,
       expose_supabase_tools: config.value.expose_supabase_tools,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
       default_surface_limit: config.value.default_surface_limit,
@@ -364,8 +364,8 @@ function removeModel(index: number) {
           <NFormItem label="启用 shenyu_* 工具">
             <NSwitch v-model:value="config.enable_gateway_tools" />
           </NFormItem>
-          <NFormItem label="??? mem0 ??????">
-            <NSwitch v-model:value="config.enable_mem0_management_tools" />
+          <NFormItem label="Inline Mem（提示并捕获 [mem]）">
+            <NSwitch v-model:value="config.enable_inline_memory_capture" />
           </NFormItem>
           <NFormItem label="启用 supabase_* 工具">
             <NSwitch v-model:value="config.expose_supabase_tools" />

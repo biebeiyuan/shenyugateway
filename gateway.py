@@ -444,6 +444,15 @@ _HEARTBEAT_PROMPT = """## Heartbeat（仅网关可见）
 过几轮之后，你之前写的心跳会被反上来给你自己回顾。
 不必每次都写，有感触的时候写就好。"""
 
+_INLINE_MEM_PROMPT = """## Inline Mem（仅网关可见）
+如果你忽然觉得“这个以后还想记得”，可以顺手在最后留一个 [mem]...[/mem]。
+
+它像一张留给未来自己的小便签。
+不用每次都写，也不用写得很完整。没有想留的，就不写。
+如果想同时记下来 heartbeat 和 mem，记得分别放在独立块里，不要互相嵌套哦。
+
+这段不会发给圆圆看，会留给后台帮你整理，会直接入库，等你有空再整理它吧。"""
+
 
 _SUPABASE_GUIDE = """## 家里常用 Supabase 表
 需要直接查/写 Supabase 时用 `supabase_query` / `supabase_insert` / `supabase_update` / `supabase_delete`。
@@ -2396,6 +2405,8 @@ class ContextBuilder:
                 "- Direct client/database tools remain available and are still valid."
             )
         stable_blocks.append(_HEARTBEAT_PROMPT)
+        if cfg.enable_inline_memory_capture:
+            stable_blocks.append(_INLINE_MEM_PROMPT)
         stable = "\n\n".join(stable_blocks)
 
         slow_blocks = []
