@@ -3226,9 +3226,51 @@ def _trim_client_messages(messages: list[dict]) -> tuple[list[dict], dict]:
     if len(non_system) <= limit:
         return messages, meta
 
-    trimmed = system_prefix + non_system[-limit:]
+    start = max(0, len(non_system) - limit)
+    start = _tool_safe_trim_start(non_system, start)
+    trimmed = system_prefix + non_system[start:]
     meta["client_messages_retained"] = len(trimmed)
+    meta["client_messages_trim_start"] = first_non_system + start
     return trimmed, meta
+
+
+def _tool_call_ids(msg: dict) -> list[str]:
+    ids: list[str] = []
+    for tool_call in msg.get("tool_calls") or []:
+        if isinstance(tool_call, dict) and tool_call.get("id"):
+            ids.append(str(tool_call["id"]))
+    return ids
+
+
+def _tool_safe_trim_start(messages: list[dict], start: int) -> int:
+    """Move a trim boundary so tool calls and tool results stay in complete turns."""
+    start = max(0, min(start, len(messages)))
+
+    for idx in range(start, len(messages)):
+        msg = messages[idx]
+        role = msg.get("role")
+        if role == "tool":
+            tool_call_id = msg.get("tool_call_id")
+            if not tool_call_id:
+                continue
+            for prev_idx in range(idx - 1, -1, -1):
+                if tool_call_id in _tool_call_ids(messages[prev_idx]):
+                    return _tool_safe_trim_start(messages, prev_idx)
+            return idx + 1
+        if role == "assistant" and _tool_call_ids(msg):
+            expected = set(_tool_call_ids(msg))
+            found: set[str] = set()
+            next_idx = idx + 1
+            while next_idx < len(messages) and messages[next_idx].get("role") == "tool":
+                tool_call_id = messages[next_idx].get("tool_call_id")
+                if tool_call_id in expected:
+                    found.add(tool_call_id)
+                next_idx += 1
+            if found != expected:
+                return next_idx
+            return idx
+
+    return start
 
 
 def _cold_start_idle_minutes(session: dict) -> float:
@@ -4039,6 +4081,8 @@ async def _run_internal_tool_loop(
             messages_override=working_messages,
             meta=meta,
         )
+        if log_entry is not None:
+            log_entry["upstream_payload"] = payload
         if log_entry is not None and round_index == 0:
             log_entry["prompt_cache"] = cache_meta
         raw = await _call_upstream_json(request, payload, headers)
