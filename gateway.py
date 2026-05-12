@@ -466,7 +466,8 @@ _SUPABASE_GUIDE = """## 家里常用 Supabase 表
 需要直接查/写 Supabase 时用 `supabase_query` / `supabase_insert` / `supabase_update` / `supabase_delete`。
 `filters` 可以写成对象；普通值会自动当作等值过滤，例如 {"id":"..."} 等价于 {"id":"eq...."}。
 需要范围、列表、模糊搜、非空时用 `operators`，例如：
-- 时间段：operators={"created_at":{"gte":"2026-05-01","lte":"2026-05-12"}}
+- 时间段：operators={"gte":"2026-05-01","lte":"2026-05-12"} 默认查 created_at
+- 其他列时间段：column="updated_at", operators={"gte":"2026-05-01"}
 - 列表：operators={"id":{"in":["a","b"]}}
 - 模糊搜：operators={"content":{"ilike":"%北海道%"}}
 - 非空：operators={"deleted_at":{"not_is":null}}
@@ -707,23 +708,27 @@ class GatewayToolService:
         table: str,
         filters: Optional[dict],
         operators: Optional[dict],
+        column: Optional[str],
         select: Optional[str],
         order: Optional[str],
         limit: int,
     ) -> dict:
         if not supabase_client:
             return {"error": "Supabase is not configured."}
+        table_hint = self._supabase_table_hint(table)
+        if table_hint:
+            return {"ok": False, "error": table_hint}
         params: list[tuple[str, str]] = [("limit", str(max(1, min(limit, 100))))]
         if select:
             params.append(("select", select))
         if order:
             params.append(("order", order))
-        params.extend(self._build_supabase_filter_params(filters, operators))
+        params.extend(self._build_supabase_filter_params(filters, operators, column=column))
         try:
             data = await supabase_client.query(table, params)
             return {"ok": True, "count": len(data) if isinstance(data, list) else 0, "data": data}
         except Exception as exc:
-            return {"error": str(exc)}
+            return {"ok": False, "error": self._friendly_supabase_error(table, exc)}
 
     async def supabase_guide(self) -> dict:
         return {"ok": True, "guide": _SUPABASE_GUIDE}
@@ -811,17 +816,23 @@ class GatewayToolService:
     async def supabase_insert(self, table: str, data: dict) -> dict:
         if not supabase_client:
             return {"error": "Supabase is not configured."}
+        table_hint = self._supabase_table_hint(table)
+        if table_hint:
+            return {"ok": False, "error": table_hint}
         try:
             result = await supabase_client.insert(table, data)
             return {"ok": True, "table": table, "row": result, "result": result}
         except Exception as exc:
-            return {"error": str(exc)}
+            return {"ok": False, "error": self._friendly_supabase_error(table, exc)}
 
-    async def supabase_update(self, table: str, match: dict, data: dict, operators: Optional[dict] = None) -> dict:
+    async def supabase_update(self, table: str, match: dict, data: dict, operators: Optional[dict] = None, column: Optional[str] = None) -> dict:
         if not supabase_client:
             return {"error": "Supabase is not configured."}
+        table_hint = self._supabase_table_hint(table)
+        if table_hint:
+            return {"ok": False, "error": table_hint}
         try:
-            params = self._build_supabase_filter_params(match, operators)
+            params = self._build_supabase_filter_params(match, operators, column=column)
             if not params:
                 return {"error": "supabase_update requires match or operators to avoid updating the whole table."}
             result = await supabase_client.update(table, params, data)
@@ -832,13 +843,16 @@ class GatewayToolService:
                 "rows": result,
             }
         except Exception as exc:
-            return {"error": str(exc)}
+            return {"ok": False, "error": self._friendly_supabase_error(table, exc)}
 
-    async def supabase_delete(self, table: str, match: dict, hard: bool = False, operators: Optional[dict] = None) -> dict:
+    async def supabase_delete(self, table: str, match: dict, hard: bool = False, operators: Optional[dict] = None, column: Optional[str] = None) -> dict:
         if not supabase_client:
             return {"error": "Supabase is not configured."}
+        table_hint = self._supabase_table_hint(table)
+        if table_hint:
+            return {"ok": False, "error": table_hint}
         try:
-            params = self._build_supabase_filter_params(match, operators)
+            params = self._build_supabase_filter_params(match, operators, column=column)
             if not params:
                 return {"error": "supabase_delete requires match or operators to avoid deleting the whole table."}
             if hard:
@@ -1557,14 +1571,14 @@ class GatewayToolService:
 
     _SUPABASE_FILTER_OPS = {"eq", "neq", "gt", "gte", "lt", "lte", "like", "ilike", "is", "in", "ov", "not"}
 
-    def _build_supabase_filter_params(self, filters: Any = None, operators: Any = None) -> list[tuple[str, str]]:
+    def _build_supabase_filter_params(self, filters: Any = None, operators: Any = None, column: Optional[str] = None) -> list[tuple[str, str]]:
         params: list[tuple[str, str]] = []
         for key, value in self._normalize_filters(filters).items():
             if isinstance(value, dict) and self._looks_like_operator_map(value):
                 params.extend(self._build_supabase_operator_params({key: value}))
             else:
                 params.append((key, self._parse_filter_value(value)))
-        params.extend(self._build_supabase_operator_params(operators))
+        params.extend(self._build_supabase_operator_params(self._normalize_operator_shape(operators, column=column)))
         return params
 
     def _build_supabase_operator_params(self, operators: Any) -> list[tuple[str, str]]:
@@ -1578,6 +1592,14 @@ class GatewayToolService:
                 if parsed:
                     params.append((column, parsed))
         return params
+
+    def _normalize_operator_shape(self, operators: Any, column: Optional[str] = None) -> dict:
+        parsed = self._normalize_filters(operators)
+        if not parsed:
+            return {}
+        if self._looks_like_operator_map(parsed):
+            return {(column or "created_at"): parsed}
+        return parsed
 
     def _parse_operator_condition(self, op: str, value: Any) -> str:
         normalized = op.strip().lower().replace("_", ".").replace(" ", ".")
@@ -1672,6 +1694,23 @@ class GatewayToolService:
         if source_model.startswith("manual") or source_model in {"", "none", "null"}:
             return "manual"
         return "auto"
+
+    def _supabase_table_hint(self, table: str) -> str:
+        normalized = (table or "").strip().lower()
+        if normalized in {"heartbeat", "heartbeats", "heartbeat_entries", "gateway_heartbeats"}:
+            return "heartbeat_entries lives in the gateway SQLite store, not Supabase. Use shenyu_read_heartbeat with date/date_from/date_to instead."
+        if normalized in {"gateway_messages", "request_context_snapshots", "raw_request_windows"}:
+            return f"{normalized} lives in the gateway SQLite store, not Supabase."
+        return ""
+
+    def _friendly_supabase_error(self, table: str, exc: Exception) -> str:
+        raw = str(exc)
+        if "404" in raw:
+            hint = self._supabase_table_hint(table)
+            if hint:
+                return hint
+            return f"Supabase table '{table}' was not found. Check the table name with shenyu_supabase_guide, or use a dedicated shenyu_* tool if this data lives in the gateway store."
+        return raw
 
     async def _load_tags_for_memories(self, memory_ids: list[str]) -> dict[str, list[dict]]:
         if not memory_ids or not supabase_client:
@@ -3076,8 +3115,9 @@ def _gateway_native_tools() -> list[dict]:
                                 "operators": {
                                     "type": "object",
                                     "additionalProperties": True,
-                                    "description": "Column operators, e.g. {\"created_at\":{\"gte\":\"2026-05-01\",\"lte\":\"2026-05-12\"},\"id\":{\"in\":[\"a\",\"b\"]},\"content\":{\"ilike\":\"%xx%\"},\"deleted_at\":{\"not_is\":null}}.",
+                                    "description": "Either short form on created_at, e.g. {\"gte\":\"2026-05-01\",\"lte\":\"2026-05-12\"}, or per-column form, e.g. {\"content\":{\"ilike\":\"%xx%\"},\"id\":{\"in\":[\"a\",\"b\"]}}.",
                                 },
+                                "column": {"type": "string", "description": "Optional column for short-form operators. Defaults to created_at."},
                                 "select": {"type": "string"},
                                 "order": {"type": "string"},
                                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
@@ -3115,8 +3155,9 @@ def _gateway_native_tools() -> list[dict]:
                                 "operators": {
                                     "type": "object",
                                     "additionalProperties": True,
-                                    "description": "Column operators, same shape as supabase_query operators.",
+                                    "description": "Short form defaults to created_at, e.g. {\"gte\":\"2026-05-01\"}; per-column form also works.",
                                 },
+                                "column": {"type": "string", "description": "Optional column for short-form operators. Defaults to created_at."},
                                 "data": {"type": "object", "additionalProperties": True},
                             },
                             "required": ["table", "data"],
@@ -3140,8 +3181,9 @@ def _gateway_native_tools() -> list[dict]:
                                 "operators": {
                                     "type": "object",
                                     "additionalProperties": True,
-                                    "description": "Column operators, same shape as supabase_query operators.",
+                                    "description": "Short form defaults to created_at, e.g. {\"gte\":\"2026-05-01\"}; per-column form also works.",
                                 },
+                                "column": {"type": "string", "description": "Optional column for short-form operators. Defaults to created_at."},
                                 "hard": {"type": "boolean", "default": False},
                             },
                             "required": ["table"],
@@ -4094,6 +4136,7 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
             table=arguments.get("table", ""),
             filters=arguments.get("filters"),
             operators=arguments.get("operators"),
+            column=arguments.get("column"),
             select=arguments.get("select"),
             order=arguments.get("order"),
             limit=int(arguments.get("limit", 20)),
@@ -4109,6 +4152,7 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
             match=arguments.get("match") or {},
             data=arguments.get("data") or {},
             operators=arguments.get("operators"),
+            column=arguments.get("column"),
         )
     if name == "supabase_delete":
         return await service.supabase_delete(
@@ -4116,6 +4160,7 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
             match=arguments.get("match") or {},
             hard=bool(arguments.get("hard", False)),
             operators=arguments.get("operators"),
+            column=arguments.get("column"),
         )
     raise ValueError(f"Unsupported gateway tool: {name}")
 
