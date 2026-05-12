@@ -17,6 +17,13 @@ def _raise_for_status(response: httpx.Response):
         ) from exc
 
 
+_POSTGREST_FILTER_OPS = ("eq", "neq", "gt", "gte", "lt", "lte", "like", "ilike", "is", "in", "ov", "not")
+
+
+def _looks_like_filter_value(value: Any) -> bool:
+    return isinstance(value, str) and any(value.startswith(op + ".") for op in _POSTGREST_FILTER_OPS)
+
+
 class SupabaseClient:
     def __init__(self, url: str, key: str):
         self.base_url = url.rstrip("/") + "/rest/v1"
@@ -67,14 +74,23 @@ class SupabaseClient:
         result = response.json()
         return result[0] if isinstance(result, list) and result else result
 
-    async def update(self, table: str, match: dict, data: dict) -> list:
-        params = {key: f"eq.{value}" for key, value in match.items()}
+    def _filter_params(self, match: Any) -> Any:
+        if isinstance(match, list):
+            return match
+        if isinstance(match, tuple):
+            return list(match)
+        if isinstance(match, dict):
+            return {key: value if _looks_like_filter_value(value) else f"eq.{value}" for key, value in match.items()}
+        return {}
+
+    async def update(self, table: str, match: Any, data: dict) -> list:
+        params = self._filter_params(match)
         response = await self._request("PATCH", f"{self.base_url}/{table}", params=params, json=data)
         _raise_for_status(response)
         return response.json()
 
-    async def delete(self, table: str, match: dict) -> list:
-        params = {key: f"eq.{value}" for key, value in match.items()}
+    async def delete(self, table: str, match: Any) -> list:
+        params = self._filter_params(match)
         response = await self._request("DELETE", f"{self.base_url}/{table}", params=params)
         _raise_for_status(response)
         return response.json()

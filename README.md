@@ -27,9 +27,9 @@ Context is assembled from low-change to high-change content:
 |---|---|---|---|
 | `tools` | request tools | client tools + `shenyu_*` / `supabase_*` tools | breakpoint at `tools[-1]` |
 | `stable` | first system message | stable charter, active meta summaries, gateway tool policy, heartbeat instructions | breakpoint |
-| `slow` | second system message when present | calendar memory, latest frozen heartbeat batch, optional cold-start bridge | breakpoint |
+| `slow` | second system message when present | calendar memory, latest frozen heartbeat batch | breakpoint |
 | client history | original messages | trimmed client messages when `MAX_CLIENT_MESSAGES` is set | fallback breakpoint only if one is free |
-| `volatile` | inserted before latest user message | first-turn briefing, active atomic memories | no breakpoint |
+| `volatile` | inserted before latest user message | active atomic memories | no breakpoint |
 | current user | latest user message | current request | no breakpoint |
 
 The retired rolling and frozen context layers have been removed from the active flow. Their legacy SQLite tables are only cleaned up during session deletion when they exist in an older database.
@@ -69,7 +69,7 @@ SQLite stores only gateway runtime state:
 - `cold_start_snapshots`: bounded bridge packages created from recent context snapshots.
 - `surface_events`: audit/debug records for surfaced passages.
 - `cache_entries`: short-lived gateway cache.
-- `heartbeat_entries`: private heartbeat notes captured from `<heartbeat>...</heartbeat>` or written manually in admin.
+- `heartbeat_entries`: global private heartbeat notes captured from `<heartbeat>...</heartbeat>` or written manually in admin. `session_id` is retained as the source session, but runtime injection reads the shared global pool.
 
 `request_context_snapshots` is the replacement for the old rolling/frozen context path. Each request stores the trimmed client window before gateway layers are inserted. Calendar generation and cold-start bridge both read these snapshots. `raw_request_windows` stores the original client payload window before any gateway-side trimming and is kept separate so cold-start stays bounded.
 
@@ -83,7 +83,7 @@ Default online retention:
 - `GATEWAY_CONTEXT_SNAPSHOT_RETENTION=3`: keep the newest context snapshots per session. Do not set this to `0`; cold-start and calendar source collection need recent snapshots.
 - `GATEWAY_COLD_START_RETENTION=20`: keep recent cold-start snapshots per session. Cleanup only removes old snapshots whose `injected_count >= max_injections`, so active cold-start bridges are preserved.
 - `GATEWAY_SURFACE_EVENT_RETENTION=500`: keep recent surface audit rows per session.
-- `heartbeat_entries` are not removed by automatic cleanup. They can be manually written/deleted from the admin session page.
+- `heartbeat_entries` are not removed by automatic cleanup. They can be manually written/deleted from the admin session page, and those actions affect the shared global heartbeat pool.
 - expired `cache_entries` are removed during cleanup.
 
 Runtime cleanup APIs:
@@ -130,22 +130,23 @@ The atomic-memory review UI reads and updates Supabase `atomic_memories`. It is 
 
 ## Cold Start Layer
 
-Cold start bridges context across windows without reintroducing the retired frozen context layer.
+Cold start bridges context across windows without reintroducing the retired frozen context layer. It now behaves like
+the normal client window at the start of a new thread: the latest previous request snapshot is inserted as ordinary
+user/assistant history before the new thread's messages, then it shrinks as the new thread grows.
 
 Flow:
 
 1. `_prepare_messages()` opens the session and stores a `request_context_snapshot`.
 2. `_maybe_prepare_cold_start_snapshot()` checks whether the request is a new window or a stale window.
-3. It reads recent request snapshots from other sessions via `recent_cross_session_context()`.
-4. It writes a `cold_start_snapshot` with a bounded message budget.
-5. `ContextBuilder.render_layered_additions()` renders it inside the `slow` system layer.
-6. The snapshot is marked injected until `COLD_START_TURNS` is exhausted.
+3. It calculates the gap between the target window and the current client message count.
+4. It reads the latest previous request snapshot via `latest_cross_session_context()`.
+5. It inserts only the number of messages needed to fill that gap.
+6. Once the new thread reaches the target window size, the bridge automatically stops.
 
 Config:
 
 - `ENABLE_COLD_START`
-- `COLD_START_TURNS`
-- `COLD_START_MESSAGE_LIMIT`
+- `COLD_START_MESSAGE_LIMIT` (optional; blank follows `MAX_CLIENT_MESSAGES`)
 - `COLD_START_IDLE_MINUTES`
 - `MAX_CLIENT_MESSAGES`
 
@@ -240,18 +241,6 @@ Current implementation details:
 - `[mem]` notes are stored verbatim as `active` rows.
 - Prompt-preset and manual-extract endpoints have been removed.
 
-## Briefing
-
-`build_briefing()` still exists as a first-turn briefing, but it is volatile and not part of the stable cache prefix. It includes:
-
-- latest memo
-- message board
-- sampled journal entries
-- recent medication records
-- tool usage guide
-
-The manual `shenyu_surface_passages` tool still supports broader primary-text lookup.
-
 ## Configuration
 
 Important environment variables:
@@ -269,8 +258,7 @@ CALENDAR_PROTOCOL=auto
 CALENDAR_MODEL=claude-opus-4-7
 
 ENABLE_COLD_START=true
-COLD_START_TURNS=3
-COLD_START_MESSAGE_LIMIT=8
+COLD_START_MESSAGE_LIMIT=
 COLD_START_IDLE_MINUTES=120
 MAX_CLIENT_MESSAGES=
 
@@ -279,9 +267,7 @@ ENABLE_INLINE_MEMORY_CAPTURE=false
 DEFAULT_ATOMIC_MEMORY_LIMIT=3
 ATOMIC_MEMORY_MIN_SCORE=0.55
 
-INJECT_BRIEFING=true
 DEFAULT_SURFACE_LIMIT=3
-DAILY_BRIEFING_TTL_MINUTES=60
 
 ENABLE_GATEWAY_TOOLS=false
 EXPOSE_SUPABASE_TOOLS=true

@@ -11,8 +11,7 @@ export interface GatewayConfig {
   supabase_key: string
   max_client_messages: number | null
   enable_cold_start: boolean
-  cold_start_turns: number
-  cold_start_message_limit: number
+  cold_start_message_limit: number | null
   cold_start_idle_minutes: number
   model_mapping: Record<string, string>
   calendar_upstream_url?: string
@@ -26,7 +25,6 @@ export interface GatewayConfig {
   default_atomic_memory_limit?: number
   atomic_memory_min_score?: number
   // feature toggles
-  inject_briefing?: boolean
   inject_meta_summaries?: boolean
   calendar_inject_day?: boolean
   calendar_inject_week?: boolean
@@ -45,7 +43,6 @@ export interface GatewayConfig {
   gateway_context_snapshot_retention?: number
   gateway_cold_start_retention?: number
   gateway_surface_event_retention?: number
-  daily_briefing_ttl_minutes?: number
   // stats
   gateway_db_path?: string
 }
@@ -62,7 +59,6 @@ export interface HealthStatus {
   enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
   inject_meta_summaries?: boolean
-  inject_briefing?: boolean
 
   inject_atomic_memories?: boolean
   enable_cold_start?: boolean

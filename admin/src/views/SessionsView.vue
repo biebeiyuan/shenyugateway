@@ -170,8 +170,8 @@ async function deleteAllHeartbeats() {
   if (!selectedTag.value) return
   deletingHeartbeats.value = true
   try {
-    await deleteGatewayHeartbeats(selectedTag.value, { delete_all: true, confirm: selectedTag.value })
-    message.success('已清空此线程 heartbeat')
+    await deleteGatewayHeartbeats(selectedTag.value, { delete_all: true, confirm: 'GLOBAL' })
+    message.success('已清空全局 heartbeat')
     await loadSessionDetail(selectedTag.value)
   } catch (error) {
     message.error(errorText(error, 'Heartbeat 批量删除失败'))
@@ -388,9 +388,9 @@ function showMoreHeartbeats() {
                   <NButton type="primary" :loading="savingHeartbeat" @click="saveHeartbeat">写入 Heartbeat</NButton>
                   <NPopconfirm positive-text="清空" negative-text="取消" @positive-click="deleteAllHeartbeats">
                     <template #trigger>
-                      <NButton type="error" :loading="deletingHeartbeats">清空此线程 Heartbeat</NButton>
+                      <NButton type="error" :loading="deletingHeartbeats">清空全局 Heartbeat</NButton>
                     </template>
-                    清空 {{ selectedTag }} 的所有 heartbeat？这个操作不会删除消息或上下文快照。
+                    清空全局 heartbeat？这个操作不会删除消息或上下文快照。
                   </NPopconfirm>
                 </div>
               </div>

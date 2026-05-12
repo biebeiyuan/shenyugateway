@@ -32,8 +32,7 @@ const config = ref<GatewayConfig>({
   supabase_key: '',
   max_client_messages: null,
   enable_cold_start: true,
-  cold_start_turns: 3,
-  cold_start_message_limit: 8,
+  cold_start_message_limit: null,
   cold_start_idle_minutes: 120,
   model_mapping: {},
 })

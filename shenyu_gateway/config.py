@@ -41,7 +41,6 @@ class RuntimeConfig:
         self.model_mapping: dict[str, str] = self._load_model_mapping()
 
         self.inject_meta_summaries: bool = _env_bool("INJECT_META_SUMMARIES", True)
-        self.inject_briefing: bool = _env_bool("INJECT_BRIEFING", True)
         self.calendar_inject_day: bool = _env_bool("CALENDAR_INJECT_DAY", True)
         self.calendar_inject_week: bool = _env_bool("CALENDAR_INJECT_WEEK", True)
         self.calendar_inject_month: bool = _env_bool("CALENDAR_INJECT_MONTH", True)
@@ -53,13 +52,11 @@ class RuntimeConfig:
         self.max_internal_tool_rounds: int = int(os.getenv("MAX_INTERNAL_TOOL_ROUNDS", "3"))
 
         self.gateway_db_path: str = os.getenv("GATEWAY_DB_PATH", "./data/shenyu_gateway.db")
-        self.daily_briefing_ttl_minutes: int = int(os.getenv("DAILY_BRIEFING_TTL_MINUTES", "60"))
         self.calendar_context_day_limit: int = int(os.getenv("CALENDAR_CONTEXT_DAY_LIMIT", "3"))
         self.calendar_context_week_limit: int = int(os.getenv("CALENDAR_CONTEXT_WEEK_LIMIT", "1"))
         self.calendar_context_month_limit: int = int(os.getenv("CALENDAR_CONTEXT_MONTH_LIMIT", "1"))
         self.max_client_messages: Optional[int] = _env_optional_int("MAX_CLIENT_MESSAGES")
-        self.cold_start_turns: int = int(os.getenv("COLD_START_TURNS", "3"))
-        self.cold_start_message_limit: int = int(os.getenv("COLD_START_MESSAGE_LIMIT", "8"))
+        self.cold_start_message_limit: Optional[int] = _env_optional_int("COLD_START_MESSAGE_LIMIT")
         self.cold_start_idle_minutes: int = int(os.getenv("COLD_START_IDLE_MINUTES", "120"))
         self.default_surface_limit: int = int(os.getenv("DEFAULT_SURFACE_LIMIT", "3"))
         self.default_atomic_memory_limit: int = int(os.getenv("DEFAULT_ATOMIC_MEMORY_LIMIT", "3"))
@@ -87,7 +84,6 @@ class RuntimeConfig:
             "enable_inline_memory_capture": self.enable_inline_memory_capture,
             "model_mapping": self.model_mapping,
             "inject_meta_summaries": self.inject_meta_summaries,
-            "inject_briefing": self.inject_briefing,
             "calendar_inject_day": self.calendar_inject_day,
             "calendar_inject_week": self.calendar_inject_week,
             "calendar_inject_month": self.calendar_inject_month,
@@ -98,12 +94,10 @@ class RuntimeConfig:
             "expose_supabase_tools": self.expose_supabase_tools,
             "max_internal_tool_rounds": self.max_internal_tool_rounds,
             "gateway_db_path": self.gateway_db_path,
-            "daily_briefing_ttl_minutes": self.daily_briefing_ttl_minutes,
             "calendar_context_day_limit": self.calendar_context_day_limit,
             "calendar_context_week_limit": self.calendar_context_week_limit,
             "calendar_context_month_limit": self.calendar_context_month_limit,
             "max_client_messages": self.max_client_messages,
-            "cold_start_turns": self.cold_start_turns,
             "cold_start_message_limit": self.cold_start_message_limit,
             "cold_start_idle_minutes": self.cold_start_idle_minutes,
             "default_surface_limit": self.default_surface_limit,

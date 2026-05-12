@@ -51,8 +51,7 @@ const config = ref<GatewayConfig>({
   supabase_key: '',
   max_client_messages: null,
   enable_cold_start: true,
-  cold_start_turns: 3,
-  cold_start_message_limit: 8,
+  cold_start_message_limit: null,
   cold_start_idle_minutes: 120,
   model_mapping: {},
 })
@@ -151,11 +150,9 @@ async function doSave() {
       supabase_key: config.value.supabase_key,
       max_client_messages: config.value.max_client_messages || null,
       enable_cold_start: config.value.enable_cold_start,
-      cold_start_turns: config.value.cold_start_turns,
-      cold_start_message_limit: config.value.cold_start_message_limit,
+      cold_start_message_limit: config.value.cold_start_message_limit || null,
       cold_start_idle_minutes: config.value.cold_start_idle_minutes,
       model_mapping: Object.fromEntries(modelEntries.value.filter(([key, value]) => key && value)),
-      inject_briefing: config.value.inject_briefing,
       inject_meta_summaries: config.value.inject_meta_summaries,
 
       enable_gateway_tools: config.value.enable_gateway_tools,
@@ -163,7 +160,6 @@ async function doSave() {
       expose_supabase_tools: config.value.expose_supabase_tools,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
       default_surface_limit: config.value.default_surface_limit,
-      daily_briefing_ttl_minutes: config.value.daily_briefing_ttl_minutes,
     }
     const result = await saveConfig(body)
     config.value = result.config
@@ -354,9 +350,6 @@ function removeModel(index: number) {
 
       <NCard title="功能开关" size="small">
         <NForm label-placement="top">
-          <NFormItem label="注入简报">
-            <NSwitch v-model:value="config.inject_briefing" />
-          </NFormItem>
           <NFormItem label="注入元摘要">
             <NSwitch v-model:value="config.inject_meta_summaries" />
           </NFormItem>
@@ -383,28 +376,20 @@ function removeModel(index: number) {
               <NInputNumber v-model:value="config.default_surface_limit" :min="1" :max="8" style="width:100%" />
             </NFormItem>
           </div>
-          <div class="cfg-inline">
-            <NFormItem label="简报缓存（分钟）">
-              <NInputNumber v-model:value="config.daily_briefing_ttl_minutes" :min="5" :max="1440" style="width:100%" />
-            </NFormItem>
-            <NFormItem label="客户端上下文保留">
-              <NInputNumber v-model:value="config.max_client_messages" :min="1" :max="500" style="width:100%" clearable placeholder="全部" />
-            </NFormItem>
-          </div>
+          <NFormItem label="客户端上下文保留">
+            <NInputNumber v-model:value="config.max_client_messages" :min="1" :max="500" style="width:100%" clearable placeholder="全部" />
+          </NFormItem>
           <NFormItem label="启用冷启动注入">
             <NSwitch v-model:value="config.enable_cold_start" />
           </NFormItem>
           <div class="cfg-inline">
-            <NFormItem label="冷启动请求数">
-              <NInputNumber v-model:value="config.cold_start_turns" :min="1" :max="20" style="width:100%" />
+            <NFormItem label="换窗补足上限">
+              <NInputNumber v-model:value="config.cold_start_message_limit" :min="1" :max="500" style="width:100%" clearable placeholder="跟随客户端上下文保留" />
             </NFormItem>
-            <NFormItem label="冷启动消息数">
-              <NInputNumber v-model:value="config.cold_start_message_limit" :min="1" :max="50" style="width:100%" />
+            <NFormItem label="旧窗口沉寂多久触发（分钟）">
+              <NInputNumber v-model:value="config.cold_start_idle_minutes" :min="1" :max="10080" style="width:100%" />
             </NFormItem>
           </div>
-          <NFormItem label="旧窗口沉寂多久触发（分钟）">
-            <NInputNumber v-model:value="config.cold_start_idle_minutes" :min="1" :max="10080" style="width:100%" />
-          </NFormItem>
         </NForm>
         <div class="rev-toolbar">
           <NButton size="tiny" @click="loadColdPreview">预览下一次冷启动</NButton>

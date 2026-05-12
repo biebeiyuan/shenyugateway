@@ -756,6 +756,58 @@ class GatewayStore:
                 break
         return sources
 
+    def latest_cross_session_context(
+        self,
+        exclude_session_id: Optional[str],
+        since: Optional[str],
+        limit_messages: int,
+    ) -> list[dict]:
+        limit_messages = max(1, min(int(limit_messages or 1), 500))
+        where = []
+        params: list[Any] = []
+        if exclude_session_id:
+            where.append("r.session_id != ?")
+            params.append(exclude_session_id)
+        if since:
+            where.append("r.created_at > ?")
+            params.append(since)
+        where_sql = "WHERE " + " AND ".join(where) if where else ""
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT r.*, s.session_tag AS resolved_session_tag, s.client_name AS resolved_client_name
+                FROM request_context_snapshots r
+                JOIN gateway_sessions s ON s.id = r.session_id
+                {where_sql}
+                ORDER BY r.created_at DESC
+                LIMIT 1
+                """,
+                params,
+            ).fetchone()
+        if not row:
+            return []
+
+        item = dict(row)
+        raw_messages = json.loads(item.get("messages_json") or "[]")
+        messages = [
+            {"role": msg.get("role"), "content": msg.get("content")}
+            for msg in raw_messages
+            if msg.get("role") in {"user", "assistant"} and msg.get("content")
+        ]
+        selected = messages[-limit_messages:]
+        if not selected:
+            return []
+        return [
+            {
+                "session_id": item.get("session_id"),
+                "session_tag": item.get("resolved_session_tag") or item.get("session_tag"),
+                "client_name": item.get("resolved_client_name") or item.get("client_name"),
+                "snapshot_at": item.get("created_at"),
+                "latest_user_text": item.get("latest_user_text"),
+                "messages": selected,
+            }
+        ]
+
     def write_cold_start_snapshot(
         self,
         session_id: str,
@@ -831,6 +883,17 @@ class GatewayStore:
                 UPDATE cold_start_snapshots
                 SET injected_count = injected_count + 1
                 WHERE id = ? AND injected_count < max_injections
+                """,
+                (snapshot_id,),
+            )
+
+    def complete_cold_start_snapshot(self, snapshot_id: str):
+        with self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE cold_start_snapshots
+                SET injected_count = max_injections
+                WHERE id = ?
                 """,
                 (snapshot_id,),
             )
@@ -1157,58 +1220,90 @@ class GatewayStore:
             "injected_at": None,
         }
 
-    def get_pending_heartbeats(self, session_id: str, limit: int = 10) -> list[dict]:
+    def get_pending_heartbeats(self, session_id: Optional[str] = None, limit: int = 10) -> list[dict]:
+        where = "injected_at IS NULL"
+        params: list[Any] = []
+        if session_id:
+            where = "session_id = ? AND " + where
+            params.append(session_id)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT * FROM heartbeat_entries
-                WHERE session_id = ? AND injected_at IS NULL
+                WHERE {where}
                 ORDER BY created_at ASC
                 LIMIT ?
                 """,
-                (session_id, limit),
+                (*params, limit),
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def mark_heartbeats_injected(self, session_id: str, heartbeat_ids: Optional[list[str]] = None):
+    def mark_heartbeats_injected(self, session_id: Optional[str] = None, heartbeat_ids: Optional[list[str]] = None):
         heartbeat_ids = [item for item in (heartbeat_ids or []) if item]
         if not heartbeat_ids:
             return
         placeholders = ",".join("?" for _ in heartbeat_ids)
+        where = f"injected_at IS NULL AND id IN ({placeholders})"
+        params: list[Any] = [*heartbeat_ids]
+        if session_id:
+            where = "session_id = ? AND " + where
+            params.insert(0, session_id)
         with self._connect() as conn:
             conn.execute(
                 f"""
                 UPDATE heartbeat_entries
                 SET injected_at = ?
-                WHERE session_id = ? AND injected_at IS NULL AND id IN ({placeholders})
+                WHERE {where}
                 """,
-                (iso_now(), session_id, *heartbeat_ids),
+                (iso_now(), *params),
             )
 
-    def get_latest_heartbeat_digest(self, session_id: str, limit: int = 10) -> str:
+    def get_latest_heartbeat_digest(self, session_id: Optional[str] = None, limit: int = 10) -> str:
+        where = "injected_at IS NOT NULL"
+        params: list[Any] = []
+        if session_id:
+            where = "session_id = ? AND " + where
+            params.append(session_id)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT content FROM heartbeat_entries
-                WHERE session_id = ? AND injected_at IS NOT NULL
+                WHERE {where}
                 ORDER BY created_at DESC
                 LIMIT ?
                 """,
-                (session_id, limit),
+                (*params, limit),
             ).fetchall()
             if not rows:
                 return ""
             return "\n".join(row["content"] for row in reversed(rows))
 
-    def read_heartbeats(self, session_id: str, state: str = "all", limit: int = 10, order: str = "desc") -> list[dict]:
+    def read_heartbeats(
+        self,
+        session_id: Optional[str],
+        state: str = "all",
+        limit: int = 10,
+        order: str = "desc",
+        created_from: Optional[str] = None,
+        created_to: Optional[str] = None,
+    ) -> list[dict]:
         state = (state or "all").strip().lower()
         order_sql = "ASC" if (order or "").strip().lower() == "asc" else "DESC"
-        where = "session_id = ?"
-        params: list[Any] = [session_id]
+        where = "1=1"
+        params: list[Any] = []
+        if session_id:
+            where += " AND session_id = ?"
+            params.append(session_id)
         if state == "pending":
             where += " AND injected_at IS NULL"
         elif state == "injected":
             where += " AND injected_at IS NOT NULL"
+        if created_from:
+            where += " AND created_at >= ?"
+            params.append(created_from)
+        if created_to:
+            where += " AND created_at < ?"
+            params.append(created_to)
         limit = max(1, min(int(limit or 10), 100))
         with self._connect() as conn:
             rows = conn.execute(
@@ -1222,30 +1317,44 @@ class GatewayStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def delete_heartbeats(self, session_id: str, heartbeat_ids: Optional[list[str]] = None, delete_all: bool = False) -> int:
+    def delete_heartbeats(self, session_id: Optional[str] = None, heartbeat_ids: Optional[list[str]] = None, delete_all: bool = False) -> int:
         heartbeat_ids = [item for item in (heartbeat_ids or []) if item]
         with self._connect() as conn:
             if delete_all:
-                cursor = conn.execute("DELETE FROM heartbeat_entries WHERE session_id = ?", (session_id,))
+                if session_id:
+                    cursor = conn.execute("DELETE FROM heartbeat_entries WHERE session_id = ?", (session_id,))
+                else:
+                    cursor = conn.execute("DELETE FROM heartbeat_entries")
                 return int(cursor.rowcount or 0)
             if not heartbeat_ids:
                 return 0
             placeholders = ",".join("?" for _ in heartbeat_ids)
-            cursor = conn.execute(
-                f"DELETE FROM heartbeat_entries WHERE session_id = ? AND id IN ({placeholders})",
-                (session_id, *heartbeat_ids),
-            )
+            if session_id:
+                cursor = conn.execute(
+                    f"DELETE FROM heartbeat_entries WHERE session_id = ? AND id IN ({placeholders})",
+                    (session_id, *heartbeat_ids),
+                )
+            else:
+                cursor = conn.execute(
+                    f"DELETE FROM heartbeat_entries WHERE id IN ({placeholders})",
+                    tuple(heartbeat_ids),
+                )
             return int(cursor.rowcount or 0)
 
-    def get_all_heartbeats(self, session_id: str) -> list[dict]:
+    def get_all_heartbeats(self, session_id: Optional[str] = None) -> list[dict]:
+        where = ""
+        params: tuple[Any, ...] = ()
+        if session_id:
+            where = "WHERE session_id = ?"
+            params = (session_id,)
         with self._connect() as conn:
             rows = conn.execute(
-                """
+                f"""
                 SELECT * FROM heartbeat_entries
-                WHERE session_id = ?
+                {where}
                 ORDER BY created_at ASC
                 """,
-                (session_id,),
+                params,
             ).fetchall()
             return [dict(row) for row in rows]
 

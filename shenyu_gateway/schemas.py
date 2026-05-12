@@ -39,7 +39,6 @@ class ConfigUpdate(BaseModel):
     supabase_url: Optional[str] = None
     supabase_key: Optional[str] = None
     inject_meta_summaries: Optional[bool] = None
-    inject_briefing: Optional[bool] = None
     calendar_inject_day: Optional[bool] = None
     calendar_inject_week: Optional[bool] = None
     calendar_inject_month: Optional[bool] = None
@@ -50,12 +49,10 @@ class ConfigUpdate(BaseModel):
     expose_supabase_tools: Optional[bool] = None
     max_internal_tool_rounds: Optional[int] = None
     gateway_db_path: Optional[str] = None
-    daily_briefing_ttl_minutes: Optional[int] = None
     calendar_context_day_limit: Optional[int] = None
     calendar_context_week_limit: Optional[int] = None
     calendar_context_month_limit: Optional[int] = None
     max_client_messages: Optional[int] = None
-    cold_start_turns: Optional[int] = None
     cold_start_message_limit: Optional[int] = None
     cold_start_idle_minutes: Optional[int] = None
     default_surface_limit: Optional[int] = None
