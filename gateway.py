@@ -4701,10 +4701,6 @@ async def chat_completions(request: Request, body: ChatRequest):
     sessions.log_input_messages(session_id, prepared_messages)
 
     merged_tools = _merge_tools(body.tools)
-    body_has_internal_tools = any(
-        _is_gateway_native_tool(tool.get("function", {}).get("name", ""))
-        for tool in merged_tools
-    )
 
     # 鏋勫缓鏃ュ織鏉＄洰
     log_id = uuid.uuid4().hex[:8]
@@ -4740,7 +4736,7 @@ async def chat_completions(request: Request, body: ChatRequest):
         "system_additions_full": system_additions,
         "tools_count": len(merged_tools),
         "tool_names": [t.get("function", {}).get("name", "") for t in merged_tools[:20]],
-        "has_internal_tools": body_has_internal_tools,
+        "has_internal_tools": False,
         "upstream_url": _get_chat_url(),
         "prepared_messages": prepared_messages,
         "upstream_payload": None,
@@ -4763,16 +4759,6 @@ async def chat_completions(request: Request, body: ChatRequest):
     }
 
     try:
-        if body_has_internal_tools:
-            completion = await _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
-            log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
-            log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
-            log_entry["status"] = "ok"
-            log_entry["response_preview"] = str(completion.get("choices", [{}])[0].get("message", {}).get("content", ""))
-            if body.stream:
-                return StreamingResponse(_completion_to_stream_events(completion), media_type="text/event-stream")
-            return completion
-
         payload, headers, _, cache_meta = await _build_upstream_request(
             request,
             body,
