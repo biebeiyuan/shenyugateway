@@ -65,7 +65,11 @@ class RuntimeConfig:
         self.gateway_message_retention: int = int(os.getenv("GATEWAY_MESSAGE_RETENTION", "1500"))
         self.gateway_context_snapshot_retention: int = int(os.getenv("GATEWAY_CONTEXT_SNAPSHOT_RETENTION", "3"))
         self.gateway_cold_start_retention: int = int(os.getenv("GATEWAY_COLD_START_RETENTION", "20"))
-        self.gateway_surface_event_retention: int = int(os.getenv("GATEWAY_SURFACE_EVENT_RETENTION", "500"))
+
+        self.hisense_client_name: str = os.getenv("HISENSE_CLIENT_NAME", "hisense")
+        self.hisense_heartbeat_limit: int = int(os.getenv("HISENSE_HEARTBEAT_LIMIT", "10"))
+        self.hisense_notebook_limit: int = int(os.getenv("HISENSE_NOTEBOOK_LIMIT", "5"))
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "supabase_url": mask(self.supabase_url, 30),
@@ -107,7 +111,9 @@ class RuntimeConfig:
             "gateway_message_retention": self.gateway_message_retention,
             "gateway_context_snapshot_retention": self.gateway_context_snapshot_retention,
             "gateway_cold_start_retention": self.gateway_cold_start_retention,
-            "gateway_surface_event_retention": self.gateway_surface_event_retention,
+            "hisense_client_name": self.hisense_client_name,
+            "hisense_heartbeat_limit": self.hisense_heartbeat_limit,
+            "hisense_notebook_limit": self.hisense_notebook_limit,
         }
 
     def _load_model_mapping(self) -> dict[str, str]:

@@ -39,7 +39,6 @@ export interface GatewaySessionStats {
   user_messages: number
   assistant_messages: number
   tool_messages: number
-  surface_events: number
   heartbeats: number
   cold_start_snapshots: number
   context_snapshots?: number

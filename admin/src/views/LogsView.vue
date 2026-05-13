@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
-import { NButton, NEmpty, NSpace, NTag, useMessage } from 'naive-ui'
+import { NButton, NEmpty, NTag, useMessage } from 'naive-ui'
 import { fetchLogs, fetchLogDetail, type LogEntry, type LogDetail } from '@/api/logs'
 
 const message = useMessage()
@@ -16,32 +16,20 @@ let timer: ReturnType<typeof setInterval> | null = null
 
 const TAB_NAMES = ['system', 'messages', 'upstream', 'tools', 'response', 'meta', 'raw'] as const
 const TAB_LABELS: Record<string, string> = {
-  system: 'System', messages: '消息', tools: '工具', response: '响应', meta: '元信息', raw: '原始JSON',
+  system: 'System', messages: 'Messages', upstream: 'Upstream',
+  tools: 'Tools', response: 'Response', meta: 'Meta', raw: 'Raw JSON',
 }
-TAB_LABELS.messages = 'Messages'
-TAB_LABELS.upstream = 'Upstream'
-TAB_LABELS.tools = 'Tools'
-TAB_LABELS.response = 'Response'
-TAB_LABELS.meta = 'Meta'
-TAB_LABELS.raw = 'Raw JSON'
 
 onMounted(async () => {
   await loadLogs()
   if (autoRefresh.value) {
-    timer = setInterval(() => { loadLogs(); loadHealth() }, 3000)
+    timer = setInterval(() => { loadLogs() }, 3000)
   }
 })
 
 onUnmounted(() => {
   if (timer) { clearInterval(timer); timer = null }
 })
-
-async function loadHealth() {
-  try {
-    const r = await fetch('/health')
-    if (!r.ok) return
-  } catch { /* ignore */ }
-}
 
 async function loadLogs() {
   loading.value = true
@@ -57,7 +45,7 @@ async function loadLogs() {
 
 function toggleAuto() {
   if (autoRefresh.value) {
-    timer = setInterval(() => { loadLogs(); loadHealth() }, 3000)
+    timer = setInterval(() => { loadLogs() }, 3000)
   } else {
     if (timer) { clearInterval(timer); timer = null }
   }

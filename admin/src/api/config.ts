@@ -42,7 +42,6 @@ export interface GatewayConfig {
   gateway_message_retention?: number
   gateway_context_snapshot_retention?: number
   gateway_cold_start_retention?: number
-  gateway_surface_event_retention?: number
   // stats
   gateway_db_path?: string
 }
@@ -76,7 +75,6 @@ export interface GatewayOverview {
   sessions_total: number
   cold_start_snapshots: number
   context_snapshots?: number
-  surface_events?: number
   heartbeats?: number
   cache_entries?: number
   earliest_message_at: string | null

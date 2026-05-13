@@ -67,7 +67,6 @@ SQLite stores only gateway runtime state:
 - `request_context_snapshots`: recent client context windows. Calendar generation and cold-start both depend on this.
 - `raw_request_windows`: recent untrimmed client request windows for backup/export/debugging.
 - `cold_start_snapshots`: bounded bridge packages created from recent context snapshots.
-- `surface_events`: audit/debug records for surfaced passages.
 - `cache_entries`: short-lived gateway cache.
 - `heartbeat_entries`: global private heartbeat notes captured from `<heartbeat>...</heartbeat>` or written manually in admin. `session_id` is retained as the source session, but runtime injection reads the shared global pool.
 
@@ -82,7 +81,6 @@ Default online retention:
 - `GATEWAY_MESSAGE_RETENTION=1500`: keep the newest local message rows per session. These rows are for admin inspection and export, not for cold-start injection.
 - `GATEWAY_CONTEXT_SNAPSHOT_RETENTION=3`: keep the newest context snapshots per session. Do not set this to `0`; cold-start and calendar source collection need recent snapshots.
 - `GATEWAY_COLD_START_RETENTION=20`: keep recent cold-start snapshots per session. Cleanup only removes old snapshots whose `injected_count >= max_injections`, so active cold-start bridges are preserved.
-- `GATEWAY_SURFACE_EVENT_RETENTION=500`: keep recent surface audit rows per session.
 - `heartbeat_entries` are not removed by automatic cleanup. They can be manually written/deleted from the admin session page, and those actions affect the shared global heartbeat pool.
 - expired `cache_entries` are removed during cleanup.
 
@@ -326,11 +324,15 @@ http://localhost:8010/admin
 - `admin/src/api/config.ts`: gateway and upstream configuration.
 - `admin/src/api/mem0.ts`: Mem0 config and atomic-memory review APIs.
 - `admin/src/api/sessions.ts`: local SQLite session browser.
+- `admin/src/api/logs.ts`: request log list and detail APIs.
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
+- `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
 - `admin/src/views/ConfigView.vue`: configuration page.
 - `admin/src/views/Mem0View.vue`: Mem0 capture/injection controls and atomic-memory review page.
 - `admin/src/views/SessionsView.vue`: session inspection page.
+- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
+- `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.
 
 The old single-file `/debug` console has been retired. User-facing admin features should go into `admin/src/views/*` and `admin/src/api/*`.

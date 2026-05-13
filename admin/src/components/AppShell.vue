@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, onUnmounted, ref } from 'vue'
 
-const health = ref({ supabase: false, protocol: '', upstream: '', models: [] as string[] })
+const health = ref({ supabase: false, protocol: '', upstream: '' })
 const live = ref(true)
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -29,7 +29,7 @@ async function checkHealth() {
 <template>
   <div class="app-shell">
     <header class="header">
-      <h1>沈予网关</h1>
+      <h1>UwU</h1>
       <span class="live-indicator">
         <span class="dot" :class="live ? 'live' : 'off'"></span>
         {{ live ? '在线' : '离线' }}
@@ -44,11 +44,12 @@ async function checkHealth() {
     </header>
 
     <nav class="tabs">
-      <RouterLink to="/" class="tab" active-class="active">配置管理</RouterLink>
-      <RouterLink to="/sessions" class="tab" active-class="active">线程管理</RouterLink>
-      <RouterLink to="/logs" class="tab" active-class="active">请求日志</RouterLink>
-      <RouterLink to="/calendar" class="tab" active-class="active">日历记忆</RouterLink>
-      <RouterLink to="/mem0" class="tab" active-class="active">Mem0</RouterLink>
+      <RouterLink to="/" class="tab" active-class="active">配置</RouterLink>
+      <RouterLink to="/sessions" class="tab" active-class="active">线程</RouterLink>
+      <RouterLink to="/logs" class="tab" active-class="active">日志</RouterLink>
+      <RouterLink to="/calendar" class="tab" active-class="active">日历</RouterLink>
+      <RouterLink to="/mem0" class="tab" active-class="active">记忆</RouterLink>
+      <RouterLink to="/hisense" class="tab" active-class="active">海信</RouterLink>
     </nav>
 
     <main class="main">
@@ -66,53 +67,53 @@ async function checkHealth() {
 
 body {
   font-family: -apple-system, 'Segoe UI', sans-serif;
-  background: #f5f5f5;
-  color: #1f1f1f;
+  background: #faf8f5;
+  color: #3d3535;
 }
 
-/* naive-ui global overrides: light clean */
 :root {
   --n-color: #fff !important;
   --n-color-modal: #fff !important;
-  --n-action-color: #fafafa !important;
+  --n-action-color: #faf9f7 !important;
 }
 
 .n-card {
   --n-color: #fff !important;
-  --n-border-color: #e8e8e8 !important;
-  --n-title-text-color: #1f1f1f !important;
-  --n-action-color: #fafafa !important;
-  --n-embedded-color: #fafafa !important;
+  --n-border-color: #f0ece8 !important;
+  --n-title-text-color: #3d3535 !important;
+  --n-action-color: #faf9f7 !important;
+  --n-embedded-color: #faf9f7 !important;
+  border-radius: 14px !important;
 }
 
 .n-card-header {
-  border-bottom: 1px solid #e8e8e8 !important;
+  border-bottom: 1px solid #f0ece8 !important;
 }
 
 .n-form-item-label {
-  --n-label-text-color: #666 !important;
+  --n-label-text-color: #888 !important;
 }
 
 .n-input {
   --n-color: #fff !important;
-  --n-border: 1px solid #e0e0e0 !important;
-  --n-text-color: #1f1f1f !important;
-  --n-caret-color: #4f46e5 !important;
+  --n-border: 1px solid #e8e4df !important;
+  --n-text-color: #3d3535 !important;
+  --n-caret-color: #9b8ec4 !important;
   --n-color-focus: #fff !important;
-  --n-border-focus: 1px solid #4f46e5 !important;
-  --n-color-disabled: #f5f5f5 !important;
+  --n-border-focus: 1px solid #9b8ec4 !important;
+  --n-color-disabled: #faf8f5 !important;
 }
 
 .n-input-number {
   --n-color: #fff !important;
-  --n-border: 1px solid #e0e0e0 !important;
-  --n-text-color: #1f1f1f !important;
+  --n-border: 1px solid #e8e4df !important;
+  --n-text-color: #3d3535 !important;
 }
 
 .n-select {
   --n-color: #fff !important;
-  --n-border: 1px solid #e0e0e0 !important;
-  --n-text-color: #1f1f1f !important;
+  --n-border: 1px solid #e8e4df !important;
+  --n-text-color: #3d3535 !important;
 }
 
 .n-select .n-base-selection {
@@ -120,127 +121,129 @@ body {
 }
 
 .n-switch {
-  --n-color: #d0d0d0 !important;
-  --n-color-active: #4f46e5 !important;
+  --n-color: #e0dbd6 !important;
+  --n-color-active: #9b8ec4 !important;
 }
 
 .n-popconfirm {
   --n-color: #fff !important;
-  --n-border-color: #e0e0e0 !important;
+  --n-border-color: #e8e4df !important;
 }
 
 .n-tag {
-  --n-color: #f0f0f0 !important;
-  --n-text-color: #666 !important;
+  --n-color: #f5f2ef !important;
+  --n-text-color: #888 !important;
   --n-border: none !important;
 }
 
 .n-data-table {
   --n-color: #fff !important;
-  --n-border-color: #e8e8e8 !important;
-  --n-th-color: #fafafa !important;
+  --n-border-color: #f0ece8 !important;
+  --n-th-color: #faf9f7 !important;
   --n-td-color: #fff !important;
-  --n-th-text-color: #666 !important;
-  --n-td-text-color: #1f1f1f !important;
-  --n-action-color: #fafafa !important;
+  --n-th-text-color: #888 !important;
+  --n-td-text-color: #3d3535 !important;
+  --n-action-color: #faf9f7 !important;
 }
 
 .n-data-table .n-data-table-tr--striped {
-  --n-td-color: #fafafa !important;
+  --n-td-color: #faf9f7 !important;
 }
 
 .n-data-table .n-data-table-th {
-  border-bottom: 1px solid #e8e8e8 !important;
+  border-bottom: 1px solid #f0ece8 !important;
 }
 
 .n-descriptions {
   --n-color: #fff !important;
-  --n-border-color: #e8e8e8 !important;
-  --n-th-color: #fafafa !important;
+  --n-border-color: #f0ece8 !important;
+  --n-th-color: #faf9f7 !important;
   --n-td-color: #fff !important;
-  --n-th-text-color: #666 !important;
-  --n-td-text-color: #1f1f1f !important;
+  --n-th-text-color: #888 !important;
+  --n-td-text-color: #3d3535 !important;
 }
 
 .n-button--default-type {
   --n-color: #fff !important;
-  --n-border: 1px solid #e0e0e0 !important;
-  --n-text-color: #1f1f1f !important;
-  --n-color-hover: #f5f5f5 !important;
-  --n-border-hover: 1px solid #4f46e5 !important;
+  --n-border: 1px solid #e8e4df !important;
+  --n-text-color: #3d3535 !important;
+  --n-color-hover: #faf8f5 !important;
+  --n-border-hover: 1px solid #9b8ec4 !important;
 }
 
 .n-button--primary-type {
-  --n-color: #4f46e5 !important;
+  --n-color: #9b8ec4 !important;
   --n-text-color: #fff !important;
-  --n-color-hover: #4338ca !important;
+  --n-color-hover: #8b7eb8 !important;
 }
 
 .n-button--error-type {
   --n-color: #fff !important;
-  --n-border: 1px solid #e53e3e !important;
-  --n-text-color: #e53e3e !important;
+  --n-border: 1px solid #d4726a !important;
+  --n-text-color: #d4726a !important;
 }
 
 .n-button--warning-type {
   --n-color: #fff !important;
-  --n-border: 1px solid #d97706 !important;
-  --n-text-color: #d97706 !important;
+  --n-border: 1px solid #c8956a !important;
+  --n-text-color: #c8956a !important;
 }
 
 .n-button--quaternary {
   --n-color: transparent !important;
-  --n-text-color: #666 !important;
+  --n-text-color: #999 !important;
 }
 
 .n-layout-footer {
-  --n-color: #fafafa !important;
-  --n-border-color: #e8e8e8 !important;
-  --n-text-color: #999 !important;
+  --n-color: #faf9f7 !important;
+  --n-border-color: #f0ece8 !important;
+  --n-text-color: #bbb !important;
 }
 
 .n-popover {
   --n-color: #fff !important;
-  --n-border-color: #e0e0e0 !important;
+  --n-border-color: #e8e4df !important;
 }
 
 ::-webkit-scrollbar {
-  width: 8px;
-  height: 8px;
+  width: 6px;
+  height: 6px;
 }
 
 ::-webkit-scrollbar-track {
-  background: #f5f5f5;
+  background: transparent;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #d0d0d0;
-  border-radius: 4px;
+  background: #e0dbd6;
+  border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #b0b0b0;
+  background: #c8c2bb;
 }
 </style>
 
 <style scoped>
 .header {
-  padding: 12px 24px;
+  padding: 14px 24px;
   background: #fff;
-  border-bottom: 1px solid #e8e8e8;
+  border-bottom: 1px solid #f0ece8;
   display: flex;
   align-items: center;
   gap: 16px;
 }
 
 .header h1 {
-  font-size: 17px;
-  color: #4f46e5;
+  font-size: 18px;
+  color: #9b8ec4;
+  font-weight: 700;
+  letter-spacing: -0.5px;
 }
 
 .live-indicator {
   font-size: 12px;
-  color: #999;
+  color: #b0a8a0;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -248,23 +251,23 @@ body {
 
 .dot {
   display: inline-block;
-  width: 8px;
-  height: 8px;
+  width: 7px;
+  height: 7px;
   border-radius: 50%;
 }
 
 .dot.live {
-  background: #22c55e;
-  animation: pulse 2s infinite;
+  background: #8bc49b;
+  animation: pulse 2.5s infinite;
 }
 
 .dot.off {
-  background: #e53e3e;
+  background: #d4726a;
 }
 
 @keyframes pulse {
   0%, 100% { opacity: 1; }
-  50% { opacity: 0.4; }
+  50% { opacity: 0.35; }
 }
 
 .health-tags {
@@ -277,49 +280,51 @@ body {
 .ht {
   padding: 2px 8px;
   border-radius: 10px;
-  font-size: 11px;
-  background: #f0f0f0;
-  color: #666;
+  font-size: 10px;
+  background: #f5f2ef;
+  color: #b0a8a0;
+  letter-spacing: 0.3px;
 }
 
 .ht.ok {
-  background: #dcfce7;
-  color: #16a34a;
+  background: #eef6f0;
+  color: #5a9a6a;
 }
 
 .ht.err {
-  background: #fef2f2;
-  color: #e53e3e;
+  background: #fdf2f0;
+  color: #d4726a;
 }
 
 .tabs {
   display: flex;
   background: #fff;
-  border-bottom: 1px solid #e8e8e8;
+  border-bottom: 1px solid #f0ece8;
   padding: 0 24px;
   gap: 0;
 }
 
 .tab {
-  padding: 10px 20px;
-  font-size: 13px;
-  color: #999;
+  padding: 11px 18px;
+  font-size: 12.5px;
+  color: #b0a8a0;
   cursor: pointer;
   text-decoration: none;
   border-bottom: 2px solid transparent;
   transition: 0.2s;
+  letter-spacing: 0.3px;
 }
 
 .tab:hover {
-  color: #1f1f1f;
+  color: #3d3535;
 }
 
 .tab.active {
-  color: #4f46e5;
-  border-bottom-color: #4f46e5;
+  color: #9b8ec4;
+  border-bottom-color: #9b8ec4;
 }
 
 .main {
-  padding: 16px 24px;
+  padding: 20px 24px;
 }
 </style>

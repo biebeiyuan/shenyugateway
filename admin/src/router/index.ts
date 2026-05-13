@@ -28,6 +28,11 @@ const router = createRouter({
       name: 'logs',
       component: () => import('@/views/LogsView.vue'),
     },
+    {
+      path: '/hisense',
+      name: 'hisense',
+      component: () => import('@/views/HisenseView.vue'),
+    },
   ],
 })
 

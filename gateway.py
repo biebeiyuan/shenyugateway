@@ -7,7 +7,6 @@ OpenAI-compatible gateway with:
 - upstream protocol adaptation for Anthropic / OpenAI
 """
 
-import hashlib
 import asyncio
 import json
 import logging
@@ -501,59 +500,6 @@ insert / update / delete 会尽量返回写入或影响到的行。
 """
 
 
-class _HeartbeatFilter:
-    """Filter <heartbeat>...</heartbeat> blocks from assistant replies."""
-    TAG_OPEN = "<heartbeat>"
-    TAG_CLOSE = "</heartbeat>"
-
-    def __init__(self):
-        self._buffer = ""
-        self._in_heartbeat = False
-        self._heartbeat_parts: list[str] = []
-
-    def feed(self, text: str) -> str:
-        """Return text safe to send to the client."""
-        self._buffer += text
-        output = ""
-
-        while self._buffer:
-            if self._in_heartbeat:
-                close_idx = self._buffer.find(self.TAG_CLOSE)
-                if close_idx >= 0:
-                    self._heartbeat_parts.append(self._buffer[:close_idx])
-                    self._buffer = self._buffer[close_idx + len(self.TAG_CLOSE):]
-                    self._in_heartbeat = False
-                else:
-                    # 还没找到闭合标签，整段都是 heartbeat 内容。
-                    self._heartbeat_parts.append(self._buffer)
-                    self._buffer = ""
-            else:
-                open_idx = self._buffer.find(self.TAG_OPEN)
-                if open_idx >= 0:
-                    output += self._buffer[:open_idx]
-                    self._buffer = self._buffer[open_idx + len(self.TAG_OPEN):]
-                    self._in_heartbeat = True
-                elif len(self._buffer) >= len(self.TAG_OPEN):
-                    # Keep enough tail characters to detect a split opening tag.
-                    safe_len = len(self._buffer) - len(self.TAG_OPEN) + 1
-                    output += self._buffer[:safe_len]
-                    self._buffer = self._buffer[safe_len:]
-                else:
-                    break
-
-        return output
-
-    def flush(self) -> str:
-        """Return any remaining visible buffer at stream end."""
-        remaining = self._buffer
-        self._buffer = ""
-        return remaining
-
-    def get_heartbeat(self) -> str:
-        """Return captured heartbeat text."""
-        return "".join(self._heartbeat_parts).strip()
-
-
 class _AssistantTagFilter:
     """Filter private assistant tags from streamed/non-streamed replies."""
 
@@ -953,14 +899,12 @@ class GatewayToolService:
             if memory_id:
                 await self._boost_memory(memory_id)
 
-        echoes = self._build_memory_echoes(cards)
         linked_threads = self._build_linked_threads(cards)
 
         return {
             "query": query,
             "count": len(cards),
             "direct_hits": cards,
-            "echoes": echoes,
             "linked_threads": linked_threads,
         }
 
@@ -1331,6 +1275,90 @@ class GatewayToolService:
             return await supabase_client.rpc("get_meta_summaries")
         except Exception as exc:
             return {"error": str(exc)}
+
+    async def recall_main_thread(self, since: Optional[str], until: Optional[str], query: Optional[str], limit: int) -> dict:
+        if not session_store:
+            return {"ok": False, "error": "Store not available"}
+        limit = max(1, min(int(limit or 10), 30))
+        all_sessions = session_store.list_sessions(limit=50)
+        non_hisense = [s for s in all_sessions if (s.get("client_name") or "") != cfg.hisense_client_name]
+        if not non_hisense:
+            return {"ok": True, "count": 0, "data": []}
+        target = non_hisense[0]
+        msgs = session_store.get_recent_dialogue_messages(target["id"], limit=limit * 3)
+        if since:
+            msgs = [m for m in msgs if (m.get("created_at") or "") >= since]
+        if until:
+            msgs = [m for m in msgs if (m.get("created_at") or "") <= until]
+        if query and query.strip():
+            keyword = query.strip().lower()
+            msgs = [m for m in msgs if keyword in (m.get("content") or "").lower()]
+        msgs = msgs[-limit:]
+        data = [{"role": m["role"], "content": (m.get("content") or "")[:500], "at": m.get("created_at")} for m in msgs]
+        return {"ok": True, "session_tag": target.get("session_tag"), "count": len(data), "data": data}
+
+    async def notebook_list(self, type_filter: Optional[str], status: str, limit: int) -> dict:
+        if not supabase_client:
+            return {"ok": False, "error": "Supabase not configured"}
+        limit = max(1, min(int(limit or 10), 20))
+        params: dict[str, str] = {
+            "order": "pinned.desc,updated_at.desc",
+            "limit": str(limit),
+            "status": f"eq.{status or 'active'}",
+            "select": "id,type,content,tags,status,pinned,metadata,created_at,updated_at",
+        }
+        if type_filter:
+            params["type"] = f"eq.{type_filter}"
+        try:
+            rows = await supabase_client.query("shenyu_notebook", params)
+            return {"ok": True, "count": len(rows or []), "data": rows or []}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    async def notebook_write(self, type_: str, content: str, tags: Optional[list], metadata: Optional[dict], session_tag: Optional[str]) -> dict:
+        if not supabase_client:
+            return {"ok": False, "error": "Supabase not configured"}
+        if not content.strip():
+            return {"ok": False, "error": "content is required"}
+        data: dict[str, Any] = {"type": type_ or "note", "content": content, "status": "active"}
+        if tags:
+            data["tags"] = tags
+        if metadata:
+            data["metadata"] = metadata
+        if session_tag:
+            data["session_tag"] = session_tag
+        try:
+            result = await supabase_client.insert("shenyu_notebook", data)
+            return {"ok": True, "data": result}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
+
+    async def notebook_update(self, id_: str, content: Optional[str], status: Optional[str], tags: Optional[list], type_: Optional[str], pinned: Optional[bool], metadata: Optional[dict]) -> dict:
+        if not supabase_client:
+            return {"ok": False, "error": "Supabase not configured"}
+        if not id_:
+            return {"ok": False, "error": "id is required"}
+        update_data: dict[str, Any] = {}
+        if content is not None:
+            update_data["content"] = content
+        if status is not None:
+            update_data["status"] = status
+        if tags is not None:
+            update_data["tags"] = tags
+        if type_ is not None:
+            update_data["type"] = type_
+        if pinned is not None:
+            update_data["pinned"] = pinned
+        if metadata is not None:
+            update_data["metadata"] = metadata
+        if not update_data:
+            return {"ok": False, "error": "Nothing to update"}
+        update_data["updated_at"] = _iso_now()
+        try:
+            result = await supabase_client.update("shenyu_notebook", match={"id": id_}, data=update_data)
+            return {"ok": True, "data": result}
+        except Exception as exc:
+            return {"ok": False, "error": str(exc)}
 
     def _normalize_primary_categories(self, categories: Any, default: set[str]) -> set[str]:
         supported = {"diary", "letter", "paper", "lock", "annotation", "life_tick", "room", "message_board"}
@@ -1804,9 +1832,6 @@ class GatewayToolService:
         elif links:
             reasons.append("linked into a thread")
         return reasons or ["event memory supplement"]
-
-    def _build_memory_echoes(self, cards: list[dict]) -> list[dict]:
-        return []
 
     def _build_linked_threads(self, cards: list[dict]) -> list[dict]:
         threads = []
@@ -2707,22 +2732,25 @@ class ContextBuilder:
         current_user_text: str,
         is_first_turn: bool,
         cold_start_snapshot: Optional[dict] = None,
+        client_name: str = "",
     ) -> dict:
         session_id = session["id"]
         message_count = int(session.get("message_count") or 0)
+        is_hisense = (client_name == cfg.hisense_client_name)
 
-        # 检查是否到了注入 heartbeat 的节点。
-        heartbeat_digest = ""
-        heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
-        pending_hbs = self.store.get_pending_heartbeats(limit=heartbeat_batch_size)
-        if len(pending_hbs) >= heartbeat_batch_size:
-            # 攒够了，合并并标记为已注入。
-            heartbeat_digest = "\n".join(hb["content"] for hb in pending_hbs)
-            self.store.mark_heartbeats_injected(heartbeat_ids=[hb["id"] for hb in pending_hbs])
-            logger.info("[Heartbeat] 注入 %d 条全局心跳到 Layer 2 (session=%s)", len(pending_hbs), session_id[:8])
+        if is_hisense:
+            heartbeat_digest = self._hisense_heartbeat_digest()
         else:
-            # 不够，使用上一批已注入的 digest。
-            heartbeat_digest = self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size)
+            # 检查是否到了注入 heartbeat 的节点。
+            heartbeat_digest = ""
+            heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
+            pending_hbs = self.store.get_pending_heartbeats(limit=heartbeat_batch_size)
+            if len(pending_hbs) >= heartbeat_batch_size:
+                heartbeat_digest = "\n".join(hb["content"] for hb in pending_hbs)
+                self.store.mark_heartbeats_injected(heartbeat_ids=[hb["id"] for hb in pending_hbs])
+                logger.info("[Heartbeat] 注入 %d 条全局心跳到 Layer 2 (session=%s)", len(pending_hbs), session_id[:8])
+            else:
+                heartbeat_digest = self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size)
 
         package = {
             "stable_charter": _stable_charter_block(),
@@ -2730,23 +2758,72 @@ class ContextBuilder:
             "cold_start_snapshot": cold_start_snapshot,
             "calendar_context": {"day": [], "week": [], "month": []},
             "atomic_memories": [],
+            "notebook_items": [],
+            "last_wake_recap": "",
         }
 
         package["calendar_context"] = await self.calendar_context_pages()
 
-        if cfg.inject_meta_summaries:
-            meta_block = await self.meta_block()
-            if meta_block:
-                package["stable_charter"] = package["stable_charter"] + "\n\n" + meta_block
+        if is_hisense:
+            package["notebook_items"] = await self._hisense_notebook_items()
+            package["last_wake_recap"] = await self._hisense_last_wake_recap(session)
+        else:
+            if cfg.inject_meta_summaries:
+                meta_block = await self.meta_block()
+                if meta_block:
+                    package["stable_charter"] = package["stable_charter"] + "\n\n" + meta_block
 
-        if cfg.inject_atomic_memories and current_user_text.strip():
-            atomic = await self.tools.search_atomic_memories(
-                current_user_text,
-                session_tag=session["session_tag"],
-                limit=cfg.default_atomic_memory_limit,
-            )
-            package["atomic_memories"] = atomic.get("memories") or []
+            if cfg.inject_atomic_memories and current_user_text.strip():
+                atomic = await self.tools.search_atomic_memories(
+                    current_user_text,
+                    session_tag=session["session_tag"],
+                    limit=cfg.default_atomic_memory_limit,
+                )
+                package["atomic_memories"] = atomic.get("memories") or []
         return package
+
+    def _hisense_heartbeat_digest(self) -> str:
+        hbs = self.store.read_heartbeats(
+            session_id=None, state="all",
+            limit=cfg.hisense_heartbeat_limit, order="desc"
+        )
+        if not hbs:
+            return ""
+        return "\n".join(hb["content"] for hb in reversed(hbs))
+
+    async def _hisense_notebook_items(self) -> list[dict]:
+        if not supabase_client:
+            return []
+        try:
+            rows = await supabase_client.query("shenyu_notebook", {
+                "status": "eq.active",
+                "order": "pinned.desc,updated_at.desc",
+                "limit": str(cfg.hisense_notebook_limit),
+                "select": "id,type,content,tags,status,pinned,updated_at",
+            })
+            return rows or []
+        except Exception:
+            return []
+
+    async def _hisense_last_wake_recap(self, session: dict) -> str:
+        # 优先读 notebook 里 tag:handoff 的最新一条
+        if supabase_client:
+            try:
+                rows = await supabase_client.query("shenyu_notebook", {
+                    "tags": "cs.{handoff}",
+                    "order": "updated_at.desc",
+                    "limit": "1",
+                    "select": "content,updated_at",
+                })
+                if rows:
+                    return rows[0].get("content") or ""
+            except Exception:
+                pass
+        # fallback: 最后一条 heartbeat
+        hbs = self.store.read_heartbeats(session_id=None, state="all", limit=1, order="desc")
+        if hbs:
+            return hbs[0]["content"]
+        return ""
 
     async def meta_block(self) -> str:
         if not supabase_client:
@@ -2806,6 +2883,21 @@ class ContextBuilder:
         heartbeat_digest = package.get("heartbeat_digest", "")
         if heartbeat_digest:
             slow_blocks.append("## 你之前写下的心跳\n" + heartbeat_digest)
+
+        notebook_items = package.get("notebook_items") or []
+        if notebook_items:
+            nb_lines = ["## 手边的事"]
+            for item in notebook_items:
+                prefix = f"[{item.get('type', 'note')}]"
+                tags = item.get("tags") or []
+                if tags:
+                    prefix += f" ({', '.join(tags)})"
+                nb_lines.append(f"- {prefix} {item.get('content', '')}")
+            slow_blocks.append("\n".join(nb_lines))
+
+        last_wake_recap = package.get("last_wake_recap") or ""
+        if last_wake_recap:
+            slow_blocks.append(f"## 上次醒来\n{last_wake_recap}")
 
         slow = "\n\n".join(slow_blocks)
 
@@ -3089,6 +3181,79 @@ def _gateway_mem0_management_tools() -> list[dict]:
     ]
 
 
+def _gateway_notebook_and_recall_tools() -> list[dict]:
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_recall_main_thread",
+                "description": "查看圆儿那边最近的聊天记录。不会自动出现在上下文里，需要你主动查。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "since": {"type": "string", "description": "起始时间 ISO 格式，如 2026-05-10T00:00:00Z"},
+                        "until": {"type": "string", "description": "截止时间 ISO 格式（可选）"},
+                        "query": {"type": "string", "description": "关键词搜索，匹配聊天内容"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 10},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_notebook_list",
+                "description": "列出笔记本里的条目（想法、待办、笔记、观察、问题）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "description": "按类型筛选：thought/task/note/observation/question"},
+                        "status": {"type": "string", "default": "active", "description": "状态筛选：active/done/archived"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_notebook_write",
+                "description": "往笔记本里写一条新的。想法、待办、随手记都行。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "type": {"type": "string", "default": "note", "description": "类型：thought/task/note/observation/question"},
+                        "content": {"type": "string", "description": "正文内容"},
+                        "tags": {"type": "array", "items": {"type": "string"}, "description": "标签（可选）"},
+                        "metadata": {"type": "object", "description": "附加信息（可选）"},
+                    },
+                    "required": ["content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_notebook_update",
+                "description": "修改笔记本里已有的条目（改内容、改状态、加标签、置顶等）。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "id": {"type": "string", "description": "条目 ID"},
+                        "content": {"type": "string"},
+                        "status": {"type": "string", "description": "active/done/archived"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "type": {"type": "string"},
+                        "pinned": {"type": "boolean", "description": "置顶，启动时优先展示"},
+                        "metadata": {"type": "object"},
+                    },
+                    "required": ["id"],
+                },
+            },
+        },
+    ]
+
+
 def _gateway_native_tools() -> list[dict]:
     tools = []
     if cfg.enable_gateway_tools:
@@ -3192,6 +3357,7 @@ def _gateway_native_tools() -> list[dict]:
                 },
             ]
         )
+    tools.extend(_gateway_notebook_and_recall_tools())
     return tools
 
 def _merge_tools(client_tools: Optional[list[dict]]) -> list[dict]:
@@ -3476,7 +3642,6 @@ def _prune_runtime_state(session_id: Optional[str] = None) -> dict[str, int]:
         context_snapshot_retention=cfg.gateway_context_snapshot_retention,
         raw_window_retention=cfg.gateway_context_snapshot_retention,
         cold_start_retention=cfg.gateway_cold_start_retention,
-        surface_event_retention=cfg.gateway_surface_event_retention,
     )
 
 
@@ -3909,7 +4074,10 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     messages, trim_meta = _trim_client_messages(raw_messages)
     user_text = _latest_user_text(messages)
     current_message_count = _non_system_message_count(messages)
-    cold_start_snapshot = _maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count)
+    is_hisense = (client_name == cfg.hisense_client_name)
+    cold_start_snapshot = None
+    if not is_hisense:
+        cold_start_snapshot = _maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count)
     session_store.write_request_context_snapshot(
         session_id=session["id"],
         session_tag=session_tag,
@@ -3923,6 +4091,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         current_user_text=user_text,
         is_first_turn=is_first_turn,
         cold_start_snapshot=cold_start_snapshot,
+        client_name=client_name,
     )
     layers = builder.render_layered_additions(package)
 
@@ -3983,11 +4152,6 @@ def _split_private_assistant_tags(content: str) -> tuple[str, str, list[str]]:
     tag_filter = _AssistantTagFilter()
     clean_content = tag_filter.feed(content or "") + tag_filter.flush()
     return clean_content, tag_filter.get_heartbeat(), tag_filter.get_memories()
-
-
-def _split_heartbeat_content(content: str) -> tuple[str, str]:
-    clean_content, heartbeat, _memories = _split_private_assistant_tags(content)
-    return clean_content, heartbeat
 
 
 def _store_heartbeat(session_id: str, session: dict, content: str):
@@ -4161,6 +4325,37 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
             hard=bool(arguments.get("hard", False)),
             operators=arguments.get("operators"),
             column=arguments.get("column"),
+        )
+    if name == "shenyu_recall_main_thread":
+        return await service.recall_main_thread(
+            since=arguments.get("since"),
+            until=arguments.get("until"),
+            query=arguments.get("query"),
+            limit=int(arguments.get("limit", 10)),
+        )
+    if name == "shenyu_notebook_list":
+        return await service.notebook_list(
+            type_filter=arguments.get("type"),
+            status=arguments.get("status", "active"),
+            limit=int(arguments.get("limit", 10)),
+        )
+    if name == "shenyu_notebook_write":
+        return await service.notebook_write(
+            type_=arguments.get("type", "note"),
+            content=arguments.get("content", ""),
+            tags=arguments.get("tags"),
+            metadata=arguments.get("metadata"),
+            session_tag=session_tag,
+        )
+    if name == "shenyu_notebook_update":
+        return await service.notebook_update(
+            id_=arguments.get("id", ""),
+            content=arguments.get("content"),
+            status=arguments.get("status"),
+            tags=arguments.get("tags"),
+            type_=arguments.get("type"),
+            pinned=arguments.get("pinned"),
+            metadata=arguments.get("metadata"),
         )
     raise ValueError(f"Unsupported gateway tool: {name}")
 
@@ -4742,13 +4937,14 @@ async def update_config(request: Request, body: ConfigUpdate):
         "gateway_message_retention": "GATEWAY_MESSAGE_RETENTION",
         "gateway_context_snapshot_retention": "GATEWAY_CONTEXT_SNAPSHOT_RETENTION",
         "gateway_cold_start_retention": "GATEWAY_COLD_START_RETENTION",
-        "gateway_surface_event_retention": "GATEWAY_SURFACE_EVENT_RETENTION",
         "max_client_messages": "MAX_CLIENT_MESSAGES",
         "cold_start_message_limit": "COLD_START_MESSAGE_LIMIT",
         "cold_start_idle_minutes": "COLD_START_IDLE_MINUTES",
         "default_surface_limit": "DEFAULT_SURFACE_LIMIT",
         "default_atomic_memory_limit": "DEFAULT_ATOMIC_MEMORY_LIMIT",
         "atomic_memory_min_score": "ATOMIC_MEMORY_MIN_SCORE",
+        "hisense_heartbeat_limit": "HISENSE_HEARTBEAT_LIMIT",
+        "hisense_notebook_limit": "HISENSE_NOTEBOOK_LIMIT",
     }
 
     simple_fields = [
@@ -4817,10 +5013,6 @@ async def update_config(request: Request, body: ConfigUpdate):
         cfg.gateway_cold_start_retention = max(1, min(body.gateway_cold_start_retention, 1000))
         changed.append("gateway_cold_start_retention")
         env_updates[env_names["gateway_cold_start_retention"]] = cfg.gateway_cold_start_retention
-    if body.gateway_surface_event_retention is not None:
-        cfg.gateway_surface_event_retention = max(1, min(body.gateway_surface_event_retention, 10000))
-        changed.append("gateway_surface_event_retention")
-        env_updates[env_names["gateway_surface_event_retention"]] = cfg.gateway_surface_event_retention
     if "max_client_messages" in body.model_fields_set:
         value = body.max_client_messages
         cfg.max_client_messages = max(1, min(int(value), 500)) if value and int(value) > 0 else None
@@ -4847,6 +5039,14 @@ async def update_config(request: Request, body: ConfigUpdate):
         cfg.atomic_memory_min_score = _clamp(float(body.atomic_memory_min_score), 0.0, 1.0)
         changed.append("atomic_memory_min_score")
         env_updates[env_names["atomic_memory_min_score"]] = cfg.atomic_memory_min_score
+    if body.hisense_heartbeat_limit is not None:
+        cfg.hisense_heartbeat_limit = max(1, min(body.hisense_heartbeat_limit, 30))
+        changed.append("hisense_heartbeat_limit")
+        env_updates[env_names["hisense_heartbeat_limit"]] = cfg.hisense_heartbeat_limit
+    if body.hisense_notebook_limit is not None:
+        cfg.hisense_notebook_limit = max(1, min(body.hisense_notebook_limit, 20))
+        changed.append("hisense_notebook_limit")
+        env_updates[env_names["hisense_notebook_limit"]] = cfg.hisense_notebook_limit
     if body.model_mapping is not None:
         cfg.model_mapping = {
             str(key).strip(): str(value).strip()
@@ -4894,7 +5094,6 @@ async def gateway_overview():
             "message_retention": cfg.gateway_message_retention,
             "context_snapshot_retention": cfg.gateway_context_snapshot_retention,
             "cold_start_retention": cfg.gateway_cold_start_retention,
-            "surface_event_retention": cfg.gateway_surface_event_retention,
             "heartbeat_retention": "keep",
         },
         "cold_start": {
@@ -5249,6 +5448,114 @@ async def calendar_context_snapshots(limit: int = 8, session_tag: Optional[str] 
 async def calendar_generate(request: Request, body: CalendarGenerateRequest):
     service = CalendarService(request)
     return await service.generate_page(body)
+
+
+# ─── Hisense Profile Management ───────────────────────────────────────────────
+
+
+@app.get("/api/hisense/preview")
+async def hisense_preview():
+    assert session_store is not None
+    sessions_mgr = SessionManager(session_store, cfg)
+    tools = GatewayToolService()
+    builder = ContextBuilder(session_store, sessions_mgr, tools)
+    fake_session = session_store.get_or_create_session(
+        session_tag="hisense-preview", client_name=cfg.hisense_client_name
+    )
+    package = await builder.build_context_package(
+        fake_session,
+        current_user_text="",
+        is_first_turn=True,
+        cold_start_snapshot=None,
+        client_name=cfg.hisense_client_name,
+    )
+    layers = builder.render_layered_additions(package)
+    return {
+        "config": {
+            "hisense_client_name": cfg.hisense_client_name,
+            "hisense_heartbeat_limit": cfg.hisense_heartbeat_limit,
+            "hisense_notebook_limit": cfg.hisense_notebook_limit,
+        },
+        "package": {
+            "heartbeat_digest": package.get("heartbeat_digest", ""),
+            "calendar_context": package.get("calendar_context", {}),
+            "notebook_items": package.get("notebook_items", []),
+            "last_wake_recap": package.get("last_wake_recap", ""),
+        },
+        "rendered_slow_layer": layers.get("slow", ""),
+    }
+
+
+@app.get("/api/hisense/notebook")
+async def hisense_notebook_list(type: Optional[str] = None, status: str = "active", limit: int = 50):
+    if not supabase_client:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    params: dict[str, str] = {
+        "order": "pinned.desc,updated_at.desc",
+        "limit": str(max(1, min(int(limit or 50), 100))),
+        "status": f"eq.{status}",
+        "select": "id,type,content,tags,status,pinned,metadata,session_tag,created_at,updated_at",
+    }
+    if type:
+        params["type"] = f"eq.{type}"
+    rows = await supabase_client.query("shenyu_notebook", params)
+    return {"ok": True, "count": len(rows or []), "data": rows or []}
+
+
+@app.post("/api/hisense/notebook")
+async def hisense_notebook_create(request: Request):
+    if not supabase_client:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    body = await request.json()
+    content = (body.get("content") or "").strip()
+    if not content:
+        raise HTTPException(status_code=400, detail="content is required")
+    data: dict[str, Any] = {
+        "type": body.get("type", "note"),
+        "content": content,
+        "status": body.get("status", "active"),
+    }
+    if body.get("tags"):
+        data["tags"] = body["tags"]
+    if body.get("metadata"):
+        data["metadata"] = body["metadata"]
+    result = await supabase_client.insert("shenyu_notebook", data)
+    return {"ok": True, "data": result}
+
+
+@app.patch("/api/hisense/notebook/{item_id}")
+async def hisense_notebook_update(item_id: str, request: Request):
+    if not supabase_client:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    body = await request.json()
+    update_data: dict[str, Any] = {}
+    for field in ("content", "status", "type", "tags", "metadata", "pinned"):
+        if field in body:
+            update_data[field] = body[field]
+    if not update_data:
+        raise HTTPException(status_code=400, detail="Nothing to update")
+    update_data["updated_at"] = _iso_now()
+    result = await supabase_client.update("shenyu_notebook", match={"id": item_id}, data=update_data)
+    return {"ok": True, "data": result}
+
+
+@app.delete("/api/hisense/notebook/{item_id}")
+async def hisense_notebook_delete(item_id: str):
+    if not supabase_client:
+        raise HTTPException(status_code=503, detail="Supabase not configured")
+    result = await supabase_client.delete("shenyu_notebook", match={"id": item_id})
+    return {"ok": True, "data": result}
+
+
+@app.get("/api/hisense/sessions")
+async def hisense_sessions(limit: int = 20):
+    assert session_store is not None
+    all_sessions = session_store.list_sessions(limit=200)
+    hisense_sessions = [
+        s for s in all_sessions
+        if (s.get("client_name") or "") == cfg.hisense_client_name
+    ][:max(1, min(int(limit or 20), 50))]
+    return {"sessions": hisense_sessions, "count": len(hisense_sessions)}
 
 
 @app.get("/")

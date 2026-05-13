@@ -23,19 +23,7 @@ import {
 
 const message = useMessage()
 
-const config = ref<GatewayConfig>({
-  gateway_key: '',
-  upstream_url: '',
-  upstream_api_key: '',
-  upstream_protocol: 'auto',
-  supabase_url: '',
-  supabase_key: '',
-  max_client_messages: null,
-  enable_cold_start: true,
-  cold_start_message_limit: null,
-  cold_start_idle_minutes: 120,
-  model_mapping: {},
-})
+const config = ref<Partial<GatewayConfig>>({})
 
 const savingConfig = ref(false)
 const loadingReview = ref(false)
@@ -265,36 +253,6 @@ async function deleteAtomic(item: AtomicMemoryItem) {
   grid-template-columns: 1fr 1fr;
 }
 
-.preset-bar {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.preset-chip {
-  display: inline-flex;
-  align-items: center;
-  min-height: 28px;
-  padding: 0 10px;
-  border: 1px solid #d0d7de;
-  border-radius: 999px;
-  background: #fff;
-  color: #4b5563;
-  cursor: pointer;
-}
-
-.preset-chip.active {
-  border-color: #4f46e5;
-  color: #4f46e5;
-  background: #eef2ff;
-}
-
-.preset-save-row {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-}
-
 .cal-input {
   min-height: 34px;
   padding: 6px 10px;
@@ -306,12 +264,6 @@ async function deleteAtomic(item: AtomicMemoryItem) {
 .hint-text {
   font-size: 12px;
   color: #6b7280;
-}
-
-.extract-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  gap: 8px;
 }
 
 .rev-toolbar {
@@ -369,8 +321,7 @@ async function deleteAtomic(item: AtomicMemoryItem) {
 
 @media (max-width: 980px) {
   .mem0-grid,
-  .cfg-inline,
-  .extract-row {
+  .cfg-inline {
     grid-template-columns: 1fr;
   }
 }

@@ -62,7 +62,8 @@ class ConfigUpdate(BaseModel):
     gateway_message_retention: Optional[int] = None
     gateway_context_snapshot_retention: Optional[int] = None
     gateway_cold_start_retention: Optional[int] = None
-    gateway_surface_event_retention: Optional[int] = None
+    hisense_heartbeat_limit: Optional[int] = None
+    hisense_notebook_limit: Optional[int] = None
 
 
 class SessionDeleteRequest(BaseModel):

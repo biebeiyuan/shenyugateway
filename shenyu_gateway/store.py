@@ -50,18 +50,6 @@ class GatewayStore:
                     FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
                 );
 
-                CREATE TABLE IF NOT EXISTS surface_events (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    trigger_text TEXT NOT NULL,
-                    surfaced_type TEXT NOT NULL,
-                    surfaced_ids_json TEXT NOT NULL,
-                    chosen_ids_json TEXT,
-                    reasons_json TEXT,
-                    created_at TEXT NOT NULL,
-                    FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
-                );
-
                 CREATE TABLE IF NOT EXISTS cache_entries (
                     cache_key TEXT PRIMARY KEY,
                     cache_type TEXT NOT NULL,
@@ -166,19 +154,6 @@ class GatewayStore:
                 WHERE id = ?
                 """,
                 (iso_now(), message_increment, session_id),
-            )
-
-    def sync_session_message_count(self, session_id: str):
-        with self._connect() as conn:
-            conn.execute(
-                """
-                UPDATE gateway_sessions
-                SET message_count = (
-                    SELECT COUNT(*) FROM gateway_messages WHERE session_id = ?
-                )
-                WHERE id = ?
-                """,
-                (session_id, session_id),
             )
 
     def append_message(
@@ -470,10 +445,6 @@ class GatewayStore:
                 """,
                 (session_id,),
             ).fetchone()
-            surface_count = conn.execute(
-                "SELECT COUNT(*) AS count FROM surface_events WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
             heartbeat_count = conn.execute(
                 "SELECT COUNT(*) AS count FROM heartbeat_entries WHERE session_id = ?",
                 (session_id,),
@@ -495,7 +466,6 @@ class GatewayStore:
                 "user_messages": int(message_counts["user_count"] or 0),
                 "assistant_messages": int(message_counts["assistant_count"] or 0),
                 "tool_messages": int(message_counts["tool_count"] or 0),
-                "surface_events": int(surface_count["count"] or 0),
                 "heartbeats": int(heartbeat_count["count"] or 0),
                 "cold_start_snapshots": int(cold_count["count"] or 0),
                 "context_snapshots": int(snapshot_count["count"] or 0),
@@ -508,7 +478,6 @@ class GatewayStore:
             "cold_start_snapshots",
             "raw_request_windows",
             "request_context_snapshots",
-            "surface_events",
             "gateway_messages",
             "gateway_sessions",
         ]
@@ -956,27 +925,6 @@ class GatewayStore:
             snapshots.append(item)
         return snapshots
 
-    def get_surface_events(self, session_id: str, limit: int = 1000) -> list[dict]:
-        limit = max(1, min(int(limit or 1000), 10000))
-        with self._connect() as conn:
-            rows = conn.execute(
-                """
-                SELECT * FROM surface_events
-                WHERE session_id = ?
-                ORDER BY created_at ASC
-                LIMIT ?
-                """,
-                (session_id, limit),
-            ).fetchall()
-        events = []
-        for row in rows:
-            item = dict(row)
-            item["surfaced_ids"] = json.loads(item.get("surfaced_ids_json") or "[]")
-            item["chosen_ids"] = json.loads(item.get("chosen_ids_json") or "[]")
-            item["reasons"] = json.loads(item.get("reasons_json") or "[]")
-            events.append(item)
-        return events
-
     def gateway_overview(self) -> dict:
         today = now().date().isoformat()
         with self._connect() as conn:
@@ -995,7 +943,6 @@ class GatewayStore:
             cold_count = conn.execute("SELECT COUNT(*) AS count FROM cold_start_snapshots").fetchone()
             snapshot_count = conn.execute("SELECT COUNT(*) AS count FROM request_context_snapshots").fetchone()
             raw_window_count = conn.execute("SELECT COUNT(*) AS count FROM raw_request_windows").fetchone()
-            surface_count = conn.execute("SELECT COUNT(*) AS count FROM surface_events").fetchone()
             heartbeat_count = conn.execute("SELECT COUNT(*) AS count FROM heartbeat_entries").fetchone()
             cache_count = conn.execute("SELECT COUNT(*) AS count FROM cache_entries").fetchone()
         return {
@@ -1007,7 +954,6 @@ class GatewayStore:
             "cold_start_snapshots": int(cold_count["count"] or 0),
             "context_snapshots": int(snapshot_count["count"] or 0),
             "raw_request_windows": int(raw_window_count["count"] or 0),
-            "surface_events": int(surface_count["count"] or 0),
             "heartbeats": int(heartbeat_count["count"] or 0),
             "cache_entries": int(cache_count["count"] or 0),
         }
@@ -1019,19 +965,16 @@ class GatewayStore:
         context_snapshot_retention: int = 3,
         raw_window_retention: Optional[int] = None,
         cold_start_retention: int = 20,
-        surface_event_retention: int = 500,
     ) -> dict[str, int]:
         message_retention = max(1, int(message_retention or 2000))
         context_snapshot_retention = max(1, int(context_snapshot_retention or 3))
         raw_window_retention = max(1, int(raw_window_retention or context_snapshot_retention))
         cold_start_retention = max(1, int(cold_start_retention or 20))
-        surface_event_retention = max(1, int(surface_event_retention or 500))
         deleted = {
             "gateway_messages": 0,
             "request_context_snapshots": 0,
             "raw_request_windows": 0,
             "cold_start_snapshots": 0,
-            "surface_events": 0,
             "cache_entries": 0,
         }
         session_filter = "WHERE id = ?" if session_id else ""
@@ -1111,58 +1054,9 @@ class GatewayStore:
                 )
                 deleted["cold_start_snapshots"] += int(cursor.rowcount or 0)
 
-                cursor = conn.execute(
-                    """
-                    DELETE FROM surface_events
-                    WHERE session_id = ?
-                    AND id NOT IN (
-                        SELECT id FROM surface_events
-                        WHERE session_id = ?
-                        ORDER BY created_at DESC
-                        LIMIT ?
-                    )
-                    """,
-                    (sid, sid, surface_event_retention),
-                )
-                deleted["surface_events"] += int(cursor.rowcount or 0)
-
             cursor = conn.execute("DELETE FROM cache_entries WHERE expires_at < ?", (iso_now(),))
             deleted["cache_entries"] = int(cursor.rowcount or 0)
         return deleted
-
-    def write_surface_event(
-        self,
-        session_id: str,
-        trigger_text: str,
-        surfaced_type: str,
-        surfaced_items: list[dict],
-        reasons: Optional[list[str]] = None,
-    ):
-        ids = []
-        for item in surfaced_items:
-            if item.get("source_id"):
-                ids.append(f"{item.get('source_table')}:{item.get('source_id')}")
-            elif item.get("id"):
-                ids.append(str(item["id"]))
-        with self._connect() as conn:
-            conn.execute(
-                """
-                INSERT INTO surface_events (
-                    id, session_id, trigger_text, surfaced_type,
-                    surfaced_ids_json, chosen_ids_json, reasons_json, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    f"se_{uuid.uuid4().hex[:12]}",
-                    session_id,
-                    trigger_text,
-                    surfaced_type,
-                    json_dumps(ids),
-                    None,
-                    json_dumps(reasons or []),
-                    iso_now(),
-                ),
-            )
 
     def cache_get(self, key: str) -> Optional[dict]:
         with self._connect() as conn:
@@ -1372,5 +1266,4 @@ class GatewayStore:
             "raw_request_windows": self.get_all_raw_request_windows(session_id),
             "cold_start_snapshots": self.all_cold_start_snapshots(session_id),
             "heartbeats": self.get_all_heartbeats(session_id),
-            "surface_events": self.get_surface_events(session_id),
         }

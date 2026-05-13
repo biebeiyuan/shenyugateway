@@ -314,7 +314,7 @@ function showMoreHeartbeats() {
             <NDescriptionsItem label="最后活跃">{{ formatTime(selectedSession.last_active_at) }}</NDescriptionsItem>
             <NDescriptionsItem label="原始请求窗口">{{ detail.stats.raw_request_windows || 0 }}</NDescriptionsItem>
             <NDescriptionsItem label="缓存层">
-              {{ detail.stats.surface_events }} surface / {{ detail.stats.heartbeats }} heartbeat /
+              {{ detail.stats.heartbeats }} heartbeat /
               {{ detail.stats.context_snapshots || 0 }} snapshots / {{ detail.stats.raw_request_windows || 0 }} raw /
               {{ detail.stats.cold_start_snapshots }} cold start
             </NDescriptionsItem>
