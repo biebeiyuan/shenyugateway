@@ -3361,7 +3361,15 @@ def _gateway_native_tools() -> list[dict]:
     return tools
 
 def _merge_tools(client_tools: Optional[list[dict]]) -> list[dict]:
-    return list(client_tools or [])
+    merged = list(client_tools or [])
+    if not cfg.enable_gateway_tools and not cfg.enable_mem0_management_tools and not cfg.expose_supabase_tools:
+        return merged
+    existing = {tool.get("function", {}).get("name") for tool in merged if isinstance(tool, dict)}
+    for tool in _gateway_native_tools():
+        name = tool["function"]["name"]
+        if name not in existing:
+            merged.append(tool)
+    return merged
 
 
 def _add_cache_control(block: dict, cache_paths: list[str], path: str, max_breakpoints: int = 4) -> bool:
@@ -4693,6 +4701,10 @@ async def chat_completions(request: Request, body: ChatRequest):
     sessions.log_input_messages(session_id, prepared_messages)
 
     merged_tools = _merge_tools(body.tools)
+    body_has_internal_tools = any(
+        _is_gateway_native_tool(tool.get("function", {}).get("name", ""))
+        for tool in merged_tools
+    )
 
     # 鏋勫缓鏃ュ織鏉＄洰
     log_id = uuid.uuid4().hex[:8]
@@ -4728,7 +4740,7 @@ async def chat_completions(request: Request, body: ChatRequest):
         "system_additions_full": system_additions,
         "tools_count": len(merged_tools),
         "tool_names": [t.get("function", {}).get("name", "") for t in merged_tools[:20]],
-        "has_internal_tools": False,
+        "has_internal_tools": body_has_internal_tools,
         "upstream_url": _get_chat_url(),
         "prepared_messages": prepared_messages,
         "upstream_payload": None,
@@ -4751,6 +4763,25 @@ async def chat_completions(request: Request, body: ChatRequest):
     }
 
     try:
+        if body_has_internal_tools:
+            if body.stream:
+                async def _tool_loop_stream():
+                    yield "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n"
+                    completion = await _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
+                    log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
+                    log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
+                    log_entry["status"] = "ok"
+                    log_entry["response_preview"] = str(completion.get("choices", [{}])[0].get("message", {}).get("content", ""))[:200]
+                    for chunk in _completion_to_stream_events(completion):
+                        yield chunk
+                return StreamingResponse(_tool_loop_stream(), media_type="text/event-stream")
+            completion = await _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
+            log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
+            log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
+            log_entry["status"] = "ok"
+            log_entry["response_preview"] = str(completion.get("choices", [{}])[0].get("message", {}).get("content", ""))[:200]
+            return completion
+
         payload, headers, _, cache_meta = await _build_upstream_request(
             request,
             body,
