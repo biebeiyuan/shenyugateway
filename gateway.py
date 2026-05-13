@@ -3361,15 +3361,7 @@ def _gateway_native_tools() -> list[dict]:
     return tools
 
 def _merge_tools(client_tools: Optional[list[dict]]) -> list[dict]:
-    merged = list(client_tools or [])
-    if not cfg.enable_gateway_tools and not cfg.enable_mem0_management_tools and not cfg.expose_supabase_tools:
-        return merged
-    existing = {tool.get("function", {}).get("name") for tool in merged if isinstance(tool, dict)}
-    for tool in _gateway_native_tools():
-        name = tool["function"]["name"]
-        if name not in existing:
-            merged.append(tool)
-    return merged
+    return list(client_tools or [])
 
 
 def _add_cache_control(block: dict, cache_paths: list[str], path: str, max_breakpoints: int = 4) -> bool:
