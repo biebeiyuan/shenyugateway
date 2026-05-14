@@ -2,7 +2,7 @@ FROM node:22-slim AS admin-builder
 
 WORKDIR /app/admin
 COPY admin/package*.json ./
-RUN npm ci
+RUN npm config set registry https://registry.npmmirror.com && npm ci
 COPY admin ./
 RUN npm run build
 
@@ -15,7 +15,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt ./
-RUN pip install --no-cache-dir -r requirements.txt
+RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt
 
 COPY gateway.py ./
 COPY shenyu_gateway ./shenyu_gateway
