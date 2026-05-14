@@ -6,6 +6,5 @@ __pycache__/
 data/*.db
 
 admin/node_modules/
-admin/dist/
 
 *.log

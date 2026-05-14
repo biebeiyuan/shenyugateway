@@ -1,11 +1,3 @@
-FROM node:22-slim AS admin-builder
-
-WORKDIR /app/admin
-COPY admin/package*.json ./
-RUN npm config set registry https://registry.npmmirror.com && npm ci
-COPY admin ./
-RUN npm run build
-
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -19,7 +11,7 @@ RUN pip install --no-cache-dir -i https://pypi.tuna.tsinghua.edu.cn/simple -r re
 
 COPY gateway.py ./
 COPY shenyu_gateway ./shenyu_gateway
-COPY --from=admin-builder /app/admin/dist ./admin/dist
+COPY admin/dist ./admin/dist
 
 EXPOSE 8010
 
