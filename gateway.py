@@ -23,6 +23,7 @@ from typing import Any, Optional
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -271,6 +272,20 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="shenyu-gateway", version="0.3.0", lifespan=lifespan)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "https://home.yuanuwuclaude.uk",
+        "https://yuanuwuclaude.uk",
+        "http://localhost:8005",
+        "http://127.0.0.1:8005",
+    ],
+    allow_credentials=True,
+    allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type"],
+)
+
 ADMIN_DIST_DIR = Path(__file__).parent / "admin" / "dist"
 if (ADMIN_DIST_DIR / "assets").exists():
     app.mount("/admin/assets", StaticFiles(directory=ADMIN_DIST_DIR / "assets"), name="admin-assets")
