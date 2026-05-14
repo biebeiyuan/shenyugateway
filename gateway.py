@@ -280,6 +280,9 @@ app.add_middleware(
         "https://yuanuwuclaude.uk",
         "http://localhost:8005",
         "http://127.0.0.1:8005",
+        "http://localhost:5500",
+        "http://127.0.0.1:5500",
+        "null",
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
@@ -323,6 +326,9 @@ async def admin_auth_middleware(request: Request, call_next):
     支持 Bearer 头和 ?token= 参数两种方式验证。
     GATEWAY_API_KEY 为空时不校验（本地开发模式）。
     """
+    if request.method == "OPTIONS":
+        return await call_next(request)
+
     path = request.url.path
     needs_auth = any(path.startswith(p) for p in _ADMIN_PROTECTED_PREFIXES)
     # /admin 是静态文件挂载，也需要保护。
@@ -5326,6 +5332,23 @@ async def delete_gateway_heartbeats(session_tag: str, body: HeartbeatDeleteReque
         raise HTTPException(status_code=400, detail="Confirmation must be GLOBAL for delete_all.")
     deleted = session_store.delete_heartbeats(None, heartbeat_ids=body.ids, delete_all=body.delete_all)
     return {"ok": True, "deleted": deleted}
+
+
+@app.get("/api/gateway/heartbeats")
+async def list_gateway_heartbeats(limit: int = 500, order: str = "asc"):
+    assert session_store is not None
+    order_key = "desc" if str(order or "").lower() == "desc" else "asc"
+    max_limit = max(1, min(int(limit or 500), 2000))
+    heartbeats = session_store.get_all_heartbeats()
+    if order_key == "desc":
+        heartbeats = list(reversed(heartbeats))
+    return {
+        "ok": True,
+        "count": len(heartbeats),
+        "limit": max_limit,
+        "order": order_key,
+        "heartbeats": heartbeats[:max_limit],
+    }
 
 
 @app.get("/api/gateway/sessions/{session_tag}/export")
