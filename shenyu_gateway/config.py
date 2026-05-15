@@ -67,7 +67,7 @@ class RuntimeConfig:
         self.gateway_cold_start_retention: int = int(os.getenv("GATEWAY_COLD_START_RETENTION", "20"))
 
         self.hisense_client_name: str = os.getenv("HISENSE_CLIENT_NAME", "hisense")
-        self.hisense_heartbeat_limit: int = int(os.getenv("HISENSE_HEARTBEAT_LIMIT", "10"))
+        self.hisense_heartbeat_limit: int = int(os.getenv("HISENSE_HEARTBEAT_LIMIT", "3"))
         self.hisense_notebook_limit: int = int(os.getenv("HISENSE_NOTEBOOK_LIMIT", "5"))
 
     def to_dict(self) -> dict[str, Any]:

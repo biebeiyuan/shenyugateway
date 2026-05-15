@@ -10,10 +10,17 @@ from typing import Any, Optional
 from shenyu_gateway.store import GatewayStore
 
 
-def _load_context_builder():
+def _load_gateway_classes():
     source = Path(__file__).with_name("gateway.py").read_text(encoding="utf-8")
     module = ast.parse(source)
-    wanted_functions = {"_shorten", "_relative_time_label", "_stable_charter_block", "_is_hisense_client"}
+    wanted_functions = {
+        "_date_range_bounds",
+        "_shorten",
+        "_relative_time_label",
+        "_stable_charter_block",
+        "_is_hisense_client",
+        "_is_hisense_session",
+    }
     wanted_constants = {"_HEARTBEAT_PROMPT", "_INLINE_MEM_PROMPT"}
     namespace = {
         "Any": Any,
@@ -23,11 +30,12 @@ def _load_context_builder():
         "GatewayToolService": object,
         "asyncio": asyncio,
         "logger": logging.getLogger("test"),
+        "session_store": None,
         "supabase_client": None,
         "cfg": SimpleNamespace(
             hisense_client_name="hisense",
             heartbeat_inject_every=5,
-            hisense_heartbeat_limit=10,
+            hisense_heartbeat_limit=3,
             calendar_inject_day=False,
             calendar_context_day_limit=0,
             calendar_inject_week=False,
@@ -52,12 +60,12 @@ def _load_context_builder():
             exec(ast.get_source_segment(source, node), namespace)
         elif isinstance(node, ast.FunctionDef) and node.name in wanted_functions:
             exec(ast.get_source_segment(source, node), namespace)
-        elif isinstance(node, ast.ClassDef) and node.name == "ContextBuilder":
+        elif isinstance(node, ast.ClassDef) and node.name in {"GatewayToolService", "ContextBuilder"}:
             exec(ast.get_source_segment(source, node), namespace)
-    return namespace["ContextBuilder"], namespace["cfg"]
+    return namespace["ContextBuilder"], namespace["GatewayToolService"], namespace["cfg"], namespace
 
 
-ContextBuilder, cfg = _load_context_builder()
+ContextBuilder, GatewayToolService, cfg, gateway_namespace = _load_gateway_classes()
 
 
 def test_hisense_context_can_see_both_heartbeat_pools(tmp_path):
@@ -106,7 +114,7 @@ def test_normal_context_does_not_see_hisense_heartbeat_pool(tmp_path):
     assert "hisense hb" not in layers["slow"]
 
 
-def test_hisense_context_marks_configured_pending_heartbeats_injected(tmp_path):
+def test_hisense_context_marks_three_pending_heartbeats_injected(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     hisense_session = store.get_or_create_session("hisense", cfg.hisense_client_name)
     heartbeat_limit = int(cfg.hisense_heartbeat_limit)
@@ -132,7 +140,7 @@ def test_hisense_context_marks_configured_pending_heartbeats_injected(tmp_path):
     assert len(store.read_heartbeats(None, state="injected", hisense=True)) == heartbeat_limit
 
 
-def test_hisense_context_waits_for_configured_pending_heartbeats(tmp_path):
+def test_hisense_context_waits_for_three_pending_heartbeats(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     hisense_session = store.get_or_create_session("hisense", cfg.hisense_client_name)
     injected = store.append_heartbeat(hisense_session["id"], "hisense injected", hisense=True)
@@ -157,3 +165,21 @@ def test_hisense_context_waits_for_configured_pending_heartbeats(tmp_path):
     assert "hisense pending 1" not in layers["slow"]
     assert f"hisense pending {heartbeat_limit - 1}" not in layers["slow"]
     assert len(store.read_heartbeats(None, state="pending", hisense=True)) == heartbeat_limit - 1
+
+
+def test_read_heartbeat_scope_can_override_hisense_default(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    normal_session = store.get_or_create_session("default", "operit")
+    hisense_session = store.get_or_create_session("hisense", cfg.hisense_client_name)
+    store.append_heartbeat(normal_session["id"], "normal hb")
+    store.append_heartbeat(hisense_session["id"], "hisense hb", hisense=True)
+    gateway_namespace["session_store"] = store
+
+    service = GatewayToolService()
+    auto_result = asyncio.run(service.read_heartbeat(session_tag="hisense"))
+    normal_result = asyncio.run(service.read_heartbeat(session_tag="hisense", scope="normal"))
+
+    assert auto_result["scope"] == "hisense"
+    assert [item["content"] for item in auto_result["items"]] == ["hisense hb"]
+    assert normal_result["scope"] == "normal"
+    assert [item["content"] for item in normal_result["items"]] == ["normal hb"]

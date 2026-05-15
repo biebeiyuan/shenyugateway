@@ -1096,6 +1096,7 @@ class GatewayToolService:
         limit: int = 10,
         state: str = "all",
         order: str = "desc",
+        scope: str = "auto",
         date: Optional[str] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
@@ -1116,7 +1117,16 @@ class GatewayToolService:
         created_to = date_to or created_to
         created_start, created_end = _date_range_bounds(created_from, created_to)
         target_session = session_store.get_session_by_tag(resolved_tag)
-        read_hisense = _is_hisense_session(target_session)
+        scope_key = (scope or "auto").strip().lower()
+        if scope_key in {"hisense", "海信"}:
+            read_hisense = True
+            resolved_scope = "hisense"
+        elif scope_key in {"normal", "global", "default", "普通", "默认"}:
+            read_hisense = False
+            resolved_scope = "normal"
+        else:
+            read_hisense = _is_hisense_session(target_session)
+            resolved_scope = "hisense" if read_hisense else "normal"
         items = session_store.read_heartbeats(
             None,
             state=state,
@@ -1132,7 +1142,8 @@ class GatewayToolService:
         return {
             "ok": True,
             "session_tag": resolved_tag,
-            "scope": "hisense" if read_hisense else "global",
+            "scope": resolved_scope,
+            "scope_requested": scope_key,
             "state": state,
             "order": order,
             "date": date,
@@ -2842,7 +2853,7 @@ class ContextBuilder:
         return "\n".join(hb["content"] for hb in reversed(hbs))
 
     def _hisense_heartbeat_digest(self, consume_pending: bool = True) -> str:
-        heartbeat_batch_size = max(int(cfg.hisense_heartbeat_limit or 10), 1)
+        heartbeat_batch_size = max(int(cfg.hisense_heartbeat_limit or 3), 1)
         if consume_pending:
             pending_hbs = self.store.get_pending_heartbeats(limit=heartbeat_batch_size, hisense=True)
             if len(pending_hbs) >= heartbeat_batch_size:
@@ -3161,7 +3172,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_read_heartbeat",
-                "description": "Read your stored heartbeat notes. To see one day, pass date like 2026-05-11. In a Hisense session this automatically reads the Hisense heartbeat pool.",
+                "description": "Read stored heartbeat notes. To see one day, pass date like 2026-05-11. scope=auto reads the current session's pool; use scope=normal for the default/global pool or scope=hisense for the Hisense pool.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -3169,6 +3180,7 @@ def _gateway_core_tools() -> list[dict]:
                         "date_from": {"type": "string", "description": "Start local day/date-time for a range."},
                         "date_to": {"type": "string", "description": "End local day/date-time for a range."},
                         "session_tag": {"type": "string"},
+                        "scope": {"type": "string", "enum": ["auto", "normal", "hisense"], "default": "auto"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
                         "state": {"type": "string", "enum": ["all", "pending", "injected"], "default": "all"},
                         "order": {"type": "string", "enum": ["desc", "asc"], "default": "desc"},
@@ -4360,6 +4372,7 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
             limit=int(arguments.get("limit", 10)),
             state=arguments.get("state", "all"),
             order=arguments.get("order", "desc"),
+            scope=arguments.get("scope", "auto"),
             date=arguments.get("date"),
             date_from=arguments.get("date_from"),
             date_to=arguments.get("date_to"),
