@@ -10,6 +10,10 @@ from typing import Any, Optional
 from .runtime import dt_to_iso, iso_now, json_dumps, now, parse_ts
 
 
+HEARTBEAT_ENTRIES_TABLE = "heartbeat_entries"
+HISENSE_HEARTBEAT_TABLE = "hisense_heartbeat"
+
+
 class GatewayStore:
     def __init__(self, db_path: str):
         self.db_path = Path(db_path)
@@ -59,6 +63,16 @@ class GatewayStore:
                 );
 
                 CREATE TABLE IF NOT EXISTS heartbeat_entries (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    turn_number INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    injected_at TEXT,
+                    FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS hisense_heartbeat (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
                     content TEXT NOT NULL,
@@ -129,6 +143,12 @@ class GatewayStore:
                 (session_tag,),
             ).fetchone()
             if row:
+                if client_name and (row["client_name"] or "") != client_name:
+                    conn.execute(
+                        "UPDATE gateway_sessions SET client_name = ? WHERE id = ?",
+                        (client_name, row["id"]),
+                    )
+                    row = conn.execute("SELECT * FROM gateway_sessions WHERE id = ?", (row["id"],)).fetchone()
                 return dict(row)
 
             session_id = f"gs_{uuid.uuid4().hex[:12]}"
@@ -376,6 +396,7 @@ class GatewayStore:
                     COALESCE(rw.raw_request_window_count, 0) AS raw_request_window_count,
                     COALESCE(c.cold_start_snapshot_count, 0) AS cold_start_snapshot_count,
                     COALESCE(h.heartbeat_count, 0) AS heartbeat_count,
+                    COALESCE(hh.hisense_heartbeat_count, 0) AS hisense_heartbeat_count,
                     latest_user.content AS latest_user_text
                 FROM gateway_sessions s
                 LEFT JOIN (
@@ -409,6 +430,11 @@ class GatewayStore:
                     FROM heartbeat_entries
                     GROUP BY session_id
                 ) h ON h.session_id = s.id
+                LEFT JOIN (
+                    SELECT session_id, COUNT(id) AS hisense_heartbeat_count
+                    FROM hisense_heartbeat
+                    GROUP BY session_id
+                ) hh ON hh.session_id = s.id
                 LEFT JOIN gateway_messages latest_user ON latest_user.id = (
                     SELECT id FROM gateway_messages
                     WHERE session_id = s.id AND role = 'user'
@@ -449,6 +475,10 @@ class GatewayStore:
                 "SELECT COUNT(*) AS count FROM heartbeat_entries WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
+            hisense_heartbeat_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM hisense_heartbeat WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
             cold_count = conn.execute(
                 "SELECT COUNT(*) AS count FROM cold_start_snapshots WHERE session_id = ?",
                 (session_id,),
@@ -467,6 +497,7 @@ class GatewayStore:
                 "assistant_messages": int(message_counts["assistant_count"] or 0),
                 "tool_messages": int(message_counts["tool_count"] or 0),
                 "heartbeats": int(heartbeat_count["count"] or 0),
+                "hisense_heartbeats": int(hisense_heartbeat_count["count"] or 0),
                 "cold_start_snapshots": int(cold_count["count"] or 0),
                 "context_snapshots": int(snapshot_count["count"] or 0),
                 "raw_request_windows": int(raw_window_count["count"] or 0),
@@ -474,6 +505,7 @@ class GatewayStore:
 
     def delete_session(self, session_id: str) -> dict:
         tables = [
+            "hisense_heartbeat",
             "heartbeat_entries",
             "cold_start_snapshots",
             "raw_request_windows",
@@ -944,6 +976,7 @@ class GatewayStore:
             snapshot_count = conn.execute("SELECT COUNT(*) AS count FROM request_context_snapshots").fetchone()
             raw_window_count = conn.execute("SELECT COUNT(*) AS count FROM raw_request_windows").fetchone()
             heartbeat_count = conn.execute("SELECT COUNT(*) AS count FROM heartbeat_entries").fetchone()
+            hisense_heartbeat_count = conn.execute("SELECT COUNT(*) AS count FROM hisense_heartbeat").fetchone()
             cache_count = conn.execute("SELECT COUNT(*) AS count FROM cache_entries").fetchone()
         return {
             "messages_total": int(message_counts["total"] or 0),
@@ -955,6 +988,7 @@ class GatewayStore:
             "context_snapshots": int(snapshot_count["count"] or 0),
             "raw_request_windows": int(raw_window_count["count"] or 0),
             "heartbeats": int(heartbeat_count["count"] or 0),
+            "hisense_heartbeats": int(hisense_heartbeat_count["count"] or 0),
             "cache_entries": int(cache_count["count"] or 0),
         }
 
@@ -1094,13 +1128,17 @@ class GatewayStore:
                 (key, cache_type, json_dumps(payload), dt_to_iso(expires_at), iso_now()),
             )
 
-    def append_heartbeat(self, session_id: str, content: str, turn_number: int = 0) -> dict:
-        heartbeat_id = f"hb_{uuid.uuid4().hex[:12]}"
+    def _heartbeat_table(self, hisense: bool = False) -> str:
+        return HISENSE_HEARTBEAT_TABLE if hisense else HEARTBEAT_ENTRIES_TABLE
+
+    def append_heartbeat(self, session_id: str, content: str, turn_number: int = 0, hisense: bool = False) -> dict:
+        table = self._heartbeat_table(hisense)
+        heartbeat_id = f"{'hhb' if hisense else 'hb'}_{uuid.uuid4().hex[:12]}"
         created_at = iso_now()
         with self._connect() as conn:
             conn.execute(
-                """
-                INSERT INTO heartbeat_entries (id, session_id, content, turn_number, created_at)
+                f"""
+                INSERT INTO {table} (id, session_id, content, turn_number, created_at)
                 VALUES (?, ?, ?, ?, ?)
                 """,
                 (heartbeat_id, session_id, content, turn_number, created_at),
@@ -1114,7 +1152,8 @@ class GatewayStore:
             "injected_at": None,
         }
 
-    def get_pending_heartbeats(self, session_id: Optional[str] = None, limit: int = 10) -> list[dict]:
+    def get_pending_heartbeats(self, session_id: Optional[str] = None, limit: int = 10, hisense: bool = False) -> list[dict]:
+        table = self._heartbeat_table(hisense)
         where = "injected_at IS NULL"
         params: list[Any] = []
         if session_id:
@@ -1123,7 +1162,7 @@ class GatewayStore:
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT * FROM heartbeat_entries
+                SELECT * FROM {table}
                 WHERE {where}
                 ORDER BY created_at ASC
                 LIMIT ?
@@ -1132,7 +1171,13 @@ class GatewayStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def mark_heartbeats_injected(self, session_id: Optional[str] = None, heartbeat_ids: Optional[list[str]] = None):
+    def mark_heartbeats_injected(
+        self,
+        session_id: Optional[str] = None,
+        heartbeat_ids: Optional[list[str]] = None,
+        hisense: bool = False,
+    ):
+        table = self._heartbeat_table(hisense)
         heartbeat_ids = [item for item in (heartbeat_ids or []) if item]
         if not heartbeat_ids:
             return
@@ -1145,14 +1190,15 @@ class GatewayStore:
         with self._connect() as conn:
             conn.execute(
                 f"""
-                UPDATE heartbeat_entries
+                UPDATE {table}
                 SET injected_at = ?
                 WHERE {where}
                 """,
                 (iso_now(), *params),
             )
 
-    def get_latest_heartbeat_digest(self, session_id: Optional[str] = None, limit: int = 10) -> str:
+    def get_latest_heartbeat_digest(self, session_id: Optional[str] = None, limit: int = 10, hisense: bool = False) -> str:
+        table = self._heartbeat_table(hisense)
         where = "injected_at IS NOT NULL"
         params: list[Any] = []
         if session_id:
@@ -1161,7 +1207,7 @@ class GatewayStore:
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT content FROM heartbeat_entries
+                SELECT content FROM {table}
                 WHERE {where}
                 ORDER BY created_at DESC
                 LIMIT ?
@@ -1180,7 +1226,9 @@ class GatewayStore:
         order: str = "desc",
         created_from: Optional[str] = None,
         created_to: Optional[str] = None,
+        hisense: bool = False,
     ) -> list[dict]:
+        table = self._heartbeat_table(hisense)
         state = (state or "all").strip().lower()
         order_sql = "ASC" if (order or "").strip().lower() == "asc" else "DESC"
         where = "1=1"
@@ -1202,7 +1250,7 @@ class GatewayStore:
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT * FROM heartbeat_entries
+                SELECT * FROM {table}
                 WHERE {where}
                 ORDER BY created_at {order_sql}
                 LIMIT ?
@@ -1211,31 +1259,39 @@ class GatewayStore:
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def delete_heartbeats(self, session_id: Optional[str] = None, heartbeat_ids: Optional[list[str]] = None, delete_all: bool = False) -> int:
+    def delete_heartbeats(
+        self,
+        session_id: Optional[str] = None,
+        heartbeat_ids: Optional[list[str]] = None,
+        delete_all: bool = False,
+        hisense: bool = False,
+    ) -> int:
+        table = self._heartbeat_table(hisense)
         heartbeat_ids = [item for item in (heartbeat_ids or []) if item]
         with self._connect() as conn:
             if delete_all:
                 if session_id:
-                    cursor = conn.execute("DELETE FROM heartbeat_entries WHERE session_id = ?", (session_id,))
+                    cursor = conn.execute(f"DELETE FROM {table} WHERE session_id = ?", (session_id,))
                 else:
-                    cursor = conn.execute("DELETE FROM heartbeat_entries")
+                    cursor = conn.execute(f"DELETE FROM {table}")
                 return int(cursor.rowcount or 0)
             if not heartbeat_ids:
                 return 0
             placeholders = ",".join("?" for _ in heartbeat_ids)
             if session_id:
                 cursor = conn.execute(
-                    f"DELETE FROM heartbeat_entries WHERE session_id = ? AND id IN ({placeholders})",
+                    f"DELETE FROM {table} WHERE session_id = ? AND id IN ({placeholders})",
                     (session_id, *heartbeat_ids),
                 )
             else:
                 cursor = conn.execute(
-                    f"DELETE FROM heartbeat_entries WHERE id IN ({placeholders})",
+                    f"DELETE FROM {table} WHERE id IN ({placeholders})",
                     tuple(heartbeat_ids),
                 )
             return int(cursor.rowcount or 0)
 
-    def get_all_heartbeats(self, session_id: Optional[str] = None) -> list[dict]:
+    def get_all_heartbeats(self, session_id: Optional[str] = None, hisense: bool = False) -> list[dict]:
+        table = self._heartbeat_table(hisense)
         where = ""
         params: tuple[Any, ...] = ()
         if session_id:
@@ -1244,7 +1300,7 @@ class GatewayStore:
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
-                SELECT * FROM heartbeat_entries
+                SELECT * FROM {table}
                 {where}
                 ORDER BY created_at ASC
                 """,
@@ -1266,4 +1322,5 @@ class GatewayStore:
             "raw_request_windows": self.get_all_raw_request_windows(session_id),
             "cold_start_snapshots": self.all_cold_start_snapshots(session_id),
             "heartbeats": self.get_all_heartbeats(session_id),
+            "hisense_heartbeats": self.get_all_heartbeats(session_id, hisense=True),
         }

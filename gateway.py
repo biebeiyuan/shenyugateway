@@ -451,6 +451,15 @@ def _client_name_from_request(request: Request) -> str:
     return request.headers.get("X-Shenyu-Client") or request.headers.get("X-Client-Name") or "unknown-client"
 
 
+def _is_hisense_client(client_name: Optional[str]) -> bool:
+    target = (cfg.hisense_client_name or "").strip()
+    return bool(target) and (client_name or "").strip() == target
+
+
+def _is_hisense_session(session: Optional[dict]) -> bool:
+    return bool(session) and _is_hisense_client(session.get("client_name"))
+
+
 def _stable_charter_block() -> str:
     return (
         "**给醒来的我：**\n"
@@ -1106,6 +1115,8 @@ class GatewayToolService:
         created_from = date_from or created_from
         created_to = date_to or created_to
         created_start, created_end = _date_range_bounds(created_from, created_to)
+        target_session = session_store.get_session_by_tag(resolved_tag)
+        read_hisense = _is_hisense_session(target_session)
         items = session_store.read_heartbeats(
             None,
             state=state,
@@ -1113,6 +1124,7 @@ class GatewayToolService:
             order=order,
             created_from=created_start,
             created_to=created_end,
+            hisense=read_hisense,
         )
         for item in items:
             item["state"] = "injected" if item.get("injected_at") else "pending"
@@ -1120,7 +1132,7 @@ class GatewayToolService:
         return {
             "ok": True,
             "session_tag": resolved_tag,
-            "scope": "global",
+            "scope": "hisense" if read_hisense else "global",
             "state": state,
             "order": order,
             "date": date,
@@ -1308,7 +1320,7 @@ class GatewayToolService:
             return {"ok": False, "error": "Store not available"}
         limit = max(1, min(int(limit or 10), 30))
         all_sessions = session_store.list_sessions(limit=50)
-        non_hisense = [s for s in all_sessions if (s.get("client_name") or "") != cfg.hisense_client_name]
+        non_hisense = [s for s in all_sessions if not _is_hisense_session(s)]
         if not non_hisense:
             return {"ok": True, "count": 0, "data": []}
         target = non_hisense[0]
@@ -2760,28 +2772,22 @@ class ContextBuilder:
         is_first_turn: bool,
         cold_start_snapshot: Optional[dict] = None,
         client_name: str = "",
+        consume_heartbeat_pending: bool = True,
     ) -> dict:
         session_id = session["id"]
-        message_count = int(session.get("message_count") or 0)
-        is_hisense = (client_name == cfg.hisense_client_name)
+        is_hisense = _is_hisense_client(client_name)
 
-        if is_hisense:
-            heartbeat_digest = self._hisense_heartbeat_digest()
-        else:
-            # 检查是否到了注入 heartbeat 的节点。
-            heartbeat_digest = ""
-            heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
-            pending_hbs = self.store.get_pending_heartbeats(limit=heartbeat_batch_size)
-            if len(pending_hbs) >= heartbeat_batch_size:
-                heartbeat_digest = "\n".join(hb["content"] for hb in pending_hbs)
-                self.store.mark_heartbeats_injected(heartbeat_ids=[hb["id"] for hb in pending_hbs])
-                logger.info("[Heartbeat] 注入 %d 条全局心跳到 Layer 2 (session=%s)", len(pending_hbs), session_id[:8])
-            else:
-                heartbeat_digest = self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size)
+        heartbeat_digest = self._normal_heartbeat_digest(
+            session_id=session_id,
+            consume_pending=consume_heartbeat_pending and not is_hisense,
+        )
+        hisense_heartbeat_digest = self._hisense_heartbeat_digest() if is_hisense else ""
 
         package = {
+            "is_hisense": is_hisense,
             "stable_charter": _stable_charter_block(),
             "heartbeat_digest": heartbeat_digest,
+            "hisense_heartbeat_digest": hisense_heartbeat_digest,
             "cold_start_snapshot": cold_start_snapshot,
             "calendar_context": {"day": [], "week": [], "month": []},
             "atomic_memories": [],
@@ -2809,14 +2815,37 @@ class ContextBuilder:
                 package["atomic_memories"] = atomic.get("memories") or []
         return package
 
-    def _hisense_heartbeat_digest(self) -> str:
+    def _normal_heartbeat_digest(self, session_id: str, consume_pending: bool = True) -> str:
+        heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
+        if consume_pending:
+            # 检查是否到了注入 heartbeat 的节点。
+            pending_hbs = self.store.get_pending_heartbeats(limit=heartbeat_batch_size)
+            if len(pending_hbs) >= heartbeat_batch_size:
+                self.store.mark_heartbeats_injected(heartbeat_ids=[hb["id"] for hb in pending_hbs])
+                logger.info("[Heartbeat] 注入 %d 条全局心跳到 Layer 2 (session=%s)", len(pending_hbs), session_id[:8])
+                return "\n".join(hb["content"] for hb in pending_hbs)
+            return self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size)
+        return self._heartbeat_digest(hisense=False, limit=heartbeat_batch_size)
+
+    def _heartbeat_digest(self, hisense: bool, limit: int, state: str = "all") -> str:
         hbs = self.store.read_heartbeats(
-            session_id=None, state="all",
-            limit=cfg.hisense_heartbeat_limit, order="desc"
+            session_id=None, state=state,
+            limit=max(1, int(limit or 10)), order="desc",
+            hisense=hisense,
         )
         if not hbs:
             return ""
         return "\n".join(hb["content"] for hb in reversed(hbs))
+
+    def _hisense_heartbeat_digest(self) -> str:
+        return self._heartbeat_digest(hisense=True, limit=cfg.hisense_heartbeat_limit)
+
+    def _preview_normal_heartbeat_digest(self) -> str:
+        heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
+        digest = self._heartbeat_digest(hisense=False, limit=heartbeat_batch_size, state="pending")
+        if digest:
+            return digest
+        return self._heartbeat_digest(hisense=False, limit=heartbeat_batch_size, state="injected")
 
     async def _hisense_notebook_items(self) -> list[dict]:
         if not supabase_client:
@@ -2846,8 +2875,8 @@ class ContextBuilder:
                     return rows[0].get("content") or ""
             except Exception:
                 pass
-        # fallback: 最后一条 heartbeat
-        hbs = self.store.read_heartbeats(session_id=None, state="all", limit=1, order="desc")
+        # fallback: 最后一条海信 heartbeat
+        hbs = self.store.read_heartbeats(session_id=None, state="all", limit=1, order="desc", hisense=True)
         if hbs:
             return hbs[0]["content"]
         return ""
@@ -2911,6 +2940,10 @@ class ContextBuilder:
         if heartbeat_digest:
             slow_blocks.append("## 你之前写下的心跳\n" + heartbeat_digest)
 
+        hisense_heartbeat_digest = package.get("hisense_heartbeat_digest", "")
+        if package.get("is_hisense") and hisense_heartbeat_digest:
+            slow_blocks.append("## 海信线程心跳\n" + hisense_heartbeat_digest)
+
         notebook_items = package.get("notebook_items") or []
         if notebook_items:
             nb_lines = ["## 手边的事"]
@@ -2961,8 +2994,21 @@ class ContextBuilder:
         return "\n\n".join(blocks)
 
     async def preview(self, session_tag: Optional[str]) -> dict:
-        fake_session = self.store.get_or_create_session(session_tag or "default", "preview")
-        package = await self.build_context_package(fake_session, current_user_text="", is_first_turn=True)
+        session = self.store.get_session_by_tag(session_tag or "default") if session_tag else None
+        fake_session = session or {
+            "id": "preview",
+            "session_tag": session_tag or "default",
+            "client_name": "preview",
+            "message_count": 0,
+        }
+        package = await self.build_context_package(
+            fake_session,
+            current_user_text="",
+            is_first_turn=True,
+            client_name=fake_session.get("client_name") or "preview",
+            consume_heartbeat_pending=False,
+        )
+        package["heartbeat_digest"] = self._preview_normal_heartbeat_digest()
         return {
             "session_tag": fake_session["session_tag"],
             "package": package,
@@ -4101,7 +4147,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     messages, trim_meta = _trim_client_messages(raw_messages)
     user_text = _latest_user_text(messages)
     current_message_count = _non_system_message_count(messages)
-    is_hisense = (client_name == cfg.hisense_client_name)
+    is_hisense = _is_hisense_client(client_name)
     cold_start_snapshot = None
     if not is_hisense:
         cold_start_snapshot = _maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count)
@@ -4186,8 +4232,15 @@ def _store_heartbeat(session_id: str, session: dict, content: str):
     if not heartbeat_content or session_store is None:
         return
     msg_count = int(session.get("message_count") or 0)
-    session_store.append_heartbeat(session_id, heartbeat_content, turn_number=msg_count)
-    logger.info("[Heartbeat] 写入心跳 (%d chars) session=%s", len(heartbeat_content), session_id[:8])
+    is_hisense = _is_hisense_session(session)
+    session_store.append_heartbeat(
+        session_id,
+        heartbeat_content,
+        turn_number=msg_count,
+        hisense=is_hisense,
+    )
+    log_tag = "HisenseHeartbeat" if is_hisense else "Heartbeat"
+    logger.info("[%s] 写入心跳 (%d chars) session=%s", log_tag, len(heartbeat_content), session_id[:8])
 
 
 def _schedule_inline_memory_capture(
@@ -4733,7 +4786,7 @@ async def chat_completions(request: Request, body: ChatRequest):
         for tool in merged_tools
     )
 
-    # 鏋勫缓鏃ュ織鏉＄洰
+    # 构建日志条目
     log_id = uuid.uuid4().hex[:8]
     is_first = meta.get("is_first_turn", False)
     system_additions = ""
@@ -4834,7 +4887,7 @@ async def chat_completions(request: Request, body: ChatRequest):
 
             return await _stream_chat(request, payload, headers, body.model, on_complete=_on_stream_complete)
 
-        # 闈炴祦寮忚矾寰勶細涔熼渶瑕佽繃婊?heartbeat
+        # 非流式路径：也需要过滤 heartbeat
         completion = await _nonstream_chat(request, payload, headers, body.model)
         log_entry["usage"] = completion.get("usage", {})
         log_entry["cache_usage"] = _cache_usage_summary(completion.get("usage", {}))
@@ -5285,7 +5338,9 @@ async def list_gateway_sessions(limit: int = 100, q: str = ""):
 @app.get("/api/gateway/sessions/{session_tag}")
 async def session_detail(session_tag: str, messages_limit: Optional[int] = None):
     assert session_store is not None
-    session = session_store.get_or_create_session(session_tag, "debug")
+    session = session_store.get_session_by_tag(session_tag)
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
     window_limit = messages_limit if messages_limit is not None else 50
     messages = session_store.get_recent_messages(
         session["id"],
@@ -5298,16 +5353,22 @@ async def session_detail(session_tag: str, messages_limit: Optional[int] = None)
     context_snapshots = session_store.get_recent_context_snapshots(session["id"], limit=5)
     cold_start = session_store.latest_cold_start_snapshot(session["id"])
     cold_start_snapshots = session_store.recent_cold_start_snapshots(session["id"], limit=8)
-    heartbeats = list(reversed(session_store.get_all_heartbeats()))
+    is_hisense = _is_hisense_session(session)
+    heartbeats = list(reversed(session_store.get_all_heartbeats(hisense=is_hisense)))
+    hisense_heartbeats = list(reversed(session_store.get_all_heartbeats(hisense=True)))
+    stats = session_store.get_session_stats(session["id"])
+    if is_hisense:
+        stats["heartbeats"] = stats.get("hisense_heartbeats", 0)
     return {
         "session": session,
-        "stats": session_store.get_session_stats(session["id"]),
+        "stats": stats,
         "latest_cold_start_snapshot": cold_start,
         "context_snapshots": context_snapshots,
         "raw_request_windows": raw_request_windows,
         "cold_start_snapshots": cold_start_snapshots,
         "recent_messages": messages,
         "heartbeats": heartbeats,
+        "hisense_heartbeats": hisense_heartbeats,
     }
 
 
@@ -5324,7 +5385,12 @@ async def create_gateway_heartbeat(session_tag: str, body: HeartbeatCreateReques
     if len(content) > 4000:
         raise HTTPException(status_code=400, detail="Heartbeat content is too long.")
     turn_number = body.turn_number if body.turn_number is not None else int(session.get("message_count") or 0)
-    item = session_store.append_heartbeat(session["id"], content, turn_number=max(0, int(turn_number or 0)))
+    item = session_store.append_heartbeat(
+        session["id"],
+        content,
+        turn_number=max(0, int(turn_number or 0)),
+        hisense=_is_hisense_session(session),
+    )
     return {"ok": True, "heartbeat": item}
 
 
@@ -5336,7 +5402,12 @@ async def delete_gateway_heartbeats(session_tag: str, body: HeartbeatDeleteReque
         raise HTTPException(status_code=404, detail="Session not found.")
     if body.delete_all and body.confirm != "GLOBAL":
         raise HTTPException(status_code=400, detail="Confirmation must be GLOBAL for delete_all.")
-    deleted = session_store.delete_heartbeats(None, heartbeat_ids=body.ids, delete_all=body.delete_all)
+    deleted = session_store.delete_heartbeats(
+        None,
+        heartbeat_ids=body.ids,
+        delete_all=body.delete_all,
+        hisense=_is_hisense_session(session),
+    )
     return {"ok": True, "deleted": deleted}
 
 
@@ -5512,15 +5583,19 @@ async def hisense_preview():
     sessions_mgr = SessionManager(session_store, cfg)
     tools = GatewayToolService()
     builder = ContextBuilder(session_store, sessions_mgr, tools)
-    fake_session = session_store.get_or_create_session(
-        session_tag="hisense-preview", client_name=cfg.hisense_client_name
-    )
+    fake_session = {
+        "id": "hisense-preview",
+        "session_tag": "hisense-preview",
+        "client_name": cfg.hisense_client_name,
+        "message_count": 0,
+    }
     package = await builder.build_context_package(
         fake_session,
         current_user_text="",
         is_first_turn=True,
         cold_start_snapshot=None,
         client_name=cfg.hisense_client_name,
+        consume_heartbeat_pending=False,
     )
     layers = builder.render_layered_additions(package)
     return {
@@ -5531,6 +5606,7 @@ async def hisense_preview():
         },
         "package": {
             "heartbeat_digest": package.get("heartbeat_digest", ""),
+            "hisense_heartbeat_digest": package.get("hisense_heartbeat_digest", ""),
             "calendar_context": package.get("calendar_context", {}),
             "notebook_items": package.get("notebook_items", []),
             "last_wake_recap": package.get("last_wake_recap", ""),
@@ -5606,8 +5682,10 @@ async def hisense_sessions(limit: int = 20):
     all_sessions = session_store.list_sessions(limit=200)
     hisense_sessions = [
         s for s in all_sessions
-        if (s.get("client_name") or "") == cfg.hisense_client_name
+        if _is_hisense_session(s)
     ][:max(1, min(int(limit or 20), 50))]
+    for item in hisense_sessions:
+        item["heartbeat_count"] = item.get("hisense_heartbeat_count", 0)
     return {"sessions": hisense_sessions, "count": len(hisense_sessions)}
 
 

@@ -18,6 +18,7 @@ export interface GatewaySession {
   raw_request_window_count?: number
   cold_start_snapshot_count?: number
   heartbeat_count?: number
+  hisense_heartbeat_count?: number
   latest_user_text?: string | null
 }
 
@@ -40,6 +41,7 @@ export interface GatewaySessionStats {
   assistant_messages: number
   tool_messages: number
   heartbeats: number
+  hisense_heartbeats?: number
   cold_start_snapshots: number
   context_snapshots?: number
   raw_request_windows?: number
@@ -109,6 +111,7 @@ export interface GatewaySessionDetail {
   cold_start_snapshots: GatewayColdStartSnapshot[]
   recent_messages: GatewayMessage[]
   heartbeats: GatewayHeartbeat[]
+  hisense_heartbeats?: GatewayHeartbeat[]
 }
 
 export async function fetchGatewaySessions(params: { limit?: number; q?: string } = {}) {

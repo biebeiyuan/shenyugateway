@@ -21,6 +21,7 @@ export interface HisensePreview {
   }
   package: {
     heartbeat_digest: string
+    hisense_heartbeat_digest: string
     calendar_context: Record<string, unknown[]>
     notebook_items: NotebookItem[]
     last_wake_recap: string

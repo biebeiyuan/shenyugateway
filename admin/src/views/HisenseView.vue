@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   NButton,
   NCollapse,
@@ -57,12 +57,14 @@ const typeOptions = [
   { label: 'question', value: 'question' },
 ]
 
-import { computed } from 'vue'
 const hasCalendar = computed(() => {
   if (!preview.value) return false
   const ctx = preview.value.package.calendar_context
   return Object.values(ctx).some((rows: any) => rows?.length > 0)
 })
+const heartbeatLines = computed(() => (preview.value?.package.heartbeat_digest || '').split('\n').filter(Boolean))
+const hisenseHeartbeatLines = computed(() => (preview.value?.package.hisense_heartbeat_digest || '').split('\n').filter(Boolean))
+const hasHeartbeat = computed(() => heartbeatLines.value.length > 0 || hisenseHeartbeatLines.value.length > 0)
 
 onMounted(async () => {
   await Promise.all([loadPreview(), loadNotebook(), loadSessions()])
@@ -157,9 +159,14 @@ function shortTime(iso: string) {
           <h2>心跳</h2>
           <span class="card-badge">最近 {{ heartbeatLimit }} 条</span>
         </div>
-        <div class="card-body" v-if="preview?.package.heartbeat_digest">
-          <div class="heartbeat-list">
-            <p v-for="(line, i) in preview.package.heartbeat_digest.split('\n').filter(Boolean)" :key="i" class="heartbeat-line">
+        <div class="card-body" v-if="hasHeartbeat">
+          <div class="heartbeat-list" v-if="heartbeatLines.length">
+            <h3 class="heartbeat-title">你之前写下的心跳</h3>
+            <p v-for="(line, i) in heartbeatLines" :key="`normal-${i}`" class="heartbeat-line">{{ line }}</p>
+          </div>
+          <div class="heartbeat-list" v-if="hisenseHeartbeatLines.length">
+            <h3 class="heartbeat-title">海信线程心跳</h3>
+            <p v-for="(line, i) in hisenseHeartbeatLines" :key="`hisense-${i}`" class="heartbeat-line">
               {{ line }}
             </p>
           </div>
@@ -420,6 +427,15 @@ function shortTime(iso: string) {
 .heartbeat-list {
   max-height: 280px;
   overflow-y: auto;
+}
+.heartbeat-list + .heartbeat-list {
+  margin-top: 14px;
+}
+.heartbeat-title {
+  margin: 0 0 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #3d3535;
 }
 .heartbeat-line {
   padding: 6px 0;
