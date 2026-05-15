@@ -1246,7 +1246,7 @@ class GatewayStore:
         if created_to:
             where += " AND created_at < ?"
             params.append(created_to)
-        limit = max(1, min(int(limit or 10), 100))
+        limit = max(1, min(int(limit or 10), 500))
         with self._connect() as conn:
             rows = conn.execute(
                 f"""

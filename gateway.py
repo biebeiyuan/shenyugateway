@@ -2781,7 +2781,11 @@ class ContextBuilder:
             session_id=session_id,
             consume_pending=consume_heartbeat_pending and not is_hisense,
         )
-        hisense_heartbeat_digest = self._hisense_heartbeat_digest() if is_hisense else ""
+        hisense_heartbeat_digest = (
+            self._hisense_heartbeat_digest(consume_pending=consume_heartbeat_pending)
+            if is_hisense
+            else ""
+        )
 
         package = {
             "is_hisense": is_hisense,
@@ -2837,7 +2841,15 @@ class ContextBuilder:
             return ""
         return "\n".join(hb["content"] for hb in reversed(hbs))
 
-    def _hisense_heartbeat_digest(self) -> str:
+    def _hisense_heartbeat_digest(self, consume_pending: bool = True) -> str:
+        heartbeat_batch_size = max(int(cfg.hisense_heartbeat_limit or 10), 1)
+        if consume_pending:
+            pending_hbs = self.store.get_pending_heartbeats(limit=heartbeat_batch_size, hisense=True)
+            if len(pending_hbs) >= heartbeat_batch_size:
+                self.store.mark_heartbeats_injected(heartbeat_ids=[hb["id"] for hb in pending_hbs], hisense=True)
+                logger.info("[HisenseHeartbeat] 注入 %d 条海信心跳到 Layer 2", len(pending_hbs))
+                return "\n".join(hb["content"] for hb in pending_hbs)
+            return self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size, hisense=True)
         return self._heartbeat_digest(hisense=True, limit=cfg.hisense_heartbeat_limit)
 
     def _preview_normal_heartbeat_digest(self) -> str:
@@ -2875,8 +2887,8 @@ class ContextBuilder:
                     return rows[0].get("content") or ""
             except Exception:
                 pass
-        # fallback: 最后一条海信 heartbeat
-        hbs = self.store.read_heartbeats(session_id=None, state="all", limit=1, order="desc", hisense=True)
+        # fallback: 最后一条已注入的海信 heartbeat
+        hbs = self.store.read_heartbeats(session_id=None, state="injected", limit=1, order="desc", hisense=True)
         if hbs:
             return hbs[0]["content"]
         return ""
@@ -3149,7 +3161,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_read_heartbeat",
-                "description": "Read your stored heartbeat notes. To see one day, pass date like 2026-05-11.",
+                "description": "Read your stored heartbeat notes. To see one day, pass date like 2026-05-11. In a Hisense session this automatically reads the Hisense heartbeat pool.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -5336,7 +5348,7 @@ async def list_gateway_sessions(limit: int = 100, q: str = ""):
 
 
 @app.get("/api/gateway/sessions/{session_tag}")
-async def session_detail(session_tag: str, messages_limit: Optional[int] = None):
+async def session_detail(session_tag: str, messages_limit: Optional[int] = None, heartbeat_limit: int = 500):
     assert session_store is not None
     session = session_store.get_session_by_tag(session_tag)
     if not session:
@@ -5354,8 +5366,13 @@ async def session_detail(session_tag: str, messages_limit: Optional[int] = None)
     cold_start = session_store.latest_cold_start_snapshot(session["id"])
     cold_start_snapshots = session_store.recent_cold_start_snapshots(session["id"], limit=8)
     is_hisense = _is_hisense_session(session)
-    heartbeats = list(reversed(session_store.get_all_heartbeats(hisense=is_hisense)))
-    hisense_heartbeats = list(reversed(session_store.get_all_heartbeats(hisense=True)))
+    heartbeats = session_store.read_heartbeats(
+        None,
+        state="all",
+        limit=max(1, min(int(heartbeat_limit or 500), 500)),
+        order="desc",
+        hisense=is_hisense,
+    )
     stats = session_store.get_session_stats(session["id"])
     if is_hisense:
         stats["heartbeats"] = stats.get("hisense_heartbeats", 0)
@@ -5368,7 +5385,7 @@ async def session_detail(session_tag: str, messages_limit: Optional[int] = None)
         "cold_start_snapshots": cold_start_snapshots,
         "recent_messages": messages,
         "heartbeats": heartbeats,
-        "hisense_heartbeats": hisense_heartbeats,
+        "hisense_heartbeats": heartbeats if is_hisense else [],
     }
 
 
@@ -5412,15 +5429,19 @@ async def delete_gateway_heartbeats(session_tag: str, body: HeartbeatDeleteReque
 
 
 @app.get("/api/gateway/heartbeats")
-async def list_gateway_heartbeats(limit: int = 500, order: str = "asc"):
+async def list_gateway_heartbeats(limit: int = 500, order: str = "asc", scope: str = "normal"):
     assert session_store is not None
     order_key = "desc" if str(order or "").lower() == "desc" else "asc"
     max_limit = max(1, min(int(limit or 500), 2000))
-    heartbeats = session_store.get_all_heartbeats()
+    scope_key = (scope or "normal").strip().lower()
+    hisense = scope_key in {"hisense", "海信"}
+    scope_key = "hisense" if hisense else "normal"
+    heartbeats = session_store.get_all_heartbeats(hisense=hisense)
     if order_key == "desc":
         heartbeats = list(reversed(heartbeats))
     return {
         "ok": True,
+        "scope": scope_key,
         "count": len(heartbeats),
         "limit": max_limit,
         "order": order_key,

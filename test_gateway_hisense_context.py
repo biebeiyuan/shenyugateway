@@ -104,3 +104,56 @@ def test_normal_context_does_not_see_hisense_heartbeat_pool(tmp_path):
 
     assert "normal hb" in layers["slow"]
     assert "hisense hb" not in layers["slow"]
+
+
+def test_hisense_context_marks_configured_pending_heartbeats_injected(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    hisense_session = store.get_or_create_session("hisense", cfg.hisense_client_name)
+    heartbeat_limit = int(cfg.hisense_heartbeat_limit)
+    for index in range(heartbeat_limit):
+        store.append_heartbeat(hisense_session["id"], f"hisense pending {index + 1}", hisense=True)
+
+    builder = ContextBuilder(store, None, SimpleNamespace())
+    package = asyncio.run(
+        builder.build_context_package(
+            hisense_session,
+            current_user_text="",
+            is_first_turn=True,
+            client_name=cfg.hisense_client_name,
+            consume_heartbeat_pending=True,
+        )
+    )
+    layers = builder.render_layered_additions(package)
+
+    assert "hisense pending 1" in layers["slow"]
+    assert "hisense pending 2" in layers["slow"]
+    assert f"hisense pending {heartbeat_limit}" in layers["slow"]
+    assert store.read_heartbeats(None, state="pending", hisense=True) == []
+    assert len(store.read_heartbeats(None, state="injected", hisense=True)) == heartbeat_limit
+
+
+def test_hisense_context_waits_for_configured_pending_heartbeats(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    hisense_session = store.get_or_create_session("hisense", cfg.hisense_client_name)
+    injected = store.append_heartbeat(hisense_session["id"], "hisense injected", hisense=True)
+    store.mark_heartbeats_injected(heartbeat_ids=[injected["id"]], hisense=True)
+    heartbeat_limit = int(cfg.hisense_heartbeat_limit)
+    for index in range(heartbeat_limit - 1):
+        store.append_heartbeat(hisense_session["id"], f"hisense pending {index + 1}", hisense=True)
+
+    builder = ContextBuilder(store, None, SimpleNamespace())
+    package = asyncio.run(
+        builder.build_context_package(
+            hisense_session,
+            current_user_text="",
+            is_first_turn=True,
+            client_name=cfg.hisense_client_name,
+            consume_heartbeat_pending=True,
+        )
+    )
+    layers = builder.render_layered_additions(package)
+
+    assert "hisense injected" in layers["slow"]
+    assert "hisense pending 1" not in layers["slow"]
+    assert f"hisense pending {heartbeat_limit - 1}" not in layers["slow"]
+    assert len(store.read_heartbeats(None, state="pending", hisense=True)) == heartbeat_limit - 1
