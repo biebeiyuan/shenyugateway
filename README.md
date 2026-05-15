@@ -138,8 +138,8 @@ Flow:
 1. `_prepare_messages()` opens the session and stores a `request_context_snapshot`.
 2. `_maybe_prepare_cold_start_snapshot()` checks whether the request is a new window or a stale window.
 3. It calculates the gap between the target window and the current client message count.
-4. It reads the latest previous request snapshot via `latest_cross_session_context()`.
-5. It inserts only the number of messages needed to fill that gap.
+4. It reads recent previous request snapshots via `latest_cross_session_context()`.
+5. It dedupes overlapping `user`/`assistant` messages and inserts only the number needed to fill that gap.
 6. Once the new thread reaches the target window size, the bridge automatically stops.
 
 Config:

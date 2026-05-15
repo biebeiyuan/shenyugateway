@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import uuid
+from collections import deque
 from datetime import timedelta
 from pathlib import Path
 from typing import Any, Optional
@@ -764,6 +765,7 @@ class GatewayStore:
         limit_messages: int,
     ) -> list[dict]:
         limit_messages = max(1, min(int(limit_messages or 1), 500))
+        fetch_limit = max(20, min(limit_messages * 3, 500))
         where = []
         params: list[Any] = []
         if exclude_session_id:
@@ -774,40 +776,58 @@ class GatewayStore:
             params.append(since)
         where_sql = "WHERE " + " AND ".join(where) if where else ""
         with self._connect() as conn:
-            row = conn.execute(
+            rows = conn.execute(
                 f"""
                 SELECT r.*, s.session_tag AS resolved_session_tag, s.client_name AS resolved_client_name
                 FROM request_context_snapshots r
                 JOIN gateway_sessions s ON s.id = r.session_id
                 {where_sql}
                 ORDER BY r.created_at DESC
-                LIMIT 1
+                LIMIT ?
                 """,
-                params,
-            ).fetchone()
-        if not row:
+                (*params, fetch_limit),
+            ).fetchall()
+        if not rows:
             return []
 
-        item = dict(row)
-        raw_messages = json.loads(item.get("messages_json") or "[]")
-        messages = [
-            {"role": msg.get("role"), "content": msg.get("content")}
-            for msg in raw_messages
-            if msg.get("role") in {"user", "assistant"} and msg.get("content")
-        ]
-        selected = messages[-limit_messages:]
-        if not selected:
-            return []
-        return [
-            {
-                "session_id": item.get("session_id"),
-                "session_tag": item.get("resolved_session_tag") or item.get("session_tag"),
-                "client_name": item.get("resolved_client_name") or item.get("client_name"),
-                "snapshot_at": item.get("created_at"),
-                "latest_user_text": item.get("latest_user_text"),
-                "messages": selected,
-            }
-        ]
+        selected_reversed: deque[dict[str, Any]] = deque()
+        seen_messages: set[tuple[str, str]] = set()
+        remaining = limit_messages
+
+        for row in rows:
+            item = dict(row)
+            raw_messages = json.loads(item.get("messages_json") or "[]")
+            source_messages = []
+            for msg in reversed(raw_messages):
+                role = msg.get("role")
+                content = msg.get("content")
+                if role not in {"user", "assistant"} or not content:
+                    continue
+                key = (str(role), str(content))
+                if key in seen_messages:
+                    continue
+                seen_messages.add(key)
+                source_messages.append({"role": role, "content": content})
+                remaining -= 1
+                if remaining <= 0:
+                    break
+
+            if source_messages:
+                selected_reversed.append(
+                    {
+                        "session_id": item.get("session_id"),
+                        "session_tag": item.get("resolved_session_tag") or item.get("session_tag"),
+                        "client_name": item.get("resolved_client_name") or item.get("client_name"),
+                        "snapshot_at": item.get("created_at"),
+                        "latest_user_text": item.get("latest_user_text"),
+                        "messages": list(reversed(source_messages)),
+                    }
+                )
+            if remaining <= 0:
+                break
+
+        sources = list(reversed(selected_reversed))
+        return sources
 
     def write_cold_start_snapshot(
         self,

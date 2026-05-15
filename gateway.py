@@ -3631,6 +3631,32 @@ def _bridge_messages_from_snapshot(cold_start_snapshot: Optional[dict]) -> list[
     return bridge_messages
 
 
+def _trim_cold_start_sources(sources: list[dict], limit: int) -> list[dict]:
+    remaining = max(int(limit or 0), 0)
+    if remaining <= 0:
+        return []
+
+    selected_reversed = []
+    for source in reversed(sources or []):
+        messages = [
+            msg
+            for msg in source.get("messages") or []
+            if msg.get("role") in {"user", "assistant"} and msg.get("content")
+        ]
+        if not messages:
+            continue
+        selected = messages[-remaining:]
+        if selected:
+            trimmed = dict(source)
+            trimmed["messages"] = selected
+            selected_reversed.append(trimmed)
+            remaining -= len(selected)
+        if remaining <= 0:
+            break
+
+    return list(reversed(selected_reversed))
+
+
 def _tool_call_ids(msg: dict) -> list[str]:
     ids: list[str] = []
     for tool_call in msg.get("tool_calls") or []:
@@ -3696,8 +3722,7 @@ def _maybe_prepare_cold_start_snapshot(
 
     active = session_store.latest_active_cold_start_snapshot(session["id"])
     if active:
-        for source in active.get("sources") or []:
-            source["messages"] = (source.get("messages") or [])[-fill_count:]
+        active["sources"] = _trim_cold_start_sources(active.get("sources") or [], fill_count)
         active["source_message_count"] = sum(len(source.get("messages") or []) for source in active.get("sources") or [])
         return active
 

@@ -41,3 +41,50 @@ def test_get_or_create_session_refreshes_client_name(tmp_path):
     assert second["id"] == first["id"]
     assert second["client_name"] == "hisense"
     assert store.get_session_by_tag("shared")["client_name"] == "hisense"
+
+
+def test_latest_cross_session_context_accumulates_multiple_snapshots(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("main", "operit")
+
+    store.write_request_context_snapshot(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        client_name=session["client_name"],
+        latest_user_text="old u3",
+        messages=[
+            {"role": "system", "content": "ignored"},
+            {"role": "user", "content": "old u1"},
+            {"role": "assistant", "content": "old a1"},
+            {"role": "user", "content": "old u2"},
+            {"role": "assistant", "content": "old a2"},
+            {"role": "user", "content": "old u3"},
+        ],
+    )
+    store.write_request_context_snapshot(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        client_name=session["client_name"],
+        latest_user_text="new u1",
+        messages=[
+            {"role": "user", "content": "old u3"},
+            {"role": "assistant", "content": "new a1"},
+            {"role": "user", "content": "new u1"},
+        ],
+    )
+
+    sources = store.latest_cross_session_context(
+        exclude_session_id=None,
+        since=None,
+        limit_messages=6,
+    )
+    messages = [msg for source in sources for msg in source["messages"]]
+
+    assert [msg["content"] for msg in messages] == [
+        "old a1",
+        "old u2",
+        "old a2",
+        "old u3",
+        "new a1",
+        "new u1",
+    ]
