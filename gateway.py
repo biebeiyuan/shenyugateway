@@ -3184,7 +3184,7 @@ def _gateway_core_tools() -> list[dict]:
                         "date_from": {"type": "string", "description": "Start date for a memory date range."},
                         "date_to": {"type": "string", "description": "End date for a memory date range."},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
-                        "session_tag": {"type": "string"},
+                        "session_tag": {"type": "string", "description": "Optional advanced filter. Usually omit this because core memories are shared across sessions."},
                     },
                 },
             },
@@ -4575,7 +4575,7 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
     if name == "shenyu_ask_memory":
         return await service.ask_memory(
             query=arguments.get("query", ""),
-            session_tag=arguments.get("session_tag") or session_tag,
+            session_tag=arguments.get("session_tag"),
             limit=int(arguments.get("limit", 8)),
             date=arguments.get("date"),
             date_from=arguments.get("date_from"),
