@@ -20,19 +20,22 @@ def _env_optional_int(name: str) -> Optional[int]:
 
 class RuntimeConfig:
     def __init__(self):
-        self.supabase_url: str = os.getenv("SUPABASE_URL", "")
-        self.supabase_key: str = os.getenv("SUPABASE_SERVICE_KEY", "")
-        self.gateway_key: str = os.getenv("GATEWAY_API_KEY", "")
-        self.upstream_url: str = os.getenv("UPSTREAM_URL", "https://api.anthropic.com/v1/messages")
-        self.upstream_api_key: str = os.getenv("ANTHROPIC_API_KEY", "")
+        self.supabase_url: str = os.getenv("SUPABASE_URL", "").strip()
+        self.supabase_key: str = os.getenv("SUPABASE_SERVICE_KEY", "").strip()
+        self.gateway_key: str = os.getenv("GATEWAY_API_KEY", "").strip()
+        self.upstream_url: str = os.getenv("UPSTREAM_URL", "https://api.treegpt.cc").strip()
+        self.upstream_api_key: str = os.getenv("ANTHROPIC_API_KEY", "").strip()
         self.upstream_version: str = os.getenv("ANTHROPIC_VERSION", "2023-06-01")
-        self.upstream_protocol: str = os.getenv("UPSTREAM_PROTOCOL", "auto")
+        self.upstream_protocol: str = os.getenv("UPSTREAM_PROTOCOL", "openai").strip().lower()
         self.upstream_proxy: str = os.getenv("UPSTREAM_PROXY", "").strip()
         self.upstream_trust_env: bool = _env_bool("UPSTREAM_TRUST_ENV", False)
-        self.calendar_upstream_url: str = os.getenv("CALENDAR_UPSTREAM_URL", "")
-        self.calendar_api_key: str = os.getenv("CALENDAR_API_KEY", "")
-        self.calendar_protocol: str = os.getenv("CALENDAR_PROTOCOL", "auto")
-        self.calendar_model: str = os.getenv("CALENDAR_MODEL", "claude-opus-4-7")
+        self.hisense_upstream_url: str = os.getenv("HISENSE_UPSTREAM_URL", "").strip()
+        self.hisense_api_key: str = os.getenv("HISENSE_API_KEY", "").strip()
+        self.hisense_protocol: str = os.getenv("HISENSE_PROTOCOL", "").strip().lower()
+        self.calendar_upstream_url: str = os.getenv("CALENDAR_UPSTREAM_URL", "").strip()
+        self.calendar_api_key: str = os.getenv("CALENDAR_API_KEY", "").strip()
+        self.calendar_protocol: str = os.getenv("CALENDAR_PROTOCOL", "auto").strip().lower()
+        self.calendar_model: str = os.getenv("CALENDAR_MODEL", "claude-opus-4-7").strip()
         self.enable_inline_memory_capture: bool = _env_bool("ENABLE_INLINE_MEMORY_CAPTURE", False)
         self.inject_inline_memory_prompt: bool = _env_bool(
             "INJECT_INLINE_MEMORY_PROMPT",
@@ -66,7 +69,7 @@ class RuntimeConfig:
         self.gateway_context_snapshot_retention: int = int(os.getenv("GATEWAY_CONTEXT_SNAPSHOT_RETENTION", "3"))
         self.gateway_cold_start_retention: int = int(os.getenv("GATEWAY_COLD_START_RETENTION", "20"))
 
-        self.hisense_client_name: str = os.getenv("HISENSE_CLIENT_NAME", "hisense")
+        self.hisense_client_name: str = os.getenv("HISENSE_CLIENT_NAME", "hisense").strip()
         self.hisense_heartbeat_limit: int = int(os.getenv("HISENSE_HEARTBEAT_LIMIT", "3"))
         self.hisense_notebook_limit: int = int(os.getenv("HISENSE_NOTEBOOK_LIMIT", "5"))
 
@@ -80,6 +83,9 @@ class RuntimeConfig:
             "upstream_protocol": self.upstream_protocol,
             "upstream_proxy": self.upstream_proxy,
             "upstream_trust_env": self.upstream_trust_env,
+            "hisense_upstream_url": self.hisense_upstream_url,
+            "hisense_api_key": mask(self.hisense_api_key),
+            "hisense_protocol": self.hisense_protocol,
             "calendar_upstream_url": self.calendar_upstream_url,
             "calendar_api_key": mask(self.calendar_api_key),
             "calendar_protocol": self.calendar_protocol,

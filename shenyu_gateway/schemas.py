@@ -29,6 +29,9 @@ class ConfigUpdate(BaseModel):
     upstream_protocol: Optional[str] = None
     upstream_proxy: Optional[str] = None
     upstream_trust_env: Optional[bool] = None
+    hisense_upstream_url: Optional[str] = None
+    hisense_api_key: Optional[str] = None
+    hisense_protocol: Optional[str] = None
     calendar_upstream_url: Optional[str] = None
     calendar_api_key: Optional[str] = None
     calendar_protocol: Optional[str] = None
@@ -62,6 +65,7 @@ class ConfigUpdate(BaseModel):
     gateway_message_retention: Optional[int] = None
     gateway_context_snapshot_retention: Optional[int] = None
     gateway_cold_start_retention: Optional[int] = None
+    hisense_client_name: Optional[str] = None
     hisense_heartbeat_limit: Optional[int] = None
     hisense_notebook_limit: Optional[int] = None
 

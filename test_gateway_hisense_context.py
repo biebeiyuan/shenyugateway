@@ -14,10 +14,16 @@ def _load_gateway_classes():
     source = Path(__file__).with_name("gateway.py").read_text(encoding="utf-8")
     module = ast.parse(source)
     wanted_functions = {
+        "_clean_config_text",
         "_date_range_bounds",
+        "_detect_protocol_for",
+        "_chat_url_for",
+        "_models_url_for",
+        "_upstream_for_hisense",
         "_shorten",
         "_relative_time_label",
         "_stable_charter_block",
+        "_session_tag_from_request",
         "_is_hisense_client",
         "_is_hisense_session",
     }
@@ -25,6 +31,7 @@ def _load_gateway_classes():
     namespace = {
         "Any": Any,
         "Optional": Optional,
+        "Request": object,
         "GatewayStore": object,
         "SessionManager": object,
         "GatewayToolService": object,
@@ -34,6 +41,12 @@ def _load_gateway_classes():
         "supabase_client": None,
         "cfg": SimpleNamespace(
             hisense_client_name="hisense",
+            hisense_upstream_url="",
+            hisense_api_key="",
+            hisense_protocol="",
+            upstream_url="https://api.treegpt.cc",
+            upstream_api_key="default-key",
+            upstream_protocol="openai",
             heartbeat_inject_every=5,
             hisense_heartbeat_limit=3,
             calendar_inject_day=False,
@@ -89,6 +102,59 @@ def test_hisense_context_can_see_both_heartbeat_pools(tmp_path):
 
     assert "normal hb" in layers["slow"]
     assert "hisense hb" in layers["slow"]
+
+
+def test_hisense_client_defaults_to_isolated_session_tag():
+    request = SimpleNamespace(headers={})
+
+    session_tag = gateway_namespace["_session_tag_from_request"](
+        request,
+        client_name=cfg.hisense_client_name,
+    )
+
+    assert session_tag == "hisense"
+
+
+def test_hisense_client_detection_tolerates_case_and_chinese_alias():
+    assert gateway_namespace["_is_hisense_client"]("Hisense")
+    assert gateway_namespace["_is_hisense_client"]("海信")
+
+
+def test_hisense_upstream_can_use_dedicated_url():
+    cfg.upstream_url = "https://default.example"
+    cfg.upstream_api_key = "default-key"
+    cfg.upstream_protocol = "openai"
+    cfg.hisense_upstream_url = "https://hisense.example"
+    cfg.hisense_api_key = "hisense-key"
+    cfg.hisense_protocol = "openai"
+
+    upstream = gateway_namespace["_upstream_for_hisense"](True)
+    default_upstream = gateway_namespace["_upstream_for_hisense"](False)
+
+    assert upstream["scope"] == "hisense"
+    assert upstream["chat_url"] == "https://hisense.example/v1/chat/completions"
+    assert upstream["api_key"] == "hisense-key"
+    assert default_upstream["chat_url"] == "https://default.example/v1/chat/completions"
+
+    cfg.upstream_url = "https://api.treegpt.cc"
+    cfg.upstream_api_key = "default-key"
+    cfg.upstream_protocol = "openai"
+    cfg.hisense_upstream_url = ""
+    cfg.hisense_api_key = ""
+    cfg.hisense_protocol = ""
+
+
+def test_upstream_url_helpers_accept_v1_base_urls():
+    chat_url_for = gateway_namespace["_chat_url_for"]
+    models_url_for = gateway_namespace["_models_url_for"]
+
+    assert chat_url_for("https://openai.example/v1", "openai") == "https://openai.example/v1/chat/completions"
+    assert chat_url_for("https://anthropic.example/v1", "anthropic") == "https://anthropic.example/v1/messages"
+    assert models_url_for({"base_url": "https://openai.example/v1"}) == "https://openai.example/v1/models"
+    assert (
+        models_url_for({"base_url": "https://openai.example/v1/chat/completions"})
+        == "https://openai.example/v1/models"
+    )
 
 
 def test_normal_context_does_not_see_hisense_heartbeat_pool(tmp_path):

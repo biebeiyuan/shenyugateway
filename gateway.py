@@ -7,6 +7,8 @@ OpenAI-compatible gateway with:
 - upstream protocol adaptation for Anthropic / OpenAI
 """
 
+from __future__ import annotations
+
 import asyncio
 import json
 import logging
@@ -20,6 +22,7 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
+from urllib.parse import urlsplit
 
 import httpx
 from fastapi import FastAPI, HTTPException, Request
@@ -225,6 +228,65 @@ def _safe_json_loads(value: Any, fallback: Any):
         return fallback
 
 
+_DNS_ERROR_MARKERS = (
+    "getaddrinfo",
+    "name or service not known",
+    "temporary failure in name resolution",
+    "nodename nor servname",
+    "no address associated",
+    "failed to resolve",
+    "could not resolve",
+    "无法解析",
+)
+
+
+def _clean_config_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _validate_http_url(field_name: str, value: Any, *, allow_empty: bool = True) -> str:
+    url = _clean_config_text(value)
+    if not url:
+        if allow_empty:
+            return ""
+        raise HTTPException(status_code=400, detail=f"{field_name} 不能为空。")
+    parsed = urlsplit(url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{field_name} 必须是包含 http(s):// 和主机名的完整 URL。",
+        )
+    return url
+
+
+def _validate_protocol(field_name: str, value: Any, *, allow_empty: bool = False) -> str:
+    protocol = _clean_config_text(value).lower()
+    if not protocol:
+        if allow_empty:
+            return ""
+        return "auto"
+    if protocol not in {"auto", "openai", "anthropic"}:
+        raise HTTPException(status_code=400, detail=f"{field_name} 只能是 auto、openai 或 anthropic。")
+    return protocol
+
+
+def _connection_route_hint() -> str:
+    if cfg.upstream_proxy:
+        return "UPSTREAM_PROXY 已配置，出站请求会走显式代理。"
+    if cfg.upstream_trust_env:
+        return "UPSTREAM_TRUST_ENV=true，出站请求会读取环境代理。"
+    return "UPSTREAM_PROXY 为空且 UPSTREAM_TRUST_ENV=false，出站请求会直连上游。"
+
+
+def _connect_error_detail(chat_url: str, exc: Exception) -> str:
+    host = urlsplit(chat_url or "").hostname or "(unknown host)"
+    raw = str(exc)
+    lowered = raw.lower()
+    if any(marker in lowered for marker in _DNS_ERROR_MARKERS):
+        return f"无法解析上游主机 {host}（{chat_url}）。{_connection_route_hint()} 原始错误: {raw}"
+    return f"无法连接上游 {chat_url}: {raw}"
+
+
 cfg = RuntimeConfig()
 supabase_client: Optional["SupabaseClient"] = None
 session_store: Optional["GatewayStore"] = None
@@ -402,28 +464,62 @@ def _detect_protocol_for(url: str, protocol: str = "auto") -> str:
     return "openai"
 
 
-def _detect_protocol() -> str:
-    return _detect_protocol_for(cfg.upstream_url, cfg.upstream_protocol)
-
-
 def _chat_url_for(base_url: str, protocol: str = "auto") -> str:
     """根据协议自动拼接正确的聊天端点 URL。
-    用户只需填写基础 URL（如 https://api.treegpt.top），自动补全路径。
+    用户只需填写基础 URL（如 https://api.treegpt.cc），自动补全路径。
     如果已经填写完整路径，则原样使用。
     """
-    url = (base_url or "").rstrip("/")
+    url = _clean_config_text(base_url).rstrip("/")
     proto = _detect_protocol_for(url, protocol)
     if proto == "anthropic":
-        if not url.endswith("/messages"):
+        if url.endswith("/v1"):
+            url += "/messages"
+        elif not url.endswith("/messages"):
             url += "/v1/messages"
     else:  # openai
-        if not url.endswith("/chat/completions"):
+        if url.endswith("/v1"):
+            url += "/chat/completions"
+        elif not url.endswith("/chat/completions"):
             url += "/v1/chat/completions"
     return url
 
 
-def _get_chat_url() -> str:
-    return _chat_url_for(cfg.upstream_url, cfg.upstream_protocol)
+def _upstream_for_hisense(is_hisense: bool = False) -> dict[str, str]:
+    base_url = _clean_config_text(cfg.upstream_url)
+    api_key = _clean_config_text(cfg.upstream_api_key)
+    protocol = _clean_config_text(cfg.upstream_protocol) or "auto"
+    scope = "default"
+
+    if is_hisense:
+        hisense_url = _clean_config_text(getattr(cfg, "hisense_upstream_url", ""))
+        hisense_key = _clean_config_text(getattr(cfg, "hisense_api_key", ""))
+        hisense_protocol = _clean_config_text(getattr(cfg, "hisense_protocol", ""))
+        if hisense_url:
+            base_url = hisense_url
+            scope = "hisense"
+        if hisense_key:
+            api_key = hisense_key
+            scope = "hisense"
+        if hisense_protocol:
+            protocol = hisense_protocol
+            scope = "hisense"
+
+    resolved_protocol = _detect_protocol_for(base_url, protocol)
+    return {
+        "scope": scope,
+        "base_url": base_url,
+        "chat_url": _chat_url_for(base_url, resolved_protocol),
+        "protocol": resolved_protocol,
+        "api_key": api_key,
+    }
+
+
+def _detect_protocol(is_hisense: bool = False) -> str:
+    return _upstream_for_hisense(is_hisense)["protocol"]
+
+
+def _get_chat_url(is_hisense: bool = False) -> str:
+    return _upstream_for_hisense(is_hisense)["chat_url"]
 
 
 def _mapped_model_name(model_name: str) -> str:
@@ -440,20 +536,27 @@ async def verify_api_key(request: Request):
             raise HTTPException(status_code=401, detail="Invalid API key")
 
 
-def _session_tag_from_request(request: Request) -> str:
+def _session_tag_from_request(request: Request, client_name: Optional[str] = None) -> str:
     header = request.headers.get("X-Shenyu-Session-Tag") or request.headers.get("X-Session-Tag")
     if header:
         return header.strip()
+    if _is_hisense_client(client_name):
+        return "hisense"
     return "default"
 
 
 def _client_name_from_request(request: Request) -> str:
-    return request.headers.get("X-Shenyu-Client") or request.headers.get("X-Client-Name") or "unknown-client"
+    return (request.headers.get("X-Shenyu-Client") or request.headers.get("X-Client-Name") or "unknown-client").strip()
 
 
 def _is_hisense_client(client_name: Optional[str]) -> bool:
     target = (cfg.hisense_client_name or "").strip()
-    return bool(target) and (client_name or "").strip() == target
+    name = (client_name or "").strip()
+    if not target or not name:
+        return False
+    if name.casefold() == target.casefold():
+        return True
+    return target.casefold() == "hisense" and name == "海信"
 
 
 def _is_hisense_session(session: Optional[dict]) -> bool:
@@ -885,63 +988,64 @@ class GatewayToolService:
                 lines.append(f"- {title}: {content}")
         return "\n".join(lines)
 
-    async def ask_memory(self, query: str, session_tag: Optional[str], limit: int = 5) -> dict:
+    async def ask_memory(
+        self,
+        query: str,
+        session_tag: Optional[str],
+        limit: int = 8,
+        date: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> dict:
         if not supabase_client:
-            return {"query": query, "count": 0, "direct_hits": [], "note": "Supabase is not configured."}
+            return {"query": query, "count": 0, "memories": [], "note": "Supabase is not configured."}
 
-        params = {
-            "is_deleted": "eq.false",
-            "order": "weight.desc,date.desc",
-            "limit": str(max(1, min(limit, 10))),
-            "select": "id,title,date,summary,facts,emotional_context,importance,weight,session_tag",
-        }
-        if query.strip() and query.strip() != "*":
-            escaped = query.replace(",", " ").replace("(", " ").replace(")", " ")
-            params["or"] = (
+        query_text = query or ""
+        params: list[tuple[str, str]] = [
+            ("is_deleted", "eq.false"),
+            ("order", "weight.desc,date.desc"),
+            ("limit", str(max(1, min(limit, 20)))),
+            ("select", "id,title,date,summary,facts,emotional_context"),
+        ]
+        if query_text.strip() and query_text.strip() != "*":
+            escaped = query_text.replace(",", " ").replace("(", " ").replace(")", " ")
+            params.append((
+                "or",
                 f"(title.ilike.*{escaped}*,summary.ilike.*{escaped}*,"
                 f"facts.ilike.*{escaped}*,emotional_context.ilike.*{escaped}*)"
-            )
+            ))
+        if date:
+            params.append(("date", f"eq.{date}"))
+        else:
+            if date_from:
+                params.append(("date", f"gte.{date_from}"))
+            if date_to:
+                params.append(("date", f"lte.{date_to}"))
         if session_tag:
-            params["session_tag"] = f"eq.{session_tag}"
+            params.append(("session_tag", f"eq.{session_tag}"))
 
         memories = await supabase_client.query("memories", params)
-        memory_ids = [memory.get("id") for memory in memories if memory.get("id")]
-        tags_by_memory = await self._load_tags_for_memories(memory_ids)
-        links_by_memory, linked_titles = await self._load_links_for_memories(memory_ids)
 
         cards = []
         for memory in memories:
             memory_id = memory.get("id")
-            tags = tags_by_memory.get(memory_id, [])
-            links = links_by_memory.get(memory_id, [])
-            why = self._memory_why(query, memory, tags, links)
             cards.append(
                 {
-                    "id": memory_id,
                     "title": memory.get("title"),
                     "date": memory.get("date"),
                     "summary": memory.get("summary"),
                     "facts": memory.get("facts"),
-                    "emotional_context_excerpt": _shorten(memory.get("emotional_context") or "", 220) or None,
-                    "importance": memory.get("importance"),
-                    "weight": memory.get("weight"),
-
-                    "tags": tags,
-                    "links": self._decorate_links(memory_id, links, linked_titles)[:4],
-                    "why": why,
+                    "emotional_context": memory.get("emotional_context"),
                 }
             )
 
             if memory_id:
                 await self._boost_memory(memory_id)
 
-        linked_threads = self._build_linked_threads(cards)
-
         return {
             "query": query,
             "count": len(cards),
-            "direct_hits": cards,
-            "linked_threads": linked_threads,
+            "memories": cards,
         }
 
     async def search_atomic_memories(self, query: str, session_tag: Optional[str], limit: int = 3) -> dict:
@@ -2935,7 +3039,7 @@ class ContextBuilder:
                 "## Gateway Tool Policy\n"
                 "- `shenyu_surface_passages` surfaces room/message_board passages before event memory.\n"
                 "- `shenyu_search_primary_texts` is for diary/letter/paper lookup when explicitly needed.\n"
-                "- `shenyu_ask_memory` is for event memory supplements.\n"
+                "- `shenyu_ask_memory` recalls event memories and only returns title/date/summary/facts/emotional_context.\n"
                 "- Direct client/database tools remain available and are still valid."
             )
         stable_blocks.append(_HEARTBEAT_PROMPT)
@@ -3071,15 +3175,17 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_ask_memory",
-                "description": "Search event memories when you need supplemental detail.",
+                "description": "Recall event memories from the core memories table. Returns only title, date, summary, facts, and emotional_context.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                        "query": {"type": "string", "description": "Words to look for. Use * or leave broad when listing by date."},
+                        "date": {"type": "string", "description": "One exact memory date, e.g. 2026-04-05."},
+                        "date_from": {"type": "string", "description": "Start date for a memory date range."},
+                        "date_to": {"type": "string", "description": "End date for a memory date range."},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
                         "session_tag": {"type": "string"},
                     },
-                    "required": ["query"],
                 },
             },
         },
@@ -4062,14 +4168,31 @@ def _completion_to_stream_events(completion: dict):
     yield "data: [DONE]\n\n"
 
 
+def _models_url_for(upstream: dict[str, str]) -> str:
+    base_url = _clean_config_text(upstream.get("base_url"))
+    if not base_url:
+        return ""
+    if base_url.endswith("/v1/chat/completions"):
+        return base_url[: -len("/v1/chat/completions")] + "/v1/models"
+    if base_url.endswith("/chat/completions"):
+        return base_url[: -len("/chat/completions")] + "/models"
+    if base_url.endswith("/v1"):
+        return base_url + "/models"
+    return base_url.rstrip("/") + "/v1/models"
+
+
 async def _fetch_upstream_models(request: Request) -> list:
-    proto = _detect_protocol()
+    client_name = _client_name_from_request(request)
+    upstream = _upstream_for_hisense(_is_hisense_client(client_name))
+    proto = upstream["protocol"]
     client = request.app.state.http
     try:
         if proto == "anthropic":
             return []
-        headers = {"Authorization": f"Bearer {cfg.upstream_api_key}"}
-        url = cfg.upstream_url.rstrip("/") + "/v1/models"
+        url = _models_url_for(upstream)
+        if not url or not upstream["api_key"]:
+            return []
+        headers = {"Authorization": f"Bearer {upstream['api_key']}"}
         response = await client.get(url, headers=headers)
         response.raise_for_status()
         data = response.json()
@@ -4089,7 +4212,7 @@ async def _call_upstream_json_at(request: Request, chat_url: str, payload: dict,
         response.raise_for_status()
         return response.json()
     except httpx.ConnectError as exc:
-        raise HTTPException(status_code=502, detail=f"无法连接上游 {chat_url}: {exc}")
+        raise HTTPException(status_code=502, detail=_connect_error_detail(chat_url, exc))
     except httpx.TimeoutException as exc:
         raise HTTPException(status_code=504, detail=f"连接上游超时 {chat_url}: {exc}")
     except httpx.HTTPStatusError as exc:
@@ -4099,8 +4222,8 @@ async def _call_upstream_json_at(request: Request, chat_url: str, payload: dict,
         raise HTTPException(status_code=502, detail=f"上游请求失败 {chat_url}: {exc}")
 
 
-async def _call_upstream_json(request: Request, payload: dict, headers: dict) -> dict:
-    return await _call_upstream_json_at(request, _get_chat_url(), payload, headers)
+async def _call_upstream_json(request: Request, chat_url: str, payload: dict, headers: dict) -> dict:
+    return await _call_upstream_json_at(request, chat_url, payload, headers)
 
 
 async def _build_upstream_request(
@@ -4108,14 +4231,19 @@ async def _build_upstream_request(
     body: ChatRequest,
     messages_override: Optional[list[dict]] = None,
     meta: Optional[dict] = None,
-) -> tuple[dict, dict, str, dict]:
+) -> tuple[dict, dict, str, dict, dict]:
     model_name = _mapped_model_name(body.model)
-    proto = _detect_protocol()
+    upstream = (meta or {}).get("upstream") or _upstream_for_hisense(
+        bool(((meta or {}).get("package") or {}).get("is_hisense"))
+    )
+    proto = upstream["protocol"]
     raw_messages = messages_override or [message.model_dump(exclude_none=True) for message in body.messages]
     merged_tools = _merge_tools(body.tools)
     cache_meta: dict[str, Any] = {
         "enabled": proto == "anthropic",
         "protocol": proto,
+        "upstream_scope": upstream["scope"],
+        "upstream_url": upstream["chat_url"],
         "breakpoints": [],
         "note": "Prompt cache breakpoints are added when the upstream protocol can carry cache_control.",
     }
@@ -4144,13 +4272,13 @@ async def _build_upstream_request(
         if anthropic_tools:
             payload["tools"] = anthropic_tools
         headers = {
-            "x-api-key": cfg.upstream_api_key,
+            "x-api-key": upstream["api_key"],
             "anthropic-version": cfg.upstream_version,
             "content-type": "application/json",
         }
         cache_meta["breakpoints"] = cache_paths
         cache_meta["note"] = "cache_control breakpoints added to stable Anthropic blocks."
-        return payload, headers, model_name, cache_meta
+        return payload, headers, model_name, cache_meta, upstream
 
     cache_messages, cache_tools, cache_paths = _apply_openai_compatible_cache_control(
         raw_messages,
@@ -4166,8 +4294,8 @@ async def _build_upstream_request(
         payload["temperature"] = body.temperature
     if cache_tools:
         payload["tools"] = cache_tools
-    headers = {"Authorization": f"Bearer {cfg.upstream_api_key}", "content-type": "application/json"}
-    return payload, headers, model_name, cache_meta
+    headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
+    return payload, headers, model_name, cache_meta, upstream
 
 
 async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[dict], dict]:
@@ -4176,8 +4304,8 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     tools = GatewayToolService()
     builder = ContextBuilder(session_store, sessions, tools)
 
-    session_tag = _session_tag_from_request(request)
     client_name = _client_name_from_request(request)
+    session_tag = _session_tag_from_request(request, client_name=client_name)
     session = sessions.open_session(session_tag=session_tag, client_name=client_name)
     # 根据请求体判断是否为新对话：非 system 消息只有 1 条 -> 新线程桥接。
     # 这样不依赖 session 持久化状态，Operit 每次新建对话都能补足上一个窗口。
@@ -4197,6 +4325,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     user_text = _latest_user_text(messages)
     current_message_count = _non_system_message_count(messages)
     is_hisense = _is_hisense_client(client_name)
+    upstream = _upstream_for_hisense(is_hisense)
     cold_start_snapshot = None
     if not is_hisense:
         cold_start_snapshot = _maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count)
@@ -4260,6 +4389,8 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         "cache_layers": layers,
         "client_message_window": trim_meta,
         "cold_start_snapshot": cold_start_snapshot,
+        "is_hisense": is_hisense,
+        "upstream": upstream,
     }
 
 
@@ -4369,7 +4500,10 @@ async def _execute_gateway_tool(name: str, arguments: dict, session_tag: Optiona
         return await service.ask_memory(
             query=arguments.get("query", ""),
             session_tag=arguments.get("session_tag") or session_tag,
-            limit=int(arguments.get("limit", 5)),
+            limit=int(arguments.get("limit", 8)),
+            date=arguments.get("date"),
+            date_from=arguments.get("date_from"),
+            date_to=arguments.get("date_to"),
         )
     if name == "shenyu_search_atomic_memory":
         return await service.search_atomic_memories(
@@ -4566,7 +4700,7 @@ async def _run_internal_tool_loop(
     upstream_usages: list[dict] = []
 
     for round_index in range(max(1, cfg.max_internal_tool_rounds)):
-        payload, headers, _, cache_meta = await _build_upstream_request(
+        payload, headers, _, cache_meta, upstream = await _build_upstream_request(
             request,
             body,
             messages_override=working_messages,
@@ -4576,12 +4710,12 @@ async def _run_internal_tool_loop(
             log_entry["upstream_payload"] = payload
         if log_entry is not None and round_index == 0:
             log_entry["prompt_cache"] = cache_meta
-        raw = await _call_upstream_json(request, payload, headers)
+        raw = await _call_upstream_json(request, upstream["chat_url"], payload, headers)
         upstream_usages.append(raw.get("usage", {}))
         if log_entry is not None:
             log_entry["usage"] = raw.get("usage", {})
             log_entry["cache_usage"] = _aggregate_cache_usage(upstream_usages)
-        proto = _detect_protocol()
+        proto = upstream["protocol"]
         completion = (
             _anthropic_to_openai_completion(body.model, raw)
             if proto == "anthropic"
@@ -4638,13 +4772,13 @@ async def _run_internal_tool_loop(
 
 
 async def _stream_chat(
-    request: Request, payload: dict, headers: dict, model: str,
+    request: Request, payload: dict, headers: dict, model: str, upstream: dict,
     on_complete: callable = None,
 ):
     """Forward a streaming response and collect assistant text."""
-    proto = _detect_protocol()
+    proto = upstream["protocol"]
     client = request.app.state.http
-    chat_url = _get_chat_url()
+    chat_url = upstream["chat_url"]
 
     # 确保 payload 中有 stream 标记。
     payload["stream"] = True
@@ -4654,7 +4788,7 @@ async def _stream_chat(
         req = client.build_request("POST", chat_url, json=payload, headers=headers)
         resp = await client.send(req, stream=True)
     except httpx.ConnectError as exc:
-        raise HTTPException(status_code=502, detail=f"无法连接上游 {chat_url}: {exc}")
+        raise HTTPException(status_code=502, detail=_connect_error_detail(chat_url, exc))
     except httpx.TimeoutException as exc:
         raise HTTPException(status_code=504, detail=f"连接上游超时 {chat_url}: {exc}")
     except httpx.HTTPError as exc:
@@ -4766,9 +4900,9 @@ async def _stream_chat(
     return StreamingResponse(generate(), media_type="text/event-stream")
 
 
-async def _nonstream_chat(request: Request, payload: dict, headers: dict, model: str):
-    proto = _detect_protocol()
-    raw = await _call_upstream_json(request, payload, headers)
+async def _nonstream_chat(request: Request, payload: dict, headers: dict, model: str, upstream: dict):
+    proto = upstream["protocol"]
+    raw = await _call_upstream_json(request, upstream["chat_url"], payload, headers)
 
     # 诊断日志：打印上游响应中的 thinking/reasoning 字段。
     if raw.get("choices"):
@@ -4839,6 +4973,7 @@ async def chat_completions(request: Request, body: ChatRequest):
     # 构建日志条目
     log_id = uuid.uuid4().hex[:8]
     is_first = meta.get("is_first_turn", False)
+    request_upstream = meta.get("upstream") or _upstream_for_hisense(meta.get("is_hisense", False))
     system_additions = ""
     sys_parts = []
     for msg in prepared_messages:
@@ -4871,7 +5006,8 @@ async def chat_completions(request: Request, body: ChatRequest):
         "tools_count": len(merged_tools),
         "tool_names": [t.get("function", {}).get("name", "") for t in merged_tools[:20]],
         "has_internal_tools": body_has_internal_tools,
-        "upstream_url": _get_chat_url(),
+        "upstream_url": request_upstream["chat_url"],
+        "upstream_scope": request_upstream["scope"],
         "prepared_messages": prepared_messages,
         "upstream_payload": None,
         "cache_layers": {
@@ -4879,8 +5015,9 @@ async def chat_completions(request: Request, body: ChatRequest):
             for k, v in meta.get("cache_layers", {}).items()
         },
         "prompt_cache": {
-            "enabled": _detect_protocol() == "anthropic",
-            "protocol": _detect_protocol(),
+            "enabled": request_upstream["protocol"] == "anthropic",
+            "protocol": request_upstream["protocol"],
+            "upstream_scope": request_upstream["scope"],
             "breakpoints": [],
             "note": "Prompt cache metadata is populated when the upstream payload is built.",
         },
@@ -4912,7 +5049,7 @@ async def chat_completions(request: Request, body: ChatRequest):
             log_entry["response_preview"] = str(completion.get("choices", [{}])[0].get("message", {}).get("content", ""))[:200]
             return completion
 
-        payload, headers, _, cache_meta = await _build_upstream_request(
+        payload, headers, _, cache_meta, upstream = await _build_upstream_request(
             request,
             body,
             messages_override=prepared_messages,
@@ -4926,19 +5063,21 @@ async def chat_completions(request: Request, body: ChatRequest):
 
             def _on_stream_complete(collected_text: str, heartbeat_content: str = "", inline_memories: Optional[list[str]] = None):
                 """Persist assistant output after streaming completes."""
+                log_entry["status"] = "ok"
                 if collected_text:
                     assistant_msg = {"role": "assistant", "content": collected_text}
                     sessions.log_assistant_output(session_id, assistant_msg)
                     _schedule_inline_memory_capture(request, session, inline_memories or [], collected_text, body.model)
                     log_entry["response_preview"] = collected_text
-                    log_entry["status"] = "ok"
+                else:
+                    log_entry["response_preview"] = ""
                 if heartbeat_content:
                     _store_heartbeat(session_id, session, heartbeat_content)
 
-            return await _stream_chat(request, payload, headers, body.model, on_complete=_on_stream_complete)
+            return await _stream_chat(request, payload, headers, body.model, upstream, on_complete=_on_stream_complete)
 
         # 非流式路径：也需要过滤 heartbeat
-        completion = await _nonstream_chat(request, payload, headers, body.model)
+        completion = await _nonstream_chat(request, payload, headers, body.model, upstream)
         log_entry["usage"] = completion.get("usage", {})
         log_entry["cache_usage"] = _cache_usage_summary(completion.get("usage", {}))
         assistant_message = completion.get("choices", [{}])[0].get("message", {})
@@ -4968,12 +5107,22 @@ async def chat_completions(request: Request, body: ChatRequest):
 
 @app.get("/health")
 async def health():
+    default_upstream = _upstream_for_hisense(False)
+    hisense_upstream = _upstream_for_hisense(True)
     return {
         "status": "ok",
         "supabase": supabase_client is not None,
         "store": session_store is not None,
         "upstream": cfg.upstream_url,
-        "protocol": _detect_protocol(),
+        "upstream_chat_url": default_upstream["chat_url"],
+        "upstream_host": urlsplit(default_upstream["chat_url"] or "").hostname or "",
+        "protocol": default_upstream["protocol"],
+        "hisense_upstream": hisense_upstream["base_url"],
+        "hisense_upstream_chat_url": hisense_upstream["chat_url"],
+        "hisense_upstream_scope": hisense_upstream["scope"],
+        "hisense_protocol": hisense_upstream["protocol"],
+        "upstream_proxy_configured": bool(cfg.upstream_proxy),
+        "upstream_trust_env": cfg.upstream_trust_env,
         "enable_gateway_tools": cfg.enable_gateway_tools,
         "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
         "expose_supabase_tools": cfg.expose_supabase_tools,
@@ -5003,6 +5152,9 @@ async def get_config_full():
         "upstream_protocol": cfg.upstream_protocol,
         "upstream_proxy": cfg.upstream_proxy,
         "upstream_trust_env": cfg.upstream_trust_env,
+        "hisense_upstream_url": cfg.hisense_upstream_url,
+        "hisense_api_key": cfg.hisense_api_key,
+        "hisense_protocol": cfg.hisense_protocol,
         "calendar_upstream_url": cfg.calendar_upstream_url,
         "calendar_api_key": cfg.calendar_api_key,
         "calendar_protocol": cfg.calendar_protocol,
@@ -5032,6 +5184,9 @@ async def get_config_full():
         "default_surface_limit": cfg.default_surface_limit,
         "default_atomic_memory_limit": cfg.default_atomic_memory_limit,
         "atomic_memory_min_score": cfg.atomic_memory_min_score,
+        "hisense_client_name": cfg.hisense_client_name,
+        "hisense_heartbeat_limit": cfg.hisense_heartbeat_limit,
+        "hisense_notebook_limit": cfg.hisense_notebook_limit,
     }
 
 
@@ -5048,6 +5203,9 @@ async def update_config(request: Request, body: ConfigUpdate):
         "upstream_protocol": "UPSTREAM_PROTOCOL",
         "upstream_proxy": "UPSTREAM_PROXY",
         "upstream_trust_env": "UPSTREAM_TRUST_ENV",
+        "hisense_upstream_url": "HISENSE_UPSTREAM_URL",
+        "hisense_api_key": "HISENSE_API_KEY",
+        "hisense_protocol": "HISENSE_PROTOCOL",
         "calendar_upstream_url": "CALENDAR_UPSTREAM_URL",
         "calendar_api_key": "CALENDAR_API_KEY",
         "calendar_protocol": "CALENDAR_PROTOCOL",
@@ -5082,6 +5240,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "default_surface_limit": "DEFAULT_SURFACE_LIMIT",
         "default_atomic_memory_limit": "DEFAULT_ATOMIC_MEMORY_LIMIT",
         "atomic_memory_min_score": "ATOMIC_MEMORY_MIN_SCORE",
+        "hisense_client_name": "HISENSE_CLIENT_NAME",
         "hisense_heartbeat_limit": "HISENSE_HEARTBEAT_LIMIT",
         "hisense_notebook_limit": "HISENSE_NOTEBOOK_LIMIT",
     }
@@ -5093,6 +5252,9 @@ async def update_config(request: Request, body: ConfigUpdate):
         "upstream_protocol",
         "upstream_proxy",
         "upstream_trust_env",
+        "hisense_upstream_url",
+        "hisense_api_key",
+        "hisense_protocol",
         "calendar_upstream_url",
         "calendar_api_key",
         "calendar_protocol",
@@ -5112,10 +5274,19 @@ async def update_config(request: Request, body: ConfigUpdate):
         "enable_mem0_management_tools",
         "expose_supabase_tools",
         "gateway_db_path",
+        "hisense_client_name",
     ]
     for field in simple_fields:
         value = getattr(body, field)
         if value is not None:
+            if field in {"upstream_url", "hisense_upstream_url", "calendar_upstream_url"}:
+                value = _validate_http_url(env_names[field], value, allow_empty=(field != "upstream_url"))
+            elif field == "upstream_proxy":
+                value = _validate_http_url(env_names[field], value, allow_empty=True)
+            elif field in {"upstream_protocol", "hisense_protocol", "calendar_protocol"}:
+                value = _validate_protocol(env_names[field], value, allow_empty=(field == "hisense_protocol"))
+            elif isinstance(value, str):
+                value = value.strip()
             setattr(cfg, field, value)
             changed.append(field)
             env_updates[env_names[field]] = str(value).lower() if isinstance(value, bool) else value
@@ -5537,6 +5708,7 @@ async def gateway_logs(limit: int = 30):
             "tool_names": l["tool_names"],
             "has_internal_tools": l["has_internal_tools"],
             "upstream_url": l["upstream_url"],
+            "upstream_scope": l.get("upstream_scope", "default"),
             "prompt_cache": l.get("prompt_cache"),
             "usage": l.get("usage"),
             "cache_usage": l.get("cache_usage"),

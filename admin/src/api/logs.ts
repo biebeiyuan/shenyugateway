@@ -9,6 +9,7 @@ export interface LogEntry {
   upstream_model: string | null
   model_mapped: boolean
   upstream_url: string
+  upstream_scope?: string
   status: string
   duration_ms: number
   stream: boolean

@@ -7,6 +7,9 @@ export interface GatewayConfig {
   upstream_protocol: string
   upstream_proxy?: string
   upstream_trust_env?: boolean
+  hisense_upstream_url?: string
+  hisense_api_key?: string
+  hisense_protocol?: string
   supabase_url: string
   supabase_key: string
   max_client_messages: number | null
@@ -42,6 +45,9 @@ export interface GatewayConfig {
   gateway_message_retention?: number
   gateway_context_snapshot_retention?: number
   gateway_cold_start_retention?: number
+  hisense_client_name?: string
+  hisense_heartbeat_limit?: number
+  hisense_notebook_limit?: number
   // stats
   gateway_db_path?: string
 }
@@ -50,6 +56,14 @@ export interface HealthStatus {
   status: string
   supabase: boolean
   upstream: string
+  upstream_chat_url?: string
+  upstream_host?: string
+  upstream_proxy_configured?: boolean
+  upstream_trust_env?: boolean
+  hisense_upstream?: string
+  hisense_upstream_chat_url?: string
+  hisense_upstream_scope?: string
+  hisense_protocol?: string
   models?: string[]
   protocol: string
   store?: boolean

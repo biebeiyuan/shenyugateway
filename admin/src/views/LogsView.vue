@@ -73,11 +73,11 @@ async function toggleDetail(id: string) {
   } else {
     expIds.value.add(id)
     aTabs.value[id] = aTabs.value[id] || 'system'
-    loadDetailTab(id, aTabs.value[id])
+    loadDetailTab(id)
   }
 }
 
-async function loadDetailTab(id: string, tab: string) {
+async function loadDetailTab(id: string) {
   if (detCache.value[id]) {
     return
   }
@@ -95,7 +95,7 @@ async function loadDetailTab(id: string, tab: string) {
 function switchTab(id: string, tab: string) {
   aTabs.value[id] = tab
   if (!detCache.value[id]) {
-    loadDetailTab(id, tab)
+    loadDetailTab(id)
   }
 }
 
