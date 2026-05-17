@@ -3603,7 +3603,83 @@ def _add_openai_message_cache_control(
             ):
                 return True
         return False
+    if not _normalize_text(content).strip():
+        return False
     return _add_cache_control(msg, cache_paths, path, max_breakpoints)
+
+
+def _sanitize_openai_content_blocks(content: list[Any]) -> list[Any]:
+    blocks: list[Any] = []
+    for item in content:
+        if isinstance(item, str):
+            if item.strip():
+                blocks.append({"type": "text", "text": item})
+            continue
+        if not isinstance(item, dict):
+            text = str(item)
+            if text.strip():
+                blocks.append({"type": "text", "text": text})
+            continue
+
+        block = dict(item)
+        block_type = block.get("type")
+        if block_type == "text":
+            text = block.get("text")
+            if text is None:
+                continue
+            text = str(text)
+            if not text.strip():
+                continue
+            block["text"] = text
+        blocks.append(block)
+    return blocks
+
+
+def _sanitize_openai_compatible_messages(messages: list[dict]) -> list[dict]:
+    sanitized: list[dict] = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        clean = {key: value for key, value in msg.items() if value is not None}
+        role = clean.get("role")
+        content = clean.get("content")
+
+        if isinstance(content, list):
+            blocks = _sanitize_openai_content_blocks(content)
+            if blocks:
+                clean["content"] = blocks
+            else:
+                clean.pop("content", None)
+        elif isinstance(content, str):
+            if not content.strip():
+                clean.pop("content", None)
+        elif "content" in clean:
+            text = _normalize_text(content)
+            if text.strip():
+                clean["content"] = text
+            else:
+                clean.pop("content", None)
+
+        if role == "tool" and "content" not in clean:
+            clean["content"] = "{}"
+        if "content" not in clean and not (role == "assistant" and clean.get("tool_calls")):
+            continue
+        sanitized.append(clean)
+    return sanitized
+
+
+def _assistant_tool_call_message(assistant_message: dict, tool_calls: list[dict]) -> dict:
+    message: dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
+    content = assistant_message.get("content")
+    if isinstance(content, list):
+        blocks = _sanitize_openai_content_blocks(content)
+        if blocks:
+            message["content"] = blocks
+    else:
+        text = _normalize_text(content)
+        if text.strip():
+            message["content"] = text
+    return message
 
 
 def _apply_openai_compatible_cache_control(
@@ -3614,7 +3690,7 @@ def _apply_openai_compatible_cache_control(
 ) -> tuple[list[dict], list[dict], list[str]]:
     layers = cache_layers or {}
     cache_paths: list[str] = []
-    cached_messages = [dict(msg) for msg in messages]
+    cached_messages = _sanitize_openai_compatible_messages(messages)
     cached_tools = [dict(tool) for tool in tools]
 
     if cached_tools:
@@ -4753,7 +4829,7 @@ async def _run_internal_tool_loop(
             return completion
 
         assistant_message = completion["choices"][0]["message"]
-        working_messages.append({"role": "assistant", "content": assistant_message.get("content", ""), "tool_calls": tool_calls})
+        working_messages.append(_assistant_tool_call_message(assistant_message, tool_calls))
         for tool_call in tool_calls:
             args = _tool_call_arguments(tool_call)
             name = _tool_call_name(tool_call)

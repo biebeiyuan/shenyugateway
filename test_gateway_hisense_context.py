@@ -19,6 +19,10 @@ def _load_gateway_classes():
         "_detect_protocol_for",
         "_chat_url_for",
         "_models_url_for",
+        "_normalize_text",
+        "_assistant_tool_call_message",
+        "_sanitize_openai_content_blocks",
+        "_sanitize_openai_compatible_messages",
         "_upstream_for_hisense",
         "_shorten",
         "_relative_time_label",
@@ -155,6 +159,33 @@ def test_upstream_url_helpers_accept_v1_base_urls():
         models_url_for({"base_url": "https://openai.example/v1/chat/completions"})
         == "https://openai.example/v1/models"
     )
+
+
+def test_openai_payload_sanitizer_removes_empty_text_blocks():
+    sanitize = gateway_namespace["_sanitize_openai_compatible_messages"]
+    messages = [
+        {"role": "system", "content": ""},
+        {"role": "user", "content": [{"type": "text", "text": ""}, {"type": "text", "text": "hello"}]},
+        {"role": "assistant", "content": "", "tool_calls": [{"id": "call_1"}]},
+        {"role": "tool", "tool_call_id": "call_1", "content": ""},
+    ]
+
+    sanitized = sanitize(messages)
+
+    assert sanitized[0]["role"] == "user"
+    assert sanitized[0]["content"] == [{"type": "text", "text": "hello"}]
+    assert "content" not in sanitized[1]
+    assert sanitized[1]["tool_calls"] == [{"id": "call_1"}]
+    assert sanitized[2]["content"] == "{}"
+
+
+def test_assistant_tool_call_message_omits_empty_content():
+    build_message = gateway_namespace["_assistant_tool_call_message"]
+    tool_calls = [{"id": "call_1", "type": "function", "function": {"name": "x", "arguments": "{}"}}]
+
+    message = build_message({"content": ""}, tool_calls)
+
+    assert message == {"role": "assistant", "tool_calls": tool_calls}
 
 
 def test_normal_context_does_not_see_hisense_heartbeat_pool(tmp_path):
