@@ -49,7 +49,7 @@ def relative_time_label(value: Optional[str]) -> str:
 
 
 def render_layered_additions(package: dict, settings: ContextLayerSettings) -> dict:
-    """Render cache-friendly stable, slow, and volatile context layers."""
+    """Render cache-friendly stable, slow, heartbeat, and volatile context layers."""
     stable_blocks = [package["stable_charter"]]
     if settings.enable_gateway_tools:
         stable_blocks.append(_GATEWAY_TOOL_POLICY)
@@ -75,12 +75,13 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
         slow_blocks.append("## Calendar Memory\n" + "\n".join(calendar_lines))
 
     heartbeat_digest = package.get("heartbeat_digest", "")
+    heartbeat_blocks = []
     if heartbeat_digest:
-        slow_blocks.append("## 你之前写下的心跳\n" + heartbeat_digest)
+        heartbeat_blocks.append("## 你之前的心跳\n" + heartbeat_digest)
 
     hisense_heartbeat_digest = package.get("hisense_heartbeat_digest", "")
     if package.get("is_hisense") and hisense_heartbeat_digest:
-        slow_blocks.append("## 海信线程心跳\n" + hisense_heartbeat_digest)
+        heartbeat_blocks.append("## 海信线程心跳\n" + hisense_heartbeat_digest)
 
     notebook_items = package.get("notebook_items") or []
     if notebook_items:
@@ -98,6 +99,7 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
         slow_blocks.append(f"## 上次醒来\n{last_wake_recap}")
 
     slow = "\n\n".join(slow_blocks)
+    heartbeat = "\n\n".join(heartbeat_blocks)
 
     volatile = ""
     atomic_memories = package.get("atomic_memories") or []
@@ -121,7 +123,7 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
         atomic_block = "\n".join(lines)
         volatile = "\n\n".join(block for block in [volatile, atomic_block] if block)
 
-    return {"stable": stable, "slow": slow, "volatile": volatile}
+    return {"stable": stable, "slow": slow, "heartbeat": heartbeat, "volatile": volatile}
 
 
 def render_system_additions(package: dict, settings: ContextLayerSettings) -> str:
@@ -129,6 +131,8 @@ def render_system_additions(package: dict, settings: ContextLayerSettings) -> st
     blocks = [layers["stable"]]
     if layers["slow"]:
         blocks.append(layers["slow"])
+    if layers.get("heartbeat"):
+        blocks.append(layers["heartbeat"])
     if layers["volatile"]:
         blocks.append(layers["volatile"])
     return "\n\n".join(blocks)
@@ -257,6 +261,8 @@ def assemble_layered_messages(
         prefix_layers.append({"role": "system", "content": layers["stable"]})
     if layers["slow"]:
         prefix_layers.append({"role": "system", "content": layers["slow"]})
+    if layers.get("heartbeat"):
+        prefix_layers.append({"role": "system", "content": layers["heartbeat"]})
     for index, layer_msg in enumerate(prefix_layers):
         messages.insert(index, layer_msg)
 

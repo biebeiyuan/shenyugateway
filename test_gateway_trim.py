@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from shenyu_gateway.context_layers import tool_safe_trim_start
+from shenyu_gateway.context_layers import assemble_layered_messages, tool_safe_trim_start
 
 
 _tool_safe_trim_start = tool_safe_trim_start
@@ -41,3 +41,23 @@ def test_tool_safe_trim_start_drops_incomplete_assistant_tool_turn():
     ]
 
     assert _tool_safe_trim_start(messages, 1) == 3
+
+
+def test_heartbeat_layer_sits_after_calendar_before_chat_history():
+    client_messages = [{"role": "user", "content": "hello"}]
+    layers = {
+        "stable": "stable block",
+        "slow": "## Calendar Memory\ncalendar block",
+        "heartbeat": "## 你之前的心跳\nheartbeat block",
+        "volatile": "",
+    }
+
+    messages, meta = assemble_layered_messages(client_messages, layers)
+
+    assert meta == {}
+    assert [msg["content"] for msg in messages] == [
+        "stable block",
+        "## Calendar Memory\ncalendar block",
+        "## 你之前的心跳\nheartbeat block",
+        "hello",
+    ]

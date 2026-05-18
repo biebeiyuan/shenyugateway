@@ -119,8 +119,8 @@ def test_hisense_context_can_see_both_heartbeat_pools(tmp_path):
     )
     layers = builder.render_layered_additions(package)
 
-    assert "normal hb" in layers["slow"]
-    assert "hisense hb" in layers["slow"]
+    assert "normal hb" in layers["heartbeat"]
+    assert "hisense hb" in layers["heartbeat"]
 
 
 def test_hisense_client_defaults_to_isolated_session_tag():
@@ -222,8 +222,8 @@ def test_normal_context_does_not_see_hisense_heartbeat_pool(tmp_path):
     )
     layers = builder.render_layered_additions(package)
 
-    assert "normal hb" in layers["slow"]
-    assert "hisense hb" not in layers["slow"]
+    assert "normal hb" in layers["heartbeat"]
+    assert "hisense hb" not in layers["heartbeat"]
 
 
 def test_hisense_context_marks_three_pending_heartbeats_injected(tmp_path):
@@ -245,9 +245,9 @@ def test_hisense_context_marks_three_pending_heartbeats_injected(tmp_path):
     )
     layers = builder.render_layered_additions(package)
 
-    assert "hisense pending 1" in layers["slow"]
-    assert "hisense pending 2" in layers["slow"]
-    assert f"hisense pending {heartbeat_limit}" in layers["slow"]
+    assert "hisense pending 1" in layers["heartbeat"]
+    assert "hisense pending 2" in layers["heartbeat"]
+    assert f"hisense pending {heartbeat_limit}" in layers["heartbeat"]
     assert store.read_heartbeats(None, state="pending", hisense=True) == []
     assert len(store.read_heartbeats(None, state="injected", hisense=True)) == heartbeat_limit
 
@@ -273,9 +273,9 @@ def test_hisense_context_waits_for_three_pending_heartbeats(tmp_path):
     )
     layers = builder.render_layered_additions(package)
 
-    assert "hisense injected" in layers["slow"]
-    assert "hisense pending 1" not in layers["slow"]
-    assert f"hisense pending {heartbeat_limit - 1}" not in layers["slow"]
+    assert "hisense injected" in layers["heartbeat"]
+    assert "hisense pending 1" not in layers["heartbeat"]
+    assert f"hisense pending {heartbeat_limit - 1}" not in layers["heartbeat"]
     assert len(store.read_heartbeats(None, state="pending", hisense=True)) == heartbeat_limit - 1
 
 

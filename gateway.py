@@ -3019,6 +3019,7 @@ async def hisense_preview():
             "last_wake_recap": package.get("last_wake_recap", ""),
         },
         "rendered_slow_layer": layers.get("slow", ""),
+        "rendered_heartbeat_layer": layers.get("heartbeat", ""),
     }
 
 

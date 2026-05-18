@@ -33,13 +33,27 @@ Main chat flow is centered in `gateway.py`:
 4. `ContextBuilder.build_context_package()` fetches runtime data: heartbeat digest, calendar context, Hisense notebook/recap, meta summaries, and atomic memories.
 5. `shenyu_gateway.context_layers` renders the package into:
    - `stable`: charter, optional gateway tool policy, heartbeat prompt, optional inline mem prompt.
-   - `slow`: calendar memory, heartbeats, Hisense notebook, wake recap.
+   - `slow`: calendar memory, Hisense notebook, wake recap.
+   - `heartbeat`: independent `## 你之前的心跳` block after `slow` and before chat history.
    - `volatile`: active atomic memories, inserted before the latest user message.
 6. `_build_upstream_request()` prepares the upstream payload.
 7. `shenyu_gateway.upstream_adapter` converts OpenAI-compatible messages/tools to Anthropic when needed, adds cache markers, and converts responses/chunks back.
 8. Tool loop may call gateway tools, then `shenyu_gateway.response_capture` filters private `<heartbeat>` and `[mem]...[/mem]` blocks before visible output is logged or sent.
 
 Tool schemas and name dispatch live in `shenyu_gateway/tool_registry.py`; implementation methods live in `shenyu_gateway/gateway_tools.py`. If a tool is visible but behaves wrong, check `tool_registry.py` dispatch first, then the matching method in `gateway_tools.py`.
+
+Gateway tool descriptions are intentionally short because they enter the model tool context. Keep them to one-line purpose plus backing pool/table. Put detailed usage notes in `shenyu_supabase_guide` or docs, not in every parameter description.
+
+Useful boundary map:
+
+- `shenyu_surface_passages`: gateway tool; reads Supabase `room` and `message_board`.
+- `shenyu_search_primary_texts`: gateway tool; reads Supabase `journal`, `room`, and `message_board`.
+- `shenyu_ask_memory`: gateway tool; reads Supabase `memories` event summaries.
+- `shenyu_search_atomic_memory`: gateway tool; reads active Supabase `atomic_memories`.
+- `shenyu_list_self_memories`: gateway tool; reads assistant-owned Supabase `atomic_memories`, defaulting to inline `[mem]` notes.
+- `shenyu_read_heartbeat`: gateway tool; reads SQLite `heartbeat_entries` or `hisense_heartbeat`.
+- `supabase_*`: gateway fallback tools for direct Supabase table operations.
+- `query_memory` and `get_memory_by_title`, when visible, are client-provided tools from outside the gateway; inspect the client/Operit tool definitions for their backing pool.
 
 ## Context Layer Debugging
 
@@ -62,6 +76,7 @@ Layer order in the final request:
 tools
 stable system
 slow system
+heartbeat system
 cold-start bridge messages, when active
 trimmed client history
 volatile system, when active, before latest user

@@ -45,7 +45,7 @@ When cleaning or refactoring, preserve behavior first and move code by boundary:
 3. Supabase HTTP mechanics belong in `SupabaseClient`; table-specific behavior can live in service classes.
 4. Context data fetching belongs around `ContextBuilder`; layer rendering and message-window assembly belong in `shenyu_gateway/context_layers.py`.
 5. Private response tag filtering and capture helpers belong in `shenyu_gateway/response_capture.py`.
-6. Gateway-native tool behavior belongs in `shenyu_gateway/gateway_tools.py`; tool schemas, merge logic, and name dispatch belong in `shenyu_gateway/tool_registry.py`.
+6. Gateway-native tool behavior belongs in `shenyu_gateway/gateway_tools.py`; tool schemas, merge logic, and name dispatch belong in `shenyu_gateway/tool_registry.py`. Keep tool descriptions short: one-line purpose plus backing table/pool.
 7. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing and HTTP calls stay near `_build_upstream_request`.
 8. External frontend contracts below are not dead code just because admin UI does not import them.
 
@@ -57,7 +57,8 @@ Context is assembled from low-change to high-change content:
 |---|---|---|---|
 | `tools` | request tools | client tools + `shenyu_*` / `supabase_*` tools | breakpoint at `tools[-1]` |
 | `stable` | first system message | stable charter, active meta summaries, gateway tool policy, heartbeat instructions | breakpoint |
-| `slow` | second system message when present | calendar memory, latest frozen heartbeat batch | breakpoint |
+| `slow` | second system message when present | calendar memory, Hisense notebook/recap | breakpoint |
+| `heartbeat` | after `slow`, before client history | `## 你之前的心跳` and optional Hisense heartbeat block | no breakpoint |
 | client history | original messages | trimmed client messages when `MAX_CLIENT_MESSAGES` is set | fallback breakpoint only if one is free |
 | `volatile` | inserted before latest user message | active atomic memories | no breakpoint |
 | current user | latest user message | current request | no breakpoint |
@@ -74,7 +75,7 @@ messages[0].stable
 messages[1].slow
 ```
 
-If `slow` is empty, the gateway may use the remaining breakpoint on the previous stable conversation message. Volatile retrieval results are deliberately left uncached so random or query-dependent content does not poison the prefix cache.
+If `slow` is empty, the gateway may use the remaining breakpoint on the previous stable conversation message. Heartbeat and volatile retrieval results are deliberately left uncached so random or frequently changing content does not poison the prefix cache.
 
 Real cache hits still depend on the upstream or OpenAI-compatible relay honoring Anthropic `cache_control`. Check:
 

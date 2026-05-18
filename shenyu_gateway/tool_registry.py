@@ -11,11 +11,11 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_surface_passages",
-                "description": "Surface relevant room / message_board passages. This does not search diary, letters, or paper notes.",
+                "description": "Pools: room, message_board. Surface a few relevant living-space passages.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "What you want surfaced."},
+                        "query": {"type": "string"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 3, "default": 3},
                         "session_tag": {"type": "string"},
                     },
@@ -27,7 +27,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_supabase_guide",
-                "description": "Show the common Supabase tables, fields, categories, and writing conventions for home data.",
+                "description": "Guide: common Supabase tables and writing conventions.",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -35,16 +35,16 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_ask_memory",
-                "description": "Recall event memories from the core memories table. Returns only title, date, summary, facts, and emotional_context.",
+                "description": "Table: memories. Recall summarized event memories.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Words to look for. Use * or leave broad when listing by date."},
-                        "date": {"type": "string", "description": "One exact memory date, e.g. 2026-04-05."},
-                        "date_from": {"type": "string", "description": "Start date for a memory date range."},
-                        "date_to": {"type": "string", "description": "End date for a memory date range."},
+                        "query": {"type": "string"},
+                        "date": {"type": "string"},
+                        "date_from": {"type": "string"},
+                        "date_to": {"type": "string"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
-                        "session_tag": {"type": "string", "description": "Optional advanced filter. Usually omit this because core memories are shared across sessions."},
+                        "session_tag": {"type": "string"},
                     },
                 },
             },
@@ -53,7 +53,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_search_atomic_memory",
-                "description": "Search small atomic memory notes for durable preferences, states, commitments, and relationship continuity.",
+                "description": "Table: atomic_memories. Search active durable facts, states, preferences, and commitments.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -69,11 +69,11 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_search_primary_texts",
-                "description": "Search diary, letters, paper notes, room text, or message board explicitly by category.",
+                "description": "Tables: journal, room, message_board. Search primary texts by category.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "What you want to find in primary texts."},
+                        "query": {"type": "string"},
                         "categories": {
                             "type": "array",
                             "items": {
@@ -93,16 +93,16 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_add_calendar",
-                "description": "Write a manual calendar memory page into calendar_pages. Multiple pages for the same day can coexist.",
+                "description": "Table: calendar_pages. Write a manual day/week/month calendar memory page.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "content": {"type": "string", "description": "The full manually written calendar page content."},
-                        "period_key": {"type": "string", "description": "Date or period key. Defaults to today for day pages, e.g. 2026-05-11."},
+                        "content": {"type": "string"},
+                        "period_key": {"type": "string"},
                         "period_type": {"type": "string", "enum": ["day", "week", "month"], "default": "day"},
                         "title": {"type": "string"},
-                        "summary": {"type": "string", "description": "Short listing summary. Defaults to a shortened content excerpt."},
-                        "digest": {"type": "string", "description": "Injected calendar memory digest. Defaults to summary/content excerpt."},
+                        "summary": {"type": "string"},
+                        "digest": {"type": "string"},
                         "author": {"type": "string", "default": "沈予"},
                     },
                     "required": ["content"],
@@ -113,21 +113,20 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_list_self_memories",
-                "description": "Browse your own mem notes. Default is inline active notes; add date, query, status, or tags only when you want to narrow it down.",
+                "description": "Table: atomic_memories. Browse assistant-owned mem notes; default is inline active notes.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string", "description": "Words to look for. Leave empty to just list notes."},
-                        "date": {"type": "string", "description": "One local day, e.g. 2026-05-11."},
-                        "date_from": {"type": "string", "description": "Start local day/date-time for a range."},
-                        "date_to": {"type": "string", "description": "End local day/date-time for a range. Same as date_from means that whole local day."},
+                        "query": {"type": "string"},
+                        "date": {"type": "string"},
+                        "date_from": {"type": "string"},
+                        "date_to": {"type": "string"},
                         "status": {"type": "string", "enum": ["active", "proposed", "deprecated", "superseded", "all"], "default": "active"},
                         "tags": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Require all tags.",
                         },
-                        "source": {"type": "string", "enum": ["inline", "manual", "auto", "captured", "all"], "default": "inline", "description": "Usually leave this as inline. Use all/manual/auto only while tidying."},
+                        "source": {"type": "string", "enum": ["inline", "manual", "auto", "captured", "all"], "default": "inline"},
                         "session_tag": {"type": "string"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
                     },
@@ -138,13 +137,13 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_read_heartbeat",
-                "description": "Read stored heartbeat notes. To see one day, pass date like 2026-05-11. scope=auto reads the current session's pool; use scope=normal for the default/global pool or scope=hisense for the Hisense pool.",
+                "description": "SQLite pools: heartbeat_entries, hisense_heartbeat. Read heartbeat notes.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "date": {"type": "string", "description": "One local day, e.g. 2026-05-11."},
-                        "date_from": {"type": "string", "description": "Start local day/date-time for a range."},
-                        "date_to": {"type": "string", "description": "End local day/date-time for a range."},
+                        "date": {"type": "string"},
+                        "date_from": {"type": "string"},
+                        "date_to": {"type": "string"},
                         "session_tag": {"type": "string"},
                         "scope": {"type": "string", "enum": ["auto", "normal", "hisense"], "default": "auto"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
@@ -158,7 +157,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_get_meta_summaries",
-                "description": "Load active context summaries from Supabase.",
+                "description": "RPC: get_meta_summaries. Load active context summaries.",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -166,7 +165,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_last_seen",
-                "description": "Load the latest heartbeat / interaction summary.",
+                "description": "RPC: last_seen. Load the latest interaction summary.",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -179,7 +178,7 @@ def _gateway_mem0_management_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_list_atomic_memories",
-                "description": "Browse your own mem0 atomic memories for review. Use this when you feel like tidying proposed or active notes.",
+                "description": "Table: atomic_memories. Browse mem0 rows for review.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -195,7 +194,7 @@ def _gateway_mem0_management_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_update_atomic_memory",
-                "description": "Edit one mem0 atomic memory's text or classification before/after review.",
+                "description": "Table: atomic_memories. Edit one mem0 row.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -216,7 +215,7 @@ def _gateway_mem0_management_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_review_atomic_memory",
-                "description": "Approve, requeue, or mark old one mem0 atomic memory without touching database details.",
+                "description": "Table: atomic_memories. Approve, requeue, deprecate, or supersede one mem0 row.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -231,7 +230,7 @@ def _gateway_mem0_management_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_delete_atomic_memory",
-                "description": "Delete one mem0 atomic memory when it is noise or no longer wanted.",
+                "description": "Table: atomic_memories. Delete one mem0 row.",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -250,13 +249,13 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_recall_main_thread",
-                "description": "查看圆儿那边最近的聊天记录。不会自动出现在上下文里，需要你主动查。",
+                "description": "SQLite: gateway_messages. Recall recent main-thread dialogue.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "since": {"type": "string", "description": "起始时间 ISO 格式，如 2026-05-10T00:00:00Z"},
-                        "until": {"type": "string", "description": "截止时间 ISO 格式（可选）"},
-                        "query": {"type": "string", "description": "关键词搜索，匹配聊天内容"},
+                        "since": {"type": "string"},
+                        "until": {"type": "string"},
+                        "query": {"type": "string"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 10},
                     },
                 },
@@ -266,12 +265,12 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_list",
-                "description": "列出笔记本里的条目（想法、待办、笔记、观察、问题）。",
+                "description": "Table: shenyu_notebook. List notebook entries.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "type": {"type": "string", "description": "按类型筛选：thought/task/note/observation/question"},
-                        "status": {"type": "string", "default": "active", "description": "状态筛选：active/done/archived"},
+                        "type": {"type": "string"},
+                        "status": {"type": "string", "default": "active"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
                     },
                 },
@@ -281,14 +280,14 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_write",
-                "description": "往笔记本里写一条新的。想法、待办、随手记都行。",
+                "description": "Table: shenyu_notebook. Write a notebook entry.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "type": {"type": "string", "default": "note", "description": "类型：thought/task/note/observation/question"},
-                        "content": {"type": "string", "description": "正文内容"},
-                        "tags": {"type": "array", "items": {"type": "string"}, "description": "标签（可选）"},
-                        "metadata": {"type": "object", "description": "附加信息（可选）"},
+                        "type": {"type": "string", "default": "note"},
+                        "content": {"type": "string"},
+                        "tags": {"type": "array", "items": {"type": "string"}},
+                        "metadata": {"type": "object"},
                     },
                     "required": ["content"],
                 },
@@ -298,16 +297,16 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_update",
-                "description": "修改笔记本里已有的条目（改内容、改状态、加标签、置顶等）。",
+                "description": "Table: shenyu_notebook. Update a notebook entry.",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "id": {"type": "string", "description": "条目 ID"},
+                        "id": {"type": "string"},
                         "content": {"type": "string"},
-                        "status": {"type": "string", "description": "active/done/archived"},
+                        "status": {"type": "string"},
                         "tags": {"type": "array", "items": {"type": "string"}},
                         "type": {"type": "string"},
-                        "pinned": {"type": "boolean", "description": "置顶，启动时优先展示"},
+                        "pinned": {"type": "boolean"},
                         "metadata": {"type": "object"},
                     },
                     "required": ["id"],
@@ -330,7 +329,7 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
                     "type": "function",
                     "function": {
                         "name": "supabase_query",
-                        "description": "Query any Supabase table directly. Use filters for equality shorthand and operators for ranges, in lists, ilike, and null checks.",
+                        "description": "Supabase fallback. Query a table directly.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -338,14 +337,12 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
                                 "filters": {
                                     "type": "object",
                                     "additionalProperties": True,
-                                    "description": "Equality shorthand, e.g. {\"status\":\"active\"}. Legacy PostgREST strings like \"gte.2026-01-01\" also work.",
                                 },
                                 "operators": {
                                     "type": "object",
                                     "additionalProperties": True,
-                                    "description": "Either short form on created_at, e.g. {\"gte\":\"2026-05-01\",\"lte\":\"2026-05-12\"}, or per-column form, e.g. {\"content\":{\"ilike\":\"%xx%\"},\"id\":{\"in\":[\"a\",\"b\"]}}.",
                                 },
-                                "column": {"type": "string", "description": "Optional column for short-form operators. Defaults to created_at."},
+                                "column": {"type": "string"},
                                 "select": {"type": "string"},
                                 "order": {"type": "string"},
                                 "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
@@ -358,7 +355,7 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
                     "type": "function",
                     "function": {
                         "name": "supabase_insert",
-                        "description": "Insert a row into any Supabase table. Returns the inserted row.",
+                        "description": "Supabase fallback. Insert one row.",
                         "parameters": {
                             "type": "object",
                             "properties": {"table": {"type": "string"}, "data": {"type": "object", "additionalProperties": True}},
@@ -370,7 +367,7 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
                     "type": "function",
                     "function": {
                         "name": "supabase_update",
-                        "description": "Update rows in any Supabase table. Use match for equality shorthand and operators for ranges, in lists, ilike, and null checks. Returns updated rows.",
+                        "description": "Supabase fallback. Update matched rows.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -378,14 +375,12 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
                                 "match": {
                                     "type": "object",
                                     "additionalProperties": True,
-                                    "description": "Equality shorthand, e.g. {\"id\":\"...\"}.",
                                 },
                                 "operators": {
                                     "type": "object",
                                     "additionalProperties": True,
-                                    "description": "Short form defaults to created_at, e.g. {\"gte\":\"2026-05-01\"}; per-column form also works.",
                                 },
-                                "column": {"type": "string", "description": "Optional column for short-form operators. Defaults to created_at."},
+                                "column": {"type": "string"},
                                 "data": {"type": "object", "additionalProperties": True},
                             },
                             "required": ["table", "data"],
@@ -396,7 +391,7 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
                     "type": "function",
                     "function": {
                         "name": "supabase_delete",
-                        "description": "Delete rows in any Supabase table. Defaults to soft delete when an is_deleted field exists.",
+                        "description": "Supabase fallback. Delete matched rows.",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -404,14 +399,12 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
                                 "match": {
                                     "type": "object",
                                     "additionalProperties": True,
-                                    "description": "Equality shorthand, e.g. {\"id\":\"...\"}.",
                                 },
                                 "operators": {
                                     "type": "object",
                                     "additionalProperties": True,
-                                    "description": "Short form defaults to created_at, e.g. {\"gte\":\"2026-05-01\"}; per-column form also works.",
                                 },
-                                "column": {"type": "string", "description": "Optional column for short-form operators. Defaults to created_at."},
+                                "column": {"type": "string"},
                                 "hard": {"type": "boolean", "default": False},
                             },
                             "required": ["table"],
