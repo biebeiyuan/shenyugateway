@@ -663,9 +663,9 @@ class GatewayStore:
                     JOIN gateway_sessions s ON s.id = r.session_id
                     WHERE r.session_tag = ?
                     ORDER BY r.created_at DESC
-                    LIMIT 1
+                    LIMIT ?
                     """,
-                    (session_tag,),
+                    (session_tag, limit),
                 ).fetchall()
             else:
                 rows = conn.execute(
@@ -1311,6 +1311,8 @@ class GatewayStore:
             return int(cursor.rowcount or 0)
 
     def get_all_heartbeats(self, session_id: Optional[str] = None, hisense: bool = False) -> list[dict]:
+        # External contract: home-frontend reads /api/gateway/heartbeats and expects
+        # ordinary and Hisense heartbeat pools to stay separate via hisense=True.
         table = self._heartbeat_table(hisense)
         where = ""
         params: tuple[Any, ...] = ()

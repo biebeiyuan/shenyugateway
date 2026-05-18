@@ -7,25 +7,32 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
 
+from shenyu_gateway import context_layers
+from shenyu_gateway import upstream_adapter
 from shenyu_gateway.store import GatewayStore
 
 
 def _load_gateway_classes():
     source = Path(__file__).with_name("gateway.py").read_text(encoding="utf-8")
     module = ast.parse(source)
+    adapter_functions = {
+        "_assistant_tool_call_message",
+        "_models_url_for",
+        "_sanitize_openai_content_blocks",
+        "_sanitize_openai_compatible_messages",
+    }
+    context_layer_functions = {
+        "_render_layered_additions": context_layers.render_layered_additions,
+        "_render_system_additions": context_layers.render_system_additions,
+    }
     wanted_functions = {
         "_clean_config_text",
         "_date_range_bounds",
         "_detect_protocol_for",
         "_chat_url_for",
-        "_models_url_for",
         "_normalize_text",
-        "_assistant_tool_call_message",
-        "_sanitize_openai_content_blocks",
-        "_sanitize_openai_compatible_messages",
         "_upstream_for_hisense",
         "_shorten",
-        "_relative_time_label",
         "_stable_charter_block",
         "_session_tag_from_request",
         "_is_hisense_client",
@@ -35,6 +42,7 @@ def _load_gateway_classes():
     namespace = {
         "Any": Any,
         "Optional": Optional,
+        "ContextLayerSettings": context_layers.ContextLayerSettings,
         "Request": object,
         "GatewayStore": object,
         "SessionManager": object,
@@ -79,6 +87,8 @@ def _load_gateway_classes():
             exec(ast.get_source_segment(source, node), namespace)
         elif isinstance(node, ast.ClassDef) and node.name in {"GatewayToolService", "ContextBuilder"}:
             exec(ast.get_source_segment(source, node), namespace)
+    namespace.update({name: getattr(upstream_adapter, name) for name in adapter_functions})
+    namespace.update(context_layer_functions)
     return namespace["ContextBuilder"], namespace["GatewayToolService"], namespace["cfg"], namespace
 
 

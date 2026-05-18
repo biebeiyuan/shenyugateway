@@ -1,25 +1,9 @@
 from __future__ import annotations
 
-import ast
-from pathlib import Path
+from shenyu_gateway.context_layers import tool_safe_trim_start
 
 
-def _load_trim_helpers():
-    source = Path(__file__).with_name("gateway.py").read_text(encoding="utf-8")
-    module = ast.parse(source)
-    wanted = {"_tool_call_ids", "_tool_safe_trim_start"}
-    namespace: dict[str, object] = {}
-    for node in module.body:
-        if isinstance(node, ast.FunctionDef) and node.name in wanted:
-            block = ast.get_source_segment(source, node)
-            exec(block, namespace)
-    if not wanted.issubset(namespace):
-        missing = wanted - set(namespace)
-        raise RuntimeError(f"Missing helpers: {missing}")
-    return namespace["_tool_safe_trim_start"]
-
-
-_tool_safe_trim_start = _load_trim_helpers()
+_tool_safe_trim_start = tool_safe_trim_start
 
 
 def test_tool_safe_trim_start_includes_assistant_for_retained_tool_result():

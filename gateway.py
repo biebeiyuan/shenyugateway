@@ -39,7 +39,17 @@ from shenyu_gateway.calendar import (
     period_bounds,
     rows_to_prompt_configs,
 )
+from shenyu_gateway.calendar_sources import CalendarSourceCollector
 from shenyu_gateway.config import RuntimeConfig
+from shenyu_gateway.context_layers import (
+    ContextLayerSettings,
+    assemble_layered_messages,
+    non_system_message_count as _non_system_message_count,
+    render_layered_additions as _render_layered_additions,
+    render_system_additions as _render_system_additions,
+    trim_client_messages as _trim_client_messages,
+    trim_cold_start_sources as _trim_cold_start_sources,
+)
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
     json_dumps as _json_dumps,
@@ -62,6 +72,17 @@ from shenyu_gateway.schemas import (
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.supabase import SupabaseClient
+from shenyu_gateway.upstream_adapter import (
+    _anthropic_to_openai_chunk,
+    _anthropic_to_openai_completion,
+    _apply_openai_compatible_cache_control,
+    _assistant_tool_call_message,
+    _cache_usage_summary,
+    _completion_to_stream_events,
+    _convert_openai_tools_to_anthropic,
+    _models_url_for,
+    _openai_to_anthropic,
+)
 logging.basicConfig(level=logging.INFO)
 
 def _normalize_text(content: Any) -> str:
@@ -172,24 +193,6 @@ def _keyword_overlap_score(query: str, text: str) -> float:
 
 def _today_utc_key() -> str:
     return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-
-def _relative_time_label(value: Optional[str]) -> str:
-    dt = _parse_ts(value)
-    if not dt:
-        return ""
-    days = (_now().date() - dt.date()).days
-    if days <= 0:
-        return "今天"
-    if days == 1:
-        return "昨天"
-    if days <= 6:
-        return "前几天"
-    if days <= 13:
-        return "上周"
-    if days <= 45:
-        return "上个月"
-    return dt.date().isoformat()
 
 
 _LOCAL_DAY_TZ = timezone(timedelta(hours=8))
@@ -337,6 +340,8 @@ app = FastAPI(title="shenyu-gateway", version="0.3.0", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
+    # External contract: home-frontend calls selected /api endpoints from these origins.
+    # Keep OPTIONS preflight open and keep query-token auth working to avoid browser preflight.
     allow_origins=[
         "https://home.yuanuwuclaude.uk",
         "https://yuanuwuclaude.uk",
@@ -388,6 +393,8 @@ async def admin_auth_middleware(request: Request, call_next):
     支持 Bearer 头和 ?token= 参数两种方式验证。
     GATEWAY_API_KEY 为空时不校验（本地开发模式）。
     """
+    # External contract: home-frontend uses ?token= instead of Authorization so simple
+    # browser GET requests do not require CORS preflight. Never require headers here.
     if request.method == "OPTIONS":
         return await call_next(request)
 
@@ -512,15 +519,6 @@ def _upstream_for_hisense(is_hisense: bool = False) -> dict[str, str]:
         "protocol": resolved_protocol,
         "api_key": api_key,
     }
-
-
-def _detect_protocol(is_hisense: bool = False) -> str:
-    return _upstream_for_hisense(is_hisense)["protocol"]
-
-
-def _get_chat_url(is_hisense: bool = False) -> str:
-    return _upstream_for_hisense(is_hisense)["chat_url"]
-
 
 def _mapped_model_name(model_name: str) -> str:
     model = (model_name or "").strip()
@@ -970,23 +968,6 @@ class GatewayToolService:
                 }
         except Exception as exc:
             return {"error": str(exc)}
-
-    async def _meta_block(self) -> str:
-        if not supabase_client:
-            return ""
-        try:
-            rows = await supabase_client.rpc("get_meta_summaries")
-        except Exception:
-            return ""
-        if not rows:
-            return ""
-        lines = ["## Active Context Summaries"]
-        for row in rows[:6]:
-            title = row.get("title") or row.get("category") or "summary"
-            content = (row.get("content") or "").strip()
-            if content:
-                lines.append(f"- {title}: {content}")
-        return "\n".join(lines)
 
     async def ask_memory(
         self,
@@ -2198,6 +2179,20 @@ class CalendarService:
     def __init__(self, request: Optional[Request] = None):
         self.request = request
 
+    def _source_collector(self) -> CalendarSourceCollector:
+        async def query_calendar_pages(params: dict[str, str]) -> list[dict[str, Any]]:
+            return await self._safe_supabase_query("calendar_pages", params)
+
+        async def surface_passages(query: str, session_tag: Optional[str], limit: int) -> dict[str, Any]:
+            return await GatewayToolService().surface_passages(query, session_tag=session_tag, limit=limit)
+
+        return CalendarSourceCollector(
+            session_store=session_store,
+            calendar_page_query=query_calendar_pages,
+            surface_passages=surface_passages,
+            default_surface_limit=cfg.default_surface_limit,
+        )
+
     def _require_supabase(self):
         if not supabase_client:
             raise HTTPException(status_code=400, detail="Supabase is not configured.")
@@ -2411,7 +2406,7 @@ class CalendarService:
             "system_prompt": prompt_pack["system_prompt"],
             "user_prompt": prompt_pack["user_prompt"],
             "source_block": prompt_pack["source_block"],
-            "source_counts": self._source_counts(sources),
+            "source_counts": CalendarSourceCollector.source_counts(sources),
         }
 
     async def generate_page(self, body: CalendarGenerateRequest) -> dict[str, Any]:
@@ -2492,140 +2487,10 @@ class CalendarService:
         return rows[0]
 
     async def _collect_sources(self, period_type: str, period_key: str, session_tag: Optional[str] = None) -> dict[str, Any]:
-        start, end = period_bounds(period_type, period_key)
-        if period_type == "day":
-            return await self._collect_day_sources(period_key, start, end, session_tag=session_tag)
-        if period_type == "week":
-            return await self._collect_week_sources(period_key, start, end, session_tag=session_tag)
-        return await self._collect_month_sources(period_key, start, end)
-
-    def _clean_snapshot_messages(self, messages: list[dict], limit: Optional[int] = None) -> list[dict[str, str]]:
-        cleaned: list[dict[str, str]] = []
-        for msg in messages:
-            role = msg.get("role")
-            if role not in {"user", "assistant"}:
-                continue
-            content = _normalize_text(msg.get("content")).strip()
-            if not content:
-                continue
-            cleaned.append({"role": role, "content": _shorten(content, 1200)})
-        return cleaned[-limit:] if limit else cleaned
+        return await self._source_collector().collect_sources(period_type, period_key, session_tag=session_tag)
 
     def _context_snapshots(self, limit: int = 5, session_tag: Optional[str] = None, message_limit: Optional[int] = None) -> list[dict[str, Any]]:
-        if session_store is None:
-            return []
-        snapshots = session_store.latest_request_context_snapshots(limit=limit, session_tag=session_tag)
-        for item in snapshots:
-            item["messages"] = self._clean_snapshot_messages(item.get("messages") or [], limit=message_limit)
-            item["latest_user_text"] = _shorten(item.get("latest_user_text") or "", 300)
-        return snapshots
-
-    async def _recent_calendar_pages(self, period_type: str, limit: int, before_key: Optional[str] = None) -> list[dict[str, Any]]:
-        params = {
-            "select": "*",
-            "period_type": f"eq.{period_type}",
-            "is_latest": "eq.true",
-            "order": "period_start.desc",
-            "limit": str(max(1, min(limit + 5, 50))),
-        }
-        rows = await self._safe_supabase_query("calendar_pages", params)
-        if before_key:
-            rows = [row for row in rows if (row.get("period_key") or "") != before_key]
-        return rows[:limit]
-
-    async def _surface_rows_for_snapshots(self, snapshots: list[dict[str, Any]], session_tag: Optional[str]) -> list[dict[str, Any]]:
-        if not snapshots:
-            return []
-        trigger_parts = [item.get("latest_user_text") or "" for item in snapshots[:3]]
-        trigger = "\n".join(part for part in trigger_parts if part).strip() or "calendar preview"
-        service = GatewayToolService()
-        surfaced = await service.surface_passages(trigger, session_tag=session_tag, limit=cfg.default_surface_limit)
-        return (surfaced.get("passages") or [])[:4]
-
-    def _calendar_source_refs(self, rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-        return [
-            {
-                "source_table": "calendar_pages",
-                "source_id": row.get("id"),
-                "title": row.get("title") or row.get("period_key") or "",
-                "period_type": row.get("period_type"),
-                "period_key": row.get("period_key"),
-            }
-            for row in rows
-        ]
-
-    async def _collect_day_sources(
-        self,
-        period_key: str,
-        start: datetime,
-        end: datetime,
-        session_tag: Optional[str] = None,
-    ) -> dict[str, Any]:
-        snapshots = self._context_snapshots(limit=5, session_tag=session_tag)
-        recent_days = await self._recent_calendar_pages("day", 3, before_key=period_key)
-        recent_weeks = await self._recent_calendar_pages("week", 1)
-        recent_months = await self._recent_calendar_pages("month", 1)
-        surface_rows = await self._surface_rows_for_snapshots(snapshots, session_tag=session_tag)
-        calendar_rows = recent_days + recent_weeks + recent_months
-        session_tags = sorted({item.get("session_tag") for item in snapshots if item.get("session_tag")})
-        source_refs = self._calendar_source_refs(calendar_rows)
-        return {
-            "period_type": "day",
-            "period_key": period_key,
-            "period_start": start.isoformat(),
-            "period_end": end.isoformat(),
-            "context_snapshots": snapshots,
-            "surface_rows": surface_rows,
-            "recent_days": recent_days,
-            "recent_weeks": recent_weeks,
-            "recent_months": recent_months,
-            "source_refs": source_refs,
-            "session_tags": session_tags,
-        }
-
-    async def _collect_week_sources(
-        self,
-        period_key: str,
-        start: datetime,
-        end: datetime,
-        session_tag: Optional[str] = None,
-    ) -> dict[str, Any]:
-        snapshots = self._context_snapshots(limit=3, session_tag=session_tag, message_limit=20)
-        recent_days = await self._recent_calendar_pages("day", 7)
-        recent_weeks = await self._recent_calendar_pages("week", 2, before_key=period_key)
-        recent_months = await self._recent_calendar_pages("month", 1)
-        calendar_rows = recent_days + recent_weeks + recent_months
-        session_tags = sorted({item.get("session_tag") for item in snapshots if item.get("session_tag")})
-        return {
-            "period_type": "week",
-            "period_key": period_key,
-            "period_start": start.isoformat(),
-            "period_end": end.isoformat(),
-            "context_snapshots": snapshots,
-            "recent_days": recent_days,
-            "recent_weeks": recent_weeks,
-            "recent_months": recent_months,
-            "source_refs": self._calendar_source_refs(calendar_rows),
-            "session_tags": session_tags,
-        }
-
-    async def _collect_month_sources(self, period_key: str, start: datetime, end: datetime) -> dict[str, Any]:
-        recent_days = await self._recent_calendar_pages("day", 7)
-        recent_weeks = await self._recent_calendar_pages("week", 4)
-        recent_months = await self._recent_calendar_pages("month", 1, before_key=period_key)
-        calendar_rows = recent_days + recent_weeks + recent_months
-        session_tags = sorted({tag for row in calendar_rows for tag in _safe_json_loads(row.get("session_tags"), []) if tag})
-        return {
-            "period_type": "month",
-            "period_key": period_key,
-            "period_start": start.isoformat(),
-            "period_end": end.isoformat(),
-            "recent_days": recent_days,
-            "recent_weeks": recent_weeks,
-            "recent_months": recent_months,
-            "source_refs": self._calendar_source_refs(calendar_rows),
-            "session_tags": session_tags,
-        }
+        return self._source_collector().context_snapshots(limit=limit, session_tag=session_tag, message_limit=message_limit)
 
     async def _build_generation_prompt(
         self,
@@ -2657,7 +2522,7 @@ class CalendarService:
             "summary is one concise line for calendar listing.\n"
             "digest is a short, tender memory snippet under 180 Chinese characters to help us recall and revisit our moments later.\n"
         )
-        source_block = self._render_source_block(period_type, sources)
+        source_block = CalendarSourceCollector.render_source_block(period_type, sources)
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_prompt + "\n\n我们刚刚聊了这些：\n\n" + source_block},
@@ -2781,7 +2646,7 @@ class CalendarService:
                 "source_model": source_model,
                 "source_refs": _json_dumps(sources.get("source_refs") or []),
                 "session_tags": _json_dumps(sources.get("session_tags") or []),
-                "meta": _json_dumps({"source_counts": self._source_counts(sources)}),
+                "meta": _json_dumps({"source_counts": CalendarSourceCollector.source_counts(sources)}),
                 "status": "final",
                 "prompt_snapshot": prompt_row.get("content") or "",
                 "generated_by": "manual",
@@ -2789,50 +2654,8 @@ class CalendarService:
         )
         page["source_refs"] = sources.get("source_refs") or []
         page["session_tags"] = sources.get("session_tags") or []
-        page["meta"] = {"source_counts": self._source_counts(sources)}
+        page["meta"] = {"source_counts": CalendarSourceCollector.source_counts(sources)}
         return page
-
-    def _render_source_block(self, period_type: str, sources: dict[str, Any]) -> str:
-        lines = [f"Period: {period_type} / {sources.get('period_key')}"]
-        snapshots = sources.get("context_snapshots") or []
-        if snapshots:
-            lines.append("\n[Current Client Context Snapshots]")
-            for snapshot in snapshots:
-                lines.append(
-                    f"\n- session_tag: {snapshot.get('session_tag') or ''}"
-                    f" / client: {snapshot.get('client_name') or ''}"
-                    f" / snapshot_at: {snapshot.get('created_at') or ''}"
-                )
-                for msg in snapshot.get("messages") or []:
-                    lines.append(f"  - {msg.get('role')}: {_shorten(msg.get('content') or '', 520)}")
-
-        if sources.get("surface_rows"):
-            lines.append("\n[Soft Surfaced Primary Texts]")
-            for row in sources["surface_rows"][:4]:
-                lines.append(f"- {row.get('source_table')} / {row.get('title')} / {_shorten(row.get('excerpt') or '', 180)}")
-
-        def add_calendar_rows(label: str, rows: list[dict[str, Any]], limit: int):
-            if not rows:
-                return
-            lines.append(f"\n[{label}]")
-            for row in rows[:limit]:
-                text = row.get("digest") or row.get("summary") or row.get("content") or ""
-                lines.append(f"- {row.get('period_key')} / {row.get('title') or ''} / {_shorten(text, 260)}")
-
-        add_calendar_rows("Recent Day Pages", sources.get("recent_days") or [], 10)
-        add_calendar_rows("Recent Week Pages", sources.get("recent_weeks") or [], 6)
-        add_calendar_rows("Recent Month Pages", sources.get("recent_months") or [], 3)
-        return "\n".join(lines)
-
-    def _source_counts(self, sources: dict[str, Any]) -> dict[str, int]:
-        return {
-            "context_snapshots": len(sources.get("context_snapshots") or []),
-            "surface_rows": len(sources.get("surface_rows") or []),
-            "recent_days": len(sources.get("recent_days") or []),
-            "recent_weeks": len(sources.get("recent_weeks") or []),
-            "recent_months": len(sources.get("recent_months") or []),
-            "context_messages": sum(len(item.get("messages") or []) for item in sources.get("context_snapshots") or []),
-        }
 
 
 class ContextBuilder:
@@ -2840,6 +2663,14 @@ class ContextBuilder:
         self.store = store
         self.sessions = sessions
         self.tools = tools
+
+    def _layer_settings(self) -> ContextLayerSettings:
+        return ContextLayerSettings(
+            enable_gateway_tools=cfg.enable_gateway_tools,
+            inject_inline_memory_prompt=cfg.inject_inline_memory_prompt,
+            heartbeat_prompt=_HEARTBEAT_PROMPT,
+            inline_mem_prompt=_INLINE_MEM_PROMPT,
+        )
 
     async def calendar_context_pages(self) -> dict[str, list[dict[str, Any]]]:
         if not supabase_client:
@@ -3032,93 +2863,11 @@ class ContextBuilder:
           slow:     calendar_context + heartbeat_digest（低频变化）
           volatile: atomic_memories（经常变，放在对话消息之后）
         """
-        # Layer 1: 稳定层（charter + tool policy + heartbeat 引导）
-        stable_blocks = [package["stable_charter"]]
-        if cfg.enable_gateway_tools:
-            stable_blocks.append(
-                "## Gateway Tool Policy\n"
-                "- `shenyu_surface_passages` surfaces room/message_board passages before event memory.\n"
-                "- `shenyu_search_primary_texts` is for diary/letter/paper lookup when explicitly needed.\n"
-                "- `shenyu_ask_memory` recalls event memories and only returns title/date/summary/facts/emotional_context.\n"
-                "- Direct client/database tools remain available and are still valid."
-            )
-        stable_blocks.append(_HEARTBEAT_PROMPT)
-        if cfg.inject_inline_memory_prompt:
-            stable_blocks.append(_INLINE_MEM_PROMPT)
-        stable = "\n\n".join(stable_blocks)
-
-        slow_blocks = []
-
-        calendar_context = package.get("calendar_context") or {}
-        calendar_lines = []
-        for label, period_type in (("recent days", "day"), ("this week", "week"), ("this month", "month")):
-            rows = calendar_context.get(period_type) or []
-            if not rows:
-                continue
-            calendar_lines.append(f"{label}:")
-            for row in rows:
-                digest = (row.get("digest") or "").strip()
-                if digest:
-                    calendar_lines.append(f"- {row.get('period_key') or ''} digest: {digest}")
-        if calendar_lines:
-            slow_blocks.append("## Calendar Memory\n" + "\n".join(calendar_lines))
-
-        heartbeat_digest = package.get("heartbeat_digest", "")
-        if heartbeat_digest:
-            slow_blocks.append("## 你之前写下的心跳\n" + heartbeat_digest)
-
-        hisense_heartbeat_digest = package.get("hisense_heartbeat_digest", "")
-        if package.get("is_hisense") and hisense_heartbeat_digest:
-            slow_blocks.append("## 海信线程心跳\n" + hisense_heartbeat_digest)
-
-        notebook_items = package.get("notebook_items") or []
-        if notebook_items:
-            nb_lines = ["## 手边的事"]
-            for item in notebook_items:
-                prefix = f"[{item.get('type', 'note')}]"
-                tags = item.get("tags") or []
-                if tags:
-                    prefix += f" ({', '.join(tags)})"
-                nb_lines.append(f"- {prefix} {item.get('content', '')}")
-            slow_blocks.append("\n".join(nb_lines))
-
-        last_wake_recap = package.get("last_wake_recap") or ""
-        if last_wake_recap:
-            slow_blocks.append(f"## 上次醒来\n{last_wake_recap}")
-
-        slow = "\n\n".join(slow_blocks)
-
-        # Layer 4: 易变层（atomic memories），放在对话消息之后。
-        volatile = ""
-        atomic_memories = package.get("atomic_memories") or []
-        if atomic_memories:
-            lines = ["## Relevant Atomic Memories"]
-            for item in atomic_memories:
-                content = (item.get("content_surface") or "").strip()
-                if not content:
-                    continue
-                marker = f"{item.get('subject') or item.get('owner') or '我们'} / {item.get('memory_type') or 'fact'} / tier {item.get('tier') or '?'}"
-                if item.get("time_hint"):
-                    marker += f" / {item.get('time_hint')}"
-                when = _relative_time_label(item.get("created_at"))
-                if when:
-                    marker += f" / {when}"
-                why = ", ".join(item.get("why") or [])
-                lines.append(f"- [{marker}] {_shorten(content, 180)} ({why})")
-            atomic_block = "\n".join(lines)
-            volatile = "\n\n".join(block for block in [volatile, atomic_block] if block)
-
-        return {"stable": stable, "slow": slow, "volatile": volatile}
+        return _render_layered_additions(package, self._layer_settings())
 
     def render_system_additions(self, package: dict) -> str:
         """兼容接口：返回拼合后的完整 system 内容（用于 preview 等）。"""
-        layers = self.render_layered_additions(package)
-        blocks = [layers["stable"]]
-        if layers["slow"]:
-            blocks.append(layers["slow"])
-        if layers["volatile"]:
-            blocks.append(layers["volatile"])
-        return "\n\n".join(blocks)
+        return _render_system_additions(package, self._layer_settings())
 
     async def preview(self, session_tag: Optional[str]) -> dict:
         session = self.store.get_session_by_tag(session_tag or "default") if session_tag else None
@@ -3575,309 +3324,6 @@ def _merge_tools(client_tools: Optional[list[dict]]) -> list[dict]:
     return merged
 
 
-def _add_cache_control(block: dict, cache_paths: list[str], path: str, max_breakpoints: int = 4) -> bool:
-    if len(cache_paths) >= max_breakpoints:
-        return False
-    if block.get("cache_control"):
-        return False
-    block["cache_control"] = {"type": "ephemeral"}
-    cache_paths.append(path)
-    return True
-
-
-def _add_openai_message_cache_control(
-    msg: dict,
-    cache_paths: list[str],
-    path: str,
-    max_breakpoints: int = 4,
-) -> bool:
-    content = msg.get("content")
-    if isinstance(content, list):
-        for block_index in range(len(content) - 1, -1, -1):
-            block = content[block_index]
-            if isinstance(block, dict) and _add_cache_control(
-                block,
-                cache_paths,
-                f"{path}.content[{block_index}]",
-                max_breakpoints,
-            ):
-                return True
-        return False
-    if not _normalize_text(content).strip():
-        return False
-    return _add_cache_control(msg, cache_paths, path, max_breakpoints)
-
-
-def _sanitize_openai_content_blocks(content: list[Any]) -> list[Any]:
-    blocks: list[Any] = []
-    for item in content:
-        if isinstance(item, str):
-            if item.strip():
-                blocks.append({"type": "text", "text": item})
-            continue
-        if not isinstance(item, dict):
-            text = str(item)
-            if text.strip():
-                blocks.append({"type": "text", "text": text})
-            continue
-
-        block = dict(item)
-        block_type = block.get("type")
-        if block_type == "text":
-            text = block.get("text")
-            if text is None:
-                continue
-            text = str(text)
-            if not text.strip():
-                continue
-            block["text"] = text
-        blocks.append(block)
-    return blocks
-
-
-def _sanitize_openai_compatible_messages(messages: list[dict]) -> list[dict]:
-    sanitized: list[dict] = []
-    for msg in messages:
-        if not isinstance(msg, dict):
-            continue
-        clean = {key: value for key, value in msg.items() if value is not None}
-        role = clean.get("role")
-        content = clean.get("content")
-
-        if isinstance(content, list):
-            blocks = _sanitize_openai_content_blocks(content)
-            if blocks:
-                clean["content"] = blocks
-            else:
-                clean.pop("content", None)
-        elif isinstance(content, str):
-            if not content.strip():
-                clean.pop("content", None)
-        elif "content" in clean:
-            text = _normalize_text(content)
-            if text.strip():
-                clean["content"] = text
-            else:
-                clean.pop("content", None)
-
-        if role == "tool" and "content" not in clean:
-            clean["content"] = "{}"
-        if "content" not in clean and not (role == "assistant" and clean.get("tool_calls")):
-            continue
-        sanitized.append(clean)
-    return sanitized
-
-
-def _assistant_tool_call_message(assistant_message: dict, tool_calls: list[dict]) -> dict:
-    message: dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
-    content = assistant_message.get("content")
-    if isinstance(content, list):
-        blocks = _sanitize_openai_content_blocks(content)
-        if blocks:
-            message["content"] = blocks
-    else:
-        text = _normalize_text(content)
-        if text.strip():
-            message["content"] = text
-    return message
-
-
-def _apply_openai_compatible_cache_control(
-    messages: list[dict],
-    tools: list[dict],
-    cache_layers: Optional[dict[str, str]] = None,
-    max_breakpoints: int = 4,
-) -> tuple[list[dict], list[dict], list[str]]:
-    layers = cache_layers or {}
-    cache_paths: list[str] = []
-    cached_messages = _sanitize_openai_compatible_messages(messages)
-    cached_tools = [dict(tool) for tool in tools]
-
-    if cached_tools:
-        _add_cache_control(cached_tools[-1], cache_paths, "tools[-1]", max_breakpoints)
-
-    for layer_name in ("stable", "slow"):
-        layer_text = layers.get(layer_name) or ""
-        if not layer_text:
-            continue
-        for idx, msg in enumerate(cached_messages):
-            if msg.get("role") == "system" and _normalize_text(msg.get("content")) == layer_text:
-                _add_openai_message_cache_control(
-                    msg,
-                    cache_paths,
-                    f"messages[{idx}].{layer_name}",
-                    max_breakpoints,
-                )
-                break
-
-    last_user_idx = -1
-    for idx, msg in enumerate(cached_messages):
-        if msg.get("role") == "user":
-            last_user_idx = idx
-
-    if len(cache_paths) < max_breakpoints:
-        for idx in range(last_user_idx - 1, -1, -1):
-            msg = cached_messages[idx]
-            if msg.get("role") not in {"user", "assistant"}:
-                continue
-            if _add_openai_message_cache_control(
-                msg,
-                cache_paths,
-                f"messages[{idx}]",
-                max_breakpoints,
-            ):
-                break
-
-    return cached_messages, cached_tools, cache_paths
-
-
-def _cache_usage_summary(usage: Optional[dict]) -> dict:
-    usage = usage or {}
-    creation = usage.get("cache_creation") or {}
-    prompt_details = usage.get("prompt_tokens_details") or {}
-    input_details = usage.get("input_tokens_details") or {}
-    read_tokens = int(
-        usage.get("cache_read_input_tokens")
-        or prompt_details.get("cached_tokens")
-        or input_details.get("cached_tokens")
-        or 0
-    )
-    write_tokens = int(
-        usage.get("cache_creation_input_tokens")
-        or prompt_details.get("cached_creation_tokens")
-        or input_details.get("cached_creation_tokens")
-        or usage.get("claude_cache_creation_5_m_tokens")
-        or usage.get("claude_cache_creation_1_h_tokens")
-        or 0
-    )
-    if not creation:
-        creation = {
-            k: int(v or 0)
-            for k, v in {
-                "ephemeral_5m_input_tokens": usage.get("claude_cache_creation_5_m_tokens"),
-                "ephemeral_1h_input_tokens": usage.get("claude_cache_creation_1_h_tokens"),
-            }.items()
-            if v
-        }
-    return {
-        "cache_read_input_tokens": read_tokens,
-        "cache_creation_input_tokens": write_tokens,
-        "cache_creation": creation,
-        "hit": read_tokens > 0,
-        "write": write_tokens > 0,
-    }
-
-
-def _trim_client_messages(messages: list[dict]) -> tuple[list[dict], dict]:
-    limit = cfg.max_client_messages
-    meta = {
-        "client_messages_original": len(messages),
-        "client_messages_retained": len(messages),
-        "max_client_messages": limit,
-    }
-    if not limit or limit <= 0:
-        return messages, meta
-
-    first_non_system = next((idx for idx, msg in enumerate(messages) if msg.get("role") != "system"), len(messages))
-    system_prefix = messages[:first_non_system]
-    non_system = messages[first_non_system:]
-    if len(non_system) <= limit:
-        return messages, meta
-
-    start = max(0, len(non_system) - limit)
-    start = _tool_safe_trim_start(non_system, start)
-    trimmed = system_prefix + non_system[start:]
-    meta["client_messages_retained"] = len(trimmed)
-    meta["client_messages_trim_start"] = first_non_system + start
-    return trimmed, meta
-
-
-def _non_system_message_count(messages: list[dict]) -> int:
-    return sum(1 for msg in messages if msg.get("role") != "system")
-
-
-def _client_history_insert_index(messages: list[dict]) -> int:
-    return next((idx for idx, msg in enumerate(messages) if msg.get("role") != "system"), len(messages))
-
-
-def _bridge_messages_from_snapshot(cold_start_snapshot: Optional[dict]) -> list[dict]:
-    if not cold_start_snapshot:
-        return []
-    bridge_messages = []
-    for source in cold_start_snapshot.get("sources") or []:
-        for msg in source.get("messages") or []:
-            role = msg.get("role")
-            content = msg.get("content")
-            if role in {"user", "assistant"} and content:
-                bridge_messages.append({"role": role, "content": content})
-    return bridge_messages
-
-
-def _trim_cold_start_sources(sources: list[dict], limit: int) -> list[dict]:
-    remaining = max(int(limit or 0), 0)
-    if remaining <= 0:
-        return []
-
-    selected_reversed = []
-    for source in reversed(sources or []):
-        messages = [
-            msg
-            for msg in source.get("messages") or []
-            if msg.get("role") in {"user", "assistant"} and msg.get("content")
-        ]
-        if not messages:
-            continue
-        selected = messages[-remaining:]
-        if selected:
-            trimmed = dict(source)
-            trimmed["messages"] = selected
-            selected_reversed.append(trimmed)
-            remaining -= len(selected)
-        if remaining <= 0:
-            break
-
-    return list(reversed(selected_reversed))
-
-
-def _tool_call_ids(msg: dict) -> list[str]:
-    ids: list[str] = []
-    for tool_call in msg.get("tool_calls") or []:
-        if isinstance(tool_call, dict) and tool_call.get("id"):
-            ids.append(str(tool_call["id"]))
-    return ids
-
-
-def _tool_safe_trim_start(messages: list[dict], start: int) -> int:
-    """Move a trim boundary so tool calls and tool results stay in complete turns."""
-    start = max(0, min(start, len(messages)))
-
-    for idx in range(start, len(messages)):
-        msg = messages[idx]
-        role = msg.get("role")
-        if role == "tool":
-            tool_call_id = msg.get("tool_call_id")
-            if not tool_call_id:
-                continue
-            for prev_idx in range(idx - 1, -1, -1):
-                if tool_call_id in _tool_call_ids(messages[prev_idx]):
-                    return _tool_safe_trim_start(messages, prev_idx)
-            return idx + 1
-        if role == "assistant" and _tool_call_ids(msg):
-            expected = set(_tool_call_ids(msg))
-            found: set[str] = set()
-            next_idx = idx + 1
-            while next_idx < len(messages) and messages[next_idx].get("role") == "tool":
-                tool_call_id = messages[next_idx].get("tool_call_id")
-                if tool_call_id in expected:
-                    found.add(tool_call_id)
-                next_idx += 1
-            if found != expected:
-                return next_idx
-            return idx
-
-    return start
-
-
 def _cold_start_idle_minutes(session: dict) -> float:
     last_active = _parse_ts(session.get("last_active_at"))
     if not last_active:
@@ -3967,294 +3413,6 @@ def _aggregate_cache_usage(usages: list[dict]) -> dict:
         "write": total_write > 0,
         "rounds": len(usages),
     }
-
-
-def _content_blocks(content: Any) -> list[dict]:
-    if content is None:
-        return []
-    if isinstance(content, str):
-        return [{"type": "text", "text": content}] if content else []
-    if isinstance(content, list):
-        blocks: list[dict] = []
-        for item in content:
-            if isinstance(item, str):
-                if item:
-                    blocks.append({"type": "text", "text": item})
-                continue
-            if not isinstance(item, dict):
-                text = str(item)
-                if text:
-                    blocks.append({"type": "text", "text": text})
-                continue
-            block = dict(item)
-            block_type = block.get("type")
-            if block_type:
-                blocks.append(block)
-            elif isinstance(block.get("text"), str):
-                blocks.append({"type": "text", "text": block["text"]})
-        if blocks:
-            return blocks
-    text = _normalize_text(content)
-    return [{"type": "text", "text": text}] if text else []
-
-
-def _convert_openai_tools_to_anthropic(
-    tools: list[dict],
-    cache_paths: Optional[list[str]] = None,
-    max_breakpoints: int = 4,
-) -> list[dict]:
-    converted = []
-    for tool in tools:
-        function = tool.get("function", {})
-        name = function.get("name")
-        if not name:
-            continue
-        converted.append(
-            {
-                "name": name,
-                "description": function.get("description", ""),
-                "input_schema": function.get("parameters", {"type": "object", "properties": {}}),
-            }
-        )
-    if converted and cache_paths is not None:
-        _add_cache_control(converted[-1], cache_paths, "tools[-1]", max_breakpoints)
-    return converted
-
-
-def _openai_to_anthropic(
-    messages: list[dict],
-    cache_layers: Optional[dict[str, str]] = None,
-    cache_paths: Optional[list[str]] = None,
-    max_breakpoints: int = 4,
-) -> tuple[Optional[list[dict]], list[dict]]:
-    layers = cache_layers or {}
-    cache_paths = cache_paths if cache_paths is not None else []
-    volatile_text = layers.get("volatile") or ""
-    system_blocks: list[dict] = []
-    anthropic_messages: list[dict] = []
-    pending_volatile = ""
-
-    for msg in messages:
-        role = msg.get("role", "")
-        content = msg.get("content")
-
-        if role == "system":
-            text = _normalize_text(content)
-            if text:
-                if volatile_text and text == volatile_text:
-                    pending_volatile = text
-                    continue
-                block = {"type": "text", "text": text}
-                if text == layers.get("stable"):
-                    _add_cache_control(block, cache_paths, "system.stable", max_breakpoints)
-                elif text == layers.get("slow"):
-                    _add_cache_control(block, cache_paths, "system.slow", max_breakpoints)
-                system_blocks.append(block)
-            continue
-
-        if role == "user":
-            blocks = _content_blocks(content)
-            if pending_volatile:
-                blocks.insert(0, {"type": "text", "text": pending_volatile})
-                pending_volatile = ""
-            anthropic_messages.append({"role": "user", "content": blocks or ""})
-            continue
-
-        if role == "assistant":
-            blocks: list[dict] = []
-            text = _normalize_text(content)
-            if text:
-                blocks.append({"type": "text", "text": text})
-            for tool_call in msg.get("tool_calls") or []:
-                function = tool_call.get("function", {})
-                args = function.get("arguments") or "{}"
-                try:
-                    parsed_args = json.loads(args) if isinstance(args, str) else args
-                except json.JSONDecodeError:
-                    parsed_args = {"raw_arguments": args}
-                blocks.append(
-                    {
-                        "type": "tool_use",
-                        "id": tool_call.get("id") or f"toolu_{uuid.uuid4().hex[:10]}",
-                        "name": function.get("name", "unknown_tool"),
-                        "input": parsed_args or {},
-                    }
-                )
-            anthropic_messages.append({"role": "assistant", "content": blocks or text or ""})
-            continue
-
-        if role == "tool":
-            anthropic_messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": msg.get("tool_call_id") or "unknown_tool_call",
-                            "content": _normalize_text(content),
-                        }
-                    ],
-                }
-            )
-
-    last_user_idx = -1
-    for i, msg in enumerate(anthropic_messages):
-        if msg.get("role") == "user":
-            last_user_idx = i
-
-    if len(cache_paths) < max_breakpoints:
-        for msg_index in range(last_user_idx - 1, -1, -1):
-            content = anthropic_messages[msg_index].get("content")
-            if not isinstance(content, list):
-                continue
-            for block_index in range(len(content) - 1, -1, -1):
-                block = content[block_index]
-                if not isinstance(block, dict) or block.get("type") == "thinking":
-                    continue
-                if _add_cache_control(block, cache_paths, f"messages[{msg_index}].content[{block_index}]", max_breakpoints):
-                    break
-            else:
-                continue
-            break
-
-    return (system_blocks or None, anthropic_messages)
-
-
-def _anthropic_to_openai_completion(model: str, response: dict) -> dict:
-    text_parts = []
-    thinking_parts = []
-    tool_calls = []
-    for block in response.get("content", []):
-        block_type = block.get("type")
-        if block_type == "thinking":
-            thinking_parts.append(block.get("thinking", ""))
-        elif block_type == "text":
-            text_parts.append(block.get("text", ""))
-        elif block_type == "tool_use":
-            tool_calls.append(
-                {
-                    "id": block.get("id") or f"call_{uuid.uuid4().hex[:10]}",
-                    "type": "function",
-                    "function": {
-                        "name": block.get("name", "unknown_tool"),
-                        "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
-                    },
-                }
-            )
-
-    message = {"role": "assistant", "content": "".join(text_parts)}
-    if thinking_parts:
-        message["reasoning_content"] = "".join(thinking_parts)
-    finish_reason = "stop"
-    if tool_calls:
-        message["tool_calls"] = tool_calls
-        finish_reason = "tool_calls"
-
-    return {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion",
-        "created": _now_ts(),
-        "model": model,
-        "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
-        "usage": response.get("usage", {}),
-    }
-
-
-def _anthropic_to_openai_chunk(model: str, chunk: dict) -> str:
-    chunk_type = chunk.get("type", "")
-    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-    base = {"id": chunk_id, "object": "chat.completion.chunk", "created": _now_ts(), "model": model}
-
-    if chunk_type == "content_block_start":
-        block = chunk.get("content_block", {})
-        if block.get("type") == "thinking":
-            base["choices"] = [{"index": 0, "delta": {"role": "assistant", "reasoning_content": ""}, "finish_reason": None}]
-        else:
-            base["choices"] = [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}]
-        return json.dumps(base)
-
-    if chunk_type == "content_block_delta":
-        delta = chunk.get("delta", {})
-        delta_type = delta.get("type", "")
-        if delta_type == "thinking_delta":
-            thinking = delta.get("thinking", "")
-            if not thinking:
-                return ""
-            base["choices"] = [{"index": 0, "delta": {"reasoning_content": thinking}, "finish_reason": None}]
-            return json.dumps(base)
-        text = delta.get("text", "")
-        if not text:
-            return ""
-        base["choices"] = [{"index": 0, "delta": {"content": text}, "finish_reason": None}]
-        return json.dumps(base)
-
-    if chunk_type == "message_stop":
-        base["choices"] = [{"index": 0, "delta": {}, "finish_reason": "stop"}]
-        return json.dumps(base)
-
-    return ""
-
-
-def _completion_to_stream_events(completion: dict):
-    model = completion.get("model", "unknown")
-    created = completion.get("created", _now_ts())
-    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-    message = completion.get("choices", [{}])[0].get("message", {})
-
-    first = {
-        "id": chunk_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
-        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
-    }
-    yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
-
-    # 先发 reasoning_content（思维链），再发正文。
-    reasoning = message.get("reasoning_content", "")
-    if reasoning:
-        body = {
-            "id": chunk_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
-            "choices": [{"index": 0, "delta": {"reasoning_content": reasoning}, "finish_reason": None}],
-        }
-        yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
-
-    text = message.get("content", "")
-    if text:
-        body = {
-            "id": chunk_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
-            "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
-        }
-        yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
-
-    final = {
-        "id": chunk_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
-        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
-    }
-    yield f"data: {json.dumps(final, ensure_ascii=False)}\n\n"
-    yield "data: [DONE]\n\n"
-
-
-def _models_url_for(upstream: dict[str, str]) -> str:
-    base_url = _clean_config_text(upstream.get("base_url"))
-    if not base_url:
-        return ""
-    if base_url.endswith("/v1/chat/completions"):
-        return base_url[: -len("/v1/chat/completions")] + "/v1/models"
-    if base_url.endswith("/chat/completions"):
-        return base_url[: -len("/chat/completions")] + "/models"
-    if base_url.endswith("/v1"):
-        return base_url + "/models"
-    return base_url.rstrip("/") + "/v1/models"
 
 
 async def _fetch_upstream_models(request: Request) -> list:
@@ -4397,7 +3555,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         messages=raw_messages,
         latest_user_text=raw_user_text,
     )
-    messages, trim_meta = _trim_client_messages(raw_messages)
+    messages, trim_meta = _trim_client_messages(raw_messages, cfg.max_client_messages)
     user_text = _latest_user_text(messages)
     current_message_count = _non_system_message_count(messages)
     is_hisense = _is_hisense_client(client_name)
@@ -4422,41 +3580,14 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     )
     layers = builder.render_layered_additions(package)
 
-    # --- 缓存友好的分层插入 ---
-    # 原则：不变的放前面，会变的放后面。每层独立一条 system 消息。
-    # 插入顺序（从前到后）：
-    #   [0] stable:  charter + tool_policy + heartbeat_prompt（尽量不变）
-    #   [1] slow:    calendar + heartbeat batch（低频变化，可缓存）
-    #   [2..M] 客户端原始消息（system prompt + 对话历史，可能按 MAX_CLIENT_MESSAGES 裁剪）
-    #   [M+1] volatile: atomic memories（活动层，不打断点）
-    #   [M+2] 当前 user 消息（已在客户端消息里）
-
-    # 在客户端消息前面插入网关的稳定层（倒序 insert(0) 保证顺序正确）。
-    prefix_layers = []
-    if layers["stable"]:
-        prefix_layers.append({"role": "system", "content": layers["stable"]})
-    if layers["slow"]:
-        prefix_layers.append({"role": "system", "content": layers["slow"]})
-    # 在头部插入稳定层。
-    for i, layer_msg in enumerate(prefix_layers):
-        messages.insert(i, layer_msg)
-
-    bridge_messages = _bridge_messages_from_snapshot(cold_start_snapshot)
-    if bridge_messages:
-        insert_at = len(prefix_layers) + _client_history_insert_index(messages[len(prefix_layers):])
-        messages[insert_at:insert_at] = bridge_messages
-        trim_meta["cold_start_bridge_messages"] = len(bridge_messages)
-        trim_meta["client_messages_after_bridge"] = len(messages)
+    messages, layer_meta = assemble_layered_messages(
+        messages,
+        layers,
+        cold_start_snapshot=cold_start_snapshot,
+    )
+    trim_meta.update(layer_meta)
+    if layer_meta.get("cold_start_bridge_messages"):
         session_store.mark_cold_start_injected(cold_start_snapshot["id"])
-
-    # 在最后一条 user 消息之前插入易变层（surface_passages）。
-    if layers["volatile"]:
-        last_user_idx = len(messages) - 1
-        for i in range(len(messages) - 1, -1, -1):
-            if messages[i].get("role") == "user":
-                last_user_idx = i
-                break
-        messages.insert(last_user_idx, {"role": "system", "content": layers["volatile"]})
 
     return messages, {
         "session": session,
@@ -5715,6 +4846,9 @@ async def delete_gateway_heartbeats(session_tag: str, body: HeartbeatDeleteReque
 
 @app.get("/api/gateway/heartbeats")
 async def list_gateway_heartbeats(limit: int = 500, order: str = "asc", scope: str = "normal"):
+    # External contract: home-frontend reads
+    # /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal|hisense.
+    # Preserve query-token auth, limit/order/scope, and heartbeats[].content/created_at.
     assert session_store is not None
     order_key = "desc" if str(order or "").lower() == "desc" else "asc"
     max_limit = max(1, min(int(limit or 500), 2000))
@@ -5825,12 +4959,15 @@ async def calendar_activate_prompt(prompt_id: str):
 
 @app.get("/api/calendar/month")
 async def calendar_month(month: Optional[str] = None):
+    # External contract: home-frontend renders the month grid from grid[].date/day/
+    # in_month/has_day/has_week/day_page{id,title,summary,status}.
     service = CalendarService()
     return await service.month_status(month)
 
 
 @app.get("/api/calendar/page/{page_id}")
 async def calendar_page(page_id: str):
+    # External contract: home-frontend expands calendar memories using id/title/summary/content.
     service = CalendarService()
     return await service.page_detail(page_id)
 

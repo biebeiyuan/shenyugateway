@@ -4,6 +4,8 @@ Shenyu Gateway is the single OpenAI-compatible provider entrypoint for Operit. I
 
 The gateway is not a persona layer or roleplay wrapper. It is a context and memory gateway: current conversation text stays primary, long-form primary text can surface softly, and durable memory is handled by explicit layers.
 
+For future debugging and cleanup work, start with `DEBUGGING_GUIDE.md`. It records the current module boundaries, chat/context flow, external frontend contracts, and verification checklist.
+
 ## Current Architecture
 
 ```text
@@ -18,6 +20,29 @@ Operit
   -> Upstream model
   -> gateway tool loop when needed
 ```
+
+## Maintenance Map
+
+The codebase is partly layered already:
+
+- `shenyu_gateway/config.py`: environment-backed runtime config.
+- `shenyu_gateway/store.py`: SQLite runtime state only.
+- `shenyu_gateway/supabase.py`: low-level Supabase REST client.
+- `shenyu_gateway/calendar.py`: date/key helpers and calendar JSON parsing.
+- `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
+- `shenyu_gateway/context_layers.py`: stable/slow/volatile layer rendering, client message trimming, and cold-start bridge insertion.
+- `shenyu_gateway/sessions.py`: session/message logging facade.
+- `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
+- `gateway.py`: FastAPI routes, upstream HTTP calls, context layering, gateway-native tools, calendar generation service, and Hisense routes.
+
+When cleaning or refactoring, preserve behavior first and move code by boundary:
+
+1. Route handlers should stay thin and call service classes.
+2. SQLite reads/writes belong in `GatewayStore`; do not query SQLite directly from route handlers.
+3. Supabase HTTP mechanics belong in `SupabaseClient`; table-specific behavior can live in service classes.
+4. Context data fetching belongs around `ContextBuilder`; layer rendering and message-window assembly belong in `shenyu_gateway/context_layers.py`.
+5. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing and HTTP calls stay near `_build_upstream_request`.
+6. External frontend contracts below are not dead code just because admin UI does not import them.
 
 ## Context Layers
 
@@ -171,9 +196,9 @@ Tables:
 
 Source collection:
 
-- Day pages read recent `request_context_snapshots`, recent day/week/month pages, and a small surface pass.
-- Week pages read recent context snapshots plus recent day/week/month pages.
-- Month pages read recent day/week/month pages.
+- Day pages read the latest 10 `request_context_snapshots`, latest 8 normal heartbeats, recent day/week/month pages, and a small surface pass.
+- Week pages read the latest 8 context snapshots, latest 5 normal heartbeats, and recent day/week/month pages.
+- Month pages read the latest 6 context snapshots, latest 5 normal heartbeats, and recent day/week/month pages.
 
 Chat injection:
 
@@ -197,6 +222,22 @@ Endpoints:
 - `GET /api/calendar/preview-sources`
 - `GET /api/calendar/send-preview`
 - `POST /api/calendar/generate`
+
+## External Frontend Contracts
+
+The separate `home-frontend` project calls a small set of gateway APIs directly from the browser. These contracts are runtime dependencies even when this repo's admin UI does not reference them.
+
+Preserve browser access behavior:
+
+- `/api/*` must continue to accept `?token=...` authentication as well as `Authorization`.
+- `OPTIONS` requests must bypass auth so CORS preflight is not rejected.
+- CORS must continue to allow `https://home.yuanuwuclaude.uk`, `https://yuanuwuclaude.uk`, `http://localhost:8005`, `http://127.0.0.1:8005`, `http://localhost:5500`, `http://127.0.0.1:5500`, and `null`.
+
+Preserve these response contracts:
+
+- `GET /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal|hisense` returns `heartbeats`; each item must include at least `content` and `created_at`. `scope=normal` reads `heartbeat_entries`; `scope=hisense` reads `hisense_heartbeat`.
+- `GET /api/calendar/month?token=...&month=YYYY-MM` returns `grid`; each day item must keep `date`, `day`, `in_month`, `has_day`, `has_week`, and when present `day_page.id/title/summary/status`.
+- `GET /api/calendar/page/{page_id}?token=...` returns at least `id`, `title`, `summary`, and `content`.
 
 ## Atomic Memory Layer
 
