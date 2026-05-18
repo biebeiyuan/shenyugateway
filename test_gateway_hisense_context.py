@@ -9,6 +9,8 @@ from typing import Any, Optional
 
 from shenyu_gateway import context_layers
 from shenyu_gateway import upstream_adapter
+from shenyu_gateway.gateway_tools import GatewayToolService as RealGatewayToolService
+from shenyu_gateway.gateway_tools import configure_gateway_tools
 from shenyu_gateway.store import GatewayStore
 
 
@@ -46,7 +48,7 @@ def _load_gateway_classes():
         "Request": object,
         "GatewayStore": object,
         "SessionManager": object,
-        "GatewayToolService": object,
+        "GatewayToolService": RealGatewayToolService,
         "asyncio": asyncio,
         "logger": logging.getLogger("test"),
         "session_store": None,
@@ -85,7 +87,7 @@ def _load_gateway_classes():
             exec(ast.get_source_segment(source, node), namespace)
         elif isinstance(node, ast.FunctionDef) and node.name in wanted_functions:
             exec(ast.get_source_segment(source, node), namespace)
-        elif isinstance(node, ast.ClassDef) and node.name in {"GatewayToolService", "ContextBuilder"}:
+        elif isinstance(node, ast.ClassDef) and node.name == "ContextBuilder":
             exec(ast.get_source_segment(source, node), namespace)
     namespace.update({name: getattr(upstream_adapter, name) for name in adapter_functions})
     namespace.update(context_layer_functions)
@@ -93,6 +95,7 @@ def _load_gateway_classes():
 
 
 ContextBuilder, GatewayToolService, cfg, gateway_namespace = _load_gateway_classes()
+configure_gateway_tools(runtime_config=cfg, supabase=None, store=None)
 
 
 def test_hisense_context_can_see_both_heartbeat_pools(tmp_path):
@@ -281,6 +284,7 @@ def test_read_heartbeat_scope_can_override_hisense_default(tmp_path):
     store.append_heartbeat(normal_session["id"], "normal hb")
     store.append_heartbeat(hisense_session["id"], "hisense hb", hisense=True)
     gateway_namespace["session_store"] = store
+    configure_gateway_tools(store=store)
 
     service = GatewayToolService()
     auto_result = asyncio.run(service.read_heartbeat(session_tag="hisense"))

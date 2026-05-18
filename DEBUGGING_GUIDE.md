@@ -18,6 +18,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 - `shenyu_gateway/calendar.py`: calendar date/key helpers and JSON parsing.
 - `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
 - `shenyu_gateway/context_layers.py`: stable/slow/volatile layer rendering, client message trimming, tool-safe trimming, and cold-start bridge insertion.
+- `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations. Look here for Supabase table tools, primary-text surface retrieval, heartbeat reads, notebook helpers, and memory helper behavior.
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>` and `[mem]...[/mem]`, heartbeat persistence helper, and inline memory scheduling helper.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic payload, cache, stream, and model URL conversion helpers.
 
@@ -36,6 +37,8 @@ Main chat flow is centered in `gateway.py`:
 6. `_build_upstream_request()` prepares the upstream payload.
 7. `shenyu_gateway.upstream_adapter` converts OpenAI-compatible messages/tools to Anthropic when needed, adds cache markers, and converts responses/chunks back.
 8. Tool loop may call gateway tools, then `shenyu_gateway.response_capture` filters private `<heartbeat>` and `[mem]...[/mem]` blocks before visible output is logged or sent.
+
+Tool schemas and dispatch still live in `gateway.py`; tool implementation methods live in `shenyu_gateway/gateway_tools.py`. If a tool is visible but behaves wrong, check `gateway.py` dispatch first, then the matching method in `gateway_tools.py`.
 
 ## Context Layer Debugging
 
