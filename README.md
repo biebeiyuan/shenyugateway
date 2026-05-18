@@ -32,10 +32,11 @@ The codebase is partly layered already:
 - `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
 - `shenyu_gateway/context_layers.py`: stable/slow/volatile layer rendering, client message trimming, and cold-start bridge insertion.
 - `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations, including Supabase table tools, primary-text surface search, heartbeats, notebook, and memory helpers.
+- `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>` and `[mem]...[/mem]`, heartbeat persistence helper, and inline memory scheduling helper.
 - `shenyu_gateway/sessions.py`: session/message logging facade.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
-- `gateway.py`: FastAPI routes, middleware, upstream HTTP calls, context orchestration, gateway tool schema/dispatch, calendar generation service, and Hisense routes.
+- `gateway.py`: FastAPI routes, middleware, upstream HTTP calls, context orchestration, tool-loop orchestration, calendar generation service, and Hisense routes.
 
 When cleaning or refactoring, preserve behavior first and move code by boundary:
 
@@ -44,7 +45,7 @@ When cleaning or refactoring, preserve behavior first and move code by boundary:
 3. Supabase HTTP mechanics belong in `SupabaseClient`; table-specific behavior can live in service classes.
 4. Context data fetching belongs around `ContextBuilder`; layer rendering and message-window assembly belong in `shenyu_gateway/context_layers.py`.
 5. Private response tag filtering and capture helpers belong in `shenyu_gateway/response_capture.py`.
-6. Gateway-native tool behavior belongs in `shenyu_gateway/gateway_tools.py`; tool schemas and dispatch can stay in `gateway.py` until that boundary is intentionally moved.
+6. Gateway-native tool behavior belongs in `shenyu_gateway/gateway_tools.py`; tool schemas, merge logic, and name dispatch belong in `shenyu_gateway/tool_registry.py`.
 7. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing and HTTP calls stay near `_build_upstream_request`.
 8. External frontend contracts below are not dead code just because admin UI does not import them.
 

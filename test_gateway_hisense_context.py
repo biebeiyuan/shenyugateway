@@ -12,6 +12,7 @@ from shenyu_gateway import upstream_adapter
 from shenyu_gateway.gateway_tools import GatewayToolService as RealGatewayToolService
 from shenyu_gateway.gateway_tools import configure_gateway_tools
 from shenyu_gateway.store import GatewayStore
+from shenyu_gateway.tool_registry import gateway_native_tools
 
 
 def _load_gateway_classes():
@@ -49,6 +50,7 @@ def _load_gateway_classes():
         "GatewayStore": object,
         "SessionManager": object,
         "GatewayToolService": RealGatewayToolService,
+        "gateway_native_tools": gateway_native_tools,
         "asyncio": asyncio,
         "logger": logging.getLogger("test"),
         "session_store": None,
