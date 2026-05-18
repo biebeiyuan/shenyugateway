@@ -31,6 +31,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/calendar.py`: date/key helpers and calendar JSON parsing.
 - `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
 - `shenyu_gateway/context_layers.py`: stable/slow/volatile layer rendering, client message trimming, and cold-start bridge insertion.
+- `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>` and `[mem]...[/mem]`, heartbeat persistence helper, and inline memory scheduling helper.
 - `shenyu_gateway/sessions.py`: session/message logging facade.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
 - `gateway.py`: FastAPI routes, upstream HTTP calls, context layering, gateway-native tools, calendar generation service, and Hisense routes.
@@ -41,8 +42,9 @@ When cleaning or refactoring, preserve behavior first and move code by boundary:
 2. SQLite reads/writes belong in `GatewayStore`; do not query SQLite directly from route handlers.
 3. Supabase HTTP mechanics belong in `SupabaseClient`; table-specific behavior can live in service classes.
 4. Context data fetching belongs around `ContextBuilder`; layer rendering and message-window assembly belong in `shenyu_gateway/context_layers.py`.
-5. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing and HTTP calls stay near `_build_upstream_request`.
-6. External frontend contracts below are not dead code just because admin UI does not import them.
+5. Private response tag filtering and capture helpers belong in `shenyu_gateway/response_capture.py`.
+6. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing and HTTP calls stay near `_build_upstream_request`.
+7. External frontend contracts below are not dead code just because admin UI does not import them.
 
 ## Context Layers
 

@@ -18,6 +18,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 - `shenyu_gateway/calendar.py`: calendar date/key helpers and JSON parsing.
 - `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
 - `shenyu_gateway/context_layers.py`: stable/slow/volatile layer rendering, client message trimming, tool-safe trimming, and cold-start bridge insertion.
+- `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>` and `[mem]...[/mem]`, heartbeat persistence helper, and inline memory scheduling helper.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic payload, cache, stream, and model URL conversion helpers.
 
 ## Chat Request Flow
@@ -34,7 +35,7 @@ Main chat flow is centered in `gateway.py`:
    - `volatile`: active atomic memories, inserted before the latest user message.
 6. `_build_upstream_request()` prepares the upstream payload.
 7. `shenyu_gateway.upstream_adapter` converts OpenAI-compatible messages/tools to Anthropic when needed, adds cache markers, and converts responses/chunks back.
-8. Tool loop may call gateway tools, then the final response is filtered for private `<heartbeat>` and `[mem]...[/mem]` blocks.
+8. Tool loop may call gateway tools, then `shenyu_gateway.response_capture` filters private `<heartbeat>` and `[mem]...[/mem]` blocks before visible output is logged or sent.
 
 ## Context Layer Debugging
 
@@ -75,6 +76,23 @@ Current source rules:
 
 If generated pages look empty, check `request_context_snapshots` first, then `heartbeat_entries`, then Supabase `calendar_pages`.
 
+## Response Capture Debugging
+
+Private assistant tags are parsed in `response_capture.py`:
+
+- `AssistantTagFilter` supports chunked streaming input. It withholds partial `<heartbeat>` or `[mem]` tags until they close or are flushed.
+- `split_private_assistant_tags()` is the non-streaming helper.
+- `store_heartbeat()` writes normal or Hisense heartbeat rows through `GatewayStore`.
+- `schedule_inline_memory_capture()` schedules `AtomicMemoryService.process_inline_memories()` without making `response_capture.py` import `gateway.py`.
+
+Visible output should never include closed private blocks:
+
+- `<heartbeat>...</heartbeat>` is removed and written to `heartbeat_entries` or `hisense_heartbeat`.
+- Closed `[mem ...]...[/mem]` is removed and captured for inline memory processing.
+- Incomplete `[mem]` is left visible on flush; incomplete heartbeat is captured and hidden.
+
+When this area breaks, check `test_gateway_tags.py` first, then `scripts/test_inline_mem_capture.py`.
+
 ## External Frontend Contracts
 
 These are hard contracts with `home-frontend`; do not remove or reshape them during cleanup:
@@ -104,7 +122,7 @@ Permanent test coverage for these contracts is in `test_external_contracts.py`.
 After Python changes:
 
 ```powershell
-python -m py_compile gateway.py shenyu_gateway\store.py shenyu_gateway\calendar_sources.py shenyu_gateway\context_layers.py shenyu_gateway\upstream_adapter.py test_external_contracts.py test_gateway_hisense_context.py test_gateway_trim.py
+python -m py_compile gateway.py shenyu_gateway\store.py shenyu_gateway\calendar_sources.py shenyu_gateway\context_layers.py shenyu_gateway\response_capture.py shenyu_gateway\upstream_adapter.py test_external_contracts.py test_gateway_hisense_context.py test_gateway_tags.py test_gateway_trim.py scripts\test_inline_mem_capture.py
 git diff --check
 rg -n "<AGENTS.md mojibake pattern>" README.md DEBUGGING_GUIDE.md gateway.py shenyu_gateway test_*.py
 ```
@@ -112,7 +130,7 @@ rg -n "<AGENTS.md mojibake pattern>" README.md DEBUGGING_GUIDE.md gateway.py she
 If the local environment has `pytest` available:
 
 ```powershell
-python -m pytest test_gateway_trim.py test_gateway_hisense_context.py test_external_contracts.py
+python -m pytest test_gateway_trim.py test_gateway_tags.py test_gateway_hisense_context.py test_external_contracts.py
 ```
 
 If `pytest` is not available or WindowsApps Python fails, use a no-file smoke test with `TestClient` and a temporary SQLite database. Do not leave one-off smoke scripts in the repo.
@@ -124,5 +142,6 @@ If `pytest` is not available or WindowsApps Python fails, use a no-file smoke te
 - Keep SQLite behavior in `GatewayStore`.
 - Keep Supabase HTTP mechanics in `SupabaseClient`.
 - Keep context rendering and message-window surgery in `context_layers.py`.
+- Keep private response tag filtering, heartbeat capture helpers, and inline memory scheduling in `response_capture.py`.
 - Keep upstream protocol conversion in `upstream_adapter.py`.
 - Add comments only where they protect external contracts or explain non-obvious behavior.

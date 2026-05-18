@@ -8,6 +8,8 @@ from typing import Any, Optional
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from shenyu_gateway.response_capture import split_private_assistant_tags
+
 
 class Request:
     pass
@@ -20,7 +22,7 @@ def _iso_now():
 def load_gateway_symbols():
     source = Path(__file__).resolve().parents[1] / "gateway.py"
     module = ast.parse(source.read_text(encoding="utf-8"))
-    wanted = {"_AssistantTagFilter", "AtomicMemoryService", "_split_private_assistant_tags"}
+    wanted = {"AtomicMemoryService"}
     selected = [node for node in module.body if getattr(node, "name", None) in wanted]
     namespace = {
         "Any": Any,
@@ -34,7 +36,6 @@ def load_gateway_symbols():
 
 
 gateway_symbols = load_gateway_symbols()
-_split_private_assistant_tags = gateway_symbols["_split_private_assistant_tags"]
 AtomicMemoryService = gateway_symbols["AtomicMemoryService"]
 
 
@@ -44,16 +45,16 @@ def assert_equal(actual, expected, label):
 
 
 def main():
-    clean, _heartbeat, memories = _split_private_assistant_tags("午安\n[mem]…[/mem]\n继续")
-    assert_equal(clean, "午安\n继续", "punctuation-only mem is hidden from visible text")
+    clean, _heartbeat, memories = split_private_assistant_tags("午安\n[mem]…[/mem]\n继续")
+    assert_equal(clean, "午安\n\n继续", "punctuation-only mem tag body is hidden from visible text")
     assert_equal(memories, [], "punctuation-only mem is not captured")
 
-    clean, _heartbeat, memories = _split_private_assistant_tags("a\n[mem]   [/mem]\nb")
-    assert_equal(clean, "a\nb", "blank mem is hidden from visible text")
+    clean, _heartbeat, memories = split_private_assistant_tags("a\n[mem]   [/mem]\nb")
+    assert_equal(clean, "a\n\nb", "blank mem tag body is hidden from visible text")
     assert_equal(memories, [], "blank mem is not captured")
 
-    clean, _heartbeat, memories = _split_private_assistant_tags("a\n[mem]她今天想早睡[/mem]\nb")
-    assert_equal(clean, "a\nb", "valid mem is hidden from visible text")
+    clean, _heartbeat, memories = split_private_assistant_tags("a\n[mem]她今天想早睡[/mem]\nb")
+    assert_equal(clean, "a\n\nb", "valid mem tag body is hidden from visible text")
     assert_equal(memories, [{"content": "她今天想早睡", "attrs": {}}], "valid mem is captured")
 
     service = AtomicMemoryService(request=None)
