@@ -182,6 +182,7 @@ function renderContent(detail: LogDetail, tab: string): string {
   if (tab === 'meta') {
     return esc(JSON.stringify({
       id: detail.id,
+      request_id: detail.request_id,
       timestamp: detail.timestamp,
       model: detail.model,
       stream: detail.stream,
@@ -235,6 +236,7 @@ function renderContent(detail: LogDetail, tab: string): string {
         <NTag v-if="log.tools_count" size="tiny" :bordered="false" class="tag-t">{{ log.tools_count }} tools</NTag>
         <NTag size="tiny" :bordered="false" :class="log.status === 'error' ? 'tag-e' : 'tag-ok'">{{ log.status }}</NTag>
         <NTag size="tiny" :bordered="false" class="tag-d">{{ log.duration_ms }}ms</NTag>
+        <NTag v-if="log.request_id" size="tiny" :bordered="false" class="tag-d">{{ log.request_id }}</NTag>
         <span class="msg-count">{{ log.original_messages_count }}→{{ log.prepared_messages_count }}</span>
         <span class="arrow" :class="{ open: expIds.has(log.id) }">▶</span>
       </div>

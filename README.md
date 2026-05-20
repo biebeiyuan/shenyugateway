@@ -34,6 +34,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations, including Supabase table tools, primary-text surface search, heartbeats, notebook, and memory helpers.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>` and `[mem]...[/mem]`, heartbeat persistence helper, and inline memory scheduling helper.
+- `shenyu_gateway/atomic_memory.py`: inline `[mem]` capture to active atomic memory rows.
 - `shenyu_gateway/sessions.py`: session/message logging facade.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
 - `gateway.py`: FastAPI routes, middleware, upstream HTTP calls, context orchestration, tool-loop orchestration, calendar generation service, and Hisense routes.

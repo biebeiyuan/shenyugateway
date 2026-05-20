@@ -2,6 +2,7 @@ import { api } from './http'
 
 export interface LogEntry {
   id: string
+  request_id?: string | null
   timestamp: string
   session_tag: string | null
   model: string

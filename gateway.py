@@ -30,6 +30,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
+from shenyu_gateway.atomic_memory import AtomicMemoryService
 from shenyu_gateway.calendar import (
     default_period_key,
     extract_json_object,
@@ -398,7 +399,9 @@ async def log_unhandled_exceptions(request: Request, call_next):
     request_id = uuid.uuid4().hex[:8]
     request.state.shenyu_request_id = request_id
     try:
-        return await call_next(request)
+        response = await call_next(request)
+        response.headers["X-Shenyu-Request-Id"] = request_id
+        return response
     except HTTPException:
         raise
     except Exception:
@@ -624,133 +627,6 @@ _INLINE_MEM_PROMPT = """## Inline Mem（仅网关可见）
 
 这段不会发给圆圆看，会留给后台帮你整理，会直接入库，等你有空再整理它吧。"""
 
-
-class AtomicMemoryService:
-    def __init__(self, request: Request):
-        self.request = request
-
-    async def process_inline_memories(
-        self,
-        session: dict,
-        inline_memories: list[Any],
-        assistant_text: str,
-        source_model: str,
-    ) -> dict[str, Any]:
-        if not cfg.enable_inline_memory_capture:
-            return {"ok": False, "reason": "inline memory capture disabled."}
-        if not supabase_client:
-            return {"ok": False, "reason": "Supabase is not configured."}
-
-        notes = [item for item in inline_memories if self._inline_note_content(item)]
-        if not notes:
-            return {"ok": False, "reason": "no inline memories."}
-
-        inserted: list[str | None] = []
-        discarded = 0
-        for note in notes[:4]:
-            memory = self._inline_note_to_active_memory(note, session, source_model)
-            if not memory:
-                discarded += 1
-                continue
-            row = await supabase_client.insert("atomic_memories", memory)
-            inserted.append(row.get("id") if isinstance(row, dict) else None)
-
-        return {
-            "ok": True,
-            "inline_count": len(notes),
-            "inserted_count": len([item for item in inserted if item]),
-            "discarded_count": discarded,
-        }
-
-    def _inline_note_content(self, note: Any) -> str:
-        if isinstance(note, dict):
-            content = str(note.get("content") or "").strip()
-        else:
-            content = str(note or "").strip()
-        if not content:
-            return ""
-        if not re.sub(r"[\W_]+", "", content, flags=re.UNICODE):
-            return ""
-        return content
-
-    def _inline_note_attrs(self, note: Any) -> dict[str, str]:
-        if isinstance(note, dict) and isinstance(note.get("attrs"), dict):
-            return {str(key).lower(): str(value).strip() for key, value in note["attrs"].items() if str(value).strip()}
-        return {}
-
-    def _split_attr_list(self, raw: str) -> list[str]:
-        if not raw:
-            return []
-        return [item.strip() for item in re.split(r"[,，、\s]+", raw) if item.strip()][:16]
-
-    def _int_attr(self, attrs: dict[str, str], name: str, fallback: int, min_value: int, max_value: int) -> int:
-        try:
-            value = int(attrs.get(name) or fallback)
-        except (TypeError, ValueError):
-            value = fallback
-        return max(min_value, min(value, max_value))
-
-    def _inline_note_to_active_memory(self, note: Any, session: dict, source_model: str) -> Optional[dict]:
-        content = self._inline_note_content(note)
-        if not content:
-            return None
-        attrs = self._inline_note_attrs(note)
-        now = _iso_now()
-        subject = self._choice(attrs.get("subject") or attrs.get("owner"), {"圆圆", "沈予", "我们"}, "沈予")
-        owner = self._subject_scope(subject)
-        return {
-            "session_tag": session.get("session_tag") or "default",
-            "subject": subject,
-            "owner": owner,
-            "applies_to": owner,
-            "speaker_perspective": owner,
-            "content_surface": content,
-            "quote": attrs.get("quote", ""),
-            "time_hint": attrs.get("time") or attrs.get("time_hint", ""),
-            "memory_type": self._memory_type(attrs.get("memory_type") or attrs.get("type") or attrs.get("kind")),
-            "tier": self._int_attr(attrs, "tier", 2, 1, 4),
-            "importance": self._int_attr(attrs, "importance", 3, 1, 5),
-            "heat": 0.68,
-            "entities_json": self._split_attr_list(attrs.get("entities", "")),
-            "tags_json": self._split_attr_list(attrs.get("tags", "")),
-            "source_session_id": session.get("id"),
-            "source_message_ids_json": [],
-            "source_excerpt": attrs.get("source_excerpt", ""),
-            "source_model": f"inline-mem:{source_model}",
-            "status": "active",
-            "activation_count": 0,
-            "created_at": now,
-            "updated_at": now,
-        }
-
-    def _choice(self, value: Any, allowed: set[str], fallback: str) -> str:
-        raw = str(value or "").strip()
-        return raw if raw in allowed else fallback
-
-    def _subject_scope(self, subject: str) -> str:
-        return {
-            "圆圆": "user",
-            "沈予": "assistant",
-            "我们": "shared",
-        }.get(subject, "assistant")
-
-    def _memory_type(self, value: Any) -> str:
-        raw = str(value or "").strip()
-        aliases = {
-            "state": "emotion",
-            "event": "fact",
-            "project": "fact",
-            "health": "fact",
-            "routine": "fact",
-            "identity": "fact",
-            "other": "fact",
-        }
-        raw = aliases.get(raw, raw)
-        return self._choice(
-            raw,
-            {"emotion", "commitment", "fact", "relation", "preference", "boundary"},
-            "fact",
-        )
 
 class CalendarService:
     def __init__(self, request: Optional[Request] = None):
@@ -1811,7 +1687,7 @@ def _schedule_inline_memory_capture(
         enabled=cfg.enable_inline_memory_capture,
         inline_memories=inline_memories,
         capture=lambda: (
-            AtomicMemoryService(request).process_inline_memories(
+            AtomicMemoryService(cfg, supabase_client).process_inline_memories(
                 session,
                 inline_memories,
                 assistant_text,
@@ -2259,6 +2135,7 @@ async def chat_completions(request: Request, body: ChatRequest):
     retain_payloads = _retain_request_log_payloads()
     log_entry = {
         "id": log_id,
+        "request_id": getattr(request.state, "shenyu_request_id", log_id),
         "timestamp": _iso_now(),
         "model": body.model,
         "client_model": body.model,
@@ -2711,6 +2588,76 @@ async def gateway_overview():
     }
 
 
+@app.get("/api/gateway/debug")
+async def gateway_debug():
+    assert session_store is not None
+    default_upstream = _upstream_for_hisense(False)
+    hisense_upstream = _upstream_for_hisense(True)
+    tools = gateway_native_tools(cfg)
+    logs = list(_request_logs)
+    latest_log = logs[0] if logs else None
+    latest_error = next((item for item in logs if item.get("status") == "error"), None)
+    return {
+        "ok": True,
+        "generated_at": _iso_now(),
+        "runtime": {
+            "config": cfg.to_dict(),
+            "store_ready": session_store is not None,
+            "supabase_ready": supabase_client is not None,
+            "request_payloads_retained": _retain_request_log_payloads(),
+        },
+        "upstream": {
+            "default": {
+                "scope": default_upstream["scope"],
+                "chat_url": default_upstream["chat_url"],
+                "protocol": default_upstream["protocol"],
+                "api_key_configured": bool(default_upstream["api_key"]),
+            },
+            "hisense": {
+                "scope": hisense_upstream["scope"],
+                "chat_url": hisense_upstream["chat_url"],
+                "protocol": hisense_upstream["protocol"],
+                "api_key_configured": bool(hisense_upstream["api_key"]),
+            },
+        },
+        "tools": {
+            "mode": cfg.gateway_tool_mode,
+            "count": len(tools),
+            "names": [tool.get("function", {}).get("name", "") for tool in tools],
+            "gateway_tools_enabled": cfg.enable_gateway_tools,
+            "supabase_tools_enabled": cfg.expose_supabase_tools,
+            "mem0_tools_enabled": cfg.enable_mem0_management_tools,
+        },
+        "store": {
+            "overview": session_store.gateway_overview(),
+            "db_path": cfg.gateway_db_path,
+            "retention": {
+                "message_retention": cfg.gateway_message_retention,
+                "context_snapshot_retention": cfg.gateway_context_snapshot_retention,
+                "cold_start_retention": cfg.gateway_cold_start_retention,
+            },
+        },
+        "logs": {
+            "count": len(logs),
+            "capacity": getattr(_request_logs, "maxlen", None),
+            "latest": {
+                "id": latest_log.get("id"),
+                "request_id": latest_log.get("request_id"),
+                "status": latest_log.get("status"),
+                "timestamp": latest_log.get("timestamp"),
+                "tools_count": latest_log.get("tools_count"),
+                "duration_ms": latest_log.get("duration_ms"),
+            } if latest_log else None,
+            "latest_error": {
+                "id": latest_error.get("id"),
+                "request_id": latest_error.get("request_id"),
+                "timestamp": latest_error.get("timestamp"),
+                "error": latest_error.get("error"),
+            } if latest_error else None,
+        },
+    }
+
+
 @app.post("/api/gateway/prune")
 async def prune_gateway_runtime():
     assert session_store is not None
@@ -2991,6 +2938,7 @@ async def gateway_logs(limit: int = 30):
     return {"logs": [
         {
             "id": l["id"],
+            "request_id": l.get("request_id"),
             "timestamp": l["timestamp"],
             "model": l["model"],
             "client_model": l.get("client_model", l["model"]),
@@ -3027,7 +2975,7 @@ async def gateway_logs(limit: int = 30):
 @app.get("/api/gateway/logs/{log_id}")
 async def gateway_log_detail(log_id: str):
     for l in _request_logs:
-        if l["id"] == log_id:
+        if l["id"] == log_id or l.get("request_id") == log_id:
             return l
     raise HTTPException(status_code=404, detail="Log not found")
 
