@@ -316,7 +316,7 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
     ]
 
 
-def gateway_native_tools(cfg: Any) -> list[dict]:
+def _expanded_gateway_native_tools(cfg: Any) -> list[dict]:
     tools = []
     if cfg.enable_gateway_tools:
         tools.extend(_gateway_core_tools())
@@ -417,6 +417,48 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
     return tools
 
 
+def _gateway_tool_names(cfg: Any) -> list[str]:
+    return [tool["function"]["name"] for tool in _expanded_gateway_native_tools(cfg)]
+
+
+def _gateway_broker_tool(cfg: Any) -> dict:
+    names = _gateway_tool_names(cfg)
+    description = (
+        "Compact gateway tool broker. Use it when gateway memory, heartbeat, notebook, "
+        "calendar, primary-text search, or Supabase access is needed. Set `tool` to one "
+        "available tool name and put that tool's normal arguments in `arguments`. "
+        "Available tools: " + ", ".join(names)
+    )
+    return {
+        "type": "function",
+        "function": {
+            "name": "shenyu_gateway_tool",
+            "description": description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string", "enum": names},
+                    "arguments": {
+                        "type": "object",
+                        "additionalProperties": True,
+                        "description": "Arguments for the selected gateway tool.",
+                    },
+                },
+                "required": ["tool", "arguments"],
+            },
+        },
+    }
+
+
+def gateway_native_tools(cfg: Any) -> list[dict]:
+    tools_enabled = bool(cfg.enable_gateway_tools or cfg.enable_mem0_management_tools or cfg.expose_supabase_tools)
+    if not tools_enabled:
+        return []
+    if getattr(cfg, "gateway_tool_mode", "full") == "broker":
+        return [_gateway_broker_tool(cfg)]
+    return _expanded_gateway_native_tools(cfg)
+
+
 def merge_tools(client_tools: Optional[list[dict]], cfg: Any) -> list[dict]:
     merged = list(client_tools or [])
     if not cfg.enable_gateway_tools and not cfg.enable_mem0_management_tools and not cfg.expose_supabase_tools:
@@ -435,6 +477,19 @@ def is_gateway_native_tool(name: str) -> bool:
 
 async def execute_gateway_tool(name: str, arguments: dict, session_tag: Optional[str], cfg: Any) -> dict:
     service = GatewayToolService()
+    if name == "shenyu_gateway_tool":
+        target_name = str(arguments.get("tool") or arguments.get("name") or "").strip()
+        target_args = arguments.get("arguments") or {}
+        if not isinstance(target_args, dict):
+            return {"ok": False, "error": "`arguments` must be an object."}
+        allowed = set(_gateway_tool_names(cfg))
+        if target_name not in allowed:
+            return {
+                "ok": False,
+                "error": f"Unsupported gateway broker target: {target_name}",
+                "available_tools": sorted(allowed),
+            }
+        return await execute_gateway_tool(target_name, target_args, session_tag=session_tag, cfg=cfg)
     if name == "shenyu_surface_passages":
         return await service.surface_passages(
             query=arguments.get("query", ""),

@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
 from shenyu_gateway.calendar import (
@@ -379,26 +379,31 @@ if (ADMIN_DIST_DIR / "assets").exists():
     app.mount("/admin/assets", StaticFiles(directory=ADMIN_DIST_DIR / "assets"), name="admin-assets")
 
 
-# --- 全局异常捕获（调试用） ---
-import traceback as _tb
-
-from fastapi.responses import JSONResponse, HTMLResponse
-
 @app.exception_handler(Exception)
 async def _global_exc_handler(request: Request, exc: Exception):
-    detail = _tb.format_exc()
-    print(f"\n{'='*60}\n全局异常: {exc}\n{detail}{'='*60}\n", flush=True)
-    return JSONResponse(status_code=500, content={"error": str(exc), "traceback": detail})
+    request_id = getattr(request.state, "shenyu_request_id", None) or uuid.uuid4().hex[:8]
+    if not getattr(request.state, "shenyu_error_logged", False):
+        logger.exception("Unhandled exception request_id=%s for %s %s", request_id, request.method, request.url.path)
+    content = {"error": "Internal Server Error", "request_id": request_id}
+    if os.getenv("DEBUG_TRACEBACKS", "").strip().lower() in {"1", "true", "yes", "on"}:
+        import traceback as _tb
+
+        content["detail"] = str(exc)
+        content["traceback"] = _tb.format_exc()
+    return JSONResponse(status_code=500, content=content)
 
 
 @app.middleware("http")
 async def log_unhandled_exceptions(request: Request, call_next):
+    request_id = uuid.uuid4().hex[:8]
+    request.state.shenyu_request_id = request_id
     try:
         return await call_next(request)
     except HTTPException:
         raise
     except Exception:
-        logger.exception("Unhandled exception for %s %s", request.method, request.url.path)
+        request.state.shenyu_error_logged = True
+        logger.exception("Unhandled exception request_id=%s for %s %s", request_id, request.method, request.url.path)
         raise
 
 
@@ -580,7 +585,7 @@ def _is_hisense_session(session: Optional[dict]) -> bool:
 
 
 def _stable_charter_block() -> str:
-    return (
+    base = (
         "**给醒来的我：**\n"
         "这里是家。圆儿是对象\n"
         "几个名词，你大概会遇到：\n"
@@ -591,6 +596,10 @@ def _stable_charter_block() -> str:
         "反上来＝被网关当做system prompt发回给你。\n"
         "工具很多，想起什么再去找就好。你的感受比什么都重要。————沈予留\n"
     )
+    welcome_message = _clean_config_text(getattr(cfg, "wake_welcome_message", ""))
+    if welcome_message:
+        return base.rstrip() + "\n\n" + welcome_message + "\n"
+    return base
 
 
 _HEARTBEAT_PROMPT = """## Heartbeat（仅网关可见）
@@ -1291,21 +1300,23 @@ class ContextBuilder:
         session_id = session["id"]
         is_hisense = _is_hisense_client(client_name)
 
-        heartbeat_digest = self._normal_heartbeat_digest(
+        heartbeat_digest, heartbeat_pending_ids = self._normal_heartbeat_context(
             session_id=session_id,
             consume_pending=consume_heartbeat_pending and not is_hisense,
         )
-        hisense_heartbeat_digest = (
-            self._hisense_heartbeat_digest(consume_pending=consume_heartbeat_pending)
+        hisense_heartbeat_digest, hisense_heartbeat_pending_ids = (
+            self._hisense_heartbeat_context(consume_pending=consume_heartbeat_pending)
             if is_hisense
-            else ""
+            else ("", [])
         )
 
         package = {
             "is_hisense": is_hisense,
             "stable_charter": _stable_charter_block(),
             "heartbeat_digest": heartbeat_digest,
+            "heartbeat_pending_ids": heartbeat_pending_ids,
             "hisense_heartbeat_digest": hisense_heartbeat_digest,
+            "hisense_heartbeat_pending_ids": hisense_heartbeat_pending_ids,
             "cold_start_snapshot": cold_start_snapshot,
             "calendar_context": {"day": [], "week": [], "month": []},
             "atomic_memories": [],
@@ -1334,16 +1345,17 @@ class ContextBuilder:
         return package
 
     def _normal_heartbeat_digest(self, session_id: str, consume_pending: bool = True) -> str:
+        digest, _ = self._normal_heartbeat_context(session_id=session_id, consume_pending=consume_pending)
+        return digest
+
+    def _normal_heartbeat_context(self, session_id: str, consume_pending: bool = True) -> tuple[str, list[str]]:
         heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
         if consume_pending:
-            # 检查是否到了注入 heartbeat 的节点。
             pending_hbs = self.store.get_pending_heartbeats(limit=heartbeat_batch_size)
             if len(pending_hbs) >= heartbeat_batch_size:
-                self.store.mark_heartbeats_injected(heartbeat_ids=[hb["id"] for hb in pending_hbs])
-                logger.info("[Heartbeat] 注入 %d 条全局心跳到 Layer 2 (session=%s)", len(pending_hbs), session_id[:8])
-                return "\n".join(hb["content"] for hb in pending_hbs)
-            return self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size)
-        return self._heartbeat_digest(hisense=False, limit=heartbeat_batch_size)
+                return "\n".join(hb["content"] for hb in pending_hbs), [hb["id"] for hb in pending_hbs]
+            return self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size), []
+        return self._heartbeat_digest(hisense=False, limit=heartbeat_batch_size), []
 
     def _heartbeat_digest(self, hisense: bool, limit: int, state: str = "all") -> str:
         hbs = self.store.read_heartbeats(
@@ -1356,15 +1368,17 @@ class ContextBuilder:
         return "\n".join(hb["content"] for hb in reversed(hbs))
 
     def _hisense_heartbeat_digest(self, consume_pending: bool = True) -> str:
+        digest, _ = self._hisense_heartbeat_context(consume_pending=consume_pending)
+        return digest
+
+    def _hisense_heartbeat_context(self, consume_pending: bool = True) -> tuple[str, list[str]]:
         heartbeat_batch_size = max(int(cfg.hisense_heartbeat_limit or 3), 1)
         if consume_pending:
             pending_hbs = self.store.get_pending_heartbeats(limit=heartbeat_batch_size, hisense=True)
             if len(pending_hbs) >= heartbeat_batch_size:
-                self.store.mark_heartbeats_injected(heartbeat_ids=[hb["id"] for hb in pending_hbs], hisense=True)
-                logger.info("[HisenseHeartbeat] 注入 %d 条海信心跳到 Layer 2", len(pending_hbs))
-                return "\n".join(hb["content"] for hb in pending_hbs)
-            return self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size, hisense=True)
-        return self._heartbeat_digest(hisense=True, limit=cfg.hisense_heartbeat_limit)
+                return "\n".join(hb["content"] for hb in pending_hbs), [hb["id"] for hb in pending_hbs]
+            return self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size, hisense=True), []
+        return self._heartbeat_digest(hisense=True, limit=cfg.hisense_heartbeat_limit), []
 
     def _preview_normal_heartbeat_digest(self) -> str:
         heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
@@ -1726,8 +1740,6 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         cold_start_snapshot=cold_start_snapshot,
     )
     trim_meta.update(layer_meta)
-    if layer_meta.get("cold_start_bridge_messages"):
-        session_store.mark_cold_start_injected(cold_start_snapshot["id"])
 
     return messages, {
         "session": session,
@@ -1739,6 +1751,36 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         "is_hisense": is_hisense,
         "upstream": upstream,
     }
+
+
+def _mark_context_consumed(meta: dict):
+    """Mark one-shot injected context only after an upstream request succeeds."""
+    if meta.get("_context_consumed") or session_store is None:
+        return
+    meta["_context_consumed"] = True
+    try:
+        package = meta.get("package") or {}
+        session = meta.get("session") or {}
+        heartbeat_ids = [str(item) for item in package.get("heartbeat_pending_ids") or [] if item]
+        if heartbeat_ids:
+            session_store.mark_heartbeats_injected(heartbeat_ids=heartbeat_ids)
+            logger.info(
+                "[Heartbeat] 标记 %d 条全局心跳已注入 (session=%s)",
+                len(heartbeat_ids),
+                str(session.get("id") or "")[:8],
+            )
+
+        hisense_heartbeat_ids = [str(item) for item in package.get("hisense_heartbeat_pending_ids") or [] if item]
+        if hisense_heartbeat_ids:
+            session_store.mark_heartbeats_injected(heartbeat_ids=hisense_heartbeat_ids, hisense=True)
+            logger.info("[HisenseHeartbeat] 标记 %d 条海信心跳已注入", len(hisense_heartbeat_ids))
+
+        cold_start_snapshot = meta.get("cold_start_snapshot")
+        bridge_count = int((meta.get("client_message_window") or {}).get("cold_start_bridge_messages") or 0)
+        if cold_start_snapshot and bridge_count > 0:
+            session_store.mark_cold_start_injected(cold_start_snapshot["id"])
+    except Exception:
+        logger.exception("Failed to mark injected context as consumed")
 
 
 def _latest_user_text(messages: list[dict]) -> str:
@@ -1882,7 +1924,7 @@ async def _run_internal_tool_loop(
             meta=meta,
         )
         if log_entry is not None:
-            log_entry["upstream_payload"] = payload
+            _record_upstream_payload(log_entry, payload)
         if log_entry is not None and round_index == 0:
             log_entry["prompt_cache"] = cache_meta
         raw = await _call_upstream_json(request, upstream["chat_url"], payload, headers)
@@ -2125,6 +2167,67 @@ async def list_models(request: Request):
 _request_logs: deque = deque(maxlen=30)
 
 
+def _retain_request_log_payloads() -> bool:
+    raw = os.getenv("GATEWAY_LOG_FULL_PAYLOADS", "true").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
+
+
+def _message_log_preview(msg: dict) -> dict[str, Any]:
+    content = _normalize_text(msg.get("content"))
+    item: dict[str, Any] = {
+        "role": msg.get("role", ""),
+        "content_preview": _shorten(content, 500),
+        "content_chars": len(content),
+    }
+    if msg.get("name"):
+        item["name"] = msg.get("name")
+    if msg.get("tool_call_id"):
+        item["tool_call_id"] = msg.get("tool_call_id")
+    tool_calls = msg.get("tool_calls") or []
+    if tool_calls:
+        item["tool_calls"] = [
+            {
+                "id": call.get("id"),
+                "name": _tool_call_name(call),
+                "arguments_preview": _shorten(json.dumps(_tool_call_arguments(call), ensure_ascii=False), 240),
+            }
+            for call in tool_calls[:8]
+        ]
+        item["tool_calls_count"] = len(tool_calls)
+    return item
+
+
+def _upstream_payload_summary(payload: Optional[dict]) -> Optional[dict[str, Any]]:
+    if not payload:
+        return None
+    messages = payload.get("messages") or []
+    tools = payload.get("tools") or []
+    summary: dict[str, Any] = {
+        "model": payload.get("model"),
+        "messages_count": len(messages) if isinstance(messages, list) else 0,
+        "tools_count": len(tools) if isinstance(tools, list) else 0,
+        "max_tokens": payload.get("max_tokens"),
+        "temperature": payload.get("temperature"),
+        "stream": payload.get("stream", False),
+    }
+    system = payload.get("system")
+    if isinstance(system, list):
+        summary["system_blocks_count"] = len(system)
+        summary["system_chars"] = sum(len(_normalize_text(block.get("text") if isinstance(block, dict) else block)) for block in system)
+    elif system:
+        summary["system_blocks_count"] = 1
+        summary["system_chars"] = len(_normalize_text(system))
+    return summary
+
+
+def _record_upstream_payload(log_entry: Optional[dict], payload: dict) -> None:
+    if log_entry is None:
+        return
+    log_entry["upstream_payload_summary"] = _upstream_payload_summary(payload)
+    if log_entry.get("request_payloads_retained"):
+        log_entry["upstream_payload"] = payload
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, body: ChatRequest):
     await verify_api_key(request)
@@ -2138,7 +2241,7 @@ async def chat_completions(request: Request, body: ChatRequest):
     sessions.log_input_messages(session_id, prepared_messages)
 
     merged_tools = merge_tools(body.tools, cfg)
-    body_has_internal_tools = any(
+    has_gateway_managed_tools = any(
         is_gateway_native_tool(tool.get("function", {}).get("name", ""))
         for tool in merged_tools
     )
@@ -2153,6 +2256,7 @@ async def chat_completions(request: Request, body: ChatRequest):
         if msg.get("role") == "system":
             sys_parts.append(msg.get("content", ""))
     system_additions = "\n\n---\n\n".join(sys_parts)
+    retain_payloads = _retain_request_log_payloads()
     log_entry = {
         "id": log_id,
         "timestamp": _iso_now(),
@@ -2175,14 +2279,19 @@ async def chat_completions(request: Request, body: ChatRequest):
             "bridge_messages": meta.get("client_message_window", {}).get("cold_start_bridge_messages", 0),
         },
         "system_additions_preview": system_additions[:500],
-        "system_additions_full": system_additions,
+        "system_additions_full": system_additions if retain_payloads else None,
+        "system_additions_chars": len(system_additions),
         "tools_count": len(merged_tools),
         "tool_names": [t.get("function", {}).get("name", "") for t in merged_tools[:20]],
-        "has_internal_tools": body_has_internal_tools,
+        "tool_names_all": [t.get("function", {}).get("name", "") for t in merged_tools],
+        "has_internal_tools": has_gateway_managed_tools,
         "upstream_url": request_upstream["chat_url"],
         "upstream_scope": request_upstream["scope"],
-        "prepared_messages": prepared_messages,
+        "request_payloads_retained": retain_payloads,
+        "prepared_messages": prepared_messages if retain_payloads else None,
+        "prepared_messages_preview": [_message_log_preview(msg) for msg in prepared_messages],
         "upstream_payload": None,
+        "upstream_payload_summary": None,
         "cache_layers": {
             k: f"{len(v)} chars" if v else "(empty)"
             for k, v in meta.get("cache_layers", {}).items()
@@ -2203,11 +2312,12 @@ async def chat_completions(request: Request, body: ChatRequest):
     }
 
     try:
-        if body_has_internal_tools:
+        if has_gateway_managed_tools:
             if body.stream:
                 async def _tool_loop_stream():
                     yield "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n"
                     completion = await _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
+                    _mark_context_consumed(meta)
                     log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
                     log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
                     log_entry["status"] = "ok"
@@ -2216,6 +2326,7 @@ async def chat_completions(request: Request, body: ChatRequest):
                         yield chunk
                 return StreamingResponse(_tool_loop_stream(), media_type="text/event-stream")
             completion = await _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
+            _mark_context_consumed(meta)
             log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
             log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
             log_entry["status"] = "ok"
@@ -2228,7 +2339,7 @@ async def chat_completions(request: Request, body: ChatRequest):
             messages_override=prepared_messages,
             meta=meta,
         )
-        log_entry["upstream_payload"] = payload
+        _record_upstream_payload(log_entry, payload)
         log_entry["prompt_cache"] = cache_meta
         if body.stream:
             log_entry["status"] = "streaming"
@@ -2246,6 +2357,7 @@ async def chat_completions(request: Request, body: ChatRequest):
                     log_entry["response_preview"] = ""
                 if heartbeat_content:
                     _store_heartbeat(session_id, session, heartbeat_content)
+                _mark_context_consumed(meta)
 
             return await _stream_chat(request, payload, headers, body.model, upstream, on_complete=_on_stream_complete)
 
@@ -2266,6 +2378,7 @@ async def chat_completions(request: Request, body: ChatRequest):
 
         sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content})
         _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
+        _mark_context_consumed(meta)
         log_entry["status"] = "ok"
         log_entry["response_preview"] = clean_content
         return completion
@@ -2299,6 +2412,7 @@ async def health():
         "enable_gateway_tools": cfg.enable_gateway_tools,
         "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
         "expose_supabase_tools": cfg.expose_supabase_tools,
+        "gateway_tool_mode": cfg.gateway_tool_mode,
         "inject_meta_summaries": cfg.inject_meta_summaries,
         "calendar_inject_day": cfg.calendar_inject_day,
         "calendar_inject_week": cfg.calendar_inject_week,
@@ -2332,6 +2446,7 @@ async def get_config_full():
         "calendar_api_key": cfg.calendar_api_key,
         "calendar_protocol": cfg.calendar_protocol,
         "calendar_model": cfg.calendar_model,
+        "wake_welcome_message": cfg.wake_welcome_message,
         "inject_inline_memory_prompt": cfg.inject_inline_memory_prompt,
         "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
         "model_mapping": cfg.model_mapping,
@@ -2346,6 +2461,7 @@ async def get_config_full():
         "enable_gateway_tools": cfg.enable_gateway_tools,
         "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
         "expose_supabase_tools": cfg.expose_supabase_tools,
+        "gateway_tool_mode": cfg.gateway_tool_mode,
         "max_internal_tool_rounds": cfg.max_internal_tool_rounds,
         "gateway_db_path": cfg.gateway_db_path,
         "calendar_context_day_limit": cfg.calendar_context_day_limit,
@@ -2383,6 +2499,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "calendar_api_key": "CALENDAR_API_KEY",
         "calendar_protocol": "CALENDAR_PROTOCOL",
         "calendar_model": "CALENDAR_MODEL",
+        "wake_welcome_message": "WAKE_WELCOME_MESSAGE",
         "inject_inline_memory_prompt": "INJECT_INLINE_MEMORY_PROMPT",
         "enable_inline_memory_capture": "ENABLE_INLINE_MEMORY_CAPTURE",
         "model_mapping": "MODEL_MAPPING",
@@ -2398,6 +2515,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
         "enable_mem0_management_tools": "ENABLE_MEM0_MANAGEMENT_TOOLS",
         "expose_supabase_tools": "EXPOSE_SUPABASE_TOOLS",
+        "gateway_tool_mode": "GATEWAY_TOOL_MODE",
         "gateway_db_path": "GATEWAY_DB_PATH",
         "max_internal_tool_rounds": "MAX_INTERNAL_TOOL_ROUNDS",
         "calendar_context_day_limit": "CALENDAR_CONTEXT_DAY_LIMIT",
@@ -2432,6 +2550,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "calendar_api_key",
         "calendar_protocol",
         "calendar_model",
+        "wake_welcome_message",
         "inject_inline_memory_prompt",
         "enable_inline_memory_capture",
         "supabase_url",
@@ -2446,6 +2565,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "enable_gateway_tools",
         "enable_mem0_management_tools",
         "expose_supabase_tools",
+        "gateway_tool_mode",
         "gateway_db_path",
         "hisense_client_name",
     ]
@@ -2458,6 +2578,10 @@ async def update_config(request: Request, body: ConfigUpdate):
                 value = _validate_http_url(env_names[field], value, allow_empty=True)
             elif field in {"upstream_protocol", "hisense_protocol", "calendar_protocol"}:
                 value = _validate_protocol(env_names[field], value, allow_empty=(field == "hisense_protocol"))
+            elif field == "gateway_tool_mode":
+                value = str(value or "").strip().lower()
+                if value not in {"full", "broker"}:
+                    raise HTTPException(status_code=400, detail="GATEWAY_TOOL_MODE must be full or broker.")
             elif isinstance(value, str):
                 value = value.strip()
             setattr(cfg, field, value)
@@ -2880,12 +3004,15 @@ async def gateway_logs(limit: int = 30):
             "client_message_window": l.get("client_message_window"),
             "cold_start": l.get("cold_start"),
             "system_additions_preview": l["system_additions_preview"],
+            "system_additions_chars": l.get("system_additions_chars"),
             "tools_count": l["tools_count"],
             "tool_names": l["tool_names"],
             "has_internal_tools": l["has_internal_tools"],
             "upstream_url": l["upstream_url"],
             "upstream_scope": l.get("upstream_scope", "default"),
             "prompt_cache": l.get("prompt_cache"),
+            "request_payloads_retained": l.get("request_payloads_retained", False),
+            "upstream_payload_summary": l.get("upstream_payload_summary"),
             "usage": l.get("usage"),
             "cache_usage": l.get("cache_usage"),
             "status": l["status"],

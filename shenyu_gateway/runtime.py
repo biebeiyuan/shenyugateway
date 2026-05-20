@@ -72,13 +72,20 @@ def env_value(value: Any) -> str:
     return "" if value is None else str(value)
 
 
+def env_file_value(value: Any) -> str:
+    text = env_value(value)
+    if "\n" in text or "\r" in text:
+        return json.dumps(text, ensure_ascii=False)
+    return text
+
+
 def persist_env(updates: dict[str, Any]) -> None:
     if not updates:
         return
 
     existing = ENV_PATH.read_text(encoding="utf-8") if ENV_PATH.exists() else ""
     lines = existing.splitlines()
-    remaining = {key: env_value(value) for key, value in updates.items()}
+    remaining = {key: env_file_value(value) for key, value in updates.items()}
     new_lines: list[str] = []
 
     for line in lines:

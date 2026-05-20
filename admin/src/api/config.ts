@@ -21,6 +21,7 @@ export interface GatewayConfig {
   calendar_api_key?: string
   calendar_protocol?: string
   calendar_model?: string
+  wake_welcome_message?: string
   // atomic memory
   inject_inline_memory_prompt?: boolean
   enable_inline_memory_capture?: boolean
@@ -39,6 +40,7 @@ export interface GatewayConfig {
   enable_gateway_tools?: boolean
   enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
+  gateway_tool_mode?: string
   max_internal_tool_rounds?: number
   default_surface_limit?: number
   heartbeat_inject_every?: number
@@ -71,6 +73,7 @@ export interface HealthStatus {
   enable_gateway_tools?: boolean
   enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
+  gateway_tool_mode?: string
   inject_meta_summaries?: boolean
 
   inject_atomic_memories?: boolean

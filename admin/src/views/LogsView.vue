@@ -112,6 +112,19 @@ function renderContent(detail: LogDetail, tab: string): string {
 
   if (tab === 'messages') {
     const msgs = detail.prepared_messages || []
+    const previews = detail.prepared_messages_preview || []
+    if (!msgs.length && previews.length) {
+      return previews.map((m: any) => {
+        const roleLabel = m.name ? `${m.role} (${m.name})` : m.role
+        let extra = ''
+        if (m.tool_calls && m.tool_calls.length) {
+          extra = m.tool_calls.map((tc: any) =>
+            `<div class="tc-block"><div class="tc-name">🔧 ${esc(tc.name || 'unknown')}</div><div class="tc-args">${esc(tc.arguments_preview || '')}</div></div>`,
+          ).join('')
+        }
+        return `<div class="mb"><div class="mr ${m.role}">${esc(roleLabel)}</div><div class="mc">${esc(m.content_preview || '')}</div><div class="rev-meta">${m.content_chars || 0} chars</div>${extra}</div>`
+      }).join('')
+    }
     if (!msgs.length) return '(无消息)'
     return msgs.map((m: any) => {
       let content = ''
@@ -133,7 +146,7 @@ function renderContent(detail: LogDetail, tab: string): string {
   }
 
   if (tab === 'tools') {
-    const names = detail.tool_names || []
+    const names = detail.tool_names_all || detail.tool_names || []
     if (!names.length) return '(无工具)'
     let html = names.map((n, i) => `${i + 1}. ${n}`).join('\n')
     html += `\n\n总计 ${names.length} 个工具`
@@ -142,9 +155,8 @@ function renderContent(detail: LogDetail, tab: string): string {
   }
 
   if (tab === 'upstream') {
-    const payload = detail.upstream_payload || {
-      note: 'No upstream payload was captured for this log. New requests will include it.',
-      prepared_messages: detail.prepared_messages || [],
+    const payload = detail.upstream_payload || detail.upstream_payload_summary || {
+      note: 'Full upstream payload is not retained. Set GATEWAY_LOG_FULL_PAYLOADS=true to keep full debug payloads in memory.',
     }
     return esc(JSON.stringify(payload, null, 2))
   }
@@ -179,6 +191,9 @@ function renderContent(detail: LogDetail, tab: string): string {
       prepared_messages_count: detail.prepared_messages_count,
       tools_count: detail.tools_count,
       has_internal_tools: detail.has_internal_tools,
+      request_payloads_retained: detail.request_payloads_retained,
+      system_additions_chars: detail.system_additions_chars,
+      upstream_payload_summary: detail.upstream_payload_summary,
       upstream_url: detail.upstream_url,
       status: detail.status,
       duration_ms: detail.duration_ms,
@@ -432,6 +447,15 @@ function renderContent(detail: LogDetail, tab: string): string {
   max-height: 300px;
   overflow-y: auto;
   color: #1f1f1f;
+}
+
+.rev-meta {
+  padding: 0 10px 6px;
+  background: #fafafa;
+  border: 1px solid #e8e8e8;
+  border-top: 0;
+  color: #6b7280;
+  font-size: 10px;
 }
 
 .tc-block {

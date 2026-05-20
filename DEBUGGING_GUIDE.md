@@ -53,13 +53,14 @@ Useful boundary map:
 - `shenyu_list_self_memories`: gateway tool; reads assistant-owned Supabase `atomic_memories`, defaulting to inline `[mem]` notes.
 - `shenyu_read_heartbeat`: gateway tool; reads SQLite `heartbeat_entries` or `hisense_heartbeat`.
 - `supabase_*`: gateway fallback tools for direct Supabase table operations.
+- `GATEWAY_TOOL_MODE=broker`: exposes one compact `shenyu_gateway_tool` that dispatches to the same gateway-native tools. Use `full` when the model needs stricter per-tool parameter schemas.
 - `query_memory` and `get_memory_by_title`, when visible, are client-provided tools from outside the gateway; inspect the client/Operit tool definitions for their backing pool.
 
 ## Context Layer Debugging
 
 When context looks wrong, inspect in this order:
 
-1. `cfg` flags: `MAX_CLIENT_MESSAGES`, `ENABLE_COLD_START`, `CALENDAR_INJECT_*`, `INJECT_ATOMIC_MEMORIES`, `ENABLE_GATEWAY_TOOLS`.
+1. `cfg` flags: `MAX_CLIENT_MESSAGES`, `ENABLE_COLD_START`, `CALENDAR_INJECT_*`, `INJECT_ATOMIC_MEMORIES`, `ENABLE_GATEWAY_TOOLS`, `GATEWAY_TOOL_MODE`.
 2. `_prepare_messages()` metadata: `client_message_window`, `cache_layers`, `cold_start_snapshot`, `is_hisense`, `upstream`.
 3. SQLite tables:
    - `raw_request_windows`: original client payload before trimming.

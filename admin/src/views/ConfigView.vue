@@ -50,6 +50,7 @@ const config = ref<GatewayConfig>({
   hisense_upstream_url: '',
   hisense_api_key: '',
   hisense_protocol: '',
+  wake_welcome_message: '',
   supabase_url: '',
   supabase_key: '',
   max_client_messages: null,
@@ -57,6 +58,7 @@ const config = ref<GatewayConfig>({
   cold_start_message_limit: null,
   cold_start_idle_minutes: 120,
   model_mapping: {},
+  gateway_tool_mode: 'broker',
 })
 
 const health = ref<HealthStatus | null>(null)
@@ -74,6 +76,10 @@ const protocolOptions = [
   { label: 'Anthropic', value: 'anthropic' },
 ]
 const inheritedProtocolOptions = [{ label: 'Inherit global', value: '' }, ...protocolOptions]
+const toolModeOptions = [
+  { label: 'Full schemas', value: 'full' },
+  { label: 'Compact broker', value: 'broker' },
+]
 
 const activePresetName = computed(() => {
   const match = presets.value.find(
@@ -153,6 +159,7 @@ async function doSave() {
       hisense_upstream_url: config.value.hisense_upstream_url,
       hisense_api_key: config.value.hisense_api_key,
       hisense_protocol: config.value.hisense_protocol,
+      wake_welcome_message: config.value.wake_welcome_message,
       supabase_url: config.value.supabase_url,
       supabase_key: config.value.supabase_key,
       max_client_messages: config.value.max_client_messages || null,
@@ -165,6 +172,7 @@ async function doSave() {
       enable_gateway_tools: config.value.enable_gateway_tools,
       enable_inline_memory_capture: config.value.enable_inline_memory_capture,
       expose_supabase_tools: config.value.expose_supabase_tools,
+      gateway_tool_mode: config.value.gateway_tool_mode,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
       default_surface_limit: config.value.default_surface_limit,
     }
@@ -364,6 +372,19 @@ function removeModel(index: number) {
         </NForm>
       </NCard>
 
+      <NCard title="醒来欢迎词" size="small">
+        <NForm label-placement="top">
+          <NFormItem label="追加到“给醒来的我”之后">
+            <NInput
+              v-model:value="config.wake_welcome_message"
+              type="textarea"
+              :autosize="{ minRows: 5, maxRows: 12 }"
+              placeholder="留空则只使用默认欢迎词"
+            />
+          </NFormItem>
+        </NForm>
+      </NCard>
+
       <NCard title="功能开关" size="small">
         <NForm label-placement="top">
           <NFormItem label="注入元摘要">
@@ -378,6 +399,9 @@ function removeModel(index: number) {
           </NFormItem>
           <NFormItem label="启用 supabase_* 工具">
             <NSwitch v-model:value="config.expose_supabase_tools" />
+          </NFormItem>
+          <NFormItem label="网关工具模式">
+            <NSelect v-model:value="config.gateway_tool_mode" :options="toolModeOptions" />
           </NFormItem>
         </NForm>
       </NCard>

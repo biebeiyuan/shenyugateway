@@ -65,6 +65,8 @@ Context is assembled from low-change to high-change content:
 
 The retired rolling and frozen context layers have been removed from the active flow. Their legacy SQLite tables are only cleaned up during session deletion when they exist in an older database.
 
+`GATEWAY_TOOL_MODE=broker` is the default and exposes one compact `shenyu_gateway_tool` dispatcher that calls the same gateway-native tools with fewer schema tokens. Use `full` when strict per-tool parameter guidance matters more than prompt size.
+
 ## Prompt Cache
 
 The gateway adds Anthropic-compatible `cache_control` markers on stable prefixes. With a full set of layers, the intended breakpoints are:

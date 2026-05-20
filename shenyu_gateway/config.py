@@ -18,6 +18,38 @@ def _env_optional_int(name: str) -> Optional[int]:
     return value if value > 0 else None
 
 
+def _env_int(name: str, default: int, min_value: Optional[int] = None, max_value: Optional[int] = None) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        value = default
+    else:
+        try:
+            value = int(raw)
+        except ValueError:
+            value = default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
+def _env_float(name: str, default: float, min_value: Optional[float] = None, max_value: Optional[float] = None) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        value = default
+    else:
+        try:
+            value = float(raw)
+        except ValueError:
+            value = default
+    if min_value is not None:
+        value = max(min_value, value)
+    if max_value is not None:
+        value = min(max_value, value)
+    return value
+
+
 class RuntimeConfig:
     def __init__(self):
         self.supabase_url: str = os.getenv("SUPABASE_URL", "").strip()
@@ -36,6 +68,7 @@ class RuntimeConfig:
         self.calendar_api_key: str = os.getenv("CALENDAR_API_KEY", "").strip()
         self.calendar_protocol: str = os.getenv("CALENDAR_PROTOCOL", "auto").strip().lower()
         self.calendar_model: str = os.getenv("CALENDAR_MODEL", "claude-opus-4-7").strip()
+        self.wake_welcome_message: str = os.getenv("WAKE_WELCOME_MESSAGE", "").strip()
         self.enable_inline_memory_capture: bool = _env_bool("ENABLE_INLINE_MEMORY_CAPTURE", False)
         self.inject_inline_memory_prompt: bool = _env_bool(
             "INJECT_INLINE_MEMORY_PROMPT",
@@ -52,26 +85,27 @@ class RuntimeConfig:
         self.enable_gateway_tools: bool = _env_bool("ENABLE_GATEWAY_TOOLS", False)
         self.enable_mem0_management_tools: bool = _env_bool("ENABLE_MEM0_MANAGEMENT_TOOLS", False)
         self.expose_supabase_tools: bool = _env_bool("EXPOSE_SUPABASE_TOOLS", True)
-        self.max_internal_tool_rounds: int = int(os.getenv("MAX_INTERNAL_TOOL_ROUNDS", "3"))
+        self.gateway_tool_mode: str = self._normalize_tool_mode(os.getenv("GATEWAY_TOOL_MODE", "broker"))
+        self.max_internal_tool_rounds: int = _env_int("MAX_INTERNAL_TOOL_ROUNDS", 3, 1, 8)
 
         self.gateway_db_path: str = os.getenv("GATEWAY_DB_PATH", "./data/shenyu_gateway.db")
-        self.calendar_context_day_limit: int = int(os.getenv("CALENDAR_CONTEXT_DAY_LIMIT", "3"))
-        self.calendar_context_week_limit: int = int(os.getenv("CALENDAR_CONTEXT_WEEK_LIMIT", "1"))
-        self.calendar_context_month_limit: int = int(os.getenv("CALENDAR_CONTEXT_MONTH_LIMIT", "1"))
+        self.calendar_context_day_limit: int = _env_int("CALENDAR_CONTEXT_DAY_LIMIT", 3, 1, 30)
+        self.calendar_context_week_limit: int = _env_int("CALENDAR_CONTEXT_WEEK_LIMIT", 1, 1, 12)
+        self.calendar_context_month_limit: int = _env_int("CALENDAR_CONTEXT_MONTH_LIMIT", 1, 1, 12)
         self.max_client_messages: Optional[int] = _env_optional_int("MAX_CLIENT_MESSAGES")
         self.cold_start_message_limit: Optional[int] = _env_optional_int("COLD_START_MESSAGE_LIMIT")
-        self.cold_start_idle_minutes: int = int(os.getenv("COLD_START_IDLE_MINUTES", "120"))
-        self.default_surface_limit: int = int(os.getenv("DEFAULT_SURFACE_LIMIT", "3"))
-        self.default_atomic_memory_limit: int = int(os.getenv("DEFAULT_ATOMIC_MEMORY_LIMIT", "3"))
-        self.atomic_memory_min_score: float = float(os.getenv("ATOMIC_MEMORY_MIN_SCORE", "0.55"))
-        self.heartbeat_inject_every: int = int(os.getenv("HEARTBEAT_INJECT_EVERY", "5"))
-        self.gateway_message_retention: int = int(os.getenv("GATEWAY_MESSAGE_RETENTION", "1500"))
-        self.gateway_context_snapshot_retention: int = int(os.getenv("GATEWAY_CONTEXT_SNAPSHOT_RETENTION", "3"))
-        self.gateway_cold_start_retention: int = int(os.getenv("GATEWAY_COLD_START_RETENTION", "20"))
+        self.cold_start_idle_minutes: int = _env_int("COLD_START_IDLE_MINUTES", 120, 1, 10080)
+        self.default_surface_limit: int = _env_int("DEFAULT_SURFACE_LIMIT", 3, 1, 8)
+        self.default_atomic_memory_limit: int = _env_int("DEFAULT_ATOMIC_MEMORY_LIMIT", 3, 1, 3)
+        self.atomic_memory_min_score: float = _env_float("ATOMIC_MEMORY_MIN_SCORE", 0.55, 0.0, 1.0)
+        self.heartbeat_inject_every: int = _env_int("HEARTBEAT_INJECT_EVERY", 5, 1, 50)
+        self.gateway_message_retention: int = _env_int("GATEWAY_MESSAGE_RETENTION", 1500, 50, 200000)
+        self.gateway_context_snapshot_retention: int = _env_int("GATEWAY_CONTEXT_SNAPSHOT_RETENTION", 3, 1, 100)
+        self.gateway_cold_start_retention: int = _env_int("GATEWAY_COLD_START_RETENTION", 20, 1, 1000)
 
         self.hisense_client_name: str = os.getenv("HISENSE_CLIENT_NAME", "hisense").strip()
-        self.hisense_heartbeat_limit: int = int(os.getenv("HISENSE_HEARTBEAT_LIMIT", "3"))
-        self.hisense_notebook_limit: int = int(os.getenv("HISENSE_NOTEBOOK_LIMIT", "5"))
+        self.hisense_heartbeat_limit: int = _env_int("HISENSE_HEARTBEAT_LIMIT", 3, 1, 30)
+        self.hisense_notebook_limit: int = _env_int("HISENSE_NOTEBOOK_LIMIT", 5, 1, 20)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +124,7 @@ class RuntimeConfig:
             "calendar_api_key": mask(self.calendar_api_key),
             "calendar_protocol": self.calendar_protocol,
             "calendar_model": self.calendar_model,
+            "wake_welcome_message": self.wake_welcome_message,
             "inject_inline_memory_prompt": self.inject_inline_memory_prompt,
             "enable_inline_memory_capture": self.enable_inline_memory_capture,
             "model_mapping": self.model_mapping,
@@ -102,6 +137,7 @@ class RuntimeConfig:
             "enable_gateway_tools": self.enable_gateway_tools,
             "enable_mem0_management_tools": self.enable_mem0_management_tools,
             "expose_supabase_tools": self.expose_supabase_tools,
+            "gateway_tool_mode": self.gateway_tool_mode,
             "max_internal_tool_rounds": self.max_internal_tool_rounds,
             "gateway_db_path": self.gateway_db_path,
             "calendar_context_day_limit": self.calendar_context_day_limit,
@@ -137,3 +173,7 @@ class RuntimeConfig:
             for key, value in data.items()
             if str(key).strip() and str(value).strip()
         }
+
+    def _normalize_tool_mode(self, value: Any) -> str:
+        raw = str(value or "").strip().lower()
+        return raw if raw in {"full", "broker"} else "broker"

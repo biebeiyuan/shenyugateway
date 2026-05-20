@@ -36,6 +36,7 @@ class ConfigUpdate(BaseModel):
     calendar_api_key: Optional[str] = None
     calendar_protocol: Optional[str] = None
     calendar_model: Optional[str] = None
+    wake_welcome_message: Optional[str] = None
     inject_inline_memory_prompt: Optional[bool] = None
     enable_inline_memory_capture: Optional[bool] = None
     model_mapping: Optional[dict[str, str]] = None
@@ -50,6 +51,7 @@ class ConfigUpdate(BaseModel):
     enable_gateway_tools: Optional[bool] = None
     enable_mem0_management_tools: Optional[bool] = None
     expose_supabase_tools: Optional[bool] = None
+    gateway_tool_mode: Optional[str] = None
     max_internal_tool_rounds: Optional[int] = None
     gateway_db_path: Optional[str] = None
     calendar_context_day_limit: Optional[int] = None
