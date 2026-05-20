@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import re
 from typing import Any, Optional
 
 from .runtime import now as _now, parse_ts as _parse_ts
@@ -20,6 +21,13 @@ _GATEWAY_TOOL_POLICY = (
     "- `shenyu_search_primary_texts` is for diary/letter/paper lookup when explicitly needed.\n"
     "- `shenyu_ask_memory` recalls event memories and only returns title/date/summary/facts/emotional_context.\n"
     "- Direct client/database tools remain available and are still valid."
+)
+
+_CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
+    r"\s*<attachment\b"
+    r"(?=[^>]*\bid\s*=\s*['\"]?message_insert_extra_bundle_[^'\"\s>]+['\"]?)"
+    r"[^>]*>.*?</attachment>",
+    re.IGNORECASE | re.DOTALL,
 )
 
 
@@ -197,6 +205,93 @@ def trim_client_messages(messages: list[dict], limit: Optional[int]) -> tuple[li
     trimmed = system_prefix + non_system[start:]
     meta["client_messages_retained"] = len(trimmed)
     meta["client_messages_trim_start"] = first_non_system + start
+    return trimmed, meta
+
+
+def _strip_client_extra_bundle_text(text: str) -> tuple[str, int]:
+    cleaned, removed = _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE.subn("", text)
+    if not removed:
+        return text, 0
+    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip(), removed
+
+
+def _message_has_client_extra_bundle(msg: dict) -> bool:
+    content = msg.get("content")
+    if isinstance(content, str):
+        return bool(_CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE.search(content))
+    if isinstance(content, list):
+        for item in content:
+            if isinstance(item, str) and _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE.search(item):
+                return True
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                if _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE.search(item["text"]):
+                    return True
+    return False
+
+
+def _strip_client_extra_bundle_content(content: Any) -> tuple[Any, int]:
+    if isinstance(content, str):
+        return _strip_client_extra_bundle_text(content)
+    if not isinstance(content, list):
+        return content, 0
+
+    cleaned_blocks: list[Any] = []
+    removed_total = 0
+    for item in content:
+        if isinstance(item, str):
+            cleaned, removed = _strip_client_extra_bundle_text(item)
+            removed_total += removed
+            if cleaned:
+                cleaned_blocks.append(cleaned)
+            continue
+        if isinstance(item, dict) and isinstance(item.get("text"), str):
+            block = dict(item)
+            cleaned, removed = _strip_client_extra_bundle_text(block["text"])
+            removed_total += removed
+            block["text"] = cleaned
+            if cleaned or block.get("type") != "text" or len(block) > 2:
+                cleaned_blocks.append(block)
+            continue
+        cleaned_blocks.append(item)
+    return cleaned_blocks, removed_total
+
+
+def trim_client_extra_bundle_attachments(
+    messages: list[dict],
+    keep_recent_messages: int = 3,
+) -> tuple[list[dict], dict]:
+    """Remove Operit device-state text attachments from older user messages."""
+    keep_recent_messages = max(int(keep_recent_messages or 0), 0)
+    attachment_message_indices = [
+        idx
+        for idx, msg in enumerate(messages)
+        if msg.get("role") == "user" and _message_has_client_extra_bundle(msg)
+    ]
+    keep_indices = set(attachment_message_indices[-keep_recent_messages:]) if keep_recent_messages else set()
+    meta = {
+        "client_attachment_keep_messages": keep_recent_messages,
+        "client_attachment_messages_seen": len(attachment_message_indices),
+        "client_attachment_messages_trimmed": 0,
+        "client_attachment_blocks_trimmed": 0,
+    }
+    if len(attachment_message_indices) <= keep_recent_messages:
+        return messages, meta
+
+    trimmed: list[dict] = []
+    trim_index_set = set(attachment_message_indices) - keep_indices
+    for idx, msg in enumerate(messages):
+        if idx not in trim_index_set:
+            trimmed.append(msg)
+            continue
+        clean = dict(msg)
+        clean_content, removed = _strip_client_extra_bundle_content(clean.get("content"))
+        if removed:
+            clean["content"] = clean_content
+            meta["client_attachment_messages_trimmed"] += 1
+            meta["client_attachment_blocks_trimmed"] += removed
+        trimmed.append(clean)
     return trimmed, meta
 
 

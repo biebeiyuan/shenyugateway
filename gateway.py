@@ -47,6 +47,7 @@ from shenyu_gateway.context_layers import (
     non_system_message_count as _non_system_message_count,
     render_layered_additions as _render_layered_additions,
     render_system_additions as _render_system_additions,
+    trim_client_extra_bundle_attachments as _trim_client_extra_bundle_attachments,
     trim_client_messages as _trim_client_messages,
     trim_cold_start_sources as _trim_cold_start_sources,
 )
@@ -1693,6 +1694,8 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         latest_user_text=raw_user_text,
     )
     messages, trim_meta = _trim_client_messages(raw_messages, cfg.max_client_messages)
+    messages, attachment_trim_meta = _trim_client_extra_bundle_attachments(messages, keep_recent_messages=3)
+    trim_meta.update(attachment_trim_meta)
     user_text = _latest_user_text(messages)
     current_message_count = _non_system_message_count(messages)
     is_hisense = _is_hisense_client(client_name)
