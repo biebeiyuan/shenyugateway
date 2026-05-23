@@ -187,7 +187,7 @@ class MemNoteService:
         mem_type: Optional[str] = None,
         trigger_text: Any = "",
         trigger_keywords: Any = None,
-        status: str = "captured",
+        status: str = "active",
         cooldown_hours: Any = None,
         review_note: Any = "",
         source_model: str = "tool:shenyu_write_mem_note",
@@ -210,14 +210,18 @@ class MemNoteService:
         }
 
         resolved_type = self._mem_type(mem_type, allow_empty=True)
+        if resolved_status == "active" and not resolved_type:
+            resolved_type = "心里那一档"
         if resolved_type:
             payload["mem_type"] = resolved_type
 
         normalized_trigger = _normalize_text(trigger_text).strip()
+        keywords = self._keyword_list(trigger_keywords)
+        if resolved_status == "active" and not normalized_trigger and not keywords:
+            normalized_trigger = normalized_content
         if normalized_trigger:
             payload["trigger_text"] = normalized_trigger
 
-        keywords = self._keyword_list(trigger_keywords)
         if keywords:
             payload["trigger_keywords"] = keywords
 

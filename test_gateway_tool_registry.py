@@ -28,7 +28,7 @@ class FakeToolService:
         mem_type=None,
         trigger_text="",
         trigger_keywords=None,
-        status="captured",
+        status="active",
         cooldown_hours=None,
         review_note="",
     ):
@@ -109,7 +109,6 @@ def test_execute_gateway_tool_routes_write_mem_note():
                 "tool": "shenyu_write_mem_note",
                 "arguments": {
                     "content": "圆圆今天帮我把上游预设修回气泡。",
-                    "status": "captured",
                 },
             },
             session_tag="default",
@@ -121,7 +120,7 @@ def test_execute_gateway_tool_routes_write_mem_note():
     assert result == {
         "ok": True,
         "content": "圆圆今天帮我把上游预设修回气泡。",
-        "status": "captured",
+        "status": "active",
         "session_tag": "default",
     }
     assert service.calls == [
@@ -132,7 +131,7 @@ def test_execute_gateway_tool_routes_write_mem_note():
             "mem_type": None,
             "trigger_text": "",
             "trigger_keywords": None,
-            "status": "captured",
+            "status": "active",
             "cooldown_hours": None,
             "review_note": "",
         }

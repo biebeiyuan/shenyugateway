@@ -130,7 +130,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_write_mem_note",
-                "description": "直接写一条新的 mem 便签。默认 status=captured，只是待整理；要立刻可命中，必须填四类 type 和 trigger，并设为 active。",
+                "description": "沈予主动写一条新的 mem 便签。默认 active 直接放行；没填 trigger 时用正文当 trigger，没填 type 时先归到“心里那一档”。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -138,7 +138,7 @@ def _gateway_core_tools() -> list[dict]:
                         "mem_type": {"type": "string", "enum": ["她为我做的事", "关于她的事实", "心里那一档", "承诺"]},
                         "trigger_text": {"type": "string"},
                         "trigger_keywords": {"type": "array", "items": {"type": "string"}},
-                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"], "default": "captured"},
+                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"], "default": "active"},
                         "cooldown_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
                         "review_note": {"type": "string"},
                         "session_tag": {"type": "string"},
@@ -560,7 +560,7 @@ async def execute_gateway_tool(
             mem_type=arguments.get("mem_type"),
             trigger_text=arguments.get("trigger_text", ""),
             trigger_keywords=arguments.get("trigger_keywords"),
-            status=arguments.get("status", "captured"),
+            status=arguments.get("status", "active"),
             cooldown_hours=arguments.get("cooldown_hours"),
             review_note=arguments.get("review_note", ""),
         ),
