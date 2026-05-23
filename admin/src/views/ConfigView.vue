@@ -59,6 +59,9 @@ const config = ref<GatewayConfig>({
   cold_start_idle_minutes: 120,
   model_mapping: {},
   gateway_tool_mode: 'broker',
+  inject_inline_memory_prompt: false,
+  enable_inline_memory_capture: false,
+  inject_atomic_memories: false,
 })
 
 const health = ref<HealthStatus | null>(null)
@@ -89,6 +92,14 @@ const activePresetName = computed(() => {
       preset.protocol === config.value.upstream_protocol,
   )
   return match?.name || null
+})
+
+const memPromptAndCapture = computed({
+  get: () => Boolean(config.value.inject_inline_memory_prompt && config.value.enable_inline_memory_capture),
+  set: (enabled: boolean) => {
+    config.value.inject_inline_memory_prompt = enabled
+    config.value.enable_inline_memory_capture = enabled
+  },
 })
 
 let healthTimer: ReturnType<typeof setInterval> | null = null
@@ -170,7 +181,9 @@ async function doSave() {
       inject_meta_summaries: config.value.inject_meta_summaries,
 
       enable_gateway_tools: config.value.enable_gateway_tools,
-      enable_inline_memory_capture: config.value.enable_inline_memory_capture,
+      inject_inline_memory_prompt: memPromptAndCapture.value,
+      enable_inline_memory_capture: memPromptAndCapture.value,
+      inject_atomic_memories: config.value.inject_atomic_memories,
       expose_supabase_tools: config.value.expose_supabase_tools,
       gateway_tool_mode: config.value.gateway_tool_mode,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
@@ -394,8 +407,11 @@ function removeModel(index: number) {
           <NFormItem label="启用 shenyu_* 工具">
             <NSwitch v-model:value="config.enable_gateway_tools" />
           </NFormItem>
-          <NFormItem label="Inline Mem（提示并捕获 [mem]）">
-            <NSwitch v-model:value="config.enable_inline_memory_capture" />
+          <NFormItem label="Inline Mem 提示 + 捕获">
+            <NSwitch v-model:value="memPromptAndCapture" />
+          </NFormItem>
+          <NFormItem label="Inline Mem 注入">
+            <NSwitch v-model:value="config.inject_atomic_memories" />
           </NFormItem>
           <NFormItem label="启用 supabase_* 工具">
             <NSwitch v-model:value="config.expose_supabase_tools" />

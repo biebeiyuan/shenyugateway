@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   NButton,
   NCard,
@@ -33,6 +33,14 @@ const atomicReviewStatus = ref('all')
 const atomicReviewSessionTag = ref('')
 const atomicReviewLimit = ref(30)
 
+const memPromptAndCapture = computed({
+  get: () => Boolean(config.value.inject_inline_memory_prompt && config.value.enable_inline_memory_capture),
+  set: (enabled: boolean) => {
+    config.value.inject_inline_memory_prompt = enabled
+    config.value.enable_inline_memory_capture = enabled
+  },
+})
+
 onMounted(async () => {
   await Promise.all([loadConfig(), loadAtomicReview()])
 })
@@ -49,7 +57,9 @@ async function doSaveConfig() {
   savingConfig.value = true
   try {
     const result = await saveMem0Config({
-      inject_inline_memory_prompt: config.value.inject_inline_memory_prompt,
+      inject_inline_memory_prompt: memPromptAndCapture.value,
+      enable_inline_memory_capture: memPromptAndCapture.value,
+      inject_atomic_memories: config.value.inject_atomic_memories,
       default_atomic_memory_limit: config.value.default_atomic_memory_limit,
       atomic_memory_min_score: config.value.atomic_memory_min_score,
     })
@@ -123,8 +133,11 @@ async function deleteAtomic(item: AtomicMemoryItem) {
     <div class="mem0-grid">
       <NCard title="Mem0 设置" size="small">
         <NForm label-placement="top">
-          <NFormItem label="聊天前注入 [mem] 标签提示">
-            <NSwitch v-model:value="config.inject_inline_memory_prompt" />
+          <NFormItem label="Inline Mem 提示 + 捕获">
+            <NSwitch v-model:value="memPromptAndCapture" />
+          </NFormItem>
+          <NFormItem label="Inline Mem 注入">
+            <NSwitch v-model:value="config.inject_atomic_memories" />
           </NFormItem>
           <div class="cfg-inline">
             <NFormItem label="注入数量">
