@@ -1,11 +1,14 @@
 from __future__ import annotations
 
 import json
+import random
 import re
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from shenyu_gateway.calendar import default_period_key, period_bounds
+from shenyu_gateway.mem_notes import MemNoteService
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
     json_dumps as _json_dumps,
@@ -15,6 +18,16 @@ from shenyu_gateway.runtime import (
 )
 
 _UNSET = object()
+
+
+@dataclass
+class GatewayToolRuntime:
+    cfg: Any = None
+    supabase_client: Any = None
+    session_store: Any = None
+
+
+_runtime = GatewayToolRuntime()
 cfg: Any = None
 supabase_client: Any = None
 session_store: Any = None
@@ -25,10 +38,13 @@ def configure_gateway_tools(*, runtime_config: Any = _UNSET, supabase: Any = _UN
     global cfg, supabase_client, session_store
     if runtime_config is not _UNSET:
         cfg = runtime_config
+        _runtime.cfg = runtime_config
     if supabase is not _UNSET:
         supabase_client = supabase
+        _runtime.supabase_client = supabase
     if store is not _UNSET:
         session_store = store
+        _runtime.session_store = store
 
 
 def _normalize_text(content: Any) -> str:
@@ -177,8 +193,9 @@ def _safe_json_loads(value: Any, fallback: Any):
         return fallback
 
 
-def _is_hisense_client(client_name: Optional[str]) -> bool:
-    target = (getattr(cfg, "hisense_client_name", "") or "").strip()
+def _is_hisense_client(client_name: Optional[str], runtime_config: Any = None) -> bool:
+    active_cfg = runtime_config or cfg
+    target = (getattr(active_cfg, "hisense_client_name", "") or "").strip()
     name = (client_name or "").strip()
     if not target or not name:
         return False
@@ -187,8 +204,10 @@ def _is_hisense_client(client_name: Optional[str]) -> bool:
     return target.casefold() == "hisense" and name == "海信"
 
 
-def _is_hisense_session(session: Optional[dict]) -> bool:
-    return bool(session) and _is_hisense_client(session.get("client_name"))
+def _is_hisense_session(session: Optional[dict], runtime_config: Any = None) -> bool:
+    return bool(session) and _is_hisense_client(session.get("client_name"), runtime_config=runtime_config)
+
+
 _SUPABASE_GUIDE = """## 家里常用 Supabase 表
 需要直接查/写 Supabase 时用 `supabase_query` / `supabase_insert` / `supabase_update` / `supabase_delete`。
 `filters` 可以写成对象；普通值会自动当作等值过滤，例如 {"id":"..."} 等价于 {"id":"eq...."}。
@@ -199,7 +218,8 @@ _SUPABASE_GUIDE = """## 家里常用 Supabase 表
 - 模糊搜：operators={"content":{"ilike":"%北海道%"}}
 - 非空：operators={"deleted_at":{"not_is":null}}
 insert / update / delete 会尽量返回写入或影响到的行。
-整理自己的 mem 用 `shenyu_list_self_memories`，一般只填 query/date/tags/status。
+整理自己的 mem 用 `shenyu_list_mem_notes`，补属性用 `shenyu_update_mem_note`。
+读老 atomic 迁移资料用 `shenyu_legacy_atomic_memories`，它只读不写。
 翻某天心跳用 `shenyu_read_heartbeat`，一般只填 date，比如 2026-05-11。
 
 ### journal（日记 / 信件 / 纸 / 空间）
@@ -229,6 +249,23 @@ insert / update / delete 会尽量返回写入或影响到的行。
 
 
 class GatewayToolService:
+    def __init__(self, runtime_config: Any = _UNSET, supabase: Any = _UNSET, store: Any = _UNSET):
+        self.cfg = (
+            (_runtime.cfg if _runtime.cfg is not None else cfg)
+            if runtime_config is _UNSET
+            else runtime_config
+        )
+        self.supabase = (
+            (_runtime.supabase_client if _runtime.supabase_client is not None else supabase_client)
+            if supabase is _UNSET
+            else supabase
+        )
+        self.store = (
+            (_runtime.session_store if _runtime.session_store is not None else session_store)
+            if store is _UNSET
+            else store
+        )
+
     async def supabase_query(
         self,
         table: str,
@@ -239,7 +276,7 @@ class GatewayToolService:
         order: Optional[str],
         limit: int,
     ) -> dict:
-        if not supabase_client:
+        if not self.supabase:
             return {"error": "Supabase is not configured."}
         table_hint = self._supabase_table_hint(table)
         if table_hint:
@@ -251,7 +288,7 @@ class GatewayToolService:
             params.append(("order", order))
         params.extend(self._build_supabase_filter_params(filters, operators, column=column))
         try:
-            data = await supabase_client.query(table, params)
+            data = await self.supabase.query(table, params)
             return {"ok": True, "count": len(data) if isinstance(data, list) else 0, "data": data}
         except Exception as exc:
             return {"ok": False, "error": self._friendly_supabase_error(table, exc)}
@@ -259,100 +296,70 @@ class GatewayToolService:
     async def supabase_guide(self) -> dict:
         return {"ok": True, "guide": _SUPABASE_GUIDE}
 
-    async def list_atomic_memories_for_review(
+    def _mem_notes(self) -> MemNoteService:
+        return MemNoteService(self.cfg, self.supabase)
+
+    async def search_mem_notes(
         self,
-        status: str = "proposed",
-        limit: int = 20,
+        query: str,
         session_tag: Optional[str] = None,
-        query: str = "",
+        limit: int = 3,
     ) -> dict:
-        if not supabase_client:
-            return {"ok": False, "error": "Supabase is not configured."}
-        params = {
-            "order": "updated_at.desc",
-            "limit": str(max(1, min(limit, 50))),
-            "select": (
-                "id,session_tag,subject,owner,content_surface,quote,time_hint,"
-                "memory_type,tier,importance,entities_json,tags_json,"
-                "source_excerpt,source_model,status,created_at,updated_at,supersedes_id"
-            ),
-        }
-        if status and status != "all":
-            params["status"] = f"eq.{status}"
-        if session_tag:
-            params["session_tag"] = f"eq.{session_tag}"
-        rows = await self._safe_query("atomic_memories", params)
-        text = (query or "").strip().lower()
-        if text:
-            rows = [
-                row for row in rows
-                if text in str(row.get("content_surface") or "").lower()
-                or text in str(row.get("quote") or "").lower()
-                or text in str(row.get("source_excerpt") or "").lower()
-            ]
-        return {"ok": True, "items": rows[: max(1, min(limit, 50))], "status": status}
+        return await self._mem_notes().search_notes(
+            query,
+            session_tag=session_tag,
+            limit=limit,
+            mark_triggered=False,
+        )
 
-    async def update_atomic_memory_for_review(self, memory_id: str, patch: dict[str, Any]) -> dict:
-        if not supabase_client:
-            return {"ok": False, "error": "Supabase is not configured."}
-        update = {"updated_at": _iso_now()}
-        if "status" in patch:
-            status = str(patch.get("status") or "").strip()
-            if status in {"proposed", "active", "deprecated", "superseded"}:
-                update["status"] = status
-        for field in ("content_surface", "quote", "time_hint"):
-            if field in patch:
-                update[field] = str(patch.get(field) or "").strip()
-        if "subject" in patch:
-            subject = str(patch.get("subject") or "").strip()
-            if subject not in {"圆圆", "沈予", "我们"}:
-                subject = "沈予"
-            update["subject"] = subject
-            update["owner"] = {"圆圆": "user", "沈予": "assistant", "我们": "shared"}[subject]
-            update["applies_to"] = update["owner"]
-            update["speaker_perspective"] = update["owner"]
-        if "memory_type" in patch:
-            memory_type = {"state": "emotion"}.get(str(patch.get("memory_type") or "").strip(), str(patch.get("memory_type") or "").strip())
-            allowed_types = {"emotion", "commitment", "fact", "relation", "preference", "boundary"}
-            update["memory_type"] = memory_type if memory_type in allowed_types else "fact"
-        if "tier" in patch and patch.get("tier") is not None:
-            update["tier"] = max(1, min(int(patch.get("tier")), 4))
-        if "importance" in patch and patch.get("importance") is not None:
-            update["importance"] = max(1, min(int(patch.get("importance")), 5))
-        rows = await supabase_client.update("atomic_memories", {"id": memory_id}, update)
-        return {"ok": True, "memory_id": memory_id, "updated": rows}
+    async def list_mem_notes(
+        self,
+        status: str = "captured",
+        limit: int = 50,
+        session_tag: Optional[str] = None,
+        q: str = "",
+        mem_type: Optional[str] = None,
+    ) -> dict:
+        return await self._mem_notes().list_notes(
+            status=status,
+            limit=limit,
+            session_tag=session_tag,
+            q=q,
+            mem_type=mem_type,
+        )
 
-    async def review_atomic_memory_action(self, memory_id: str, action: str) -> dict:
-        mapped = {
-            "approve": "active",
-            "requeue": "proposed",
-            "deprecate": "deprecated",
-            "supersede": "superseded",
-        }.get((action or "").strip(), "")
-        if not mapped:
-            return {"ok": False, "error": "Unsupported action."}
-        return await self.update_atomic_memory_for_review(memory_id, {"status": mapped})
+    async def update_mem_note(self, note_id: str, patch: dict[str, Any]) -> dict:
+        return await self._mem_notes().update_note(note_id, patch)
 
-    async def delete_atomic_memory_for_review(self, memory_id: str) -> dict:
-        if not supabase_client:
-            return {"ok": False, "error": "Supabase is not configured."}
-        rows = await supabase_client.delete("atomic_memories", {"id": memory_id})
-        return {"ok": True, "memory_id": memory_id, "deleted": rows}
+    async def delete_mem_note(self, note_id: str) -> dict:
+        return await self._mem_notes().delete_note(note_id)
+
+    async def legacy_atomic_memories(
+        self,
+        limit: int = 30,
+        session_tag: Optional[str] = None,
+        q: str = "",
+    ) -> dict:
+        return await self._mem_notes().legacy_atomic_memories(
+            limit=limit,
+            session_tag=session_tag,
+            q=q,
+        )
 
     async def supabase_insert(self, table: str, data: dict) -> dict:
-        if not supabase_client:
+        if not self.supabase:
             return {"error": "Supabase is not configured."}
         table_hint = self._supabase_table_hint(table)
         if table_hint:
             return {"ok": False, "error": table_hint}
         try:
-            result = await supabase_client.insert(table, data)
+            result = await self.supabase.insert(table, data)
             return {"ok": True, "table": table, "row": result, "result": result}
         except Exception as exc:
             return {"ok": False, "error": self._friendly_supabase_error(table, exc)}
 
     async def supabase_update(self, table: str, match: dict, data: dict, operators: Optional[dict] = None, column: Optional[str] = None) -> dict:
-        if not supabase_client:
+        if not self.supabase:
             return {"error": "Supabase is not configured."}
         table_hint = self._supabase_table_hint(table)
         if table_hint:
@@ -361,7 +368,7 @@ class GatewayToolService:
             params = self._build_supabase_filter_params(match, operators, column=column)
             if not params:
                 return {"error": "supabase_update requires match or operators to avoid updating the whole table."}
-            result = await supabase_client.update(table, params, data)
+            result = await self.supabase.update(table, params, data)
             return {
                 "ok": True,
                 "table": table,
@@ -372,7 +379,7 @@ class GatewayToolService:
             return {"ok": False, "error": self._friendly_supabase_error(table, exc)}
 
     async def supabase_delete(self, table: str, match: dict, hard: bool = False, operators: Optional[dict] = None, column: Optional[str] = None) -> dict:
-        if not supabase_client:
+        if not self.supabase:
             return {"error": "Supabase is not configured."}
         table_hint = self._supabase_table_hint(table)
         if table_hint:
@@ -382,7 +389,7 @@ class GatewayToolService:
             if not params:
                 return {"error": "supabase_delete requires match or operators to avoid deleting the whole table."}
             if hard:
-                result = await supabase_client.delete(table, params)
+                result = await self.supabase.delete(table, params)
                 return {
                     "ok": True,
                     "table": table,
@@ -392,7 +399,7 @@ class GatewayToolService:
                 }
 
             try:
-                result = await supabase_client.update(table, params, {"is_deleted": True})
+                result = await self.supabase.update(table, params, {"is_deleted": True})
                 return {
                     "ok": True,
                     "table": table,
@@ -401,7 +408,7 @@ class GatewayToolService:
                     "rows": result,
                 }
             except Exception:
-                result = await supabase_client.delete(table, params)
+                result = await self.supabase.delete(table, params)
                 return {
                     "ok": True,
                     "table": table,
@@ -421,7 +428,7 @@ class GatewayToolService:
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
     ) -> dict:
-        if not supabase_client:
+        if not self.supabase:
             return {"query": query, "count": 0, "memories": [], "note": "Supabase is not configured."}
 
         query_text = query or ""
@@ -448,7 +455,7 @@ class GatewayToolService:
         if session_tag:
             params.append(("session_tag", f"eq.{session_tag}"))
 
-        memories = await supabase_client.query("memories", params)
+        memories = await self.supabase.query("memories", params)
 
         cards = []
         for memory in memories:
@@ -472,152 +479,6 @@ class GatewayToolService:
             "memories": cards,
         }
 
-    async def search_atomic_memories(self, query: str, session_tag: Optional[str], limit: int = 3) -> dict:
-        if not supabase_client:
-            return {"query": query, "count": 0, "memories": [], "note": "Supabase is not configured."}
-
-        params = {
-            "status": "eq.active",
-            "order": "heat.desc,importance.desc,updated_at.desc",
-            "limit": "80",
-            "select": (
-                "id,session_tag,subject,owner,content_surface,quote,time_hint,"
-                "memory_type,tier,importance,heat,entities_json,tags_json,"
-                "source_excerpt,created_at,updated_at"
-            ),
-        }
-        if session_tag:
-            params["session_tag"] = f"eq.{session_tag}"
-
-        try:
-            rows = await supabase_client.query("atomic_memories", params)
-        except Exception as exc:
-            logger.warning("[AtomicMemory] search skipped: %s", exc)
-            return {"query": query, "count": 0, "memories": [], "note": "atomic_memories table is not ready."}
-
-        scored = []
-        for row in rows:
-            score, why = self._score_atomic_memory(query, row)
-            if score < cfg.atomic_memory_min_score:
-                continue
-            scored.append({**row, "score": round(score, 3), "why": why})
-
-        scored.sort(key=lambda item: item["score"], reverse=True)
-        memories = scored[: max(1, min(limit, 3))]
-        for memory in memories:
-            await self._boost_atomic_memory(memory.get("id"))
-        return {"query": query, "count": len(memories), "memories": memories}
-
-    async def list_self_memories(
-        self,
-        query: str = "",
-        status: str = "active",
-        source: str = "inline",
-        date: Optional[str] = None,
-        date_from: Optional[str] = None,
-        date_to: Optional[str] = None,
-        created_from: Optional[str] = None,
-        created_to: Optional[str] = None,
-        tags: Any = None,
-        session_tag: Optional[str] = None,
-        limit: int = 20,
-    ) -> dict:
-        if not supabase_client:
-            return {"ok": False, "items": [], "note": "Supabase is not configured."}
-
-        status = (status or "active").strip().lower()
-        source = (source or "inline").strip().lower()
-        if status not in {"active", "proposed", "deprecated", "superseded", "all"}:
-            status = "active"
-        if source not in {"inline", "manual", "auto", "automatic", "captured", "all"}:
-            source = "inline"
-        if source == "automatic":
-            source = "auto"
-        tag_terms = self._normalize_tag_filter(tags)
-        if date:
-            date_from = date_to = date
-        created_from = date_from or created_from
-        created_to = date_to or created_to
-        created_start, created_end = _date_range_bounds(created_from, created_to)
-        fetch_limit = max(1, min(int(limit or 20), 50))
-        params: list[tuple[str, str]] = [
-            ("owner", "eq.assistant"),
-            ("order", "created_at.desc"),
-            ("limit", str(max(fetch_limit, 80))),
-            (
-                "select",
-                "id,session_tag,subject,owner,content_surface,quote,time_hint,"
-                "memory_type,tier,importance,entities_json,tags_json,"
-                "source_excerpt,source_model,status,created_at,updated_at,supersedes_id",
-            ),
-        ]
-        if status != "all":
-            params.append(("status", f"eq.{status}"))
-        if source == "inline":
-            params.append(("source_model", "ilike.inline-mem*"))
-        elif source in {"auto", "captured"}:
-            params.append(("source_model", "not.ilike.inline-mem*"))
-        if created_start:
-            params.append(("created_at", f"gte.{created_start}"))
-        if created_end:
-            params.append(("created_at", f"lt.{created_end}"))
-        if session_tag:
-            params.append(("session_tag", f"eq.{session_tag}"))
-
-        try:
-            rows = await supabase_client.query("atomic_memories", params)
-        except Exception as exc:
-            return {"ok": False, "items": [], "error": f"atomic_memories query failed: {exc}"}
-
-        terms = _keyword_terms(query or "")
-        if terms:
-            filtered = []
-            for row in rows:
-                haystack = " ".join(
-                    str(part or "")
-                    for part in [
-                        row.get("content_surface"),
-                        row.get("quote"),
-                        row.get("time_hint"),
-                        row.get("source_excerpt"),
-                        row.get("memory_type"),
-                        row.get("source_model"),
-                        " ".join(str(item) for item in _safe_json_loads(row.get("tags_json"), [])),
-                        " ".join(str(item) for item in _safe_json_loads(row.get("entities_json"), [])),
-                    ]
-                ).lower()
-                if any(term in haystack for term in terms):
-                    filtered.append(row)
-            rows = filtered
-
-        if tag_terms:
-            rows = [
-                row for row in rows
-                if self._row_has_all_tags(row, tag_terms)
-            ]
-        if source == "manual":
-            rows = [row for row in rows if self._memory_source_kind(row) == "manual"]
-        elif source in {"auto", "captured"}:
-            rows = [row for row in rows if self._memory_source_kind(row) == "auto"]
-
-        items = rows[:fetch_limit]
-        return {
-            "ok": True,
-            "query": query,
-            "count": len(items),
-            "items": items,
-            "filters": {
-                "owner": "assistant",
-                "status": status,
-                "source": source,
-                "date": date,
-                "date_from": date_from,
-                "date_to": date_to,
-                "tags": tag_terms,
-                "session_tag": session_tag,
-            },
-        }
-
     async def read_heartbeat(
         self,
         session_tag: Optional[str],
@@ -631,7 +492,7 @@ class GatewayToolService:
         created_from: Optional[str] = None,
         created_to: Optional[str] = None,
     ) -> dict:
-        if session_store is None:
+        if self.store is None:
             return {"ok": False, "items": [], "note": "Gateway store is not configured."}
         resolved_tag = (session_tag or "default").strip() or "default"
 
@@ -644,7 +505,7 @@ class GatewayToolService:
         created_from = date_from or created_from
         created_to = date_to or created_to
         created_start, created_end = _date_range_bounds(created_from, created_to)
-        target_session = session_store.get_session_by_tag(resolved_tag)
+        target_session = self.store.get_session_by_tag(resolved_tag)
         scope_key = (scope or "auto").strip().lower()
         if scope_key in {"hisense", "海信"}:
             read_hisense = True
@@ -653,9 +514,9 @@ class GatewayToolService:
             read_hisense = False
             resolved_scope = "normal"
         else:
-            read_hisense = _is_hisense_session(target_session)
+            read_hisense = _is_hisense_session(target_session, runtime_config=self.cfg)
             resolved_scope = "hisense" if read_hisense else "normal"
-        items = session_store.read_heartbeats(
+        items = self.store.read_heartbeats(
             None,
             state=state,
             limit=max(1, min(int(limit or 10), 100)),
@@ -753,7 +614,7 @@ class GatewayToolService:
         digest: str = "",
         author: str = "沈予",
     ) -> dict:
-        if not supabase_client:
+        if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured."}
         body = (content or "").strip()
         if not body:
@@ -827,7 +688,7 @@ class GatewayToolService:
                 "generated_by": "manual",
             }
 
-        page = await supabase_client.insert("calendar_pages", page_payload)
+        page = await self.supabase.insert("calendar_pages", page_payload)
         return {
             "ok": True,
             "period_type": period_type,
@@ -839,31 +700,31 @@ class GatewayToolService:
 
 
     async def last_seen(self) -> Any:
-        if not supabase_client:
+        if not self.supabase:
             return {"note": "Supabase is not configured."}
         try:
-            return await supabase_client.rpc("last_seen")
+            return await self.supabase.rpc("last_seen")
         except Exception as exc:
             return {"error": str(exc)}
 
     async def meta_summaries(self) -> Any:
-        if not supabase_client:
+        if not self.supabase:
             return []
         try:
-            return await supabase_client.rpc("get_meta_summaries")
+            return await self.supabase.rpc("get_meta_summaries")
         except Exception as exc:
             return {"error": str(exc)}
 
     async def recall_main_thread(self, since: Optional[str], until: Optional[str], query: Optional[str], limit: int) -> dict:
-        if not session_store:
+        if not self.store:
             return {"ok": False, "error": "Store not available"}
         limit = max(1, min(int(limit or 10), 30))
-        all_sessions = session_store.list_sessions(limit=50)
-        non_hisense = [s for s in all_sessions if not _is_hisense_session(s)]
+        all_sessions = self.store.list_sessions(limit=50)
+        non_hisense = [s for s in all_sessions if not _is_hisense_session(s, runtime_config=self.cfg)]
         if not non_hisense:
             return {"ok": True, "count": 0, "data": []}
         target = non_hisense[0]
-        msgs = session_store.get_recent_dialogue_messages(target["id"], limit=limit * 3)
+        msgs = self.store.get_recent_dialogue_messages(target["id"], limit=limit * 3)
         if since:
             msgs = [m for m in msgs if (m.get("created_at") or "") >= since]
         if until:
@@ -876,7 +737,7 @@ class GatewayToolService:
         return {"ok": True, "session_tag": target.get("session_tag"), "count": len(data), "data": data}
 
     async def notebook_list(self, type_filter: Optional[str], status: str, limit: int) -> dict:
-        if not supabase_client:
+        if not self.supabase:
             return {"ok": False, "error": "Supabase not configured"}
         limit = max(1, min(int(limit or 10), 20))
         params: dict[str, str] = {
@@ -888,13 +749,13 @@ class GatewayToolService:
         if type_filter:
             params["type"] = f"eq.{type_filter}"
         try:
-            rows = await supabase_client.query("shenyu_notebook", params)
+            rows = await self.supabase.query("shenyu_notebook", params)
             return {"ok": True, "count": len(rows or []), "data": rows or []}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
     async def notebook_write(self, type_: str, content: str, tags: Optional[list], metadata: Optional[dict], session_tag: Optional[str]) -> dict:
-        if not supabase_client:
+        if not self.supabase:
             return {"ok": False, "error": "Supabase not configured"}
         if not content.strip():
             return {"ok": False, "error": "content is required"}
@@ -906,13 +767,13 @@ class GatewayToolService:
         if session_tag:
             data["session_tag"] = session_tag
         try:
-            result = await supabase_client.insert("shenyu_notebook", data)
+            result = await self.supabase.insert("shenyu_notebook", data)
             return {"ok": True, "data": result}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
     async def notebook_update(self, id_: str, content: Optional[str], status: Optional[str], tags: Optional[list], type_: Optional[str], pinned: Optional[bool], metadata: Optional[dict]) -> dict:
-        if not supabase_client:
+        if not self.supabase:
             return {"ok": False, "error": "Supabase not configured"}
         if not id_:
             return {"ok": False, "error": "id is required"}
@@ -933,7 +794,7 @@ class GatewayToolService:
             return {"ok": False, "error": "Nothing to update"}
         update_data["updated_at"] = _iso_now()
         try:
-            result = await supabase_client.update("shenyu_notebook", match={"id": id_}, data=update_data)
+            result = await self.supabase.update("shenyu_notebook", match={"id": id_}, data=update_data)
             return {"ok": True, "data": result}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
@@ -959,7 +820,7 @@ class GatewayToolService:
         return {item for item in normalized if item in supported} or set(default)
 
     async def _collect_primary_text_candidates(self, session_tag: Optional[str], categories: Optional[set[str]] = None) -> list[dict]:
-        if not supabase_client:
+        if not self.supabase:
             return []
 
         selected = categories or {"diary", "letter", "paper", "room", "message_board"}
@@ -1059,55 +920,6 @@ class GatewayToolService:
         body_bonus = self._body_bonus_for_item(item)
         return _clamp(item.get("base_salience", 0.5) * 0.45 + keyword_score * 0.35 + recency_score * 0.12 + body_bonus + length_bonus, 0.0, 1.0)
 
-    def _score_atomic_memory(self, query: str, memory: dict) -> tuple[float, list[str]]:
-        tags = _safe_json_loads(memory.get("tags_json"), [])
-        entities = _safe_json_loads(memory.get("entities_json"), [])
-        full_text = "\n".join(
-            [
-                memory.get("subject") or memory.get("owner") or "",
-                memory.get("content_surface") or "",
-                memory.get("quote") or "",
-                memory.get("time_hint") or "",
-                memory.get("source_excerpt") or "",
-                memory.get("memory_type") or "",
-                " ".join(str(tag) for tag in tags),
-                " ".join(str(entity) for entity in entities),
-            ]
-        )
-        keyword_score = _keyword_overlap_score(query, full_text)
-        tag_score = 0.15 if self._query_matches_text_items(query, tags) else 0.0
-        entity_score = 0.18 if self._query_matches_text_items(query, entities) else 0.0
-        importance_score = _clamp((memory.get("importance") or 1) / 5, 0.0, 1.0)
-        heat_score = _clamp(memory.get("heat") or 0.3, 0.0, 1.0)
-        tier = int(memory.get("tier") or 3)
-        tier_score = {1: 0.22, 2: 0.15, 3: 0.08}.get(tier, 0.02)
-        recency_score = self._recency_score(memory.get("updated_at") or memory.get("created_at"))
-        recency_score = recency_score if recency_score >= 0.65 else 0.0
-
-        score = _clamp(
-            keyword_score * 0.42
-            + tag_score
-            + entity_score
-            + heat_score * 0.08
-            + importance_score * 0.10
-            + recency_score * 0.05
-            + tier_score,
-            0.0,
-            1.0,
-        )
-        why = []
-        if keyword_score >= 0.25:
-            why.append("keyword overlap")
-        if tag_score:
-            why.append("tag match")
-        if entity_score:
-            why.append("entity match")
-        if heat_score >= 0.7:
-            why.append("warm memory")
-        if tier <= 2:
-            why.append(f"tier {tier}")
-        return score, why or ["soft atomic match"]
-
     def _why_passage(self, query: str, item: dict, score: float) -> list[str]:
         reasons = []
         if _keyword_overlap_score(query, item.get("title", "") + "\n" + item.get("full_text", "")) >= 0.4:
@@ -1168,10 +980,10 @@ class GatewayToolService:
         return 0.25
 
     async def _safe_query(self, table: str, params: dict) -> list:
-        if not supabase_client:
+        if not self.supabase:
             return []
         try:
-            return await supabase_client.query(table, params)
+            return await self.supabase.query(table, params)
         except Exception:
             return []
 
@@ -1267,40 +1079,6 @@ class GatewayToolService:
             return parsed if isinstance(parsed, dict) else {}
         return filters if isinstance(filters, dict) else {}
 
-    def _normalize_tag_filter(self, tags: Any) -> list[str]:
-        if not tags:
-            return []
-        if isinstance(tags, str):
-            raw_items = re.split(r"[,，\s]+", tags)
-        elif isinstance(tags, (list, tuple, set)):
-            raw_items = [str(item) for item in tags]
-        else:
-            raw_items = [str(tags)]
-        result: list[str] = []
-        seen: set[str] = set()
-        for item in raw_items:
-            tag = str(item or "").strip().lstrip("#").lower()
-            if tag and tag not in seen:
-                seen.add(tag)
-                result.append(tag)
-        return result
-
-    def _row_has_all_tags(self, row: dict, tags: list[str]) -> bool:
-        row_tags = {
-            str(item or "").strip().lstrip("#").lower()
-            for item in _safe_json_loads(row.get("tags_json"), [])
-            if str(item or "").strip()
-        }
-        return all(tag in row_tags for tag in tags)
-
-    def _memory_source_kind(self, row: dict) -> str:
-        source_model = str(row.get("source_model") or "").strip().lower()
-        if source_model.startswith("inline-mem"):
-            return "inline"
-        if source_model.startswith("manual") or source_model in {"", "none", "null"}:
-            return "manual"
-        return "auto"
-
     def _supabase_table_hint(self, table: str) -> str:
         normalized = (table or "").strip().lower()
         if normalized in {"heartbeat", "heartbeats", "heartbeat_entries", "gateway_heartbeats"}:
@@ -1319,7 +1097,7 @@ class GatewayToolService:
         return raw
 
     async def _load_tags_for_memories(self, memory_ids: list[str]) -> dict[str, list[dict]]:
-        if not memory_ids or not supabase_client:
+        if not memory_ids or not self.supabase:
             return {}
         ids = ",".join(memory_ids)
         rows = await self._safe_query(
@@ -1338,7 +1116,7 @@ class GatewayToolService:
         return result
 
     async def _load_links_for_memories(self, memory_ids: list[str]) -> tuple[dict[str, list[dict]], dict[str, str]]:
-        if not memory_ids or not supabase_client:
+        if not memory_ids or not self.supabase:
             return {}, {}
         ids = ",".join(memory_ids)
         rows = await self._safe_query(
@@ -1378,10 +1156,10 @@ class GatewayToolService:
         return result, title_lookup
 
     async def _boost_memory(self, memory_id: str):
-        if not supabase_client:
+        if not self.supabase:
             return
         try:
-            await supabase_client.rpc("boost_memory", {"memory_uuid": memory_id})
+            await self.supabase.rpc("boost_memory", {"memory_uuid": memory_id})
         except Exception:
             return
 
@@ -1452,41 +1230,6 @@ class GatewayToolService:
             return False
         tag_texts = [(tag.get("tag") or "").lower() for tag in tags]
         return any(term in tag_text for term in terms for tag_text in tag_texts)
-
-    def _query_matches_text_items(self, query: str, items: Any) -> bool:
-        terms = _keyword_terms(query)
-        if not terms:
-            return False
-        if isinstance(items, str):
-            texts = [items.lower()]
-        elif isinstance(items, list):
-            texts = []
-            for item in items:
-                if isinstance(item, dict):
-                    texts.extend(str(value).lower() for value in item.values() if value)
-                elif item:
-                    texts.append(str(item).lower())
-        else:
-            texts = [str(items).lower()] if items else []
-        return any(term in text for term in terms for text in texts)
-
-    async def _boost_atomic_memory(self, memory_id: Optional[str]):
-        if not memory_id or not supabase_client:
-            return
-        try:
-            await supabase_client.rpc("boost_atomic_memory", {"memory_uuid": memory_id})
-        except Exception:
-            try:
-                await supabase_client.update(
-                    "atomic_memories",
-                    {"id": memory_id},
-                    {
-                        "heat": 0.75,
-                        "last_activated": _iso_now(),
-                    },
-                )
-            except Exception:
-                logger.debug("[AtomicMemory] boost skipped for %s", memory_id)
 
     def _has_strong_link(self, links: list[dict]) -> bool:
         return any((link.get("strength") or 0) >= 0.75 for link in links)

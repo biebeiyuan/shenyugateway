@@ -80,7 +80,7 @@ class RuntimeConfig:
         self.calendar_inject_day: bool = _env_bool("CALENDAR_INJECT_DAY", True)
         self.calendar_inject_week: bool = _env_bool("CALENDAR_INJECT_WEEK", True)
         self.calendar_inject_month: bool = _env_bool("CALENDAR_INJECT_MONTH", True)
-        self.inject_atomic_memories: bool = _env_bool("INJECT_ATOMIC_MEMORIES", False)
+        self.inject_mem_notes: bool = _env_bool("INJECT_MEM_NOTES", False)
         self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
         self.enable_gateway_tools: bool = _env_bool("ENABLE_GATEWAY_TOOLS", False)
         self.enable_mem0_management_tools: bool = _env_bool("ENABLE_MEM0_MANAGEMENT_TOOLS", False)
@@ -96,8 +96,9 @@ class RuntimeConfig:
         self.cold_start_message_limit: Optional[int] = _env_optional_int("COLD_START_MESSAGE_LIMIT")
         self.cold_start_idle_minutes: int = _env_int("COLD_START_IDLE_MINUTES", 120, 1, 10080)
         self.default_surface_limit: int = _env_int("DEFAULT_SURFACE_LIMIT", 3, 1, 8)
-        self.default_atomic_memory_limit: int = _env_int("DEFAULT_ATOMIC_MEMORY_LIMIT", 3, 1, 3)
-        self.atomic_memory_min_score: float = _env_float("ATOMIC_MEMORY_MIN_SCORE", 0.55, 0.0, 1.0)
+        self.mem_note_limit: int = _env_int("MEM_NOTE_LIMIT", 3, 1, 5)
+        self.mem_note_min_score: float = _env_float("MEM_NOTE_MIN_SCORE", 0.45, 0.0, 1.0)
+        self.mem_note_default_cooldown_hours: int = _env_int("MEM_NOTE_DEFAULT_COOLDOWN_HOURS", 72, 0, 8760)
         self.heartbeat_inject_every: int = _env_int("HEARTBEAT_INJECT_EVERY", 5, 1, 50)
         self.gateway_message_retention: int = _env_int("GATEWAY_MESSAGE_RETENTION", 1500, 50, 200000)
         self.gateway_context_snapshot_retention: int = _env_int("GATEWAY_CONTEXT_SNAPSHOT_RETENTION", 3, 1, 100)
@@ -132,7 +133,7 @@ class RuntimeConfig:
             "calendar_inject_day": self.calendar_inject_day,
             "calendar_inject_week": self.calendar_inject_week,
             "calendar_inject_month": self.calendar_inject_month,
-            "inject_atomic_memories": self.inject_atomic_memories,
+            "inject_mem_notes": self.inject_mem_notes,
             "enable_cold_start": self.enable_cold_start,
             "enable_gateway_tools": self.enable_gateway_tools,
             "enable_mem0_management_tools": self.enable_mem0_management_tools,
@@ -147,8 +148,9 @@ class RuntimeConfig:
             "cold_start_message_limit": self.cold_start_message_limit,
             "cold_start_idle_minutes": self.cold_start_idle_minutes,
             "default_surface_limit": self.default_surface_limit,
-            "default_atomic_memory_limit": self.default_atomic_memory_limit,
-            "atomic_memory_min_score": self.atomic_memory_min_score,
+            "mem_note_limit": self.mem_note_limit,
+            "mem_note_min_score": self.mem_note_min_score,
+            "mem_note_default_cooldown_hours": self.mem_note_default_cooldown_hours,
             "heartbeat_inject_every": self.heartbeat_inject_every,
             "gateway_message_retention": self.gateway_message_retention,
             "gateway_context_snapshot_retention": self.gateway_context_snapshot_retention,

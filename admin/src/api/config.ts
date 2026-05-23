@@ -22,12 +22,13 @@ export interface GatewayConfig {
   calendar_protocol?: string
   calendar_model?: string
   wake_welcome_message?: string
-  // atomic memory
+  // mem notes
   inject_inline_memory_prompt?: boolean
   enable_inline_memory_capture?: boolean
-  inject_atomic_memories?: boolean
-  default_atomic_memory_limit?: number
-  atomic_memory_min_score?: number
+  inject_mem_notes?: boolean
+  mem_note_limit?: number
+  mem_note_min_score?: number
+  mem_note_default_cooldown_hours?: number
   // feature toggles
   inject_meta_summaries?: boolean
   calendar_inject_day?: boolean
@@ -76,7 +77,7 @@ export interface HealthStatus {
   gateway_tool_mode?: string
   inject_meta_summaries?: boolean
 
-  inject_atomic_memories?: boolean
+  inject_mem_notes?: boolean
   enable_cold_start?: boolean
 }
 
@@ -98,23 +99,60 @@ export interface GatewayOverview {
   latest_message_at: string | null
 }
 
-export interface AtomicMemoryItem {
+export type MemNoteType = '她为我做的事' | '关于她的事实' | '心里那一档' | '承诺'
+export type MemNoteStatus = 'captured' | 'active' | 'paused' | 'archived'
+
+export interface MemNoteItem {
   id: string
+  session_tag: string | null
+  content: string
+  mem_type: MemNoteType | '' | null
+  trigger_text: string | null
+  trigger_keywords: string[] | null
+  status: MemNoteStatus
+  cooldown_hours: number
+  last_triggered_at: string | null
+  trigger_count: number
+  source_model?: string | null
+  source_session_id?: string | null
+  source_excerpt?: string | null
+  review_note?: string | null
+  reviewed_at?: string | null
+  created_at?: string | null
+  updated_at?: string | null
+}
+
+export type MemNotePatch = Partial<
+  Pick<
+    MemNoteItem,
+    | 'content'
+    | 'mem_type'
+    | 'trigger_text'
+    | 'trigger_keywords'
+    | 'status'
+    | 'cooldown_hours'
+    | 'review_note'
+  >
+>
+
+export interface LegacyAtomicMemoryItem {
+  id: string
+  session_tag: string | null
   subject: string | null
+  owner: string | null
   content_surface: string | null
   quote: string | null
   time_hint: string | null
   status: string
-  owner: string | null
   memory_type: string
-  tier: number
-  importance: number
-  session_tag: string | null
+  tier: number | null
+  importance: number | null
   tags_json: string[] | null
   entities_json: string[] | null
   source_excerpt: string | null
   source_model?: string | null
-  supersedes_id?: string | null
+  created_at?: string | null
+  updated_at?: string | null
 }
 
 export interface ColdStartPreview {
@@ -152,17 +190,3 @@ export async function fetchColdStartPreview(): Promise<ColdStartPreview> {
   const { data } = await api.get('/api/gateway/cold-start/preview')
   return data
 }
-
-export type AtomicMemoryReviewPatch = Partial<
-  Pick<
-    AtomicMemoryItem,
-    | 'content_surface'
-    | 'quote'
-    | 'time_hint'
-    | 'subject'
-    | 'owner'
-    | 'memory_type'
-    | 'tier'
-    | 'importance'
-  >
-> & { status: string }

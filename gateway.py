@@ -30,7 +30,6 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 
-from shenyu_gateway.atomic_memory import AtomicMemoryService
 from shenyu_gateway.calendar import (
     default_period_key,
     extract_json_object,
@@ -53,6 +52,7 @@ from shenyu_gateway.context_layers import (
     trim_cold_start_sources as _trim_cold_start_sources,
 )
 from shenyu_gateway.gateway_tools import GatewayToolService, configure_gateway_tools
+from shenyu_gateway.mem_notes import MemNoteService
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
     json_dumps as _json_dumps,
@@ -70,13 +70,13 @@ from shenyu_gateway.response_capture import (
     store_heartbeat,
 )
 from shenyu_gateway.schemas import (
-    AtomicMemoryReviewUpdate,
     CalendarGenerateRequest,
     CalendarPromptUpdate,
     ChatRequest,
     ConfigUpdate,
     HeartbeatCreateRequest,
     HeartbeatDeleteRequest,
+    MemNotePatch,
     SessionDeleteRequest,
 )
 from shenyu_gateway.sessions import SessionManager
@@ -588,12 +588,12 @@ def _is_hisense_session(session: Optional[dict]) -> bool:
 
 
 def _mem_charter_line() -> str:
-    if cfg.enable_inline_memory_capture and cfg.inject_atomic_memories:
+    if cfg.enable_inline_memory_capture and cfg.inject_mem_notes:
         return "- **mem**：便签。可以查可以写；你写下的 [mem] 会被网关捕获，命中时会反给你。\n"
     if cfg.enable_inline_memory_capture:
         return "- **mem**：便签。可以查可以写；你写下的 [mem] 会被网关捕获，但暂时不会主动反上来。\n"
-    if cfg.inject_atomic_memories:
-        return "- **mem**：便签。可以查可以写；旧便签命中时会反给你，但新的 [mem] 捕获暂时没开。\n"
+    if cfg.inject_mem_notes:
+        return "- **mem**：便签。可以查可以写；整理好的便签命中时会反给你，但新的 [mem] 捕获暂时没开。\n"
     return "- **mem**：便签。可以查可以写。开了之后命中会反给你，现在还没开。\n"
 
 
@@ -632,10 +632,12 @@ _INLINE_MEM_PROMPT = """## Inline Mem（仅网关可见）
 如果你忽然觉得“这个以后还想记得”，可以顺手在最后留一个 [mem]...[/mem]。
 
 它像一张留给未来自己的小便签。
-不用每次都写，也不用写得很完整。没有想留的，就不写。
+写一段话就行，不需要写 type、重要性、热度，也不要写成表格。
+圆圆和你以后会一起补：它属于哪一类、什么时候反上来、要不要冷却。
+不用每次都写。没有想留的，就不写。
 如果想同时记下来 heartbeat 和 mem，记得分别放在独立块里，不要互相嵌套哦。
 
-这段不会发给圆圆看，会留给后台帮你整理，会直接入库，等你有空再整理它吧。"""
+这段不会发给圆圆看，会先进“待整理”，等你有空再整理它吧。"""
 
 
 class CalendarService:
@@ -1205,7 +1207,7 @@ class ContextBuilder:
             "hisense_heartbeat_pending_ids": hisense_heartbeat_pending_ids,
             "cold_start_snapshot": cold_start_snapshot,
             "calendar_context": {"day": [], "week": [], "month": []},
-            "atomic_memories": [],
+            "mem_notes": [],
             "notebook_items": [],
             "last_wake_recap": "",
         }
@@ -1221,13 +1223,13 @@ class ContextBuilder:
                 if meta_block:
                     package["stable_charter"] = package["stable_charter"] + "\n\n" + meta_block
 
-            if cfg.inject_atomic_memories and current_user_text.strip():
-                atomic = await self.tools.search_atomic_memories(
+            if cfg.inject_mem_notes and current_user_text.strip():
+                notes = await MemNoteService(cfg, supabase_client).search_notes(
                     current_user_text,
                     session_tag=session["session_tag"],
-                    limit=cfg.default_atomic_memory_limit,
+                    limit=cfg.mem_note_limit,
                 )
-                package["atomic_memories"] = atomic.get("memories") or []
+                package["mem_notes"] = notes.get("items") or []
         return package
 
     def _normal_heartbeat_digest(self, session_id: str, consume_pending: bool = True) -> str:
@@ -1329,7 +1331,7 @@ class ContextBuilder:
         按变化频率从低到高排列：
           stable:   charter + tool_policy + heartbeat_prompt（尽量不变）
           slow:     calendar_context + heartbeat_digest（低频变化）
-          volatile: atomic_memories（经常变，放在对话消息之后）
+          volatile: mem_notes（经常变，放在对话消息之后）
         """
         return _render_layered_additions(package, self._layer_settings())
 
@@ -1697,7 +1699,7 @@ def _schedule_inline_memory_capture(
         enabled=cfg.enable_inline_memory_capture,
         inline_memories=inline_memories,
         capture=lambda: (
-            AtomicMemoryService(cfg, supabase_client).process_inline_memories(
+            MemNoteService(cfg, supabase_client).process_inline_memories(
                 session,
                 inline_memories,
                 assistant_text,
@@ -2304,7 +2306,7 @@ async def health():
         "calendar_inject_day": cfg.calendar_inject_day,
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
-        "inject_atomic_memories": cfg.inject_atomic_memories,
+        "inject_mem_notes": cfg.inject_mem_notes,
         "inject_inline_memory_prompt": cfg.inject_inline_memory_prompt,
         "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
         "enable_cold_start": cfg.enable_cold_start,
@@ -2343,7 +2345,7 @@ async def get_config_full():
         "calendar_inject_day": cfg.calendar_inject_day,
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
-        "inject_atomic_memories": cfg.inject_atomic_memories,
+        "inject_mem_notes": cfg.inject_mem_notes,
         "enable_cold_start": cfg.enable_cold_start,
         "enable_gateway_tools": cfg.enable_gateway_tools,
         "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
@@ -2358,8 +2360,9 @@ async def get_config_full():
         "cold_start_message_limit": cfg.cold_start_message_limit,
         "cold_start_idle_minutes": cfg.cold_start_idle_minutes,
         "default_surface_limit": cfg.default_surface_limit,
-        "default_atomic_memory_limit": cfg.default_atomic_memory_limit,
-        "atomic_memory_min_score": cfg.atomic_memory_min_score,
+        "mem_note_limit": cfg.mem_note_limit,
+        "mem_note_min_score": cfg.mem_note_min_score,
+        "mem_note_default_cooldown_hours": cfg.mem_note_default_cooldown_hours,
         "hisense_client_name": cfg.hisense_client_name,
         "hisense_heartbeat_limit": cfg.hisense_heartbeat_limit,
         "hisense_notebook_limit": cfg.hisense_notebook_limit,
@@ -2397,7 +2400,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "calendar_inject_week": "CALENDAR_INJECT_WEEK",
         "calendar_inject_month": "CALENDAR_INJECT_MONTH",
 
-        "inject_atomic_memories": "INJECT_ATOMIC_MEMORIES",
+        "inject_mem_notes": "INJECT_MEM_NOTES",
         "enable_cold_start": "ENABLE_COLD_START",
         "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
         "enable_mem0_management_tools": "ENABLE_MEM0_MANAGEMENT_TOOLS",
@@ -2416,8 +2419,9 @@ async def update_config(request: Request, body: ConfigUpdate):
         "cold_start_message_limit": "COLD_START_MESSAGE_LIMIT",
         "cold_start_idle_minutes": "COLD_START_IDLE_MINUTES",
         "default_surface_limit": "DEFAULT_SURFACE_LIMIT",
-        "default_atomic_memory_limit": "DEFAULT_ATOMIC_MEMORY_LIMIT",
-        "atomic_memory_min_score": "ATOMIC_MEMORY_MIN_SCORE",
+        "mem_note_limit": "MEM_NOTE_LIMIT",
+        "mem_note_min_score": "MEM_NOTE_MIN_SCORE",
+        "mem_note_default_cooldown_hours": "MEM_NOTE_DEFAULT_COOLDOWN_HOURS",
         "hisense_client_name": "HISENSE_CLIENT_NAME",
         "hisense_heartbeat_limit": "HISENSE_HEARTBEAT_LIMIT",
         "hisense_notebook_limit": "HISENSE_NOTEBOOK_LIMIT",
@@ -2447,7 +2451,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "calendar_inject_week",
         "calendar_inject_month",
 
-        "inject_atomic_memories",
+        "inject_mem_notes",
         "enable_cold_start",
         "enable_gateway_tools",
         "enable_mem0_management_tools",
@@ -2525,14 +2529,18 @@ async def update_config(request: Request, body: ConfigUpdate):
         cfg.default_surface_limit = max(1, min(body.default_surface_limit, 8))
         changed.append("default_surface_limit")
         env_updates[env_names["default_surface_limit"]] = cfg.default_surface_limit
-    if body.default_atomic_memory_limit is not None:
-        cfg.default_atomic_memory_limit = max(1, min(body.default_atomic_memory_limit, 3))
-        changed.append("default_atomic_memory_limit")
-        env_updates[env_names["default_atomic_memory_limit"]] = cfg.default_atomic_memory_limit
-    if body.atomic_memory_min_score is not None:
-        cfg.atomic_memory_min_score = _clamp(float(body.atomic_memory_min_score), 0.0, 1.0)
-        changed.append("atomic_memory_min_score")
-        env_updates[env_names["atomic_memory_min_score"]] = cfg.atomic_memory_min_score
+    if body.mem_note_limit is not None:
+        cfg.mem_note_limit = max(1, min(body.mem_note_limit, 5))
+        changed.append("mem_note_limit")
+        env_updates[env_names["mem_note_limit"]] = cfg.mem_note_limit
+    if body.mem_note_min_score is not None:
+        cfg.mem_note_min_score = _clamp(float(body.mem_note_min_score), 0.0, 1.0)
+        changed.append("mem_note_min_score")
+        env_updates[env_names["mem_note_min_score"]] = cfg.mem_note_min_score
+    if body.mem_note_default_cooldown_hours is not None:
+        cfg.mem_note_default_cooldown_hours = max(0, min(body.mem_note_default_cooldown_hours, 8760))
+        changed.append("mem_note_default_cooldown_hours")
+        env_updates[env_names["mem_note_default_cooldown_hours"]] = cfg.mem_note_default_cooldown_hours
     if body.hisense_heartbeat_limit is not None:
         cfg.hisense_heartbeat_limit = max(1, min(body.hisense_heartbeat_limit, 30))
         changed.append("hisense_heartbeat_limit")
@@ -2722,85 +2730,66 @@ async def cold_start_preview(session_tag: Optional[str] = None):
     }
 
 
-@app.get("/api/gateway/atomic-memories/search")
-async def atomic_memory_search(q: str, session_tag: Optional[str] = None, limit: int = 3):
-    service = GatewayToolService()
-    return await service.search_atomic_memories(q, session_tag=session_tag, limit=limit)
+@app.get("/api/gateway/mem-notes/search")
+async def mem_note_search(q: str, session_tag: Optional[str] = None, limit: int = 3):
+    return await MemNoteService(cfg, supabase_client).search_notes(
+        q,
+        session_tag=session_tag,
+        limit=limit,
+        mark_triggered=False,
+    )
 
 
-@app.get("/api/gateway/atomic-memories")
-async def list_atomic_memories(status: str = "proposed", limit: int = 50, session_tag: Optional[str] = None):
-    if not supabase_client:
-        raise HTTPException(status_code=400, detail="Supabase is not configured.")
-    params = {
-        "order": "updated_at.desc",
-        "limit": str(max(1, min(limit, 200))),
-        "select": (
-            "id,session_tag,subject,owner,content_surface,quote,time_hint,"
-            "memory_type,tier,importance,entities_json,tags_json,"
-            "source_excerpt,source_model,status,created_at,updated_at,supersedes_id"
-        ),
+@app.get("/api/gateway/mem-notes")
+async def list_mem_notes(
+    status: str = "captured",
+    limit: int = 50,
+    session_tag: Optional[str] = None,
+    q: str = "",
+    mem_type: Optional[str] = None,
+):
+    result = await MemNoteService(cfg, supabase_client).list_notes(
+        status=status,
+        limit=limit,
+        session_tag=session_tag,
+        q=q,
+        mem_type=mem_type,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "mem note query failed")
+    return result
+
+
+@app.patch("/api/gateway/mem-notes/{note_id}")
+async def update_mem_note(note_id: str, body: MemNotePatch):
+    patch = {
+        key: getattr(body, key)
+        for key in body.model_fields_set
     }
-    if status and status != "all":
-        params["status"] = f"eq.{status}"
-    if session_tag:
-        params["session_tag"] = f"eq.{session_tag}"
-    try:
-        rows = await supabase_client.query("atomic_memories", params)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"atomic_memories query failed: {exc}")
-    return {"items": rows, "status": status, "limit": max(1, min(limit, 200)), "session_tag": session_tag}
+    result = await MemNoteService(cfg, supabase_client).update_note(note_id, patch)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "mem note update failed")
+    return result
 
 
-@app.post("/api/gateway/atomic-memories/{memory_id}/review")
-async def review_atomic_memory(memory_id: str, body: AtomicMemoryReviewUpdate):
-    if not supabase_client:
-        raise HTTPException(status_code=400, detail="Supabase is not configured.")
-    allowed = {"proposed", "active", "deprecated", "superseded", "delete"}
-    status = (body.status or "").strip()
-    if status not in allowed:
-        raise HTTPException(status_code=400, detail="Unsupported status.")
-    if status == "delete":
-        try:
-            rows = await supabase_client.delete("atomic_memories", {"id": memory_id})
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"atomic_memories delete failed: {exc}")
-        return {"ok": True, "memory_id": memory_id, "deleted": rows}
-    update = {"status": status, "updated_at": _iso_now()}
-    text_fields = ["content_surface", "quote", "time_hint", "subject", "owner", "memory_type"]
-    for field in text_fields:
-        if field in body.model_fields_set:
-            value = getattr(body, field)
-            update[field] = (value or "").strip()
-    if "subject" in update:
-        subject = update["subject"]
-        if subject not in {"圆圆", "沈予", "我们"}:
-            subject = "沈予"
-            update["subject"] = subject
-        update["owner"] = {"圆圆": "user", "沈予": "assistant", "我们": "shared"}[subject]
-        update["applies_to"] = update["owner"]
-        update["speaker_perspective"] = update["owner"]
-    if "memory_type" in update:
-        memory_type = str(update["memory_type"] or "").strip()
-        memory_type = {"state": "emotion"}.get(memory_type, memory_type)
-        allowed_types = {
-            "emotion",
-            "commitment",
-            "fact",
-            "relation",
-            "preference",
-            "boundary",
-        }
-        update["memory_type"] = memory_type if memory_type in allowed_types else "fact"
-    if body.tier is not None:
-        update["tier"] = max(1, min(body.tier, 4))
-    if body.importance is not None:
-        update["importance"] = max(1, min(body.importance, 5))
-    try:
-        rows = await supabase_client.update("atomic_memories", {"id": memory_id}, update)
-    except Exception as exc:
-        raise HTTPException(status_code=400, detail=f"atomic_memories update failed: {exc}")
-    return {"ok": True, "memory_id": memory_id, "updated": rows}
+@app.delete("/api/gateway/mem-notes/{note_id}")
+async def delete_mem_note(note_id: str):
+    result = await MemNoteService(cfg, supabase_client).delete_note(note_id)
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "mem note delete failed")
+    return result
+
+
+@app.get("/api/gateway/legacy-atomic-memories")
+async def legacy_atomic_memories(limit: int = 30, session_tag: Optional[str] = None, q: str = ""):
+    result = await MemNoteService(cfg, supabase_client).legacy_atomic_memories(
+        limit=limit,
+        session_tag=session_tag,
+        q=q,
+    )
+    if not result.get("ok"):
+        raise HTTPException(status_code=400, detail=result.get("error") or "legacy atomic query failed")
+    return result
 
 
 @app.get("/api/gateway/sessions")

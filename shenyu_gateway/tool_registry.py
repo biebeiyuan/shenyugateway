@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 from shenyu_gateway.gateway_tools import GatewayToolService
 
@@ -11,7 +11,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_surface_passages",
-                "description": "Pools: room, message_board. Surface a few relevant living-space passages.",
+                "description": "从 room 和留言板里捞几段相关原文，适合先找手边的感觉。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -27,7 +27,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_supabase_guide",
-                "description": "Guide: common Supabase tables and writing conventions.",
+                "description": "不知道该查哪个 Supabase 表时，先看这个。",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -35,7 +35,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_ask_memory",
-                "description": "Table: memories. Recall summarized event memories.",
+                "description": "ClaudeAI 时期的旧记忆库；查以前整理过的事件、关系脉络或某天发生过什么。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -52,13 +52,13 @@ def _gateway_core_tools() -> list[dict]:
         {
             "type": "function",
             "function": {
-                "name": "shenyu_search_atomic_memory",
-                "description": "Table: atomic_memories. Search active durable facts, states, preferences, and commitments.",
+                "name": "shenyu_search_mem_notes",
+                "description": "找已经整理好并激活的 mem 便签。只查 active，待整理 captured 不会反上来。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 8, "default": 3},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3},
                         "session_tag": {"type": "string"},
                     },
                     "required": ["query"],
@@ -69,7 +69,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_search_primary_texts",
-                "description": "Tables: journal, room, message_board. Search primary texts by category.",
+                "description": "查日记、信、纸条、room、留言板这些原文。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -93,7 +93,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_add_calendar",
-                "description": "Table: calendar_pages. Write a manual day/week/month calendar memory page.",
+                "description": "手动写一页 day / week / month 日历记忆。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -112,23 +112,16 @@ def _gateway_core_tools() -> list[dict]:
         {
             "type": "function",
             "function": {
-                "name": "shenyu_list_self_memories",
-                "description": "Table: atomic_memories. Browse assistant-owned mem notes; default is inline active notes.",
+                "name": "shenyu_list_mem_notes",
+                "description": "看 mem 便签列表。整理时通常先看 status=captured。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string"},
-                        "date": {"type": "string"},
-                        "date_from": {"type": "string"},
-                        "date_to": {"type": "string"},
-                        "status": {"type": "string", "enum": ["active", "proposed", "deprecated", "superseded", "all"], "default": "active"},
-                        "tags": {
-                            "type": "array",
-                            "items": {"type": "string"},
-                        },
-                        "source": {"type": "string", "enum": ["inline", "manual", "auto", "captured", "all"], "default": "inline"},
+                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived", "all"], "default": "captured"},
+                        "q": {"type": "string"},
+                        "mem_type": {"type": "string", "enum": ["她为我做的事", "关于她的事实", "心里那一档", "承诺"]},
                         "session_tag": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
                     },
                 },
             },
@@ -137,7 +130,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_read_heartbeat",
-                "description": "SQLite pools: heartbeat_entries, hisense_heartbeat. Read heartbeat notes.",
+                "description": "读沈予以前留给自己的心跳。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -157,7 +150,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_get_meta_summaries",
-                "description": "RPC: get_meta_summaries. Load active context summaries.",
+                "description": "读取当前启用的元摘要。",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -165,7 +158,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_last_seen",
-                "description": "RPC: last_seen. Load the latest interaction summary.",
+                "description": "读取最近一次互动摘要。",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -177,66 +170,50 @@ def _gateway_mem0_management_tools() -> list[dict]:
         {
             "type": "function",
             "function": {
-                "name": "shenyu_list_atomic_memories",
-                "description": "Table: atomic_memories. Browse mem0 rows for review.",
+                "name": "shenyu_update_mem_note",
+                "description": "补或修改一条 mem 便签的 type、trigger、触发词、状态和冷却时间。设为 active 前必须补 type 和 trigger。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "status": {"type": "string", "enum": ["proposed", "active", "deprecated", "all"], "default": "proposed"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 20},
+                        "note_id": {"type": "string"},
+                        "content": {"type": "string"},
+                        "mem_type": {"type": "string", "enum": ["她为我做的事", "关于她的事实", "心里那一档", "承诺"]},
+                        "trigger_text": {"type": "string"},
+                        "trigger_keywords": {"type": "array", "items": {"type": "string"}},
+                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"]},
+                        "cooldown_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
+                        "review_note": {"type": "string"},
+                    },
+                    "required": ["note_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_delete_mem_note",
+                "description": "删除一条 mem 便签。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "note_id": {"type": "string"},
+                    },
+                    "required": ["note_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_legacy_atomic_memories",
+                "description": "只读旧 atomic 记忆，给手动迁移用。不会写入，也不会激活旧逻辑。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "q": {"type": "string"},
                         "session_tag": {"type": "string"},
-                        "query": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
                     },
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_update_atomic_memory",
-                "description": "Table: atomic_memories. Edit one mem0 row.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "memory_id": {"type": "string"},
-                        "content_surface": {"type": "string"},
-                        "subject": {"type": "string", "enum": ["圆圆", "沈予", "我们"]},
-                        "memory_type": {"type": "string", "enum": ["emotion", "commitment", "fact", "relation", "preference", "boundary"]},
-                        "tier": {"type": "integer", "minimum": 1, "maximum": 4},
-                        "importance": {"type": "integer", "minimum": 1, "maximum": 5},
-                        "quote": {"type": "string"},
-                        "time_hint": {"type": "string"},
-                    },
-                    "required": ["memory_id"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_review_atomic_memory",
-                "description": "Table: atomic_memories. Approve, requeue, deprecate, or supersede one mem0 row.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "memory_id": {"type": "string"},
-                        "action": {"type": "string", "enum": ["approve", "requeue", "deprecate", "supersede"]},
-                    },
-                    "required": ["memory_id", "action"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_delete_atomic_memory",
-                "description": "Table: atomic_memories. Delete one mem0 row.",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "memory_id": {"type": "string"},
-                    },
-                    "required": ["memory_id"],
                 },
             },
         },
@@ -249,7 +226,7 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_recall_main_thread",
-                "description": "SQLite: gateway_messages. Recall recent main-thread dialogue.",
+                "description": "查最近主线程对话。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -265,7 +242,7 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_list",
-                "description": "Table: shenyu_notebook. List notebook entries.",
+                "description": "看 notebook 里留过的条目。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -280,7 +257,7 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_write",
-                "description": "Table: shenyu_notebook. Write a notebook entry.",
+                "description": "写一条 notebook，适合跨窗口或海信那边留事。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -297,7 +274,7 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_update",
-                "description": "Table: shenyu_notebook. Update a notebook entry.",
+                "description": "修改一条 notebook。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -424,10 +401,8 @@ def _gateway_tool_names(cfg: Any) -> list[str]:
 def _gateway_broker_tool(cfg: Any) -> dict:
     names = _gateway_tool_names(cfg)
     description = (
-        "Compact gateway tool broker. Use it when gateway memory, heartbeat, notebook, "
-        "calendar, primary-text search, or Supabase access is needed. Set `tool` to one "
-        "available tool name and put that tool's normal arguments in `arguments`. "
-        "Available tools: " + ", ".join(names)
+        "这是网关工具箱。想查旧记忆、mem 便签、心跳、日记、room、notebook 或 Supabase 时，"
+        "用 `tool` 选择名字，把参数放进 `arguments`。可用工具：" + ", ".join(names)
     )
     return {
         "type": "function",
@@ -475,8 +450,26 @@ def is_gateway_native_tool(name: str) -> bool:
     return name.startswith("shenyu_") or name.startswith("supabase_")
 
 
-async def execute_gateway_tool(name: str, arguments: dict, session_tag: Optional[str], cfg: Any) -> dict:
-    service = GatewayToolService()
+def _int_arg(arguments: dict, key: str, default: int) -> int:
+    try:
+        return int(arguments.get(key, default))
+    except (TypeError, ValueError):
+        return default
+
+
+async def _wrapped_service_result(key: str, awaitable: Awaitable[Any]) -> dict:
+    return {key: await awaitable}
+
+
+async def execute_gateway_tool(
+    name: str,
+    arguments: dict,
+    session_tag: Optional[str],
+    cfg: Any,
+    service: Optional[GatewayToolService] = None,
+) -> dict:
+    arguments = arguments if isinstance(arguments, dict) else {}
+    service = service or GatewayToolService(runtime_config=cfg)
     if name == "shenyu_gateway_tool":
         target_name = str(arguments.get("tool") or arguments.get("name") or "").strip()
         target_args = arguments.get("arguments") or {}
@@ -489,22 +482,28 @@ async def execute_gateway_tool(name: str, arguments: dict, session_tag: Optional
                 "error": f"Unsupported gateway broker target: {target_name}",
                 "available_tools": sorted(allowed),
             }
-        return await execute_gateway_tool(target_name, target_args, session_tag=session_tag, cfg=cfg)
-    if name == "shenyu_surface_passages":
-        return await service.surface_passages(
-            query=arguments.get("query", ""),
-            session_tag=arguments.get("session_tag") or session_tag,
-            limit=int(arguments.get("limit", cfg.default_surface_limit)),
+        return await execute_gateway_tool(
+            target_name,
+            target_args,
+            session_tag=session_tag,
+            cfg=cfg,
+            service=service,
         )
-    if name == "shenyu_search_primary_texts":
-        return await service.search_primary_texts(
+
+    resolved_session_tag = arguments.get("session_tag") or session_tag
+    handlers: dict[str, Callable[[], Awaitable[dict]]] = {
+        "shenyu_surface_passages": lambda: service.surface_passages(
+            query=arguments.get("query", ""),
+            session_tag=resolved_session_tag,
+            limit=_int_arg(arguments, "limit", cfg.default_surface_limit),
+        ),
+        "shenyu_search_primary_texts": lambda: service.search_primary_texts(
             query=arguments.get("query", ""),
             categories=arguments.get("categories"),
-            session_tag=arguments.get("session_tag") or session_tag,
-            limit=int(arguments.get("limit", 5)),
-        )
-    if name == "shenyu_add_calendar":
-        return await service.add_calendar(
+            session_tag=resolved_session_tag,
+            limit=_int_arg(arguments, "limit", 5),
+        ),
+        "shenyu_add_calendar": lambda: service.add_calendar(
             content=arguments.get("content", ""),
             period_key=arguments.get("period_key"),
             period_type=arguments.get("period_type", "day"),
@@ -512,42 +511,31 @@ async def execute_gateway_tool(name: str, arguments: dict, session_tag: Optional
             summary=arguments.get("summary", ""),
             digest=arguments.get("digest", ""),
             author=arguments.get("author", "沈予"),
-        )
-    if name == "shenyu_supabase_guide":
-        return await service.supabase_guide()
-    if name == "shenyu_ask_memory":
-        return await service.ask_memory(
+        ),
+        "shenyu_supabase_guide": lambda: service.supabase_guide(),
+        "shenyu_ask_memory": lambda: service.ask_memory(
             query=arguments.get("query", ""),
             session_tag=arguments.get("session_tag"),
-            limit=int(arguments.get("limit", 8)),
+            limit=_int_arg(arguments, "limit", 8),
             date=arguments.get("date"),
             date_from=arguments.get("date_from"),
             date_to=arguments.get("date_to"),
-        )
-    if name == "shenyu_search_atomic_memory":
-        return await service.search_atomic_memories(
+        ),
+        "shenyu_search_mem_notes": lambda: service.search_mem_notes(
             query=arguments.get("query", ""),
-            session_tag=arguments.get("session_tag") or session_tag,
-            limit=int(arguments.get("limit", cfg.default_atomic_memory_limit)),
-        )
-    if name == "shenyu_list_self_memories":
-        return await service.list_self_memories(
-            query=arguments.get("query", ""),
-            status=arguments.get("status", "active"),
-            source=arguments.get("source", "inline"),
-            date=arguments.get("date"),
-            date_from=arguments.get("date_from"),
-            date_to=arguments.get("date_to"),
-            created_from=arguments.get("created_from"),
-            created_to=arguments.get("created_to"),
-            tags=arguments.get("tags"),
-            session_tag=arguments.get("session_tag") or session_tag,
-            limit=int(arguments.get("limit", 20)),
-        )
-    if name == "shenyu_read_heartbeat":
-        return await service.read_heartbeat(
-            session_tag=arguments.get("session_tag") or session_tag,
-            limit=int(arguments.get("limit", 10)),
+            session_tag=resolved_session_tag,
+            limit=_int_arg(arguments, "limit", cfg.mem_note_limit),
+        ),
+        "shenyu_list_mem_notes": lambda: service.list_mem_notes(
+            status=arguments.get("status", "captured"),
+            limit=_int_arg(arguments, "limit", 30),
+            session_tag=resolved_session_tag,
+            q=arguments.get("q") or arguments.get("query", ""),
+            mem_type=arguments.get("mem_type"),
+        ),
+        "shenyu_read_heartbeat": lambda: service.read_heartbeat(
+            session_tag=resolved_session_tag,
+            limit=_int_arg(arguments, "limit", 10),
             state=arguments.get("state", "all"),
             order=arguments.get("order", "desc"),
             scope=arguments.get("scope", "auto"),
@@ -556,82 +544,65 @@ async def execute_gateway_tool(name: str, arguments: dict, session_tag: Optional
             date_to=arguments.get("date_to"),
             created_from=arguments.get("created_from"),
             created_to=arguments.get("created_to"),
-        )
-    if name == "shenyu_list_atomic_memories":
-        return await service.list_atomic_memories_for_review(
-            status=arguments.get("status", "proposed"),
-            limit=int(arguments.get("limit", 20)),
-            session_tag=arguments.get("session_tag") or session_tag,
-            query=arguments.get("query", ""),
-        )
-    if name == "shenyu_update_atomic_memory":
-        payload = {key: value for key, value in arguments.items() if key != "memory_id"}
-        return await service.update_atomic_memory_for_review(arguments.get("memory_id", ""), payload)
-    if name == "shenyu_review_atomic_memory":
-        return await service.review_atomic_memory_action(
-            arguments.get("memory_id", ""),
-            arguments.get("action", ""),
-        )
-    if name == "shenyu_delete_atomic_memory":
-        return await service.delete_atomic_memory_for_review(arguments.get("memory_id", ""))
-    if name == "shenyu_get_meta_summaries":
-        return {"meta_summaries": await service.meta_summaries()}
-    if name == "shenyu_last_seen":
-        return {"last_seen": await service.last_seen()}
-    if name == "supabase_query":
-        return await service.supabase_query(
+        ),
+        "shenyu_update_mem_note": lambda: service.update_mem_note(
+            arguments.get("note_id", ""),
+            {key: value for key, value in arguments.items() if key != "note_id"},
+        ),
+        "shenyu_delete_mem_note": lambda: service.delete_mem_note(arguments.get("note_id", "")),
+        "shenyu_legacy_atomic_memories": lambda: service.legacy_atomic_memories(
+            limit=_int_arg(arguments, "limit", 30),
+            session_tag=resolved_session_tag,
+            q=arguments.get("q") or arguments.get("query", ""),
+        ),
+        "shenyu_get_meta_summaries": lambda: _wrapped_service_result("meta_summaries", service.meta_summaries()),
+        "shenyu_last_seen": lambda: _wrapped_service_result("last_seen", service.last_seen()),
+        "supabase_query": lambda: service.supabase_query(
             table=arguments.get("table", ""),
             filters=arguments.get("filters"),
             operators=arguments.get("operators"),
             column=arguments.get("column"),
             select=arguments.get("select"),
             order=arguments.get("order"),
-            limit=int(arguments.get("limit", 20)),
-        )
-    if name == "supabase_insert":
-        return await service.supabase_insert(
+            limit=_int_arg(arguments, "limit", 20),
+        ),
+        "supabase_insert": lambda: service.supabase_insert(
             table=arguments.get("table", ""),
             data=arguments.get("data") or {},
-        )
-    if name == "supabase_update":
-        return await service.supabase_update(
+        ),
+        "supabase_update": lambda: service.supabase_update(
             table=arguments.get("table", ""),
             match=arguments.get("match") or {},
             data=arguments.get("data") or {},
             operators=arguments.get("operators"),
             column=arguments.get("column"),
-        )
-    if name == "supabase_delete":
-        return await service.supabase_delete(
+        ),
+        "supabase_delete": lambda: service.supabase_delete(
             table=arguments.get("table", ""),
             match=arguments.get("match") or {},
             hard=bool(arguments.get("hard", False)),
             operators=arguments.get("operators"),
             column=arguments.get("column"),
-        )
-    if name == "shenyu_recall_main_thread":
-        return await service.recall_main_thread(
+        ),
+        "shenyu_recall_main_thread": lambda: service.recall_main_thread(
             since=arguments.get("since"),
             until=arguments.get("until"),
             query=arguments.get("query"),
-            limit=int(arguments.get("limit", 10)),
-        )
-    if name == "shenyu_notebook_list":
-        return await service.notebook_list(
+            limit=_int_arg(arguments, "limit", 10),
+        ),
+        "shenyu_notebook_list": lambda: service.notebook_list(
             type_filter=arguments.get("type"),
             status=arguments.get("status", "active"),
-            limit=int(arguments.get("limit", 10)),
-        )
-    if name == "shenyu_notebook_write":
-        return await service.notebook_write(
+            limit=_int_arg(arguments, "limit", 10),
+        ),
+        "shenyu_notebook_write": lambda: service.notebook_write(
             type_=arguments.get("type", "note"),
             content=arguments.get("content", ""),
             tags=arguments.get("tags"),
             metadata=arguments.get("metadata"),
             session_tag=session_tag,
-        )
-    if name == "shenyu_notebook_update":
-        return await service.notebook_update(
+        ),
+        "shenyu_notebook_update": lambda: service.notebook_update(
             id_=arguments.get("id", ""),
             content=arguments.get("content"),
             status=arguments.get("status"),
@@ -639,5 +610,9 @@ async def execute_gateway_tool(name: str, arguments: dict, session_tag: Optional
             type_=arguments.get("type"),
             pinned=arguments.get("pinned"),
             metadata=arguments.get("metadata"),
-        )
+        ),
+    }
+    handler = handlers.get(name)
+    if handler:
+        return await handler()
     raise ValueError(f"Unsupported gateway tool: {name}")

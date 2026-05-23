@@ -4,8 +4,6 @@ from dataclasses import dataclass
 import re
 from typing import Any, Optional
 
-from .runtime import now as _now, parse_ts as _parse_ts
-
 
 @dataclass(frozen=True)
 class ContextLayerSettings:
@@ -16,11 +14,15 @@ class ContextLayerSettings:
 
 
 _GATEWAY_TOOL_POLICY = (
-    "## Gateway Tool Policy\n"
-    "- `shenyu_surface_passages` surfaces room/message_board passages before event memory.\n"
-    "- `shenyu_search_primary_texts` is for diary/letter/paper lookup when explicitly needed.\n"
-    "- `shenyu_ask_memory` recalls event memories and only returns title/date/summary/facts/emotional_context.\n"
-    "- Direct client/database tools remain available and are still valid."
+    "## 工具怎么用\n"
+    "- 找 ClaudeAI 时期留下的旧事件记忆：用 `shenyu_ask_memory`。\n"
+    "- 找已经整理好、允许反上来的便签：用 `shenyu_search_mem_notes`。\n"
+    "- 整理待处理便签：先用 `shenyu_list_mem_notes` 看 captured，再用 `shenyu_update_mem_note` 补 type / trigger，最后手动改 active。\n"
+    "- 找日记、信、纸条、room、留言板原文：用 `shenyu_search_primary_texts`。\n"
+    "- 只想从 room / 留言板捞几段相关话：用 `shenyu_surface_passages`。\n"
+    "- 看自己以前写的心跳：用 `shenyu_read_heartbeat`。\n"
+    "- 旧 atomic 只读迁移：只用 `shenyu_legacy_atomic_memories`。\n"
+    "- 不确定 Supabase 表怎么查：先用 `shenyu_supabase_guide`。"
 )
 
 _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
@@ -36,24 +38,6 @@ def shorten(text: str, limit: int = 240) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
-
-
-def relative_time_label(value: Optional[str]) -> str:
-    dt = _parse_ts(value)
-    if not dt:
-        return ""
-    days = (_now().date() - dt.date()).days
-    if days <= 0:
-        return "今天"
-    if days == 1:
-        return "昨天"
-    if days <= 6:
-        return "前几天"
-    if days <= 13:
-        return "上周"
-    if days <= 45:
-        return "上个月"
-    return dt.date().isoformat()
 
 
 def render_layered_additions(package: dict, settings: ContextLayerSettings) -> dict:
@@ -110,26 +94,18 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
     heartbeat = "\n\n".join(heartbeat_blocks)
 
     volatile = ""
-    atomic_memories = package.get("atomic_memories") or []
-    if atomic_memories:
-        lines = ["## Relevant Atomic Memories"]
-        for item in atomic_memories:
-            content = (item.get("content_surface") or "").strip()
+    mem_notes = package.get("mem_notes") or []
+    if mem_notes:
+        lines = ["## 你以前给自己留过"]
+        for item in mem_notes:
+            content = (item.get("content") or "").strip()
             if not content:
                 continue
-            marker = (
-                f"{item.get('subject') or item.get('owner') or '我们'}"
-                f" / {item.get('memory_type') or 'fact'} / tier {item.get('tier') or '?'}"
-            )
-            if item.get("time_hint"):
-                marker += f" / {item.get('time_hint')}"
-            when = relative_time_label(item.get("created_at"))
-            if when:
-                marker += f" / {when}"
-            why = ", ".join(item.get("why") or [])
-            lines.append(f"- [{marker}] {shorten(content, 180)} ({why})")
-        atomic_block = "\n".join(lines)
-        volatile = "\n\n".join(block for block in [volatile, atomic_block] if block)
+            mem_type = (item.get("mem_type") or "").strip()
+            prefix = f"{mem_type}：" if mem_type else ""
+            lines.append(f"- {prefix}{shorten(content, 220)}")
+        mem_block = "\n".join(lines)
+        volatile = "\n\n".join(block for block in [volatile, mem_block] if block)
 
     return {"stable": stable, "slow": slow, "heartbeat": heartbeat, "volatile": volatile}
 

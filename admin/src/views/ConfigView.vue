@@ -61,7 +61,7 @@ const config = ref<GatewayConfig>({
   gateway_tool_mode: 'broker',
   inject_inline_memory_prompt: false,
   enable_inline_memory_capture: false,
-  inject_atomic_memories: false,
+  inject_mem_notes: false,
 })
 
 const health = ref<HealthStatus | null>(null)
@@ -183,7 +183,7 @@ async function doSave() {
       enable_gateway_tools: config.value.enable_gateway_tools,
       inject_inline_memory_prompt: memPromptAndCapture.value,
       enable_inline_memory_capture: memPromptAndCapture.value,
-      inject_atomic_memories: config.value.inject_atomic_memories,
+      inject_mem_notes: config.value.inject_mem_notes,
       expose_supabase_tools: config.value.expose_supabase_tools,
       gateway_tool_mode: config.value.gateway_tool_mode,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
@@ -410,8 +410,8 @@ function removeModel(index: number) {
           <NFormItem label="Inline Mem 提示 + 捕获">
             <NSwitch v-model:value="memPromptAndCapture" />
           </NFormItem>
-          <NFormItem label="Inline Mem 注入">
-            <NSwitch v-model:value="config.inject_atomic_memories" />
+          <NFormItem label="Mem 便签反上来">
+            <NSwitch v-model:value="config.inject_mem_notes" />
           </NFormItem>
           <NFormItem label="启用 supabase_* 工具">
             <NSwitch v-model:value="config.expose_supabase_tools" />

@@ -15,7 +15,7 @@ Operit
        -> GatewayStore (SQLite runtime state)
        -> GatewayToolService (Supabase tools, surface, memory)
        -> CalendarService (day/week/month pages)
-       -> AtomicMemoryService (small durable facts)
+       -> MemNoteService (small personal notes)
        -> Upstream adapter (Anthropic / OpenAI-compatible)
   -> Upstream model
   -> gateway tool loop when needed
@@ -34,7 +34,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations, including Supabase table tools, primary-text surface search, heartbeats, notebook, and memory helpers.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>` and `[mem]...[/mem]`, heartbeat persistence helper, and inline memory scheduling helper.
-- `shenyu_gateway/atomic_memory.py`: inline `[mem]` capture to active atomic memory rows.
+- `shenyu_gateway/mem_notes.py`: inline `[mem]` capture, clean note search, review/update/delete helpers, and old atomic read-only lookup.
 - `shenyu_gateway/sessions.py`: session/message logging facade.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
 - `gateway.py`: FastAPI routes, middleware, upstream HTTP calls, context orchestration, tool-loop orchestration, calendar generation service, and Hisense routes.
@@ -61,7 +61,7 @@ Context is assembled from low-change to high-change content:
 | `slow` | second system message when present | calendar memory, Hisense notebook/recap | breakpoint |
 | `heartbeat` | after `slow`, before client history | `## 你之前的心跳` and optional Hisense heartbeat block | no breakpoint |
 | client history | original messages | trimmed client messages when `MAX_CLIENT_MESSAGES` is set | fallback breakpoint only if one is free |
-| `volatile` | inserted before latest user message | active atomic memories | no breakpoint |
+| `volatile` | inserted before latest user message | active mem notes | no breakpoint |
 | current user | latest user message | current request | no breakpoint |
 
 The retired rolling and frozen context layers have been removed from the active flow. Their legacy SQLite tables are only cleaned up during session deletion when they exist in an older database.
@@ -155,11 +155,12 @@ Supabase remains the durable fact and content source:
 - `calendar_prompt_configs`
 - `calendar_pages`
 - `calendar_generation_runs`
-- `atomic_memories`
+- `shenyu_mem_notes`
+- `atomic_memories` (legacy read-only migration source)
 
 The short-lived notes table is no longer used by gateway code.
 
-The atomic-memory review UI reads and updates Supabase `atomic_memories`. It is not reviewing a SQLite buffer table. SQLite only provides local request/session context.
+The mem review UI reads and updates Supabase `shenyu_mem_notes`. The old `atomic_memories` table is only exposed through a read-only lookup for manual migration. SQLite only provides local request/session context.
 
 ## Cold Start Layer
 
@@ -248,46 +249,49 @@ Preserve these response contracts:
 - `GET /api/calendar/month?token=...&month=YYYY-MM` returns `grid`; each day item must keep `date`, `day`, `in_month`, `has_day`, `has_week`, and when present `day_page.id/title/summary/status`.
 - `GET /api/calendar/page/{page_id}?token=...` returns at least `id`, `title`, `summary`, and `content`.
 
-## Atomic Memory Layer
+## Mem Note Layer
 
-Atomic memories are small durable notes, separate from event memories and calendar pages.
+Mem notes are small personal notes, separate from event memories and calendar pages.
 
 Two switches control it:
 
-- `INJECT_ATOMIC_MEMORIES`: before a reply, search active atomic memories and inject relevant hits in `volatile`.
+- `INJECT_MEM_NOTES`: before a reply, search active mem notes and inject relevant hits in `volatile`.
 - `ENABLE_INLINE_MEMORY_CAPTURE`: after a reply, capture explicit `[mem]...[/mem]` notes.
 
 Explicit inline memory flow:
 
 1. Assistant reply is filtered before it reaches the client.
 2. Only closed `[mem]...[/mem]` blocks are removed from visible text.
-3. Each captured note is inserted directly into `atomic_memories` as `active`.
-4. Inline notes are not rewritten, scored, or routed through `proposed`.
-5. Defaults are `subject=沈予`, `tier=2`, `importance=3`, and `memory_type=fact` unless attributes override them.
+3. Each captured note is inserted into `shenyu_mem_notes` as `captured`.
+4. Inline notes are stored as one paragraph. Type, trigger, keywords, status, and cooldown are filled later.
+5. The four note types are `她为我做的事`, `关于她的事实`, `心里那一档`, and `承诺`.
 
 Search/injection flow:
 
-1. `ContextBuilder` calls `search_atomic_memories()` when enabled.
-2. Active rows are scored by keyword overlap, tags/entities, importance, heat, tier, and a 7-day recency bonus.
-3. Relevant hits are rendered in `volatile`.
+1. `ContextBuilder` calls `MemNoteService.search_notes()` when enabled.
+2. Active rows are matched mainly by沈予填写的 `trigger_text` and `trigger_keywords`, with content as a fallback.
+3. Cooldown blocks frequent repeats. Relevant hits are rendered cleanly in `volatile`, without tier/importance/heat.
 
 Endpoints:
 
-- `GET /api/gateway/atomic-memories/search`
-- `GET /api/gateway/atomic-memories`
-- `POST /api/gateway/atomic-memories/{memory_id}/review`
+- `GET /api/gateway/mem-notes/search`
+- `GET /api/gateway/mem-notes`
+- `PATCH /api/gateway/mem-notes/{note_id}`
+- `DELETE /api/gateway/mem-notes/{note_id}`
+- `GET /api/gateway/legacy-atomic-memories`
 
 Admin UI notes:
 
 - Mem0 is now a standalone admin area instead of being embedded in the generic config page.
 - The Mem0 page includes:
-  - controls for explicit `[mem]` capture and active-memory injection
-  - the atomic-memory review workflow for Supabase `atomic_memories`
+  - controls for explicit `[mem]` capture and mem-note injection
+  - the mem-note attribute workflow for Supabase `shenyu_mem_notes`
+  - read-only old `atomic_memories` lookup for manual migration
 
 Current implementation details:
 
-- Automatic/model-based atomic extraction is disabled.
-- `[mem]` notes are stored verbatim as `active` rows.
+- Automatic/model-based extraction is disabled.
+- `[mem]` notes are stored verbatim as `captured` rows.
 - Prompt-preset and manual-extract endpoints have been removed.
 
 ## Configuration
@@ -376,13 +380,13 @@ http://localhost:8010/admin
 `/admin` is the formal Vue/Vite admin app. It is organized by feature:
 
 - `admin/src/api/config.ts`: gateway and upstream configuration.
-- `admin/src/api/mem0.ts`: Mem0 config and atomic-memory review APIs.
+- `admin/src/api/mem0.ts`: Mem config, mem-note review APIs, and old atomic read-only lookup.
 - `admin/src/api/sessions.ts`: local SQLite session browser.
 - `admin/src/api/logs.ts`: request log list and detail APIs.
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
 - `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
 - `admin/src/views/ConfigView.vue`: configuration page.
-- `admin/src/views/Mem0View.vue`: Mem0 capture/injection controls and atomic-memory review page.
+- `admin/src/views/Mem0View.vue`: Mem capture/injection controls, mem-note attribute workflow, and old atomic read-only lookup.
 - `admin/src/views/SessionsView.vue`: session inspection page.
 - `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.

@@ -46,7 +46,7 @@ class ConfigUpdate(BaseModel):
     calendar_inject_day: Optional[bool] = None
     calendar_inject_week: Optional[bool] = None
     calendar_inject_month: Optional[bool] = None
-    inject_atomic_memories: Optional[bool] = None
+    inject_mem_notes: Optional[bool] = None
     enable_cold_start: Optional[bool] = None
     enable_gateway_tools: Optional[bool] = None
     enable_mem0_management_tools: Optional[bool] = None
@@ -61,8 +61,9 @@ class ConfigUpdate(BaseModel):
     cold_start_message_limit: Optional[int] = None
     cold_start_idle_minutes: Optional[int] = None
     default_surface_limit: Optional[int] = None
-    default_atomic_memory_limit: Optional[int] = None
-    atomic_memory_min_score: Optional[float] = None
+    mem_note_limit: Optional[int] = None
+    mem_note_min_score: Optional[float] = None
+    mem_note_default_cooldown_hours: Optional[int] = None
     heartbeat_inject_every: Optional[int] = None
     gateway_message_retention: Optional[int] = None
     gateway_context_snapshot_retention: Optional[int] = None
@@ -102,13 +103,11 @@ class CalendarGenerateRequest(BaseModel):
     session_tag: Optional[str] = None
 
 
-class AtomicMemoryReviewUpdate(BaseModel):
-    status: str
-    content_surface: Optional[str] = None
-    quote: Optional[str] = None
-    time_hint: Optional[str] = None
-    subject: Optional[str] = None
-    owner: Optional[str] = None
-    memory_type: Optional[str] = None
-    tier: Optional[int] = None
-    importance: Optional[int] = None
+class MemNotePatch(BaseModel):
+    content: Optional[str] = None
+    mem_type: Optional[str] = None
+    trigger_text: Optional[str] = None
+    trigger_keywords: Optional[list[str] | str] = None
+    status: Optional[str] = None
+    cooldown_hours: Optional[int] = None
+    review_note: Optional[str] = None
