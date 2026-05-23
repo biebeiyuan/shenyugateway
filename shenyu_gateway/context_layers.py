@@ -17,6 +17,7 @@ _GATEWAY_TOOL_POLICY = (
     "## 工具怎么用\n"
     "- 找 ClaudeAI 时期留下的旧事件记忆：用 `shenyu_ask_memory`。\n"
     "- 找已经整理好、允许反上来的便签：用 `shenyu_search_mem_notes`。\n"
+    "- 直接写一条新的 mem 便签：用 `shenyu_write_mem_note`，默认 captured；要马上能反上来必须补 type / trigger 并设 active。\n"
     "- 整理待处理便签：先用 `shenyu_list_mem_notes` 看 captured，再用 `shenyu_update_mem_note` 补 type / trigger，最后手动改 active。\n"
     "- 找日记、信、纸条、room、留言板原文：用 `shenyu_search_primary_texts`。\n"
     "- 只想从 room / 留言板捞几段相关话：用 `shenyu_surface_passages`。\n"

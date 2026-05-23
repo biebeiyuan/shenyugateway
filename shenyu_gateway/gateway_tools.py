@@ -219,6 +219,7 @@ _SUPABASE_GUIDE = """## 家里常用 Supabase 表
 - 非空：operators={"deleted_at":{"not_is":null}}
 insert / update / delete 会尽量返回写入或影响到的行。
 整理自己的 mem 用 `shenyu_list_mem_notes`，补属性用 `shenyu_update_mem_note`。
+直接写一条新 mem 用 `shenyu_write_mem_note`，默认先放进 captured。
 读老 atomic 迁移资料用 `shenyu_legacy_atomic_memories`，它只读不写。
 翻某天心跳用 `shenyu_read_heartbeat`，一般只填 date，比如 2026-05-11。
 
@@ -326,6 +327,28 @@ class GatewayToolService:
             session_tag=session_tag,
             q=q,
             mem_type=mem_type,
+        )
+
+    async def write_mem_note(
+        self,
+        content: str,
+        session_tag: Optional[str] = None,
+        mem_type: Optional[str] = None,
+        trigger_text: Any = "",
+        trigger_keywords: Any = None,
+        status: str = "captured",
+        cooldown_hours: Any = None,
+        review_note: Any = "",
+    ) -> dict:
+        return await self._mem_notes().create_note(
+            content=content,
+            session_tag=session_tag,
+            mem_type=mem_type,
+            trigger_text=trigger_text,
+            trigger_keywords=trigger_keywords,
+            status=status,
+            cooldown_hours=cooldown_hours,
+            review_note=review_note,
         )
 
     async def update_mem_note(self, note_id: str, patch: dict[str, Any]) -> dict:

@@ -180,6 +180,63 @@ class MemNoteService:
             ]
         return {"ok": True, "items": rows, "status": status, "count": len(rows)}
 
+    async def create_note(
+        self,
+        content: Any,
+        session_tag: Optional[str] = None,
+        mem_type: Optional[str] = None,
+        trigger_text: Any = "",
+        trigger_keywords: Any = None,
+        status: str = "captured",
+        cooldown_hours: Any = None,
+        review_note: Any = "",
+        source_model: str = "tool:shenyu_write_mem_note",
+    ) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+        normalized_content = _normalize_text(content).strip()
+        if not normalized_content:
+            return {"ok": False, "error": "content is required."}
+
+        resolved_status = self._status(status, fallback="captured")
+        resolved_session_tag = (session_tag or "default").strip() or "default"
+        default_cooldown = int(getattr(self.cfg, "mem_note_default_cooldown_hours", 72) or 72)
+        payload: dict[str, Any] = {
+            "session_tag": resolved_session_tag,
+            "content": normalized_content,
+            "status": resolved_status,
+            "cooldown_hours": self._int_range(cooldown_hours, default_cooldown, 0, 8760),
+            "source_model": source_model,
+        }
+
+        resolved_type = self._mem_type(mem_type, allow_empty=True)
+        if resolved_type:
+            payload["mem_type"] = resolved_type
+
+        normalized_trigger = _normalize_text(trigger_text).strip()
+        if normalized_trigger:
+            payload["trigger_text"] = normalized_trigger
+
+        keywords = self._keyword_list(trigger_keywords)
+        if keywords:
+            payload["trigger_keywords"] = keywords
+
+        normalized_review_note = _normalize_text(review_note).strip()
+        if normalized_review_note:
+            payload["review_note"] = normalized_review_note
+            payload["reviewed_at"] = iso_now()
+
+        active_error = self._active_validation_error(payload)
+        if active_error:
+            return {"ok": False, "error": active_error}
+
+        row = await self.supabase.insert("shenyu_mem_notes", payload)
+        return {
+            "ok": True,
+            "note_id": row.get("id") if isinstance(row, dict) else None,
+            "note": row,
+        }
+
     async def update_note(self, note_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured."}

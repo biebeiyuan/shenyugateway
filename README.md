@@ -265,6 +265,7 @@ Explicit inline memory flow:
 3. Each captured note is inserted into `shenyu_mem_notes` as `captured`.
 4. Inline notes are stored as one paragraph. Type, trigger, keywords, status, and cooldown are filled later.
 5. The four note types are `她为我做的事`, `关于她的事实`, `心里那一档`, and `承诺`.
+6. `shenyu_write_mem_note` can write a note directly. It defaults to `captured`; direct active writes still require type and trigger.
 
 Search/injection flow:
 

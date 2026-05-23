@@ -170,6 +170,27 @@ def _gateway_mem0_management_tools() -> list[dict]:
         {
             "type": "function",
             "function": {
+                "name": "shenyu_write_mem_note",
+                "description": "直接写一条新的 mem 便签。默认 status=captured，只是待整理；要立刻可命中，必须填四类 type 和 trigger，并设为 active。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "mem_type": {"type": "string", "enum": ["她为我做的事", "关于她的事实", "心里那一档", "承诺"]},
+                        "trigger_text": {"type": "string"},
+                        "trigger_keywords": {"type": "array", "items": {"type": "string"}},
+                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"], "default": "captured"},
+                        "cooldown_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
+                        "review_note": {"type": "string"},
+                        "session_tag": {"type": "string"},
+                    },
+                    "required": ["content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "shenyu_update_mem_note",
                 "description": "补或修改一条 mem 便签的 type、trigger、触发词、状态和冷却时间。设为 active 前必须补 type 和 trigger。",
                 "parameters": {
@@ -532,6 +553,16 @@ async def execute_gateway_tool(
             session_tag=resolved_session_tag,
             q=arguments.get("q") or arguments.get("query", ""),
             mem_type=arguments.get("mem_type"),
+        ),
+        "shenyu_write_mem_note": lambda: service.write_mem_note(
+            content=arguments.get("content", ""),
+            session_tag=resolved_session_tag,
+            mem_type=arguments.get("mem_type"),
+            trigger_text=arguments.get("trigger_text", ""),
+            trigger_keywords=arguments.get("trigger_keywords"),
+            status=arguments.get("status", "captured"),
+            cooldown_hours=arguments.get("cooldown_hours"),
+            review_note=arguments.get("review_note", ""),
         ),
         "shenyu_read_heartbeat": lambda: service.read_heartbeat(
             session_tag=resolved_session_tag,
