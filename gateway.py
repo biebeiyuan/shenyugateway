@@ -1734,6 +1734,64 @@ def _all_tool_calls_are_gateway_native(tool_calls: list[dict]) -> bool:
     return bool(names) and all(is_gateway_native_tool(name) for name in names)
 
 
+def _tool_call_cache_key(name: str, args: dict) -> str:
+    try:
+        args_text = json.dumps(args or {}, ensure_ascii=False, sort_keys=True, default=str)
+    except TypeError:
+        args_text = _json_dumps(args or {})
+    return f"{name}:{args_text}"
+
+
+def _stream_content_event(model: str, content: str, *, finish_reason: Optional[str] = None) -> str:
+    body = {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion.chunk",
+        "created": _now_ts(),
+        "model": model,
+        "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": finish_reason}],
+    }
+    return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+
+def _stream_gateway_error_events(model: str, error: str):
+    message = (error or "Gateway request failed.").strip()
+    yield _stream_content_event(model, f"\n\n[网关错误] {message}\n", finish_reason=None)
+    final = {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion.chunk",
+        "created": _now_ts(),
+        "model": model,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+    }
+    yield f"data: {json.dumps(final, ensure_ascii=False)}\n\n"
+    yield "data: [DONE]\n\n"
+
+
+def _gateway_error_text(exc: Exception) -> str:
+    if isinstance(exc, HTTPException):
+        detail = exc.detail if isinstance(exc.detail, str) else _json_dumps(exc.detail)
+        return f"{exc.status_code}: {detail}"[:800]
+    return str(exc)[:800]
+
+
+def _gateway_error_completion(model: str, error: str) -> dict:
+    content = f"[网关错误] {(error or 'Gateway request failed.').strip()}"
+    return {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion",
+        "created": _now_ts(),
+        "model": model,
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": content},
+                "finish_reason": "stop",
+            }
+        ],
+        "usage": {},
+    }
+
+
 async def _execute_mixed_gateway_tool_calls(
     completion: dict,
     tool_calls: list[dict],
@@ -1803,6 +1861,7 @@ async def _run_internal_tool_loop(
     session_tag = session["session_tag"]
     working_messages = list(prepared_messages)
     upstream_usages: list[dict] = []
+    tool_result_cache: dict[str, dict] = {}
 
     for round_index in range(max(1, cfg.max_internal_tool_rounds)):
         payload, headers, _, cache_meta, upstream = await _build_upstream_request(
@@ -1813,6 +1872,14 @@ async def _run_internal_tool_loop(
         )
         if log_entry is not None:
             _record_upstream_payload(log_entry, payload)
+            round_log = {
+                "round": round_index + 1,
+                "messages_count": len(working_messages),
+                "tools": [],
+            }
+            log_entry.setdefault("internal_tool_rounds", []).append(round_log)
+        else:
+            round_log = None
         if log_entry is not None and round_index == 0:
             log_entry["prompt_cache"] = cache_meta
         raw = await _call_upstream_json(request, upstream["chat_url"], payload, headers)
@@ -1820,6 +1887,8 @@ async def _run_internal_tool_loop(
         if log_entry is not None:
             log_entry["usage"] = raw.get("usage", {})
             log_entry["cache_usage"] = _aggregate_cache_usage(upstream_usages)
+        if round_log is not None:
+            round_log["usage"] = raw.get("usage", {})
         proto = upstream["protocol"]
         completion = (
             _anthropic_to_openai_completion(body.model, raw)
@@ -1836,6 +1905,9 @@ async def _run_internal_tool_loop(
 
         tool_calls = _extract_tool_calls(completion)
         if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
+            if round_log is not None:
+                round_log["final"] = True
+                round_log["tool_calls_count"] = len(tool_calls)
             if tool_calls:
                 completion, mixed_gateway_calls, client_tool_calls = await _execute_mixed_gateway_tool_calls(
                     completion,
@@ -1859,11 +1931,31 @@ async def _run_internal_tool_loop(
 
         assistant_message = completion["choices"][0]["message"]
         working_messages.append(_assistant_tool_call_message(assistant_message, tool_calls))
+        if round_log is not None:
+            round_log["tool_calls_count"] = len(tool_calls)
         for tool_call in tool_calls:
             args = _tool_call_arguments(tool_call)
             name = _tool_call_name(tool_call)
-            result = await execute_gateway_tool(name, args, session_tag=session_tag, cfg=cfg)
-            sessions.log_tool_result(session_id, name, args, result)
+            cache_key = _tool_call_cache_key(name, args)
+            cached = cache_key in tool_result_cache
+            if cached:
+                result = {
+                    "ok": True,
+                    "cached_duplicate": True,
+                    "result": tool_result_cache[cache_key],
+                }
+            else:
+                result = await execute_gateway_tool(name, args, session_tag=session_tag, cfg=cfg)
+                tool_result_cache[cache_key] = result
+                sessions.log_tool_result(session_id, name, args, result)
+            if round_log is not None:
+                round_log["tools"].append(
+                    {
+                        "name": name,
+                        "cached_duplicate": cached,
+                        "args_preview": _json_dumps(args)[:300],
+                    }
+                )
             working_messages.append(
                 {
                     "role": "tool",
@@ -2205,16 +2297,66 @@ async def chat_completions(request: Request, body: ChatRequest):
             if body.stream:
                 async def _tool_loop_stream():
                     yield "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n"
-                    completion = await _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
-                    _mark_context_consumed(meta)
-                    log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
-                    log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
-                    log_entry["status"] = "ok"
-                    log_entry["response_preview"] = str(completion.get("choices", [{}])[0].get("message", {}).get("content", ""))[:200]
-                    for chunk in _completion_to_stream_events(completion):
-                        yield chunk
+                    log_entry["status"] = "streaming_tools"
+                    task = asyncio.create_task(
+                        _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
+                    )
+                    try:
+                        while True:
+                            done, _ = await asyncio.wait({task}, timeout=10.0)
+                            if task in done:
+                                break
+                            if await request.is_disconnected():
+                                task.cancel()
+                                log_entry["status"] = "client_disconnected"
+                                log_entry["error"] = "Client disconnected during internal gateway tool loop."
+                                return
+                            yield ": shenyu-gateway keepalive\n\n"
+
+                        completion = task.result()
+                        _mark_context_consumed(meta)
+                        log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
+                        log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
+                        log_entry["status"] = "ok"
+                        log_entry["response_preview"] = str(completion.get("choices", [{}])[0].get("message", {}).get("content", ""))[:200]
+                        for chunk in _completion_to_stream_events(completion):
+                            yield chunk
+                    except asyncio.CancelledError:
+                        task.cancel()
+                        log_entry["status"] = "client_disconnected"
+                        log_entry["error"] = "Client disconnected during internal gateway tool loop."
+                        raise
+                    except HTTPException as exc:
+                        log_entry["status"] = "error"
+                        log_entry["error"] = _gateway_error_text(exc)[:500]
+                        for chunk in _stream_gateway_error_events(body.model, log_entry["error"]):
+                            yield chunk
+                    except Exception as exc:
+                        logger.exception("Internal gateway tool stream failed")
+                        log_entry["status"] = "error"
+                        log_entry["error"] = str(exc)[:500]
+                        for chunk in _stream_gateway_error_events(body.model, log_entry["error"]):
+                            yield chunk
+                    finally:
+                        log_entry["duration_ms"] = int((_time.monotonic() - t0) * 1000)
+                        if not task.done():
+                            task.cancel()
                 return StreamingResponse(_tool_loop_stream(), media_type="text/event-stream")
-            completion = await _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
+            try:
+                completion = await _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
+            except HTTPException as exc:
+                log_entry["status"] = "error"
+                log_entry["error"] = _gateway_error_text(exc)[:500]
+                completion = _gateway_error_completion(body.model, log_entry["error"])
+                log_entry["response_preview"] = completion["choices"][0]["message"]["content"][:200]
+                return completion
+            except Exception as exc:
+                logger.exception("Internal gateway tool request failed")
+                log_entry["status"] = "error"
+                log_entry["error"] = _gateway_error_text(exc)[:500]
+                completion = _gateway_error_completion(body.model, log_entry["error"])
+                log_entry["response_preview"] = completion["choices"][0]["message"]["content"][:200]
+                return completion
             _mark_context_consumed(meta)
             log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
             log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
@@ -2962,6 +3104,7 @@ async def gateway_logs(limit: int = 30):
             "upstream_payload_summary": l.get("upstream_payload_summary"),
             "usage": l.get("usage"),
             "cache_usage": l.get("cache_usage"),
+            "internal_tool_rounds": len(l.get("internal_tool_rounds") or []),
             "status": l["status"],
             "duration_ms": l["duration_ms"],
             "error": l["error"],

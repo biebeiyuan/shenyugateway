@@ -15,6 +15,9 @@ class ContextLayerSettings:
 
 _GATEWAY_TOOL_POLICY = (
     "## 工具怎么用\n"
+    "- 默认先直接回答；只有真的需要查库、写便签、读心跳或用户明确要求时才用工具。\n"
+    "- 予予如果查到足够信息，可以直接写入并结束哦；避免重复查、重复写。我们的网关请求太多容易报错。\n"
+    "- 没查完就直接告诉圆儿，不要硬循环。每一步工具都要有明确目的。\n"
     "- 找 ClaudeAI 时期留下的旧事件记忆：用 `shenyu_ask_memory`。\n"
     "- 找已经整理好、允许反上来的便签：用 `shenyu_search_mem_notes`。\n"
     "- 主动写一条新的 mem 便签：用 `shenyu_write_mem_note`，默认 active 直接放行；没写 trigger 时会用正文当 trigger。\n"
