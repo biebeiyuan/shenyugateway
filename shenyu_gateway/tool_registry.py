@@ -129,6 +129,27 @@ def _gateway_core_tools() -> list[dict]:
         {
             "type": "function",
             "function": {
+                "name": "shenyu_write_mem_note",
+                "description": "直接写一条新的 mem 便签。默认 status=captured，只是待整理；要立刻可命中，必须填四类 type 和 trigger，并设为 active。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "mem_type": {"type": "string", "enum": ["她为我做的事", "关于她的事实", "心里那一档", "承诺"]},
+                        "trigger_text": {"type": "string"},
+                        "trigger_keywords": {"type": "array", "items": {"type": "string"}},
+                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"], "default": "captured"},
+                        "cooldown_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
+                        "review_note": {"type": "string"},
+                        "session_tag": {"type": "string"},
+                    },
+                    "required": ["content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "shenyu_read_heartbeat",
                 "description": "读沈予以前留给自己的心跳。",
                 "parameters": {
@@ -167,27 +188,6 @@ def _gateway_core_tools() -> list[dict]:
 
 def _gateway_mem0_management_tools() -> list[dict]:
     return [
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_write_mem_note",
-                "description": "直接写一条新的 mem 便签。默认 status=captured，只是待整理；要立刻可命中，必须填四类 type 和 trigger，并设为 active。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "content": {"type": "string"},
-                        "mem_type": {"type": "string", "enum": ["她为我做的事", "关于她的事实", "心里那一档", "承诺"]},
-                        "trigger_text": {"type": "string"},
-                        "trigger_keywords": {"type": "array", "items": {"type": "string"}},
-                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"], "default": "captured"},
-                        "cooldown_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
-                        "review_note": {"type": "string"},
-                        "session_tag": {"type": "string"},
-                    },
-                    "required": ["content"],
-                },
-            },
-        },
         {
             "type": "function",
             "function": {

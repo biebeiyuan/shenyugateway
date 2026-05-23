@@ -113,7 +113,7 @@ def test_execute_gateway_tool_routes_write_mem_note():
                 },
             },
             session_tag="default",
-            cfg=_cfg(enable_mem0_management_tools=True),
+            cfg=_cfg(),
             service=service,
         )
     )
