@@ -11,6 +11,8 @@ class AssistantTagFilter:
     """Filter private assistant tags from streamed/non-streamed replies."""
 
     TAGS = ("heartbeat", "mem")
+    HEARTBEAT_OPEN_RE = re.compile(r"<\s*heartbeat(?:\s[^>]*)?>", flags=re.I)
+    HEARTBEAT_CLOSE_RE = re.compile(r"<\s*/\s*heartbeat\s*>", flags=re.I)
 
     def __init__(self):
         self._buffer = ""
@@ -32,7 +34,7 @@ class AssistantTagFilter:
             attr_text = open_text[tag_start + 4:-1] if tag_start >= 0 else ""
             candidates.append((mem_open.start(), "mem", mem_open.end(), "[/mem]", self._parse_attrs(attr_text)))
 
-        heartbeat_open = re.search(r"<heartbeat>", self._buffer, flags=re.I)
+        heartbeat_open = self.HEARTBEAT_OPEN_RE.search(self._buffer)
         if heartbeat_open:
             candidates.append((heartbeat_open.start(), "heartbeat", heartbeat_open.end(), "</heartbeat>", {}))
 
@@ -68,6 +70,37 @@ class AssistantTagFilter:
             self._captured[self._active_tag].append(content)
         self._active_parts = []
 
+    def _reset_active(self):
+        self._active_tag = ""
+        self._active_close = ""
+        self._active_open = ""
+        self._active_attrs = {}
+        self._active_parts = []
+
+    def _strip_heartbeat_blocks(self, text: str) -> str:
+        """Keep visible text while still capturing heartbeat blocks inside it."""
+        if not text:
+            return ""
+        output: list[str] = []
+        pos = 0
+        while pos < len(text):
+            open_match = self.HEARTBEAT_OPEN_RE.search(text, pos)
+            if not open_match:
+                output.append(text[pos:])
+                break
+            output.append(text[pos:open_match.start()])
+            close_match = self.HEARTBEAT_CLOSE_RE.search(text, open_match.end())
+            if not close_match:
+                heartbeat = text[open_match.end():].strip()
+                if heartbeat:
+                    self._captured["heartbeat"].append(heartbeat)
+                break
+            heartbeat = text[open_match.end():close_match.start()].strip()
+            if heartbeat:
+                self._captured["heartbeat"].append(heartbeat)
+            pos = close_match.end()
+        return "".join(output)
+
     def feed(self, text: str) -> str:
         if not text:
             return ""
@@ -82,10 +115,7 @@ class AssistantTagFilter:
                     self._capture_active(self._buffer[:close_idx])
                     self._finish_active_capture()
                     self._buffer = self._buffer[close_idx + len(close_tag):]
-                    self._active_tag = ""
-                    self._active_close = ""
-                    self._active_open = ""
-                    self._active_attrs = {}
+                    self._reset_active()
                     continue
                 keep = len(close_tag) - 1
                 if len(self._buffer) > keep:
@@ -122,16 +152,13 @@ class AssistantTagFilter:
         if self._active_tag:
             if self._active_tag == "mem":
                 visible = self._active_open + "".join(self._active_parts) + self._buffer
-                self._active_tag = ""
-                self._active_close = ""
-                self._active_open = ""
-                self._active_attrs = {}
-                self._active_parts = []
+                self._reset_active()
                 self._buffer = ""
-                return visible
+                return self._strip_heartbeat_blocks(visible)
             self._capture_active(self._buffer)
             self._finish_active_capture()
             self._buffer = ""
+            self._reset_active()
             return ""
         remaining = self._buffer
         self._buffer = ""
