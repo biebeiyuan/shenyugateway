@@ -36,7 +36,9 @@ const message = useMessage()
 const memTypeOptions: Array<{ label: string; value: MemNoteType | '' }> = [
   { label: '未分类', value: '' },
   { label: '她为我做的事', value: '她为我做的事' },
+  { label: '我为她做的事', value: '我为她做的事' },
   { label: '关于她的事实', value: '关于她的事实' },
+  { label: '关于我的事', value: '关于我的事' },
   { label: '心里那一档', value: '心里那一档' },
   { label: '承诺', value: '承诺' },
 ]

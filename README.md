@@ -264,13 +264,13 @@ Explicit inline memory flow:
 2. Only closed `[mem]...[/mem]` blocks are removed from visible text.
 3. Each captured note is inserted into `shenyu_mem_notes` as `captured`.
 4. Inline notes are stored as one paragraph. Type, trigger, keywords, status, and cooldown are filled later.
-5. The four note types are `她为我做的事`, `关于她的事实`, `心里那一档`, and `承诺`.
+5. The note types are `她为我做的事`, `我为她做的事`, `关于她的事实`, `关于我的事`, `心里那一档`, and `承诺`.
 6. `shenyu_write_mem_note` writes an intentional note directly as `active`. If type or trigger is missing, the writer fills safe defaults so the note can surface immediately.
 
 Search/injection flow:
 
 1. `ContextBuilder` calls `MemNoteService.search_notes()` when enabled.
-2. Active rows are matched mainly by沈予填写的 `trigger_text` and `trigger_keywords`, with content as a fallback.
+2. Active rows are matched mainly by manually filled `trigger_text` and `trigger_keywords`, with content as a fallback.
 3. Cooldown blocks frequent repeats. Relevant hits are rendered cleanly in `volatile`, without tier/importance/heat.
 
 Endpoints:

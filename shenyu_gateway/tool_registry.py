@@ -3,6 +3,10 @@ from __future__ import annotations
 from typing import Any, Awaitable, Callable, Optional
 
 from shenyu_gateway.gateway_tools import GatewayToolService
+from shenyu_gateway.mem_notes import MEM_NOTE_TYPES
+
+
+MEM_NOTE_TYPE_ENUM = list(MEM_NOTE_TYPES)
 
 
 def _gateway_core_tools() -> list[dict]:
@@ -53,15 +57,17 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_search_mem_notes",
-                "description": "找已经整理好并激活的 mem 便签。只查 active，待整理 captured 不会反上来。",
+                "description": "查看我写过的 mem 便签，可按关键词筛选。默认查所有状态；当前聊天相关的 active mem 会由网关自动命中，不需要用这个工具反复召回。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "query": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3},
+                        "q": {"type": "string", "description": "关键词过滤 content/type/trigger/review_note。"},
+                        "query": {"type": "string", "description": "Alias of q."},
+                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived", "all"], "default": "all"},
+                        "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
                         "session_tag": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
                     },
-                    "required": ["query"],
                 },
             },
         },
@@ -119,7 +125,7 @@ def _gateway_core_tools() -> list[dict]:
                     "properties": {
                         "status": {"type": "string", "enum": ["captured", "active", "paused", "archived", "all"], "default": "captured"},
                         "q": {"type": "string"},
-                        "mem_type": {"type": "string", "enum": ["她为我做的事", "关于她的事实", "心里那一档", "承诺"]},
+                        "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
                         "session_tag": {"type": "string"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
                     },
@@ -130,12 +136,12 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_write_mem_note",
-                "description": "沈予主动写一条新的 mem 便签。默认 active 直接放行；没填 trigger 时用正文当 trigger，没填 type 时先归到“心里那一档”。",
+                "description": "我主动写一条新的 mem 便签。默认 active 直接放行；没填 trigger 时用正文当 trigger，没填 type 时先归到“心里那一档”。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "content": {"type": "string"},
-                        "mem_type": {"type": "string", "enum": ["她为我做的事", "关于她的事实", "心里那一档", "承诺"]},
+                        "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
                         "trigger_text": {"type": "string"},
                         "trigger_keywords": {"type": "array", "items": {"type": "string"}},
                         "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"], "default": "active"},
@@ -151,7 +157,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_read_heartbeat",
-                "description": "读沈予以前留给自己的心跳。",
+                "description": "读我以前留给自己的心跳。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -196,9 +202,11 @@ def _gateway_mem0_management_tools() -> list[dict]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "note_id": {"type": "string"},
+                        "note_id": {"type": "string", "description": "Use the id returned by shenyu_list_mem_notes."},
+                        "id": {"type": "string", "description": "Alias of note_id."},
+                        "noteId": {"type": "string", "description": "Alias of note_id."},
                         "content": {"type": "string"},
-                        "mem_type": {"type": "string", "enum": ["她为我做的事", "关于她的事实", "心里那一档", "承诺"]},
+                        "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
                         "trigger_text": {"type": "string"},
                         "trigger_keywords": {"type": "array", "items": {"type": "string"}},
                         "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"]},
@@ -217,24 +225,11 @@ def _gateway_mem0_management_tools() -> list[dict]:
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "note_id": {"type": "string"},
+                        "note_id": {"type": "string", "description": "Use the id returned by shenyu_list_mem_notes."},
+                        "id": {"type": "string", "description": "Alias of note_id."},
+                        "noteId": {"type": "string", "description": "Alias of note_id."},
                     },
                     "required": ["note_id"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_legacy_atomic_memories",
-                "description": "只读旧 atomic 记忆，给手动迁移用。不会写入，也不会激活旧逻辑。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "q": {"type": "string"},
-                        "session_tag": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
-                    },
                 },
             },
         },
@@ -478,6 +473,19 @@ def _int_arg(arguments: dict, key: str, default: int) -> int:
         return default
 
 
+def _mem_note_id_arg(arguments: dict) -> str:
+    for key in ("note_id", "id", "noteId"):
+        value = arguments.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+def _mem_note_patch_args(arguments: dict) -> dict:
+    id_keys = {"note_id", "id", "noteId"}
+    return {key: value for key, value in arguments.items() if key not in id_keys}
+
+
 async def _wrapped_service_result(key: str, awaitable: Awaitable[Any]) -> dict:
     return {key: await awaitable}
 
@@ -543,9 +551,11 @@ async def execute_gateway_tool(
             date_to=arguments.get("date_to"),
         ),
         "shenyu_search_mem_notes": lambda: service.search_mem_notes(
-            query=arguments.get("query", ""),
+            query=arguments.get("q") or arguments.get("query", ""),
             session_tag=resolved_session_tag,
-            limit=_int_arg(arguments, "limit", cfg.mem_note_limit),
+            limit=_int_arg(arguments, "limit", 30),
+            status=arguments.get("status", "all"),
+            mem_type=arguments.get("mem_type"),
         ),
         "shenyu_list_mem_notes": lambda: service.list_mem_notes(
             status=arguments.get("status", "captured"),
@@ -577,15 +587,10 @@ async def execute_gateway_tool(
             created_to=arguments.get("created_to"),
         ),
         "shenyu_update_mem_note": lambda: service.update_mem_note(
-            arguments.get("note_id", ""),
-            {key: value for key, value in arguments.items() if key != "note_id"},
+            _mem_note_id_arg(arguments),
+            _mem_note_patch_args(arguments),
         ),
-        "shenyu_delete_mem_note": lambda: service.delete_mem_note(arguments.get("note_id", "")),
-        "shenyu_legacy_atomic_memories": lambda: service.legacy_atomic_memories(
-            limit=_int_arg(arguments, "limit", 30),
-            session_tag=resolved_session_tag,
-            q=arguments.get("q") or arguments.get("query", ""),
-        ),
+        "shenyu_delete_mem_note": lambda: service.delete_mem_note(_mem_note_id_arg(arguments)),
         "shenyu_get_meta_summaries": lambda: _wrapped_service_result("meta_summaries", service.meta_summaries()),
         "shenyu_last_seen": lambda: _wrapped_service_result("last_seen", service.last_seen()),
         "supabase_query": lambda: service.supabase_query(

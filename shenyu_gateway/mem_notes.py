@@ -7,8 +7,11 @@ from typing import Any, Optional
 from .runtime import iso_now, now as _now, parse_ts as _parse_ts
 
 
-MEM_NOTE_TYPES = ("她为我做的事", "关于她的事实", "心里那一档", "承诺")
+MEM_NOTE_TYPES = ("她为我做的事", "我为她做的事", "关于她的事实", "关于我的事", "心里那一档", "承诺")
 MEM_NOTE_STATUSES = ("captured", "active", "paused", "archived")
+_UUID_RE = re.compile(
+    r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
+)
 
 
 def _normalize_text(content: Any) -> str:
@@ -61,6 +64,12 @@ def _shorten(text: str, limit: int = 220) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3].rstrip() + "..."
+
+
+def _normalize_note_id(value: Any) -> str:
+    raw = _normalize_text(value).strip()
+    match = _UUID_RE.search(raw)
+    return match.group(0) if match else raw
 
 
 class MemNoteService:
@@ -244,6 +253,9 @@ class MemNoteService:
     async def update_note(self, note_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured."}
+        note_id = _normalize_note_id(note_id)
+        if not note_id:
+            return {"ok": False, "error": "note_id is required."}
         current = await self._get_note(note_id)
         if not current:
             return {"ok": False, "error": "note not found."}
@@ -279,6 +291,9 @@ class MemNoteService:
     async def delete_note(self, note_id: str) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured."}
+        note_id = _normalize_note_id(note_id)
+        if not note_id:
+            return {"ok": False, "error": "note_id is required."}
         rows = await self.supabase.delete("shenyu_mem_notes", {"id": note_id})
         return {"ok": True, "note_id": note_id, "deleted": rows}
 
@@ -448,7 +463,7 @@ class MemNoteService:
                 continue
 
     async def _get_note(self, note_id: str) -> Optional[dict[str, Any]]:
-        note_id = (note_id or "").strip()
+        note_id = _normalize_note_id(note_id)
         if not note_id or not self.supabase:
             return None
         rows = await self.supabase.query(
@@ -468,7 +483,7 @@ class MemNoteService:
         trigger_text = _normalize_text(row.get("trigger_text")).strip()
         trigger_keywords = self._keyword_list(row.get("trigger_keywords"))
         if mem_type not in MEM_NOTE_TYPES:
-            return "active mem note requires one of the four mem_type values."
+            return "active mem note requires a known mem_type value."
         if not trigger_text and not trigger_keywords:
             return "active mem note requires trigger_text or trigger_keywords."
         return ""

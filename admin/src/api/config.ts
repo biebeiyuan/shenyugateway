@@ -99,7 +99,7 @@ export interface GatewayOverview {
   latest_message_at: string | null
 }
 
-export type MemNoteType = '她为我做的事' | '关于她的事实' | '心里那一档' | '承诺'
+export type MemNoteType = '她为我做的事' | '我为她做的事' | '关于她的事实' | '关于我的事' | '心里那一档' | '承诺'
 export type MemNoteStatus = 'captured' | 'active' | 'paused' | 'archived'
 
 export interface MemNoteItem {

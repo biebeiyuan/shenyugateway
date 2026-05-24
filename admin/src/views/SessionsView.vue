@@ -381,7 +381,7 @@ function showMoreHeartbeats() {
                 <NInput
                   v-model:value="heartbeatDraft"
                   type="textarea"
-                  placeholder="写给沈予自己的 heartbeat。只写正文，不需要标签。"
+                  placeholder="写给我自己的 heartbeat。只写正文，不需要标签。"
                   :autosize="{ minRows: 4, maxRows: 8 }"
                 />
                 <div class="heartbeat-actions">
