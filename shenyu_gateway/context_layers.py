@@ -131,6 +131,30 @@ def tool_call_ids(msg: dict) -> list[str]:
     return ids
 
 
+def tool_turn_start(messages: list[dict], assistant_idx: int) -> int:
+    if assistant_idx > 0 and messages[assistant_idx - 1].get("role") == "user":
+        return assistant_idx - 1
+    return assistant_idx
+
+
+def latest_complete_tool_turn_start(messages: list[dict]) -> Optional[int]:
+    if not messages or messages[-1].get("role") != "tool":
+        return None
+
+    for idx in range(len(messages) - 2, -1, -1):
+        msg = messages[idx]
+        if msg.get("role") != "assistant" or not tool_call_ids(msg):
+            continue
+        expected = set(tool_call_ids(msg))
+        trailing = messages[idx + 1 :]
+        if not trailing or any(item.get("role") != "tool" for item in trailing):
+            continue
+        found = {str(item.get("tool_call_id")) for item in trailing if item.get("tool_call_id") in expected}
+        if found == expected:
+            return idx
+    return None
+
+
 def tool_safe_trim_start(messages: list[dict], start: int) -> int:
     """Move a trim boundary so tool calls and tool results stay in complete turns."""
     start = max(0, min(start, len(messages)))
@@ -144,7 +168,7 @@ def tool_safe_trim_start(messages: list[dict], start: int) -> int:
                 continue
             for prev_idx in range(idx - 1, -1, -1):
                 if tool_call_id in tool_call_ids(messages[prev_idx]):
-                    return tool_safe_trim_start(messages, prev_idx)
+                    return tool_safe_trim_start(messages, tool_turn_start(messages, prev_idx))
             return idx + 1
         if role == "assistant" and tool_call_ids(msg):
             expected = set(tool_call_ids(msg))
@@ -157,7 +181,9 @@ def tool_safe_trim_start(messages: list[dict], start: int) -> int:
                 next_idx += 1
             if found != expected:
                 return next_idx
-            return idx
+            if idx == start:
+                return tool_turn_start(messages, idx)
+            return start
 
     return start
 
@@ -176,6 +202,18 @@ def trim_client_messages(messages: list[dict], limit: Optional[int]) -> tuple[li
     non_system = messages[first_non_system:]
     if len(non_system) <= limit:
         return messages, meta
+
+    latest_tool_start = latest_complete_tool_turn_start(non_system)
+    if latest_tool_start is not None:
+        tool_tail = non_system[latest_tool_start:]
+        history = non_system[:latest_tool_start]
+        history_start = max(0, len(history) - int(limit))
+        history_start = tool_safe_trim_start(history, history_start)
+        trimmed = system_prefix + non_system[history_start:latest_tool_start] + tool_tail
+        meta["client_messages_retained"] = len(trimmed)
+        meta["client_messages_trim_start"] = first_non_system + history_start
+        meta["client_tool_tail_messages"] = len(tool_tail)
+        return trimmed, meta
 
     start = max(0, len(non_system) - limit)
     start = tool_safe_trim_start(non_system, start)
