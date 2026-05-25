@@ -453,7 +453,8 @@ def _completion_to_stream_events(completion: dict):
     model = completion.get("model", "unknown")
     created = completion.get("created", _now_ts())
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-    message = completion.get("choices", [{}])[0].get("message", {})
+    choice = completion.get("choices", [{}])[0]
+    message = choice.get("message", {})
 
     first = {
         "id": chunk_id,
@@ -487,12 +488,37 @@ def _completion_to_stream_events(completion: dict):
         }
         yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
 
+    tool_calls = message.get("tool_calls") or []
+    for index, tool_call in enumerate(tool_calls):
+        function = tool_call.get("function") or {}
+        arguments = function.get("arguments", "")
+        if not isinstance(arguments, str):
+            arguments = json.dumps(arguments or {}, ensure_ascii=False)
+        stream_call = {
+            "index": index,
+            "id": tool_call.get("id") or f"call_{uuid.uuid4().hex[:10]}",
+            "type": tool_call.get("type") or "function",
+            "function": {
+                "name": function.get("name", ""),
+                "arguments": arguments,
+            },
+        }
+        body = {
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {"tool_calls": [stream_call]}, "finish_reason": None}],
+        }
+        yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+    finish_reason = "tool_calls" if tool_calls else choice.get("finish_reason") or "stop"
     final = {
         "id": chunk_id,
         "object": "chat.completion.chunk",
         "created": created,
         "model": model,
-        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
     }
     yield f"data: {json.dumps(final, ensure_ascii=False)}\n\n"
     yield "data: [DONE]\n\n"

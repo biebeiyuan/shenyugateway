@@ -1729,6 +1729,19 @@ def _tool_call_arguments(tool_call: dict) -> dict:
     return args or {}
 
 
+def _tool_call_log_preview(tool_calls: list[dict]) -> list[dict]:
+    previews = []
+    for call in tool_calls[:8]:
+        previews.append(
+            {
+                "id": call.get("id"),
+                "name": _tool_call_name(call),
+                "arguments_preview": _shorten(json.dumps(_tool_call_arguments(call), ensure_ascii=False), 240),
+            }
+        )
+    return previews
+
+
 def _all_tool_calls_are_gateway_native(tool_calls: list[dict]) -> bool:
     names = [_tool_call_name(call) for call in tool_calls]
     return bool(names) and all(is_gateway_native_tool(name) for name in names)
@@ -1908,6 +1921,8 @@ async def _run_internal_tool_loop(
             if round_log is not None:
                 round_log["final"] = True
                 round_log["tool_calls_count"] = len(tool_calls)
+                if tool_calls:
+                    round_log["returned_tool_calls"] = _tool_call_log_preview(tool_calls)
             if tool_calls:
                 completion, mixed_gateway_calls, client_tool_calls = await _execute_mixed_gateway_tool_calls(
                     completion,
@@ -1918,6 +1933,8 @@ async def _run_internal_tool_loop(
                 )
                 if mixed_gateway_calls and client_tool_calls:
                     tool_calls = client_tool_calls
+                    if round_log is not None:
+                        round_log["returned_tool_calls"] = _tool_call_log_preview(tool_calls)
             assistant_message = completion.get("choices", [{}])[0].get("message", {})
             clean_content, heartbeat_content, inline_memories = split_private_assistant_tags(_normalize_text(assistant_message.get("content")))
             if heartbeat_content:
@@ -1933,6 +1950,7 @@ async def _run_internal_tool_loop(
         working_messages.append(_assistant_tool_call_message(assistant_message, tool_calls))
         if round_log is not None:
             round_log["tool_calls_count"] = len(tool_calls)
+            round_log["gateway_tool_calls"] = _tool_call_log_preview(tool_calls)
         for tool_call in tool_calls:
             args = _tool_call_arguments(tool_call)
             name = _tool_call_name(tool_call)
@@ -2021,7 +2039,8 @@ async def _stream_chat(
                     if line.startswith("data: "):
                         try:
                             data = json.loads(line[6:])
-                            delta = (data.get("choices") or [{}])[0].get("delta", {})
+                            choice = (data.get("choices") or [{}])[0]
+                            delta = choice.get("delta", {})
                             text = delta.get("content")
                             if text:
                                 collected_parts.append(text)
@@ -2029,8 +2048,12 @@ async def _stream_chat(
                                 if filtered:
                                     data["choices"][0]["delta"]["content"] = filtered
                                     yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                                else:
+                                    delta.pop("content", None)
+                                    if delta or choice.get("finish_reason") is not None:
+                                        yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
                                 continue  # 已处理，不重复转发原始行。
-                        except (json.JSONDecodeError, IndexError, KeyError):
+                        except (json.JSONDecodeError, IndexError, KeyError, TypeError):
                             pass
                     # 非 content 行（role、tool_calls 等），原样转发。
                     yield line + "\n\n"
@@ -2303,7 +2326,7 @@ async def chat_completions(request: Request, body: ChatRequest):
                     )
                     try:
                         while True:
-                            done, _ = await asyncio.wait({task}, timeout=10.0)
+                            done, _ = await asyncio.wait({task}, timeout=3.0)
                             if task in done:
                                 break
                             if await request.is_disconnected():
