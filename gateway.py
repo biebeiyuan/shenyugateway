@@ -1766,6 +1766,77 @@ def _stream_content_event(model: str, content: str, *, finish_reason: Optional[s
     return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
+_EMPTY_VISIBLE_ASSISTANT_REPLY = "沈予已记录。"
+
+
+def _is_free_time_fallback_context(latest_user_text: str) -> bool:
+    text = latest_user_text or ""
+    lower = text.lower()
+    if "自由时间" in text or "free_time" in lower or "free-time" in lower:
+        return True
+    return "proxy_sender" in lower and "沈予" in text and ("提醒" in text or "自动" in text)
+
+
+def _private_capture_kinds(
+    *,
+    heartbeat_content: str = "",
+    inline_memories: Optional[list[dict[str, Any]]] = None,
+    mem_note_written: bool = False,
+) -> list[str]:
+    kinds: list[str] = []
+    if (heartbeat_content or "").strip():
+        kinds.append("heartbeat")
+    if mem_note_written or bool(inline_memories):
+        kinds.append("mem")
+    return kinds
+
+
+def _private_capture_fallback_text(latest_user_text: str, stored_kinds: list[str]) -> tuple[str, str]:
+    context = "free_time" if _is_free_time_fallback_context(latest_user_text) else "generic"
+    prefix = "沈予在自由时间" if context == "free_time" else "沈予已记录"
+    if stored_kinds:
+        return f"{prefix} · 已存 {' + '.join(stored_kinds)}", context
+    if context == "free_time":
+        return f"{prefix} · 已记录", context
+    return _EMPTY_VISIBLE_ASSISTANT_REPLY, context
+
+
+def _ensure_visible_assistant_content(assistant_message: dict, fallback_text: str = _EMPTY_VISIBLE_ASSISTANT_REPLY) -> bool:
+    if assistant_message.get("tool_calls"):
+        return False
+    if _normalize_text(assistant_message.get("content")).strip():
+        return False
+    assistant_message["content"] = fallback_text
+    return True
+
+
+def _finalize_assistant_private_content(
+    assistant_message: dict,
+    *,
+    latest_user_text: str = "",
+    mem_note_written: bool = False,
+) -> tuple[str, str, list[dict[str, Any]], dict[str, Any]]:
+    clean_content, heartbeat_content, inline_memories = split_private_assistant_tags(
+        _normalize_text(assistant_message.get("content"))
+    )
+    if heartbeat_content or inline_memories:
+        assistant_message["content"] = clean_content
+    stored_kinds = _private_capture_kinds(
+        heartbeat_content=heartbeat_content,
+        inline_memories=inline_memories,
+        mem_note_written=mem_note_written,
+    )
+    fallback_text, fallback_context = _private_capture_fallback_text(latest_user_text, stored_kinds)
+    fallback_applied = _ensure_visible_assistant_content(assistant_message, fallback_text)
+    fallback_meta = {
+        "applied": fallback_applied,
+        "text": fallback_text if fallback_applied else "",
+        "kinds": stored_kinds if fallback_applied else [],
+        "context": fallback_context if fallback_applied else "",
+    }
+    return _normalize_text(assistant_message.get("content")), heartbeat_content, inline_memories, fallback_meta
+
+
 def _stream_gateway_error_events(model: str, error: str):
     message = (error or "Gateway request failed.").strip()
     yield _stream_content_event(model, f"\n\n[网关错误] {message}\n", finish_reason=None)
@@ -1875,6 +1946,8 @@ async def _run_internal_tool_loop(
     working_messages = list(prepared_messages)
     upstream_usages: list[dict] = []
     tool_result_cache: dict[str, dict] = {}
+    mem_note_written = False
+    latest_user_text = _latest_user_text(prepared_messages)
 
     for round_index in range(max(1, cfg.max_internal_tool_rounds)):
         payload, headers, _, cache_meta, upstream = await _build_upstream_request(
@@ -1936,12 +2009,16 @@ async def _run_internal_tool_loop(
                     if round_log is not None:
                         round_log["returned_tool_calls"] = _tool_call_log_preview(tool_calls)
             assistant_message = completion.get("choices", [{}])[0].get("message", {})
-            clean_content, heartbeat_content, inline_memories = split_private_assistant_tags(_normalize_text(assistant_message.get("content")))
+            clean_content, heartbeat_content, inline_memories, fallback_meta = _finalize_assistant_private_content(
+                assistant_message,
+                latest_user_text=latest_user_text,
+                mem_note_written=mem_note_written,
+            )
             if heartbeat_content:
-                assistant_message["content"] = clean_content
                 _store_heartbeat(session_id, session, heartbeat_content)
-            elif inline_memories:
-                assistant_message["content"] = clean_content
+            if fallback_meta["applied"] and log_entry is not None:
+                log_entry["empty_visible_response_fallback"] = True
+                log_entry["empty_visible_response_fallback_detail"] = fallback_meta
             sessions.log_assistant_output(session_id, assistant_message)
             _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
             return completion
@@ -1974,6 +2051,9 @@ async def _run_internal_tool_loop(
                         "args_preview": _json_dumps(args)[:300],
                     }
                 )
+            target_name = str(args.get("tool") or "") if name == "shenyu_gateway_tool" else name
+            if target_name == "shenyu_write_mem_note":
+                mem_note_written = True
             working_messages.append(
                 {
                     "role": "tool",
@@ -1989,6 +2069,7 @@ async def _run_internal_tool_loop(
 async def _stream_chat(
     request: Request, payload: dict, headers: dict, model: str, upstream: dict,
     on_complete: callable = None,
+    latest_user_text: str = "",
 ):
     """Forward a streaming response and collect assistant text."""
     proto = upstream["protocol"]
@@ -2022,6 +2103,9 @@ async def _stream_chat(
     if proto == "openai":
         # OpenAI 协议：逐行解析 SSE，过滤 heartbeat，转发干净内容。
         async def generate():
+            visible_output_sent = False
+            tool_call_seen = False
+            fallback_applied = False
             try:
                 async for raw_line in resp.aiter_lines():
                     line = raw_line.strip()
@@ -2034,6 +2118,18 @@ async def _stream_chat(
                         if remaining:
                             flush_chunk = {"choices": [{"delta": {"content": remaining}}]}
                             yield f"data: {json.dumps(flush_chunk, ensure_ascii=False)}\n\n"
+                            visible_output_sent = visible_output_sent or bool(remaining.strip())
+                        if not visible_output_sent and not tool_call_seen:
+                            fallback_applied = True
+                            visible_output_sent = True
+                            fallback_text, _ = _private_capture_fallback_text(
+                                latest_user_text,
+                                _private_capture_kinds(
+                                    heartbeat_content=tag_filter.get_heartbeat(),
+                                    inline_memories=tag_filter.get_memories(),
+                                ),
+                            )
+                            yield _stream_content_event(model, fallback_text, finish_reason=None)
                         yield "data: [DONE]\n\n"
                         continue
                     if line.startswith("data: "):
@@ -2041,6 +2137,8 @@ async def _stream_chat(
                             data = json.loads(line[6:])
                             choice = (data.get("choices") or [{}])[0]
                             delta = choice.get("delta", {})
+                            if delta.get("tool_calls"):
+                                tool_call_seen = True
                             text = delta.get("content")
                             if text:
                                 collected_parts.append(text)
@@ -2048,11 +2146,23 @@ async def _stream_chat(
                                 if filtered:
                                     data["choices"][0]["delta"]["content"] = filtered
                                     yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
+                                    visible_output_sent = visible_output_sent or bool(filtered.strip())
                                 else:
                                     delta.pop("content", None)
                                     if delta or choice.get("finish_reason") is not None:
                                         yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
                                 continue  # 已处理，不重复转发原始行。
+                            if choice.get("finish_reason") is not None and not visible_output_sent and not tool_call_seen:
+                                fallback_applied = True
+                                visible_output_sent = True
+                                fallback_text, _ = _private_capture_fallback_text(
+                                    latest_user_text,
+                                    _private_capture_kinds(
+                                        heartbeat_content=tag_filter.get_heartbeat(),
+                                        inline_memories=tag_filter.get_memories(),
+                                    ),
+                                )
+                                yield _stream_content_event(model, fallback_text, finish_reason=None)
                         except (json.JSONDecodeError, IndexError, KeyError, TypeError):
                             pass
                     # 非 content 行（role、tool_calls 等），原样转发。
@@ -2064,7 +2174,15 @@ async def _stream_chat(
                         full_text = "".join(collected_parts)
                         # 对完整文本也做一次过滤（获取干净的 assistant 内容）。
                         clean_text = clean_text_from_filter_source(full_text)
-                        on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories())
+                        if fallback_applied and not clean_text.strip():
+                            clean_text, _ = _private_capture_fallback_text(
+                                latest_user_text,
+                                _private_capture_kinds(
+                                    heartbeat_content=tag_filter.get_heartbeat(),
+                                    inline_memories=tag_filter.get_memories(),
+                                ),
+                            )
+                        on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories(), fallback_applied)
                     except Exception:
                         logger.exception("流式回调执行失败")
 
@@ -2072,6 +2190,9 @@ async def _stream_chat(
 
     # Anthropic 协议：逐行解析，过滤 heartbeat，转为 OpenAI SSE 格式。
     async def generate():
+        visible_output_sent = False
+        tool_call_seen = False
+        fallback_applied = False
         try:
             async for line in resp.aiter_lines():
                 line = line.strip()
@@ -2094,8 +2215,24 @@ async def _stream_chat(
                         filtered = tag_filter.feed(text)
                         if filtered:
                             delta["text"] = filtered
+                            visible_output_sent = visible_output_sent or bool(filtered.strip())
                         else:
                             continue  # heartbeat 内容，不转发。
+                elif data.get("type") == "content_block_start":
+                    block = data.get("content_block", {})
+                    if block.get("type") == "tool_use":
+                        tool_call_seen = True
+                elif data.get("type") == "message_stop" and not visible_output_sent and not tool_call_seen:
+                    fallback_applied = True
+                    visible_output_sent = True
+                    fallback_text, _ = _private_capture_fallback_text(
+                        latest_user_text,
+                        _private_capture_kinds(
+                            heartbeat_content=tag_filter.get_heartbeat(),
+                            inline_memories=tag_filter.get_memories(),
+                        ),
+                    )
+                    yield _stream_content_event(model, fallback_text, finish_reason=None)
                 chunk = _anthropic_to_openai_chunk(model, data)
                 if chunk:
                     yield f"data: {chunk}\n\n"
@@ -2104,6 +2241,18 @@ async def _stream_chat(
             if remaining:
                 flush_data = {"choices": [{"delta": {"content": remaining}}]}
                 yield f"data: {json.dumps(flush_data, ensure_ascii=False)}\n\n"
+                visible_output_sent = visible_output_sent or bool(remaining.strip())
+            if not visible_output_sent and not tool_call_seen:
+                fallback_applied = True
+                visible_output_sent = True
+                fallback_text, _ = _private_capture_fallback_text(
+                    latest_user_text,
+                    _private_capture_kinds(
+                        heartbeat_content=tag_filter.get_heartbeat(),
+                        inline_memories=tag_filter.get_memories(),
+                    ),
+                )
+                yield _stream_content_event(model, fallback_text, finish_reason=None)
             yield "data: [DONE]\n\n"
         finally:
             await resp.aclose()
@@ -2111,7 +2260,15 @@ async def _stream_chat(
                 try:
                     full_text = "".join(collected_parts)
                     clean_text = clean_text_from_filter_source(full_text)
-                    on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories())
+                    if fallback_applied and not clean_text.strip():
+                        clean_text, _ = _private_capture_fallback_text(
+                            latest_user_text,
+                            _private_capture_kinds(
+                                heartbeat_content=tag_filter.get_heartbeat(),
+                                inline_memories=tag_filter.get_memories(),
+                            ),
+                        )
+                    on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories(), fallback_applied)
                 except Exception:
                     logger.exception("流式回调执行失败")
 
@@ -2313,6 +2470,8 @@ async def chat_completions(request: Request, body: ChatRequest):
         "duration_ms": 0,
         "error": None,
         "response_preview": None,
+        "empty_visible_response_fallback": False,
+        "empty_visible_response_fallback_detail": None,
     }
 
     try:
@@ -2399,9 +2558,32 @@ async def chat_completions(request: Request, body: ChatRequest):
             log_entry["status"] = "streaming"
             log_entry["usage"] = {"note": "Streaming usage is not available in this gateway log path."}
 
-            def _on_stream_complete(collected_text: str, heartbeat_content: str = "", inline_memories: Optional[list[str]] = None):
+            def _on_stream_complete(
+                collected_text: str,
+                heartbeat_content: str = "",
+                inline_memories: Optional[list[str]] = None,
+                fallback_applied: bool = False,
+            ):
                 """Persist assistant output after streaming completes."""
                 log_entry["status"] = "ok"
+                if fallback_applied:
+                    log_entry["empty_visible_response_fallback"] = True
+                    fallback_text, fallback_context = _private_capture_fallback_text(
+                        _latest_user_text(prepared_messages),
+                        _private_capture_kinds(
+                            heartbeat_content=heartbeat_content,
+                            inline_memories=inline_memories,
+                        ),
+                    )
+                    log_entry["empty_visible_response_fallback_detail"] = {
+                        "applied": True,
+                        "text": fallback_text,
+                        "kinds": _private_capture_kinds(
+                            heartbeat_content=heartbeat_content,
+                            inline_memories=inline_memories,
+                        ),
+                        "context": fallback_context,
+                    }
                 if collected_text:
                     assistant_msg = {"role": "assistant", "content": collected_text}
                     sessions.log_assistant_output(session_id, assistant_msg)
@@ -2413,22 +2595,30 @@ async def chat_completions(request: Request, body: ChatRequest):
                     _store_heartbeat(session_id, session, heartbeat_content)
                 _mark_context_consumed(meta)
 
-            return await _stream_chat(request, payload, headers, body.model, upstream, on_complete=_on_stream_complete)
+            return await _stream_chat(
+                request,
+                payload,
+                headers,
+                body.model,
+                upstream,
+                on_complete=_on_stream_complete,
+                latest_user_text=_latest_user_text(prepared_messages),
+            )
 
         # 非流式路径：也需要过滤 heartbeat
         completion = await _nonstream_chat(request, payload, headers, body.model, upstream)
         log_entry["usage"] = completion.get("usage", {})
         log_entry["cache_usage"] = _cache_usage_summary(completion.get("usage", {}))
         assistant_message = completion.get("choices", [{}])[0].get("message", {})
-        raw_content = assistant_message.get("content", "") or ""
-
-        clean_content, heartbeat_content, inline_memories = split_private_assistant_tags(raw_content)
-
-        if heartbeat_content or inline_memories:
-            # 把干净内容写回 completion，heartbeat 存入 DB。
-            assistant_message["content"] = clean_content
+        clean_content, heartbeat_content, inline_memories, fallback_meta = _finalize_assistant_private_content(
+            assistant_message,
+            latest_user_text=_latest_user_text(prepared_messages),
+        )
         if heartbeat_content:
             _store_heartbeat(session_id, session, heartbeat_content)
+        if fallback_meta["applied"]:
+            log_entry["empty_visible_response_fallback"] = True
+            log_entry["empty_visible_response_fallback_detail"] = fallback_meta
 
         sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content})
         _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
@@ -3128,6 +3318,8 @@ async def gateway_logs(limit: int = 30):
             "usage": l.get("usage"),
             "cache_usage": l.get("cache_usage"),
             "internal_tool_rounds": len(l.get("internal_tool_rounds") or []),
+            "empty_visible_response_fallback": l.get("empty_visible_response_fallback", False),
+            "empty_visible_response_fallback_detail": l.get("empty_visible_response_fallback_detail"),
             "status": l["status"],
             "duration_ms": l["duration_ms"],
             "error": l["error"],

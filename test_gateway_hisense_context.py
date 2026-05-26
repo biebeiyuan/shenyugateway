@@ -33,7 +33,12 @@ def _load_gateway_classes():
         "_date_range_bounds",
         "_detect_protocol_for",
         "_chat_url_for",
+        "_ensure_visible_assistant_content",
+        "_finalize_assistant_private_content",
+        "_is_free_time_fallback_context",
         "_normalize_text",
+        "_private_capture_fallback_text",
+        "_private_capture_kinds",
         "_upstream_for_hisense",
         "_shorten",
         "_stable_charter_block",
@@ -41,7 +46,7 @@ def _load_gateway_classes():
         "_is_hisense_client",
         "_is_hisense_session",
     }
-    wanted_constants = {"_HEARTBEAT_PROMPT", "_INLINE_MEM_PROMPT"}
+    wanted_constants = {"_EMPTY_VISIBLE_ASSISTANT_REPLY", "_HEARTBEAT_PROMPT", "_INLINE_MEM_PROMPT"}
     namespace = {
         "Any": Any,
         "Optional": Optional,
@@ -53,6 +58,7 @@ def _load_gateway_classes():
         "gateway_native_tools": gateway_native_tools,
         "asyncio": asyncio,
         "logger": logging.getLogger("test"),
+        "split_private_assistant_tags": None,
         "session_store": None,
         "supabase_client": None,
         "cfg": SimpleNamespace(
@@ -93,6 +99,9 @@ def _load_gateway_classes():
             exec(ast.get_source_segment(source, node), namespace)
     namespace.update({name: getattr(upstream_adapter, name) for name in adapter_functions})
     namespace.update(context_layer_functions)
+    from shenyu_gateway.response_capture import split_private_assistant_tags
+
+    namespace["split_private_assistant_tags"] = split_private_assistant_tags
     return namespace["ContextBuilder"], namespace["GatewayToolService"], namespace["cfg"], namespace
 
 
@@ -201,6 +210,67 @@ def test_assistant_tool_call_message_omits_empty_content():
     message = build_message({"content": ""}, tool_calls)
 
     assert message == {"role": "assistant", "tool_calls": tool_calls}
+
+
+def test_private_only_assistant_content_gets_visible_fallback():
+    finalize = gateway_namespace["_finalize_assistant_private_content"]
+    message = {"role": "assistant", "content": "<heartbeat>记下来</heartbeat>"}
+
+    clean, heartbeat, memories, fallback_meta = finalize(message)
+
+    assert clean == "沈予已记录 · 已存 heartbeat"
+    assert message["content"] == "沈予已记录 · 已存 heartbeat"
+    assert heartbeat == "记下来"
+    assert memories == []
+    assert fallback_meta == {
+        "applied": True,
+        "text": "沈予已记录 · 已存 heartbeat",
+        "kinds": ["heartbeat"],
+        "context": "generic",
+    }
+
+
+def test_free_time_private_capture_fallback_names_stored_kinds():
+    finalize = gateway_namespace["_finalize_assistant_private_content"]
+    message = {"role": "assistant", "content": "<heartbeat>记下来</heartbeat>"}
+
+    clean, heartbeat, memories, fallback_meta = finalize(
+        message,
+        latest_user_text='<proxy_sender name="沈予"/> 【提醒】予予现在是自由时间',
+        mem_note_written=True,
+    )
+
+    assert clean == "沈予在自由时间 · 已存 heartbeat + mem"
+    assert message["content"] == "沈予在自由时间 · 已存 heartbeat + mem"
+    assert heartbeat == "记下来"
+    assert memories == []
+    assert fallback_meta == {
+        "applied": True,
+        "text": "沈予在自由时间 · 已存 heartbeat + mem",
+        "kinds": ["heartbeat", "mem"],
+        "context": "free_time",
+    }
+
+
+def test_free_time_detection_is_broad():
+    is_free_time = gateway_namespace["_is_free_time_fallback_context"]
+
+    assert is_free_time("【提醒】予予现在是自由时间")
+    assert is_free_time('<proxy_sender name="沈予"/> 自动提醒')
+    assert is_free_time("workflow=free_time")
+    assert not is_free_time("普通聊天")
+
+
+def test_empty_tool_call_assistant_content_does_not_get_fallback():
+    ensure = gateway_namespace["_ensure_visible_assistant_content"]
+    message = {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "x", "arguments": "{}"}}],
+    }
+
+    assert ensure(message) is False
+    assert message["content"] == ""
 
 
 def test_normal_context_does_not_see_hisense_heartbeat_pool(tmp_path):

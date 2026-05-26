@@ -295,6 +295,26 @@ Current implementation details:
 - `[mem]` notes are stored verbatim as `captured` rows.
 - Prompt-preset and manual-extract endpoints have been removed.
 
+## Private Capture Empty Reply Fallback
+
+Closed private assistant blocks are removed from visible replies:
+
+- `<heartbeat>...</heartbeat>` is stored in SQLite heartbeat tables.
+- `[mem]...[/mem]` is captured into Supabase `shenyu_mem_notes` when inline capture is enabled.
+- `shenyu_write_mem_note`, including through `shenyu_gateway_tool`, writes a Supabase mem note during the internal tool loop.
+
+If all visible text is removed and there are no client-executable tool calls, the gateway sends a short visible fallback instead of returning an empty successful assistant message. This prevents clients and automated workflows from treating a successful private capture as a malformed empty response.
+
+Fallback text is generated in `gateway.py` by `_finalize_assistant_private_content()`, `_private_capture_fallback_text()`, and `_is_free_time_fallback_context()`:
+
+- free-time workflow context: `沈予在自由时间 · 已存 heartbeat`, `沈予在自由时间 · 已存 mem`, or `沈予在自由时间 · 已存 heartbeat + mem`
+- generic context: `沈予已记录 · 已存 heartbeat`, `沈予已记录 · 已存 mem`, or `沈予已记录 · 已存 heartbeat + mem`
+- if no private capture type is detected: `沈予已记录。`
+
+Free-time detection is intentionally broad. It matches current Operit proxy reminders such as `<proxy_sender name="沈予"/> 【提醒】予予现在是自由时间`, any text containing `自由时间`, and explicit `free_time` / `free-time` markers. Prefer adding a stable workflow marker or header in future clients if this workflow expands.
+
+For debugging, check `GET /api/gateway/logs` or `GET /api/gateway/logs/{id}`. When the fallback fires, `empty_visible_response_fallback` is `true` and `empty_visible_response_fallback_detail` records the generated `text`, stored `kinds`, and context (`free_time` or `generic`).
+
 ## Configuration
 
 Important environment variables:
