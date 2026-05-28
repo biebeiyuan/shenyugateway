@@ -414,7 +414,13 @@ def _anthropic_to_openai_completion(model: str, response: dict) -> dict:
     }
 
 
-def _anthropic_to_openai_chunk(model: str, chunk: dict) -> str:
+def _anthropic_to_openai_chunk(
+    model: str,
+    chunk: dict,
+    *,
+    finish_reason_override: str | None = None,
+    tool_index_override: int | None = None,
+) -> str:
     chunk_type = chunk.get("type", "")
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     base = {"id": chunk_id, "object": "chat.completion.chunk", "created": _now_ts(), "model": model}
@@ -423,6 +429,29 @@ def _anthropic_to_openai_chunk(model: str, chunk: dict) -> str:
         block = chunk.get("content_block", {})
         if block.get("type") == "thinking":
             base["choices"] = [{"index": 0, "delta": {"role": "assistant", "reasoning_content": ""}, "finish_reason": None}]
+        elif block.get("type") == "tool_use":
+            tool_index = tool_index_override if tool_index_override is not None else int(chunk.get("index") or 0)
+            arguments = block.get("input") or {}
+            base["choices"] = [
+                {
+                    "index": 0,
+                    "delta": {
+                        "role": "assistant",
+                        "tool_calls": [
+                            {
+                                "index": tool_index,
+                                "id": block.get("id") or f"call_{uuid.uuid4().hex[:10]}",
+                                "type": "function",
+                                "function": {
+                                    "name": block.get("name", ""),
+                                    "arguments": json.dumps(arguments, ensure_ascii=False) if arguments else "",
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": None,
+                }
+            ]
         else:
             base["choices"] = [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}]
         return json.dumps(base)
@@ -438,32 +467,62 @@ def _anthropic_to_openai_chunk(model: str, chunk: dict) -> str:
             return json.dumps(base)
         text = delta.get("text", "")
         if not text:
-            return ""
+            if delta_type != "input_json_delta":
+                return ""
+        if delta_type == "input_json_delta":
+            partial_json = delta.get("partial_json", "")
+            if not partial_json:
+                return ""
+            tool_index = tool_index_override if tool_index_override is not None else int(chunk.get("index") or 0)
+            base["choices"] = [
+                {
+                    "index": 0,
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": tool_index,
+                                "function": {"arguments": partial_json},
+                            }
+                        ]
+                    },
+                    "finish_reason": None,
+                }
+            ]
+            return json.dumps(base)
         base["choices"] = [{"index": 0, "delta": {"content": text}, "finish_reason": None}]
         return json.dumps(base)
 
     if chunk_type == "message_stop":
-        base["choices"] = [{"index": 0, "delta": {}, "finish_reason": "stop"}]
+        base["choices"] = [{"index": 0, "delta": {}, "finish_reason": finish_reason_override or "stop"}]
         return json.dumps(base)
 
     return ""
 
 
-def _completion_to_stream_events(completion: dict):
+def _text_chunks(text: str, chunk_chars: int):
+    if chunk_chars <= 0:
+        yield text
+        return
+    for index in range(0, len(text), chunk_chars):
+        yield text[index : index + chunk_chars]
+
+
+def _completion_to_stream_events(completion: dict, *, include_role: bool = True, content_chunk_chars: int = 0):
     model = completion.get("model", "unknown")
     created = completion.get("created", _now_ts())
     chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
     choice = completion.get("choices", [{}])[0]
     message = choice.get("message", {})
 
-    first = {
-        "id": chunk_id,
-        "object": "chat.completion.chunk",
-        "created": created,
-        "model": model,
-        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
-    }
-    yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
+    if include_role:
+        first = {
+            "id": chunk_id,
+            "object": "chat.completion.chunk",
+            "created": created,
+            "model": model,
+            "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+        }
+        yield f"data: {json.dumps(first, ensure_ascii=False)}\n\n"
 
     # Send reasoning_content before normal content when the upstream supplied it.
     reasoning = message.get("reasoning_content", "")
@@ -479,14 +538,15 @@ def _completion_to_stream_events(completion: dict):
 
     text = message.get("content", "")
     if text:
-        body = {
-            "id": chunk_id,
-            "object": "chat.completion.chunk",
-            "created": created,
-            "model": model,
-            "choices": [{"index": 0, "delta": {"content": text}, "finish_reason": None}],
-        }
-        yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+        for text_part in _text_chunks(text, content_chunk_chars):
+            body = {
+                "id": chunk_id,
+                "object": "chat.completion.chunk",
+                "created": created,
+                "model": model,
+                "choices": [{"index": 0, "delta": {"content": text_part}, "finish_reason": None}],
+            }
+            yield f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
 
     tool_calls = message.get("tool_calls") or []
     for index, tool_call in enumerate(tool_calls):

@@ -169,10 +169,11 @@ function renderContent(detail: LogDetail, tab: string): string {
     parts.push(`上游: ${detail.upstream_url}`)
     if (detail.stream) parts.push('流式')
     let html = parts.join(' · ') + '\n\n'
+    const responseText = detail.response_full ?? detail.response_preview
     if (detail.error) {
       html += esc(detail.error)
-    } else if (detail.response_preview) {
-      html += esc(detail.response_preview)
+    } else if (responseText) {
+      html += esc(responseText)
     } else {
       html += '(流式请求无预览 / 无响应)'
     }

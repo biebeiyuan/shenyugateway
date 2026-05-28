@@ -1766,6 +1766,57 @@ def _stream_content_event(model: str, content: str, *, finish_reason: Optional[s
     return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
+def _stream_reasoning_event(model: str, reasoning: str, *, finish_reason: Optional[str] = None) -> str:
+    body = {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion.chunk",
+        "created": _now_ts(),
+        "model": model,
+        "choices": [{"index": 0, "delta": {"reasoning_content": reasoning}, "finish_reason": finish_reason}],
+    }
+    return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+
+def _stream_role_event(model: str) -> str:
+    body = {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion.chunk",
+        "created": _now_ts(),
+        "model": model,
+        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
+    }
+    return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+
+def _stream_final_event(model: str, finish_reason: str = "stop") -> str:
+    body = {
+        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+        "object": "chat.completion.chunk",
+        "created": _now_ts(),
+        "model": model,
+        "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
+    }
+    return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+
+def _stream_keepalive_event(model: str) -> str:
+    # OpenAI-compatible empty delta; some clients/proxies do not treat SSE comments
+    # as activity, so this keeps long internal tool loops visibly alive to parsers.
+    return _stream_content_event(model, "", finish_reason=None)
+
+
+def _sse_response(generator) -> StreamingResponse:
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 _EMPTY_VISIBLE_ASSISTANT_REPLY = "沈予已记录。"
 
 
@@ -1840,15 +1891,97 @@ def _finalize_assistant_private_content(
 def _stream_gateway_error_events(model: str, error: str):
     message = (error or "Gateway request failed.").strip()
     yield _stream_content_event(model, f"\n\n[网关错误] {message}\n", finish_reason=None)
-    final = {
+    yield _stream_final_event(model)
+    yield "data: [DONE]\n\n"
+
+
+def _new_stream_completion(model: str) -> dict:
+    return {
         "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion.chunk",
+        "object": "chat.completion",
         "created": _now_ts(),
         "model": model,
-        "choices": [{"index": 0, "delta": {}, "finish_reason": "stop"}],
+        "choices": [
+            {
+                "index": 0,
+                "message": {"role": "assistant", "content": ""},
+                "finish_reason": None,
+            }
+        ],
+        "usage": {},
     }
-    yield f"data: {json.dumps(final, ensure_ascii=False)}\n\n"
-    yield "data: [DONE]\n\n"
+
+
+def _ensure_stream_tool_call(tool_calls: list[dict], index: int) -> dict:
+    while len(tool_calls) <= index:
+        tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
+    call = tool_calls[index]
+    call.setdefault("type", "function")
+    function = call.setdefault("function", {})
+    function.setdefault("name", "")
+    function.setdefault("arguments", "")
+    return call
+
+
+def _apply_openai_stream_chunk(completion: dict, data: dict) -> None:
+    choices = data.get("choices") or []
+    if not choices:
+        if data.get("usage"):
+            completion["usage"] = data.get("usage") or {}
+        return
+    choice = choices[0]
+    delta = choice.get("delta") or {}
+    message = completion["choices"][0]["message"]
+    if delta.get("role"):
+        message["role"] = delta["role"]
+    if delta.get("content"):
+        message["content"] = _normalize_text(message.get("content")) + str(delta.get("content") or "")
+    if delta.get("reasoning_content"):
+        message["reasoning_content"] = _normalize_text(message.get("reasoning_content")) + str(
+            delta.get("reasoning_content") or ""
+        )
+    if delta.get("tool_calls"):
+        tool_calls = message.setdefault("tool_calls", [])
+        for call_delta in delta.get("tool_calls") or []:
+            index = int(call_delta.get("index") or 0)
+            call = _ensure_stream_tool_call(tool_calls, index)
+            if call_delta.get("id"):
+                call["id"] = call_delta["id"]
+            if call_delta.get("type"):
+                call["type"] = call_delta["type"]
+            fn_delta = call_delta.get("function") or {}
+            function = call.setdefault("function", {})
+            if fn_delta.get("name"):
+                function["name"] = fn_delta["name"]
+            if "arguments" in fn_delta:
+                arguments = fn_delta.get("arguments")
+                if arguments is None:
+                    arguments = ""
+                elif not isinstance(arguments, str):
+                    arguments = json.dumps(arguments, ensure_ascii=False)
+                function["arguments"] = str(function.get("arguments") or "") + arguments
+    if choice.get("finish_reason") is not None:
+        completion["choices"][0]["finish_reason"] = choice.get("finish_reason")
+    if data.get("usage"):
+        completion["usage"] = data.get("usage") or {}
+
+
+def _anthropic_tool_index_override(data: dict, tool_index_by_block: dict[int, int]) -> Optional[int]:
+    chunk_type = data.get("type")
+    is_tool_chunk = False
+    if chunk_type == "content_block_start":
+        is_tool_chunk = (data.get("content_block") or {}).get("type") == "tool_use"
+    elif chunk_type == "content_block_delta":
+        is_tool_chunk = (data.get("delta") or {}).get("type") == "input_json_delta"
+    if not is_tool_chunk:
+        return None
+    try:
+        block_index = int(data.get("index") or 0)
+    except (TypeError, ValueError):
+        block_index = 0
+    if block_index not in tool_index_by_block:
+        tool_index_by_block[block_index] = len(tool_index_by_block)
+    return tool_index_by_block[block_index]
 
 
 def _gateway_error_text(exc: Exception) -> str:
@@ -1874,6 +2007,85 @@ def _gateway_error_completion(model: str, error: str) -> dict:
         ],
         "usage": {},
     }
+
+
+async def _stream_upstream_openai_chunks(
+    request: Request,
+    payload: dict,
+    headers: dict,
+    model: str,
+    upstream: dict,
+):
+    proto = upstream["protocol"]
+    client = request.app.state.http
+    chat_url = upstream["chat_url"]
+    stream_payload = dict(payload)
+    stream_payload["stream"] = True
+    try:
+        req = client.build_request("POST", chat_url, json=stream_payload, headers=headers)
+        resp = await client.send(req, stream=True)
+    except httpx.ConnectError as exc:
+        raise HTTPException(status_code=502, detail=_connect_error_detail(chat_url, exc))
+    except httpx.TimeoutException as exc:
+        raise HTTPException(status_code=504, detail=f"连接上游超时 {chat_url}: {exc}")
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"上游请求失败 {chat_url}: {exc}")
+
+    if resp.status_code >= 400:
+        error_body = await resp.aread()
+        await resp.aclose()
+        raise HTTPException(status_code=resp.status_code, detail=error_body.decode("utf-8", errors="replace")[:500])
+
+    try:
+        if proto == "openai":
+            async for raw_line in resp.aiter_lines():
+                line = raw_line.strip()
+                if not line:
+                    continue
+                if line == "data: [DONE]":
+                    break
+                if not line.startswith("data: "):
+                    continue
+                try:
+                    data = json.loads(line[6:])
+                except json.JSONDecodeError:
+                    continue
+                yield data
+            return
+
+        anthropic_stop_reason = ""
+        tool_index_by_block: dict[int, int] = {}
+        async for raw_line in resp.aiter_lines():
+            line = raw_line.strip()
+            if not line or line == "data: [DONE]" or line.startswith("event:"):
+                continue
+            if line.startswith("data: "):
+                line = line[6:]
+            try:
+                data = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if data.get("type") == "message_delta":
+                anthropic_stop_reason = data.get("delta", {}).get("stop_reason") or anthropic_stop_reason
+            finish_reason = "tool_calls" if anthropic_stop_reason == "tool_use" else None
+            chunk = _anthropic_to_openai_chunk(
+                model,
+                data,
+                finish_reason_override=finish_reason,
+                tool_index_override=_anthropic_tool_index_override(data, tool_index_by_block),
+            )
+            if not chunk:
+                continue
+            try:
+                converted = json.loads(chunk)
+            except json.JSONDecodeError:
+                continue
+            usage = data.get("usage") or (data.get("message") or {}).get("usage")
+            if usage:
+                converted["usage"] = usage
+            yield converted
+    finally:
+        await resp.aclose()
 
 
 async def _execute_mixed_gateway_tool_calls(
@@ -2040,7 +2252,11 @@ async def _run_internal_tool_loop(
                     "result": tool_result_cache[cache_key],
                 }
             else:
-                result = await execute_gateway_tool(name, args, session_tag=session_tag, cfg=cfg)
+                try:
+                    result = await execute_gateway_tool(name, args, session_tag=session_tag, cfg=cfg)
+                except Exception as exc:
+                    logger.exception("[GatewayTool] Internal tool call failed: %s", name)
+                    result = {"ok": False, "error": str(exc)}
                 tool_result_cache[cache_key] = result
                 sessions.log_tool_result(session_id, name, args, result)
             if round_log is not None:
@@ -2062,6 +2278,214 @@ async def _run_internal_tool_loop(
                     "content": _json_dumps(result),
                 }
             )
+
+    raise HTTPException(status_code=500, detail="Exceeded internal gateway tool rounds.")
+
+
+async def _run_internal_tool_loop_stream(
+    request: Request,
+    body: ChatRequest,
+    prepared_messages: list[dict],
+    meta: dict,
+    log_entry: Optional[dict] = None,
+):
+    assert session_store is not None
+    sessions = SessionManager(session_store, cfg)
+    session = meta["session"]
+    session_id = session["id"]
+    session_tag = session["session_tag"]
+    working_messages = list(prepared_messages)
+    upstream_usages: list[dict] = []
+    tool_result_cache: dict[str, dict] = {}
+    mem_note_written = False
+    latest_user_text = _latest_user_text(prepared_messages)
+
+    yield _stream_role_event(body.model)
+
+    for round_index in range(max(1, cfg.max_internal_tool_rounds)):
+        payload, headers, _, cache_meta, upstream = await _build_upstream_request(
+            request,
+            body,
+            messages_override=working_messages,
+            meta=meta,
+        )
+        payload["stream"] = True
+        if log_entry is not None:
+            _record_upstream_payload(log_entry, payload)
+            round_log = {
+                "round": round_index + 1,
+                "messages_count": len(working_messages),
+                "tools": [],
+                "stream": True,
+            }
+            log_entry.setdefault("internal_tool_rounds", []).append(round_log)
+        else:
+            round_log = None
+        if log_entry is not None and round_index == 0:
+            log_entry["prompt_cache"] = cache_meta
+
+        completion = _new_stream_completion(body.model)
+        tag_filter = AssistantTagFilter()
+        visible_output_sent = False
+        tool_call_seen = False
+
+        upstream_chunks = _stream_upstream_openai_chunks(request, payload, headers, body.model, upstream)
+        next_chunk = asyncio.create_task(anext(upstream_chunks))
+        try:
+            while True:
+                done, _ = await asyncio.wait({next_chunk}, timeout=2.0)
+                if next_chunk not in done:
+                    if await request.is_disconnected():
+                        if log_entry is not None:
+                            log_entry["status"] = "client_disconnected"
+                            log_entry["error"] = "Client disconnected during native internal gateway tool stream."
+                        next_chunk.cancel()
+                        await upstream_chunks.aclose()
+                        return
+                    yield _stream_keepalive_event(body.model)
+                    continue
+                try:
+                    data = next_chunk.result()
+                except StopAsyncIteration:
+                    break
+
+                next_chunk = asyncio.create_task(anext(upstream_chunks))
+                _apply_openai_stream_chunk(completion, data)
+                choice = (data.get("choices") or [{}])[0]
+                delta = choice.get("delta") or {}
+                if delta.get("tool_calls"):
+                    tool_call_seen = True
+                    continue
+                if tool_call_seen:
+                    continue
+                reasoning = delta.get("reasoning_content")
+                if reasoning:
+                    yield _stream_reasoning_event(body.model, reasoning)
+                text = delta.get("content")
+                if text:
+                    filtered = tag_filter.feed(text)
+                    if filtered:
+                        visible_output_sent = visible_output_sent or bool(filtered.strip())
+                        yield _stream_content_event(body.model, filtered)
+        finally:
+            if not next_chunk.done():
+                next_chunk.cancel()
+            await upstream_chunks.aclose()
+
+        usage = completion.get("usage") or {}
+        upstream_usages.append(usage)
+        if log_entry is not None:
+            log_entry["usage"] = usage
+            log_entry["cache_usage"] = _aggregate_cache_usage(upstream_usages)
+        if round_log is not None:
+            round_log["usage"] = usage
+
+        tool_calls = _extract_tool_calls(completion)
+        if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
+            if not tool_calls:
+                remaining = tag_filter.flush()
+                if remaining:
+                    visible_output_sent = visible_output_sent or bool(remaining.strip())
+                    yield _stream_content_event(body.model, remaining)
+            if round_log is not None:
+                round_log["final"] = True
+                round_log["tool_calls_count"] = len(tool_calls)
+                if tool_calls:
+                    round_log["returned_tool_calls"] = _tool_call_log_preview(tool_calls)
+            if tool_calls:
+                completion, mixed_gateway_calls, client_tool_calls = await _execute_mixed_gateway_tool_calls(
+                    completion,
+                    tool_calls,
+                    session_tag,
+                    sessions,
+                    session_id,
+                )
+                if mixed_gateway_calls and client_tool_calls:
+                    tool_calls = client_tool_calls
+                    if round_log is not None:
+                        round_log["returned_tool_calls"] = _tool_call_log_preview(tool_calls)
+
+            assistant_message = completion.get("choices", [{}])[0].get("message", {})
+            clean_content, heartbeat_content, inline_memories, fallback_meta = _finalize_assistant_private_content(
+                assistant_message,
+                latest_user_text=latest_user_text,
+                mem_note_written=mem_note_written,
+            )
+            if heartbeat_content:
+                _store_heartbeat(session_id, session, heartbeat_content)
+            if fallback_meta["applied"] and log_entry is not None:
+                log_entry["empty_visible_response_fallback"] = True
+                log_entry["empty_visible_response_fallback_detail"] = fallback_meta
+            sessions.log_assistant_output(session_id, assistant_message)
+            _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
+            _mark_context_consumed(meta)
+            if log_entry is not None:
+                log_entry["status"] = "ok"
+                _record_response_text(log_entry, clean_content)
+
+            if tool_calls:
+                for chunk in _completion_to_stream_events(
+                    completion,
+                    include_role=False,
+                    content_chunk_chars=1200,
+                ):
+                    yield chunk
+            else:
+                if fallback_meta["applied"] and not visible_output_sent:
+                    yield _stream_content_event(body.model, fallback_meta["text"])
+                yield _stream_final_event(body.model, completion.get("choices", [{}])[0].get("finish_reason") or "stop")
+                yield "data: [DONE]\n\n"
+            return
+
+        assistant_message = completion["choices"][0]["message"]
+        working_messages.append(_assistant_tool_call_message(assistant_message, tool_calls))
+        if round_log is not None:
+            round_log["tool_calls_count"] = len(tool_calls)
+            round_log["gateway_tool_calls"] = _tool_call_log_preview(tool_calls)
+        for tool_call in tool_calls:
+            args = _tool_call_arguments(tool_call)
+            name = _tool_call_name(tool_call)
+            cache_key = _tool_call_cache_key(name, args)
+            cached = cache_key in tool_result_cache
+            if cached:
+                result = {
+                    "ok": True,
+                    "cached_duplicate": True,
+                    "result": tool_result_cache[cache_key],
+                }
+            else:
+                try:
+                    result = await execute_gateway_tool(name, args, session_tag=session_tag, cfg=cfg)
+                except Exception as exc:
+                    logger.exception("[GatewayTool] Internal stream tool call failed: %s", name)
+                    result = {"ok": False, "error": str(exc)}
+                tool_result_cache[cache_key] = result
+                sessions.log_tool_result(session_id, name, args, result)
+            if round_log is not None:
+                round_log["tools"].append(
+                    {
+                        "name": name,
+                        "cached_duplicate": cached,
+                        "args_preview": _json_dumps(args)[:300],
+                    }
+                )
+            target_name = str(args.get("tool") or "") if name == "shenyu_gateway_tool" else name
+            if target_name == "shenyu_write_mem_note":
+                mem_note_written = True
+            working_messages.append(
+                {
+                    "role": "tool",
+                    "tool_call_id": tool_call.get("id"),
+                    "name": name,
+                    "content": _json_dumps(result),
+                }
+            )
+            if await request.is_disconnected():
+                if log_entry is not None:
+                    log_entry["status"] = "client_disconnected"
+                    log_entry["error"] = "Client disconnected during native internal gateway tool execution."
+                return
+            yield _stream_keepalive_event(body.model)
 
     raise HTTPException(status_code=500, detail="Exceeded internal gateway tool rounds.")
 
@@ -2186,13 +2610,15 @@ async def _stream_chat(
                     except Exception:
                         logger.exception("流式回调执行失败")
 
-        return StreamingResponse(generate(), media_type="text/event-stream")
+        return _sse_response(generate())
 
     # Anthropic 协议：逐行解析，过滤 heartbeat，转为 OpenAI SSE 格式。
     async def generate():
         visible_output_sent = False
         tool_call_seen = False
         fallback_applied = False
+        anthropic_stop_reason = ""
+        tool_index_by_block: dict[int, int] = {}
         try:
             async for line in resp.aiter_lines():
                 line = line.strip()
@@ -2222,6 +2648,11 @@ async def _stream_chat(
                     block = data.get("content_block", {})
                     if block.get("type") == "tool_use":
                         tool_call_seen = True
+                elif data.get("type") == "message_delta":
+                    anthropic_stop_reason = (
+                        data.get("delta", {}).get("stop_reason")
+                        or anthropic_stop_reason
+                    )
                 elif data.get("type") == "message_stop" and not visible_output_sent and not tool_call_seen:
                     fallback_applied = True
                     visible_output_sent = True
@@ -2233,7 +2664,13 @@ async def _stream_chat(
                         ),
                     )
                     yield _stream_content_event(model, fallback_text, finish_reason=None)
-                chunk = _anthropic_to_openai_chunk(model, data)
+                finish_reason = "tool_calls" if anthropic_stop_reason == "tool_use" else None
+                chunk = _anthropic_to_openai_chunk(
+                    model,
+                    data,
+                    finish_reason_override=finish_reason,
+                    tool_index_override=_anthropic_tool_index_override(data, tool_index_by_block),
+                )
                 if chunk:
                     yield f"data: {chunk}\n\n"
             # 刷出剩余缓冲。
@@ -2272,7 +2709,7 @@ async def _stream_chat(
                 except Exception:
                     logger.exception("流式回调执行失败")
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
+    return _sse_response(generate())
 
 
 async def _nonstream_chat(request: Request, payload: dict, headers: dict, model: str, upstream: dict):
@@ -2388,6 +2825,13 @@ def _record_upstream_payload(log_entry: Optional[dict], payload: dict) -> None:
         log_entry["upstream_payload"] = payload
 
 
+def _record_response_text(log_entry: dict, text: str, preview_limit: int = 200) -> None:
+    text = text or ""
+    log_entry["response_preview"] = _shorten(text, preview_limit)
+    if log_entry.get("request_payloads_retained"):
+        log_entry["response_full"] = text
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, body: ChatRequest):
     await verify_api_key(request)
@@ -2470,6 +2914,7 @@ async def chat_completions(request: Request, body: ChatRequest):
         "duration_ms": 0,
         "error": None,
         "response_preview": None,
+        "response_full": None,
         "empty_visible_response_fallback": False,
         "empty_visible_response_fallback_detail": None,
     }
@@ -2478,35 +2923,19 @@ async def chat_completions(request: Request, body: ChatRequest):
         if has_gateway_managed_tools:
             if body.stream:
                 async def _tool_loop_stream():
-                    yield "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\",\"content\":\"\"}}]}\n\n"
                     log_entry["status"] = "streaming_tools"
-                    task = asyncio.create_task(
-                        _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
-                    )
                     try:
-                        while True:
-                            done, _ = await asyncio.wait({task}, timeout=3.0)
-                            if task in done:
-                                break
-                            if await request.is_disconnected():
-                                task.cancel()
-                                log_entry["status"] = "client_disconnected"
-                                log_entry["error"] = "Client disconnected during internal gateway tool loop."
-                                return
-                            yield ": shenyu-gateway keepalive\n\n"
-
-                        completion = task.result()
-                        _mark_context_consumed(meta)
-                        log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
-                        log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
-                        log_entry["status"] = "ok"
-                        log_entry["response_preview"] = str(completion.get("choices", [{}])[0].get("message", {}).get("content", ""))[:200]
-                        for chunk in _completion_to_stream_events(completion):
+                        async for chunk in _run_internal_tool_loop_stream(
+                            request,
+                            body,
+                            prepared_messages,
+                            meta,
+                            log_entry=log_entry,
+                        ):
                             yield chunk
                     except asyncio.CancelledError:
-                        task.cancel()
                         log_entry["status"] = "client_disconnected"
-                        log_entry["error"] = "Client disconnected during internal gateway tool loop."
+                        log_entry["error"] = "Client disconnected during native internal gateway tool stream."
                         raise
                     except HTTPException as exc:
                         log_entry["status"] = "error"
@@ -2521,29 +2950,30 @@ async def chat_completions(request: Request, body: ChatRequest):
                             yield chunk
                     finally:
                         log_entry["duration_ms"] = int((_time.monotonic() - t0) * 1000)
-                        if not task.done():
-                            task.cancel()
-                return StreamingResponse(_tool_loop_stream(), media_type="text/event-stream")
+                return _sse_response(_tool_loop_stream())
             try:
                 completion = await _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
             except HTTPException as exc:
                 log_entry["status"] = "error"
                 log_entry["error"] = _gateway_error_text(exc)[:500]
                 completion = _gateway_error_completion(body.model, log_entry["error"])
-                log_entry["response_preview"] = completion["choices"][0]["message"]["content"][:200]
+                _record_response_text(log_entry, completion["choices"][0]["message"]["content"])
                 return completion
             except Exception as exc:
                 logger.exception("Internal gateway tool request failed")
                 log_entry["status"] = "error"
                 log_entry["error"] = _gateway_error_text(exc)[:500]
                 completion = _gateway_error_completion(body.model, log_entry["error"])
-                log_entry["response_preview"] = completion["choices"][0]["message"]["content"][:200]
+                _record_response_text(log_entry, completion["choices"][0]["message"]["content"])
                 return completion
             _mark_context_consumed(meta)
             log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
             log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
             log_entry["status"] = "ok"
-            log_entry["response_preview"] = str(completion.get("choices", [{}])[0].get("message", {}).get("content", ""))[:200]
+            _record_response_text(
+                log_entry,
+                str(completion.get("choices", [{}])[0].get("message", {}).get("content", "")),
+            )
             return completion
 
         payload, headers, _, cache_meta, upstream = await _build_upstream_request(
@@ -2588,9 +3018,9 @@ async def chat_completions(request: Request, body: ChatRequest):
                     assistant_msg = {"role": "assistant", "content": collected_text}
                     sessions.log_assistant_output(session_id, assistant_msg)
                     _schedule_inline_memory_capture(request, session, inline_memories or [], collected_text, body.model)
-                    log_entry["response_preview"] = collected_text
+                    _record_response_text(log_entry, collected_text)
                 else:
-                    log_entry["response_preview"] = ""
+                    _record_response_text(log_entry, "")
                 if heartbeat_content:
                     _store_heartbeat(session_id, session, heartbeat_content)
                 _mark_context_consumed(meta)
@@ -2624,7 +3054,7 @@ async def chat_completions(request: Request, body: ChatRequest):
         _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
         _mark_context_consumed(meta)
         log_entry["status"] = "ok"
-        log_entry["response_preview"] = clean_content
+        _record_response_text(log_entry, clean_content)
         return completion
     except Exception as exc:
         log_entry["status"] = "error"

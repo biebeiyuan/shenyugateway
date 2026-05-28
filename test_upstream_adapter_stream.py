@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import json
 
-from shenyu_gateway.upstream_adapter import _completion_to_stream_events
+from shenyu_gateway.upstream_adapter import _anthropic_to_openai_chunk, _completion_to_stream_events
 
 
 def _stream_payloads(completion: dict):
@@ -91,3 +91,83 @@ def test_completion_stream_events_handle_tool_only_reply():
     assert json.loads(tool_delta["function"]["arguments"]) == {"pattern": "TODO"}
     assert payloads[-2]["choices"][0]["finish_reason"] == "tool_calls"
     assert payloads[-1] == "[DONE]"
+
+
+def test_completion_stream_events_can_skip_role_and_chunk_content():
+    completion = {
+        "created": 123,
+        "model": "test-model",
+        "choices": [{"message": {"role": "assistant", "content": "abcdef"}}],
+    }
+
+    payloads = []
+    for event in _completion_to_stream_events(completion, include_role=False, content_chunk_chars=2):
+        for line in event.splitlines():
+            if not line.startswith("data: "):
+                continue
+            data = line.removeprefix("data: ")
+            payloads.append("[DONE]" if data == "[DONE]" else json.loads(data))
+
+    deltas = [payload["choices"][0]["delta"] for payload in payloads if payload != "[DONE]"]
+    assert {"role": "assistant", "content": ""} not in deltas
+    assert [delta["content"] for delta in deltas[:3]] == ["ab", "cd", "ef"]
+    assert payloads[-2]["choices"][0]["finish_reason"] == "stop"
+    assert payloads[-1] == "[DONE]"
+
+
+def test_anthropic_streaming_tool_use_is_forwarded_as_openai_tool_call():
+    start = {
+        "type": "content_block_start",
+        "index": 0,
+        "content_block": {
+            "type": "tool_use",
+            "id": "toolu_1",
+            "name": "read_file",
+            "input": {},
+        },
+    }
+    delta = {
+        "type": "content_block_delta",
+        "index": 0,
+        "delta": {"type": "input_json_delta", "partial_json": "{\"path\""},
+    }
+    stop = {"type": "message_stop"}
+
+    start_payload = json.loads(_anthropic_to_openai_chunk("test-model", start))
+    tool_delta = start_payload["choices"][0]["delta"]["tool_calls"][0]
+    assert tool_delta["id"] == "toolu_1"
+    assert tool_delta["function"]["name"] == "read_file"
+
+    delta_payload = json.loads(_anthropic_to_openai_chunk("test-model", delta))
+    arg_delta = delta_payload["choices"][0]["delta"]["tool_calls"][0]
+    assert arg_delta["index"] == 0
+    assert arg_delta["function"]["arguments"] == "{\"path\""
+
+    stop_payload = json.loads(
+        _anthropic_to_openai_chunk("test-model", stop, finish_reason_override="tool_calls")
+    )
+    assert stop_payload["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_anthropic_tool_block_index_can_be_overridden_for_openai_tool_index():
+    start = {
+        "type": "content_block_start",
+        "index": 2,
+        "content_block": {
+            "type": "tool_use",
+            "id": "toolu_2",
+            "name": "read_file",
+            "input": {},
+        },
+    }
+    delta = {
+        "type": "content_block_delta",
+        "index": 2,
+        "delta": {"type": "input_json_delta", "partial_json": "{\"path\""},
+    }
+
+    start_payload = json.loads(_anthropic_to_openai_chunk("test-model", start, tool_index_override=0))
+    delta_payload = json.loads(_anthropic_to_openai_chunk("test-model", delta, tool_index_override=0))
+
+    assert start_payload["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
+    assert delta_payload["choices"][0]["delta"]["tool_calls"][0]["index"] == 0

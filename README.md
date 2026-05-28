@@ -92,6 +92,32 @@ or the normalized gateway log field:
 cache_usage.cache_read_input_tokens > 0
 ```
 
+## Streaming And Tool Calls
+
+The gateway has two streaming paths:
+
+- Plain pass-through streaming: when no gateway-managed tools are exposed for a request, `_stream_chat()` forwards upstream chunks while filtering private `<heartbeat>` and `[mem]...[/mem]` blocks from visible output.
+- Gateway-managed tool streaming: when `shenyu_*` / `supabase_*` tools are available, `_run_internal_tool_loop_stream()` consumes upstream stream chunks directly. It intercepts gateway-native tool calls, executes them server-side, appends tool results to the working message list, and starts the next upstream round. Final natural-language replies stream to the client token by token.
+
+Request count is still driven by model tool rounds, not by streaming itself:
+
+- direct answer: one upstream request
+- one internal tool round: one upstream request to produce the tool call, then one upstream request to produce the final answer from the tool result
+- repeated internal tool rounds: one upstream request per round, bounded by `MAX_INTERNAL_TOOL_ROUNDS`
+
+Streaming changes the connection shape, not the number of model rounds. The managed stream sends OpenAI-compatible empty delta keepalives while waiting on the upstream or tool execution, and all SSE responses set `Cache-Control: no-cache, no-transform` plus `X-Accel-Buffering: no` to reduce proxy buffering.
+
+Tool routing rules:
+
+- Gateway-native calls are recognized by `is_gateway_native_tool()` and executed through `execute_gateway_tool()`.
+- Mixed batches are split: gateway-native calls are consumed by the gateway, while client-executable calls remain in `tool_calls` and are forwarded to the client.
+- Internal tool exceptions are returned to the model as tool results shaped like `{ok: false, error: ...}` so one failed tool does not automatically fail the whole chat request.
+- Repeated identical tool calls within one internal loop use an in-memory duplicate-result cache.
+
+Adding ordinary gateway-native tools should not require changes to the streaming loop. Add the schema/name dispatch in `shenyu_gateway/tool_registry.py` and the behavior in `shenyu_gateway/gateway_tools.py`. Only update streaming/protocol code when adding a new upstream protocol, a tool whose execution progress must stream to the client, or a non-gateway client tool with special forwarding semantics.
+
+`shenyu_gateway/upstream_adapter.py` normalizes upstream stream protocols. Anthropic `tool_use` / `input_json_delta` chunks are converted into OpenAI-compatible `tool_calls` deltas, and completion-to-SSE conversion can skip duplicate role chunks and split large final content into smaller events.
+
 ## SQLite Runtime State
 
 SQLite stores only gateway runtime state:
@@ -315,6 +341,12 @@ Free-time detection is intentionally broad. It matches current Operit proxy remi
 
 For debugging, check `GET /api/gateway/logs` or `GET /api/gateway/logs/{id}`. When the fallback fires, `empty_visible_response_fallback` is `true` and `empty_visible_response_fallback_detail` records the generated `text`, stored `kinds`, and context (`free_time` or `generic`).
 
+Request log response text fields:
+
+- `response_preview` is a short list-friendly preview and may be truncated.
+- `response_full` is retained in detail logs when `GATEWAY_LOG_FULL_PAYLOADS` is enabled. The admin Response tab prefers `response_full` and falls back to `response_preview`.
+- `client_disconnected` means the gateway detected the downstream client had gone away while a stream/tool loop was still running. Empty-delta keepalives are used to reduce false disconnects through clients or proxies that ignore SSE comments.
+
 ## Configuration
 
 Important environment variables:
@@ -438,6 +470,9 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 - `GET /api/gateway/context/preview` should show `stable`, optional `slow`, and `volatile`.
 - `GET /api/calendar/send-preview?...` should show `Current Client Context Snapshots`, not rolling/frozen blocks.
 - `GET /api/gateway/logs` should show prompt cache breakpoints and cold-start metadata.
+- `GET /api/gateway/logs/{id}` should show `response_full` for retained payloads; the list view should keep using short previews.
+- Run `python -c "import test_gateway_streaming as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after streaming/tool-loop edits when `pytest` is unavailable.
+- Run `python -c "import test_upstream_adapter_stream as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after upstream stream adapter edits when `pytest` is unavailable.
 - Run `cd admin && npm run build` after admin UI edits.
 - Run `python -m py_compile gateway.py shenyu_gateway/*.py` after edits.
 
