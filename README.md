@@ -188,6 +188,58 @@ The short-lived notes table is no longer used by gateway code.
 
 The mem review UI reads and updates Supabase `shenyu_mem_notes`. The old `atomic_memories` table is only exposed through a read-only lookup for manual migration. SQLite only provides local request/session context.
 
+## Recall Index
+
+`shenyu_recall` is the unified search entrypoint for old context. It searches the `shenyu_recall_index` Supabase table with keyword matching first and vector matching when embeddings are configured. The tool returns the selected original chunks with title, source, date, and content, so the model can read the matched text directly instead of only seeing a summary.
+
+Indexed public source types:
+
+- `memory`: rows from `memories`
+- `journal`: rows from `journal`
+- `room`: rows from `room`
+- `board`: rows from `message_board`
+- `calendar`: rows from `calendar_pages`
+- `mem_note`: rows from `shenyu_mem_notes`
+- `notebook`: rows from `shenyu_notebook`
+
+`atomic_memories` and `meta_summaries` are not exposed through the public recall source filter. `note` is accepted only as a backward-compatible alias for old recall index rows; new mem-note rows are indexed as `mem_note`.
+
+Required Supabase migrations:
+
+- `supabase/migrations/20260526_shenyu_recall_index.sql`
+- `supabase/migrations/20260527_shenyu_recall_keyword_rpc.sql`
+- `supabase/migrations/20260527_shenyu_recall_vector_rpc.sql`
+
+Recall-related env vars:
+
+```text
+ENABLE_RECALL_AUTO_SYNC=false
+RECALL_CANDIDATE_LIMIT=160
+
+ENABLE_RECALL_EMBEDDINGS=false
+ENABLE_RECALL_EMBEDDING_WORKER=true
+RECALL_EMBEDDING_WORKER_INTERVAL_SECONDS=900
+RECALL_EMBEDDING_WORKER_BATCH_SIZE=50
+EMBEDDING_BASE_URL=https://api.siliconflow.cn/v1
+EMBEDDING_API_KEY=
+EMBEDDING_MODEL=BAAI/bge-m3
+EMBEDDING_DIM=1024
+```
+
+When `ENABLE_RECALL_EMBEDDINGS=true`, the gateway can fill pending embeddings. The in-process worker runs every `RECALL_EMBEDDING_WORKER_INTERVAL_SECONDS` seconds and embeds up to `RECALL_EMBEDDING_WORKER_BATCH_SIZE` pending rows per pass. This keeps normal `shenyu_recall` calls fast: live search reads the index and only embeds the query vector when vector recall is enabled; it does not rebuild or backfill the whole index during a user request.
+
+For manual backfill or one-off repair, run:
+
+```bash
+python scripts/embed_recall_pending.py --batch-size 50 --sleep 0.5
+```
+
+To inspect source coverage before or after a rebuild:
+
+```bash
+python scripts/inspect_recall_sources.py
+```
+
 ## Cold Start Layer
 
 Cold start bridges context across windows without reintroducing the retired frozen context layer. It now behaves like

@@ -16,7 +16,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_recall",
-                "description": "统一召回入口：按语义/关键词查 memories、journal、room、calendar、mem、notebook 等索引，不需要猜 Supabase 表。",
+                "description": "统一召回入口：按语义/关键词查 memories、journal、room、calendar、mem note、notebook 等索引，不需要猜 Supabase 表。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -25,7 +25,7 @@ def _gateway_core_tools() -> list[dict]:
                             "type": "array",
                             "items": {
                                 "type": "string",
-                                "enum": ["all", "memory", "journal", "room", "board", "calendar", "note", "atomic", "notebook", "meta"],
+                                "enum": ["all", "memory", "journal", "room", "board", "calendar", "mem_note", "notebook"],
                             },
                             "default": ["all"],
                         },

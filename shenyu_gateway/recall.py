@@ -365,7 +365,7 @@ class RecallIndexService:
             limit = DEFAULT_RECALL_CANDIDATE_LIMIT
         return max(20, min(limit, 1000))
 
-    def _source_type_filter(self, source_types: Optional[list[str]]) -> list[str]:
+    def _requested_source_types(self, source_types: Optional[list[str]]) -> list[str]:
         types = []
         for item in source_types or []:
             if item is None:
@@ -373,6 +373,19 @@ class RecallIndexService:
             source_type = str(item).strip()
             if source_type and source_type != "all":
                 types.append(source_type)
+        return types
+
+    def _source_type_filter(self, source_types: Optional[list[str]]) -> list[str]:
+        types = []
+        for source_type in self._requested_source_types(source_types):
+            if source_type in {"note", "mem_note"}:
+                for alias in ("mem_note", "note"):
+                    if alias not in types:
+                        types.append(alias)
+                continue
+            if source_type in {"atomic", "meta"}:
+                continue
+            types.append(source_type)
         return types
 
     def _auto_sync_enabled(self, auto_sync: Optional[bool]) -> bool:
@@ -553,6 +566,8 @@ class RecallIndexService:
         if error or vector is None:
             return [], {"enabled": True, "used": False, "error": error or "query embedding failed"}
         types = self._source_type_filter(source_types)
+        if self._requested_source_types(source_types) and not types:
+            return [], {"enabled": True, "used": False, "reason": "no valid source_types"}
         try:
             rows = await self.supabase.rpc(
                 "match_shenyu_recall_index",
@@ -584,6 +599,17 @@ class RecallIndexService:
                 merged[key] = dict(row)
         return list(merged.values())
 
+    def _row_matches_tokens(self, row: dict, tokens: list[str], query_text: str) -> bool:
+        if not tokens and not query_text.strip():
+            return True
+        search_text = (row.get("search_text") or "").lower()
+        row_tokens = {str(item).lower() for item in row.get("search_tokens") or []}
+        if any(token in row_tokens or token in search_text for token in tokens):
+            return True
+        compact_query = re.sub(r"\s+", "", query_text.lower())
+        compact_text = re.sub(r"\s+", "", search_text)
+        return bool(compact_query and compact_query in compact_text)
+
     async def _query_index(
         self,
         source_types: Optional[list[str]] = None,
@@ -591,6 +617,8 @@ class RecallIndexService:
         tokens: Optional[list[str]] = None,
     ) -> list[dict]:
         types = self._source_type_filter(source_types)
+        if self._requested_source_types(source_types) and not types:
+            return []
         candidate_limit = self._candidate_limit()
         if hasattr(self.supabase, "rpc"):
             try:
@@ -616,7 +644,11 @@ class RecallIndexService:
         }
         if types:
             params["source_type"] = "in.(" + ",".join(types) + ")"
-        return await self.supabase.query(RECALL_INDEX_TABLE, params)
+        rows = await self.supabase.query(RECALL_INDEX_TABLE, params)
+        if tokens or query_text.strip():
+            matched = [row for row in rows if self._row_matches_tokens(row, tokens or [], query_text)]
+            return matched or rows
+        return rows
 
     def _score_row(self, row: dict, query: str, tokens: list[str]) -> tuple[float, list[str]]:
         title = (row.get("title") or "").lower()
@@ -713,10 +745,9 @@ class RecallIndexService:
             "memory": 0.88,
             "journal": 0.82,
             "calendar": 0.76,
+            "mem_note": 0.74,
             "note": 0.74,
-            "atomic": 0.70,
             "notebook": 0.68,
-            "meta": 0.66,
             "board": 0.58,
         }.get(source_type or "", 0.5)
 
@@ -781,13 +812,11 @@ class RecallIndexService:
             "memory": "memories",
             "memories": "memories",
             "calendar": "calendar_pages",
-            "note": "shenyu_mem_notes",
             "mem_note": "shenyu_mem_notes",
-            "atomic": "atomic_memories",
             "notebook": "shenyu_notebook",
-            "meta": "meta_summaries",
         }
-        if not source_types or "all" in source_types:
+        requested = self._requested_source_types(source_types)
+        if not requested:
             return [
                 "journal",
                 "room",
@@ -795,16 +824,14 @@ class RecallIndexService:
                 "memories",
                 "calendar_pages",
                 "shenyu_mem_notes",
-                "atomic_memories",
                 "shenyu_notebook",
-                "meta_summaries",
             ]
         names = []
-        for source_type in source_types:
+        for source_type in requested:
             mapped = mapping.get(str(source_type).strip())
             if mapped and mapped not in names:
                 names.append(mapped)
-        return names or list(dict.fromkeys(mapping.values()))
+        return names
 
     async def _load_documents(self, source_table: str) -> list[RecallDocument]:
         loaders = {
@@ -985,7 +1012,7 @@ class RecallIndexService:
                 _make_documents(
                     source_table="shenyu_mem_notes",
                     source_id=row.get("id"),
-                    source_type="note",
+                    source_type="mem_note",
                     title=row.get("mem_type") or _shorten(row.get("content") or "", 60),
                     body=body,
                     session_tag=row.get("session_tag"),

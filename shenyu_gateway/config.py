@@ -90,6 +90,9 @@ class RuntimeConfig:
         self.enable_recall_auto_sync: bool = _env_bool("ENABLE_RECALL_AUTO_SYNC", False)
         self.recall_candidate_limit: int = _env_int("RECALL_CANDIDATE_LIMIT", 160, 20, 1000)
         self.enable_recall_embeddings: bool = _env_bool("ENABLE_RECALL_EMBEDDINGS", False)
+        self.enable_recall_embedding_worker: bool = _env_bool("ENABLE_RECALL_EMBEDDING_WORKER", True)
+        self.recall_embedding_worker_interval_seconds: int = _env_int("RECALL_EMBEDDING_WORKER_INTERVAL_SECONDS", 900, 60, 86400)
+        self.recall_embedding_worker_batch_size: int = _env_int("RECALL_EMBEDDING_WORKER_BATCH_SIZE", 50, 1, 1000)
         self.embedding_base_url: str = os.getenv("EMBEDDING_BASE_URL", "https://api.siliconflow.cn/v1").strip()
         self.embedding_api_key: str = os.getenv("EMBEDDING_API_KEY", "").strip()
         self.embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3").strip()
@@ -150,6 +153,9 @@ class RuntimeConfig:
             "enable_recall_auto_sync": self.enable_recall_auto_sync,
             "recall_candidate_limit": self.recall_candidate_limit,
             "enable_recall_embeddings": self.enable_recall_embeddings,
+            "enable_recall_embedding_worker": self.enable_recall_embedding_worker,
+            "recall_embedding_worker_interval_seconds": self.recall_embedding_worker_interval_seconds,
+            "recall_embedding_worker_batch_size": self.recall_embedding_worker_batch_size,
             "embedding_base_url": self.embedding_base_url,
             "embedding_api_key": mask(self.embedding_api_key) if self.embedding_api_key else "",
             "embedding_model": self.embedding_model,

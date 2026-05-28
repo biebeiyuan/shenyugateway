@@ -338,3 +338,53 @@ def test_recall_returns_clear_error_when_index_table_is_missing():
     assert result["ok"] is False
     assert result["count"] == 0
     assert "recall index table is not ready" in result["error"]
+
+
+def test_recall_source_type_filter_hides_atomic_and_meta_and_aliases_mem_note():
+    service = RecallIndexService(FakeSupabase([]))
+
+    assert service._source_type_filter(["mem_note"]) == ["mem_note", "note"]
+    assert service._source_type_filter(["note"]) == ["mem_note", "note"]
+    assert service._source_type_filter(["atomic", "meta", "memory"]) == ["memory"]
+    assert service._source_type_filter(["atomic", "meta"]) == []
+    assert service._adapter_names() == [
+        "journal",
+        "room",
+        "message_board",
+        "memories",
+        "calendar_pages",
+        "shenyu_mem_notes",
+        "shenyu_notebook",
+    ]
+    assert service._adapter_names(["atomic", "meta", "mem_note"]) == ["shenyu_mem_notes"]
+    assert service._adapter_names(["atomic", "meta"]) == []
+
+
+def test_recall_rejects_removed_source_types_without_widening_to_all():
+    rows = [
+        {
+            "source_table": "memories",
+            "source_id": "1",
+            "source_type": "memory",
+            "chunk_index": 0,
+            "session_tag": "5.15",
+            "title": "长隆海洋馆",
+            "body": "今天写到了长隆和海獭。",
+            "excerpt": "今天写到了长隆和海獭。",
+            "search_text": "长隆海洋馆 今天写到了长隆和海獭",
+            "search_tokens": ["长隆", "海獭"],
+            "tags_json": [],
+            "entities_json": [],
+            "event_date": "2026-05-20T00:00:00+00:00",
+            "importance": 0.6,
+            "status": "active",
+            "visibility": None,
+        },
+    ]
+    supabase = FakeSupabase(rows)
+    service = RecallIndexService(supabase)
+
+    result = asyncio.run(service.recall("长隆", source_types=["atomic", "meta"], session_tag="5.15", auto_sync=False))
+
+    assert result == {"ok": True, "count": 0, "items": []}
+    assert supabase.rpc_calls == []

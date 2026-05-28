@@ -417,3 +417,19 @@ def test_gateway_tools_do_not_expose_legacy_atomic_memories():
     cfg.gateway_tool_mode = "full"
     names = [tool["function"]["name"] for tool in gateway_native_tools(cfg)]
     assert "shenyu_legacy_atomic_memories" not in names
+
+
+def test_shenyu_recall_source_types_are_public_set_only():
+    cfg = _cfg()
+
+    broker_tool = gateway_native_tools(cfg)[0]
+    assert "shenyu_recall" in broker_tool["function"]["parameters"]["properties"]["tool"]["enum"]
+
+    cfg.gateway_tool_mode = "full"
+    recall_tool = next(tool for tool in gateway_native_tools(cfg) if tool["function"]["name"] == "shenyu_recall")
+    source_types = recall_tool["function"]["parameters"]["properties"]["source_types"]["items"]["enum"]
+
+    assert source_types == ["all", "memory", "journal", "room", "board", "calendar", "mem_note", "notebook"]
+    assert "note" not in source_types
+    assert "atomic" not in source_types
+    assert "meta" not in source_types

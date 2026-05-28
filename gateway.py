@@ -53,6 +53,7 @@ from shenyu_gateway.context_layers import (
 )
 from shenyu_gateway.gateway_tools import GatewayToolService, configure_gateway_tools
 from shenyu_gateway.mem_notes import MemNoteService
+from shenyu_gateway.recall import RecallIndexService
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
     json_dumps as _json_dumps,
@@ -309,6 +310,7 @@ def _connect_error_detail(chat_url: str, exc: Exception) -> str:
 cfg = RuntimeConfig()
 supabase_client: Optional["SupabaseClient"] = None
 session_store: Optional["GatewayStore"] = None
+recall_embedding_worker_task: Optional[asyncio.Task] = None
 configure_gateway_tools(runtime_config=cfg, supabase=supabase_client, store=session_store)
 
 
@@ -342,14 +344,50 @@ def _make_upstream_http_client() -> httpx.AsyncClient:
     return httpx.AsyncClient(**kwargs)
 
 
+async def _recall_embedding_worker():
+    if not supabase_client:
+        return
+    interval = max(int(cfg.recall_embedding_worker_interval_seconds or 900), 60)
+    batch_size = max(1, min(int(cfg.recall_embedding_worker_batch_size or 50), 1000))
+    service = RecallIndexService(supabase_client, cfg=cfg)
+    if not service.embedding_client or not service.embedding_client.enabled:
+        logger.info("[RecallEmbeddingWorker] disabled: embedding API is not configured")
+        return
+    logger.info("[RecallEmbeddingWorker] started interval=%ss batch_size=%s", interval, batch_size)
+    try:
+        while True:
+            try:
+                result = await service.embed_pending(limit=batch_size)
+                if result.get("seen"):
+                    logger.info("[RecallEmbeddingWorker] result=%s", result)
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                logger.exception("[RecallEmbeddingWorker] batch failed")
+            await asyncio.sleep(interval)
+    except asyncio.CancelledError:
+        logger.info("[RecallEmbeddingWorker] stopped")
+        raise
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global recall_embedding_worker_task
     _init_supabase()
     _init_store()
+    if cfg.enable_recall_embedding_worker and cfg.enable_recall_embeddings and supabase_client:
+        recall_embedding_worker_task = asyncio.create_task(_recall_embedding_worker())
     # connect/write/pool 保持合理超时；read 设为 None，因为流式场景下
     # LLM 可能 thinking 很久才开始输出，读取不能有固定超时。
     app.state.http = _make_upstream_http_client()
     yield
+    if recall_embedding_worker_task:
+        recall_embedding_worker_task.cancel()
+        try:
+            await recall_embedding_worker_task
+        except asyncio.CancelledError:
+            pass
+        recall_embedding_worker_task = None
     if supabase_client:
         await supabase_client.close()
     await app.state.http.aclose()
