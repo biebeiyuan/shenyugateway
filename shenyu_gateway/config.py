@@ -87,6 +87,13 @@ class RuntimeConfig:
         self.expose_supabase_tools: bool = _env_bool("EXPOSE_SUPABASE_TOOLS", True)
         self.gateway_tool_mode: str = self._normalize_tool_mode(os.getenv("GATEWAY_TOOL_MODE", "broker"))
         self.max_internal_tool_rounds: int = _env_int("MAX_INTERNAL_TOOL_ROUNDS", 4, 1, 8)
+        self.enable_recall_auto_sync: bool = _env_bool("ENABLE_RECALL_AUTO_SYNC", False)
+        self.recall_candidate_limit: int = _env_int("RECALL_CANDIDATE_LIMIT", 160, 20, 1000)
+        self.enable_recall_embeddings: bool = _env_bool("ENABLE_RECALL_EMBEDDINGS", False)
+        self.embedding_base_url: str = os.getenv("EMBEDDING_BASE_URL", "https://api.siliconflow.cn/v1").strip()
+        self.embedding_api_key: str = os.getenv("EMBEDDING_API_KEY", "").strip()
+        self.embedding_model: str = os.getenv("EMBEDDING_MODEL", "BAAI/bge-m3").strip()
+        self.embedding_dim: int = _env_int("EMBEDDING_DIM", 1024, 1, 8192)
 
         self.gateway_db_path: str = os.getenv("GATEWAY_DB_PATH", "./data/shenyu_gateway.db")
         self.calendar_context_day_limit: int = _env_int("CALENDAR_CONTEXT_DAY_LIMIT", 3, 1, 30)
@@ -140,6 +147,13 @@ class RuntimeConfig:
             "expose_supabase_tools": self.expose_supabase_tools,
             "gateway_tool_mode": self.gateway_tool_mode,
             "max_internal_tool_rounds": self.max_internal_tool_rounds,
+            "enable_recall_auto_sync": self.enable_recall_auto_sync,
+            "recall_candidate_limit": self.recall_candidate_limit,
+            "enable_recall_embeddings": self.enable_recall_embeddings,
+            "embedding_base_url": self.embedding_base_url,
+            "embedding_api_key": mask(self.embedding_api_key) if self.embedding_api_key else "",
+            "embedding_model": self.embedding_model,
+            "embedding_dim": self.embedding_dim,
             "gateway_db_path": self.gateway_db_path,
             "calendar_context_day_limit": self.calendar_context_day_limit,
             "calendar_context_week_limit": self.calendar_context_week_limit,

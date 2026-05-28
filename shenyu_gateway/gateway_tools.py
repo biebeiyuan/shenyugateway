@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from shenyu_gateway.calendar import default_period_key, period_bounds
 from shenyu_gateway.mem_notes import MemNoteService
+from shenyu_gateway.recall import RecallIndexService
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
     json_dumps as _json_dumps,
@@ -299,6 +300,39 @@ class GatewayToolService:
 
     def _mem_notes(self) -> MemNoteService:
         return MemNoteService(self.cfg, self.supabase)
+
+    def _recall_index(self) -> RecallIndexService:
+        return RecallIndexService(self.supabase, cfg=self.cfg)
+
+    def _recall_source_types(self, value: Any) -> Optional[list[str]]:
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str) and value.strip():
+            return [item.strip() for item in re.split(r"[,，\s]+", value) if item.strip()]
+        return None
+
+    async def recall(
+        self,
+        query: str,
+        source_types: Any = None,
+        session_tag: Optional[str] = None,
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+        limit: int = 8,
+        auto_sync: Optional[bool] = None,
+    ) -> dict:
+        return await self._recall_index().recall(
+            query=query,
+            source_types=self._recall_source_types(source_types),
+            session_tag=session_tag,
+            date_from=date_from,
+            date_to=date_to,
+            limit=limit,
+            auto_sync=auto_sync,
+        )
+
+    async def rebuild_recall_index(self, source_types: Any = None) -> dict:
+        return await self._recall_index().rebuild(self._recall_source_types(source_types))
 
     async def search_mem_notes(
         self,

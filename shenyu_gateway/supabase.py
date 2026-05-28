@@ -74,6 +74,15 @@ class SupabaseClient:
         result = response.json()
         return result[0] if isinstance(result, list) and result else result
 
+    async def upsert(self, table: str, data: Any, on_conflict: Optional[str] = None) -> list:
+        params = {"on_conflict": on_conflict} if on_conflict else {}
+        headers = dict(self.headers)
+        headers["Prefer"] = "resolution=merge-duplicates,return=representation"
+        response = await self._request("POST", f"{self.base_url}/{table}", params=params, json=data, headers=headers)
+        _raise_for_status(response)
+        result = response.json()
+        return result if isinstance(result, list) else [result]
+
     def _filter_params(self, match: Any) -> Any:
         if isinstance(match, list):
             return match

@@ -41,6 +41,64 @@ class FakeToolService:
         )
         return {"ok": True, "query": query, "status": status, "limit": limit}
 
+    async def search_primary_texts(self, query: str, categories=None, session_tag=None, limit: int = 5):
+        self.calls.append(
+            {
+                "tool": "shenyu_search_primary_texts",
+                "query": query,
+                "categories": categories,
+                "session_tag": session_tag,
+                "limit": limit,
+            }
+        )
+        return {"ok": True, "query": query, "limit": limit}
+
+    async def recall(
+        self,
+        query: str,
+        source_types=None,
+        session_tag=None,
+        date_from=None,
+        date_to=None,
+        limit: int = 8,
+        auto_sync: bool = True,
+    ):
+        self.calls.append(
+            {
+                "tool": "shenyu_recall",
+                "query": query,
+                "source_types": source_types,
+                "session_tag": session_tag,
+                "date_from": date_from,
+                "date_to": date_to,
+                "limit": limit,
+                "auto_sync": auto_sync,
+            }
+        )
+        return {"ok": True, "query": query, "limit": limit}
+
+    async def ask_memory(
+        self,
+        query: str,
+        session_tag: str,
+        limit: int = 8,
+        date=None,
+        date_from=None,
+        date_to=None,
+    ):
+        self.calls.append(
+            {
+                "tool": "shenyu_ask_memory",
+                "query": query,
+                "session_tag": session_tag,
+                "limit": limit,
+                "date": date,
+                "date_from": date_from,
+                "date_to": date_to,
+            }
+        )
+        return {"ok": True, "query": query, "limit": limit}
+
     async def write_mem_note(
         self,
         content: str,
@@ -95,6 +153,7 @@ def _cfg(enable_mem0_management_tools: bool = False):
         gateway_tool_mode="broker",
         default_surface_limit=3,
         mem_note_limit=3,
+        enable_recall_auto_sync=False,
     )
 
 
@@ -200,6 +259,120 @@ def test_execute_gateway_tool_routes_search_mem_notes_as_browse():
             "limit": 60,
             "status": "all",
             "mem_type": None,
+        }
+    ]
+
+
+def test_execute_gateway_tool_accepts_broker_json_string_arguments():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_ask_memory",
+                "arguments": "{\"query\":\"长隆海洋馆 海獭 企鹅\",\"limit\":2}",
+            },
+            session_tag="default",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "query": "长隆海洋馆 海獭 企鹅", "limit": 2}
+    assert service.calls == [
+        {
+            "tool": "shenyu_ask_memory",
+            "query": "长隆海洋馆 海獭 企鹅",
+            "session_tag": None,
+            "limit": 2,
+            "date": None,
+            "date_from": None,
+            "date_to": None,
+        }
+    ]
+
+
+def test_execute_gateway_tool_routes_shenyu_recall():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_recall",
+                "arguments": {
+                    "query": "长隆 海獭",
+                    "source_types": ["memory", "journal"],
+                    "limit": 6,
+                },
+            },
+            session_tag="5.15",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "query": "长隆 海獭", "limit": 6}
+    assert service.calls == [
+        {
+            "tool": "shenyu_recall",
+            "query": "长隆 海獭",
+            "source_types": ["memory", "journal"],
+            "session_tag": "5.15",
+            "date_from": None,
+            "date_to": None,
+            "limit": 6,
+            "auto_sync": False,
+        }
+    ]
+
+
+def test_execute_gateway_tool_unwraps_nested_broker_arguments_object():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_ask_memory",
+                "arguments": "{\"arguments\":{\"query\":\"claudeai 长隆\",\"limit\":3}}",
+            },
+            session_tag="default",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "query": "claudeai 长隆", "limit": 3}
+    assert service.calls[0]["query"] == "claudeai 长隆"
+    assert service.calls[0]["limit"] == 3
+
+
+def test_execute_gateway_tool_accepts_q_alias_for_primary_text_search():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_search_primary_texts",
+                "arguments": {"q": "海獭", "limit": 5},
+            },
+            session_tag="5.15",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "query": "海獭", "limit": 5}
+    assert service.calls == [
+        {
+            "tool": "shenyu_search_primary_texts",
+            "query": "海獭",
+            "categories": None,
+            "session_tag": "5.15",
+            "limit": 5,
         }
     ]
 

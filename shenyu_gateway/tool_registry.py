@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Awaitable, Callable, Optional
 
 from shenyu_gateway.gateway_tools import GatewayToolService
@@ -11,6 +12,32 @@ MEM_NOTE_TYPE_ENUM = list(MEM_NOTE_TYPES)
 
 def _gateway_core_tools() -> list[dict]:
     return [
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_recall",
+                "description": "统一召回入口：按语义/关键词查 memories、journal、room、calendar、mem、notebook 等索引，不需要猜 Supabase 表。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "source_types": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": ["all", "memory", "journal", "room", "board", "calendar", "note", "atomic", "notebook", "meta"],
+                            },
+                            "default": ["all"],
+                        },
+                        "date_from": {"type": "string"},
+                        "date_to": {"type": "string"},
+                        "session_tag": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 8},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
         {
             "type": "function",
             "function": {
@@ -473,6 +500,32 @@ def _int_arg(arguments: dict, key: str, default: int) -> int:
         return default
 
 
+def _coerce_json_object(value: Any) -> Optional[dict]:
+    current = value
+    for _ in range(2):
+        if not isinstance(current, str):
+            break
+        text = current.strip()
+        if not text:
+            return {}
+        try:
+            current = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    return current if isinstance(current, dict) else None
+
+
+def _coerce_broker_arguments(value: Any) -> Optional[dict]:
+    target_args = _coerce_json_object(value)
+    if target_args is None:
+        return None
+    if set(target_args) == {"arguments"}:
+        nested_args = _coerce_json_object(target_args.get("arguments"))
+        if nested_args is not None:
+            return nested_args
+    return target_args
+
+
 def _mem_note_id_arg(arguments: dict) -> str:
     for key in ("note_id", "id", "noteId"):
         value = arguments.get(key)
@@ -501,9 +554,12 @@ async def execute_gateway_tool(
     service = service or GatewayToolService(runtime_config=cfg)
     if name == "shenyu_gateway_tool":
         target_name = str(arguments.get("tool") or arguments.get("name") or "").strip()
-        target_args = arguments.get("arguments") or {}
-        if not isinstance(target_args, dict):
-            return {"ok": False, "error": "`arguments` must be an object."}
+        raw_target_args = arguments.get("arguments")
+        if raw_target_args is None:
+            raw_target_args = {key: value for key, value in arguments.items() if key not in {"tool", "name"}}
+        target_args = _coerce_broker_arguments(raw_target_args)
+        if target_args is None:
+            return {"ok": False, "error": "`arguments` must be an object or a JSON object string."}
         allowed = set(_gateway_tool_names(cfg))
         if target_name not in allowed:
             return {
@@ -521,13 +577,22 @@ async def execute_gateway_tool(
 
     resolved_session_tag = arguments.get("session_tag") or session_tag
     handlers: dict[str, Callable[[], Awaitable[dict]]] = {
+        "shenyu_recall": lambda: service.recall(
+            query=arguments.get("query") or arguments.get("q") or "",
+            source_types=arguments.get("source_types") or arguments.get("sources"),
+            session_tag=arguments.get("session_tag") or session_tag,
+            date_from=arguments.get("date_from") or arguments.get("since"),
+            date_to=arguments.get("date_to") or arguments.get("until"),
+            limit=_int_arg(arguments, "limit", 8),
+            auto_sync=bool(getattr(cfg, "enable_recall_auto_sync", False)),
+        ),
         "shenyu_surface_passages": lambda: service.surface_passages(
             query=arguments.get("query", ""),
             session_tag=resolved_session_tag,
             limit=_int_arg(arguments, "limit", cfg.default_surface_limit),
         ),
         "shenyu_search_primary_texts": lambda: service.search_primary_texts(
-            query=arguments.get("query", ""),
+            query=arguments.get("query") or arguments.get("q") or "",
             categories=arguments.get("categories"),
             session_tag=resolved_session_tag,
             limit=_int_arg(arguments, "limit", 5),
@@ -543,7 +608,7 @@ async def execute_gateway_tool(
         ),
         "shenyu_supabase_guide": lambda: service.supabase_guide(),
         "shenyu_ask_memory": lambda: service.ask_memory(
-            query=arguments.get("query", ""),
+            query=arguments.get("query") or arguments.get("q") or "",
             session_tag=arguments.get("session_tag"),
             limit=_int_arg(arguments, "limit", 8),
             date=arguments.get("date"),
