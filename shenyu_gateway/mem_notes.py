@@ -4,6 +4,7 @@ import re
 from datetime import timedelta
 from typing import Any, Optional
 
+from shenyu_gateway.recall import RecallIndexService, recall_terms
 from .runtime import iso_now, now as _now, parse_ts as _parse_ts
 
 
@@ -12,6 +13,37 @@ MEM_NOTE_STATUSES = ("captured", "active", "paused", "archived")
 _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
+_CONTEXT_QUERY_ATTACHMENT_RE = re.compile(
+    r"\s*<attachment\b(?=[^>]*\bid\s*=\s*['\"]?message_insert_extra_bundle_[^'\"\s>]+['\"]?)[^>]*>.*?</attachment>",
+    re.IGNORECASE | re.DOTALL,
+)
+CONTEXT_KEYWORD_MIN_SCORE = 0.35
+CONTEXT_SEMANTIC_MIN_SCORE = 0.40
+CONTEXT_SEMANTIC_MIN_VECTOR_SCORE = 0.58
+CONTEXT_ANCHORED_SEMANTIC_MIN_SCORE = 0.30
+CONTEXT_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE = 0.48
+CONTEXT_WEAK_KEYWORD_HITS = {
+    "0",
+    "mem",
+    "note",
+    "一下",
+    "可以",
+    "东西",
+    "为什么",
+    "为什",
+    "什么",
+    "现在",
+    "到底",
+    "还是",
+    "不是",
+    "是不",
+    "自己",
+    "怎么",
+    "方式",
+    "的方",
+    "类的",
+    "写的",
+}
 
 
 def _normalize_text(content: Any) -> str:
@@ -72,6 +104,18 @@ def _normalize_note_id(value: Any) -> str:
     return match.group(0) if match else raw
 
 
+def _clean_context_query(query: Any) -> str:
+    text = _normalize_text(query)
+    if not text:
+        return ""
+    text = _CONTEXT_QUERY_ATTACHMENT_RE.sub(" ", text)
+    text = re.sub(r"<attachment\b[^>]*>", " ", text, flags=re.IGNORECASE)
+    text = text.replace("</attachment>", " ")
+    text = re.sub(r"message_insert_extra_bundle_[0-9A-Za-z_-]+", " ", text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
 class MemNoteService:
     def __init__(self, cfg: Any, supabase_client: Any):
         self.cfg = cfg
@@ -116,6 +160,7 @@ class MemNoteService:
         session_tag: Optional[str] = None,
         limit: int = 3,
         mark_triggered: bool = True,
+        min_score: Optional[float] = None,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "query": query, "count": 0, "items": [], "note": "Supabase is not configured."}
@@ -136,7 +181,11 @@ class MemNoteService:
             params["session_tag"] = f"eq.{session_tag}"
         rows = await self.supabase.query("shenyu_mem_notes", params)
 
-        min_score = float(getattr(self.cfg, "mem_note_min_score", 0.45) or 0.45)
+        min_score = (
+            self._float_range(min_score, 0.45, 0.0, 1.0)
+            if min_score is not None
+            else float(getattr(self.cfg, "mem_note_min_score", 0.45) or 0.45)
+        )
         scored: list[tuple[float, dict, list[str]]] = []
         for row in rows:
             if self._in_cooldown(row):
@@ -151,6 +200,56 @@ class MemNoteService:
         if mark_triggered and items:
             await self._mark_triggered([row for _, row, _ in selected])
         return {"ok": True, "query": query, "count": len(items), "items": items}
+
+    async def search_notes_contextual(
+        self,
+        query: str,
+        session_tag: Optional[str] = None,
+        limit: int = 3,
+        mark_triggered: bool = True,
+        recall_service: Optional[RecallIndexService] = None,
+    ) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "query": query, "count": 0, "items": [], "note": "Supabase is not configured."}
+
+        clean_query = _clean_context_query(query)
+        if not clean_query:
+            return {"ok": True, "query": clean_query, "count": 0, "items": []}
+
+        target_limit = max(1, min(int(limit or 3), 5))
+        keyword_min_score = self._float_range(
+            getattr(self.cfg, "mem_note_context_keyword_min_score", CONTEXT_KEYWORD_MIN_SCORE),
+            CONTEXT_KEYWORD_MIN_SCORE,
+            0.0,
+            1.0,
+        )
+        keyword_result = await self.search_notes(
+            clean_query,
+            session_tag=session_tag,
+            limit=target_limit,
+            mark_triggered=False,
+            min_score=keyword_min_score,
+        )
+        items = list(keyword_result.get("items") or [])
+        selected_ids = {str(item.get("id") or "") for item in items if item.get("id")}
+
+        if not items:
+            semantic_items = await self._semantic_search_notes(
+                clean_query,
+                session_tag=session_tag,
+                limit=target_limit,
+                exclude_ids=selected_ids,
+                recall_service=recall_service,
+            )
+            items.extend(semantic_items)
+
+        items = items[:target_limit]
+        if mark_triggered and items:
+            note_ids = [str(item.get("id") or "") for item in items if item.get("id")]
+            rows_by_id = await self._get_notes_by_ids(note_ids)
+            await self._mark_triggered([rows_by_id[note_id] for note_id in note_ids if note_id in rows_by_id])
+
+        return {"ok": True, "query": clean_query, "count": len(items), "items": items}
 
     async def list_notes(
         self,
@@ -409,6 +508,143 @@ class MemNoteService:
             "updated_at": row.get("updated_at"),
         }
 
+    async def _get_notes_by_ids(self, note_ids: list[str]) -> dict[str, dict[str, Any]]:
+        if not note_ids or not self.supabase:
+            return {}
+        unique_ids: list[str] = []
+        seen: set[str] = set()
+        for note_id in note_ids:
+            normalized = _normalize_note_id(note_id)
+            if not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            unique_ids.append(normalized)
+        if not unique_ids:
+            return {}
+        rows = await self.supabase.query(
+            "shenyu_mem_notes",
+            {
+                "id": "in.(" + ",".join(unique_ids) + ")",
+                "limit": str(len(unique_ids)),
+                "select": (
+                    "id,session_tag,content,mem_type,trigger_text,trigger_keywords,status,"
+                    "cooldown_hours,last_triggered_at,trigger_count,source_model,source_session_id,"
+                    "source_excerpt,review_note,reviewed_at,created_at,updated_at"
+                ),
+            },
+        )
+        result: dict[str, dict[str, Any]] = {}
+        for row in rows:
+            note_id = str(row.get("id") or "").strip()
+            if note_id:
+                result[note_id] = row
+        return result
+
+    async def _semantic_search_notes(
+        self,
+        query: str,
+        session_tag: Optional[str],
+        limit: int,
+        *,
+        exclude_ids: Optional[set[str]] = None,
+        recall_service: Optional[RecallIndexService] = None,
+    ) -> list[dict[str, Any]]:
+        if not query.strip() or not self.supabase:
+            return []
+        exclude_ids = exclude_ids or set()
+        service = recall_service or RecallIndexService(self.supabase, cfg=self.cfg)
+        tokens = recall_terms(query)
+        try:
+            keyword_rows = await service._query_index(source_types=["mem_note"], query_text=query, tokens=tokens)
+        except Exception:
+            keyword_rows = []
+        try:
+            vector_rows, _ = await service._vector_rows(query, source_types=["mem_note"])
+        except Exception:
+            vector_rows = []
+        rows = service._merge_candidate_rows(keyword_rows, vector_rows)
+        if not rows:
+            return []
+
+        candidate_ids: list[str] = []
+        for row in rows:
+            note_id = str(row.get("source_id") or "").strip()
+            if note_id and note_id not in exclude_ids and note_id not in candidate_ids:
+                candidate_ids.append(note_id)
+
+        note_rows = await self._get_notes_by_ids(candidate_ids)
+        candidates: list[tuple[float, list[str], dict[str, Any], dict[str, Any]]] = []
+        seen_ids: set[str] = set()
+        semantic_min_score = self._float_range(
+            getattr(self.cfg, "mem_note_semantic_min_score", CONTEXT_SEMANTIC_MIN_SCORE),
+            CONTEXT_SEMANTIC_MIN_SCORE,
+            0.0,
+            1.0,
+        )
+        semantic_min_vector_score = self._float_range(
+            getattr(self.cfg, "mem_note_semantic_min_vector_score", CONTEXT_SEMANTIC_MIN_VECTOR_SCORE),
+            CONTEXT_SEMANTIC_MIN_VECTOR_SCORE,
+            0.0,
+            1.0,
+        )
+        for row in rows:
+            note_id = str(row.get("source_id") or "").strip()
+            if not note_id or note_id in seen_ids or note_id in exclude_ids:
+                continue
+            note = note_rows.get(note_id)
+            if not note or (note.get("status") or "") != "active":
+                continue
+            if session_tag and (note.get("session_tag") or "").strip() != session_tag:
+                continue
+            if not service._row_visible_for_session(row, session_tag):
+                continue
+            if self._in_cooldown(note):
+                continue
+            score, reasons = service._score_row(row, query, tokens)
+            vector_score = max(0.0, min(float(row.get("_vector_score") or 0.0), 1.0))
+            has_direct_match = service._has_direct_match(reasons)
+            if tokens and not has_direct_match and not vector_score:
+                continue
+            strong_hits = self._context_strong_keyword_hits(reasons)
+            is_strong_semantic = score >= semantic_min_score and vector_score >= semantic_min_vector_score
+            is_anchored_semantic = (
+                bool(strong_hits)
+                and score >= CONTEXT_ANCHORED_SEMANTIC_MIN_SCORE
+                and vector_score >= CONTEXT_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE
+            )
+            if not is_strong_semantic and not is_anchored_semantic:
+                continue
+            candidates.append((score, reasons, note, row))
+            seen_ids.add(note_id)
+
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        selected = candidates[: max(1, min(int(limit or 3), 5))]
+        items: list[dict[str, Any]] = []
+        for score, reasons, note, row in selected:
+            item = self._public_search_item(note, reasons)
+            item["score"] = round(score, 3)
+            item["search_mode"] = "semantic"
+            if row.get("_vector_score") is not None:
+                try:
+                    item["semantic_score"] = round(float(row.get("_vector_score") or 0.0), 3)
+                except (TypeError, ValueError):
+                    item["semantic_score"] = 0.0
+            items.append(item)
+        return items
+
+    def _context_strong_keyword_hits(self, reasons: list[str]) -> list[str]:
+        hits: list[str] = []
+        for reason in reasons:
+            if not reason.startswith("keyword:"):
+                continue
+            raw_hits = reason.removeprefix("keyword:").split(",")
+            for hit in raw_hits:
+                normalized = hit.strip().lower()
+                if not normalized or normalized in CONTEXT_WEAK_KEYWORD_HITS:
+                    continue
+                hits.append(normalized)
+        return hits
+
     def _search_text(self, row: dict) -> str:
         return "\n".join(
             [
@@ -521,6 +757,13 @@ class MemNoteService:
     def _int_range(self, value: Any, fallback: int, min_value: int, max_value: int) -> int:
         try:
             parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = fallback
+        return max(min_value, min(parsed, max_value))
+
+    def _float_range(self, value: Any, fallback: float, min_value: float, max_value: float) -> float:
+        try:
+            parsed = float(value)
         except (TypeError, ValueError):
             parsed = fallback
         return max(min_value, min(parsed, max_value))

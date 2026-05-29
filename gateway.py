@@ -1262,7 +1262,7 @@ class ContextBuilder:
                     package["stable_charter"] = package["stable_charter"] + "\n\n" + meta_block
 
             if cfg.inject_mem_notes and current_user_text.strip():
-                notes = await MemNoteService(cfg, supabase_client).search_notes(
+                notes = await MemNoteService(cfg, supabase_client).search_notes_contextual(
                     current_user_text,
                     session_tag=session["session_tag"],
                     limit=cfg.mem_note_limit,

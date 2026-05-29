@@ -31,7 +31,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/calendar.py`: date/key helpers and calendar JSON parsing.
 - `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
 - `shenyu_gateway/context_layers.py`: stable/slow/volatile layer rendering, client message trimming, and cold-start bridge insertion.
-- `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations, including Supabase table tools, primary-text surface search, heartbeats, notebook, and memory helpers.
+- `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations, including Supabase table tools, recall compatibility helpers, heartbeats, notebook, and memory helpers.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>` and `[mem]...[/mem]`, heartbeat persistence helper, and inline memory scheduling helper.
 - `shenyu_gateway/mem_notes.py`: inline `[mem]` capture, clean note search, review/update/delete helpers, and old atomic read-only lookup.
@@ -423,15 +423,15 @@ COLD_START_MESSAGE_LIMIT=
 COLD_START_IDLE_MINUTES=120
 MAX_CLIENT_MESSAGES=
 
-INJECT_ATOMIC_MEMORIES=false
+INJECT_MEM_NOTES=false
 ENABLE_INLINE_MEMORY_CAPTURE=false
-DEFAULT_ATOMIC_MEMORY_LIMIT=3
-ATOMIC_MEMORY_MIN_SCORE=0.55
 
 DEFAULT_SURFACE_LIMIT=3
 
 ENABLE_GATEWAY_TOOLS=false
+ENABLE_MEM0_MANAGEMENT_TOOLS=false
 EXPOSE_SUPABASE_TOOLS=true
+GATEWAY_TOOL_MODE=broker
 MAX_INTERNAL_TOOL_ROUNDS=3
 ```
 

@@ -41,6 +41,26 @@ class FakeToolService:
         )
         return {"ok": True, "query": query, "status": status, "limit": limit}
 
+    async def list_mem_notes(
+        self,
+        status: str = "captured",
+        limit: int = 30,
+        session_tag: str = None,
+        q: str = "",
+        mem_type=None,
+    ):
+        self.calls.append(
+            {
+                "tool": "shenyu_list_mem_notes",
+                "q": q,
+                "session_tag": session_tag,
+                "limit": limit,
+                "status": status,
+                "mem_type": mem_type,
+            }
+        )
+        return {"ok": True, "q": q, "status": status, "limit": limit}
+
     async def search_primary_texts(self, query: str, categories=None, session_tag=None, limit: int = 5):
         self.calls.append(
             {
@@ -144,6 +164,33 @@ class FakeToolService:
         )
         return {"ok": True, "note_id": note_id}
 
+    async def notebook_list(self, type_filter=None, status="active", limit: int = 10, tag=None, scope=None):
+        self.calls.append(
+            {
+                "tool": "shenyu_notebook_list",
+                "type_filter": type_filter,
+                "status": status,
+                "limit": limit,
+                "tag": tag,
+                "scope": scope,
+            }
+        )
+        return {"ok": True, "limit": limit}
+
+    async def notebook_write(self, type_=None, content="", tags=None, metadata=None, session_tag=None, scope=None):
+        self.calls.append(
+            {
+                "tool": "shenyu_notebook_write",
+                "type": type_,
+                "content": content,
+                "tags": tags,
+                "metadata": metadata,
+                "session_tag": session_tag,
+                "scope": scope,
+            }
+        )
+        return {"ok": True, "content": content}
+
 
 def _cfg(enable_mem0_management_tools: bool = False):
     return SimpleNamespace(
@@ -163,20 +210,22 @@ def test_execute_gateway_tool_reuses_service_for_broker_target():
     result = asyncio.run(
         execute_gateway_tool(
             "shenyu_gateway_tool",
-            {"tool": "shenyu_surface_passages", "arguments": {"query": "home", "limit": 2}},
+            {"tool": "shenyu_list_mem_notes", "arguments": {"q": "home", "status": "all", "limit": 2}},
             session_tag="default",
             cfg=_cfg(),
             service=service,
         )
     )
 
-    assert result == {"ok": True, "limit": 2, "session_tag": "default"}
+    assert result == {"ok": True, "q": "home", "status": "all", "limit": 2}
     assert service.calls == [
         {
-            "tool": "shenyu_surface_passages",
-            "query": "home",
+            "tool": "shenyu_list_mem_notes",
+            "q": "home",
             "session_tag": "default",
             "limit": 2,
+            "status": "all",
+            "mem_type": None,
         }
     ]
 
@@ -237,7 +286,7 @@ def test_execute_gateway_tool_routes_write_mem_note():
     ]
 
 
-def test_execute_gateway_tool_routes_search_mem_notes_as_browse():
+def test_execute_gateway_tool_routes_hidden_search_mem_notes_for_compat():
     service = FakeToolService()
 
     result = asyncio.run(
@@ -270,7 +319,7 @@ def test_execute_gateway_tool_accepts_broker_json_string_arguments():
         execute_gateway_tool(
             "shenyu_gateway_tool",
             {
-                "tool": "shenyu_ask_memory",
+                "tool": "shenyu_recall",
                 "arguments": "{\"query\":\"长隆海洋馆 海獭 企鹅\",\"limit\":2}",
             },
             session_tag="default",
@@ -282,13 +331,14 @@ def test_execute_gateway_tool_accepts_broker_json_string_arguments():
     assert result == {"ok": True, "query": "长隆海洋馆 海獭 企鹅", "limit": 2}
     assert service.calls == [
         {
-            "tool": "shenyu_ask_memory",
+            "tool": "shenyu_recall",
             "query": "长隆海洋馆 海獭 企鹅",
-            "session_tag": None,
-            "limit": 2,
-            "date": None,
+            "source_types": None,
+            "session_tag": "default",
             "date_from": None,
             "date_to": None,
+            "limit": 2,
+            "auto_sync": False,
         }
     ]
 
@@ -335,7 +385,7 @@ def test_execute_gateway_tool_unwraps_nested_broker_arguments_object():
         execute_gateway_tool(
             "shenyu_gateway_tool",
             {
-                "tool": "shenyu_ask_memory",
+                "tool": "shenyu_recall",
                 "arguments": "{\"arguments\":{\"query\":\"claudeai 长隆\",\"limit\":3}}",
             },
             session_tag="default",
@@ -349,16 +399,13 @@ def test_execute_gateway_tool_unwraps_nested_broker_arguments_object():
     assert service.calls[0]["limit"] == 3
 
 
-def test_execute_gateway_tool_accepts_q_alias_for_primary_text_search():
+def test_execute_gateway_tool_accepts_q_alias_for_hidden_primary_text_search_compat():
     service = FakeToolService()
 
     result = asyncio.run(
         execute_gateway_tool(
-            "shenyu_gateway_tool",
-            {
-                "tool": "shenyu_search_primary_texts",
-                "arguments": {"q": "海獭", "limit": 5},
-            },
+            "shenyu_search_primary_texts",
+            {"q": "海獭", "limit": 5},
             session_tag="5.15",
             cfg=_cfg(),
             service=service,
@@ -408,6 +455,61 @@ def test_execute_gateway_tool_accepts_mem_note_id_alias_for_update():
     ]
 
 
+def test_execute_gateway_tool_routes_notebook_scope_arguments():
+    service = FakeToolService()
+
+    write_result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_notebook_write",
+                "arguments": {
+                    "content": "给海信那边留一条交接。",
+                    "scope": "handoff",
+                    "tags": ["release"],
+                },
+            },
+            session_tag="5.29",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+    list_result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_notebook_list",
+                "arguments": {"scope": "hisense", "limit": 4},
+            },
+            session_tag="5.29",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert write_result == {"ok": True, "content": "给海信那边留一条交接。"}
+    assert list_result == {"ok": True, "limit": 4}
+    assert service.calls[-2:] == [
+        {
+            "tool": "shenyu_notebook_write",
+            "type": None,
+            "content": "给海信那边留一条交接。",
+            "tags": ["release"],
+            "metadata": None,
+            "session_tag": "5.29",
+            "scope": "handoff",
+        },
+        {
+            "tool": "shenyu_notebook_list",
+            "type_filter": None,
+            "status": "active",
+            "limit": 4,
+            "tag": None,
+            "scope": "hisense",
+        },
+    ]
+
+
 def test_gateway_tools_do_not_expose_legacy_atomic_memories():
     cfg = _cfg(enable_mem0_management_tools=True)
 
@@ -417,6 +519,28 @@ def test_gateway_tools_do_not_expose_legacy_atomic_memories():
     cfg.gateway_tool_mode = "full"
     names = [tool["function"]["name"] for tool in gateway_native_tools(cfg)]
     assert "shenyu_legacy_atomic_memories" not in names
+
+
+def test_gateway_tools_hide_duplicate_query_tools_from_model_schemas():
+    cfg = _cfg()
+    hidden = {
+        "shenyu_surface_passages",
+        "shenyu_search_primary_texts",
+        "shenyu_ask_memory",
+        "shenyu_search_mem_notes",
+    }
+
+    broker_tool = gateway_native_tools(cfg)[0]
+    broker_names = set(broker_tool["function"]["parameters"]["properties"]["tool"]["enum"])
+    assert hidden.isdisjoint(broker_names)
+    assert "shenyu_recall" in broker_names
+    assert "shenyu_list_mem_notes" in broker_names
+
+    cfg.gateway_tool_mode = "full"
+    full_names = {tool["function"]["name"] for tool in gateway_native_tools(cfg)}
+    assert hidden.isdisjoint(full_names)
+    assert "shenyu_recall" in full_names
+    assert "shenyu_list_mem_notes" in full_names
 
 
 def test_shenyu_recall_source_types_are_public_set_only():

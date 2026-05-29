@@ -219,9 +219,10 @@ _SUPABASE_GUIDE = """## 家里常用 Supabase 表
 - 模糊搜：operators={"content":{"ilike":"%北海道%"}}
 - 非空：operators={"deleted_at":{"not_is":null}}
 insert / update / delete 会尽量返回写入或影响到的行。
-查看自己写过哪些 mem 用 `shenyu_search_mem_notes`，默认查所有状态，可带 q/status。
-整理自己的 mem 用 `shenyu_list_mem_notes`，补属性用 `shenyu_update_mem_note`。
+找旧上下文优先用 `shenyu_recall`，可按 source_types 限定 memory / journal / room / board / calendar / mem_note / notebook。
+查看或整理自己写过哪些 mem 用 `shenyu_list_mem_notes`，查全部状态时传 status=all，可带 q/status/mem_type；补属性用 `shenyu_update_mem_note`。
 直接写一条新 mem 用 `shenyu_write_mem_note`，这是主动写，默认 active 直接放行。
+notebook 是共享手边事项；海信那边或跨窗口要留事用 `shenyu_notebook_write` / `shenyu_notebook_list`。
 翻某天心跳用 `shenyu_read_heartbeat`，一般只填 date，比如 2026-05-11。
 
 ### journal（日记 / 信件 / 纸 / 空间）
@@ -784,34 +785,95 @@ class GatewayToolService:
         data = [{"role": m["role"], "content": (m.get("content") or "")[:500], "at": m.get("created_at")} for m in msgs]
         return {"ok": True, "session_tag": target.get("session_tag"), "count": len(data), "data": data}
 
-    async def notebook_list(self, type_filter: Optional[str], status: str, limit: int) -> dict:
+    def _notebook_scope(self, scope: Optional[str]) -> str:
+        raw = str(scope or "shared").strip().lower()
+        if raw in {"hisense", "海信"}:
+            return "hisense"
+        if raw in {"handoff", "交接"}:
+            return "handoff"
+        return "shared"
+
+    def _notebook_tags(self, tags: Optional[Any], scope: Optional[str]) -> list[str]:
+        result: list[str] = []
+
+        def add(value: Any) -> None:
+            text = str(value or "").strip()
+            if text and text not in result:
+                result.append(text)
+
+        if isinstance(tags, str):
+            for item in re.split(r"[,，\s]+", tags):
+                add(item)
+        elif isinstance(tags, list):
+            for item in tags:
+                add(item)
+        elif tags:
+            add(tags)
+
+        scope_key = self._notebook_scope(scope)
+        if scope_key == "hisense":
+            add("hisense")
+        elif scope_key == "handoff":
+            add("handoff")
+            add("hisense")
+        return result
+
+    def _notebook_filter_tag(self, tag: Optional[Any], scope: Optional[str]) -> str:
+        explicit = str(tag or "").strip()
+        if explicit:
+            return explicit.replace("{", "").replace("}", "").replace(",", "")
+        scope_key = self._notebook_scope(scope)
+        if scope_key == "hisense":
+            return "hisense"
+        if scope_key == "handoff":
+            return "handoff"
+        return ""
+
+    def _notebook_metadata(self, metadata: Optional[dict], scope: Optional[str]) -> dict:
+        data = dict(metadata) if isinstance(metadata, dict) else {}
+        scope_key = self._notebook_scope(scope)
+        if scope_key != "shared":
+            data.setdefault("scope", scope_key)
+        return data
+
+    async def notebook_list(self, type_filter: Optional[str], status: str, limit: int, tag: Optional[str] = None, scope: Optional[str] = None) -> dict:
         if not self.supabase:
             return {"ok": False, "error": "Supabase not configured"}
         limit = max(1, min(int(limit or 10), 20))
+        status_key = (status or "active").strip().lower()
         params: dict[str, str] = {
             "order": "pinned.desc,updated_at.desc",
             "limit": str(limit),
-            "status": f"eq.{status or 'active'}",
             "select": "id,type,content,tags,status,pinned,metadata,created_at,updated_at",
         }
+        if status_key and status_key != "all":
+            params["status"] = f"eq.{status_key}"
         if type_filter:
             params["type"] = f"eq.{type_filter}"
+        filter_tag = self._notebook_filter_tag(tag, scope)
+        if filter_tag:
+            params["tags"] = f"cs.{{{filter_tag}}}"
         try:
             rows = await self.supabase.query("shenyu_notebook", params)
             return {"ok": True, "count": len(rows or []), "data": rows or []}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    async def notebook_write(self, type_: str, content: str, tags: Optional[list], metadata: Optional[dict], session_tag: Optional[str]) -> dict:
+    async def notebook_write(self, type_: Optional[str], content: str, tags: Optional[list], metadata: Optional[dict], session_tag: Optional[str], scope: Optional[str] = None) -> dict:
         if not self.supabase:
             return {"ok": False, "error": "Supabase not configured"}
-        if not content.strip():
+        body = (content or "").strip()
+        if not body:
             return {"ok": False, "error": "content is required"}
-        data: dict[str, Any] = {"type": type_ or "note", "content": content, "status": "active"}
-        if tags:
-            data["tags"] = tags
-        if metadata:
-            data["metadata"] = metadata
+        scope_key = self._notebook_scope(scope)
+        note_type = (type_ or "").strip() or ("handoff" if scope_key == "handoff" else "note")
+        data: dict[str, Any] = {"type": note_type, "content": body, "status": "active"}
+        normalized_tags = self._notebook_tags(tags, scope_key)
+        if normalized_tags:
+            data["tags"] = normalized_tags
+        normalized_metadata = self._notebook_metadata(metadata, scope_key)
+        if normalized_metadata:
+            data["metadata"] = normalized_metadata
         if session_tag:
             data["session_tag"] = session_tag
         try:

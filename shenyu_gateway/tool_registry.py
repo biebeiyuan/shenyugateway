@@ -16,7 +16,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_recall",
-                "description": "统一召回入口：按语义/关键词查 memories、journal、room、calendar、mem note、notebook 等索引，不需要猜 Supabase 表。",
+                "description": "统一召回入口：按语义/关键词查旧上下文，可限定 memory、journal、room、board、calendar、mem_note、notebook。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -41,85 +41,9 @@ def _gateway_core_tools() -> list[dict]:
         {
             "type": "function",
             "function": {
-                "name": "shenyu_surface_passages",
-                "description": "从 room 和留言板里捞几段相关原文，适合先找手边的感觉。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 3, "default": 3},
-                        "session_tag": {"type": "string"},
-                    },
-                    "required": ["query"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
                 "name": "shenyu_supabase_guide",
                 "description": "不知道该查哪个 Supabase 表时，先看这个。",
                 "parameters": {"type": "object", "properties": {}},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_ask_memory",
-                "description": "ClaudeAI 时期的旧记忆库；查以前整理过的事件、关系脉络或某天发生过什么。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "date": {"type": "string"},
-                        "date_from": {"type": "string"},
-                        "date_to": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
-                        "session_tag": {"type": "string"},
-                    },
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_search_mem_notes",
-                "description": "查看我写过的 mem 便签，可按关键词筛选。默认查所有状态；当前聊天相关的 active mem 会由网关自动命中，不需要用这个工具反复召回。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "q": {"type": "string", "description": "关键词过滤 content/type/trigger/review_note。"},
-                        "query": {"type": "string", "description": "Alias of q."},
-                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived", "all"], "default": "all"},
-                        "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
-                        "session_tag": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
-                    },
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_search_primary_texts",
-                "description": "查日记、信、纸条、room、留言板这些原文。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "categories": {
-                            "type": "array",
-                            "items": {
-                                "type": "string",
-                                "enum": ["diary", "letter", "paper", "lock", "annotation", "life_tick", "room", "message_board", "journal", "all"],
-                            },
-                            "default": ["diary", "letter", "paper"],
-                        },
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
-                        "session_tag": {"type": "string"},
-                    },
-                    "required": ["query"],
-                },
             },
         },
         {
@@ -146,7 +70,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_list_mem_notes",
-                "description": "看 mem 便签列表。整理时通常先看 status=captured。",
+                "description": "看 mem 便签列表。整理时通常先看 status=captured；自动反上来的 active mem 另走网关的关键词/语义命中。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -285,12 +209,14 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_list",
-                "description": "看 notebook 里留过的条目。",
+                "description": "看共享 notebook 手边事项，可按 type/status/tag/scope 筛。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "type": {"type": "string"},
                         "status": {"type": "string", "default": "active"},
+                        "tag": {"type": "string"},
+                        "scope": {"type": "string", "enum": ["shared", "hisense", "handoff"], "default": "shared"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
                     },
                 },
@@ -300,7 +226,7 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_write",
-                "description": "写一条 notebook，适合跨窗口或海信那边留事。",
+                "description": "写一条共享 notebook 手边事项；给海信那边留事可填 scope=hisense 或 scope=handoff。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -308,6 +234,7 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
                         "content": {"type": "string"},
                         "tags": {"type": "array", "items": {"type": "string"}},
                         "metadata": {"type": "object"},
+                        "scope": {"type": "string", "enum": ["shared", "hisense", "handoff"], "default": "shared"},
                     },
                     "required": ["content"],
                 },
@@ -695,13 +622,16 @@ async def execute_gateway_tool(
             type_filter=arguments.get("type"),
             status=arguments.get("status", "active"),
             limit=_int_arg(arguments, "limit", 10),
+            tag=arguments.get("tag"),
+            scope=arguments.get("scope"),
         ),
         "shenyu_notebook_write": lambda: service.notebook_write(
-            type_=arguments.get("type", "note"),
+            type_=arguments.get("type"),
             content=arguments.get("content", ""),
             tags=arguments.get("tags"),
             metadata=arguments.get("metadata"),
-            session_tag=session_tag,
+            session_tag=arguments.get("session_tag") or session_tag,
+            scope=arguments.get("scope"),
         ),
         "shenyu_notebook_update": lambda: service.notebook_update(
             id_=arguments.get("id", ""),
