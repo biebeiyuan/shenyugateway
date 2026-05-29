@@ -1,3 +1,13 @@
+FROM node:20-slim AS admin-builder
+
+WORKDIR /admin
+
+COPY admin/package*.json ./
+RUN npm ci
+
+COPY admin ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -11,7 +21,7 @@ RUN pip install --no-cache-dir --timeout 120 --retries 5 -r requirements.txt
 
 COPY gateway.py ./
 COPY shenyu_gateway ./shenyu_gateway
-COPY admin/dist ./admin/dist
+COPY --from=admin-builder /admin/dist ./admin/dist
 
 EXPOSE 8010
 

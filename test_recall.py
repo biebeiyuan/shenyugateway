@@ -143,8 +143,13 @@ def test_recall_ranks_keyword_title_and_tag_hits():
 
     assert result["ok"] is True
     assert result["count"] == 1
-    assert result["items"][0]["content"] == "她想看海獭，也提到了企鹅。完整匹配 chunk 会给模型，不用 embedding_text。"
-    assert set(result["items"][0]) == {"content", "title"}
+    assert result["items"][0] == {
+        "content": "她想看海獭，也提到了企鹅。完整匹配 chunk 会给模型，不用 embedding_text。",
+        "title": "长隆海洋馆",
+        "source_type": "memory",
+        "source_table": "memories",
+        "event_date": "2026-05-21T00:00:00+00:00",
+    }
     assert result["items"][0]["title"] == "长隆海洋馆"
     assert "embedding_text" not in result["items"][0]
     assert "excerpt" not in result["items"][0]
@@ -180,7 +185,15 @@ def test_recall_public_item_includes_title_only_for_journal():
 
     result = asyncio.run(service.recall("长隆 海獭", session_tag="5.15", auto_sync=False))
 
-    assert result["items"] == [{"content": "今天写到了长隆和海獭。", "title": "长隆日记"}]
+    assert result["items"] == [
+        {
+            "content": "今天写到了长隆和海獭。",
+            "title": "长隆日记",
+            "source_type": "journal",
+            "source_table": "journal",
+            "event_date": "2026-05-20T00:00:00+00:00",
+        }
+    ]
 
 
 def test_recall_public_item_includes_any_source_title_and_full_source_chunks():
@@ -226,7 +239,15 @@ def test_recall_public_item_includes_any_source_title_and_full_source_chunks():
 
     result = asyncio.run(service.recall("海獭", session_tag="5.15", auto_sync=False))
 
-    assert result["items"] == [{"content": "第一段写长隆。\n\n第二段写海獭。", "title": "海洋馆房间"}]
+    assert result["items"] == [
+        {
+            "content": "第一段写长隆。\n\n第二段写海獭。",
+            "title": "海洋馆房间",
+            "source_type": "room",
+            "source_table": "room",
+            "event_date": "2026-05-20T00:00:00+00:00",
+        }
+    ]
 
 
 def test_recall_falls_back_to_keyword_when_embedding_fails():
@@ -255,7 +276,19 @@ def test_recall_falls_back_to_keyword_when_embedding_fails():
 
     result = asyncio.run(service.recall("长隆 海獭", session_tag="5.15", auto_sync=False))
 
-    assert result == {"ok": True, "count": 1, "items": [{"content": "今天写到了长隆和海獭。", "title": "长隆日记"}]}
+    assert result == {
+        "ok": True,
+        "count": 1,
+        "items": [
+            {
+                "content": "今天写到了长隆和海獭。",
+                "title": "长隆日记",
+                "source_type": "journal",
+                "source_table": "journal",
+                "event_date": "2026-05-20T00:00:00+00:00",
+            }
+        ],
+    }
     assert [call[0] for call in supabase.rpc_calls] == ["search_shenyu_recall_index"]
 
 
@@ -287,7 +320,15 @@ def test_recall_returns_vector_only_candidate_when_keywords_miss():
     assert result == {
         "ok": True,
         "count": 1,
-        "items": [{"content": "这里没有表面关键词，但语义向量召回了这一段。", "title": "海洋馆房间"}],
+        "items": [
+            {
+                "content": "这里没有表面关键词，但语义向量召回了这一段。",
+                "title": "海洋馆房间",
+                "source_type": "room",
+                "source_table": "room",
+                "event_date": "2026-05-20T00:00:00+00:00",
+            }
+        ],
     }
     match_call = next(call for call in supabase.rpc_calls if call[0] == "match_shenyu_recall_index")
     assert isinstance(match_call[1]["query_embedding"], str)
@@ -328,6 +369,110 @@ def test_upsert_documents_resets_embedding_only_when_content_changes():
     assert changed.upserts[0]["embedding"] is None
     assert "embedding" not in unchanged.upserts[0]
     assert "embedding_status" not in unchanged.upserts[0]
+
+
+def test_mark_stale_source_deleted_only_after_live_docs_are_known():
+    supabase = FakeSupabase(
+        [
+            {"source_id": "keep", "chunk_index": 0, "content_hash": "same"},
+            {"source_id": "stale", "chunk_index": 0, "content_hash": "old"},
+        ]
+    )
+    doc = RecallDocument(
+        source_table="journal",
+        source_id="keep",
+        source_type="journal",
+        chunk_index=0,
+        session_tag="5.15",
+        title="保留",
+        body="正文",
+        excerpt="正文",
+        search_text="保留 正文",
+        search_tokens=["保留"],
+        embedding_text="标题：保留\n\n正文：正文",
+        tags_json=[],
+        entities_json=[],
+        metadata_json={},
+        event_date=None,
+        source_created_at=None,
+        source_updated_at=None,
+        status="active",
+        visibility=None,
+        importance=0.6,
+        content_hash="same",
+    )
+    service = RecallIndexService(supabase)
+
+    asyncio.run(service._upsert_documents([doc]))
+    asyncio.run(service._mark_stale_source_deleted("journal", [doc]))
+
+    assert supabase.upserts[0]["source_id"] == "keep"
+    assert supabase.updates == [
+        (
+            "shenyu_recall_index",
+            {"source_table": "journal", "source_id": "stale", "chunk_index": 0},
+            {"deleted_at": supabase.updates[0][2]["deleted_at"]},
+        )
+    ]
+
+
+def test_recall_date_filter_can_exclude_undated_rows():
+    rows = [
+        {
+            "source_table": "memories",
+            "source_id": "undated",
+            "source_type": "memory",
+            "chunk_index": 0,
+            "session_tag": "5.15",
+            "title": "旧迁移记忆",
+            "body": "长隆旧记忆，没有日期。",
+            "excerpt": "长隆旧记忆，没有日期。",
+            "search_text": "旧迁移记忆 长隆旧记忆 没有日期",
+            "search_tokens": ["长隆", "旧记"],
+            "tags_json": [],
+            "entities_json": [],
+            "event_date": None,
+            "source_updated_at": None,
+            "importance": 0.6,
+            "status": "active",
+            "visibility": None,
+        },
+        {
+            "source_table": "journal",
+            "source_id": "dated",
+            "source_type": "journal",
+            "chunk_index": 0,
+            "session_tag": "5.15",
+            "title": "长隆日记",
+            "body": "长隆有日期。",
+            "excerpt": "长隆有日期。",
+            "search_text": "长隆日记 长隆有日期",
+            "search_tokens": ["长隆"],
+            "tags_json": [],
+            "entities_json": [],
+            "event_date": "2026-05-20T00:00:00+00:00",
+            "importance": 0.6,
+            "status": "active",
+            "visibility": None,
+        },
+    ]
+    service = RecallIndexService(FakeSupabase(rows))
+
+    default_result = asyncio.run(
+        service.recall("长隆", session_tag="5.15", date_from="2026-05-01", auto_sync=False)
+    )
+    strict_result = asyncio.run(
+        service.recall(
+            "长隆",
+            session_tag="5.15",
+            date_from="2026-05-01",
+            include_undated=False,
+            auto_sync=False,
+        )
+    )
+
+    assert default_result["count"] == 2
+    assert [item["source_table"] for item in strict_result["items"]] == ["journal"]
 
 
 def test_recall_returns_clear_error_when_index_table_is_missing():

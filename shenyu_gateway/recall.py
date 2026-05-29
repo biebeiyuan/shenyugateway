@@ -404,8 +404,8 @@ class RecallIndexService:
         for name in adapters:
             try:
                 docs = await self._load_documents(name)
-                await self._mark_source_deleted(name)
                 await self._upsert_documents(docs)
+                await self._mark_stale_source_deleted(name, docs)
                 total_docs += len(docs)
                 source_counts[name] = len(docs)
             except Exception as exc:
@@ -482,6 +482,7 @@ class RecallIndexService:
         session_tag: Optional[str] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
+        include_undated: bool = True,
         limit: int = 8,
         auto_sync: Optional[bool] = None,
     ) -> dict[str, Any]:
@@ -533,11 +534,14 @@ class RecallIndexService:
 
         start_dt = _parse_dt(date_from)
         end_dt = _parse_dt(date_to)
+        has_date_filter = bool(start_dt or end_dt)
         scored = []
         for row in rows:
             if not self._row_visible_for_session(row, session_tag):
                 continue
             row_dt = _parse_dt(row.get("event_date") or row.get("source_updated_at"))
+            if has_date_filter and not row_dt and not include_undated:
+                continue
             if start_dt and row_dt and row_dt < start_dt:
                 continue
             if end_dt and row_dt and row_dt > end_dt:
@@ -706,7 +710,36 @@ class RecallIndexService:
         item = {"content": content}
         if row.get("title"):
             item["title"] = row.get("title") or ""
+        item["source_type"] = row.get("source_type") or ""
+        item["source_table"] = row.get("source_table") or ""
+        item["event_date"] = row.get("event_date") or row.get("source_updated_at") or ""
         return item
+
+    async def _mark_stale_source_deleted(self, source_table: str, docs: list[RecallDocument]) -> None:
+        live_keys = {(doc.source_id, doc.chunk_index) for doc in docs}
+        existing_rows = await self.supabase.query(
+            RECALL_INDEX_TABLE,
+            {
+                "select": "source_id,chunk_index",
+                "source_table": f"eq.{source_table}",
+                "deleted_at": "is.null",
+                "limit": "10000",
+            },
+        )
+        deleted_at = datetime.now(timezone.utc).isoformat()
+        for row in existing_rows:
+            key = (str(row.get("source_id") or ""), int(row.get("chunk_index") or 0))
+            if key in live_keys:
+                continue
+            await self.supabase.update(
+                RECALL_INDEX_TABLE,
+                {
+                    "source_table": source_table,
+                    "source_id": key[0],
+                    "chunk_index": key[1],
+                },
+                {"deleted_at": deleted_at},
+            )
 
     def _dedupe(self, scored: list[tuple[float, list[str], dict]], limit: int) -> list[tuple[float, list[str], dict]]:
         selected = []

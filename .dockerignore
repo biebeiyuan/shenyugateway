@@ -1,9 +1,9 @@
+.git
 __pycache__/
 *.py[cod]
 
 .env
-
-data/*.db
+data/
 
 admin/node_modules/
 admin/dist/

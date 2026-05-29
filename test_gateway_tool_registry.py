@@ -80,6 +80,7 @@ class FakeToolService:
         session_tag=None,
         date_from=None,
         date_to=None,
+        include_undated: bool = True,
         limit: int = 8,
         auto_sync: bool = True,
     ):
@@ -91,6 +92,7 @@ class FakeToolService:
                 "session_tag": session_tag,
                 "date_from": date_from,
                 "date_to": date_to,
+                "include_undated": include_undated,
                 "limit": limit,
                 "auto_sync": auto_sync,
             }
@@ -337,6 +339,7 @@ def test_execute_gateway_tool_accepts_broker_json_string_arguments():
             "session_tag": "default",
             "date_from": None,
             "date_to": None,
+            "include_undated": True,
             "limit": 2,
             "auto_sync": False,
         }
@@ -354,6 +357,7 @@ def test_execute_gateway_tool_routes_shenyu_recall():
                 "arguments": {
                     "query": "长隆 海獭",
                     "source_types": ["memory", "journal"],
+                    "include_undated": False,
                     "limit": 6,
                 },
             },
@@ -372,6 +376,7 @@ def test_execute_gateway_tool_routes_shenyu_recall():
             "session_tag": "5.15",
             "date_from": None,
             "date_to": None,
+            "include_undated": False,
             "limit": 6,
             "auto_sync": False,
         }
@@ -552,8 +557,10 @@ def test_shenyu_recall_source_types_are_public_set_only():
     cfg.gateway_tool_mode = "full"
     recall_tool = next(tool for tool in gateway_native_tools(cfg) if tool["function"]["name"] == "shenyu_recall")
     source_types = recall_tool["function"]["parameters"]["properties"]["source_types"]["items"]["enum"]
+    include_undated = recall_tool["function"]["parameters"]["properties"]["include_undated"]
 
     assert source_types == ["all", "memory", "journal", "room", "board", "calendar", "mem_note", "notebook"]
+    assert include_undated["default"] is True
     assert "note" not in source_types
     assert "atomic" not in source_types
     assert "meta" not in source_types

@@ -16,7 +16,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_recall",
-                "description": "统一召回入口：按语义/关键词查旧上下文，可限定 memory、journal、room、board、calendar、mem_note、notebook。",
+                "description": "统一召回入口：关键词召回旧上下文；启用 embedding 后追加语义召回。可限定 memory、journal、room、board、calendar、mem_note、notebook。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -31,6 +31,11 @@ def _gateway_core_tools() -> list[dict]:
                         },
                         "date_from": {"type": "string"},
                         "date_to": {"type": "string"},
+                        "include_undated": {
+                            "type": "boolean",
+                            "default": True,
+                            "description": "When date_from/date_to is set, keep rows without event/source dates.",
+                        },
                         "session_tag": {"type": "string"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 8},
                     },
@@ -427,6 +432,21 @@ def _int_arg(arguments: dict, key: str, default: int) -> int:
         return default
 
 
+def _bool_arg(arguments: dict, key: str, default: bool) -> bool:
+    value = arguments.get(key, default)
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return default
+    if isinstance(value, str):
+        text = value.strip().lower()
+        if text in {"1", "true", "yes", "on"}:
+            return True
+        if text in {"0", "false", "no", "off"}:
+            return False
+    return bool(value)
+
+
 def _coerce_json_object(value: Any) -> Optional[dict]:
     current = value
     for _ in range(2):
@@ -510,6 +530,7 @@ async def execute_gateway_tool(
             session_tag=arguments.get("session_tag") or session_tag,
             date_from=arguments.get("date_from") or arguments.get("since"),
             date_to=arguments.get("date_to") or arguments.get("until"),
+            include_undated=_bool_arg(arguments, "include_undated", True),
             limit=_int_arg(arguments, "limit", 8),
             auto_sync=bool(getattr(cfg, "enable_recall_auto_sync", False)),
         ),

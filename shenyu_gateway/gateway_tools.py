@@ -319,6 +319,7 @@ class GatewayToolService:
         session_tag: Optional[str] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
+        include_undated: bool = True,
         limit: int = 8,
         auto_sync: Optional[bool] = None,
     ) -> dict:
@@ -328,6 +329,7 @@ class GatewayToolService:
             session_tag=session_tag,
             date_from=date_from,
             date_to=date_to,
+            include_undated=include_undated,
             limit=limit,
             auto_sync=auto_sync,
         )
