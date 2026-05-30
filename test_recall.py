@@ -9,6 +9,7 @@ from shenyu_gateway.recall import (
     RecallDocument,
     RecallIndexService,
     build_embedding_text,
+    recall_terms,
     split_recall_chunks,
     _recency_score,
 )
@@ -84,6 +85,15 @@ def test_build_embedding_text_keeps_title_and_limits_length():
     assert "标题：长隆" in embedding_text
     assert "标签：海獭 企鹅" in embedding_text
     assert "正文：" in embedding_text
+
+
+def test_recall_terms_adds_cjk_bigrams_for_short_words():
+    terms = recall_terms("中文分词")
+
+    assert "中文分词" in terms
+    assert "中文" in terms
+    assert "分词" in terms
+    assert "文分" in terms
 
 
 def test_recency_score_uses_slow_step_decay():
@@ -333,6 +343,43 @@ def test_recall_returns_vector_only_candidate_when_keywords_miss():
     match_call = next(call for call in supabase.rpc_calls if call[0] == "match_shenyu_recall_index")
     assert isinstance(match_call[1]["query_embedding"], str)
     assert match_call[1]["query_embedding"].startswith("[")
+
+
+def test_recall_merges_keyword_and_vector_chunks_for_same_source():
+    keyword_row = {
+        "source_table": "room",
+        "source_id": "room-1",
+        "source_type": "room",
+        "chunk_index": 0,
+        "session_tag": "5.15",
+        "title": "混合召回房间",
+        "body": "第一段写长隆关键词。",
+        "excerpt": "第一段写长隆关键词。",
+        "search_text": "第一段写长隆关键词",
+        "search_tokens": ["长隆"],
+        "tags_json": [],
+        "entities_json": [],
+        "event_date": "2026-05-20T00:00:00+00:00",
+        "importance": 0.6,
+        "status": "open",
+        "visibility": "self",
+    }
+    vector_row = {
+        **keyword_row,
+        "chunk_index": 1,
+        "body": "第二段是语义向量命中的海洋馆细节。",
+        "excerpt": "第二段是语义向量命中的海洋馆细节。",
+        "search_text": "第二段是语义向量命中的海洋馆细节",
+        "search_tokens": ["海洋馆"],
+        "vector_score": 0.9,
+    }
+    supabase = FakeSupabase([keyword_row], vector_rows=[vector_row])
+    service = RecallIndexService(supabase, embedding_client=FakeEmbeddingClient())
+
+    result = asyncio.run(service.recall("长隆", session_tag="5.15", auto_sync=False))
+
+    assert result["count"] == 1
+    assert result["items"][0]["content"] == "第一段写长隆关键词。\n\n第二段是语义向量命中的海洋馆细节。"
 
 
 def test_upsert_documents_resets_embedding_only_when_content_changes():

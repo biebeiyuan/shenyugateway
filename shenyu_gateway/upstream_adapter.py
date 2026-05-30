@@ -499,6 +499,24 @@ def _anthropic_to_openai_chunk(
     return ""
 
 
+def _anthropic_tool_index_override(data: dict, tool_index_by_block: dict[int, int]) -> Optional[int]:
+    chunk_type = data.get("type")
+    is_tool_chunk = False
+    if chunk_type == "content_block_start":
+        is_tool_chunk = (data.get("content_block") or {}).get("type") == "tool_use"
+    elif chunk_type == "content_block_delta":
+        is_tool_chunk = (data.get("delta") or {}).get("type") == "input_json_delta"
+    if not is_tool_chunk:
+        return None
+    try:
+        block_index = int(data.get("index") or 0)
+    except (TypeError, ValueError):
+        block_index = 0
+    if block_index not in tool_index_by_block:
+        tool_index_by_block[block_index] = len(tool_index_by_block)
+    return tool_index_by_block[block_index]
+
+
 def _text_chunks(text: str, chunk_chars: int):
     if chunk_chars <= 0:
         yield text

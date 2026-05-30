@@ -2,7 +2,11 @@ from __future__ import annotations
 
 import json
 
-from shenyu_gateway.upstream_adapter import _anthropic_to_openai_chunk, _completion_to_stream_events
+from shenyu_gateway.upstream_adapter import (
+    _anthropic_tool_index_override,
+    _anthropic_to_openai_chunk,
+    _completion_to_stream_events,
+)
 
 
 def _stream_payloads(completion: dict):
@@ -171,3 +175,50 @@ def test_anthropic_tool_block_index_can_be_overridden_for_openai_tool_index():
 
     assert start_payload["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
     assert delta_payload["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
+
+
+def test_anthropic_mixed_text_and_tool_stream_uses_compact_tool_indexes():
+    state: dict[int, int] = {}
+    text_start = {"type": "content_block_start", "index": 0, "content_block": {"type": "text"}}
+    first_tool = {
+        "type": "content_block_start",
+        "index": 1,
+        "content_block": {"type": "tool_use", "id": "toolu_1", "name": "read_file"},
+    }
+    first_delta = {
+        "type": "content_block_delta",
+        "index": 1,
+        "delta": {"type": "input_json_delta", "partial_json": "{\"path\""},
+    }
+    second_tool = {
+        "type": "content_block_start",
+        "index": 3,
+        "content_block": {"type": "tool_use", "id": "toolu_2", "name": "grep_code"},
+    }
+
+    assert _anthropic_tool_index_override(text_start, state) is None
+    first_payload = json.loads(
+        _anthropic_to_openai_chunk(
+            "test-model",
+            first_tool,
+            tool_index_override=_anthropic_tool_index_override(first_tool, state),
+        )
+    )
+    delta_payload = json.loads(
+        _anthropic_to_openai_chunk(
+            "test-model",
+            first_delta,
+            tool_index_override=_anthropic_tool_index_override(first_delta, state),
+        )
+    )
+    second_payload = json.loads(
+        _anthropic_to_openai_chunk(
+            "test-model",
+            second_tool,
+            tool_index_override=_anthropic_tool_index_override(second_tool, state),
+        )
+    )
+
+    assert first_payload["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
+    assert delta_payload["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
+    assert second_payload["choices"][0]["delta"]["tool_calls"][0]["index"] == 1

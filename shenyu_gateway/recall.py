@@ -87,7 +87,7 @@ def recall_terms(text: str) -> list[str]:
 
     for token in re.findall(r"[A-Za-z0-9_.+-]+|[\u4e00-\u9fff]+", raw):
         add(token)
-        if re.fullmatch(r"[\u4e00-\u9fff]+", token) and len(token) > 2:
+        if re.fullmatch(r"[\u4e00-\u9fff]+", token) and len(token) >= 2:
             for size in (2, 3):
                 if len(token) < size:
                     continue

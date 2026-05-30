@@ -90,6 +90,7 @@ from shenyu_gateway.tool_registry import (
     merge_tools,
 )
 from shenyu_gateway.upstream_adapter import (
+    _anthropic_tool_index_override,
     _anthropic_to_openai_chunk,
     _anthropic_to_openai_completion,
     _apply_openai_compatible_cache_control,
@@ -2004,24 +2005,6 @@ def _apply_openai_stream_chunk(completion: dict, data: dict) -> None:
         completion["usage"] = data.get("usage") or {}
 
 
-def _anthropic_tool_index_override(data: dict, tool_index_by_block: dict[int, int]) -> Optional[int]:
-    chunk_type = data.get("type")
-    is_tool_chunk = False
-    if chunk_type == "content_block_start":
-        is_tool_chunk = (data.get("content_block") or {}).get("type") == "tool_use"
-    elif chunk_type == "content_block_delta":
-        is_tool_chunk = (data.get("delta") or {}).get("type") == "input_json_delta"
-    if not is_tool_chunk:
-        return None
-    try:
-        block_index = int(data.get("index") or 0)
-    except (TypeError, ValueError):
-        block_index = 0
-    if block_index not in tool_index_by_block:
-        tool_index_by_block[block_index] = len(tool_index_by_block)
-    return tool_index_by_block[block_index]
-
-
 def _gateway_error_text(exc: Exception) -> str:
     if isinstance(exc, HTTPException):
         detail = exc.detail if isinstance(exc.detail, str) else _json_dumps(exc.detail)
@@ -2179,6 +2162,51 @@ async def _execute_mixed_gateway_tool_calls(
         len(client_calls),
     )
     return completion, gateway_calls, client_calls
+
+
+def _unstreamed_text_suffix(text: str, streamed_text: str) -> str:
+    if not streamed_text:
+        return text
+    if text.startswith(streamed_text):
+        return text[len(streamed_text):]
+    trimmed_streamed = streamed_text.rstrip()
+    if trimmed_streamed and text.startswith(trimmed_streamed):
+        return text[len(trimmed_streamed):]
+    marker = "<gateway_tool_results>"
+    marker_index = text.find(marker)
+    if marker_index >= 0:
+        start = marker_index
+        while start > 0 and text[start - 1] in "\r\n":
+            start -= 1
+        return text[start:]
+    return ""
+
+
+def _completion_with_unstreamed_deltas(
+    completion: dict,
+    *,
+    streamed_content: str = "",
+    streamed_reasoning: str = "",
+) -> dict:
+    if not streamed_content and not streamed_reasoning:
+        return completion
+    replay = dict(completion)
+    choices = list(replay.get("choices") or [])
+    if not choices:
+        return replay
+    choice = dict(choices[0])
+    message = dict(choice.get("message") or {})
+    if streamed_content:
+        message["content"] = _unstreamed_text_suffix(_normalize_text(message.get("content")), streamed_content)
+    if streamed_reasoning and message.get("reasoning_content"):
+        message["reasoning_content"] = _unstreamed_text_suffix(
+            _normalize_text(message.get("reasoning_content")),
+            streamed_reasoning,
+        )
+    choice["message"] = message
+    choices[0] = choice
+    replay["choices"] = choices
+    return replay
 
 
 async def _run_internal_tool_loop(
@@ -2366,6 +2394,8 @@ async def _run_internal_tool_loop_stream(
         tag_filter = AssistantTagFilter()
         visible_output_sent = False
         tool_call_seen = False
+        streamed_content_parts: list[str] = []
+        streamed_reasoning_parts: list[str] = []
 
         upstream_chunks = _stream_upstream_openai_chunks(request, payload, headers, body.model, upstream)
         next_chunk = asyncio.create_task(anext(upstream_chunks))
@@ -2398,12 +2428,14 @@ async def _run_internal_tool_loop_stream(
                     continue
                 reasoning = delta.get("reasoning_content")
                 if reasoning:
+                    streamed_reasoning_parts.append(reasoning)
                     yield _stream_reasoning_event(body.model, reasoning)
                 text = delta.get("content")
                 if text:
                     filtered = tag_filter.feed(text)
                     if filtered:
                         visible_output_sent = visible_output_sent or bool(filtered.strip())
+                        streamed_content_parts.append(filtered)
                         yield _stream_content_event(body.model, filtered)
         finally:
             if not next_chunk.done():
@@ -2462,8 +2494,13 @@ async def _run_internal_tool_loop_stream(
                 _record_response_text(log_entry, clean_content)
 
             if tool_calls:
-                for chunk in _completion_to_stream_events(
+                replay_completion = _completion_with_unstreamed_deltas(
                     completion,
+                    streamed_content="".join(streamed_content_parts),
+                    streamed_reasoning="".join(streamed_reasoning_parts),
+                )
+                for chunk in _completion_to_stream_events(
+                    replay_completion,
                     include_role=False,
                     content_chunk_chars=1200,
                 ):

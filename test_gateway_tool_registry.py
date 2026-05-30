@@ -429,6 +429,30 @@ def test_execute_gateway_tool_accepts_q_alias_for_hidden_primary_text_search_com
     ]
 
 
+def test_execute_gateway_tool_accepts_q_alias_for_surface_passages():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_surface_passages",
+            {"q": "海獭", "limit": 2},
+            session_tag="5.15",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "limit": 2, "session_tag": "5.15"}
+    assert service.calls == [
+        {
+            "tool": "shenyu_surface_passages",
+            "query": "海獭",
+            "session_tag": "5.15",
+            "limit": 2,
+        }
+    ]
+
+
 def test_execute_gateway_tool_accepts_mem_note_id_alias_for_update():
     service = FakeToolService()
 

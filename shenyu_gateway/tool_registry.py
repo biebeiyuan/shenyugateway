@@ -447,6 +447,10 @@ def _bool_arg(arguments: dict, key: str, default: bool) -> bool:
     return bool(value)
 
 
+def _query_arg(arguments: dict) -> str:
+    return arguments.get("query") or arguments.get("q") or ""
+
+
 def _coerce_json_object(value: Any) -> Optional[dict]:
     current = value
     for _ in range(2):
@@ -525,7 +529,7 @@ async def execute_gateway_tool(
     resolved_session_tag = arguments.get("session_tag") or session_tag
     handlers: dict[str, Callable[[], Awaitable[dict]]] = {
         "shenyu_recall": lambda: service.recall(
-            query=arguments.get("query") or arguments.get("q") or "",
+            query=_query_arg(arguments),
             source_types=arguments.get("source_types") or arguments.get("sources"),
             session_tag=arguments.get("session_tag") or session_tag,
             date_from=arguments.get("date_from") or arguments.get("since"),
@@ -535,12 +539,12 @@ async def execute_gateway_tool(
             auto_sync=bool(getattr(cfg, "enable_recall_auto_sync", False)),
         ),
         "shenyu_surface_passages": lambda: service.surface_passages(
-            query=arguments.get("query", ""),
+            query=_query_arg(arguments),
             session_tag=resolved_session_tag,
             limit=_int_arg(arguments, "limit", cfg.default_surface_limit),
         ),
         "shenyu_search_primary_texts": lambda: service.search_primary_texts(
-            query=arguments.get("query") or arguments.get("q") or "",
+            query=_query_arg(arguments),
             categories=arguments.get("categories"),
             session_tag=resolved_session_tag,
             limit=_int_arg(arguments, "limit", 5),
@@ -556,7 +560,7 @@ async def execute_gateway_tool(
         ),
         "shenyu_supabase_guide": lambda: service.supabase_guide(),
         "shenyu_ask_memory": lambda: service.ask_memory(
-            query=arguments.get("query") or arguments.get("q") or "",
+            query=_query_arg(arguments),
             session_tag=arguments.get("session_tag"),
             limit=_int_arg(arguments, "limit", 8),
             date=arguments.get("date"),
@@ -564,7 +568,7 @@ async def execute_gateway_tool(
             date_to=arguments.get("date_to"),
         ),
         "shenyu_search_mem_notes": lambda: service.search_mem_notes(
-            query=arguments.get("q") or arguments.get("query", ""),
+            query=_query_arg(arguments),
             session_tag=resolved_session_tag,
             limit=_int_arg(arguments, "limit", 30),
             status=arguments.get("status", "all"),
@@ -636,7 +640,7 @@ async def execute_gateway_tool(
         "shenyu_recall_main_thread": lambda: service.recall_main_thread(
             since=arguments.get("since"),
             until=arguments.get("until"),
-            query=arguments.get("query"),
+            query=_query_arg(arguments),
             limit=_int_arg(arguments, "limit", 10),
         ),
         "shenyu_notebook_list": lambda: service.notebook_list(

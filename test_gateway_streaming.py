@@ -141,3 +141,34 @@ def test_anthropic_tool_block_indexes_are_compacted_for_openai():
     assert gateway._anthropic_tool_index_override(tool_start, state) == 0
     assert gateway._anthropic_tool_index_override(tool_delta, state) == 0
     assert gateway._anthropic_tool_index_override(second_tool, state) == 1
+
+
+def test_completion_replay_skips_already_streamed_text_for_mixed_tools():
+    completion = {
+        "created": 123,
+        "model": "test-model",
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "I will check.\n\n<gateway_tool_results>\n[]\n</gateway_tool_results>",
+                    "tool_calls": [
+                        {
+                            "id": "call_1",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": "{}"},
+                        }
+                    ],
+                }
+            }
+        ],
+    }
+
+    replay = gateway._completion_with_unstreamed_deltas(
+        completion,
+        streamed_content="I will check.",
+    )
+
+    message = replay["choices"][0]["message"]
+    assert message["content"] == "\n\n<gateway_tool_results>\n[]\n</gateway_tool_results>"
+    assert completion["choices"][0]["message"]["content"].startswith("I will check.")
