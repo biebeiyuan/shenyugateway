@@ -3,25 +3,7 @@ from __future__ import annotations
 from .config import RuntimeConfig
 from .runtime import json_dumps
 from .store import GatewayStore
-
-
-def normalize_text(content):
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                if item.get("type") == "text" and isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-                elif isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-        return "\n".join(part for part in parts if part)
-    return str(content)
+from .utils import normalize_text
 
 
 def shorten(text: str, limit: int = 240) -> str:

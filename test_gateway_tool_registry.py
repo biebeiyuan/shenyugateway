@@ -550,9 +550,9 @@ def test_gateway_tools_do_not_expose_legacy_atomic_memories():
     assert "shenyu_legacy_atomic_memories" not in names
 
 
-def test_gateway_tools_hide_duplicate_query_tools_from_model_schemas():
+def test_gateway_tools_expose_all_registered_query_tools():
     cfg = _cfg()
-    hidden = {
+    registered = {
         "shenyu_surface_passages",
         "shenyu_search_primary_texts",
         "shenyu_ask_memory",
@@ -561,13 +561,13 @@ def test_gateway_tools_hide_duplicate_query_tools_from_model_schemas():
 
     broker_tool = gateway_native_tools(cfg)[0]
     broker_names = set(broker_tool["function"]["parameters"]["properties"]["tool"]["enum"])
-    assert hidden.isdisjoint(broker_names)
+    assert registered.issubset(broker_names)
     assert "shenyu_recall" in broker_names
     assert "shenyu_list_mem_notes" in broker_names
 
     cfg.gateway_tool_mode = "full"
     full_names = {tool["function"]["name"] for tool in gateway_native_tools(cfg)}
-    assert hidden.isdisjoint(full_names)
+    assert registered.issubset(full_names)
     assert "shenyu_recall" in full_names
     assert "shenyu_list_mem_notes" in full_names
 

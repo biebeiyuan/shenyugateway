@@ -5,25 +5,7 @@ import uuid
 from typing import Any, Optional
 
 from .runtime import now_ts as _now_ts
-
-
-def _normalize_text(content: Any) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                if item.get("type") == "text" and isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-                elif isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-        return "\n".join(part for part in parts if part)
-    return str(content)
+from .utils import normalize_text as _normalize_text
 
 
 def _clean_config_text(value: Any) -> str:
@@ -223,6 +205,45 @@ def _cache_usage_summary(usage: Optional[dict]) -> dict:
     }
 
 
+def _anthropic_stop_reason_to_openai(stop_reason: Any) -> str | None:
+    reason = str(stop_reason or "").strip()
+    if reason == "tool_use":
+        return "tool_calls"
+    if reason == "max_tokens":
+        return "length"
+    if reason in {"end_turn", "stop_sequence", "stop"}:
+        return "stop"
+    return None
+
+
+def _usage_int(value: Any) -> int:
+    try:
+        return int(value or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _anthropic_usage_to_openai(usage: Optional[dict]) -> dict:
+    if not isinstance(usage, dict) or not usage:
+        return {}
+    prompt_tokens = _usage_int(usage.get("prompt_tokens", usage.get("input_tokens")))
+    completion_tokens = _usage_int(usage.get("completion_tokens", usage.get("output_tokens")))
+    total_tokens = _usage_int(usage.get("total_tokens")) or prompt_tokens + completion_tokens
+    result = {
+        "prompt_tokens": prompt_tokens,
+        "completion_tokens": completion_tokens,
+        "total_tokens": total_tokens,
+    }
+    input_details = usage.get("input_tokens_details") or {}
+    cached_tokens = _usage_int(
+        usage.get("cache_read_input_tokens")
+        or input_details.get("cached_tokens")
+    )
+    if cached_tokens:
+        result["prompt_tokens_details"] = {"cached_tokens": cached_tokens}
+    return result
+
+
 def _content_blocks(content: Any) -> list[dict]:
     if content is None:
         return []
@@ -399,7 +420,7 @@ def _anthropic_to_openai_completion(model: str, response: dict) -> dict:
     message = {"role": "assistant", "content": "".join(text_parts)}
     if thinking_parts:
         message["reasoning_content"] = "".join(thinking_parts)
-    finish_reason = "stop"
+    finish_reason = _anthropic_stop_reason_to_openai(response.get("stop_reason")) or "stop"
     if tool_calls:
         message["tool_calls"] = tool_calls
         finish_reason = "tool_calls"
@@ -410,7 +431,7 @@ def _anthropic_to_openai_completion(model: str, response: dict) -> dict:
         "created": _now_ts(),
         "model": model,
         "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
-        "usage": response.get("usage", {}),
+        "usage": _anthropic_usage_to_openai(response.get("usage", {})),
     }
 
 
@@ -420,10 +441,17 @@ def _anthropic_to_openai_chunk(
     *,
     finish_reason_override: str | None = None,
     tool_index_override: int | None = None,
+    chunk_id: str | None = None,
+    created: int | None = None,
 ) -> str:
     chunk_type = chunk.get("type", "")
-    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
-    base = {"id": chunk_id, "object": "chat.completion.chunk", "created": _now_ts(), "model": model}
+    resolved_chunk_id = chunk_id or f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    base = {
+        "id": resolved_chunk_id,
+        "object": "chat.completion.chunk",
+        "created": created if created is not None else _now_ts(),
+        "model": model,
+    }
 
     if chunk_type == "content_block_start":
         block = chunk.get("content_block", {})
@@ -431,7 +459,6 @@ def _anthropic_to_openai_chunk(
             base["choices"] = [{"index": 0, "delta": {"role": "assistant", "reasoning_content": ""}, "finish_reason": None}]
         elif block.get("type") == "tool_use":
             tool_index = tool_index_override if tool_index_override is not None else int(chunk.get("index") or 0)
-            arguments = block.get("input") or {}
             base["choices"] = [
                 {
                     "index": 0,
@@ -444,7 +471,7 @@ def _anthropic_to_openai_chunk(
                                 "type": "function",
                                 "function": {
                                     "name": block.get("name", ""),
-                                    "arguments": json.dumps(arguments, ensure_ascii=False) if arguments else "",
+                                    "arguments": "",
                                 },
                             }
                         ],
@@ -525,16 +552,22 @@ def _text_chunks(text: str, chunk_chars: int):
         yield text[index : index + chunk_chars]
 
 
-def _completion_to_stream_events(completion: dict, *, include_role: bool = True, content_chunk_chars: int = 0):
+def _completion_to_stream_events(
+    completion: dict,
+    *,
+    include_role: bool = True,
+    content_chunk_chars: int = 0,
+    chunk_id: str | None = None,
+):
     model = completion.get("model", "unknown")
     created = completion.get("created", _now_ts())
-    chunk_id = f"chatcmpl-{uuid.uuid4().hex[:12]}"
+    resolved_chunk_id = chunk_id or f"chatcmpl-{uuid.uuid4().hex[:12]}"
     choice = completion.get("choices", [{}])[0]
     message = choice.get("message", {})
 
     if include_role:
         first = {
-            "id": chunk_id,
+            "id": resolved_chunk_id,
             "object": "chat.completion.chunk",
             "created": created,
             "model": model,
@@ -546,7 +579,7 @@ def _completion_to_stream_events(completion: dict, *, include_role: bool = True,
     reasoning = message.get("reasoning_content", "")
     if reasoning:
         body = {
-            "id": chunk_id,
+            "id": resolved_chunk_id,
             "object": "chat.completion.chunk",
             "created": created,
             "model": model,
@@ -558,7 +591,7 @@ def _completion_to_stream_events(completion: dict, *, include_role: bool = True,
     if text:
         for text_part in _text_chunks(text, content_chunk_chars):
             body = {
-                "id": chunk_id,
+                "id": resolved_chunk_id,
                 "object": "chat.completion.chunk",
                 "created": created,
                 "model": model,
@@ -582,7 +615,7 @@ def _completion_to_stream_events(completion: dict, *, include_role: bool = True,
             },
         }
         body = {
-            "id": chunk_id,
+            "id": resolved_chunk_id,
             "object": "chat.completion.chunk",
             "created": created,
             "model": model,
@@ -592,7 +625,7 @@ def _completion_to_stream_events(completion: dict, *, include_role: bool = True,
 
     finish_reason = "tool_calls" if tool_calls else choice.get("finish_reason") or "stop"
     final = {
-        "id": chunk_id,
+        "id": resolved_chunk_id,
         "object": "chat.completion.chunk",
         "created": created,
         "model": model,

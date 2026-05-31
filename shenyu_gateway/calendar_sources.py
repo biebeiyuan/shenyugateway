@@ -6,25 +6,7 @@ from datetime import datetime
 from typing import Any, Optional
 
 from .calendar import period_bounds
-
-
-def _normalize_text(content: Any) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts: list[str] = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                if item.get("type") == "text" and isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-                elif isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-        return "\n".join(part for part in parts if part)
-    return str(content)
+from .utils import normalize_text as _normalize_text
 
 
 def _shorten(text: str, limit: int = 240) -> str:

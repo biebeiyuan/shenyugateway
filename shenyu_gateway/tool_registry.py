@@ -54,6 +54,92 @@ def _gateway_core_tools() -> list[dict]:
         {
             "type": "function",
             "function": {
+                "name": "shenyu_surface_passages",
+                "description": "从 room 和留言板里按概率浮现相关片段，适合需要一点旧场景灵感时使用。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "session_tag": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 8, "default": 3},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_search_primary_texts",
+                "description": "查日记、信、纸、room 或留言板的原文片段。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "categories": {
+                            "type": "array",
+                            "items": {
+                                "type": "string",
+                                "enum": [
+                                    "all",
+                                    "journal",
+                                    "diary",
+                                    "letter",
+                                    "paper",
+                                    "lock",
+                                    "annotation",
+                                    "life_tick",
+                                    "room",
+                                    "message_board",
+                                ],
+                            },
+                        },
+                        "session_tag": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_ask_memory",
+                "description": "查旧 memories 表里的摘要、事实和情绪上下文，可按日期或会话过滤。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "session_tag": {"type": "string"},
+                        "date": {"type": "string"},
+                        "date_from": {"type": "string"},
+                        "date_to": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_search_mem_notes",
+                "description": "按关键词搜索 mem 便签；和列表工具相比默认查全部状态。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived", "all"], "default": "all"},
+                        "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
+                        "session_tag": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "shenyu_add_calendar",
                 "description": "手动写一页 day / week / month 日历记忆。",
                 "parameters": {

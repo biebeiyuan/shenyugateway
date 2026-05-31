@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from typing import Any, Optional
 
 from shenyu_gateway.embeddings import EmbeddingClient
+from shenyu_gateway.runtime import logger
+from shenyu_gateway.utils import normalize_text as _normalize_text
 
 
 RECALL_INDEX_TABLE = "shenyu_recall_index"
@@ -15,18 +17,6 @@ RECALL_CHUNK_MIN_CHARS = 140
 RECALL_CHUNK_MAX_CHARS = 900
 EMBEDDING_TEXT_MAX_CHARS = 1600
 DEFAULT_RECALL_CANDIDATE_LIMIT = 160
-
-
-def _normalize_text(value: Any) -> str:
-    if value is None:
-        return ""
-    if isinstance(value, str):
-        return value
-    if isinstance(value, (list, tuple, set)):
-        return " ".join(_normalize_text(item) for item in value if item is not None)
-    if isinstance(value, dict):
-        return json.dumps(value, ensure_ascii=False, sort_keys=True)
-    return str(value)
 
 
 def _shorten(text: str, limit: int = 260) -> str:
@@ -637,8 +627,8 @@ class RecallIndexService:
                 )
                 if isinstance(rows, list):
                     return rows
-            except Exception:
-                pass
+            except Exception as exc:
+                logger.warning("Recall index RPC search failed; falling back to table query: %s", exc)
 
         params: dict[str, str] = {
             "select": "*",
@@ -771,18 +761,6 @@ class RecallIndexService:
         if not session_tag:
             return True
         return not row_session or row_session in {session_tag, "default", "shared", "unknown"}
-
-    def _source_weight(self, source_type: str) -> float:
-        return {
-            "room": 0.92,
-            "memory": 0.88,
-            "journal": 0.82,
-            "calendar": 0.76,
-            "mem_note": 0.74,
-            "note": 0.74,
-            "notebook": 0.68,
-            "board": 0.58,
-        }.get(source_type or "", 0.5)
 
     async def _upsert_documents(self, docs: list[RecallDocument]) -> None:
         if not docs:

@@ -53,7 +53,7 @@ from shenyu_gateway.context_layers import (
 )
 from shenyu_gateway.gateway_tools import GatewayToolService, configure_gateway_tools
 from shenyu_gateway.mem_notes import MemNoteService
-from shenyu_gateway.recall import RecallIndexService
+from shenyu_gateway.recall import RecallIndexService, recall_terms
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
     json_dumps as _json_dumps,
@@ -91,6 +91,8 @@ from shenyu_gateway.tool_registry import (
 )
 from shenyu_gateway.upstream_adapter import (
     _anthropic_tool_index_override,
+    _anthropic_stop_reason_to_openai,
+    _anthropic_usage_to_openai,
     _anthropic_to_openai_chunk,
     _anthropic_to_openai_completion,
     _apply_openai_compatible_cache_control,
@@ -101,25 +103,9 @@ from shenyu_gateway.upstream_adapter import (
     _models_url_for,
     _openai_to_anthropic,
 )
-logging.basicConfig(level=logging.INFO)
+from shenyu_gateway.utils import normalize_text as _normalize_text
 
-def _normalize_text(content: Any) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                if item.get("type") == "text" and isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-                elif isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-        return "\n".join(part for part in parts if part)
-    return str(content)
+logging.basicConfig(level=logging.INFO)
 
 
 def _shorten(text: str, limit: int = 240) -> str:
@@ -177,27 +163,7 @@ def _split_paragraph_chunks(text: str, min_len: int = 80, max_len: int = 420) ->
 
 
 def _keyword_terms(query: str) -> list[str]:
-    raw = (query or "").replace("\n", " ")
-    terms: list[str] = []
-    seen: set[str] = set()
-
-    def add(term: str):
-        term = term.strip().lower()
-        if term and term not in seen:
-            seen.add(term)
-            terms.append(term)
-
-    for token in re.findall(r"[A-Za-z0-9_.+-]+|[\u4e00-\u9fff]+", raw):
-        add(token)
-        if re.fullmatch(r"[\u4e00-\u9fff]+", token):
-            if len(token) <= 2:
-                continue
-            for size in (2, 3):
-                if len(token) < size:
-                    continue
-                for idx in range(0, len(token) - size + 1):
-                    add(token[idx : idx + size])
-    return terms
+    return recall_terms(query)
 
 
 def _keyword_overlap_score(query: str, text: str) -> float:
@@ -1794,54 +1760,75 @@ def _tool_call_cache_key(name: str, args: dict) -> str:
     return f"{name}:{args_text}"
 
 
-def _stream_content_event(model: str, content: str, *, finish_reason: Optional[str] = None) -> str:
-    body = {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
+def _new_stream_chunk_id() -> str:
+    return f"chatcmpl-{uuid.uuid4().hex[:12]}"
+
+
+def _stream_chunk_base(model: str, *, chunk_id: Optional[str] = None, created: Optional[int] = None) -> dict:
+    return {
+        "id": chunk_id or _new_stream_chunk_id(),
         "object": "chat.completion.chunk",
-        "created": _now_ts(),
+        "created": created if created is not None else _now_ts(),
         "model": model,
+    }
+
+
+def _stream_content_event(
+    model: str,
+    content: str,
+    *,
+    finish_reason: Optional[str] = None,
+    chunk_id: Optional[str] = None,
+    created: Optional[int] = None,
+) -> str:
+    body = {
+        **_stream_chunk_base(model, chunk_id=chunk_id, created=created),
         "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": finish_reason}],
     }
     return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
-def _stream_reasoning_event(model: str, reasoning: str, *, finish_reason: Optional[str] = None) -> str:
+def _stream_reasoning_event(
+    model: str,
+    reasoning: str,
+    *,
+    finish_reason: Optional[str] = None,
+    chunk_id: Optional[str] = None,
+    created: Optional[int] = None,
+) -> str:
     body = {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion.chunk",
-        "created": _now_ts(),
-        "model": model,
+        **_stream_chunk_base(model, chunk_id=chunk_id, created=created),
         "choices": [{"index": 0, "delta": {"reasoning_content": reasoning}, "finish_reason": finish_reason}],
     }
     return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
-def _stream_role_event(model: str) -> str:
+def _stream_role_event(model: str, *, chunk_id: Optional[str] = None, created: Optional[int] = None) -> str:
     body = {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion.chunk",
-        "created": _now_ts(),
-        "model": model,
+        **_stream_chunk_base(model, chunk_id=chunk_id, created=created),
         "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
     }
     return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
-def _stream_final_event(model: str, finish_reason: str = "stop") -> str:
+def _stream_final_event(
+    model: str,
+    finish_reason: str = "stop",
+    *,
+    chunk_id: Optional[str] = None,
+    created: Optional[int] = None,
+) -> str:
     body = {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion.chunk",
-        "created": _now_ts(),
-        "model": model,
+        **_stream_chunk_base(model, chunk_id=chunk_id, created=created),
         "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
     }
     return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
-def _stream_keepalive_event(model: str) -> str:
+def _stream_keepalive_event(model: str, *, chunk_id: Optional[str] = None, created: Optional[int] = None) -> str:
     # OpenAI-compatible empty delta; some clients/proxies do not treat SSE comments
     # as activity, so this keeps long internal tool loops visibly alive to parsers.
-    return _stream_content_event(model, "", finish_reason=None)
+    return _stream_content_event(model, "", finish_reason=None, chunk_id=chunk_id, created=created)
 
 
 def _sse_response(generator) -> StreamingResponse:
@@ -1928,9 +1915,11 @@ def _finalize_assistant_private_content(
 
 
 def _stream_gateway_error_events(model: str, error: str):
+    chunk_id = _new_stream_chunk_id()
+    created = _now_ts()
     message = (error or "Gateway request failed.").strip()
-    yield _stream_content_event(model, f"\n\n[网关错误] {message}\n", finish_reason=None)
-    yield _stream_final_event(model)
+    yield _stream_content_event(model, f"\n\n[网关错误] {message}\n", finish_reason=None, chunk_id=chunk_id, created=created)
+    yield _stream_final_event(model, chunk_id=chunk_id, created=created)
     yield "data: [DONE]\n\n"
 
 
@@ -2075,6 +2064,10 @@ async def _stream_upstream_openai_chunks(
             return
 
         anthropic_stop_reason = ""
+        anthropic_usage: dict[str, Any] = {}
+        chunk_id = _new_stream_chunk_id()
+        created = _now_ts()
+        tool_call_seen = False
         tool_index_by_block: dict[int, int] = {}
         async for raw_line in resp.aiter_lines():
             line = raw_line.strip()
@@ -2086,14 +2079,28 @@ async def _stream_upstream_openai_chunks(
                 data = json.loads(line)
             except json.JSONDecodeError:
                 continue
-            if data.get("type") == "message_delta":
+            if data.get("type") == "message_start":
+                usage = (data.get("message") or {}).get("usage")
+                if isinstance(usage, dict):
+                    anthropic_usage.update(usage)
+            elif data.get("type") == "content_block_start":
+                if (data.get("content_block") or {}).get("type") == "tool_use":
+                    tool_call_seen = True
+            elif data.get("type") == "message_delta":
                 anthropic_stop_reason = data.get("delta", {}).get("stop_reason") or anthropic_stop_reason
-            finish_reason = "tool_calls" if anthropic_stop_reason == "tool_use" else None
+                usage = data.get("usage")
+                if isinstance(usage, dict):
+                    anthropic_usage.update(usage)
+            finish_reason = _anthropic_stop_reason_to_openai(anthropic_stop_reason)
+            if data.get("type") == "message_stop" and tool_call_seen and finish_reason is None:
+                finish_reason = "tool_calls"
             chunk = _anthropic_to_openai_chunk(
                 model,
                 data,
                 finish_reason_override=finish_reason,
                 tool_index_override=_anthropic_tool_index_override(data, tool_index_by_block),
+                chunk_id=chunk_id,
+                created=created,
             )
             if not chunk:
                 continue
@@ -2102,8 +2109,10 @@ async def _stream_upstream_openai_chunks(
             except json.JSONDecodeError:
                 continue
             usage = data.get("usage") or (data.get("message") or {}).get("usage")
-            if usage:
-                converted["usage"] = usage
+            if isinstance(usage, dict):
+                converted["usage"] = _anthropic_usage_to_openai(usage)
+            elif data.get("type") == "message_stop" and anthropic_usage:
+                converted["usage"] = _anthropic_usage_to_openai(anthropic_usage)
             yield converted
     finally:
         await resp.aclose()
@@ -2365,8 +2374,10 @@ async def _run_internal_tool_loop_stream(
     tool_result_cache: dict[str, dict] = {}
     mem_note_written = False
     latest_user_text = _latest_user_text(prepared_messages)
+    stream_chunk_id = _new_stream_chunk_id()
+    stream_created = _now_ts()
 
-    yield _stream_role_event(body.model)
+    yield _stream_role_event(body.model, chunk_id=stream_chunk_id, created=stream_created)
 
     for round_index in range(max(1, cfg.max_internal_tool_rounds)):
         payload, headers, _, cache_meta, upstream = await _build_upstream_request(
@@ -2410,7 +2421,7 @@ async def _run_internal_tool_loop_stream(
                         next_chunk.cancel()
                         await upstream_chunks.aclose()
                         return
-                    yield _stream_keepalive_event(body.model)
+                    yield _stream_keepalive_event(body.model, chunk_id=stream_chunk_id, created=stream_created)
                     continue
                 try:
                     data = next_chunk.result()
@@ -2429,14 +2440,14 @@ async def _run_internal_tool_loop_stream(
                 reasoning = delta.get("reasoning_content")
                 if reasoning:
                     streamed_reasoning_parts.append(reasoning)
-                    yield _stream_reasoning_event(body.model, reasoning)
+                    yield _stream_reasoning_event(body.model, reasoning, chunk_id=stream_chunk_id, created=stream_created)
                 text = delta.get("content")
                 if text:
                     filtered = tag_filter.feed(text)
                     if filtered:
                         visible_output_sent = visible_output_sent or bool(filtered.strip())
                         streamed_content_parts.append(filtered)
-                        yield _stream_content_event(body.model, filtered)
+                        yield _stream_content_event(body.model, filtered, chunk_id=stream_chunk_id, created=stream_created)
         finally:
             if not next_chunk.done():
                 next_chunk.cancel()
@@ -2456,7 +2467,7 @@ async def _run_internal_tool_loop_stream(
                 remaining = tag_filter.flush()
                 if remaining:
                     visible_output_sent = visible_output_sent or bool(remaining.strip())
-                    yield _stream_content_event(body.model, remaining)
+                    yield _stream_content_event(body.model, remaining, chunk_id=stream_chunk_id, created=stream_created)
             if round_log is not None:
                 round_log["final"] = True
                 round_log["tool_calls_count"] = len(tool_calls)
@@ -2503,12 +2514,18 @@ async def _run_internal_tool_loop_stream(
                     replay_completion,
                     include_role=False,
                     content_chunk_chars=1200,
+                    chunk_id=stream_chunk_id,
                 ):
                     yield chunk
             else:
                 if fallback_meta["applied"] and not visible_output_sent:
-                    yield _stream_content_event(body.model, fallback_meta["text"])
-                yield _stream_final_event(body.model, completion.get("choices", [{}])[0].get("finish_reason") or "stop")
+                    yield _stream_content_event(body.model, fallback_meta["text"], chunk_id=stream_chunk_id, created=stream_created)
+                yield _stream_final_event(
+                    body.model,
+                    completion.get("choices", [{}])[0].get("finish_reason") or "stop",
+                    chunk_id=stream_chunk_id,
+                    created=stream_created,
+                )
                 yield "data: [DONE]\n\n"
             return
 
@@ -2560,7 +2577,7 @@ async def _run_internal_tool_loop_stream(
                     log_entry["status"] = "client_disconnected"
                     log_entry["error"] = "Client disconnected during native internal gateway tool execution."
                 return
-            yield _stream_keepalive_event(body.model)
+            yield _stream_keepalive_event(body.model, chunk_id=stream_chunk_id, created=stream_created)
 
     raise HTTPException(status_code=500, detail="Exceeded internal gateway tool rounds.")
 
@@ -2605,6 +2622,8 @@ async def _stream_chat(
             visible_output_sent = False
             tool_call_seen = False
             fallback_applied = False
+            stream_chunk_id = _new_stream_chunk_id()
+            stream_created = _now_ts()
             try:
                 async for raw_line in resp.aiter_lines():
                     line = raw_line.strip()
@@ -2615,8 +2634,13 @@ async def _stream_chat(
                         # 刷出 heartbeat 过滤器缓冲区的剩余文本。
                         remaining = tag_filter.flush()
                         if remaining:
-                            flush_chunk = {"choices": [{"delta": {"content": remaining}}]}
-                            yield f"data: {json.dumps(flush_chunk, ensure_ascii=False)}\n\n"
+                            yield _stream_content_event(
+                                model,
+                                remaining,
+                                finish_reason=None,
+                                chunk_id=stream_chunk_id,
+                                created=stream_created,
+                            )
                             visible_output_sent = visible_output_sent or bool(remaining.strip())
                         if not visible_output_sent and not tool_call_seen:
                             fallback_applied = True
@@ -2628,12 +2652,20 @@ async def _stream_chat(
                                     inline_memories=tag_filter.get_memories(),
                                 ),
                             )
-                            yield _stream_content_event(model, fallback_text, finish_reason=None)
+                            yield _stream_content_event(
+                                model,
+                                fallback_text,
+                                finish_reason=None,
+                                chunk_id=stream_chunk_id,
+                                created=stream_created,
+                            )
                         yield "data: [DONE]\n\n"
                         continue
                     if line.startswith("data: "):
                         try:
                             data = json.loads(line[6:])
+                            stream_chunk_id = data.get("id") or stream_chunk_id
+                            stream_created = data.get("created") or stream_created
                             choice = (data.get("choices") or [{}])[0]
                             delta = choice.get("delta", {})
                             if delta.get("tool_calls"):
@@ -2661,7 +2693,13 @@ async def _stream_chat(
                                         inline_memories=tag_filter.get_memories(),
                                     ),
                                 )
-                                yield _stream_content_event(model, fallback_text, finish_reason=None)
+                                yield _stream_content_event(
+                                    model,
+                                    fallback_text,
+                                    finish_reason=None,
+                                    chunk_id=stream_chunk_id,
+                                    created=stream_created,
+                                )
                         except (json.JSONDecodeError, IndexError, KeyError, TypeError):
                             pass
                     # 非 content 行（role、tool_calls 等），原样转发。
@@ -2693,6 +2731,9 @@ async def _stream_chat(
         tool_call_seen = False
         fallback_applied = False
         anthropic_stop_reason = ""
+        anthropic_usage: dict[str, Any] = {}
+        stream_chunk_id = _new_stream_chunk_id()
+        stream_created = _now_ts()
         tool_index_by_block: dict[int, int] = {}
         try:
             async for line in resp.aiter_lines():
@@ -2708,7 +2749,11 @@ async def _stream_chat(
                 except json.JSONDecodeError:
                     continue
                 # 收集文本并过滤 heartbeat。
-                if data.get("type") == "content_block_delta":
+                if data.get("type") == "message_start":
+                    usage = (data.get("message") or {}).get("usage")
+                    if isinstance(usage, dict):
+                        anthropic_usage.update(usage)
+                elif data.get("type") == "content_block_delta":
                     delta = data.get("delta", {})
                     text = delta.get("text", "")
                     if text:
@@ -2728,6 +2773,9 @@ async def _stream_chat(
                         data.get("delta", {}).get("stop_reason")
                         or anthropic_stop_reason
                     )
+                    usage = data.get("usage")
+                    if isinstance(usage, dict):
+                        anthropic_usage.update(usage)
                 elif data.get("type") == "message_stop" and not visible_output_sent and not tool_call_seen:
                     fallback_applied = True
                     visible_output_sent = True
@@ -2738,21 +2786,43 @@ async def _stream_chat(
                             inline_memories=tag_filter.get_memories(),
                         ),
                     )
-                    yield _stream_content_event(model, fallback_text, finish_reason=None)
-                finish_reason = "tool_calls" if anthropic_stop_reason == "tool_use" else None
+                    yield _stream_content_event(
+                        model,
+                        fallback_text,
+                        finish_reason=None,
+                        chunk_id=stream_chunk_id,
+                        created=stream_created,
+                    )
+                finish_reason = _anthropic_stop_reason_to_openai(anthropic_stop_reason)
+                if data.get("type") == "message_stop" and tool_call_seen and finish_reason is None:
+                    finish_reason = "tool_calls"
                 chunk = _anthropic_to_openai_chunk(
                     model,
                     data,
                     finish_reason_override=finish_reason,
                     tool_index_override=_anthropic_tool_index_override(data, tool_index_by_block),
+                    chunk_id=stream_chunk_id,
+                    created=stream_created,
                 )
                 if chunk:
+                    if data.get("type") == "message_stop" and anthropic_usage:
+                        try:
+                            chunk_data = json.loads(chunk)
+                            chunk_data["usage"] = _anthropic_usage_to_openai(anthropic_usage)
+                            chunk = json.dumps(chunk_data, ensure_ascii=False)
+                        except (TypeError, json.JSONDecodeError):
+                            pass
                     yield f"data: {chunk}\n\n"
             # 刷出剩余缓冲。
             remaining = tag_filter.flush()
             if remaining:
-                flush_data = {"choices": [{"delta": {"content": remaining}}]}
-                yield f"data: {json.dumps(flush_data, ensure_ascii=False)}\n\n"
+                yield _stream_content_event(
+                    model,
+                    remaining,
+                    finish_reason=None,
+                    chunk_id=stream_chunk_id,
+                    created=stream_created,
+                )
                 visible_output_sent = visible_output_sent or bool(remaining.strip())
             if not visible_output_sent and not tool_call_seen:
                 fallback_applied = True
@@ -2764,7 +2834,13 @@ async def _stream_chat(
                         inline_memories=tag_filter.get_memories(),
                     ),
                 )
-                yield _stream_content_event(model, fallback_text, finish_reason=None)
+                yield _stream_content_event(
+                    model,
+                    fallback_text,
+                    finish_reason=None,
+                    chunk_id=stream_chunk_id,
+                    created=stream_created,
+                )
             yield "data: [DONE]\n\n"
         finally:
             await resp.aclose()
@@ -4060,4 +4136,3 @@ if __name__ == "__main__":
     print(f"Admin -> http://localhost:{port}/admin")
     print(f"Operit custom provider URL -> http://your-ip:{port}")
     uvicorn.run("gateway:app", host="0.0.0.0", port=port, reload=reload_enabled)
-

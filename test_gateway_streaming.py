@@ -20,6 +20,25 @@ def test_internal_tool_keepalive_is_openai_compatible_empty_delta():
     assert choice["finish_reason"] is None
 
 
+def test_stream_content_event_is_complete_openai_chunk():
+    payload = _data_payload(
+        gateway._stream_content_event(
+            "test-model",
+            "hello",
+            chunk_id="chatcmpl-fixed",
+            created=123,
+        )
+    )
+
+    assert payload["id"] == "chatcmpl-fixed"
+    assert payload["object"] == "chat.completion.chunk"
+    assert payload["created"] == 123
+    assert payload["model"] == "test-model"
+    assert payload["choices"] == [
+        {"index": 0, "delta": {"content": "hello"}, "finish_reason": None}
+    ]
+
+
 def test_sse_response_disables_proxy_buffering():
     async def generate():
         yield "data: [DONE]\n\n"
@@ -120,9 +139,13 @@ def test_openai_stream_accumulator_treats_null_arguments_as_empty_delta():
 
 
 def test_stream_role_and_final_events_are_openai_compatible():
-    role_payload = _data_payload(gateway._stream_role_event("test-model"))
-    final_payload = _data_payload(gateway._stream_final_event("test-model", "tool_calls"))
+    role_payload = _data_payload(gateway._stream_role_event("test-model", chunk_id="chatcmpl-fixed", created=123))
+    final_payload = _data_payload(
+        gateway._stream_final_event("test-model", "tool_calls", chunk_id="chatcmpl-fixed", created=123)
+    )
 
+    assert role_payload["id"] == final_payload["id"] == "chatcmpl-fixed"
+    assert role_payload["created"] == final_payload["created"] == 123
     assert role_payload["choices"][0]["delta"] == {"role": "assistant", "content": ""}
     assert role_payload["choices"][0]["finish_reason"] is None
     assert final_payload["choices"][0]["delta"] == {}

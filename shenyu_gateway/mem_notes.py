@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Any, Optional
 
 from shenyu_gateway.recall import RecallIndexService, recall_terms
+from shenyu_gateway.utils import normalize_text as _normalize_text
 from .runtime import iso_now, now as _now, parse_ts as _parse_ts
 
 
@@ -46,44 +47,8 @@ CONTEXT_WEAK_KEYWORD_HITS = {
 }
 
 
-def _normalize_text(content: Any) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict) and isinstance(item.get("text"), str):
-                parts.append(item["text"])
-        return "\n".join(part for part in parts if part)
-    return str(content)
-
-
-def _terms(query: str) -> list[str]:
-    raw = (query or "").replace("\n", " ")
-    result: list[str] = []
-    seen: set[str] = set()
-
-    def add(term: str):
-        term = term.strip().lower()
-        if term and term not in seen:
-            seen.add(term)
-            result.append(term)
-
-    for token in re.findall(r"[A-Za-z0-9_.+-]+|[\u4e00-\u9fff]+", raw):
-        add(token)
-        if re.fullmatch(r"[\u4e00-\u9fff]+", token) and len(token) > 2:
-            for size in (2, 3):
-                for index in range(0, len(token) - size + 1):
-                    add(token[index : index + size])
-    return result
-
-
 def _overlap(query: str, text: str) -> float:
-    terms = _terms(query)
+    terms = recall_terms(query)
     if not terms:
         return 0.0
     haystack = (text or "").lower()

@@ -9,7 +9,7 @@ from typing import Any, Optional
 
 from shenyu_gateway.calendar import default_period_key, period_bounds
 from shenyu_gateway.mem_notes import MemNoteService
-from shenyu_gateway.recall import RecallIndexService
+from shenyu_gateway.recall import RecallIndexService, recall_terms
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
     json_dumps as _json_dumps,
@@ -29,42 +29,16 @@ class GatewayToolRuntime:
 
 
 _runtime = GatewayToolRuntime()
-cfg: Any = None
-supabase_client: Any = None
-session_store: Any = None
 
 
 def configure_gateway_tools(*, runtime_config: Any = _UNSET, supabase: Any = _UNSET, store: Any = _UNSET) -> None:
     """Inject gateway runtime dependencies without importing gateway.py back into this module."""
-    global cfg, supabase_client, session_store
     if runtime_config is not _UNSET:
-        cfg = runtime_config
         _runtime.cfg = runtime_config
     if supabase is not _UNSET:
-        supabase_client = supabase
         _runtime.supabase_client = supabase
     if store is not _UNSET:
-        session_store = store
         _runtime.session_store = store
-
-
-def _normalize_text(content: Any) -> str:
-    if content is None:
-        return ""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, str):
-                parts.append(item)
-            elif isinstance(item, dict):
-                if item.get("type") == "text" and isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-                elif isinstance(item.get("text"), str):
-                    parts.append(item["text"])
-        return "\n".join(part for part in parts if part)
-    return str(content)
 
 
 def _shorten(text: str, limit: int = 240) -> str:
@@ -122,27 +96,7 @@ def _split_paragraph_chunks(text: str, min_len: int = 80, max_len: int = 420) ->
 
 
 def _keyword_terms(query: str) -> list[str]:
-    raw = (query or "").replace("\n", " ")
-    terms: list[str] = []
-    seen: set[str] = set()
-
-    def add(term: str):
-        term = term.strip().lower()
-        if term and term not in seen:
-            seen.add(term)
-            terms.append(term)
-
-    for token in re.findall(r"[A-Za-z0-9_.+-]+|[\u4e00-\u9fff]+", raw):
-        add(token)
-        if re.fullmatch(r"[\u4e00-\u9fff]+", token):
-            if len(token) <= 2:
-                continue
-            for size in (2, 3):
-                if len(token) < size:
-                    continue
-                for idx in range(0, len(token) - size + 1):
-                    add(token[idx : idx + size])
-    return terms
+    return recall_terms(query)
 
 
 def _keyword_overlap_score(query: str, text: str) -> float:
@@ -195,7 +149,7 @@ def _safe_json_loads(value: Any, fallback: Any):
 
 
 def _is_hisense_client(client_name: Optional[str], runtime_config: Any = None) -> bool:
-    active_cfg = runtime_config or cfg
+    active_cfg = runtime_config or _runtime.cfg
     target = (getattr(active_cfg, "hisense_client_name", "") or "").strip()
     name = (client_name or "").strip()
     if not target or not name:
@@ -254,17 +208,17 @@ notebook 是共享手边事项；海信那边或跨窗口要留事用 `shenyu_no
 class GatewayToolService:
     def __init__(self, runtime_config: Any = _UNSET, supabase: Any = _UNSET, store: Any = _UNSET):
         self.cfg = (
-            (_runtime.cfg if _runtime.cfg is not None else cfg)
+            _runtime.cfg
             if runtime_config is _UNSET
             else runtime_config
         )
         self.supabase = (
-            (_runtime.supabase_client if _runtime.supabase_client is not None else supabase_client)
+            _runtime.supabase_client
             if supabase is _UNSET
             else supabase
         )
         self.store = (
-            (_runtime.session_store if _runtime.session_store is not None else session_store)
+            _runtime.session_store
             if store is _UNSET
             else store
         )
@@ -280,7 +234,7 @@ class GatewayToolService:
         limit: int,
     ) -> dict:
         if not self.supabase:
-            return {"error": "Supabase is not configured."}
+            return {"ok": False, "error": "Supabase is not configured."}
         table_hint = self._supabase_table_hint(table)
         if table_hint:
             return {"ok": False, "error": table_hint}
@@ -399,7 +353,7 @@ class GatewayToolService:
 
     async def supabase_insert(self, table: str, data: dict) -> dict:
         if not self.supabase:
-            return {"error": "Supabase is not configured."}
+            return {"ok": False, "error": "Supabase is not configured."}
         table_hint = self._supabase_table_hint(table)
         if table_hint:
             return {"ok": False, "error": table_hint}
@@ -411,14 +365,14 @@ class GatewayToolService:
 
     async def supabase_update(self, table: str, match: dict, data: dict, operators: Optional[dict] = None, column: Optional[str] = None) -> dict:
         if not self.supabase:
-            return {"error": "Supabase is not configured."}
+            return {"ok": False, "error": "Supabase is not configured."}
         table_hint = self._supabase_table_hint(table)
         if table_hint:
             return {"ok": False, "error": table_hint}
         try:
             params = self._build_supabase_filter_params(match, operators, column=column)
             if not params:
-                return {"error": "supabase_update requires match or operators to avoid updating the whole table."}
+                return {"ok": False, "error": "supabase_update requires match or operators to avoid updating the whole table."}
             result = await self.supabase.update(table, params, data)
             return {
                 "ok": True,
@@ -431,14 +385,14 @@ class GatewayToolService:
 
     async def supabase_delete(self, table: str, match: dict, hard: bool = False, operators: Optional[dict] = None, column: Optional[str] = None) -> dict:
         if not self.supabase:
-            return {"error": "Supabase is not configured."}
+            return {"ok": False, "error": "Supabase is not configured."}
         table_hint = self._supabase_table_hint(table)
         if table_hint:
             return {"ok": False, "error": table_hint}
         try:
             params = self._build_supabase_filter_params(match, operators, column=column)
             if not params:
-                return {"error": "supabase_delete requires match or operators to avoid deleting the whole table."}
+                return {"ok": False, "error": "supabase_delete requires match or operators to avoid deleting the whole table."}
             if hard:
                 result = await self.supabase.delete(table, params)
                 return {
@@ -468,7 +422,7 @@ class GatewayToolService:
                     "rows": result,
                 }
         except Exception as exc:
-            return {"error": str(exc)}
+            return {"ok": False, "error": str(exc)}
 
     async def ask_memory(
         self,
@@ -752,11 +706,11 @@ class GatewayToolService:
 
     async def last_seen(self) -> Any:
         if not self.supabase:
-            return {"note": "Supabase is not configured."}
+            return {"ok": False, "error": "Supabase is not configured."}
         try:
             return await self.supabase.rpc("last_seen")
         except Exception as exc:
-            return {"error": str(exc)}
+            return {"ok": False, "error": str(exc)}
 
     async def meta_summaries(self) -> Any:
         if not self.supabase:
@@ -764,7 +718,7 @@ class GatewayToolService:
         try:
             return await self.supabase.rpc("get_meta_summaries")
         except Exception as exc:
-            return {"error": str(exc)}
+            return {"ok": False, "error": str(exc)}
 
     async def recall_main_thread(self, since: Optional[str], until: Optional[str], query: Optional[str], limit: int) -> dict:
         if not self.store:

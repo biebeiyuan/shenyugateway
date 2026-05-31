@@ -5,6 +5,7 @@ import json
 from shenyu_gateway.upstream_adapter import (
     _anthropic_tool_index_override,
     _anthropic_to_openai_chunk,
+    _anthropic_to_openai_completion,
     _completion_to_stream_events,
 )
 
@@ -119,6 +120,22 @@ def test_completion_stream_events_can_skip_role_and_chunk_content():
     assert payloads[-1] == "[DONE]"
 
 
+def test_completion_stream_events_can_reuse_completion_id():
+    completion = {
+        "created": 123,
+        "model": "test-model",
+        "choices": [{"message": {"role": "assistant", "content": "abc"}}],
+    }
+
+    payloads = []
+    for event in _completion_to_stream_events(completion, chunk_id="chatcmpl-fixed"):
+        for line in event.splitlines():
+            if line.startswith("data: ") and line != "data: [DONE]":
+                payloads.append(json.loads(line.removeprefix("data: ")))
+
+    assert {payload["id"] for payload in payloads} == {"chatcmpl-fixed"}
+
+
 def test_anthropic_streaming_tool_use_is_forwarded_as_openai_tool_call():
     start = {
         "type": "content_block_start",
@@ -141,6 +158,7 @@ def test_anthropic_streaming_tool_use_is_forwarded_as_openai_tool_call():
     tool_delta = start_payload["choices"][0]["delta"]["tool_calls"][0]
     assert tool_delta["id"] == "toolu_1"
     assert tool_delta["function"]["name"] == "read_file"
+    assert tool_delta["function"]["arguments"] == ""
 
     delta_payload = json.loads(_anthropic_to_openai_chunk("test-model", delta))
     arg_delta = delta_payload["choices"][0]["delta"]["tool_calls"][0]
@@ -151,6 +169,42 @@ def test_anthropic_streaming_tool_use_is_forwarded_as_openai_tool_call():
         _anthropic_to_openai_chunk("test-model", stop, finish_reason_override="tool_calls")
     )
     assert stop_payload["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_anthropic_completion_maps_max_tokens_to_length():
+    completion = _anthropic_to_openai_completion(
+        "test-model",
+        {
+            "stop_reason": "max_tokens",
+            "content": [{"type": "text", "text": "partial"}],
+            "usage": {"input_tokens": 1, "output_tokens": 2},
+        },
+    )
+
+    assert completion["choices"][0]["finish_reason"] == "length"
+    assert completion["usage"] == {
+        "prompt_tokens": 1,
+        "completion_tokens": 2,
+        "total_tokens": 3,
+    }
+
+
+def test_anthropic_stream_chunk_uses_supplied_id_and_length_finish_reason():
+    stop = {"type": "message_stop"}
+
+    payload = json.loads(
+        _anthropic_to_openai_chunk(
+            "test-model",
+            stop,
+            finish_reason_override="length",
+            chunk_id="chatcmpl-fixed",
+            created=123,
+        )
+    )
+
+    assert payload["id"] == "chatcmpl-fixed"
+    assert payload["created"] == 123
+    assert payload["choices"][0]["finish_reason"] == "length"
 
 
 def test_anthropic_tool_block_index_can_be_overridden_for_openai_tool_index():
