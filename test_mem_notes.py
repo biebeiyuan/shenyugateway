@@ -73,6 +73,36 @@ def test_clean_context_query_removes_operit_extra_bundle_attachment():
     assert "设备状态" not in clean
 
 
+def test_list_notes_filters_query_without_crashing():
+    rows = [
+        {
+            "id": "note-1",
+            "session_tag": "5.15",
+            "content": "工具是我的手。",
+            "mem_type": "心里那一档",
+            "trigger_text": "工作描述",
+            "trigger_keywords": ["工具"],
+            "status": "captured",
+        },
+        {
+            "id": "note-2",
+            "session_tag": "5.15",
+            "content": "另一个便签。",
+            "mem_type": "",
+            "trigger_text": "",
+            "trigger_keywords": [],
+            "status": "captured",
+        },
+    ]
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=rows))
+
+    result = asyncio.run(service.list_notes(status="captured", q="工具"))
+
+    assert result["ok"] is True
+    assert result["count"] == 1
+    assert result["items"][0]["id"] == "note-1"
+
+
 class FakeRecallService:
     def __init__(self, rows):
         self.rows = rows

@@ -81,6 +81,10 @@ def _clean_context_query(query: Any) -> str:
     return text
 
 
+def _terms(query: Any) -> list[str]:
+    return recall_terms(_normalize_text(query))
+
+
 class MemNoteService:
     def __init__(self, cfg: Any, supabase_client: Any):
         self.cfg = cfg
