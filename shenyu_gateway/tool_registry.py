@@ -8,6 +8,15 @@ from shenyu_gateway.mem_notes import MEM_NOTE_TYPES
 
 
 MEM_NOTE_TYPE_ENUM = list(MEM_NOTE_TYPES)
+MEM_NOTE_PATCH_KEYS = {
+    "content",
+    "mem_type",
+    "trigger_text",
+    "trigger_keywords",
+    "status",
+    "cooldown_hours",
+    "review_note",
+}
 
 
 def _gateway_core_tools() -> list[dict]:
@@ -16,7 +25,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_recall",
-                "description": "统一召回入口：关键词召回旧上下文；启用 embedding 后追加语义召回。可限定 memory、journal、room、board、calendar、mem_note、notebook。",
+                "description": "统一召回入口：关键词召回旧上下文；启用 embedding 后追加语义召回。可限定 memory、journal、room、board、calendar、notebook。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -25,7 +34,7 @@ def _gateway_core_tools() -> list[dict]:
                             "type": "array",
                             "items": {
                                 "type": "string",
-                                "enum": ["all", "memory", "journal", "room", "board", "calendar", "mem_note", "notebook"],
+                                "enum": ["all", "memory", "journal", "room", "board", "calendar", "notebook"],
                             },
                             "default": ["all"],
                         },
@@ -161,7 +170,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_list_mem_notes",
-                "description": "看 mem 便签列表。整理时通常先看 status=captured；自动反上来的 active mem 另走网关的关键词/语义命中。",
+                "description": "看 mem 便签列表。返回 suggested_mem_type / suggested_trigger_* 供整理参考；active mem 会由 trigger_text 和 trigger_keywords 一起参与关键词命中，并有语义兜底。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -240,7 +249,7 @@ def _gateway_mem0_management_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_update_mem_note",
-                "description": "补或修改一条 mem 便签的 type、trigger、触发词、状态和冷却时间。设为 active 前必须补 type 和 trigger。",
+                "description": "补或修改一条 mem 便签的 type、trigger、触发词、状态和冷却时间。trigger_text 和 trigger_keywords 都参与命中；设为 active 前必须补 type 和至少一种 trigger。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -256,6 +265,30 @@ def _gateway_mem0_management_tools() -> list[dict]:
                         "review_note": {"type": "string"},
                     },
                     "required": ["note_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_bulk_update_mem_notes",
+                "description": "批量整理 mem 便签。可传 ids+patch 批量改同一字段，或传 updates 逐条 patch；use_suggestions=true 会给空缺的 mem_type / trigger_text / trigger_keywords 填 list 返回的建议。批量激活用 patch={\"status\":\"active\"}。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "ids": {"type": "array", "items": {"type": "string"}},
+                        "note_ids": {"type": "array", "items": {"type": "string"}, "description": "Alias of ids."},
+                        "patch": {"type": "object", "additionalProperties": True},
+                        "updates": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
+                        "use_suggestions": {"type": "boolean", "default": False},
+                        "content": {"type": "string"},
+                        "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
+                        "trigger_text": {"type": "string"},
+                        "trigger_keywords": {"type": "array", "items": {"type": "string"}},
+                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"]},
+                        "cooldown_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
+                        "review_note": {"type": "string"},
+                    },
                 },
             },
         },
@@ -576,6 +609,24 @@ def _mem_note_patch_args(arguments: dict) -> dict:
     return {key: value for key, value in arguments.items() if key not in id_keys}
 
 
+def _mem_note_ids_arg(arguments: dict) -> list[str]:
+    value = arguments.get("ids") or arguments.get("note_ids") or arguments.get("noteIds") or []
+    if isinstance(value, str):
+        return [item.strip() for item in value.replace("，", ",").split(",") if item.strip()]
+    if isinstance(value, (list, tuple, set)):
+        return [str(item).strip() for item in value if str(item).strip()]
+    return []
+
+
+def _mem_note_bulk_patch_arg(arguments: dict) -> dict:
+    patch: dict[str, Any] = {}
+    nested = arguments.get("patch")
+    if isinstance(nested, dict):
+        patch.update({key: value for key, value in nested.items() if key in MEM_NOTE_PATCH_KEYS})
+    patch.update({key: value for key, value in arguments.items() if key in MEM_NOTE_PATCH_KEYS})
+    return patch
+
+
 async def _wrapped_service_result(key: str, awaitable: Awaitable[Any]) -> dict:
     return {key: await awaitable}
 
@@ -692,6 +743,12 @@ async def execute_gateway_tool(
         "shenyu_update_mem_note": lambda: service.update_mem_note(
             _mem_note_id_arg(arguments),
             _mem_note_patch_args(arguments),
+        ),
+        "shenyu_bulk_update_mem_notes": lambda: service.bulk_update_mem_notes(
+            ids=_mem_note_ids_arg(arguments),
+            patch=_mem_note_bulk_patch_arg(arguments),
+            updates=arguments.get("updates") if isinstance(arguments.get("updates"), list) else [],
+            use_suggestions=_bool_arg(arguments, "use_suggestions", False),
         ),
         "shenyu_delete_mem_note": lambda: service.delete_mem_note(_mem_note_id_arg(arguments)),
         "shenyu_get_meta_summaries": lambda: _wrapped_service_result("meta_summaries", service.meta_summaries()),

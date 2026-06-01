@@ -77,6 +77,7 @@ from shenyu_gateway.schemas import (
     ConfigUpdate,
     HeartbeatCreateRequest,
     HeartbeatDeleteRequest,
+    MemNoteBulkPatch,
     MemNotePatch,
     SessionDeleteRequest,
 )
@@ -1617,6 +1618,12 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         messages=messages,
         latest_user_text=user_text,
     )
+    messages, pending_gateway_meta = _inject_pending_gateway_tool_turns(
+        messages,
+        session_store,
+        session_id=session["id"],
+    )
+    trim_meta.update(pending_gateway_meta)
     _prune_runtime_state(session["id"])
     package = await builder.build_context_package(
         session,
@@ -1640,9 +1647,105 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         "is_first_turn": is_first_turn,
         "cache_layers": layers,
         "client_message_window": trim_meta,
+        "pending_gateway_tool_turn_ids": pending_gateway_meta.get("pending_gateway_tool_turn_ids", []),
         "cold_start_snapshot": cold_start_snapshot,
         "is_hisense": is_hisense,
         "upstream": upstream,
+    }
+
+
+def _json_clone(value: Any) -> Any:
+    return json.loads(_json_dumps(value))
+
+
+def _message_tool_call_ids(message: dict) -> list[str]:
+    ids: list[str] = []
+    for tool_call in message.get("tool_calls") or []:
+        if isinstance(tool_call, dict) and tool_call.get("id"):
+            ids.append(str(tool_call["id"]))
+    return ids
+
+
+def _trailing_client_tool_results(
+    messages: list[dict],
+    assistant_idx: int,
+    expected_ids: set[str],
+) -> tuple[int, list[dict]]:
+    if not expected_ids:
+        return assistant_idx + 1, []
+    found: set[str] = set()
+    tool_results: list[dict] = []
+    next_idx = assistant_idx + 1
+    while next_idx < len(messages) and messages[next_idx].get("role") == "tool":
+        tool_call_id = str(messages[next_idx].get("tool_call_id") or "")
+        if tool_call_id not in expected_ids:
+            return assistant_idx + 1, []
+        found.add(tool_call_id)
+        tool_results.append(messages[next_idx])
+        next_idx += 1
+    if found != expected_ids:
+        return assistant_idx + 1, []
+    return next_idx, tool_results
+
+
+def _inject_pending_gateway_tool_turns(
+    messages: list[dict],
+    store: GatewayStore,
+    session_id: str,
+) -> tuple[list[dict], dict[str, Any]]:
+    rebuilt: list[dict] = []
+    pending_ids: list[str] = []
+    gateway_tool_messages_count = 0
+    idx = 0
+
+    while idx < len(messages):
+        message = messages[idx]
+        tool_calls = message.get("tool_calls") or []
+        if message.get("role") != "assistant" or not isinstance(tool_calls, list) or not tool_calls:
+            rebuilt.append(message)
+            idx += 1
+            continue
+        if any(is_gateway_native_tool(_tool_call_name(call)) for call in tool_calls if isinstance(call, dict)):
+            rebuilt.append(message)
+            idx += 1
+            continue
+
+        client_tool_call_ids = _message_tool_call_ids(message)
+        next_idx, client_tool_results = _trailing_client_tool_results(
+            messages,
+            idx,
+            set(client_tool_call_ids),
+        )
+        if not client_tool_results:
+            rebuilt.append(message)
+            idx += 1
+            continue
+
+        pending = store.find_pending_gateway_tool_turn(session_id, client_tool_call_ids)
+        if not pending:
+            pending_count = store.count_pending_gateway_tool_turns(session_id)
+            logger.info(
+                "[GatewayTool] No pending mixed transcript found for client tool ids: %s (active_pending=%d)",
+                ",".join(client_tool_call_ids),
+                pending_count,
+            )
+            rebuilt.append(message)
+            idx += 1
+            continue
+
+        original_assistant_message = pending.get("original_assistant_message") or message
+        gateway_tool_messages = pending.get("gateway_tool_messages") or []
+        rebuilt.append(_json_clone(original_assistant_message))
+        rebuilt.extend(_json_clone(gateway_tool_messages))
+        rebuilt.extend(client_tool_results)
+        pending_ids.append(str(pending.get("id")))
+        gateway_tool_messages_count += len(gateway_tool_messages)
+        idx = next_idx
+
+    return rebuilt, {
+        "pending_gateway_tool_turns_injected": len(pending_ids),
+        "pending_gateway_tool_turn_ids": pending_ids,
+        "pending_gateway_tool_messages": gateway_tool_messages_count,
     }
 
 
@@ -1672,6 +1775,11 @@ def _mark_context_consumed(meta: dict):
         bridge_count = int((meta.get("client_message_window") or {}).get("cold_start_bridge_messages") or 0)
         if cold_start_snapshot and bridge_count > 0:
             session_store.mark_cold_start_injected(cold_start_snapshot["id"])
+
+        pending_ids = [str(item) for item in meta.get("pending_gateway_tool_turn_ids") or [] if item]
+        if pending_ids:
+            marked = session_store.mark_pending_gateway_tool_turns_consumed(pending_ids)
+            logger.info("[GatewayTool] 标记 %d 个 mixed pending transcript 已消费", marked)
     except Exception:
         logger.exception("Failed to mark injected context as consumed")
 
@@ -2129,15 +2237,23 @@ async def _execute_mixed_gateway_tool_calls(
 
     Some clients provide their own tools (filesystem, package_proxy, etc.). If the model asks for
     client tools and gateway-native tools in the same assistant turn, returning the whole batch makes
-    the client try to execute supabase_/shenyu_ tools locally. We consume the gateway calls here and
-    embed their results into assistant content, then return only the client-executable calls.
+    the client try to execute supabase_/shenyu_ tools locally. We consume the gateway calls here,
+    persist their hidden tool transcript, and return only the client-executable calls. The next
+    upstream request reconstructs the original mixed assistant turn plus gateway tool results.
     """
-    gateway_calls = [call for call in tool_calls if is_gateway_native_tool(_tool_call_name(call))]
-    client_calls = [call for call in tool_calls if not is_gateway_native_tool(_tool_call_name(call))]
+    assert session_store is not None
+    normalized_tool_calls = [_ensure_tool_call_id(call, index) for index, call in enumerate(tool_calls)]
+    assistant_message = completion.get("choices", [{}])[0].get("message", {})
+    base_content = _normalize_text(assistant_message.get("content"))
+    assistant_message["content"] = base_content
+    assistant_message["tool_calls"] = normalized_tool_calls
+
+    gateway_calls = [call for call in normalized_tool_calls if is_gateway_native_tool(_tool_call_name(call))]
+    client_calls = [call for call in normalized_tool_calls if not is_gateway_native_tool(_tool_call_name(call))]
     if not gateway_calls or not client_calls:
         return completion, gateway_calls, client_calls
 
-    embedded_results: list[dict] = []
+    gateway_tool_messages: list[dict] = []
     for tool_call in gateway_calls:
         name = _tool_call_name(tool_call)
         args = _tool_call_arguments(tool_call)
@@ -2145,32 +2261,50 @@ async def _execute_mixed_gateway_tool_calls(
             result = await execute_gateway_tool(name, args, session_tag=session_tag, cfg=cfg)
         except Exception as exc:
             logger.exception("[GatewayTool] Mixed tool call failed: %s", name)
-            result = {"error": str(exc)}
+            result = {"ok": False, "error": str(exc)}
         sessions.log_tool_result(session_id, name, args, result)
-        embedded_results.append(
+        gateway_tool_messages.append(
             {
+                "role": "tool",
                 "tool_call_id": tool_call.get("id"),
                 "name": name,
-                "arguments": args,
-                "result": result,
+                "content": _json_dumps(result),
             }
         )
 
-    assistant_message = completion.get("choices", [{}])[0].get("message", {})
-    base_content = _normalize_text(assistant_message.get("content"))
-    gateway_block = (
-        "<gateway_tool_results>\n"
-        + _json_dumps(embedded_results)
-        + "\n</gateway_tool_results>"
+    original_assistant_message = _pending_assistant_tool_call_message(assistant_message, normalized_tool_calls)
+    session_store.create_pending_gateway_tool_turn(
+        session_id=session_id,
+        session_tag=session_tag or "",
+        client_tool_call_ids=[str(call.get("id")) for call in client_calls if call.get("id")],
+        original_assistant_message=original_assistant_message,
+        gateway_tool_messages=gateway_tool_messages,
     )
-    assistant_message["content"] = "\n\n".join(part for part in [base_content, gateway_block] if part)
     assistant_message["tool_calls"] = client_calls
     logger.info(
-        "[GatewayTool] Executed %d native calls from mixed batch; forwarding %d client calls.",
+        "[GatewayTool] Executed %d native calls from mixed batch; forwarding %d client calls with hidden transcript.",
         len(gateway_calls),
         len(client_calls),
     )
     return completion, gateway_calls, client_calls
+
+
+def _pending_assistant_tool_call_message(assistant_message: dict, tool_calls: list[dict]) -> dict:
+    pending_copy = dict(assistant_message or {})
+    clean_content, _, _ = split_private_assistant_tags(_normalize_text(pending_copy.get("content")))
+    pending_copy["content"] = clean_content
+    return _assistant_tool_call_message(pending_copy, tool_calls)
+
+
+def _ensure_tool_call_id(tool_call: dict, index: int = 0) -> dict:
+    normalized = _json_clone(tool_call if isinstance(tool_call, dict) else {})
+    if not normalized.get("id"):
+        normalized["id"] = f"call_gw_{uuid.uuid4().hex[:12]}_{index}"
+    normalized.setdefault("type", "function")
+    function = normalized.setdefault("function", {})
+    if not isinstance(function, dict):
+        normalized["function"] = {}
+    return normalized
 
 
 def _unstreamed_text_suffix(text: str, streamed_text: str) -> str:
@@ -3693,6 +3827,17 @@ async def list_mem_notes(
     )
     if not result.get("ok"):
         raise HTTPException(status_code=400, detail=result.get("error") or "mem note query failed")
+    return result
+
+
+@app.patch("/api/gateway/mem-notes/bulk")
+async def bulk_update_mem_notes(body: MemNoteBulkPatch):
+    result = await MemNoteService(cfg, supabase_client).bulk_update_notes(
+        ids=body.ids,
+        patch=body.patch,
+        updates=body.updates,
+        use_suggestions=body.use_suggestions,
+    )
     return result
 
 

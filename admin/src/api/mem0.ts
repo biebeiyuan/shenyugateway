@@ -2,6 +2,7 @@ import { api } from './http'
 import type {
   GatewayConfig,
   LegacyAtomicMemoryItem,
+  MemNoteBulkPatch,
   MemNoteItem,
   MemNotePatch,
   SaveConfigResult,
@@ -36,6 +37,20 @@ export async function fetchMemNotes(params: {
 
 export async function updateMemNote(noteId: string, patch: MemNotePatch): Promise<void> {
   await api.patch(`/api/gateway/mem-notes/${encodeURIComponent(noteId)}`, patch)
+}
+
+export async function bulkUpdateMemNotes(patch: MemNoteBulkPatch): Promise<{
+  ok: boolean
+  error?: string
+  requested_count: number
+  max_count?: number
+  updated_count: number
+  failed_count: number
+  updated_ids: string[]
+  failures: Array<{ id: string; error: string }>
+}> {
+  const { data } = await api.patch('/api/gateway/mem-notes/bulk', patch)
+  return data
 }
 
 export async function deleteMemNote(noteId: string): Promise<void> {

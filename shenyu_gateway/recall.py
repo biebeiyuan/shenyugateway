@@ -17,6 +17,7 @@ RECALL_CHUNK_MIN_CHARS = 140
 RECALL_CHUNK_MAX_CHARS = 900
 EMBEDDING_TEXT_MAX_CHARS = 1600
 DEFAULT_RECALL_CANDIDATE_LIMIT = 160
+PUBLIC_RECALL_SOURCE_TYPES = ["memory", "journal", "room", "board", "calendar", "notebook"]
 
 
 def _shorten(text: str, limit: int = 260) -> str:
@@ -365,13 +366,16 @@ class RecallIndexService:
                 types.append(source_type)
         return types
 
-    def _source_type_filter(self, source_types: Optional[list[str]]) -> list[str]:
+    def _source_type_filter(self, source_types: Optional[list[str]], *, allow_mem_note: bool = False) -> list[str]:
+        if not self._requested_source_types(source_types):
+            return list(PUBLIC_RECALL_SOURCE_TYPES)
         types = []
         for source_type in self._requested_source_types(source_types):
             if source_type in {"note", "mem_note"}:
-                for alias in ("mem_note", "note"):
-                    if alias not in types:
-                        types.append(alias)
+                if allow_mem_note:
+                    for alias in ("mem_note", "note"):
+                        if alias not in types:
+                            types.append(alias)
                 continue
             if source_type in {"atomic", "meta"}:
                 continue
@@ -551,7 +555,13 @@ class RecallIndexService:
             "items": items,
         }
 
-    async def _vector_rows(self, query: str, source_types: Optional[list[str]] = None) -> tuple[list[dict], dict[str, Any]]:
+    async def _vector_rows(
+        self,
+        query: str,
+        source_types: Optional[list[str]] = None,
+        *,
+        allow_mem_note: bool = False,
+    ) -> tuple[list[dict], dict[str, Any]]:
         if not query.strip():
             return [], {"enabled": False, "used": False, "reason": "empty query"}
         if not self.embedding_client or not self.embedding_client.enabled:
@@ -559,7 +569,7 @@ class RecallIndexService:
         vector, error = await self.embedding_client.embed(query)
         if error or vector is None:
             return [], {"enabled": True, "used": False, "error": error or "query embedding failed"}
-        types = self._source_type_filter(source_types)
+        types = self._source_type_filter(source_types, allow_mem_note=allow_mem_note)
         if self._requested_source_types(source_types) and not types:
             return [], {"enabled": True, "used": False, "reason": "no valid source_types"}
         try:
@@ -575,6 +585,7 @@ class RecallIndexService:
             return [], {"enabled": True, "used": False, "error": str(exc)[:500]}
         if not isinstance(rows, list):
             rows = []
+        rows = self._filter_rows_by_source_types(rows, types)
         for row in rows:
             row["_vector_score"] = float(row.get("vector_score") or 0.0)
         return rows, {"enabled": True, "used": True, "count": len(rows)}
@@ -593,6 +604,12 @@ class RecallIndexService:
                 merged[key] = dict(row)
         return list(merged.values())
 
+    def _filter_rows_by_source_types(self, rows: list[dict], types: list[str]) -> list[dict]:
+        if not types:
+            return rows
+        allowed = set(types)
+        return [row for row in rows if str(row.get("source_type") or "").strip() in allowed]
+
     def _row_matches_tokens(self, row: dict, tokens: list[str], query_text: str) -> bool:
         if not tokens and not query_text.strip():
             return True
@@ -609,8 +626,10 @@ class RecallIndexService:
         source_types: Optional[list[str]] = None,
         query_text: str = "",
         tokens: Optional[list[str]] = None,
+        *,
+        allow_mem_note: bool = False,
     ) -> list[dict]:
-        types = self._source_type_filter(source_types)
+        types = self._source_type_filter(source_types, allow_mem_note=allow_mem_note)
         if self._requested_source_types(source_types) and not types:
             return []
         candidate_limit = self._candidate_limit()
@@ -626,7 +645,7 @@ class RecallIndexService:
                     },
                 )
                 if isinstance(rows, list):
-                    return rows
+                    return self._filter_rows_by_source_types(rows, types)
             except Exception as exc:
                 logger.warning("Recall index RPC search failed; falling back to table query: %s", exc)
 
@@ -639,6 +658,7 @@ class RecallIndexService:
         if types:
             params["source_type"] = "in.(" + ",".join(types) + ")"
         rows = await self.supabase.query(RECALL_INDEX_TABLE, params)
+        rows = self._filter_rows_by_source_types(rows, types)
         if tokens or query_text.strip():
             matched = [row for row in rows if self._row_matches_tokens(row, tokens or [], query_text)]
             return matched or rows
@@ -1047,7 +1067,7 @@ class RecallIndexService:
         docs = []
         for row in rows:
             tags = _json_list(row.get("tags_json")) + [row.get("memory_type"), row.get("owner"), row.get("applies_to")]
-            body = "\n\n".join(part for part in [row.get("content_surface"), row.get("quote"), row.get("source_excerpt")] if part)
+            body = row.get("content_surface") or ""
             importance = min(1.0, float(row.get("importance") or 3) / 5.0 * 0.55 + float(row.get("heat") or 0.5) * 0.45)
             docs.extend(
                 _make_documents(
