@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import {
   NButton,
   NCard,
+  NCheckbox,
   NForm,
   NFormItem,
   NInput,
@@ -23,6 +24,7 @@ import type {
   MemNoteType,
 } from '@/api/config'
 import {
+  bulkUpdateMemNotes,
   deleteMemNote,
   fetchLegacyAtomicMemories,
   fetchMem0Config,
@@ -60,6 +62,8 @@ const notes = ref<MemNoteItem[]>([])
 const loadingNotes = ref(false)
 const savingNoteId = ref('')
 const deletingNoteId = ref('')
+const bulkSaving = ref(false)
+const selectedNoteIds = ref<string[]>([])
 const keywordDrafts = ref<Record<string, string>>({})
 
 const noteStatus = ref<MemNoteStatus | 'all'>('captured')
@@ -80,6 +84,12 @@ const memPromptAndCapture = computed({
     config.value.inject_inline_memory_prompt = enabled
     config.value.enable_inline_memory_capture = enabled
   },
+})
+
+const selectedNotes = computed(() => notes.value.filter((item) => selectedNoteIds.value.includes(item.id)))
+const selectedActivationMissing = computed(() => {
+  const missing = selectedNotes.value.map((item) => activationMissing(item)).filter(Boolean)
+  return missing[0] || ''
 })
 
 onMounted(async () => {
@@ -129,6 +139,8 @@ async function loadNotes() {
     keywordDrafts.value = Object.fromEntries(
       notes.value.map((item) => [item.id, (item.trigger_keywords || []).join('，')]),
     )
+    const visibleIds = new Set(notes.value.map((item) => item.id))
+    selectedNoteIds.value = selectedNoteIds.value.filter((id) => visibleIds.has(id))
   } catch {
     notes.value = []
     keywordDrafts.value = {}
@@ -143,6 +155,40 @@ function splitKeywords(value: string): string[] {
     .split(/[,，、\s]+/)
     .map((item) => item.trim())
     .filter(Boolean)
+}
+
+function suggestionKeywordsText(item: MemNoteItem): string {
+  return (item.suggested_trigger_keywords || []).join('，')
+}
+
+function toggleSelected(id: string, checked: boolean) {
+  if (checked) {
+    if (!selectedNoteIds.value.includes(id)) selectedNoteIds.value = [...selectedNoteIds.value, id]
+    return
+  }
+  selectedNoteIds.value = selectedNoteIds.value.filter((item) => item !== id)
+}
+
+function selectVisibleNotes() {
+  selectedNoteIds.value = notes.value.map((item) => item.id)
+}
+
+function clearSelectedNotes() {
+  selectedNoteIds.value = []
+}
+
+function applySuggestion(item: MemNoteItem) {
+  if (!item.mem_type && item.suggested_mem_type) item.mem_type = item.suggested_mem_type
+  if (!(item.trigger_text || '').trim() && item.suggested_trigger_text) item.trigger_text = item.suggested_trigger_text
+  if (!splitKeywords(keywordDrafts.value[item.id] || '').length && item.suggested_trigger_keywords?.length) {
+    keywordDrafts.value[item.id] = suggestionKeywordsText(item)
+  }
+}
+
+function applySuggestionsToSelection() {
+  const target = selectedNotes.value.length ? selectedNotes.value : notes.value
+  target.forEach(applySuggestion)
+  message.success(selectedNotes.value.length ? '已给所选便签套用建议' : '已给本页便签套用建议')
 }
 
 function notePatch(item: MemNoteItem, status?: MemNoteStatus): MemNotePatch {
@@ -168,6 +214,64 @@ function activationMissing(item: MemNoteItem): string {
 
 function canActivate(item: MemNoteItem): boolean {
   return !activationMissing(item)
+}
+
+async function saveSelectedNotes(status?: MemNoteStatus) {
+  if (bulkSaving.value || !selectedNotes.value.length) return
+  const missing = status === 'active' ? selectedActivationMissing.value : ''
+  if (missing) {
+    message.warning(missing)
+    return
+  }
+  bulkSaving.value = true
+  try {
+    const result = await bulkUpdateMemNotes({
+      updates: selectedNotes.value.map((item) => ({
+        id: item.id,
+        patch: notePatch(item, status),
+      })),
+    })
+    if (!result.ok && result.max_count) {
+      message.error(`一次最多处理 ${result.max_count} 条，当前 ${result.requested_count} 条`)
+      return
+    }
+    if (result.failed_count) {
+      message.warning(`已保存 ${result.updated_count} 条，失败 ${result.failed_count} 条`)
+    } else {
+      message.success(status === 'active' ? `已激活 ${result.updated_count} 条` : `已保存 ${result.updated_count} 条`)
+    }
+    await loadNotes()
+  } catch {
+    message.error(status === 'active' ? '批量激活失败' : '批量保存失败')
+  } finally {
+    bulkSaving.value = false
+  }
+}
+
+async function activateSelectedWithSuggestions() {
+  if (bulkSaving.value || !selectedNotes.value.length) return
+  bulkSaving.value = true
+  try {
+    const result = await bulkUpdateMemNotes({
+      ids: selectedNoteIds.value,
+      patch: { status: 'active' },
+      use_suggestions: true,
+    })
+    if (!result.ok && result.max_count) {
+      message.error(`一次最多处理 ${result.max_count} 条，当前 ${result.requested_count} 条`)
+      return
+    }
+    if (result.failed_count) {
+      message.warning(`已激活 ${result.updated_count} 条，失败 ${result.failed_count} 条`)
+    } else {
+      message.success(`已用建议激活 ${result.updated_count} 条`)
+    }
+    await loadNotes()
+  } catch {
+    message.error('用建议批量激活失败')
+  } finally {
+    bulkSaving.value = false
+  }
 }
 
 async function saveNote(item: MemNoteItem, status?: MemNoteStatus) {
@@ -275,16 +379,42 @@ function formatTime(value?: string | null) {
         <input v-model="noteSessionTag" class="cal-input short" placeholder="session_tag">
         <input v-model="noteLimit" class="cal-input tiny" type="number" min="1" max="200">
         <NButton size="small" :loading="loadingNotes" @click="loadNotes">刷新</NButton>
+        <NButton size="small" :disabled="!notes.length" @click="selectVisibleNotes">全选本页</NButton>
+        <NButton size="small" :disabled="!selectedNoteIds.length" @click="clearSelectedNotes">清空选择</NButton>
+        <NButton size="small" :disabled="!notes.length" @click="applySuggestionsToSelection">用建议补齐</NButton>
+        <NButton size="small" :loading="bulkSaving" :disabled="!selectedNoteIds.length" @click="saveSelectedNotes()">批量保存</NButton>
+        <NButton size="small" type="primary" :loading="bulkSaving" :disabled="!selectedNoteIds.length || Boolean(selectedActivationMissing)" @click="saveSelectedNotes('active')">批量激活</NButton>
+        <NPopconfirm positive-text="用建议并激活" negative-text="取消" @positive-click="activateSelectedWithSuggestions">
+          <template #trigger>
+            <NButton size="small" :loading="bulkSaving" :disabled="!selectedNoteIds.length">建议并激活</NButton>
+          </template>
+          会把所选便签缺失的 type 和触发条件用建议补齐，然后设为 active。
+        </NPopconfirm>
+        <NTag v-if="selectedNoteIds.length" size="small">已选 {{ selectedNoteIds.length }}</NTag>
+      </div>
+      <div v-if="selectedNoteIds.length && selectedActivationMissing" class="ready-hint">
+        所选便签里还有：{{ selectedActivationMissing }}
       </div>
 
       <div v-if="!notes.length" class="rev-empty">当前筛选没有便签</div>
       <div v-for="item in notes" :key="item.id" class="rev-card">
         <div class="rev-meta">
+          <NCheckbox :checked="selectedNoteIds.includes(item.id)" @update:checked="(checked) => toggleSelected(item.id, checked)" />
           <NTag size="small" :type="statusTagType(item.status)">{{ item.status }}</NTag>
           <NTag size="small">{{ item.mem_type || '未分类' }}</NTag>
+          <NTag v-if="item.suggested_mem_type && item.suggested_mem_type !== item.mem_type" size="small" type="info">
+            建议 {{ item.suggested_mem_type }}
+          </NTag>
           <NTag size="small">{{ item.session_tag || 'default' }}</NTag>
           <NTag size="small">反上 {{ item.trigger_count || 0 }} 次</NTag>
           <NTag size="small">上次 {{ formatTime(item.last_triggered_at) }}</NTag>
+        </div>
+
+        <div v-if="item.suggested_mem_type" class="suggestion-row">
+          <span>建议：{{ item.suggested_mem_type }}</span>
+          <span v-if="item.suggestion_reason">{{ item.suggestion_reason }}</span>
+          <span v-if="suggestionKeywordsText(item)">触发词 {{ suggestionKeywordsText(item) }}</span>
+          <NButton size="tiny" @click="applySuggestion(item)">用建议</NButton>
         </div>
 
         <NForm label-placement="top">
@@ -302,11 +432,11 @@ function formatTime(value?: string | null) {
               <NInputNumber v-model:value="item.cooldown_hours" :min="0" :max="8760" style="width:100%" />
             </NFormItem>
           </div>
-          <NFormItem label="什么时候反上来">
+          <NFormItem label="trigger_text（参与命中）">
             <NInput v-model:value="item.trigger_text" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" />
           </NFormItem>
           <div class="cfg-inline two">
-            <NFormItem label="触发词">
+            <NFormItem label="trigger_keywords（也参与命中）">
               <NInput v-model:value="keywordDrafts[item.id]" placeholder="用逗号分开" />
             </NFormItem>
             <NFormItem label="整理备注">
@@ -427,7 +557,18 @@ function formatTime(value?: string | null) {
   display: flex;
   gap: 6px;
   flex-wrap: wrap;
+  align-items: center;
   margin-bottom: 10px;
+}
+
+.suggestion-row {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+  color: #475569;
+  font-size: 12px;
 }
 
 .rev-body {

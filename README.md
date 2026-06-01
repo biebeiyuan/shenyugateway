@@ -114,6 +114,15 @@ Tool routing rules:
 - Internal tool exceptions are returned to the model as tool results shaped like `{ok: false, error: ...}` so one failed tool does not automatically fail the whole chat request.
 - Repeated identical tool calls within one internal loop use an in-memory duplicate-result cache.
 
+Mixed gateway/client transcript rules:
+
+- New responses must not generate `<gateway_tool_results>`, XML wrappers, or raw JSON summaries in `assistant.content`.
+- When one assistant turn contains both gateway-native and client-executable tool calls, the gateway executes its native calls, logs the tool audit rows, and stores a hidden pending transcript in SQLite.
+- The response sent back to the client keeps only the client-executable `tool_calls`. The client then runs those tools using normal OpenAI tool protocol.
+- On the next request, before calling the upstream model, the gateway matches the client's returned tool-call ids against `pending_gateway_tool_turns`. If matched, it rebuilds the upstream transcript as: original mixed assistant message, hidden gateway tool result messages, then the client's tool result messages.
+- Pending mixed transcripts are marked consumed only after the upstream request succeeds. If a match is not found, the gateway logs the miss and forwards the client history unchanged.
+- Existing old history that already contains `<gateway_tool_results>` is not migrated or filtered. The fix is forward-only: new code should not create that block again.
+
 Adding ordinary gateway-native tools should not require changes to the streaming loop. Add the schema/name dispatch in `shenyu_gateway/tool_registry.py` and the behavior in `shenyu_gateway/gateway_tools.py`. Only update streaming/protocol code when adding a new upstream protocol, a tool whose execution progress must stream to the client, or a non-gateway client tool with special forwarding semantics.
 
 `shenyu_gateway/upstream_adapter.py` normalizes upstream stream protocols. Anthropic `tool_use` / `input_json_delta` chunks are converted into OpenAI-compatible `tool_calls` deltas, and completion-to-SSE conversion can skip duplicate role chunks and split large final content into smaller events.
@@ -127,6 +136,7 @@ SQLite stores only gateway runtime state:
 - `request_context_snapshots`: recent client context windows. Calendar generation and cold-start both depend on this.
 - `raw_request_windows`: recent untrimmed client request windows for backup/export/debugging.
 - `cold_start_snapshots`: bounded bridge packages created from recent context snapshots.
+- `pending_gateway_tool_turns`: short-lived hidden mixed tool transcripts. It stores the original mixed assistant tool-call message, gateway tool result messages, client tool-call ids, and consumed/expiry timestamps.
 - `cache_entries`: short-lived gateway cache.
 - `heartbeat_entries`: global private heartbeat notes captured from `<heartbeat>...</heartbeat>` or written manually in admin. `session_id` is retained as the source session, but runtime injection reads the shared global pool.
 - `hisense_heartbeat`: private heartbeat notes captured from Hisense sessions. These use the same parser as normal heartbeats but are stored and injected separately.
@@ -142,6 +152,7 @@ Default online retention:
 - `GATEWAY_MESSAGE_RETENTION=1500`: keep the newest local message rows per session. These rows are for admin inspection and export, not for cold-start injection.
 - `GATEWAY_CONTEXT_SNAPSHOT_RETENTION=3`: keep the newest context snapshots per session. Do not set this to `0`; cold-start and calendar source collection need recent snapshots.
 - `GATEWAY_COLD_START_RETENTION=20`: keep recent cold-start snapshots per session. Cleanup only removes old snapshots whose `injected_count >= max_injections`, so active cold-start bridges are preserved.
+- Consumed or expired `pending_gateway_tool_turns` are removed during cleanup. Unconsumed pending rows are kept until expiry so a client can return its tool result in the next request.
 - `heartbeat_entries` and `hisense_heartbeat` are not removed by automatic cleanup. They can be manually written/deleted from the admin session page, and those actions affect their respective heartbeat pools.
 - expired `cache_entries` are removed during cleanup.
 
@@ -161,6 +172,7 @@ Safe cleanup boundaries:
 
 - It is safe to prune/dedupe `gateway_messages`; cold-start does not read this table.
 - It is safe to prune/dedupe `raw_request_windows`; they are backup/debug records and are not used for cold-start injection.
+- It is safe to prune consumed or expired `pending_gateway_tool_turns`; do not delete fresh unconsumed pending rows while a client tool turn may still be in flight.
 - Be conservative with `request_context_snapshots`; cold-start and calendar generation read this table.
 - Do not delete active `cold_start_snapshots`; the retention cleanup already avoids active snapshots.
 - Heartbeats are independent from message cleanup and are only changed by explicit heartbeat actions.
@@ -190,7 +202,7 @@ The mem review UI reads and updates Supabase `shenyu_mem_notes`. The old `atomic
 
 ## Recall Index
 
-`shenyu_recall` is the unified search entrypoint for old context. It searches the `shenyu_recall_index` Supabase table with keyword matching first and vector matching when embeddings are configured. The tool returns the selected original chunks with title, source, date, and content, so the model can read the matched text directly instead of only seeing a summary.
+`shenyu_recall` is the unified search entrypoint for old context. It searches the `shenyu_recall_index` Supabase table with keyword matching first and vector matching when embeddings are configured. Public recall searches `memory`, `journal`, `room`, `board`, `calendar`, and `notebook` sources by default. Active `shenyu_mem_notes` are surfaced by the automatic mem-note context path instead of public recall.
 
 Indexed public source types:
 
@@ -199,10 +211,9 @@ Indexed public source types:
 - `room`: rows from `room`
 - `board`: rows from `message_board`
 - `calendar`: rows from `calendar_pages`
-- `mem_note`: rows from `shenyu_mem_notes`
 - `notebook`: rows from `shenyu_notebook`
 
-`atomic_memories` and `meta_summaries` are not exposed through the public recall source filter. `note` is accepted only as a backward-compatible alias for old recall index rows; new mem-note rows are indexed as `mem_note`.
+`atomic_memories`, `meta_summaries`, and `shenyu_mem_notes` are not exposed through the public recall source filter. Mem-note rows are still indexed for the internal automatic mem-note semantic fallback.
 
 Required Supabase migrations:
 
@@ -341,20 +352,21 @@ Explicit inline memory flow:
 1. Assistant reply is filtered before it reaches the client.
 2. Only closed `[mem]...[/mem]` blocks are removed from visible text.
 3. Each captured note is inserted into `shenyu_mem_notes` as `captured`.
-4. Inline notes are stored as one paragraph. Type, trigger, keywords, status, and cooldown are filled later.
+4. Inline notes are stored as one paragraph. Type, trigger, keywords, status, and cooldown are filled later; list/review responses include suggested type and trigger fields to speed this up.
 5. The note types are `她为我做的事`, `我为她做的事`, `关于她的事实`, `关于我的事`, `心里那一档`, and `承诺`.
 6. `shenyu_write_mem_note` writes an intentional note directly as `active`. If type or trigger is missing, the writer fills safe defaults so the note can surface immediately.
 
 Search/injection flow:
 
 1. `ContextBuilder` calls `MemNoteService.search_notes()` when enabled.
-2. Active rows are matched mainly by manually filled `trigger_text` and `trigger_keywords`, with content as a fallback.
+2. Active rows are matched mainly by `trigger_text` and `trigger_keywords` together, with content as a fallback. Contextual injection also has a semantic fallback through the recall index.
 3. Cooldown blocks frequent repeats. Relevant hits are rendered cleanly in `volatile`, without tier/importance/heat.
 
 Endpoints:
 
 - `GET /api/gateway/mem-notes/search`
 - `GET /api/gateway/mem-notes`
+- `PATCH /api/gateway/mem-notes/bulk`
 - `PATCH /api/gateway/mem-notes/{note_id}`
 - `DELETE /api/gateway/mem-notes/{note_id}`
 - `GET /api/gateway/legacy-atomic-memories`
@@ -364,7 +376,7 @@ Admin UI notes:
 - Mem0 is now a standalone admin area instead of being embedded in the generic config page.
 - The Mem0 page includes:
   - controls for explicit `[mem]` capture and mem-note injection
-  - the mem-note attribute workflow for Supabase `shenyu_mem_notes`
+  - the mem-note attribute workflow for Supabase `shenyu_mem_notes`, including suggestions, bulk save, and bulk activation
   - read-only old `atomic_memories` lookup for manual migration
 
 Current implementation details:
@@ -527,6 +539,48 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 - Run `python -c "import test_upstream_adapter_stream as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after upstream stream adapter edits when `pytest` is unavailable.
 - Run `cd admin && npm run build` after admin UI edits.
 - Run `python -m py_compile gateway.py shenyu_gateway/*.py` after edits.
+
+## Review Follow-Up Plan
+
+This plan comes from the Claude code-review report, adjusted for the current mixed-tool fix.
+
+Current status:
+
+- A6 is complete. The gateway no longer writes `<gateway_tool_results>` into new assistant content. Instead, it uses `pending_gateway_tool_turns` and reconstructs the structured tool transcript before the next upstream request.
+- Do not implement the report's A/C "strip XML" variants now; they would hide state from the next model turn. Do not use custom client metadata for this path; ordinary clients should only need normal OpenAI tool messages.
+- B1, B2, B3, and B7 are still useful, but should stay separate from protocol fixes.
+
+Recommended order:
+
+| Phase | Item | Why now | Scope | Exit criteria |
+|---|---|---|---|---|
+| 1 | B3 `execute_gateway_tool` dispatch refactor | Highest maintenance risk in the remaining report. It also gives the next refactors a cleaner tool boundary. | Add handler snapshot tests first, then replace the giant handler dict/lambdas with `ToolContext` plus registered async handler functions. Keep broker behavior identical. | All existing tool-registry tests pass; new parameter snapshot tests cover aliases, session_tag fallback, cfg defaults, broker nested arguments, and unsupported tools. |
+| 2 | B7 return format normalization | Small, easy win after B3 tests make tool behavior visible. | Add `ok: true` to successful tool results that currently omit it, especially memory/search style results. Keep error shape as `{ok: false, error: ...}`. | Tests assert both success and error shapes for direct and broker calls. |
+| 3 | B1 `gateway.py` split | Worth doing once dispatch is stable, because the file still owns too many independent concerns. | Extract by dependency order: calendar service, context/cold-start helpers, streaming helpers, tool-loop orchestration, then admin routes. Move code without behavior changes. | `gateway.py` remains the app entrypoint and chat route coordinator; moved modules have focused imports; streaming/tool-loop tests still pass. |
+| 4 | B2 `GatewayToolService` composition split | Useful only after B3/B1 reduce the surrounding noise. | Keep `GatewayToolService` as a compatibility facade and delegate to Supabase, memory, calendar, heartbeat, and notebook operation classes. | Tool registry does not change; service tests prove old method signatures still work. |
+
+Phase 1 executable checklist:
+
+1. In `test_gateway_tool_registry.py`, create a call-recording fake service that can record every tool method invocation.
+2. Add snapshot tests for every public gateway-native tool and for `shenyu_gateway_tool` broker mode.
+3. Cover tricky argument behavior before refactoring: `query/q`, `source_types/sources`, `date_from/since`, `date_to/until`, `note_id/id/noteId`, invalid numeric limits, cfg-driven defaults, and session_tag fallback/non-fallback differences.
+4. Add `ToolContext` and `_tool_handler()` registration in `shenyu_gateway/tool_registry.py`.
+5. Move 2-3 handlers at a time from lambda dict entries into named async functions; run the registry tests after each batch.
+6. Remove the old handler dict after all registered handlers are covered.
+7. Run:
+
+```bash
+python -c "import test_gateway_tool_registry as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"
+python -c "import test_gateway_streaming as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"
+python -m py_compile gateway.py shenyu_gateway/*.py
+```
+
+Phase 3 split guidance:
+
+- Prefer pure move commits. Avoid behavior edits in the same step as file extraction.
+- Move `streaming.py` before `tool_loop.py` if the tool loop needs `_stream_*_event` helpers.
+- Keep FastAPI app construction, middleware, auth, and the main `/v1/chat/completions` route in `gateway.py` until the end.
+- Extract admin routes last; they have the most surface area but the least bearing on chat correctness.
 
 ## DevOps Plan | 部署计划
 

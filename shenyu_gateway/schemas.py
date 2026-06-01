@@ -111,3 +111,10 @@ class MemNotePatch(BaseModel):
     status: Optional[str] = None
     cooldown_hours: Optional[int] = None
     review_note: Optional[str] = None
+
+
+class MemNoteBulkPatch(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+    patch: dict[str, Any] = Field(default_factory=dict)
+    updates: list[dict[str, Any]] = Field(default_factory=list)
+    use_suggestions: bool = False

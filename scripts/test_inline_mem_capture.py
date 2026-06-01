@@ -1,42 +1,13 @@
 """Regression checks for explicit inline [mem] capture."""
 
-import ast
-import re
 import sys
 from pathlib import Path
-from typing import Any, Optional
+from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
+from shenyu_gateway.mem_notes import MemNoteService
 from shenyu_gateway.response_capture import split_private_assistant_tags
-
-
-class Request:
-    pass
-
-
-def _iso_now():
-    return "2026-05-10T00:00:00+00:00"
-
-
-def load_gateway_symbols():
-    source = Path(__file__).resolve().parents[1] / "gateway.py"
-    module = ast.parse(source.read_text(encoding="utf-8"))
-    wanted = {"AtomicMemoryService"}
-    selected = [node for node in module.body if getattr(node, "name", None) in wanted]
-    namespace = {
-        "Any": Any,
-        "Optional": Optional,
-        "Request": Request,
-        "_iso_now": _iso_now,
-        "re": re,
-    }
-    exec(compile(ast.Module(body=selected, type_ignores=[]), str(source), "exec"), namespace)
-    return namespace
-
-
-gateway_symbols = load_gateway_symbols()
-AtomicMemoryService = gateway_symbols["AtomicMemoryService"]
 
 
 def assert_equal(actual, expected, label):
@@ -57,24 +28,27 @@ def main():
     assert_equal(clean, "a\n\nb", "valid mem tag body is hidden from visible text")
     assert_equal(memories, [{"content": "她今天想早睡", "attrs": {}}], "valid mem is captured")
 
-    service = AtomicMemoryService(request=None)
-    row = service._inline_note_to_active_memory(
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), None)
+    row = service._inline_note_to_row(
         memories[0],
         {"id": "session-id", "session_tag": "default"},
+        "visible assistant text",
         "test-model",
     )
     assert row is not None
-    assert_equal(row["subject"], "沈予", "default subject")
-    assert_equal(row["owner"], "assistant", "default owner")
+    assert_equal(row["content"], "她今天想早睡", "inline mem content")
+    assert_equal(row["status"], "captured", "inline mem status")
+    assert_equal(row["source_session_id"], "session-id", "source session")
     for legacy_field in ("content_canonical", "valence", "arousal", "confidence"):
         if legacy_field in row:
             raise AssertionError(f"legacy field still written: {legacy_field}")
 
-    assert service._inline_note_to_active_memory(
+    assert service._inline_note_to_row(
         {"content": "主动标我们", "attrs": {"subject": "我们"}},
         {"id": "session-id", "session_tag": "default"},
+        "visible assistant text",
         "test-model",
-    )["subject"] == "我们"
+    )["content"] == "主动标我们"
 
     print("inline mem capture regression checks passed")
 

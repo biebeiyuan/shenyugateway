@@ -35,6 +35,8 @@ class FakeSupabase:
             if session_filter and session_filter.startswith("eq."):
                 rows = [row for row in rows if row.get("session_tag") == session_filter.removeprefix("eq.")]
             return rows
+        if table == "atomic_memories":
+            return list(self.rows)
         return []
 
     async def update(self, table: str, match: dict, data: dict):
@@ -103,14 +105,121 @@ def test_list_notes_filters_query_without_crashing():
     assert result["items"][0]["id"] == "note-1"
 
 
+def test_list_notes_includes_review_suggestions():
+    rows = [
+        {
+            "id": "note-1",
+            "session_tag": "5.15",
+            "content": "圆圆今天帮我把上游预设修回气泡。",
+            "mem_type": None,
+            "trigger_text": None,
+            "trigger_keywords": None,
+            "status": "captured",
+        },
+    ]
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=rows))
+
+    result = asyncio.run(service.list_notes(status="captured"))
+
+    item = result["items"][0]
+    assert item["suggested_mem_type"] == "她为我做的事"
+    assert item["suggested_trigger_text"] == "圆圆今天帮我把上游预设修回气泡。"
+    assert "圆圆" in item["suggested_trigger_keywords"]
+
+
+def test_bulk_update_notes_can_activate_with_suggestions():
+    rows = [
+        {
+            "id": "note-1",
+            "session_tag": "5.15",
+            "content": "圆圆今天帮我把上游预设修回气泡。",
+            "mem_type": None,
+            "trigger_text": None,
+            "trigger_keywords": None,
+            "status": "captured",
+            "cooldown_hours": 72,
+        },
+        {
+            "id": "note-2",
+            "session_tag": "5.15",
+            "content": "我答应圆圆下次要提前说清楚。",
+            "mem_type": None,
+            "trigger_text": None,
+            "trigger_keywords": None,
+            "status": "captured",
+            "cooldown_hours": 72,
+        },
+    ]
+    supabase = FakeSupabase(rows=rows)
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), supabase)
+
+    result = asyncio.run(
+        service.bulk_update_notes(
+            ids=["note-1", "note-2"],
+            patch={"status": "active"},
+            use_suggestions=True,
+        )
+    )
+
+    assert result["ok"] is True
+    assert result["updated_count"] == 2
+    first_update = supabase.updates[0]["data"]
+    second_update = supabase.updates[1]["data"]
+    assert first_update["status"] == "active"
+    assert first_update["mem_type"] == "她为我做的事"
+    assert first_update["trigger_text"] == "圆圆今天帮我把上游预设修回气泡。"
+    assert second_update["mem_type"] == "承诺"
+
+
+def test_bulk_update_notes_rejects_more_than_max_without_partial_update():
+    supabase = FakeSupabase(rows=[])
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), supabase)
+
+    result = asyncio.run(
+        service.bulk_update_notes(
+            ids=[f"note-{index}" for index in range(201)],
+            patch={"status": "paused"},
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["requested_count"] == 201
+    assert result["max_count"] == 200
+    assert result["updated_count"] == 0
+    assert supabase.queries == []
+    assert supabase.updates == []
+
+
+def test_legacy_atomic_memories_returns_only_content_surface_body_fields():
+    rows = [
+        {
+            "id": "atomic-1",
+            "session_tag": "5.15",
+            "subject": "圆圆",
+            "content_surface": "只保留这个正文。",
+            "quote": "不要返回原话。",
+            "source_excerpt": "不要返回聊天摘录。",
+            "status": "active",
+        }
+    ]
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=rows))
+
+    result = asyncio.run(service.legacy_atomic_memories(q="正文"))
+
+    assert result["count"] == 1
+    assert result["items"][0]["content_surface"] == "只保留这个正文。"
+    assert "quote" not in result["items"][0]
+    assert "source_excerpt" not in result["items"][0]
+
+
 class FakeRecallService:
     def __init__(self, rows):
         self.rows = rows
 
-    async def _query_index(self, source_types=None, query_text="", tokens=None):
+    async def _query_index(self, source_types=None, query_text="", tokens=None, allow_mem_note=False):
         return []
 
-    async def _vector_rows(self, query, source_types=None):
+    async def _vector_rows(self, query, source_types=None, allow_mem_note=False):
         return self.rows, {"enabled": True, "used": True, "count": len(self.rows)}
 
     def _merge_candidate_rows(self, keyword_rows, vector_rows):

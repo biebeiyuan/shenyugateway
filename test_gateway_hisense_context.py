@@ -13,6 +13,7 @@ from shenyu_gateway.gateway_tools import GatewayToolService as RealGatewayToolSe
 from shenyu_gateway.gateway_tools import configure_gateway_tools
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.tool_registry import gateway_native_tools
+from shenyu_gateway.utils import normalize_text as _normalize_text
 
 
 def _load_gateway_classes():
@@ -36,6 +37,7 @@ def _load_gateway_classes():
         "_ensure_visible_assistant_content",
         "_finalize_assistant_private_content",
         "_is_free_time_fallback_context",
+        "_mem_charter_line",
         "_normalize_text",
         "_private_capture_fallback_text",
         "_private_capture_kinds",
@@ -58,6 +60,7 @@ def _load_gateway_classes():
         "gateway_native_tools": gateway_native_tools,
         "asyncio": asyncio,
         "logger": logging.getLogger("test"),
+        "_normalize_text": _normalize_text,
         "split_private_assistant_tags": None,
         "session_store": None,
         "supabase_client": None,
@@ -78,7 +81,9 @@ def _load_gateway_classes():
             calendar_inject_month=False,
             calendar_context_month_limit=0,
             enable_gateway_tools=False,
+            enable_inline_memory_capture=False,
             inject_inline_memory_prompt=False,
+            inject_mem_notes=False,
             inject_meta_summaries=False,
             inject_atomic_memories=False,
             default_atomic_memory_limit=3,
@@ -296,7 +301,7 @@ def test_normal_context_does_not_see_hisense_heartbeat_pool(tmp_path):
     assert "hisense hb" not in layers["heartbeat"]
 
 
-def test_hisense_context_marks_three_pending_heartbeats_injected(tmp_path):
+def test_hisense_context_returns_three_pending_heartbeat_ids_for_deferred_marking(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     hisense_session = store.get_or_create_session("hisense", cfg.hisense_client_name)
     heartbeat_limit = int(cfg.hisense_heartbeat_limit)
@@ -318,6 +323,11 @@ def test_hisense_context_marks_three_pending_heartbeats_injected(tmp_path):
     assert "hisense pending 1" in layers["heartbeat"]
     assert "hisense pending 2" in layers["heartbeat"]
     assert f"hisense pending {heartbeat_limit}" in layers["heartbeat"]
+    assert len(package["hisense_heartbeat_pending_ids"]) == heartbeat_limit
+    assert len(store.read_heartbeats(None, state="pending", hisense=True)) == heartbeat_limit
+
+    store.mark_heartbeats_injected(heartbeat_ids=package["hisense_heartbeat_pending_ids"], hisense=True)
+
     assert store.read_heartbeats(None, state="pending", hisense=True) == []
     assert len(store.read_heartbeats(None, state="injected", hisense=True)) == heartbeat_limit
 

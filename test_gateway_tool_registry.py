@@ -157,6 +157,18 @@ class FakeToolService:
         )
         return {"ok": True, "note_id": note_id, "patch": patch}
 
+    async def bulk_update_mem_notes(self, ids=None, patch=None, updates=None, use_suggestions=False):
+        self.calls.append(
+            {
+                "tool": "shenyu_bulk_update_mem_notes",
+                "ids": ids,
+                "patch": patch,
+                "updates": updates,
+                "use_suggestions": use_suggestions,
+            }
+        )
+        return {"ok": True, "updated_count": len(ids or []) + len(updates or [])}
+
     async def delete_mem_note(self, note_id: str):
         self.calls.append(
             {
@@ -484,6 +496,35 @@ def test_execute_gateway_tool_accepts_mem_note_id_alias_for_update():
     ]
 
 
+def test_execute_gateway_tool_routes_bulk_mem_note_update():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_bulk_update_mem_notes",
+            {
+                "ids": ["note-1", "note-2"],
+                "status": "active",
+                "use_suggestions": True,
+            },
+            session_tag="default",
+            cfg=_cfg(enable_mem0_management_tools=True),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "updated_count": 2}
+    assert service.calls == [
+        {
+            "tool": "shenyu_bulk_update_mem_notes",
+            "ids": ["note-1", "note-2"],
+            "patch": {"status": "active"},
+            "updates": [],
+            "use_suggestions": True,
+        }
+    ]
+
+
 def test_execute_gateway_tool_routes_notebook_scope_arguments():
     service = FakeToolService()
 
@@ -583,8 +624,9 @@ def test_shenyu_recall_source_types_are_public_set_only():
     source_types = recall_tool["function"]["parameters"]["properties"]["source_types"]["items"]["enum"]
     include_undated = recall_tool["function"]["parameters"]["properties"]["include_undated"]
 
-    assert source_types == ["all", "memory", "journal", "room", "board", "calendar", "mem_note", "notebook"]
+    assert source_types == ["all", "memory", "journal", "room", "board", "calendar", "notebook"]
     assert include_undated["default"] is True
+    assert "mem_note" not in source_types
     assert "note" not in source_types
     assert "atomic" not in source_types
     assert "meta" not in source_types

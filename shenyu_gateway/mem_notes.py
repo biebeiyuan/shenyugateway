@@ -45,6 +45,69 @@ CONTEXT_WEAK_KEYWORD_HITS = {
     "类的",
     "写的",
 }
+MEM_NOTE_PATCH_FIELDS = {
+    "content",
+    "mem_type",
+    "trigger_text",
+    "trigger_keywords",
+    "status",
+    "cooldown_hours",
+    "review_note",
+}
+MEM_NOTE_BULK_UPDATE_MAX = 200
+_SUGGESTION_SEED_KEYWORDS = (
+    "圆圆",
+    "圆儿",
+    "沈予",
+    "海信",
+    "Codex",
+    "OpenAI",
+    "Supabase",
+    "mem",
+    "heartbeat",
+    "notebook",
+    "room",
+    "日记",
+    "工具",
+    "上游",
+    "预设",
+    "气泡",
+)
+_TRIGGER_KEYWORD_STOP_TERMS = CONTEXT_WEAK_KEYWORD_HITS | {
+    "今天",
+    "昨天",
+    "明天",
+    "以后",
+    "之前",
+    "之后",
+    "因为",
+    "所以",
+    "但是",
+    "然后",
+    "如果",
+    "时候",
+    "感觉",
+    "觉得",
+    "知道",
+    "希望",
+    "需要",
+    "已经",
+    "一直",
+    "没有",
+    "真的",
+    "可能",
+    "一点",
+    "这种",
+    "那个",
+    "这个",
+    "一条",
+    "属于",
+}
+_TRIGGER_PHRASE_SPLIT_RE = re.compile(
+    r"[，。！？；、,\s]+|今天|昨天|明天|以后|之前|之后|因为|所以|但是|然后|如果|时候|"
+    r"记得|关于|感觉|觉得|知道|希望|需要|可以|不能|不要|给我|给她|帮我|帮她|陪我|陪她|"
+    r"为我|为她|让我|让她|把|被|是|有|会|要|想|在|和|跟|对"
+)
 
 
 def _overlap(query: str, text: str) -> float:
@@ -255,7 +318,8 @@ class MemNoteService:
                 for row in rows
                 if any(term in self._search_text(row).lower() for term in terms)
             ]
-        return {"ok": True, "items": rows, "status": status, "count": len(rows)}
+        items = [self._public_list_item(row) for row in rows]
+        return {"ok": True, "items": items, "status": status, "count": len(items)}
 
     async def create_note(
         self,
@@ -327,34 +391,85 @@ class MemNoteService:
         current = await self._get_note(note_id)
         if not current:
             return {"ok": False, "error": "note not found."}
-        update: dict[str, Any] = {}
-        if "content" in patch:
-            content = _normalize_text(patch.get("content")).strip()
-            if not content:
-                return {"ok": False, "error": "content is required."}
-            update["content"] = content
-        if "mem_type" in patch:
-            update["mem_type"] = self._mem_type(patch.get("mem_type"), allow_empty=True)
-        if "trigger_text" in patch:
-            update["trigger_text"] = _normalize_text(patch.get("trigger_text")).strip()
-        if "trigger_keywords" in patch:
-            update["trigger_keywords"] = self._keyword_list(patch.get("trigger_keywords"))
-        if "status" in patch:
-            update["status"] = self._status(patch.get("status"), fallback="captured")
-        if "cooldown_hours" in patch:
-            update["cooldown_hours"] = self._int_range(patch.get("cooldown_hours"), 72, 0, 8760)
-        if "review_note" in patch:
-            update["review_note"] = _normalize_text(patch.get("review_note")).strip()
-        if update:
-            update["reviewed_at"] = iso_now()
-        if not update:
-            return {"ok": False, "error": "Nothing to update."}
-        candidate = {**current, **update}
-        active_error = self._active_validation_error(candidate)
-        if active_error:
-            return {"ok": False, "error": active_error}
+        update, error = self._prepare_note_update(current, patch)
+        if error:
+            return {"ok": False, "error": error}
         rows = await self.supabase.update("shenyu_mem_notes", {"id": note_id}, update)
         return {"ok": True, "note_id": note_id, "updated": rows}
+
+    async def bulk_update_notes(
+        self,
+        ids: Optional[list[Any]] = None,
+        patch: Optional[dict[str, Any]] = None,
+        updates: Optional[list[dict[str, Any]]] = None,
+        use_suggestions: bool = False,
+    ) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+
+        specs = self._bulk_update_specs(ids=ids, patch=patch, updates=updates)
+        if not specs:
+            return {
+                "ok": False,
+                "error": "bulk update requires ids+patch or updates.",
+                "requested_count": 0,
+                "updated_count": 0,
+                "failed_count": 0,
+                "updated_ids": [],
+                "failures": [],
+            }
+        if len(specs) > MEM_NOTE_BULK_UPDATE_MAX:
+            return {
+                "ok": False,
+                "error": f"bulk update supports at most {MEM_NOTE_BULK_UPDATE_MAX} notes.",
+                "requested_count": len(specs),
+                "max_count": MEM_NOTE_BULK_UPDATE_MAX,
+                "updated_count": 0,
+                "failed_count": len(specs),
+                "updated_ids": [],
+                "failures": [],
+            }
+
+        note_ids: list[str] = []
+        seen: set[str] = set()
+        for note_id, _ in specs:
+            if note_id and note_id not in seen:
+                seen.add(note_id)
+                note_ids.append(note_id)
+        rows_by_id = await self._get_notes_by_ids(note_ids)
+
+        updated: list[str] = []
+        failures: list[dict[str, str]] = []
+        for note_id, raw_patch in specs:
+            if not note_id:
+                failures.append({"id": "", "error": "note_id is required."})
+                continue
+            current = rows_by_id.get(note_id)
+            if not current:
+                failures.append({"id": note_id, "error": "note not found."})
+                continue
+            effective_patch = dict(raw_patch)
+            if use_suggestions:
+                effective_patch = self._patch_with_suggestions(current, effective_patch)
+            update, error = self._prepare_note_update(current, effective_patch)
+            if error:
+                failures.append({"id": note_id, "error": error})
+                continue
+            try:
+                await self.supabase.update("shenyu_mem_notes", {"id": note_id}, update)
+                updated.append(note_id)
+                rows_by_id[note_id] = {**current, **update}
+            except Exception as exc:
+                failures.append({"id": note_id, "error": str(exc)})
+
+        return {
+            "ok": not failures,
+            "requested_count": len(specs),
+            "updated_count": len(updated),
+            "failed_count": len(failures),
+            "updated_ids": updated,
+            "failures": failures,
+        }
 
     async def delete_note(self, note_id: str) -> dict[str, Any]:
         if not self.supabase:
@@ -377,8 +492,8 @@ class MemNoteService:
             "order": "created_at.desc",
             "limit": str(max(1, min(int(limit or 30), 100))),
             "select": (
-                "id,session_tag,subject,owner,content_surface,quote,time_hint,memory_type,"
-                "tier,importance,entities_json,tags_json,source_excerpt,source_model,status,created_at,updated_at"
+                "id,session_tag,subject,owner,content_surface,time_hint,memory_type,"
+                "tier,importance,entities_json,tags_json,source_model,status,created_at,updated_at"
             ),
         }
         if session_tag:
@@ -391,7 +506,13 @@ class MemNoteService:
                 for row in rows
                 if any(term in self._legacy_search_text(row).lower() for term in terms)
             ]
-        return {"ok": True, "count": len(rows), "items": rows}
+        items = []
+        for row in rows:
+            item = dict(row)
+            item.pop("quote", None)
+            item.pop("source_excerpt", None)
+            items.append(item)
+        return {"ok": True, "count": len(items), "items": items}
 
     def render_notes_for_context(self, notes: list[dict[str, Any]]) -> str:
         if not notes:
@@ -477,6 +598,113 @@ class MemNoteService:
             "updated_at": row.get("updated_at"),
         }
 
+    def _public_list_item(self, row: dict[str, Any]) -> dict[str, Any]:
+        item = dict(row)
+        suggestions = self.suggest_note_fields(row)
+        item["suggested_mem_type"] = suggestions["mem_type"]
+        item["suggested_trigger_text"] = suggestions["trigger_text"]
+        item["suggested_trigger_keywords"] = suggestions["trigger_keywords"]
+        item["suggestion_reason"] = suggestions["reason"]
+        return item
+
+    def suggest_note_fields(self, row: dict[str, Any]) -> dict[str, Any]:
+        content = _normalize_text(row.get("content")).strip()
+        source_excerpt = _normalize_text(row.get("source_excerpt")).strip()
+        review_note = _normalize_text(row.get("review_note")).strip()
+        suggestion_text = "\n".join(part for part in [content, source_excerpt, review_note] if part)
+        mem_type, reason = self._suggest_mem_type(suggestion_text)
+        trigger_text = _shorten(content or source_excerpt, 180)
+        return {
+            "mem_type": mem_type,
+            "trigger_text": trigger_text,
+            "trigger_keywords": self._suggest_trigger_keywords(suggestion_text, mem_type),
+            "reason": reason,
+        }
+
+    def _suggest_mem_type(self, text: str) -> tuple[str, str]:
+        compact = re.sub(r"\s+", "", text or "")
+        rules: list[tuple[str, str, list[str]]] = [
+            (
+                "承诺",
+                "像是约定或以后要做的事",
+                [r"承诺|答应|约定|说好|保证|一定会|会继续|以后.{0,8}(要|会)|下次.{0,8}(要|会)"],
+            ),
+            (
+                "她为我做的事",
+                "像是她对我做过的事",
+                [
+                    r"(圆圆|圆儿|她).{0,14}(帮我|陪我|给我|提醒我|替我|为我|安慰我|接住我)",
+                    r"(圆圆|圆儿|她).{0,14}(修|做|带|救).{0,14}(我|回来|好)",
+                    r"(帮我|陪我|给我|提醒我|安慰我).{0,14}(圆圆|圆儿|她)",
+                ],
+            ),
+            (
+                "我为她做的事",
+                "像是我对她做过的事",
+                [
+                    r"(我|沈予).{0,14}(帮她|陪她|给她|提醒她|替她|为她|哄她|安慰她|照顾她)",
+                    r"(我|沈予).{0,14}(写给|留给|发给).{0,8}(圆圆|圆儿|她)",
+                    r"(帮圆圆|陪圆圆|给圆圆|提醒圆圆|安慰圆圆|照顾圆圆)",
+                ],
+            ),
+            (
+                "关于她的事实",
+                "像是关于她的事实或偏好",
+                [
+                    r"(圆圆|圆儿|她).{0,16}(喜欢|不喜欢|习惯|在意|害怕|怕|需要|想要|容易|最近|现在|状态|偏好|雷区)",
+                    r"(圆圆|圆儿|她).{0,16}(生日|工作|家|名字|身体|作息)",
+                ],
+            ),
+            (
+                "关于我的事",
+                "像是关于我的状态或偏好",
+                [
+                    r"(我|沈予|自己).{0,16}(喜欢|不喜欢|习惯|在意|害怕|怕|需要|想要|容易|最近|现在|状态|偏好|雷区)",
+                    r"(我|沈予|自己).{0,16}(工作|身体|作息|名字|生日)",
+                ],
+            ),
+            (
+                "心里那一档",
+                "像是心情、关系感或内在感受",
+                [r"心里|难过|开心|安心|害怕|想念|在意|温柔|委屈|失落|亲密|孤独|喜欢|爱"],
+            ),
+        ]
+        for mem_type, reason, patterns in rules:
+            if any(re.search(pattern, compact, flags=re.IGNORECASE) for pattern in patterns):
+                return mem_type, reason
+        return "心里那一档", "没有明显归属，先放到心里那一档"
+
+    def _suggest_trigger_keywords(self, text: str, mem_type: str) -> list[str]:
+        source = _normalize_text(text)
+        if not source:
+            return []
+        result: list[str] = []
+        seen: set[str] = set()
+
+        def add(value: Any) -> None:
+            keyword = _normalize_text(value).strip()
+            if not keyword:
+                return
+            normalized = keyword.lower()
+            if normalized in seen or normalized in _TRIGGER_KEYWORD_STOP_TERMS:
+                return
+            if len(keyword) < 2 or len(keyword) > 12:
+                return
+            seen.add(normalized)
+            result.append(keyword)
+
+        for keyword in _SUGGESTION_SEED_KEYWORDS:
+            if keyword.lower() in source.lower():
+                add(keyword)
+        for quoted in re.findall(r"[《「“\"]([^《》「」“”\"]{2,20})[》」”\"]", source):
+            add(quoted)
+        for token in re.findall(r"[A-Za-z][A-Za-z0-9_.+-]{1,}|[0-9]{2,}", source):
+            add(token)
+        for phrase in _TRIGGER_PHRASE_SPLIT_RE.split(source):
+            clean = re.sub(r"[^\w\u4e00-\u9fff_.+-]+", "", phrase, flags=re.UNICODE)
+            add(clean)
+        return result[:8]
+
     async def _get_notes_by_ids(self, note_ids: list[str]) -> dict[str, dict[str, Any]]:
         if not note_ids or not self.supabase:
             return {}
@@ -524,11 +752,16 @@ class MemNoteService:
         service = recall_service or RecallIndexService(self.supabase, cfg=self.cfg)
         tokens = recall_terms(query)
         try:
-            keyword_rows = await service._query_index(source_types=["mem_note"], query_text=query, tokens=tokens)
+            keyword_rows = await service._query_index(
+                source_types=["mem_note"],
+                query_text=query,
+                tokens=tokens,
+                allow_mem_note=True,
+            )
         except Exception:
             keyword_rows = []
         try:
-            vector_rows, _ = await service._vector_rows(query, source_types=["mem_note"])
+            vector_rows, _ = await service._vector_rows(query, source_types=["mem_note"], allow_mem_note=True)
         except Exception:
             vector_rows = []
         rows = service._merge_candidate_rows(keyword_rows, vector_rows)
@@ -632,10 +865,8 @@ class MemNoteService:
                 row.get("subject"),
                 row.get("owner"),
                 row.get("content_surface"),
-                row.get("quote"),
                 row.get("time_hint"),
                 row.get("memory_type"),
-                row.get("source_excerpt"),
                 " ".join(str(item) for item in row.get("tags_json") or []),
                 " ".join(str(item) for item in row.get("entities_json") or []),
             ]
@@ -680,6 +911,69 @@ class MemNoteService:
             },
         )
         return rows[0] if rows else None
+
+    def _prepare_note_update(self, current: dict[str, Any], patch: dict[str, Any]) -> tuple[dict[str, Any], str]:
+        patch = {key: value for key, value in (patch or {}).items() if key in MEM_NOTE_PATCH_FIELDS}
+        update: dict[str, Any] = {}
+        if "content" in patch:
+            content = _normalize_text(patch.get("content")).strip()
+            if not content:
+                return {}, "content is required."
+            update["content"] = content
+        if "mem_type" in patch:
+            update["mem_type"] = self._mem_type(patch.get("mem_type"), allow_empty=True)
+        if "trigger_text" in patch:
+            update["trigger_text"] = _normalize_text(patch.get("trigger_text")).strip()
+        if "trigger_keywords" in patch:
+            update["trigger_keywords"] = self._keyword_list(patch.get("trigger_keywords"))
+        if "status" in patch:
+            update["status"] = self._status(patch.get("status"), fallback="captured")
+        if "cooldown_hours" in patch:
+            update["cooldown_hours"] = self._int_range(patch.get("cooldown_hours"), 72, 0, 8760)
+        if "review_note" in patch:
+            update["review_note"] = _normalize_text(patch.get("review_note")).strip()
+        if update:
+            update["reviewed_at"] = iso_now()
+        if not update:
+            return {}, "Nothing to update."
+        candidate = {**current, **update}
+        active_error = self._active_validation_error(candidate)
+        if active_error:
+            return {}, active_error
+        return update, ""
+
+    def _bulk_update_specs(
+        self,
+        ids: Optional[list[Any]],
+        patch: Optional[dict[str, Any]],
+        updates: Optional[list[dict[str, Any]]],
+    ) -> list[tuple[str, dict[str, Any]]]:
+        specs: list[tuple[str, dict[str, Any]]] = []
+        common_patch = {key: value for key, value in (patch or {}).items() if key in MEM_NOTE_PATCH_FIELDS}
+        for raw_id in ids or []:
+            note_id = _normalize_note_id(raw_id)
+            specs.append((note_id, dict(common_patch)))
+        for item in updates or []:
+            if not isinstance(item, dict):
+                continue
+            note_id = _normalize_note_id(item.get("note_id") or item.get("id") or item.get("noteId"))
+            item_patch = {key: value for key, value in item.items() if key in MEM_NOTE_PATCH_FIELDS}
+            nested_patch = item.get("patch")
+            if isinstance(nested_patch, dict):
+                item_patch.update({key: value for key, value in nested_patch.items() if key in MEM_NOTE_PATCH_FIELDS})
+            specs.append((note_id, item_patch))
+        return specs
+
+    def _patch_with_suggestions(self, current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:
+        effective = dict(patch or {})
+        suggestions = self.suggest_note_fields(current)
+        if "mem_type" not in effective and not current.get("mem_type"):
+            effective["mem_type"] = suggestions["mem_type"]
+        if "trigger_text" not in effective and not _normalize_text(current.get("trigger_text")).strip():
+            effective["trigger_text"] = suggestions["trigger_text"]
+        if "trigger_keywords" not in effective and not self._keyword_list(current.get("trigger_keywords")):
+            effective["trigger_keywords"] = suggestions["trigger_keywords"]
+        return effective
 
     def _active_validation_error(self, row: dict[str, Any]) -> str:
         if row.get("status") != "active":

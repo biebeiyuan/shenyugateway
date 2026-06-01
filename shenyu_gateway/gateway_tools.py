@@ -173,8 +173,9 @@ _SUPABASE_GUIDE = """## 家里常用 Supabase 表
 - 模糊搜：operators={"content":{"ilike":"%北海道%"}}
 - 非空：operators={"deleted_at":{"not_is":null}}
 insert / update / delete 会尽量返回写入或影响到的行。
-找旧上下文优先用 `shenyu_recall`，可按 source_types 限定 memory / journal / room / board / calendar / mem_note / notebook。
-查看或整理自己写过哪些 mem 用 `shenyu_list_mem_notes`，查全部状态时传 status=all，可带 q/status/mem_type；补属性用 `shenyu_update_mem_note`。
+找旧上下文优先用 `shenyu_recall`，可按 source_types 限定 memory / journal / room / board / calendar / notebook；当前相关 active mem 会由网关自动反上来。
+查看或整理自己写过哪些 mem 用 `shenyu_list_mem_notes`，查全部状态时传 status=all，可带 q/status/mem_type；list 会返回 suggested_mem_type / suggested_trigger_*。补单条用 `shenyu_update_mem_note`，批量补或激活用 `shenyu_bulk_update_mem_notes`。
+mem 命中：`trigger_text` 和 `trigger_keywords` 都参与关键词命中，content 是 fallback，另外还有 recall index 的语义兜底。
 直接写一条新 mem 用 `shenyu_write_mem_note`，这是主动写，默认 active 直接放行。
 notebook 是共享手边事项；海信那边或跨窗口要留事用 `shenyu_notebook_write` / `shenyu_notebook_list`。
 翻某天心跳用 `shenyu_read_heartbeat`，一般只填 date，比如 2026-05-11。
@@ -347,6 +348,20 @@ class GatewayToolService:
 
     async def update_mem_note(self, note_id: str, patch: dict[str, Any]) -> dict:
         return await self._mem_notes().update_note(note_id, patch)
+
+    async def bulk_update_mem_notes(
+        self,
+        ids: Optional[list[Any]] = None,
+        patch: Optional[dict[str, Any]] = None,
+        updates: Optional[list[dict[str, Any]]] = None,
+        use_suggestions: bool = False,
+    ) -> dict:
+        return await self._mem_notes().bulk_update_notes(
+            ids=ids,
+            patch=patch,
+            updates=updates,
+            use_suggestions=use_suggestions,
+        )
 
     async def delete_mem_note(self, note_id: str) -> dict:
         return await self._mem_notes().delete_note(note_id)

@@ -532,11 +532,14 @@ def test_recall_returns_clear_error_when_index_table_is_missing():
     assert "recall index table is not ready" in result["error"]
 
 
-def test_recall_source_type_filter_hides_atomic_and_meta_and_aliases_mem_note():
+def test_recall_source_type_filter_hides_atomic_meta_and_public_mem_note():
     service = RecallIndexService(FakeSupabase([]))
 
-    assert service._source_type_filter(["mem_note"]) == ["mem_note", "note"]
-    assert service._source_type_filter(["note"]) == ["mem_note", "note"]
+    assert service._source_type_filter(None) == ["memory", "journal", "room", "board", "calendar", "notebook"]
+    assert service._source_type_filter(["mem_note"]) == []
+    assert service._source_type_filter(["note"]) == []
+    assert service._source_type_filter(["mem_note"], allow_mem_note=True) == ["mem_note", "note"]
+    assert service._source_type_filter(["note"], allow_mem_note=True) == ["mem_note", "note"]
     assert service._source_type_filter(["atomic", "meta", "memory"]) == ["memory"]
     assert service._source_type_filter(["atomic", "meta"]) == []
     assert service._adapter_names() == [
@@ -550,6 +553,72 @@ def test_recall_source_type_filter_hides_atomic_and_meta_and_aliases_mem_note():
     ]
     assert service._adapter_names(["atomic", "meta", "mem_note"]) == ["shenyu_mem_notes"]
     assert service._adapter_names(["atomic", "meta"]) == []
+
+
+def test_recall_default_filters_out_mem_note_and_atomic_rows_from_rpc():
+    rows = [
+        {
+            "source_table": "shenyu_mem_notes",
+            "source_id": "note-1",
+            "source_type": "mem_note",
+            "chunk_index": 0,
+            "session_tag": "5.15",
+            "title": "mem",
+            "body": "mem note 不该由公开 recall 返回。",
+            "excerpt": "mem note 不该由公开 recall 返回。",
+            "search_text": "长隆 mem note",
+            "search_tokens": ["长隆"],
+            "tags_json": [],
+            "entities_json": [],
+            "event_date": "2026-05-20T00:00:00+00:00",
+            "importance": 0.8,
+            "status": "active",
+            "visibility": None,
+        },
+        {
+            "source_table": "atomic_memories",
+            "source_id": "atomic-1",
+            "source_type": "atomic",
+            "chunk_index": 0,
+            "session_tag": "5.15",
+            "title": "atomic",
+            "body": "atomic 不该由公开 recall 返回。",
+            "excerpt": "atomic 不该由公开 recall 返回。",
+            "search_text": "长隆 atomic",
+            "search_tokens": ["长隆"],
+            "tags_json": [],
+            "entities_json": [],
+            "event_date": "2026-05-20T00:00:00+00:00",
+            "importance": 0.8,
+            "status": "active",
+            "visibility": None,
+        },
+        {
+            "source_table": "memories",
+            "source_id": "memory-1",
+            "source_type": "memory",
+            "chunk_index": 0,
+            "session_tag": "5.15",
+            "title": "memory",
+            "body": "公开 recall 保留 memory 正文。",
+            "excerpt": "公开 recall 保留 memory 正文。",
+            "search_text": "长隆 memory",
+            "search_tokens": ["长隆"],
+            "tags_json": [],
+            "entities_json": [],
+            "event_date": "2026-05-20T00:00:00+00:00",
+            "importance": 0.8,
+            "status": "active",
+            "visibility": None,
+        },
+    ]
+    supabase = FakeSupabase(rows)
+    service = RecallIndexService(supabase)
+
+    result = asyncio.run(service.recall("长隆", session_tag="5.15", auto_sync=False))
+
+    assert [item["source_table"] for item in result["items"]] == ["memories"]
+    assert supabase.rpc_calls[0][1]["source_types"] == ["memory", "journal", "room", "board", "calendar", "notebook"]
 
 
 def test_recall_rejects_removed_source_types_without_widening_to_all():

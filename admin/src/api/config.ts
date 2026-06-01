@@ -120,6 +120,10 @@ export interface MemNoteItem {
   reviewed_at?: string | null
   created_at?: string | null
   updated_at?: string | null
+  suggested_mem_type?: MemNoteType | ''
+  suggested_trigger_text?: string
+  suggested_trigger_keywords?: string[]
+  suggestion_reason?: string
 }
 
 export type MemNotePatch = Partial<
@@ -134,6 +138,13 @@ export type MemNotePatch = Partial<
     | 'review_note'
   >
 >
+
+export interface MemNoteBulkPatch {
+  ids?: string[]
+  patch?: MemNotePatch
+  updates?: Array<{ id: string; patch: MemNotePatch }>
+  use_suggestions?: boolean
+}
 
 export interface LegacyAtomicMemoryItem {
   id: string
