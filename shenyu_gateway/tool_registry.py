@@ -171,7 +171,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_add_calendar",
-                "description": "手动写一页 day / week / month 日历记忆。",
+                "description": "写一页日历记忆，可以是 day / week / month。",
                 "parameters": {
                     "type": "object",
                     "properties": {

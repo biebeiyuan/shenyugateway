@@ -25,9 +25,8 @@ _GATEWAY_TOOL_POLICY = (
     "- notebook 是共享手边事项；"
     "海信那边或跨窗口要留事：`shenyu_notebook_write` / `shenyu_notebook_list`。\n"
     "- 看我以前写的心跳：`shenyu_read_heartbeat`。\n"
-    "- 不要把工具结果写成 `<gateway_tool_results>`、XML 或 raw JSON；"
-    "工具结果由网关隐藏传递，并在日志/工具消息里记录。\n"
-    "- 不记得 Supabase 表怎么查：先用 `shenyu_supabase_guide`。"
+    "- 工具返回的东西网关会自己处理，我不用手动格式化。\n"
+    "- 忘了 Supabase 表的结构，`shenyu_supabase_guide` 里有。"
 )
 
 _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
