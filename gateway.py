@@ -84,6 +84,7 @@ from shenyu_gateway.schemas import (
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.streaming import (
+    StreamReplayAccumulator,
     _apply_openai_stream_chunk,
     _completion_with_unstreamed_deltas,
     _ensure_stream_tool_call,
@@ -2329,10 +2330,7 @@ async def _run_internal_tool_loop_stream(
 
         completion = _new_stream_completion(body.model)
         tag_filter = AssistantTagFilter()
-        visible_output_sent = False
-        tool_call_seen = False
-        streamed_content_parts: list[str] = []
-        streamed_reasoning_parts: list[str] = []
+        stream_replay = StreamReplayAccumulator()
 
         upstream_chunks = _stream_upstream_openai_chunks(request, payload, headers, body.model, upstream)
         next_chunk = asyncio.create_task(anext(upstream_chunks))
@@ -2359,21 +2357,28 @@ async def _run_internal_tool_loop_stream(
                 choice = (data.get("choices") or [{}])[0]
                 delta = choice.get("delta") or {}
                 if delta.get("tool_calls"):
-                    tool_call_seen = True
+                    stream_replay.mark_tool_call_seen()
                     continue
-                if tool_call_seen:
+                if stream_replay.should_skip_visible_delta():
                     continue
                 reasoning = delta.get("reasoning_content")
                 if reasoning:
-                    streamed_reasoning_parts.append(reasoning)
-                    yield _stream_reasoning_event(body.model, reasoning, chunk_id=stream_chunk_id, created=stream_created)
+                    yield _stream_reasoning_event(
+                        body.model,
+                        stream_replay.record_reasoning(reasoning),
+                        chunk_id=stream_chunk_id,
+                        created=stream_created,
+                    )
                 text = delta.get("content")
                 if text:
                     filtered = tag_filter.feed(text)
                     if filtered:
-                        visible_output_sent = visible_output_sent or bool(filtered.strip())
-                        streamed_content_parts.append(filtered)
-                        yield _stream_content_event(body.model, filtered, chunk_id=stream_chunk_id, created=stream_created)
+                        yield _stream_content_event(
+                            body.model,
+                            stream_replay.record_content(filtered),
+                            chunk_id=stream_chunk_id,
+                            created=stream_created,
+                        )
         finally:
             if not next_chunk.done():
                 next_chunk.cancel()
@@ -2392,7 +2397,7 @@ async def _run_internal_tool_loop_stream(
             if not tool_calls:
                 remaining = tag_filter.flush()
                 if remaining:
-                    visible_output_sent = visible_output_sent or bool(remaining.strip())
+                    stream_replay.mark_visible_output(remaining)
                     yield _stream_content_event(body.model, remaining, chunk_id=stream_chunk_id, created=stream_created)
             if round_log is not None:
                 round_log["final"] = True
@@ -2431,11 +2436,7 @@ async def _run_internal_tool_loop_stream(
                 _record_response_text(log_entry, clean_content)
 
             if tool_calls:
-                replay_completion = _completion_with_unstreamed_deltas(
-                    completion,
-                    streamed_content="".join(streamed_content_parts),
-                    streamed_reasoning="".join(streamed_reasoning_parts),
-                )
+                replay_completion = stream_replay.replay_completion(completion)
                 for chunk in _completion_to_stream_events(
                     replay_completion,
                     include_role=False,
@@ -2444,7 +2445,7 @@ async def _run_internal_tool_loop_stream(
                 ):
                     yield chunk
             else:
-                if fallback_meta["applied"] and not visible_output_sent:
+                if fallback_meta["applied"] and not stream_replay.visible_output_sent:
                     yield _stream_content_event(body.model, fallback_meta["text"], chunk_id=stream_chunk_id, created=stream_created)
                 yield _stream_final_event(
                     body.model,

@@ -212,6 +212,33 @@ def test_completion_replay_skips_already_streamed_text_for_mixed_tools():
     assert completion["choices"][0]["message"]["content"].startswith("I will check.")
 
 
+def test_stream_replay_accumulator_replays_only_unstreamed_deltas():
+    accumulator = gateway.StreamReplayAccumulator()
+
+    assert accumulator.record_reasoning("thinking ") == "thinking "
+    assert accumulator.record_content("I will check.") == "I will check."
+    assert accumulator.visible_output_sent is True
+    accumulator.mark_tool_call_seen()
+
+    completion = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "reasoning_content": "thinking more",
+                    "content": "I will check.\n\nFinal text.",
+                }
+            }
+        ],
+    }
+
+    replay = accumulator.replay_completion(completion)
+
+    assert accumulator.should_skip_visible_delta() is True
+    assert replay["choices"][0]["message"]["reasoning_content"] == "more"
+    assert replay["choices"][0]["message"]["content"] == "\n\nFinal text."
+
+
 def test_pending_gateway_tool_turn_store_round_trip_consume_and_prune():
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         store = GatewayStore(f"{tmp}/gateway.db")

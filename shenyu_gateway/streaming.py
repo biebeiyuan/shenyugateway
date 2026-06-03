@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import uuid
+from dataclasses import dataclass, field
 from typing import Optional
 
 from fastapi import HTTPException
@@ -243,3 +244,49 @@ def _completion_with_unstreamed_deltas(
     choices[0] = choice
     replay["choices"] = choices
     return replay
+
+
+@dataclass
+class StreamReplayAccumulator:
+    """Track streamed deltas so replay can skip content the client already saw."""
+
+    visible_output_sent: bool = False
+    tool_call_seen: bool = False
+    _content_parts: list[str] = field(default_factory=list)
+    _reasoning_parts: list[str] = field(default_factory=list)
+
+    @property
+    def streamed_content(self) -> str:
+        return "".join(self._content_parts)
+
+    @property
+    def streamed_reasoning(self) -> str:
+        return "".join(self._reasoning_parts)
+
+    def mark_tool_call_seen(self) -> None:
+        self.tool_call_seen = True
+
+    def should_skip_visible_delta(self) -> bool:
+        return self.tool_call_seen
+
+    def record_reasoning(self, reasoning: str) -> str:
+        if reasoning:
+            self._reasoning_parts.append(reasoning)
+        return reasoning
+
+    def record_content(self, content: str) -> str:
+        if content:
+            self.visible_output_sent = self.visible_output_sent or bool(content.strip())
+            self._content_parts.append(content)
+        return content
+
+    def mark_visible_output(self, content: str) -> None:
+        if content:
+            self.visible_output_sent = self.visible_output_sent or bool(content.strip())
+
+    def replay_completion(self, completion: dict) -> dict:
+        return _completion_with_unstreamed_deltas(
+            completion,
+            streamed_content=self.streamed_content,
+            streamed_reasoning=self.streamed_reasoning,
+        )
