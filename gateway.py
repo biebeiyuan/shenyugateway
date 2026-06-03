@@ -2509,6 +2509,16 @@ def _record_response_text(log_entry: dict, text: str, preview_limit: int = 200) 
         log_entry["response_full"] = text
 
 
+def _finalize_tool_stream_log(log_entry: dict, duration_ms: int) -> None:
+    if log_entry.get("status") == "streaming_tools":
+        log_entry["status"] = "client_disconnected"
+        log_entry["error"] = (
+            log_entry.get("error")
+            or "Client disconnected before native internal gateway tool stream completed."
+        )
+    log_entry["duration_ms"] = duration_ms
+
+
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, body: ChatRequest):
     await verify_api_key(request)
@@ -2626,7 +2636,10 @@ async def chat_completions(request: Request, body: ChatRequest):
                         for chunk in _stream_gateway_error_events(body.model, log_entry["error"]):
                             yield chunk
                     finally:
-                        log_entry["duration_ms"] = int((_time.monotonic() - t0) * 1000)
+                        _finalize_tool_stream_log(
+                            log_entry,
+                            int((_time.monotonic() - t0) * 1000),
+                        )
                 return _sse_response(_tool_loop_stream())
             try:
                 completion = await _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)

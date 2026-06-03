@@ -75,6 +75,26 @@ def test_record_response_text_keeps_full_detail_when_payloads_retained():
     assert entry["response_full"] == "x" * 250
 
 
+def test_finalize_tool_stream_log_closes_unfinished_streaming_status():
+    entry = {"status": "streaming_tools", "error": None}
+
+    gateway._finalize_tool_stream_log(entry, 1234)
+
+    assert entry["status"] == "client_disconnected"
+    assert entry["duration_ms"] == 1234
+    assert entry["error"] == "Client disconnected before native internal gateway tool stream completed."
+
+
+def test_finalize_tool_stream_log_preserves_terminal_status():
+    entry = {"status": "error", "error": "upstream failed"}
+
+    gateway._finalize_tool_stream_log(entry, 5678)
+
+    assert entry["status"] == "error"
+    assert entry["duration_ms"] == 5678
+    assert entry["error"] == "upstream failed"
+
+
 def test_openai_stream_accumulator_collects_content_and_tool_arguments():
     completion = gateway._new_stream_completion("test-model")
 
