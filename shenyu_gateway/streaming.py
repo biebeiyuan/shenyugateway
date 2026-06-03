@@ -135,6 +135,35 @@ def _ensure_stream_tool_call(tool_calls: list[dict], index: int) -> dict:
     return call
 
 
+def _stream_tool_call_name(tool_call: dict) -> str:
+    function = tool_call.get("function") if isinstance(tool_call, dict) else {}
+    if not isinstance(function, dict):
+        return ""
+    return str(function.get("name") or "").strip()
+
+
+def _compact_stream_tool_calls(completion: dict) -> None:
+    choice = completion.get("choices", [{}])[0]
+    message = choice.get("message", {})
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        message.pop("tool_calls", None)
+        if choice.get("finish_reason") == "tool_calls":
+            choice["finish_reason"] = "stop"
+        return
+    compacted = [
+        call
+        for call in tool_calls
+        if isinstance(call, dict) and _stream_tool_call_name(call)
+    ]
+    if compacted:
+        message["tool_calls"] = compacted
+    else:
+        message.pop("tool_calls", None)
+        if choice.get("finish_reason") == "tool_calls":
+            choice["finish_reason"] = "stop"
+
+
 def _apply_openai_stream_chunk(completion: dict, data: dict) -> None:
     choices = data.get("choices") or []
     if not choices:
@@ -174,6 +203,8 @@ def _apply_openai_stream_chunk(completion: dict, data: dict) -> None:
                 function["arguments"] = str(function.get("arguments") or "") + arguments
     if choice.get("finish_reason") is not None:
         completion["choices"][0]["finish_reason"] = choice.get("finish_reason")
+        if choice.get("finish_reason") == "tool_calls":
+            _compact_stream_tool_calls(completion)
     if data.get("usage"):
         completion["usage"] = data.get("usage") or {}
 

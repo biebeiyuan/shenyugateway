@@ -80,15 +80,41 @@ def _extract_tool_calls(completion: dict) -> list[dict]:
     choices = completion.get("choices") or []
     if not choices:
         return []
-    return choices[0].get("message", {}).get("tool_calls") or []
+    choice = choices[0]
+    message = choice.get("message", {})
+    tool_calls = message.get("tool_calls")
+    if not isinstance(tool_calls, list):
+        message.pop("tool_calls", None)
+        if choice.get("finish_reason") == "tool_calls":
+            choice["finish_reason"] = "stop"
+        return []
+    valid_tool_calls = [
+        call
+        for call in tool_calls
+        if isinstance(call, dict) and _tool_call_name(call).strip()
+    ]
+    if tool_calls != valid_tool_calls:
+        if valid_tool_calls:
+            message["tool_calls"] = valid_tool_calls
+        else:
+            message.pop("tool_calls", None)
+            if choice.get("finish_reason") == "tool_calls":
+                choice["finish_reason"] = "stop"
+    return valid_tool_calls
 
 
 def _tool_call_name(tool_call: dict) -> str:
-    return tool_call.get("function", {}).get("name", "") or ""
+    function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
+    if not isinstance(function, dict):
+        return ""
+    return str(function.get("name") or "")
 
 
 def _tool_call_arguments(tool_call: dict) -> dict:
-    raw_args = tool_call.get("function", {}).get("arguments") or "{}"
+    function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
+    if not isinstance(function, dict):
+        function = {}
+    raw_args = function.get("arguments") or "{}"
     try:
         args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
     except json.JSONDecodeError:

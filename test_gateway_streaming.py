@@ -8,6 +8,7 @@ import gateway
 import pytest
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
+from shenyu_gateway.tool_loop import InternalToolLoopContext
 
 
 def test_require_session_store_raises_clear_runtime_error_when_uninitialized():
@@ -151,6 +152,151 @@ def test_openai_stream_accumulator_treats_null_arguments_as_empty_delta():
 
     arguments = completion["choices"][0]["message"]["tool_calls"][0]["function"]["arguments"]
     assert arguments == "{\"path\":\"a.txt\"}"
+
+
+def test_openai_stream_accumulator_drops_empty_sparse_tool_placeholders():
+    completion = gateway._new_stream_completion("test-model")
+
+    gateway._apply_openai_stream_chunk(
+        completion,
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "content": ".",
+                        "tool_calls": [
+                            {
+                                "index": 1,
+                                "id": "tooluse_1",
+                                "type": "function",
+                                "function": {
+                                    "name": "shenyu_gateway_tool",
+                                    "arguments": "{\"tool\":\"shenyu_list_mem_notes\"}",
+                                },
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        },
+    )
+
+    tool_calls = completion["choices"][0]["message"]["tool_calls"]
+    assert len(tool_calls) == 1
+    assert tool_calls[0]["id"] == "tooluse_1"
+    assert tool_calls[0]["function"]["name"] == "shenyu_gateway_tool"
+    assert gateway._extract_tool_calls(completion) == tool_calls
+
+
+def test_openai_stream_accumulator_drops_only_empty_tool_calls():
+    completion = gateway._new_stream_completion("test-model")
+
+    gateway._apply_openai_stream_chunk(
+        completion,
+        {
+            "choices": [
+                {
+                    "delta": {
+                        "tool_calls": [
+                            {
+                                "index": 0,
+                                "id": "call_empty",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            }
+                        ],
+                    },
+                    "finish_reason": "tool_calls",
+                }
+            ]
+        },
+    )
+
+    message = completion["choices"][0]["message"]
+    assert "tool_calls" not in message
+    assert completion["choices"][0]["finish_reason"] == "stop"
+    assert gateway._extract_tool_calls(completion) == []
+
+
+def test_openai_stream_accumulator_clears_tool_finish_without_tool_calls():
+    completion = gateway._new_stream_completion("test-model")
+
+    gateway._apply_openai_stream_chunk(
+        completion,
+        {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
+    )
+
+    assert "tool_calls" not in completion["choices"][0]["message"]
+    assert completion["choices"][0]["finish_reason"] == "stop"
+    assert gateway._extract_tool_calls(completion) == []
+
+
+def test_extract_tool_calls_preserves_real_client_tools_after_empty_placeholder():
+    completion = {
+        "choices": [
+            {
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "content": "I will read it.",
+                    "tool_calls": [
+                        {"id": "empty", "type": "function", "function": {"name": "", "arguments": ""}},
+                        {
+                            "id": "call_client",
+                            "type": "function",
+                            "function": {"name": "read_file", "arguments": "{\"path\":\"a.txt\"}"},
+                        },
+                    ],
+                },
+            }
+        ]
+    }
+
+    tool_calls = gateway._extract_tool_calls(completion)
+
+    assert [gateway._tool_call_name(call) for call in tool_calls] == ["read_file"]
+    assert completion["choices"][0]["message"]["tool_calls"] == tool_calls
+    assert completion["choices"][0]["finish_reason"] == "tool_calls"
+
+
+def test_extract_tool_calls_ignores_malformed_function_payloads():
+    completion = {
+        "choices": [
+            {
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": [
+                        {"id": "bad_none", "type": "function", "function": None},
+                        {"id": "bad_text", "type": "function", "function": "read_file"},
+                    ],
+                },
+            }
+        ]
+    }
+
+    assert gateway._extract_tool_calls(completion) == []
+    assert "tool_calls" not in completion["choices"][0]["message"]
+    assert completion["choices"][0]["finish_reason"] == "stop"
+
+
+def test_extract_tool_calls_clears_non_list_tool_calls():
+    completion = {
+        "choices": [
+            {
+                "finish_reason": "tool_calls",
+                "message": {
+                    "role": "assistant",
+                    "tool_calls": {"id": "bad", "function": {"name": "read_file"}},
+                },
+            }
+        ]
+    }
+
+    assert gateway._extract_tool_calls(completion) == []
+    assert "tool_calls" not in completion["choices"][0]["message"]
+    assert completion["choices"][0]["finish_reason"] == "stop"
 
 
 def test_stream_role_and_final_events_are_openai_compatible():
@@ -344,6 +490,109 @@ def test_close_stream_reader_cancels_pending_task_and_closes_upstream():
 
         assert next_chunk.cancelled() is True
         assert upstream.closed is True
+
+    asyncio.run(run_case())
+
+
+def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_tool():
+    async def run_case():
+        class Body:
+            model = "test-model"
+
+        class Cfg:
+            max_internal_tool_rounds = 3
+
+        executed_tools: list[tuple[str, dict]] = []
+        payload_messages_counts: list[int] = []
+
+        async def build_upstream_request(request, body, messages_override=None, meta=None):
+            payload_messages_counts.append(len(messages_override or []))
+            return (
+                {"model": body.model, "messages": messages_override or [], "tools": []},
+                {},
+                "",
+                {},
+                {"chat_url": "https://upstream.test/v1/chat/completions", "protocol": "openai"},
+            )
+
+        async def stream_upstream_openai_chunks(request, payload, headers, model, upstream):
+            if len(payload_messages_counts) == 1:
+                yield {
+                    "choices": [
+                        {
+                            "delta": {
+                                "content": ".",
+                                "tool_calls": [
+                                    {
+                                        "index": 1,
+                                        "id": "tooluse_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "shenyu_gateway_tool",
+                                            "arguments": "{\"tool\":\"shenyu_list_mem_notes\",\"arguments\":{}}",
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ]
+                }
+            else:
+                yield {"choices": [{"delta": {"content": "done"}, "finish_reason": None}]}
+                yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+
+        async def execute_gateway_tool(name, args, session_tag=None, cfg=None):
+            executed_tools.append((name, args))
+            return {"ok": True, "items": []}
+
+        class Sessions:
+            def log_tool_result(self, *args, **kwargs):
+                pass
+
+            def log_assistant_output(self, *args, **kwargs):
+                pass
+
+        ctx = InternalToolLoopContext(
+            request=_DisconnectProbe(),
+            body=Body(),
+            prepared_messages=[{"role": "user", "content": "list mem"}],
+            meta={"session": {"id": "session-1", "session_tag": "5.15"}},
+            log_entry={},
+            cfg=Cfg(),
+            store=None,
+            sessions=Sessions(),
+            build_upstream_request=build_upstream_request,
+            call_upstream_json=None,
+            stream_upstream_openai_chunks=stream_upstream_openai_chunks,
+            execute_gateway_tool=execute_gateway_tool,
+            record_upstream_payload=lambda log_entry, payload: None,
+            aggregate_cache_usage=lambda usages: {},
+            finalize_assistant_private_content=lambda assistant_message, **kwargs: (
+                assistant_message.get("content", ""),
+                "",
+                [],
+                {"applied": False},
+            ),
+            store_heartbeat=lambda *args, **kwargs: None,
+            schedule_inline_memory_capture=lambda *args, **kwargs: None,
+            mark_context_consumed=lambda meta: None,
+            record_response_text=lambda log_entry, text: log_entry.__setitem__("response_text", text),
+        )
+
+        events = [
+            event
+            async for event in gateway._run_internal_tool_loop_stream_impl(ctx)
+            if isinstance(event, str) and event.startswith("data: ")
+        ]
+
+        assert executed_tools == [
+            ("shenyu_gateway_tool", {"tool": "shenyu_list_mem_notes", "arguments": {}})
+        ]
+        assert len(payload_messages_counts) == 2
+        assert ctx.log_entry["response_text"] == "done"
+        assert any('"content": "done"' in event for event in events)
+        assert not any('"function": {"name": ""' in event for event in events)
 
     asyncio.run(run_case())
 
