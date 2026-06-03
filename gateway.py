@@ -111,6 +111,19 @@ from shenyu_gateway.tool_registry import (
     is_gateway_native_tool,
     merge_tools,
 )
+from shenyu_gateway.tool_loop import (
+    InternalToolLoopContext,
+    _all_tool_calls_are_gateway_native,
+    _execute_mixed_gateway_tool_calls as _execute_mixed_gateway_tool_calls_impl,
+    _extract_tool_calls,
+    _latest_user_text,
+    _tool_call_arguments,
+    _tool_call_cache_key,
+    _tool_call_log_preview,
+    _tool_call_name,
+    run_internal_tool_loop as _run_internal_tool_loop_impl,
+    run_internal_tool_loop_stream as _run_internal_tool_loop_stream_impl,
+)
 from shenyu_gateway.upstream_adapter import (
     _anthropic_tool_index_override,
     _anthropic_stop_reason_to_openai,
@@ -1812,13 +1825,6 @@ def _mark_context_consumed(meta: dict):
         logger.exception("Failed to mark injected context as consumed")
 
 
-def _latest_user_text(messages: list[dict]) -> str:
-    for msg in reversed(messages):
-        if msg.get("role") == "user":
-            return _normalize_text(msg.get("content"))
-    return ""
-
-
 def _store_heartbeat(session_id: str, session: dict, content: str):
     store_heartbeat(
         store=session_store,
@@ -1848,52 +1854,6 @@ def _schedule_inline_memory_capture(
             )
         ),
     )
-
-
-def _extract_tool_calls(completion: dict) -> list[dict]:
-    choices = completion.get("choices") or []
-    if not choices:
-        return []
-    return choices[0].get("message", {}).get("tool_calls") or []
-
-
-def _tool_call_name(tool_call: dict) -> str:
-    return tool_call.get("function", {}).get("name", "") or ""
-
-
-def _tool_call_arguments(tool_call: dict) -> dict:
-    raw_args = tool_call.get("function", {}).get("arguments") or "{}"
-    try:
-        args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-    except json.JSONDecodeError:
-        args = {"raw_arguments": raw_args}
-    return args or {}
-
-
-def _tool_call_log_preview(tool_calls: list[dict]) -> list[dict]:
-    previews = []
-    for call in tool_calls[:8]:
-        previews.append(
-            {
-                "id": call.get("id"),
-                "name": _tool_call_name(call),
-                "arguments_preview": _shorten(json.dumps(_tool_call_arguments(call), ensure_ascii=False), 240),
-            }
-        )
-    return previews
-
-
-def _all_tool_calls_are_gateway_native(tool_calls: list[dict]) -> bool:
-    names = [_tool_call_name(call) for call in tool_calls]
-    return bool(names) and all(is_gateway_native_tool(name) for name in names)
-
-
-def _tool_call_cache_key(name: str, args: dict) -> str:
-    try:
-        args_text = json.dumps(args or {}, ensure_ascii=False, sort_keys=True, default=str)
-    except TypeError:
-        args_text = _json_dumps(args or {})
-    return f"{name}:{args_text}"
 
 
 _EMPTY_VISIBLE_ASSISTANT_REPLY = "沈予已记录。"
@@ -2066,6 +2026,39 @@ async def _stream_upstream_openai_chunks(
         await resp.aclose()
 
 
+def _make_internal_tool_loop_context(
+    request: Request,
+    body: ChatRequest,
+    prepared_messages: list[dict],
+    meta: dict,
+    log_entry: Optional[dict] = None,
+    *,
+    sessions: Optional[SessionManager] = None,
+) -> InternalToolLoopContext:
+    store = _require_session_store()
+    return InternalToolLoopContext(
+        request=request,
+        body=body,
+        prepared_messages=prepared_messages,
+        meta=meta,
+        log_entry=log_entry,
+        cfg=cfg,
+        store=store,
+        sessions=sessions or SessionManager(store, cfg),
+        build_upstream_request=_build_upstream_request,
+        call_upstream_json=_call_upstream_json,
+        stream_upstream_openai_chunks=_stream_upstream_openai_chunks,
+        execute_gateway_tool=execute_gateway_tool,
+        record_upstream_payload=_record_upstream_payload,
+        aggregate_cache_usage=_aggregate_cache_usage,
+        finalize_assistant_private_content=_finalize_assistant_private_content,
+        store_heartbeat=_store_heartbeat,
+        schedule_inline_memory_capture=_schedule_inline_memory_capture,
+        mark_context_consumed=_mark_context_consumed,
+        record_response_text=_record_response_text,
+    )
+
+
 async def _execute_mixed_gateway_tool_calls(
     completion: dict,
     tool_calls: list[dict],
@@ -2081,70 +2074,14 @@ async def _execute_mixed_gateway_tool_calls(
     persist their hidden tool transcript, and return only the client-executable calls. The next
     upstream request reconstructs the original mixed assistant turn plus gateway tool results.
     """
-    store = _require_session_store()
-    normalized_tool_calls = [_ensure_tool_call_id(call, index) for index, call in enumerate(tool_calls)]
-    assistant_message = completion.get("choices", [{}])[0].get("message", {})
-    base_content = _normalize_text(assistant_message.get("content"))
-    assistant_message["content"] = base_content
-    assistant_message["tool_calls"] = normalized_tool_calls
-
-    gateway_calls = [call for call in normalized_tool_calls if is_gateway_native_tool(_tool_call_name(call))]
-    client_calls = [call for call in normalized_tool_calls if not is_gateway_native_tool(_tool_call_name(call))]
-    if not gateway_calls or not client_calls:
-        return completion, gateway_calls, client_calls
-
-    gateway_tool_messages: list[dict] = []
-    for tool_call in gateway_calls:
-        name = _tool_call_name(tool_call)
-        args = _tool_call_arguments(tool_call)
-        try:
-            result = await execute_gateway_tool(name, args, session_tag=session_tag, cfg=cfg)
-        except Exception as exc:
-            logger.exception("[GatewayTool] Mixed tool call failed: %s", name)
-            result = {"ok": False, "error": str(exc)}
-        sessions.log_tool_result(session_id, name, args, result)
-        gateway_tool_messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call.get("id"),
-                "name": name,
-                "content": _json_dumps(result),
-            }
-        )
-
-    original_assistant_message = _pending_assistant_tool_call_message(assistant_message, normalized_tool_calls)
-    store.create_pending_gateway_tool_turn(
-        session_id=session_id,
-        session_tag=session_tag or "",
-        client_tool_call_ids=[str(call.get("id")) for call in client_calls if call.get("id")],
-        original_assistant_message=original_assistant_message,
-        gateway_tool_messages=gateway_tool_messages,
+    ctx = _make_internal_tool_loop_context(
+        request=None,
+        body=None,
+        prepared_messages=[],
+        meta={"session": {"id": session_id, "session_tag": session_tag or ""}},
+        sessions=sessions,
     )
-    assistant_message["tool_calls"] = client_calls
-    logger.info(
-        "[GatewayTool] Executed %d native calls from mixed batch; forwarding %d client calls with hidden transcript.",
-        len(gateway_calls),
-        len(client_calls),
-    )
-    return completion, gateway_calls, client_calls
-
-
-def _pending_assistant_tool_call_message(assistant_message: dict, tool_calls: list[dict]) -> dict:
-    pending_copy = dict(assistant_message or {})
-    clean_content, _, _ = split_private_assistant_tags(_normalize_text(pending_copy.get("content")))
-    pending_copy["content"] = clean_content
-    return _assistant_tool_call_message(pending_copy, tool_calls)
-
-
-def _ensure_tool_call_id(tool_call: dict, index: int = 0) -> dict:
-    normalized = _json_clone(tool_call if isinstance(tool_call, dict) else {})
-    if not normalized.get("id"):
-        normalized["id"] = f"call_gw_{uuid.uuid4().hex[:12]}_{index}"
-    normalized.setdefault("type", "function")
-    function = normalized.setdefault("function", {})
-    if not isinstance(function, dict):
-        normalized["function"] = {}
-    return normalized
+    return await _execute_mixed_gateway_tool_calls_impl(ctx, completion, tool_calls)
 
 
 async def _run_internal_tool_loop(
@@ -2154,136 +2091,8 @@ async def _run_internal_tool_loop(
     meta: dict,
     log_entry: Optional[dict] = None,
 ) -> dict:
-    store = _require_session_store()
-    sessions = SessionManager(store, cfg)
-    session = meta["session"]
-    session_id = session["id"]
-    session_tag = session["session_tag"]
-    working_messages = list(prepared_messages)
-    upstream_usages: list[dict] = []
-    tool_result_cache: dict[str, dict] = {}
-    mem_note_written = False
-    latest_user_text = _latest_user_text(prepared_messages)
-
-    for round_index in range(max(1, cfg.max_internal_tool_rounds)):
-        payload, headers, _, cache_meta, upstream = await _build_upstream_request(
-            request,
-            body,
-            messages_override=working_messages,
-            meta=meta,
-        )
-        if log_entry is not None:
-            _record_upstream_payload(log_entry, payload)
-            round_log = {
-                "round": round_index + 1,
-                "messages_count": len(working_messages),
-                "tools": [],
-            }
-            log_entry.setdefault("internal_tool_rounds", []).append(round_log)
-        else:
-            round_log = None
-        if log_entry is not None and round_index == 0:
-            log_entry["prompt_cache"] = cache_meta
-        raw = await _call_upstream_json(request, upstream["chat_url"], payload, headers)
-        upstream_usages.append(raw.get("usage", {}))
-        if log_entry is not None:
-            log_entry["usage"] = raw.get("usage", {})
-            log_entry["cache_usage"] = _aggregate_cache_usage(upstream_usages)
-        if round_log is not None:
-            round_log["usage"] = raw.get("usage", {})
-        proto = upstream["protocol"]
-        completion = (
-            _anthropic_to_openai_completion(body.model, raw)
-            if proto == "anthropic"
-            else {
-                "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-                "object": "chat.completion",
-                "created": _now_ts(),
-                "model": body.model,
-                "choices": raw.get("choices", []),
-                "usage": raw.get("usage", {}),
-            }
-        )
-
-        tool_calls = _extract_tool_calls(completion)
-        if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
-            if round_log is not None:
-                round_log["final"] = True
-                round_log["tool_calls_count"] = len(tool_calls)
-                if tool_calls:
-                    round_log["returned_tool_calls"] = _tool_call_log_preview(tool_calls)
-            if tool_calls:
-                completion, mixed_gateway_calls, client_tool_calls = await _execute_mixed_gateway_tool_calls(
-                    completion,
-                    tool_calls,
-                    session_tag,
-                    sessions,
-                    session_id,
-                )
-                if mixed_gateway_calls and client_tool_calls:
-                    tool_calls = client_tool_calls
-                    if round_log is not None:
-                        round_log["returned_tool_calls"] = _tool_call_log_preview(tool_calls)
-            assistant_message = completion.get("choices", [{}])[0].get("message", {})
-            clean_content, heartbeat_content, inline_memories, fallback_meta = _finalize_assistant_private_content(
-                assistant_message,
-                latest_user_text=latest_user_text,
-                mem_note_written=mem_note_written,
-            )
-            if heartbeat_content:
-                _store_heartbeat(session_id, session, heartbeat_content)
-            if fallback_meta["applied"] and log_entry is not None:
-                log_entry["empty_visible_response_fallback"] = True
-                log_entry["empty_visible_response_fallback_detail"] = fallback_meta
-            sessions.log_assistant_output(session_id, assistant_message)
-            _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
-            return completion
-
-        assistant_message = completion["choices"][0]["message"]
-        working_messages.append(_assistant_tool_call_message(assistant_message, tool_calls))
-        if round_log is not None:
-            round_log["tool_calls_count"] = len(tool_calls)
-            round_log["gateway_tool_calls"] = _tool_call_log_preview(tool_calls)
-        for tool_call in tool_calls:
-            args = _tool_call_arguments(tool_call)
-            name = _tool_call_name(tool_call)
-            cache_key = _tool_call_cache_key(name, args)
-            cached = cache_key in tool_result_cache
-            if cached:
-                result = {
-                    "ok": True,
-                    "cached_duplicate": True,
-                    "result": tool_result_cache[cache_key],
-                }
-            else:
-                try:
-                    result = await execute_gateway_tool(name, args, session_tag=session_tag, cfg=cfg)
-                except Exception as exc:
-                    logger.exception("[GatewayTool] Internal tool call failed: %s", name)
-                    result = {"ok": False, "error": str(exc)}
-                tool_result_cache[cache_key] = result
-                sessions.log_tool_result(session_id, name, args, result)
-            if round_log is not None:
-                round_log["tools"].append(
-                    {
-                        "name": name,
-                        "cached_duplicate": cached,
-                        "args_preview": _json_dumps(args)[:300],
-                    }
-                )
-            target_name = str(args.get("tool") or "") if name == "shenyu_gateway_tool" else name
-            if target_name == "shenyu_write_mem_note":
-                mem_note_written = True
-            working_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.get("id"),
-                    "name": name,
-                    "content": _json_dumps(result),
-                }
-            )
-
-    raise HTTPException(status_code=500, detail="Exceeded internal gateway tool rounds.")
+    ctx = _make_internal_tool_loop_context(request, body, prepared_messages, meta, log_entry)
+    return await _run_internal_tool_loop_impl(ctx)
 
 
 async def _run_internal_tool_loop_stream(
@@ -2293,221 +2102,10 @@ async def _run_internal_tool_loop_stream(
     meta: dict,
     log_entry: Optional[dict] = None,
 ):
-    store = _require_session_store()
-    sessions = SessionManager(store, cfg)
-    session = meta["session"]
-    session_id = session["id"]
-    session_tag = session["session_tag"]
-    working_messages = list(prepared_messages)
-    upstream_usages: list[dict] = []
-    tool_result_cache: dict[str, dict] = {}
-    mem_note_written = False
-    latest_user_text = _latest_user_text(prepared_messages)
-    stream_chunk_id = _new_stream_chunk_id()
-    stream_created = _now_ts()
-
-    yield _stream_role_event(body.model, chunk_id=stream_chunk_id, created=stream_created)
-
-    for round_index in range(max(1, cfg.max_internal_tool_rounds)):
-        payload, headers, _, cache_meta, upstream = await _build_upstream_request(
-            request,
-            body,
-            messages_override=working_messages,
-            meta=meta,
-        )
-        payload["stream"] = True
-        if log_entry is not None:
-            _record_upstream_payload(log_entry, payload)
-            round_log = {
-                "round": round_index + 1,
-                "messages_count": len(working_messages),
-                "tools": [],
-                "stream": True,
-            }
-            log_entry.setdefault("internal_tool_rounds", []).append(round_log)
-        else:
-            round_log = None
-        if log_entry is not None and round_index == 0:
-            log_entry["prompt_cache"] = cache_meta
-
-        completion = _new_stream_completion(body.model)
-        tag_filter = AssistantTagFilter()
-        stream_replay = StreamReplayAccumulator()
-
-        upstream_chunks = _stream_upstream_openai_chunks(request, payload, headers, body.model, upstream)
-        next_chunk = asyncio.create_task(anext(upstream_chunks))
-        try:
-            while True:
-                read_result = await read_next_stream_chunk(
-                    upstream_chunks=upstream_chunks,
-                    next_chunk=next_chunk,
-                    request=request,
-                )
-                if read_result.kind == "keepalive":
-                    yield _stream_keepalive_event(body.model, chunk_id=stream_chunk_id, created=stream_created)
-                    continue
-                if read_result.kind == "disconnected":
-                    if log_entry is not None:
-                        log_entry["status"] = "client_disconnected"
-                        log_entry["error"] = "Client disconnected during native internal gateway tool stream."
-                    return
-                if read_result.kind == "exhausted":
-                    break
-
-                data = read_result.data or {}
-                next_chunk = asyncio.create_task(anext(upstream_chunks))
-                _apply_openai_stream_chunk(completion, data)
-                choice = (data.get("choices") or [{}])[0]
-                delta = choice.get("delta") or {}
-                if delta.get("tool_calls"):
-                    stream_replay.mark_tool_call_seen()
-                    continue
-                if stream_replay.should_skip_visible_delta():
-                    continue
-                reasoning = delta.get("reasoning_content")
-                if reasoning:
-                    yield _stream_reasoning_event(
-                        body.model,
-                        stream_replay.record_reasoning(reasoning),
-                        chunk_id=stream_chunk_id,
-                        created=stream_created,
-                    )
-                text = delta.get("content")
-                if text:
-                    filtered = tag_filter.feed(text)
-                    if filtered:
-                        yield _stream_content_event(
-                            body.model,
-                            stream_replay.record_content(filtered),
-                            chunk_id=stream_chunk_id,
-                            created=stream_created,
-                        )
-        finally:
-            await close_stream_reader(upstream_chunks=upstream_chunks, next_chunk=next_chunk)
-
-        usage = completion.get("usage") or {}
-        upstream_usages.append(usage)
-        if log_entry is not None:
-            log_entry["usage"] = usage
-            log_entry["cache_usage"] = _aggregate_cache_usage(upstream_usages)
-        if round_log is not None:
-            round_log["usage"] = usage
-
-        tool_calls = _extract_tool_calls(completion)
-        if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
-            if not tool_calls:
-                remaining = tag_filter.flush()
-                if remaining:
-                    stream_replay.mark_visible_output(remaining)
-                    yield _stream_content_event(body.model, remaining, chunk_id=stream_chunk_id, created=stream_created)
-            if round_log is not None:
-                round_log["final"] = True
-                round_log["tool_calls_count"] = len(tool_calls)
-                if tool_calls:
-                    round_log["returned_tool_calls"] = _tool_call_log_preview(tool_calls)
-            if tool_calls:
-                completion, mixed_gateway_calls, client_tool_calls = await _execute_mixed_gateway_tool_calls(
-                    completion,
-                    tool_calls,
-                    session_tag,
-                    sessions,
-                    session_id,
-                )
-                if mixed_gateway_calls and client_tool_calls:
-                    tool_calls = client_tool_calls
-                    if round_log is not None:
-                        round_log["returned_tool_calls"] = _tool_call_log_preview(tool_calls)
-
-            assistant_message = completion.get("choices", [{}])[0].get("message", {})
-            clean_content, heartbeat_content, inline_memories, fallback_meta = _finalize_assistant_private_content(
-                assistant_message,
-                latest_user_text=latest_user_text,
-                mem_note_written=mem_note_written,
-            )
-            if heartbeat_content:
-                _store_heartbeat(session_id, session, heartbeat_content)
-            if fallback_meta["applied"] and log_entry is not None:
-                log_entry["empty_visible_response_fallback"] = True
-                log_entry["empty_visible_response_fallback_detail"] = fallback_meta
-            sessions.log_assistant_output(session_id, assistant_message)
-            _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
-            _mark_context_consumed(meta)
-            if log_entry is not None:
-                log_entry["status"] = "ok"
-                _record_response_text(log_entry, clean_content)
-
-            if tool_calls:
-                replay_completion = stream_replay.replay_completion(completion)
-                for chunk in _completion_to_stream_events(
-                    replay_completion,
-                    include_role=False,
-                    content_chunk_chars=1200,
-                    chunk_id=stream_chunk_id,
-                ):
-                    yield chunk
-            else:
-                if fallback_meta["applied"] and not stream_replay.visible_output_sent:
-                    yield _stream_content_event(body.model, fallback_meta["text"], chunk_id=stream_chunk_id, created=stream_created)
-                yield _stream_final_event(
-                    body.model,
-                    completion.get("choices", [{}])[0].get("finish_reason") or "stop",
-                    chunk_id=stream_chunk_id,
-                    created=stream_created,
-                )
-                yield "data: [DONE]\n\n"
-            return
-
-        assistant_message = completion["choices"][0]["message"]
-        working_messages.append(_assistant_tool_call_message(assistant_message, tool_calls))
-        if round_log is not None:
-            round_log["tool_calls_count"] = len(tool_calls)
-            round_log["gateway_tool_calls"] = _tool_call_log_preview(tool_calls)
-        for tool_call in tool_calls:
-            args = _tool_call_arguments(tool_call)
-            name = _tool_call_name(tool_call)
-            cache_key = _tool_call_cache_key(name, args)
-            cached = cache_key in tool_result_cache
-            if cached:
-                result = {
-                    "ok": True,
-                    "cached_duplicate": True,
-                    "result": tool_result_cache[cache_key],
-                }
-            else:
-                try:
-                    result = await execute_gateway_tool(name, args, session_tag=session_tag, cfg=cfg)
-                except Exception as exc:
-                    logger.exception("[GatewayTool] Internal stream tool call failed: %s", name)
-                    result = {"ok": False, "error": str(exc)}
-                tool_result_cache[cache_key] = result
-                sessions.log_tool_result(session_id, name, args, result)
-            if round_log is not None:
-                round_log["tools"].append(
-                    {
-                        "name": name,
-                        "cached_duplicate": cached,
-                        "args_preview": _json_dumps(args)[:300],
-                    }
-                )
-            target_name = str(args.get("tool") or "") if name == "shenyu_gateway_tool" else name
-            if target_name == "shenyu_write_mem_note":
-                mem_note_written = True
-            working_messages.append(
-                {
-                    "role": "tool",
-                    "tool_call_id": tool_call.get("id"),
-                    "name": name,
-                    "content": _json_dumps(result),
-                }
-            )
-            if await request.is_disconnected():
-                if log_entry is not None:
-                    log_entry["status"] = "client_disconnected"
-                    log_entry["error"] = "Client disconnected during native internal gateway tool execution."
-                return
-            yield _stream_keepalive_event(body.model, chunk_id=stream_chunk_id, created=stream_created)
-
-    raise HTTPException(status_code=500, detail="Exceeded internal gateway tool rounds.")
+    ctx = _make_internal_tool_loop_context(request, body, prepared_messages, meta, log_entry)
+    async for chunk in _run_internal_tool_loop_stream_impl(ctx):
+        yield chunk
+    return
 
 
 async def _stream_chat(
