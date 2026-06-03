@@ -239,6 +239,133 @@ def test_stream_replay_accumulator_replays_only_unstreamed_deltas():
     assert replay["choices"][0]["message"]["content"] == "\n\nFinal text."
 
 
+class _DisconnectProbe:
+    def __init__(self, disconnected: bool = False):
+        self.disconnected = disconnected
+
+    async def is_disconnected(self):
+        return self.disconnected
+
+
+class _ClosableAsyncIterator:
+    def __init__(self, values):
+        self._values = list(values)
+        self.closed = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        if not self._values:
+            raise StopAsyncIteration
+        value = self._values.pop(0)
+        if isinstance(value, BaseException):
+            raise value
+        return value
+
+    async def aclose(self):
+        self.closed = True
+
+
+def test_read_next_stream_chunk_returns_chunk_when_upstream_task_finishes():
+    async def run_case():
+        upstream = _ClosableAsyncIterator([{"choices": [{"delta": {"content": "hello"}}]}])
+        next_chunk = asyncio.create_task(anext(upstream))
+
+        result = await gateway.read_next_stream_chunk(
+            upstream_chunks=upstream,
+            next_chunk=next_chunk,
+            request=_DisconnectProbe(),
+            timeout=0.1,
+        )
+
+        assert result.kind == "chunk"
+        assert result.data == {"choices": [{"delta": {"content": "hello"}}]}
+        assert upstream.closed is False
+
+    asyncio.run(run_case())
+
+
+def test_read_next_stream_chunk_returns_keepalive_while_upstream_is_pending():
+    async def pending_forever():
+        await asyncio.sleep(3600)
+
+    async def run_case():
+        upstream = _ClosableAsyncIterator([])
+        next_chunk = asyncio.create_task(pending_forever())
+        try:
+            result = await gateway.read_next_stream_chunk(
+                upstream_chunks=upstream,
+                next_chunk=next_chunk,
+                request=_DisconnectProbe(),
+                timeout=0.001,
+            )
+
+            assert result.kind == "keepalive"
+            assert next_chunk.cancelled() is False
+            assert upstream.closed is False
+        finally:
+            next_chunk.cancel()
+
+    asyncio.run(run_case())
+
+
+def test_read_next_stream_chunk_closes_upstream_when_client_disconnects():
+    async def pending_forever():
+        await asyncio.sleep(3600)
+
+    async def run_case():
+        upstream = _ClosableAsyncIterator([])
+        next_chunk = asyncio.create_task(pending_forever())
+
+        result = await gateway.read_next_stream_chunk(
+            upstream_chunks=upstream,
+            next_chunk=next_chunk,
+            request=_DisconnectProbe(disconnected=True),
+            timeout=0.001,
+        )
+
+        assert result.kind == "disconnected"
+        assert next_chunk.cancelled() is True
+        assert upstream.closed is True
+
+    asyncio.run(run_case())
+
+
+def test_close_stream_reader_cancels_pending_task_and_closes_upstream():
+    async def pending_forever():
+        await asyncio.sleep(3600)
+
+    async def run_case():
+        upstream = _ClosableAsyncIterator([])
+        next_chunk = asyncio.create_task(pending_forever())
+
+        await gateway.close_stream_reader(upstream_chunks=upstream, next_chunk=next_chunk)
+
+        assert next_chunk.cancelled() is True
+        assert upstream.closed is True
+
+    asyncio.run(run_case())
+
+
+def test_read_next_stream_chunk_returns_exhausted_at_end_of_stream():
+    async def run_case():
+        upstream = _ClosableAsyncIterator([])
+        next_chunk = asyncio.create_task(anext(upstream))
+
+        result = await gateway.read_next_stream_chunk(
+            upstream_chunks=upstream,
+            next_chunk=next_chunk,
+            request=_DisconnectProbe(),
+            timeout=0.1,
+        )
+
+        assert result.kind == "exhausted"
+        assert upstream.closed is False
+
+    asyncio.run(run_case())
+
+
 def test_pending_gateway_tool_turn_store_round_trip_consume_and_prune():
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         store = GatewayStore(f"{tmp}/gateway.db")

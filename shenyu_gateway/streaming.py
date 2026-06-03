@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import uuid
+from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Any, Optional
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
@@ -290,3 +292,37 @@ class StreamReplayAccumulator:
             streamed_content=self.streamed_content,
             streamed_reasoning=self.streamed_reasoning,
         )
+
+
+@dataclass(frozen=True)
+class StreamReadResult:
+    kind: str
+    data: Optional[dict[str, Any]] = None
+
+
+async def close_stream_reader(*, upstream_chunks, next_chunk) -> None:
+    if not next_chunk.done():
+        next_chunk.cancel()
+        with suppress(asyncio.CancelledError):
+            await next_chunk
+    await upstream_chunks.aclose()
+
+
+async def read_next_stream_chunk(
+    *,
+    upstream_chunks,
+    next_chunk,
+    request,
+    timeout: float = 2.0,
+) -> StreamReadResult:
+    done, _ = await asyncio.wait({next_chunk}, timeout=timeout)
+    if next_chunk not in done:
+        if await request.is_disconnected():
+            await close_stream_reader(upstream_chunks=upstream_chunks, next_chunk=next_chunk)
+            return StreamReadResult("disconnected")
+        return StreamReadResult("keepalive")
+    try:
+        data = next_chunk.result()
+    except StopAsyncIteration:
+        return StreamReadResult("exhausted")
+    return StreamReadResult("chunk", data=data)

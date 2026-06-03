@@ -101,6 +101,8 @@ from shenyu_gateway.streaming import (
     _stream_reasoning_event,
     _stream_role_event,
     _unstreamed_text_suffix,
+    close_stream_reader,
+    read_next_stream_chunk,
 )
 from shenyu_gateway.supabase import SupabaseClient
 from shenyu_gateway.tool_registry import (
@@ -2336,22 +2338,23 @@ async def _run_internal_tool_loop_stream(
         next_chunk = asyncio.create_task(anext(upstream_chunks))
         try:
             while True:
-                done, _ = await asyncio.wait({next_chunk}, timeout=2.0)
-                if next_chunk not in done:
-                    if await request.is_disconnected():
-                        if log_entry is not None:
-                            log_entry["status"] = "client_disconnected"
-                            log_entry["error"] = "Client disconnected during native internal gateway tool stream."
-                        next_chunk.cancel()
-                        await upstream_chunks.aclose()
-                        return
+                read_result = await read_next_stream_chunk(
+                    upstream_chunks=upstream_chunks,
+                    next_chunk=next_chunk,
+                    request=request,
+                )
+                if read_result.kind == "keepalive":
                     yield _stream_keepalive_event(body.model, chunk_id=stream_chunk_id, created=stream_created)
                     continue
-                try:
-                    data = next_chunk.result()
-                except StopAsyncIteration:
+                if read_result.kind == "disconnected":
+                    if log_entry is not None:
+                        log_entry["status"] = "client_disconnected"
+                        log_entry["error"] = "Client disconnected during native internal gateway tool stream."
+                    return
+                if read_result.kind == "exhausted":
                     break
 
+                data = read_result.data or {}
                 next_chunk = asyncio.create_task(anext(upstream_chunks))
                 _apply_openai_stream_chunk(completion, data)
                 choice = (data.get("choices") or [{}])[0]
@@ -2380,9 +2383,7 @@ async def _run_internal_tool_loop_stream(
                             created=stream_created,
                         )
         finally:
-            if not next_chunk.done():
-                next_chunk.cancel()
-            await upstream_chunks.aclose()
+            await close_stream_reader(upstream_chunks=upstream_chunks, next_chunk=next_chunk)
 
         usage = completion.get("usage") or {}
         upstream_usages.append(usage)
