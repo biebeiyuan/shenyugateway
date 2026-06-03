@@ -58,6 +58,20 @@ class FakeEmbeddingClient:
         return self.vector, None
 
 
+class SlowEmbeddingClient(FakeEmbeddingClient):
+    def __init__(self):
+        super().__init__()
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.calls = 0
+
+    async def embed(self, text):
+        self.calls += 1
+        self.started.set()
+        await self.release.wait()
+        return self.vector, None
+
+
 class BrokenSupabase:
     async def query(self, table, params=None):
         raise RuntimeError("relation shenyu_recall_index does not exist")
@@ -461,6 +475,42 @@ def test_mark_stale_source_deleted_only_after_live_docs_are_known():
             {"deleted_at": supabase.updates[0][2]["deleted_at"]},
         )
     ]
+
+
+def test_embed_pending_returns_running_status_for_concurrent_call():
+    async def run_case():
+        row = {
+            "id": "recall-1",
+            "embedding_text": "标题：长隆\n\n正文：海獭企鹅",
+            "embedding_status": "pending",
+        }
+        supabase = FakeSupabase([row])
+        embedding_client = SlowEmbeddingClient()
+        service = RecallIndexService(supabase, embedding_client=embedding_client)
+
+        first_task = asyncio.create_task(service.embed_pending(limit=5))
+        await embedding_client.started.wait()
+        second_result = await service.embed_pending(limit=5)
+        embedding_client.release.set()
+        first_result = await first_task
+
+        return supabase, embedding_client, first_result, second_result
+
+    supabase, embedding_client, first_result, second_result = asyncio.run(run_case())
+
+    assert first_result["ok"] is True
+    assert first_result["embedded"] == 1
+    assert second_result == {
+        "ok": False,
+        "enabled": True,
+        "seen": 0,
+        "embedded": 0,
+        "failed": 0,
+        "already_running": True,
+        "error": "Embedding worker is already running.",
+    }
+    assert embedding_client.calls == 1
+    assert len(supabase.updates) == 1
 
 
 def test_recall_date_filter_can_exclude_undated_rows():

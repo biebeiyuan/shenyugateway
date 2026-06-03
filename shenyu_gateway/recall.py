@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import re
@@ -337,6 +338,7 @@ class RecallIndexService:
         self.supabase = supabase
         self.cfg = cfg
         self.embedding_client = embedding_client or self._embedding_client_from_config(cfg)
+        self._embed_pending_lock = asyncio.Lock()
 
     def _embedding_client_from_config(self, cfg: Any) -> Optional[EmbeddingClient]:
         if not cfg or not getattr(cfg, "enable_recall_embeddings", False):
@@ -417,6 +419,20 @@ class RecallIndexService:
     async def embed_pending(self, limit: int = 200) -> dict[str, Any]:
         if not self.embedding_client or not self.embedding_client.enabled:
             return {"ok": False, "enabled": False, "embedded": 0, "error": "Embedding API is not configured."}
+        if self._embed_pending_lock.locked():
+            return {
+                "ok": False,
+                "enabled": True,
+                "seen": 0,
+                "embedded": 0,
+                "failed": 0,
+                "already_running": True,
+                "error": "Embedding worker is already running.",
+            }
+        async with self._embed_pending_lock:
+            return await self._embed_pending_unlocked(limit=limit)
+
+    async def _embed_pending_unlocked(self, limit: int = 200) -> dict[str, Any]:
         rows = await self.supabase.query(
             RECALL_INDEX_TABLE,
             {
