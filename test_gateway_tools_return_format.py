@@ -25,6 +25,11 @@ class FakeSupabase:
         return {"table": table, "match": match, **data}
 
 
+class FailingSupabase:
+    async def query(self, table, params):
+        raise RuntimeError("query failed")
+
+
 def test_ask_memory_returns_standard_ok_field():
     service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
 
@@ -43,6 +48,18 @@ def test_ask_memory_without_supabase_returns_standard_error_shape():
 
     assert result["ok"] is False
     assert result["error"] == "Supabase is not configured."
+    assert result["query"] == "长隆"
+    assert result["count"] == 0
+    assert result["memories"] == []
+
+
+def test_ask_memory_query_error_returns_standard_error_shape():
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FailingSupabase(), store=None)
+
+    result = asyncio.run(service.ask_memory(query="长隆", session_tag="5.29"))
+
+    assert result["ok"] is False
+    assert result["error"] == "query failed"
     assert result["query"] == "长隆"
     assert result["count"] == 0
     assert result["memories"] == []

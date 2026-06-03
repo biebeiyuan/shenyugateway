@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Any, Optional
 
 from shenyu_gateway.recall import RecallIndexService, recall_terms
+from shenyu_gateway.runtime import logger
 from shenyu_gateway.utils import normalize_text as _normalize_text
 from .runtime import iso_now, now as _now, parse_ts as _parse_ts
 
@@ -895,7 +896,8 @@ class MemNoteService:
                         "trigger_count": int(row.get("trigger_count") or 0) + 1,
                     },
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning("Failed to mark mem note triggered: id=%s error=%s", note_id, exc)
                 continue
 
     async def _get_note(self, note_id: str) -> Optional[dict[str, Any]]:

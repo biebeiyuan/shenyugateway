@@ -44,6 +44,11 @@ class FakeSupabase:
         return [{"id": match["id"], **data}]
 
 
+class FailingUpdateSupabase(FakeSupabase):
+    async def update(self, table: str, match: dict, data: dict):
+        raise RuntimeError("update failed")
+
+
 def test_update_note_normalizes_uuid_from_pasted_text():
     supabase = FakeSupabase()
     service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), supabase)
@@ -295,3 +300,25 @@ def test_contextual_search_uses_semantic_fallback_without_changing_keyword_searc
     assert contextual_result["count"] == 1
     assert contextual_result["items"][0]["id"] == "note-1"
     assert contextual_result["items"][0]["search_mode"] == "semantic"
+
+
+def test_mark_triggered_logs_update_failures(caplog):
+    row = {
+        "id": "note-1",
+        "session_tag": "5.15",
+        "content": "工具是我的手。",
+        "mem_type": "心里那一档",
+        "trigger_text": "工具是我的手",
+        "trigger_keywords": ["工具"],
+        "status": "active",
+        "cooldown_hours": 0,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+    }
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FailingUpdateSupabase(rows=[row]))
+
+    result = asyncio.run(service.search_notes("工具", session_tag="5.15", mark_triggered=True))
+
+    assert result["ok"] is True
+    assert result["count"] == 1
+    assert "Failed to mark mem note triggered: id=note-1 error=update failed" in caplog.text

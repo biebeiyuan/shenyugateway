@@ -482,7 +482,16 @@ class GatewayToolService:
         if session_tag:
             params.append(("session_tag", f"eq.{session_tag}"))
 
-        memories = await self.supabase.query("memories", params)
+        try:
+            memories = await self.supabase.query("memories", params)
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": str(exc),
+                "query": query,
+                "count": 0,
+                "memories": [],
+            }
 
         cards = []
         for memory in memories:
