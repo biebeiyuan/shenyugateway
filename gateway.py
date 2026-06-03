@@ -2439,11 +2439,63 @@ async def list_models(request: Request):
 
 # --- 请求日志环形缓冲区 ---
 _request_logs: deque = deque(maxlen=30)
+_TOOL_STREAM_STALE_SECONDS = 30.0
 
 
 def _retain_request_log_payloads() -> bool:
     raw = os.getenv("GATEWAY_LOG_FULL_PAYLOADS", "true").strip().lower()
     return raw not in {"0", "false", "no", "off"}
+
+
+def _tool_stream_stale_seconds() -> float:
+    raw = os.getenv("GATEWAY_TOOL_STREAM_STALE_SECONDS", "").strip()
+    if not raw:
+        return _TOOL_STREAM_STALE_SECONDS
+    try:
+        value = float(raw)
+    except ValueError:
+        return _TOOL_STREAM_STALE_SECONDS
+    return max(5.0, value)
+
+
+def _mark_tool_stream_activity(log_entry: Optional[dict]) -> None:
+    if log_entry is not None:
+        now_value = _time.monotonic()
+        log_entry.setdefault("_tool_stream_started_monotonic", now_value)
+        log_entry["_tool_stream_last_activity_monotonic"] = now_value
+
+
+def _finalize_stale_tool_stream_log(
+    log_entry: dict,
+    *,
+    now_monotonic: Optional[float] = None,
+    stale_seconds: Optional[float] = None,
+) -> bool:
+    if log_entry.get("status") != "streaming_tools":
+        return False
+    last_activity = log_entry.get("_tool_stream_last_activity_monotonic")
+    if not isinstance(last_activity, (int, float)):
+        return False
+    now_value = _time.monotonic() if now_monotonic is None else now_monotonic
+    threshold = _tool_stream_stale_seconds() if stale_seconds is None else stale_seconds
+    if now_value - float(last_activity) < threshold:
+        return False
+    started_at = log_entry.get("_tool_stream_started_monotonic")
+    duration_source = float(started_at) if isinstance(started_at, (int, float)) else float(last_activity)
+    duration_ms = max(int(log_entry.get("duration_ms") or 0), int((now_value - duration_source) * 1000))
+    _finalize_tool_stream_log(log_entry, duration_ms)
+    return True
+
+
+def _finalize_stale_tool_stream_logs() -> None:
+    now_value = _time.monotonic()
+    threshold = _tool_stream_stale_seconds()
+    for log_entry in list(_request_logs):
+        _finalize_stale_tool_stream_log(
+            log_entry,
+            now_monotonic=now_value,
+            stale_seconds=threshold,
+        )
 
 
 def _message_log_preview(msg: dict) -> dict[str, Any]:
@@ -2516,6 +2568,8 @@ def _finalize_tool_stream_log(log_entry: dict, duration_ms: int) -> None:
             log_entry.get("error")
             or "Client disconnected before native internal gateway tool stream completed."
         )
+    log_entry.pop("_tool_stream_started_monotonic", None)
+    log_entry.pop("_tool_stream_last_activity_monotonic", None)
     log_entry["duration_ms"] = duration_ms
 
 
@@ -2611,6 +2665,7 @@ async def chat_completions(request: Request, body: ChatRequest):
             if body.stream:
                 async def _tool_loop_stream():
                     log_entry["status"] = "streaming_tools"
+                    _mark_tool_stream_activity(log_entry)
                     try:
                         async for chunk in _run_internal_tool_loop_stream(
                             request,
@@ -2619,6 +2674,7 @@ async def chat_completions(request: Request, body: ChatRequest):
                             meta,
                             log_entry=log_entry,
                         ):
+                            _mark_tool_stream_activity(log_entry)
                             yield chunk
                     except asyncio.CancelledError:
                         log_entry["status"] = "client_disconnected"
@@ -2628,12 +2684,14 @@ async def chat_completions(request: Request, body: ChatRequest):
                         log_entry["status"] = "error"
                         log_entry["error"] = _gateway_error_text(exc)[:500]
                         for chunk in _stream_gateway_error_events(body.model, log_entry["error"]):
+                            _mark_tool_stream_activity(log_entry)
                             yield chunk
                     except Exception as exc:
                         logger.exception("Internal gateway tool stream failed")
                         log_entry["status"] = "error"
                         log_entry["error"] = str(exc)[:500]
                         for chunk in _stream_gateway_error_events(body.model, log_entry["error"]):
+                            _mark_tool_stream_activity(log_entry)
                             yield chunk
                     finally:
                         _finalize_tool_stream_log(
@@ -3419,6 +3477,7 @@ async def delete_gateway_session(session_tag: str, body: SessionDeleteRequest):
 
 @app.get("/api/gateway/logs")
 async def gateway_logs(limit: int = 30):
+    _finalize_stale_tool_stream_logs()
     logs = list(_request_logs)[:limit]
     return {"logs": [
         {
@@ -3462,6 +3521,7 @@ async def gateway_logs(limit: int = 30):
 
 @app.get("/api/gateway/logs/{log_id}")
 async def gateway_log_detail(log_id: str):
+    _finalize_stale_tool_stream_logs()
     for l in _request_logs:
         if l["id"] == log_id or l.get("request_id") == log_id:
             return l

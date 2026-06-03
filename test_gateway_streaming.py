@@ -95,6 +95,40 @@ def test_finalize_tool_stream_log_preserves_terminal_status():
     assert entry["error"] == "upstream failed"
 
 
+def test_finalize_stale_tool_stream_log_closes_inactive_stream():
+    entry = {
+        "status": "streaming_tools",
+        "duration_ms": 0,
+        "error": None,
+        "_tool_stream_started_monotonic": 10.0,
+        "_tool_stream_last_activity_monotonic": 20.0,
+    }
+
+    changed = gateway._finalize_stale_tool_stream_log(entry, now_monotonic=30.0, stale_seconds=5.0)
+
+    assert changed is True
+    assert entry["status"] == "client_disconnected"
+    assert entry["duration_ms"] == 20000
+    assert "_tool_stream_started_monotonic" not in entry
+    assert "_tool_stream_last_activity_monotonic" not in entry
+
+
+def test_finalize_stale_tool_stream_log_keeps_recent_stream_active():
+    entry = {
+        "status": "streaming_tools",
+        "duration_ms": 0,
+        "error": None,
+        "_tool_stream_started_monotonic": 10.0,
+        "_tool_stream_last_activity_monotonic": 28.0,
+    }
+
+    changed = gateway._finalize_stale_tool_stream_log(entry, now_monotonic=30.0, stale_seconds=5.0)
+
+    assert changed is False
+    assert entry["status"] == "streaming_tools"
+    assert entry["_tool_stream_last_activity_monotonic"] == 28.0
+
+
 def test_openai_stream_accumulator_collects_content_and_tool_arguments():
     completion = gateway._new_stream_completion("test-model")
 
