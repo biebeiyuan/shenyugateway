@@ -449,7 +449,14 @@ class GatewayToolService:
         date_to: Optional[str] = None,
     ) -> dict:
         if not self.supabase:
-            return {"query": query, "count": 0, "memories": [], "note": "Supabase is not configured."}
+            return {
+                "ok": False,
+                "error": "Supabase is not configured.",
+                "query": query,
+                "count": 0,
+                "memories": [],
+                "note": "Supabase is not configured.",
+            }
 
         query_text = query or ""
         params: list[tuple[str, str]] = [
@@ -494,6 +501,7 @@ class GatewayToolService:
                 await self._boost_memory(memory_id)
 
         return {
+            "ok": True,
             "query": query,
             "count": len(cards),
             "memories": cards,
@@ -588,7 +596,7 @@ class GatewayToolService:
 
         scored.sort(key=lambda row: row["score"], reverse=True)
         passages = scored[: max(1, min(limit, 8))]
-        return {"query": query, "count": len(passages), "passages": passages}
+        return {"ok": True, "query": query, "count": len(passages), "passages": passages}
 
     async def search_primary_texts(
         self,
@@ -618,6 +626,7 @@ class GatewayToolService:
         scored.sort(key=lambda row: row["score"], reverse=True)
         passages = scored[: max(1, min(int(limit or 5), 20))]
         return {
+            "ok": True,
             "query": query,
             "categories": sorted(selected),
             "count": len(passages),

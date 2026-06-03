@@ -325,6 +325,123 @@ def test_pending_gateway_tool_turn_rebuilds_mixed_transcript_before_upstream():
         assert store.find_pending_gateway_tool_turn(session["id"], ["call_client"]) is None
 
 
+def test_pending_gateway_tool_turn_is_not_injected_without_complete_client_result():
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        store = GatewayStore(f"{tmp}/gateway.db")
+        session = store.get_or_create_session("test-session", "test-client")
+        original_assistant = {
+            "role": "assistant",
+            "content": "I will check both.",
+            "tool_calls": [
+                {
+                    "id": "call_gateway",
+                    "type": "function",
+                    "function": {"name": "shenyu_recall", "arguments": "{}"},
+                },
+                {
+                    "id": "call_client",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{\"path\":\"a.txt\"}"},
+                },
+            ],
+        }
+        pending = store.create_pending_gateway_tool_turn(
+            session_id=session["id"],
+            session_tag=session["session_tag"],
+            client_tool_call_ids=["call_client"],
+            original_assistant_message=original_assistant,
+            gateway_tool_messages=[
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_gateway",
+                    "name": "shenyu_recall",
+                    "content": "{\"ok\":true}",
+                }
+            ],
+        )
+        client_messages = [
+            {"role": "user", "content": "check"},
+            {
+                "role": "assistant",
+                "content": "I will check both.",
+                "tool_calls": [original_assistant["tool_calls"][1]],
+            },
+        ]
+
+        rebuilt, meta = gateway._inject_pending_gateway_tool_turns(
+            client_messages,
+            store,
+            session["id"],
+        )
+
+        assert rebuilt == client_messages
+        assert meta == {
+            "pending_gateway_tool_turns_injected": 0,
+            "pending_gateway_tool_turn_ids": [],
+            "pending_gateway_tool_messages": 0,
+        }
+        assert store.find_pending_gateway_tool_turn(session["id"], ["call_client"])["id"] == pending["id"]
+
+
+def test_pending_gateway_tool_turn_is_not_injected_for_mismatched_client_result_id():
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        store = GatewayStore(f"{tmp}/gateway.db")
+        session = store.get_or_create_session("test-session", "test-client")
+        original_assistant = {
+            "role": "assistant",
+            "content": "I will check both.",
+            "tool_calls": [
+                {
+                    "id": "call_gateway",
+                    "type": "function",
+                    "function": {"name": "shenyu_recall", "arguments": "{}"},
+                },
+                {
+                    "id": "call_client",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{\"path\":\"a.txt\"}"},
+                },
+            ],
+        }
+        pending = store.create_pending_gateway_tool_turn(
+            session_id=session["id"],
+            session_tag=session["session_tag"],
+            client_tool_call_ids=["call_client"],
+            original_assistant_message=original_assistant,
+            gateway_tool_messages=[
+                {
+                    "role": "tool",
+                    "tool_call_id": "call_gateway",
+                    "name": "shenyu_recall",
+                    "content": "{\"ok\":true}",
+                }
+            ],
+        )
+        client_messages = [
+            {"role": "user", "content": "check"},
+            {
+                "role": "assistant",
+                "content": "I will check both.",
+                "tool_calls": [original_assistant["tool_calls"][1]],
+            },
+            {"role": "tool", "tool_call_id": "call_other", "name": "read_file", "content": "file body"},
+        ]
+
+        rebuilt, meta = gateway._inject_pending_gateway_tool_turns(
+            client_messages,
+            store,
+            session["id"],
+        )
+
+        assert rebuilt == client_messages
+        assert meta == {
+            "pending_gateway_tool_turns_injected": 0,
+            "pending_gateway_tool_turn_ids": [],
+            "pending_gateway_tool_messages": 0,
+        }
+        assert store.find_pending_gateway_tool_turn(session["id"], ["call_client"])["id"] == pending["id"]
+
+
 def test_execute_mixed_gateway_tool_calls_stores_hidden_result_and_returns_only_client_calls():
     async def run_case():
         with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:

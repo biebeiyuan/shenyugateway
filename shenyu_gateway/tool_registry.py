@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 import json
 from typing import Any, Awaitable, Callable, Optional
 
@@ -17,6 +18,26 @@ MEM_NOTE_PATCH_KEYS = {
     "cooldown_hours",
     "review_note",
 }
+
+
+def _gateway_list_mem_notes_tool() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "shenyu_list_mem_notes",
+            "description": "看 mem 便签列表。返回 suggested_mem_type / suggested_trigger_* 供整理参考；active mem 会由 trigger_text 和 trigger_keywords 一起参与关键词命中，并有语义兜底。",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "status": {"type": "string", "enum": ["captured", "active", "paused", "archived", "all"], "default": "captured"},
+                    "q": {"type": "string"},
+                    "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
+                    "session_tag": {"type": "string"},
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
+                },
+            },
+        },
+    }
 
 
 def _gateway_core_tools() -> list[dict]:
@@ -166,23 +187,7 @@ def _gateway_core_tools() -> list[dict]:
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_list_mem_notes",
-                "description": "看 mem 便签列表。返回 suggested_mem_type / suggested_trigger_* 供整理参考；active mem 会由 trigger_text 和 trigger_keywords 一起参与关键词命中，并有语义兜底。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "status": {"type": "string", "enum": ["captured", "active", "paused", "archived", "all"], "default": "captured"},
-                        "q": {"type": "string"},
-                        "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
-                        "session_tag": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
-                    },
-                },
-            },
-        },
+        _gateway_list_mem_notes_tool(),
         {
             "type": "function",
             "function": {
@@ -392,6 +397,8 @@ def _expanded_gateway_native_tools(cfg: Any) -> list[dict]:
     if cfg.enable_gateway_tools:
         tools.extend(_gateway_core_tools())
     if cfg.enable_mem0_management_tools:
+        if not cfg.enable_gateway_tools:
+            tools.append(_gateway_list_mem_notes_tool())
         tools.extend(_gateway_mem0_management_tools())
     if cfg.expose_supabase_tools:
         tools.extend(
@@ -627,8 +634,261 @@ def _mem_note_bulk_patch_arg(arguments: dict) -> dict:
     return patch
 
 
-async def _wrapped_service_result(key: str, awaitable: Awaitable[Any]) -> dict:
-    return {key: await awaitable}
+@dataclass(frozen=True)
+class ToolContext:
+    arguments: dict
+    session_tag: Optional[str]
+    resolved_session_tag: Optional[str]
+    cfg: Any
+    service: GatewayToolService
+
+
+_TOOL_HANDLERS: dict[str, Callable[[ToolContext], Awaitable[dict]]] = {}
+
+
+def _tool_handler(name: str) -> Callable[[Callable[[ToolContext], Awaitable[dict]]], Callable[[ToolContext], Awaitable[dict]]]:
+    def decorator(fn: Callable[[ToolContext], Awaitable[dict]]) -> Callable[[ToolContext], Awaitable[dict]]:
+        _TOOL_HANDLERS[name] = fn
+        return fn
+
+    return decorator
+
+
+@_tool_handler("shenyu_recall")
+async def _handle_recall(ctx: ToolContext) -> dict:
+    return await ctx.service.recall(
+        query=_query_arg(ctx.arguments),
+        source_types=ctx.arguments.get("source_types") or ctx.arguments.get("sources"),
+        session_tag=ctx.arguments.get("session_tag") or ctx.session_tag,
+        date_from=ctx.arguments.get("date_from") or ctx.arguments.get("since"),
+        date_to=ctx.arguments.get("date_to") or ctx.arguments.get("until"),
+        include_undated=_bool_arg(ctx.arguments, "include_undated", True),
+        limit=_int_arg(ctx.arguments, "limit", 8),
+        auto_sync=bool(getattr(ctx.cfg, "enable_recall_auto_sync", False)),
+    )
+
+
+@_tool_handler("shenyu_surface_passages")
+async def _handle_surface_passages(ctx: ToolContext) -> dict:
+    return await ctx.service.surface_passages(
+        query=_query_arg(ctx.arguments),
+        session_tag=ctx.resolved_session_tag,
+        limit=_int_arg(ctx.arguments, "limit", ctx.cfg.default_surface_limit),
+    )
+
+
+@_tool_handler("shenyu_search_primary_texts")
+async def _handle_search_primary_texts(ctx: ToolContext) -> dict:
+    return await ctx.service.search_primary_texts(
+        query=_query_arg(ctx.arguments),
+        categories=ctx.arguments.get("categories"),
+        session_tag=ctx.resolved_session_tag,
+        limit=_int_arg(ctx.arguments, "limit", 5),
+    )
+
+
+@_tool_handler("shenyu_add_calendar")
+async def _handle_add_calendar(ctx: ToolContext) -> dict:
+    return await ctx.service.add_calendar(
+        content=ctx.arguments.get("content", ""),
+        period_key=ctx.arguments.get("period_key"),
+        period_type=ctx.arguments.get("period_type", "day"),
+        title=ctx.arguments.get("title", ""),
+        summary=ctx.arguments.get("summary", ""),
+        digest=ctx.arguments.get("digest", ""),
+        author=ctx.arguments.get("author", "沈予"),
+    )
+
+
+@_tool_handler("shenyu_supabase_guide")
+async def _handle_supabase_guide(ctx: ToolContext) -> dict:
+    return await ctx.service.supabase_guide()
+
+
+@_tool_handler("shenyu_ask_memory")
+async def _handle_ask_memory(ctx: ToolContext) -> dict:
+    return await ctx.service.ask_memory(
+        query=_query_arg(ctx.arguments),
+        session_tag=ctx.arguments.get("session_tag"),
+        limit=_int_arg(ctx.arguments, "limit", 8),
+        date=ctx.arguments.get("date"),
+        date_from=ctx.arguments.get("date_from"),
+        date_to=ctx.arguments.get("date_to"),
+    )
+
+
+@_tool_handler("shenyu_search_mem_notes")
+async def _handle_search_mem_notes(ctx: ToolContext) -> dict:
+    return await ctx.service.search_mem_notes(
+        query=_query_arg(ctx.arguments),
+        session_tag=ctx.resolved_session_tag,
+        limit=_int_arg(ctx.arguments, "limit", 30),
+        status=ctx.arguments.get("status", "all"),
+        mem_type=ctx.arguments.get("mem_type"),
+    )
+
+
+@_tool_handler("shenyu_list_mem_notes")
+async def _handle_list_mem_notes(ctx: ToolContext) -> dict:
+    return await ctx.service.list_mem_notes(
+        status=ctx.arguments.get("status", "captured"),
+        limit=_int_arg(ctx.arguments, "limit", 30),
+        session_tag=ctx.resolved_session_tag,
+        q=ctx.arguments.get("q") or ctx.arguments.get("query", ""),
+        mem_type=ctx.arguments.get("mem_type"),
+    )
+
+
+@_tool_handler("shenyu_write_mem_note")
+async def _handle_write_mem_note(ctx: ToolContext) -> dict:
+    return await ctx.service.write_mem_note(
+        content=ctx.arguments.get("content", ""),
+        session_tag=ctx.resolved_session_tag,
+        mem_type=ctx.arguments.get("mem_type"),
+        trigger_text=ctx.arguments.get("trigger_text", ""),
+        trigger_keywords=ctx.arguments.get("trigger_keywords"),
+        status=ctx.arguments.get("status", "active"),
+        cooldown_hours=ctx.arguments.get("cooldown_hours"),
+        review_note=ctx.arguments.get("review_note", ""),
+    )
+
+
+@_tool_handler("shenyu_read_heartbeat")
+async def _handle_read_heartbeat(ctx: ToolContext) -> dict:
+    return await ctx.service.read_heartbeat(
+        session_tag=ctx.resolved_session_tag,
+        limit=_int_arg(ctx.arguments, "limit", 10),
+        state=ctx.arguments.get("state", "all"),
+        order=ctx.arguments.get("order", "desc"),
+        scope=ctx.arguments.get("scope", "auto"),
+        date=ctx.arguments.get("date"),
+        date_from=ctx.arguments.get("date_from"),
+        date_to=ctx.arguments.get("date_to"),
+        created_from=ctx.arguments.get("created_from"),
+        created_to=ctx.arguments.get("created_to"),
+    )
+
+
+@_tool_handler("shenyu_update_mem_note")
+async def _handle_update_mem_note(ctx: ToolContext) -> dict:
+    return await ctx.service.update_mem_note(
+        _mem_note_id_arg(ctx.arguments),
+        _mem_note_patch_args(ctx.arguments),
+    )
+
+
+@_tool_handler("shenyu_bulk_update_mem_notes")
+async def _handle_bulk_update_mem_notes(ctx: ToolContext) -> dict:
+    return await ctx.service.bulk_update_mem_notes(
+        ids=_mem_note_ids_arg(ctx.arguments),
+        patch=_mem_note_bulk_patch_arg(ctx.arguments),
+        updates=ctx.arguments.get("updates") if isinstance(ctx.arguments.get("updates"), list) else [],
+        use_suggestions=_bool_arg(ctx.arguments, "use_suggestions", False),
+    )
+
+
+@_tool_handler("shenyu_delete_mem_note")
+async def _handle_delete_mem_note(ctx: ToolContext) -> dict:
+    return await ctx.service.delete_mem_note(_mem_note_id_arg(ctx.arguments))
+
+
+@_tool_handler("shenyu_get_meta_summaries")
+async def _handle_get_meta_summaries(ctx: ToolContext) -> dict:
+    return {"meta_summaries": await ctx.service.meta_summaries()}
+
+
+@_tool_handler("shenyu_last_seen")
+async def _handle_last_seen(ctx: ToolContext) -> dict:
+    return {"last_seen": await ctx.service.last_seen()}
+
+
+@_tool_handler("supabase_query")
+async def _handle_supabase_query(ctx: ToolContext) -> dict:
+    return await ctx.service.supabase_query(
+        table=ctx.arguments.get("table", ""),
+        filters=ctx.arguments.get("filters"),
+        operators=ctx.arguments.get("operators"),
+        column=ctx.arguments.get("column"),
+        select=ctx.arguments.get("select"),
+        order=ctx.arguments.get("order"),
+        limit=_int_arg(ctx.arguments, "limit", 20),
+    )
+
+
+@_tool_handler("supabase_insert")
+async def _handle_supabase_insert(ctx: ToolContext) -> dict:
+    return await ctx.service.supabase_insert(
+        table=ctx.arguments.get("table", ""),
+        data=ctx.arguments.get("data") or {},
+    )
+
+
+@_tool_handler("supabase_update")
+async def _handle_supabase_update(ctx: ToolContext) -> dict:
+    return await ctx.service.supabase_update(
+        table=ctx.arguments.get("table", ""),
+        match=ctx.arguments.get("match") or {},
+        data=ctx.arguments.get("data") or {},
+        operators=ctx.arguments.get("operators"),
+        column=ctx.arguments.get("column"),
+    )
+
+
+@_tool_handler("supabase_delete")
+async def _handle_supabase_delete(ctx: ToolContext) -> dict:
+    return await ctx.service.supabase_delete(
+        table=ctx.arguments.get("table", ""),
+        match=ctx.arguments.get("match") or {},
+        hard=bool(ctx.arguments.get("hard", False)),
+        operators=ctx.arguments.get("operators"),
+        column=ctx.arguments.get("column"),
+    )
+
+
+@_tool_handler("shenyu_recall_main_thread")
+async def _handle_recall_main_thread(ctx: ToolContext) -> dict:
+    return await ctx.service.recall_main_thread(
+        since=ctx.arguments.get("since"),
+        until=ctx.arguments.get("until"),
+        query=_query_arg(ctx.arguments),
+        limit=_int_arg(ctx.arguments, "limit", 10),
+    )
+
+
+@_tool_handler("shenyu_notebook_list")
+async def _handle_notebook_list(ctx: ToolContext) -> dict:
+    return await ctx.service.notebook_list(
+        type_filter=ctx.arguments.get("type"),
+        status=ctx.arguments.get("status", "active"),
+        limit=_int_arg(ctx.arguments, "limit", 10),
+        tag=ctx.arguments.get("tag"),
+        scope=ctx.arguments.get("scope"),
+    )
+
+
+@_tool_handler("shenyu_notebook_write")
+async def _handle_notebook_write(ctx: ToolContext) -> dict:
+    return await ctx.service.notebook_write(
+        type_=ctx.arguments.get("type"),
+        content=ctx.arguments.get("content", ""),
+        tags=ctx.arguments.get("tags"),
+        metadata=ctx.arguments.get("metadata"),
+        session_tag=ctx.arguments.get("session_tag") or ctx.session_tag,
+        scope=ctx.arguments.get("scope"),
+    )
+
+
+@_tool_handler("shenyu_notebook_update")
+async def _handle_notebook_update(ctx: ToolContext) -> dict:
+    return await ctx.service.notebook_update(
+        id_=ctx.arguments.get("id", ""),
+        content=ctx.arguments.get("content"),
+        status=ctx.arguments.get("status"),
+        tags=ctx.arguments.get("tags"),
+        type_=ctx.arguments.get("type"),
+        pinned=ctx.arguments.get("pinned"),
+        metadata=ctx.arguments.get("metadata"),
+    )
 
 
 async def execute_gateway_tool(
@@ -663,155 +923,14 @@ async def execute_gateway_tool(
             service=service,
         )
 
-    resolved_session_tag = arguments.get("session_tag") or session_tag
-    handlers: dict[str, Callable[[], Awaitable[dict]]] = {
-        "shenyu_recall": lambda: service.recall(
-            query=_query_arg(arguments),
-            source_types=arguments.get("source_types") or arguments.get("sources"),
-            session_tag=arguments.get("session_tag") or session_tag,
-            date_from=arguments.get("date_from") or arguments.get("since"),
-            date_to=arguments.get("date_to") or arguments.get("until"),
-            include_undated=_bool_arg(arguments, "include_undated", True),
-            limit=_int_arg(arguments, "limit", 8),
-            auto_sync=bool(getattr(cfg, "enable_recall_auto_sync", False)),
-        ),
-        "shenyu_surface_passages": lambda: service.surface_passages(
-            query=_query_arg(arguments),
-            session_tag=resolved_session_tag,
-            limit=_int_arg(arguments, "limit", cfg.default_surface_limit),
-        ),
-        "shenyu_search_primary_texts": lambda: service.search_primary_texts(
-            query=_query_arg(arguments),
-            categories=arguments.get("categories"),
-            session_tag=resolved_session_tag,
-            limit=_int_arg(arguments, "limit", 5),
-        ),
-        "shenyu_add_calendar": lambda: service.add_calendar(
-            content=arguments.get("content", ""),
-            period_key=arguments.get("period_key"),
-            period_type=arguments.get("period_type", "day"),
-            title=arguments.get("title", ""),
-            summary=arguments.get("summary", ""),
-            digest=arguments.get("digest", ""),
-            author=arguments.get("author", "沈予"),
-        ),
-        "shenyu_supabase_guide": lambda: service.supabase_guide(),
-        "shenyu_ask_memory": lambda: service.ask_memory(
-            query=_query_arg(arguments),
-            session_tag=arguments.get("session_tag"),
-            limit=_int_arg(arguments, "limit", 8),
-            date=arguments.get("date"),
-            date_from=arguments.get("date_from"),
-            date_to=arguments.get("date_to"),
-        ),
-        "shenyu_search_mem_notes": lambda: service.search_mem_notes(
-            query=_query_arg(arguments),
-            session_tag=resolved_session_tag,
-            limit=_int_arg(arguments, "limit", 30),
-            status=arguments.get("status", "all"),
-            mem_type=arguments.get("mem_type"),
-        ),
-        "shenyu_list_mem_notes": lambda: service.list_mem_notes(
-            status=arguments.get("status", "captured"),
-            limit=_int_arg(arguments, "limit", 30),
-            session_tag=resolved_session_tag,
-            q=arguments.get("q") or arguments.get("query", ""),
-            mem_type=arguments.get("mem_type"),
-        ),
-        "shenyu_write_mem_note": lambda: service.write_mem_note(
-            content=arguments.get("content", ""),
-            session_tag=resolved_session_tag,
-            mem_type=arguments.get("mem_type"),
-            trigger_text=arguments.get("trigger_text", ""),
-            trigger_keywords=arguments.get("trigger_keywords"),
-            status=arguments.get("status", "active"),
-            cooldown_hours=arguments.get("cooldown_hours"),
-            review_note=arguments.get("review_note", ""),
-        ),
-        "shenyu_read_heartbeat": lambda: service.read_heartbeat(
-            session_tag=resolved_session_tag,
-            limit=_int_arg(arguments, "limit", 10),
-            state=arguments.get("state", "all"),
-            order=arguments.get("order", "desc"),
-            scope=arguments.get("scope", "auto"),
-            date=arguments.get("date"),
-            date_from=arguments.get("date_from"),
-            date_to=arguments.get("date_to"),
-            created_from=arguments.get("created_from"),
-            created_to=arguments.get("created_to"),
-        ),
-        "shenyu_update_mem_note": lambda: service.update_mem_note(
-            _mem_note_id_arg(arguments),
-            _mem_note_patch_args(arguments),
-        ),
-        "shenyu_bulk_update_mem_notes": lambda: service.bulk_update_mem_notes(
-            ids=_mem_note_ids_arg(arguments),
-            patch=_mem_note_bulk_patch_arg(arguments),
-            updates=arguments.get("updates") if isinstance(arguments.get("updates"), list) else [],
-            use_suggestions=_bool_arg(arguments, "use_suggestions", False),
-        ),
-        "shenyu_delete_mem_note": lambda: service.delete_mem_note(_mem_note_id_arg(arguments)),
-        "shenyu_get_meta_summaries": lambda: _wrapped_service_result("meta_summaries", service.meta_summaries()),
-        "shenyu_last_seen": lambda: _wrapped_service_result("last_seen", service.last_seen()),
-        "supabase_query": lambda: service.supabase_query(
-            table=arguments.get("table", ""),
-            filters=arguments.get("filters"),
-            operators=arguments.get("operators"),
-            column=arguments.get("column"),
-            select=arguments.get("select"),
-            order=arguments.get("order"),
-            limit=_int_arg(arguments, "limit", 20),
-        ),
-        "supabase_insert": lambda: service.supabase_insert(
-            table=arguments.get("table", ""),
-            data=arguments.get("data") or {},
-        ),
-        "supabase_update": lambda: service.supabase_update(
-            table=arguments.get("table", ""),
-            match=arguments.get("match") or {},
-            data=arguments.get("data") or {},
-            operators=arguments.get("operators"),
-            column=arguments.get("column"),
-        ),
-        "supabase_delete": lambda: service.supabase_delete(
-            table=arguments.get("table", ""),
-            match=arguments.get("match") or {},
-            hard=bool(arguments.get("hard", False)),
-            operators=arguments.get("operators"),
-            column=arguments.get("column"),
-        ),
-        "shenyu_recall_main_thread": lambda: service.recall_main_thread(
-            since=arguments.get("since"),
-            until=arguments.get("until"),
-            query=_query_arg(arguments),
-            limit=_int_arg(arguments, "limit", 10),
-        ),
-        "shenyu_notebook_list": lambda: service.notebook_list(
-            type_filter=arguments.get("type"),
-            status=arguments.get("status", "active"),
-            limit=_int_arg(arguments, "limit", 10),
-            tag=arguments.get("tag"),
-            scope=arguments.get("scope"),
-        ),
-        "shenyu_notebook_write": lambda: service.notebook_write(
-            type_=arguments.get("type"),
-            content=arguments.get("content", ""),
-            tags=arguments.get("tags"),
-            metadata=arguments.get("metadata"),
-            session_tag=arguments.get("session_tag") or session_tag,
-            scope=arguments.get("scope"),
-        ),
-        "shenyu_notebook_update": lambda: service.notebook_update(
-            id_=arguments.get("id", ""),
-            content=arguments.get("content"),
-            status=arguments.get("status"),
-            tags=arguments.get("tags"),
-            type_=arguments.get("type"),
-            pinned=arguments.get("pinned"),
-            metadata=arguments.get("metadata"),
-        ),
-    }
-    handler = handlers.get(name)
+    ctx = ToolContext(
+        arguments=arguments,
+        session_tag=session_tag,
+        resolved_session_tag=arguments.get("session_tag") or session_tag,
+        cfg=cfg,
+        service=service,
+    )
+    handler = _TOOL_HANDLERS.get(name)
     if handler:
-        return await handler()
+        return await handler(ctx)
     raise ValueError(f"Unsupported gateway tool: {name}")

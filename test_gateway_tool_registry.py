@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import pytest
 from types import SimpleNamespace
 
 from shenyu_gateway.tool_registry import execute_gateway_tool, gateway_native_tools
@@ -102,7 +103,7 @@ class FakeToolService:
     async def ask_memory(
         self,
         query: str,
-        session_tag: str,
+        session_tag: str | None,
         limit: int = 8,
         date=None,
         date_from=None,
@@ -120,6 +121,34 @@ class FakeToolService:
             }
         )
         return {"ok": True, "query": query, "limit": limit}
+
+    async def add_calendar(
+        self,
+        content: str,
+        period_key=None,
+        period_type="day",
+        title="",
+        summary="",
+        digest="",
+        author="沈予",
+    ):
+        self.calls.append(
+            {
+                "tool": "shenyu_add_calendar",
+                "content": content,
+                "period_key": period_key,
+                "period_type": period_type,
+                "title": title,
+                "summary": summary,
+                "digest": digest,
+                "author": author,
+            }
+        )
+        return {"ok": True, "content": content, "period_type": period_type}
+
+    async def supabase_guide(self):
+        self.calls.append({"tool": "shenyu_supabase_guide"})
+        return {"ok": True, "guide": "fake"}
 
     async def write_mem_note(
         self,
@@ -178,6 +207,110 @@ class FakeToolService:
         )
         return {"ok": True, "note_id": note_id}
 
+    async def read_heartbeat(
+        self,
+        session_tag=None,
+        limit: int = 10,
+        state="all",
+        order="desc",
+        scope="auto",
+        date=None,
+        date_from=None,
+        date_to=None,
+        created_from=None,
+        created_to=None,
+    ):
+        self.calls.append(
+            {
+                "tool": "shenyu_read_heartbeat",
+                "session_tag": session_tag,
+                "limit": limit,
+                "state": state,
+                "order": order,
+                "scope": scope,
+                "date": date,
+                "date_from": date_from,
+                "date_to": date_to,
+                "created_from": created_from,
+                "created_to": created_to,
+            }
+        )
+        return {"ok": True, "limit": limit, "scope": scope}
+
+    async def meta_summaries(self):
+        self.calls.append({"tool": "shenyu_get_meta_summaries"})
+        return [{"summary": "meta"}]
+
+    async def last_seen(self):
+        self.calls.append({"tool": "shenyu_last_seen"})
+        return {"at": "2026-06-03T00:00:00Z"}
+
+    async def supabase_query(
+        self,
+        table="",
+        filters=None,
+        operators=None,
+        column=None,
+        select=None,
+        order=None,
+        limit: int = 20,
+    ):
+        self.calls.append(
+            {
+                "tool": "supabase_query",
+                "table": table,
+                "filters": filters,
+                "operators": operators,
+                "column": column,
+                "select": select,
+                "order": order,
+                "limit": limit,
+            }
+        )
+        return {"ok": True, "table": table, "limit": limit}
+
+    async def supabase_insert(self, table="", data=None):
+        self.calls.append({"tool": "supabase_insert", "table": table, "data": data})
+        return {"ok": True, "table": table, "data": data}
+
+    async def supabase_update(self, table="", match=None, data=None, operators=None, column=None):
+        self.calls.append(
+            {
+                "tool": "supabase_update",
+                "table": table,
+                "match": match,
+                "data": data,
+                "operators": operators,
+                "column": column,
+            }
+        )
+        return {"ok": True, "table": table, "match": match, "data": data}
+
+    async def supabase_delete(self, table="", match=None, hard=False, operators=None, column=None):
+        self.calls.append(
+            {
+                "tool": "supabase_delete",
+                "table": table,
+                "match": match,
+                "hard": hard,
+                "operators": operators,
+                "column": column,
+            }
+        )
+        return {"ok": True, "table": table, "hard": hard}
+
+    async def recall_main_thread(self, since=None, until=None, query=None, limit: int = 10):
+        self.calls.append(
+            {
+                "tool": "shenyu_recall_main_thread",
+                "since": since,
+                "until": until,
+                "query": query,
+                "limit": limit,
+            }
+        )
+        return {"ok": True, "query": query, "limit": limit}
+
     async def notebook_list(self, type_filter=None, status="active", limit: int = 10, tag=None, scope=None):
         self.calls.append(
             {
@@ -205,17 +338,403 @@ class FakeToolService:
         )
         return {"ok": True, "content": content}
 
+    async def notebook_update(
+        self,
+        id_: str,
+        content=None,
+        status=None,
+        tags=None,
+        type_=None,
+        pinned=None,
+        metadata=None,
+    ):
+        self.calls.append(
+            {
+                "tool": "shenyu_notebook_update",
+                "id": id_,
+                "content": content,
+                "status": status,
+                "tags": tags,
+                "type": type_,
+                "pinned": pinned,
+                "metadata": metadata,
+            }
+        )
+        return {"ok": True, "id": id_}
 
-def _cfg(enable_mem0_management_tools: bool = False):
+
+def _cfg(
+    enable_gateway_tools: bool = True,
+    enable_mem0_management_tools: bool = False,
+    expose_supabase_tools: bool = False,
+):
     return SimpleNamespace(
-        enable_gateway_tools=True,
+        enable_gateway_tools=enable_gateway_tools,
         enable_mem0_management_tools=enable_mem0_management_tools,
-        expose_supabase_tools=False,
+        expose_supabase_tools=expose_supabase_tools,
         gateway_tool_mode="broker",
         default_surface_limit=3,
         mem_note_limit=3,
         enable_recall_auto_sync=False,
     )
+
+
+def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
+    cfg = _cfg(enable_mem0_management_tools=True, expose_supabase_tools=True)
+    cfg.gateway_tool_mode = "full"
+    exposed_names = [tool["function"]["name"] for tool in gateway_native_tools(cfg)]
+    tool_args = {
+        "shenyu_recall": {
+            "q": "企鹅",
+            "sources": ["memory"],
+            "session_tag": "arg-tag",
+            "since": "2026-01-01",
+            "until": "2026-01-31",
+            "include_undated": "false",
+            "limit": "4",
+        },
+        "shenyu_supabase_guide": {},
+        "shenyu_surface_passages": {"query": "room", "session_tag": "arg-tag", "limit": 2},
+        "shenyu_search_primary_texts": {
+            "query": "paper",
+            "categories": ["journal"],
+            "session_tag": "arg-tag",
+            "limit": 7,
+        },
+        "shenyu_ask_memory": {
+            "q": "memory",
+            "limit": 6,
+            "date": "2026-06-03",
+            "date_from": "2026-06-01",
+            "date_to": "2026-06-03",
+        },
+        "shenyu_search_mem_notes": {
+            "query": "note",
+            "session_tag": "arg-tag",
+            "status": "paused",
+            "mem_type": "memory",
+            "limit": 9,
+        },
+        "shenyu_add_calendar": {
+            "content": "手写日历",
+            "period_key": "2026-W23",
+            "period_type": "week",
+            "title": "标题",
+            "summary": "摘要",
+            "digest": "摘要 digest",
+            "author": "圆圆",
+        },
+        "shenyu_list_mem_notes": {"query": "list", "status": "all", "mem_type": "memory", "limit": 8},
+        "shenyu_write_mem_note": {
+            "content": "一条便签",
+            "session_tag": "arg-tag",
+            "mem_type": "memory",
+            "trigger_text": "触发",
+            "trigger_keywords": ["关键词"],
+            "status": "captured",
+            "cooldown_hours": 12,
+            "review_note": "复核",
+        },
+        "shenyu_read_heartbeat": {
+            "session_tag": "arg-tag",
+            "limit": 5,
+            "state": "pending",
+            "order": "asc",
+            "scope": "normal",
+            "date": "2026-06-03",
+            "date_from": "2026-06-01",
+            "date_to": "2026-06-03",
+            "created_from": "2026-05-01",
+            "created_to": "2026-06-01",
+        },
+        "shenyu_get_meta_summaries": {},
+        "shenyu_last_seen": {},
+        "shenyu_update_mem_note": {"noteId": "note-1", "content": "正文", "status": "active"},
+        "shenyu_bulk_update_mem_notes": {
+            "note_ids": "note-1，note-2",
+            "patch": {"status": "active", "ignored": "x"},
+            "review_note": "批量复核",
+            "use_suggestions": "true",
+        },
+        "shenyu_delete_mem_note": {"id": "note-3"},
+        "supabase_query": {
+            "table": "journal",
+            "filters": {"category": "diary"},
+            "operators": {"created_at": {"gte": "2026-01-01"}},
+            "column": "content",
+            "select": "id,content",
+            "order": "created_at.desc",
+            "limit": "bad",
+        },
+        "supabase_insert": {"table": "journal", "data": {"content": "new"}},
+        "supabase_update": {
+            "table": "journal",
+            "match": {"id": "j1"},
+            "data": {"content": "updated"},
+            "operators": {"id": {"eq": "j1"}},
+            "column": "content",
+        },
+        "supabase_delete": {
+            "table": "journal",
+            "match": {"id": "j1"},
+            "hard": True,
+            "operators": {"id": {"eq": "j1"}},
+            "column": "id",
+        },
+        "shenyu_recall_main_thread": {
+            "since": "2026-01-01",
+            "until": "2026-06-03",
+            "q": "主线程",
+            "limit": 11,
+        },
+        "shenyu_notebook_list": {
+            "type": "handoff",
+            "status": "all",
+            "limit": 4,
+            "tag": "hisense",
+            "scope": "handoff",
+        },
+        "shenyu_notebook_write": {
+            "type": "note",
+            "content": "待办",
+            "tags": ["hisense"],
+            "metadata": {"source": "test"},
+            "scope": "hisense",
+        },
+        "shenyu_notebook_update": {
+            "id": "nb-1",
+            "content": "更新",
+            "status": "archived",
+            "tags": ["done"],
+            "type": "note",
+            "pinned": False,
+            "metadata": {"source": "test"},
+        },
+    }
+    expected_calls = {
+        "shenyu_recall": {
+            "tool": "shenyu_recall",
+            "query": "企鹅",
+            "source_types": ["memory"],
+            "session_tag": "arg-tag",
+            "date_from": "2026-01-01",
+            "date_to": "2026-01-31",
+            "include_undated": False,
+            "limit": 4,
+            "auto_sync": False,
+        },
+        "shenyu_supabase_guide": {"tool": "shenyu_supabase_guide"},
+        "shenyu_surface_passages": {
+            "tool": "shenyu_surface_passages",
+            "query": "room",
+            "session_tag": "arg-tag",
+            "limit": 2,
+        },
+        "shenyu_search_primary_texts": {
+            "tool": "shenyu_search_primary_texts",
+            "query": "paper",
+            "categories": ["journal"],
+            "session_tag": "arg-tag",
+            "limit": 7,
+        },
+        "shenyu_ask_memory": {
+            "tool": "shenyu_ask_memory",
+            "query": "memory",
+            "session_tag": None,
+            "limit": 6,
+            "date": "2026-06-03",
+            "date_from": "2026-06-01",
+            "date_to": "2026-06-03",
+        },
+        "shenyu_search_mem_notes": {
+            "tool": "shenyu_search_mem_notes",
+            "query": "note",
+            "session_tag": "arg-tag",
+            "limit": 9,
+            "status": "paused",
+            "mem_type": "memory",
+        },
+        "shenyu_add_calendar": {
+            "tool": "shenyu_add_calendar",
+            "content": "手写日历",
+            "period_key": "2026-W23",
+            "period_type": "week",
+            "title": "标题",
+            "summary": "摘要",
+            "digest": "摘要 digest",
+            "author": "圆圆",
+        },
+        "shenyu_list_mem_notes": {
+            "tool": "shenyu_list_mem_notes",
+            "q": "list",
+            "session_tag": "default",
+            "limit": 8,
+            "status": "all",
+            "mem_type": "memory",
+        },
+        "shenyu_write_mem_note": {
+            "tool": "shenyu_write_mem_note",
+            "content": "一条便签",
+            "session_tag": "arg-tag",
+            "mem_type": "memory",
+            "trigger_text": "触发",
+            "trigger_keywords": ["关键词"],
+            "status": "captured",
+            "cooldown_hours": 12,
+            "review_note": "复核",
+        },
+        "shenyu_read_heartbeat": {
+            "tool": "shenyu_read_heartbeat",
+            "session_tag": "arg-tag",
+            "limit": 5,
+            "state": "pending",
+            "order": "asc",
+            "scope": "normal",
+            "date": "2026-06-03",
+            "date_from": "2026-06-01",
+            "date_to": "2026-06-03",
+            "created_from": "2026-05-01",
+            "created_to": "2026-06-01",
+        },
+        "shenyu_get_meta_summaries": {"tool": "shenyu_get_meta_summaries"},
+        "shenyu_last_seen": {"tool": "shenyu_last_seen"},
+        "shenyu_update_mem_note": {
+            "tool": "shenyu_update_mem_note",
+            "note_id": "note-1",
+            "patch": {"content": "正文", "status": "active"},
+        },
+        "shenyu_bulk_update_mem_notes": {
+            "tool": "shenyu_bulk_update_mem_notes",
+            "ids": ["note-1", "note-2"],
+            "patch": {"status": "active", "review_note": "批量复核"},
+            "updates": [],
+            "use_suggestions": True,
+        },
+        "shenyu_delete_mem_note": {"tool": "shenyu_delete_mem_note", "note_id": "note-3"},
+        "supabase_query": {
+            "tool": "supabase_query",
+            "table": "journal",
+            "filters": {"category": "diary"},
+            "operators": {"created_at": {"gte": "2026-01-01"}},
+            "column": "content",
+            "select": "id,content",
+            "order": "created_at.desc",
+            "limit": 20,
+        },
+        "supabase_insert": {"tool": "supabase_insert", "table": "journal", "data": {"content": "new"}},
+        "supabase_update": {
+            "tool": "supabase_update",
+            "table": "journal",
+            "match": {"id": "j1"},
+            "data": {"content": "updated"},
+            "operators": {"id": {"eq": "j1"}},
+            "column": "content",
+        },
+        "supabase_delete": {
+            "tool": "supabase_delete",
+            "table": "journal",
+            "match": {"id": "j1"},
+            "hard": True,
+            "operators": {"id": {"eq": "j1"}},
+            "column": "id",
+        },
+        "shenyu_recall_main_thread": {
+            "tool": "shenyu_recall_main_thread",
+            "since": "2026-01-01",
+            "until": "2026-06-03",
+            "query": "主线程",
+            "limit": 11,
+        },
+        "shenyu_notebook_list": {
+            "tool": "shenyu_notebook_list",
+            "type_filter": "handoff",
+            "status": "all",
+            "limit": 4,
+            "tag": "hisense",
+            "scope": "handoff",
+        },
+        "shenyu_notebook_write": {
+            "tool": "shenyu_notebook_write",
+            "type": "note",
+            "content": "待办",
+            "tags": ["hisense"],
+            "metadata": {"source": "test"},
+            "session_tag": "default",
+            "scope": "hisense",
+        },
+        "shenyu_notebook_update": {
+            "tool": "shenyu_notebook_update",
+            "id": "nb-1",
+            "content": "更新",
+            "status": "archived",
+            "tags": ["done"],
+            "type": "note",
+            "pinned": False,
+            "metadata": {"source": "test"},
+        },
+    }
+
+    assert len(exposed_names) == len(set(exposed_names))
+    assert set(tool_args) == set(exposed_names)
+    assert set(expected_calls) == set(exposed_names)
+
+    for tool_name in exposed_names:
+        service = FakeToolService()
+        result = asyncio.run(
+            execute_gateway_tool(
+                tool_name,
+                tool_args[tool_name],
+                session_tag="default",
+                cfg=cfg,
+                service=service,
+            )
+        )
+
+        assert result is not None
+        assert service.calls == [expected_calls[tool_name]]
+
+
+def test_execute_gateway_tool_reports_invalid_broker_arguments():
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {"tool": "shenyu_recall", "arguments": "not json"},
+            session_tag="default",
+            cfg=_cfg(),
+            service=FakeToolService(),
+        )
+    )
+
+    assert result == {"ok": False, "error": "`arguments` must be an object or a JSON object string."}
+
+
+def test_execute_gateway_tool_reports_unsupported_broker_target():
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {"tool": "not_a_gateway_tool", "arguments": {}},
+            session_tag="default",
+            cfg=_cfg(),
+            service=FakeToolService(),
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "Unsupported gateway broker target: not_a_gateway_tool"
+    assert "shenyu_recall" in result["available_tools"]
+
+
+def test_execute_gateway_tool_raises_for_unsupported_direct_tool():
+    with pytest.raises(ValueError, match="Unsupported gateway tool: not_a_gateway_tool"):
+        asyncio.run(
+            execute_gateway_tool(
+                "not_a_gateway_tool",
+                {},
+                session_tag="default",
+                cfg=_cfg(),
+                service=FakeToolService(),
+            )
+        )
 
 
 def test_execute_gateway_tool_reuses_service_for_broker_target():
@@ -589,6 +1108,35 @@ def test_gateway_tools_do_not_expose_legacy_atomic_memories():
     cfg.gateway_tool_mode = "full"
     names = [tool["function"]["name"] for tool in gateway_native_tools(cfg)]
     assert "shenyu_legacy_atomic_memories" not in names
+
+
+def test_mem0_management_tools_include_list_when_core_gateway_tools_disabled():
+    cfg = _cfg(enable_gateway_tools=False, enable_mem0_management_tools=True)
+
+    broker_tool = gateway_native_tools(cfg)[0]
+    broker_names = set(broker_tool["function"]["parameters"]["properties"]["tool"]["enum"])
+    assert "shenyu_list_mem_notes" in broker_names
+    assert "shenyu_update_mem_note" in broker_names
+    assert "shenyu_bulk_update_mem_notes" in broker_names
+
+    cfg.gateway_tool_mode = "full"
+    full_names = [tool["function"]["name"] for tool in gateway_native_tools(cfg)]
+    assert "shenyu_list_mem_notes" in full_names
+    assert "shenyu_update_mem_note" in full_names
+    assert "shenyu_bulk_update_mem_notes" in full_names
+    assert full_names.count("shenyu_list_mem_notes") == 1
+
+
+def test_core_and_mem0_management_tools_do_not_duplicate_mem_note_list_tool():
+    cfg = _cfg(enable_gateway_tools=True, enable_mem0_management_tools=True)
+
+    broker_tool = gateway_native_tools(cfg)[0]
+    broker_names = broker_tool["function"]["parameters"]["properties"]["tool"]["enum"]
+    assert broker_names.count("shenyu_list_mem_notes") == 1
+
+    cfg.gateway_tool_mode = "full"
+    full_names = [tool["function"]["name"] for tool in gateway_native_tools(cfg)]
+    assert full_names.count("shenyu_list_mem_notes") == 1
 
 
 def test_gateway_tools_expose_all_registered_query_tools():
