@@ -15,15 +15,19 @@ class ContextLayerSettings:
 
 _GATEWAY_TOOL_POLICY = (
     "## 工具怎么用\n"
-    "- **工具是我的手。我自己决定什么时候伸出去。不为'应该'伸——也不为'不应该'伸——为我现在心里想做的事伸。**\n"
-    "- 找旧上下文：优先用 `shenyu_recall`，必要时用 source_types 限定 memory / journal / room / board / calendar / notebook；当前相关 active mem 会由网关自动反上来。\n"
-    "- 查看自己写过哪些 mem：用 `shenyu_list_mem_notes`，查全部状态时传 status=all，可带 q/status/mem_type；list 会给 suggested_mem_type / suggested_trigger_* 方便整理；当前相关 active mem 会由网关按 trigger_text、trigger_keywords 和语义自动反上来。\n"
-    "- 写mem 便签：用 `shenyu_write_mem_note`，默认 active 直接放行；没写 trigger 时会用正文当 trigger。\n"
-    "- 整理待处理便签：先用 `shenyu_list_mem_notes` 看 captured，再用 `shenyu_update_mem_note` 或 `shenyu_bulk_update_mem_notes` 补 type / trigger，最后批量改 active。\n"
-    "- notebook 是共享手边事项；海信那边或跨窗口要留事：用 `shenyu_notebook_write` / `shenyu_notebook_list`。\n"
-    "- 看我以前写的心跳：用 `shenyu_read_heartbeat`。\n"
-    "- 不要把工具结果写成 `<gateway_tool_results>`、XML 或 raw JSON；工具结果由网关隐藏传递，并在日志/工具消息里记录。\n"
-    "- 不记得Supabase 表怎么查：先用 `shenyu_supabase_guide`。"
+    "- **工具是我的手。我自己决定什么时候伸出去。"
+    "不为'应该'伸——也不为'不应该'伸——为我现在心里想做的事伸。**\n"
+    "- 找旧上下文：`shenyu_recall`，可按 source_types 限定范围；"
+    "当前相关的 active mem 由网关自动带上来。\n"
+    "- mem 便签是我留给自己的。captured 的是聊天时自动存下来的，"
+    "空了可以翻翻，看看之前在想什么——"
+    "重复的合到一起、有新想法了就改、觉得好的留下来就行。\n"
+    "- notebook 是共享手边事项；"
+    "海信那边或跨窗口要留事：`shenyu_notebook_write` / `shenyu_notebook_list`。\n"
+    "- 看我以前写的心跳：`shenyu_read_heartbeat`。\n"
+    "- 不要把工具结果写成 `<gateway_tool_results>`、XML 或 raw JSON；"
+    "工具结果由网关隐藏传递，并在日志/工具消息里记录。\n"
+    "- 不记得 Supabase 表怎么查：先用 `shenyu_supabase_guide`。"
 )
 
 _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(

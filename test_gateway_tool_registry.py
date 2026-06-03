@@ -160,6 +160,7 @@ class FakeToolService:
         status="active",
         cooldown_hours=None,
         review_note="",
+        replaces=None,
     ):
         self.calls.append(
             {
@@ -172,6 +173,7 @@ class FakeToolService:
                 "status": status,
                 "cooldown_hours": cooldown_hours,
                 "review_note": review_note,
+                "replaces": replaces,
             }
         )
         return {"ok": True, "content": content, "status": status, "session_tag": session_tag}
@@ -186,7 +188,7 @@ class FakeToolService:
         )
         return {"ok": True, "note_id": note_id, "patch": patch}
 
-    async def bulk_update_mem_notes(self, ids=None, patch=None, updates=None, use_suggestions=False):
+    async def bulk_update_mem_notes(self, ids=None, patch=None, updates=None, use_suggestions=False, source_status=None, exclude_ids=None):
         self.calls.append(
             {
                 "tool": "shenyu_bulk_update_mem_notes",
@@ -194,6 +196,8 @@ class FakeToolService:
                 "patch": patch,
                 "updates": updates,
                 "use_suggestions": use_suggestions,
+                "source_status": source_status,
+                "exclude_ids": exclude_ids,
             }
         )
         return {"ok": True, "updated_count": len(ids or []) + len(updates or [])}
@@ -582,6 +586,7 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "status": "captured",
             "cooldown_hours": 12,
             "review_note": "复核",
+            "replaces": None,
         },
         "shenyu_read_heartbeat": {
             "tool": "shenyu_read_heartbeat",
@@ -609,6 +614,8 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "patch": {"status": "active", "review_note": "批量复核"},
             "updates": [],
             "use_suggestions": True,
+            "source_status": None,
+            "exclude_ids": None,
         },
         "shenyu_delete_mem_note": {"tool": "shenyu_delete_mem_note", "note_id": "note-3"},
         "supabase_query": {
@@ -815,6 +822,7 @@ def test_execute_gateway_tool_routes_write_mem_note():
             "status": "active",
             "cooldown_hours": None,
             "review_note": "",
+            "replaces": None,
         }
     ]
 
@@ -1040,6 +1048,8 @@ def test_execute_gateway_tool_routes_bulk_mem_note_update():
             "patch": {"status": "active"},
             "updates": [],
             "use_suggestions": True,
+            "source_status": None,
+            "exclude_ids": None,
         }
     ]
 

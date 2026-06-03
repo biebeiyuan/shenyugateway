@@ -332,6 +332,7 @@ class MemNoteService:
         status: str = "active",
         cooldown_hours: Any = None,
         review_note: Any = "",
+        replaces: Optional[list[Any]] = None,
         source_model: str = "tool:shenyu_write_mem_note",
     ) -> dict[str, Any]:
         if not self.supabase:
@@ -377,11 +378,33 @@ class MemNoteService:
             return {"ok": False, "error": active_error}
 
         row = await self.supabase.insert("shenyu_mem_notes", payload)
-        return {
+
+        archived_ids: list[str] = []
+        if replaces:
+            new_id = row.get("id") if isinstance(row, dict) else ""
+            for raw_old_id in replaces:
+                old_id = _normalize_note_id(raw_old_id)
+                if not old_id:
+                    continue
+                try:
+                    await self.supabase.update(
+                        "shenyu_mem_notes",
+                        {"id": old_id},
+                        {"status": "archived", "review_note": f"merged into {new_id}"},
+                    )
+                    archived_ids.append(old_id)
+                except Exception:
+                    logger.warning("[MemNote] Failed to archive replaced note %s", old_id)
+
+        result: dict[str, Any] = {
             "ok": True,
             "note_id": row.get("id") if isinstance(row, dict) else None,
             "note": row,
         }
+        if archived_ids:
+            result["replaced_ids"] = archived_ids
+            result["replaced_count"] = len(archived_ids)
+        return result
 
     async def update_note(self, note_id: str, patch: dict[str, Any]) -> dict[str, Any]:
         if not self.supabase:
@@ -404,9 +427,41 @@ class MemNoteService:
         patch: Optional[dict[str, Any]] = None,
         updates: Optional[list[dict[str, Any]]] = None,
         use_suggestions: bool = False,
+        source_status: Optional[str] = None,
+        exclude_ids: Optional[list[Any]] = None,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured."}
+
+        # 如果没传 ids 但传了 source_status，按状态查出目标便签
+        if not ids and source_status:
+            resolved_source = self._status(source_status, fallback="")
+            if not resolved_source:
+                return {
+                    "ok": False,
+                    "error": f"invalid source_status: {source_status}",
+                    "requested_count": 0,
+                    "updated_count": 0,
+                    "failed_count": 0,
+                    "updated_ids": [],
+                    "failures": [],
+                }
+            rows = await self.supabase.query(
+                "shenyu_mem_notes",
+                {
+                    "status": f"eq.{resolved_source}",
+                    "limit": str(MEM_NOTE_BULK_UPDATE_MAX),
+                    "select": "id",
+                },
+            )
+            exclude_set = set(
+                _normalize_note_id(item) for item in (exclude_ids or []) if item
+            )
+            ids = [
+                str(row.get("id"))
+                for row in (rows or [])
+                if row.get("id") and str(row.get("id")) not in exclude_set
+            ]
 
         specs = self._bulk_update_specs(ids=ids, patch=patch, updates=updates)
         if not specs:

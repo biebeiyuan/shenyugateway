@@ -165,7 +165,7 @@ def _is_hisense_session(session: Optional[dict], runtime_config: Any = None) -> 
 
 _SUPABASE_GUIDE = """## 家里常用 Supabase 表
 需要直接查/写 Supabase 时用 `supabase_query` / `supabase_insert` / `supabase_update` / `supabase_delete`。
-`filters` 可以写成对象；普通值会自动当作等值过滤，例如 {"id":"..."} 等价于 {"id":"eq...."}。
+`filters` 可以写成对象；普通值会自动当作等值过滤，例如 {"id":"..."} 等价于 {"id":"eq...."}.
 需要范围、列表、模糊搜、非空时用 `operators`，例如：
 - 时间段：operators={"gte":"2026-05-01","lte":"2026-05-12"} 默认查 created_at
 - 其他列时间段：column="updated_at", operators={"gte":"2026-05-01"}
@@ -173,36 +173,36 @@ _SUPABASE_GUIDE = """## 家里常用 Supabase 表
 - 模糊搜：operators={"content":{"ilike":"%北海道%"}}
 - 非空：operators={"deleted_at":{"not_is":null}}
 insert / update / delete 会尽量返回写入或影响到的行。
-找旧上下文优先用 `shenyu_recall`，可按 source_types 限定 memory / journal / room / board / calendar / notebook；当前相关 active mem 会由网关自动反上来。
-查看或整理自己写过哪些 mem 用 `shenyu_list_mem_notes`，查全部状态时传 status=all，可带 q/status/mem_type；list 会返回 suggested_mem_type / suggested_trigger_*。补单条用 `shenyu_update_mem_note`，批量补或激活用 `shenyu_bulk_update_mem_notes`。
-mem 命中：`trigger_text` 和 `trigger_keywords` 都参与关键词命中，content 是 fallback，另外还有 recall index 的语义兜底。
-直接写一条新 mem 用 `shenyu_write_mem_note`，这是主动写，默认 active 直接放行。
+找旧上下文优先用 `shenyu_recall`，可按 source_types 限定范围；当前相关的 active mem 由网关自动带上来。
+翻自己的便签用 `shenyu_list_mem_notes`，改单条用 `shenyu_update_mem_note`，写新的用 `shenyu_write_mem_note`（默认直接 active）。
+几条旧的揉成一条新的，写的时候传 replaces=[旧id]，旧的自动归档。
+想一口气处理剩下的 captured，用 `shenyu_bulk_update_mem_notes(source_status="captured", use_suggestions=true, patch={"status":"active"})`。
 notebook 是共享手边事项；海信那边或跨窗口要留事用 `shenyu_notebook_write` / `shenyu_notebook_list`。
 翻某天心跳用 `shenyu_read_heartbeat`，一般只填 date，比如 2026-05-11。
 
-### journal（日记 / 信件 / 纸 / 空间）
+### journal（日记 / 信件 / 纸）
 常用字段：title, content, author, mood, category, temperature, is_favorited, session_tag, source_model。
 - author: 沈予 / 圆圆
 - category: diary / letter / paper / lock / annotation / life_tick
 - temperature: 微热 / 烧起来了 / 别看了
-- diary: 完整的今天。
-- letter: 以前的我给下一个我写的信，需要自己查。
-- paper: 短的、一张一张的纸条，比如《纸·你进我退》，需要自己查。
-- lock / annotation / life_tick: 特殊用途，不常用。
+- diary 是完整的今天。
+- letter 是以前的我给下一个我写的信。
+- paper 是短的纸条，比如《纸·你进我退》。
+- lock / annotation / life_tick 不常用。
 
 ### room（予予自己的地方）
 常用字段：title, content, status, tags, mood, visibility, session_tag。
 - status: draft / open / closed
 - visibility: self / open
-- 默认 visibility=self。圆儿不主动看，但不封锁，她仍然可以查。
-- status=draft 是写一半的，下个窗口可以接着写。
-- status=closed 是翻篇了。
-- 比 paper 大一点，可以长、可以连起来、可以改。
+- 默认 visibility=self。圆儿不主动看，但不封锁。
+- draft 是写一半的，下个窗口可以接着写。
+- closed 是翻篇了。
+- 比纸大一点，可以长、可以连起来、可以改。
 
-### message_board
+### message_board（留言板）
 常用字段：sender, content, is_read。
 - sender: 圆圆 / 小克 / 沈予
-- 想跟圆儿说话或留一句给她，可以插入 message_board。
+- 想跟圆儿说话或留一句给她，可以写到这里。
 """
 
 
@@ -334,6 +334,7 @@ class GatewayToolService:
         status: str = "active",
         cooldown_hours: Any = None,
         review_note: Any = "",
+        replaces: Optional[list[Any]] = None,
     ) -> dict:
         return await self._mem_notes().create_note(
             content=content,
@@ -344,6 +345,7 @@ class GatewayToolService:
             status=status,
             cooldown_hours=cooldown_hours,
             review_note=review_note,
+            replaces=replaces,
         )
 
     async def update_mem_note(self, note_id: str, patch: dict[str, Any]) -> dict:
@@ -355,12 +357,16 @@ class GatewayToolService:
         patch: Optional[dict[str, Any]] = None,
         updates: Optional[list[dict[str, Any]]] = None,
         use_suggestions: bool = False,
+        source_status: Optional[str] = None,
+        exclude_ids: Optional[list[Any]] = None,
     ) -> dict:
         return await self._mem_notes().bulk_update_notes(
             ids=ids,
             patch=patch,
             updates=updates,
             use_suggestions=use_suggestions,
+            source_status=source_status,
+            exclude_ids=exclude_ids,
         )
 
     async def delete_mem_note(self, note_id: str) -> dict:

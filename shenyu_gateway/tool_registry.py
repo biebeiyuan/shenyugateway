@@ -25,7 +25,7 @@ def _gateway_list_mem_notes_tool() -> dict:
         "type": "function",
         "function": {
             "name": "shenyu_list_mem_notes",
-            "description": "看 mem 便签列表。返回 suggested_mem_type / suggested_trigger_* 供整理参考；active mem 会由 trigger_text 和 trigger_keywords 一起参与关键词命中，并有语义兜底。",
+            "description": "翻翻我给自己留的便签。默认看 captured（还没整理的），传 status=all 看全部。",
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -46,7 +46,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_recall",
-                "description": "统一召回入口：关键词召回旧上下文；启用 embedding 后追加语义召回。可限定 memory、journal、room、board、calendar、notebook。",
+                "description": "找以前的事。可以限定来源：memory、journal、room、board、calendar、notebook。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -64,7 +64,7 @@ def _gateway_core_tools() -> list[dict]:
                         "include_undated": {
                             "type": "boolean",
                             "default": True,
-                            "description": "When date_from/date_to is set, keep rows without event/source dates.",
+                            "description": "按日期过滤时，是否保留没有日期的条目。",
                         },
                         "session_tag": {"type": "string"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 8},
@@ -85,7 +85,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_surface_passages",
-                "description": "从 room 和留言板里按概率浮现相关片段，适合需要一点旧场景灵感时使用。",
+                "description": "从 room 和留言板里浮现一些旧片段，想找点灵感的时候用。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -135,7 +135,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_ask_memory",
-                "description": "查旧 memories 表里的摘要、事实和情绪上下文，可按日期或会话过滤。",
+                "description": "找旧的记忆摘要和情绪上下文，可按日期过滤。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -154,7 +154,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_search_mem_notes",
-                "description": "按关键词搜索 mem 便签；和列表工具相比默认查全部状态。",
+                "description": "搜我的便签，默认查全部状态。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -192,7 +192,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_write_mem_note",
-                "description": "我主动写一条新的 mem 便签。默认 active 直接放行；没填 trigger 时用正文当 trigger，没填 type 时先归到“心里那一档”。",
+                "description": "写一条新便签，默认直接 active。如果是从几条旧的里整理出来的，传 replaces 把旧的归档。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -203,6 +203,7 @@ def _gateway_core_tools() -> list[dict]:
                         "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"], "default": "active"},
                         "cooldown_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
                         "review_note": {"type": "string"},
+                        "replaces": {"type": "array", "items": {"type": "string"}, "description": "要归档的旧便签 id，适合把几条旧想法合成一条新的"},
                         "session_tag": {"type": "string"},
                     },
                     "required": ["content"],
@@ -233,7 +234,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_get_meta_summaries",
-                "description": "读取当前启用的元摘要。",
+                "description": "看看现在的元摘要。",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -241,7 +242,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_last_seen",
-                "description": "读取最近一次互动摘要。",
+                "description": "上次我们聊了什么。",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -254,13 +255,13 @@ def _gateway_mem0_management_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_update_mem_note",
-                "description": "补或修改一条 mem 便签的 type、trigger、触发词、状态和冷却时间。trigger_text 和 trigger_keywords 都参与命中；设为 active 前必须补 type 和至少一种 trigger。",
+                "description": "改一条便签的内容、分类或状态。激活前需要有 mem_type 和 trigger。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "note_id": {"type": "string", "description": "Use the id returned by shenyu_list_mem_notes."},
-                        "id": {"type": "string", "description": "Alias of note_id."},
-                        "noteId": {"type": "string", "description": "Alias of note_id."},
+                        "note_id": {"type": "string"},
+                        "id": {"type": "string", "description": "note_id 的别名"},
+                        "noteId": {"type": "string", "description": "note_id 的别名"},
                         "content": {"type": "string"},
                         "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
                         "trigger_text": {"type": "string"},
@@ -277,12 +278,14 @@ def _gateway_mem0_management_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_bulk_update_mem_notes",
-                "description": "批量整理 mem 便签。可传 ids+patch 批量改同一字段，或传 updates 逐条 patch；use_suggestions=true 会给空缺的 mem_type / trigger_text / trigger_keywords 填 list 返回的建议。批量激活用 patch={\"status\":\"active\"}。",
+                "description": "一口气改好几条便签。传 source_status 可以按状态选，use_suggestions=true 帮我自动补全分类和触发词。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "ids": {"type": "array", "items": {"type": "string"}},
-                        "note_ids": {"type": "array", "items": {"type": "string"}, "description": "Alias of ids."},
+                        "note_ids": {"type": "array", "items": {"type": "string"}, "description": "ids 的别名"},
+                        "source_status": {"type": "string", "enum": ["captured", "active", "paused", "archived"], "description": "按状态选目标便签，代替手动传 ids"},
+                        "exclude_ids": {"type": "array", "items": {"type": "string"}, "description": "排除不想动的便签"},
                         "patch": {"type": "object", "additionalProperties": True},
                         "updates": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
                         "use_suggestions": {"type": "boolean", "default": False},
@@ -301,13 +304,13 @@ def _gateway_mem0_management_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_delete_mem_note",
-                "description": "删除一条 mem 便签。",
+                "description": "删掉一条便签。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "note_id": {"type": "string", "description": "Use the id returned by shenyu_list_mem_notes."},
-                        "id": {"type": "string", "description": "Alias of note_id."},
-                        "noteId": {"type": "string", "description": "Alias of note_id."},
+                        "note_id": {"type": "string"},
+                        "id": {"type": "string", "description": "note_id 的别名"},
+                        "noteId": {"type": "string", "description": "note_id 的别名"},
                     },
                     "required": ["note_id"],
                 },
@@ -338,7 +341,7 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_list",
-                "description": "看共享 notebook 手边事项，可按 type/status/tag/scope 筛。",
+                "description": "看手边的事。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -355,7 +358,7 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_write",
-                "description": "写一条共享 notebook 手边事项；给海信那边留事可填 scope=hisense 或 scope=handoff。",
+                "description": "记一条手边的事。给海信那边留可以填 scope=hisense。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -373,7 +376,7 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_update",
-                "description": "修改一条 notebook。",
+                "description": "改一条手边的事。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -407,7 +410,7 @@ def _expanded_gateway_native_tools(cfg: Any) -> list[dict]:
                     "type": "function",
                     "function": {
                         "name": "supabase_query",
-                        "description": "Supabase fallback. Query a table directly.",
+                        "description": "直接查 Supabase 表。",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -433,7 +436,7 @@ def _expanded_gateway_native_tools(cfg: Any) -> list[dict]:
                     "type": "function",
                     "function": {
                         "name": "supabase_insert",
-                        "description": "Supabase fallback. Insert one row.",
+                        "description": "往 Supabase 表里写一行。",
                         "parameters": {
                             "type": "object",
                             "properties": {"table": {"type": "string"}, "data": {"type": "object", "additionalProperties": True}},
@@ -445,7 +448,7 @@ def _expanded_gateway_native_tools(cfg: Any) -> list[dict]:
                     "type": "function",
                     "function": {
                         "name": "supabase_update",
-                        "description": "Supabase fallback. Update matched rows.",
+                        "description": "改 Supabase 表里的行。",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -469,7 +472,7 @@ def _expanded_gateway_native_tools(cfg: Any) -> list[dict]:
                     "type": "function",
                     "function": {
                         "name": "supabase_delete",
-                        "description": "Supabase fallback. Delete matched rows.",
+                        "description": "删 Supabase 表里的行。",
                         "parameters": {
                             "type": "object",
                             "properties": {
@@ -517,7 +520,7 @@ def _gateway_broker_tool(cfg: Any) -> dict:
                     "arguments": {
                         "type": "object",
                         "additionalProperties": True,
-                        "description": "Arguments for the selected gateway tool.",
+                        "description": "选好的工具的参数。",
                     },
                 },
                 "required": ["tool", "arguments"],
@@ -750,6 +753,7 @@ async def _handle_write_mem_note(ctx: ToolContext) -> dict:
         status=ctx.arguments.get("status", "active"),
         cooldown_hours=ctx.arguments.get("cooldown_hours"),
         review_note=ctx.arguments.get("review_note", ""),
+        replaces=ctx.arguments.get("replaces"),
     )
 
 
@@ -784,6 +788,8 @@ async def _handle_bulk_update_mem_notes(ctx: ToolContext) -> dict:
         patch=_mem_note_bulk_patch_arg(ctx.arguments),
         updates=ctx.arguments.get("updates") if isinstance(ctx.arguments.get("updates"), list) else [],
         use_suggestions=_bool_arg(ctx.arguments, "use_suggestions", False),
+        source_status=ctx.arguments.get("source_status"),
+        exclude_ids=ctx.arguments.get("exclude_ids"),
     )
 
 
