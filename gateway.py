@@ -27,7 +27,7 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from shenyu_gateway.calendar import (
@@ -83,6 +83,24 @@ from shenyu_gateway.schemas import (
 )
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
+from shenyu_gateway.streaming import (
+    _apply_openai_stream_chunk,
+    _completion_with_unstreamed_deltas,
+    _ensure_stream_tool_call,
+    _gateway_error_completion,
+    _gateway_error_text,
+    _new_stream_chunk_id,
+    _new_stream_completion,
+    _sse_response,
+    _stream_chunk_base,
+    _stream_content_event,
+    _stream_final_event,
+    _stream_gateway_error_events,
+    _stream_keepalive_event,
+    _stream_reasoning_event,
+    _stream_role_event,
+    _unstreamed_text_suffix,
+)
 from shenyu_gateway.supabase import SupabaseClient
 from shenyu_gateway.tool_registry import (
     execute_gateway_tool,
@@ -295,6 +313,13 @@ def _init_store():
     global session_store
     session_store = GatewayStore(cfg.gateway_db_path)
     configure_gateway_tools(store=session_store)
+
+
+def _require_session_store() -> GatewayStore:
+    store = session_store
+    if store is None:
+        raise RuntimeError("Gateway session store is not initialized.")
+    return store
 
 
 def _make_upstream_http_client() -> httpx.AsyncClient:
@@ -1384,17 +1409,17 @@ def _maybe_prepare_cold_start_snapshot(
 ) -> Optional[dict]:
     if not cfg.enable_cold_start:
         return None
-    assert session_store is not None
+    store = _require_session_store()
 
     target_messages = cfg.cold_start_message_limit or cfg.max_client_messages or 8
     fill_count = max(int(target_messages) - max(int(current_message_count or 0), 0), 0)
     if fill_count <= 0:
-        active = session_store.latest_active_cold_start_snapshot(session["id"])
+        active = store.latest_active_cold_start_snapshot(session["id"])
         if active:
-            session_store.complete_cold_start_snapshot(active["id"])
+            store.complete_cold_start_snapshot(active["id"])
         return None
 
-    active = session_store.latest_active_cold_start_snapshot(session["id"])
+    active = store.latest_active_cold_start_snapshot(session["id"])
     if active:
         active["sources"] = _trim_cold_start_sources(active.get("sources") or [], fill_count)
         active["source_message_count"] = sum(len(source.get("messages") or []) for source in active.get("sources") or [])
@@ -1411,7 +1436,7 @@ def _maybe_prepare_cold_start_snapshot(
     else:
         return None
 
-    sources = session_store.latest_cross_session_context(
+    sources = store.latest_cross_session_context(
         exclude_session_id=None if is_first_turn else session["id"],
         since=since,
         limit_messages=fill_count,
@@ -1419,7 +1444,7 @@ def _maybe_prepare_cold_start_snapshot(
     if not sources:
         return None
 
-    return session_store.write_cold_start_snapshot(
+    return store.write_cold_start_snapshot(
         session_id=session["id"],
         session_tag=session["session_tag"],
         reason=reason,
@@ -1579,10 +1604,10 @@ async def _build_upstream_request(
 
 
 async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[dict], dict]:
-    assert session_store is not None
-    sessions = SessionManager(session_store, cfg)
+    store = _require_session_store()
+    sessions = SessionManager(store, cfg)
     tools = GatewayToolService()
-    builder = ContextBuilder(session_store, sessions, tools)
+    builder = ContextBuilder(store, sessions, tools)
 
     client_name = _client_name_from_request(request)
     session_tag = _session_tag_from_request(request, client_name=client_name)
@@ -1594,7 +1619,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
 
     raw_messages = [message.model_dump(exclude_none=True) for message in body.messages]
     raw_user_text = _latest_user_text(raw_messages)
-    session_store.write_raw_request_window(
+    store.write_raw_request_window(
         session_id=session["id"],
         session_tag=session_tag,
         client_name=client_name,
@@ -1611,7 +1636,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     cold_start_snapshot = None
     if not is_hisense:
         cold_start_snapshot = _maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count)
-    session_store.write_request_context_snapshot(
+    store.write_request_context_snapshot(
         session_id=session["id"],
         session_tag=session_tag,
         client_name=client_name,
@@ -1620,7 +1645,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     )
     messages, pending_gateway_meta = _inject_pending_gateway_tool_turns(
         messages,
-        session_store,
+        store,
         session_id=session["id"],
     )
     trim_meta.update(pending_gateway_meta)
@@ -1868,89 +1893,6 @@ def _tool_call_cache_key(name: str, args: dict) -> str:
     return f"{name}:{args_text}"
 
 
-def _new_stream_chunk_id() -> str:
-    return f"chatcmpl-{uuid.uuid4().hex[:12]}"
-
-
-def _stream_chunk_base(model: str, *, chunk_id: Optional[str] = None, created: Optional[int] = None) -> dict:
-    return {
-        "id": chunk_id or _new_stream_chunk_id(),
-        "object": "chat.completion.chunk",
-        "created": created if created is not None else _now_ts(),
-        "model": model,
-    }
-
-
-def _stream_content_event(
-    model: str,
-    content: str,
-    *,
-    finish_reason: Optional[str] = None,
-    chunk_id: Optional[str] = None,
-    created: Optional[int] = None,
-) -> str:
-    body = {
-        **_stream_chunk_base(model, chunk_id=chunk_id, created=created),
-        "choices": [{"index": 0, "delta": {"content": content}, "finish_reason": finish_reason}],
-    }
-    return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
-
-
-def _stream_reasoning_event(
-    model: str,
-    reasoning: str,
-    *,
-    finish_reason: Optional[str] = None,
-    chunk_id: Optional[str] = None,
-    created: Optional[int] = None,
-) -> str:
-    body = {
-        **_stream_chunk_base(model, chunk_id=chunk_id, created=created),
-        "choices": [{"index": 0, "delta": {"reasoning_content": reasoning}, "finish_reason": finish_reason}],
-    }
-    return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
-
-
-def _stream_role_event(model: str, *, chunk_id: Optional[str] = None, created: Optional[int] = None) -> str:
-    body = {
-        **_stream_chunk_base(model, chunk_id=chunk_id, created=created),
-        "choices": [{"index": 0, "delta": {"role": "assistant", "content": ""}, "finish_reason": None}],
-    }
-    return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
-
-
-def _stream_final_event(
-    model: str,
-    finish_reason: str = "stop",
-    *,
-    chunk_id: Optional[str] = None,
-    created: Optional[int] = None,
-) -> str:
-    body = {
-        **_stream_chunk_base(model, chunk_id=chunk_id, created=created),
-        "choices": [{"index": 0, "delta": {}, "finish_reason": finish_reason}],
-    }
-    return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
-
-
-def _stream_keepalive_event(model: str, *, chunk_id: Optional[str] = None, created: Optional[int] = None) -> str:
-    # OpenAI-compatible empty delta; some clients/proxies do not treat SSE comments
-    # as activity, so this keeps long internal tool loops visibly alive to parsers.
-    return _stream_content_event(model, "", finish_reason=None, chunk_id=chunk_id, created=created)
-
-
-def _sse_response(generator) -> StreamingResponse:
-    return StreamingResponse(
-        generator,
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache, no-transform",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no",
-        },
-    )
-
-
 _EMPTY_VISIBLE_ASSISTANT_REPLY = "沈予已记录。"
 
 
@@ -2020,111 +1962,6 @@ def _finalize_assistant_private_content(
         "context": fallback_context if fallback_applied else "",
     }
     return _normalize_text(assistant_message.get("content")), heartbeat_content, inline_memories, fallback_meta
-
-
-def _stream_gateway_error_events(model: str, error: str):
-    chunk_id = _new_stream_chunk_id()
-    created = _now_ts()
-    message = (error or "Gateway request failed.").strip()
-    yield _stream_content_event(model, f"\n\n[网关错误] {message}\n", finish_reason=None, chunk_id=chunk_id, created=created)
-    yield _stream_final_event(model, chunk_id=chunk_id, created=created)
-    yield "data: [DONE]\n\n"
-
-
-def _new_stream_completion(model: str) -> dict:
-    return {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion",
-        "created": _now_ts(),
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": ""},
-                "finish_reason": None,
-            }
-        ],
-        "usage": {},
-    }
-
-
-def _ensure_stream_tool_call(tool_calls: list[dict], index: int) -> dict:
-    while len(tool_calls) <= index:
-        tool_calls.append({"id": "", "type": "function", "function": {"name": "", "arguments": ""}})
-    call = tool_calls[index]
-    call.setdefault("type", "function")
-    function = call.setdefault("function", {})
-    function.setdefault("name", "")
-    function.setdefault("arguments", "")
-    return call
-
-
-def _apply_openai_stream_chunk(completion: dict, data: dict) -> None:
-    choices = data.get("choices") or []
-    if not choices:
-        if data.get("usage"):
-            completion["usage"] = data.get("usage") or {}
-        return
-    choice = choices[0]
-    delta = choice.get("delta") or {}
-    message = completion["choices"][0]["message"]
-    if delta.get("role"):
-        message["role"] = delta["role"]
-    if delta.get("content"):
-        message["content"] = _normalize_text(message.get("content")) + str(delta.get("content") or "")
-    if delta.get("reasoning_content"):
-        message["reasoning_content"] = _normalize_text(message.get("reasoning_content")) + str(
-            delta.get("reasoning_content") or ""
-        )
-    if delta.get("tool_calls"):
-        tool_calls = message.setdefault("tool_calls", [])
-        for call_delta in delta.get("tool_calls") or []:
-            index = int(call_delta.get("index") or 0)
-            call = _ensure_stream_tool_call(tool_calls, index)
-            if call_delta.get("id"):
-                call["id"] = call_delta["id"]
-            if call_delta.get("type"):
-                call["type"] = call_delta["type"]
-            fn_delta = call_delta.get("function") or {}
-            function = call.setdefault("function", {})
-            if fn_delta.get("name"):
-                function["name"] = fn_delta["name"]
-            if "arguments" in fn_delta:
-                arguments = fn_delta.get("arguments")
-                if arguments is None:
-                    arguments = ""
-                elif not isinstance(arguments, str):
-                    arguments = json.dumps(arguments, ensure_ascii=False)
-                function["arguments"] = str(function.get("arguments") or "") + arguments
-    if choice.get("finish_reason") is not None:
-        completion["choices"][0]["finish_reason"] = choice.get("finish_reason")
-    if data.get("usage"):
-        completion["usage"] = data.get("usage") or {}
-
-
-def _gateway_error_text(exc: Exception) -> str:
-    if isinstance(exc, HTTPException):
-        detail = exc.detail if isinstance(exc.detail, str) else _json_dumps(exc.detail)
-        return f"{exc.status_code}: {detail}"[:800]
-    return str(exc)[:800]
-
-
-def _gateway_error_completion(model: str, error: str) -> dict:
-    content = f"[网关错误] {(error or 'Gateway request failed.').strip()}"
-    return {
-        "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
-        "object": "chat.completion",
-        "created": _now_ts(),
-        "model": model,
-        "choices": [
-            {
-                "index": 0,
-                "message": {"role": "assistant", "content": content},
-                "finish_reason": "stop",
-            }
-        ],
-        "usage": {},
-    }
 
 
 async def _stream_upstream_openai_chunks(
@@ -2241,7 +2078,7 @@ async def _execute_mixed_gateway_tool_calls(
     persist their hidden tool transcript, and return only the client-executable calls. The next
     upstream request reconstructs the original mixed assistant turn plus gateway tool results.
     """
-    assert session_store is not None
+    store = _require_session_store()
     normalized_tool_calls = [_ensure_tool_call_id(call, index) for index, call in enumerate(tool_calls)]
     assistant_message = completion.get("choices", [{}])[0].get("message", {})
     base_content = _normalize_text(assistant_message.get("content"))
@@ -2273,7 +2110,7 @@ async def _execute_mixed_gateway_tool_calls(
         )
 
     original_assistant_message = _pending_assistant_tool_call_message(assistant_message, normalized_tool_calls)
-    session_store.create_pending_gateway_tool_turn(
+    store.create_pending_gateway_tool_turn(
         session_id=session_id,
         session_tag=session_tag or "",
         client_tool_call_ids=[str(call.get("id")) for call in client_calls if call.get("id")],
@@ -2307,51 +2144,6 @@ def _ensure_tool_call_id(tool_call: dict, index: int = 0) -> dict:
     return normalized
 
 
-def _unstreamed_text_suffix(text: str, streamed_text: str) -> str:
-    if not streamed_text:
-        return text
-    if text.startswith(streamed_text):
-        return text[len(streamed_text):]
-    trimmed_streamed = streamed_text.rstrip()
-    if trimmed_streamed and text.startswith(trimmed_streamed):
-        return text[len(trimmed_streamed):]
-    marker = "<gateway_tool_results>"
-    marker_index = text.find(marker)
-    if marker_index >= 0:
-        start = marker_index
-        while start > 0 and text[start - 1] in "\r\n":
-            start -= 1
-        return text[start:]
-    return ""
-
-
-def _completion_with_unstreamed_deltas(
-    completion: dict,
-    *,
-    streamed_content: str = "",
-    streamed_reasoning: str = "",
-) -> dict:
-    if not streamed_content and not streamed_reasoning:
-        return completion
-    replay = dict(completion)
-    choices = list(replay.get("choices") or [])
-    if not choices:
-        return replay
-    choice = dict(choices[0])
-    message = dict(choice.get("message") or {})
-    if streamed_content:
-        message["content"] = _unstreamed_text_suffix(_normalize_text(message.get("content")), streamed_content)
-    if streamed_reasoning and message.get("reasoning_content"):
-        message["reasoning_content"] = _unstreamed_text_suffix(
-            _normalize_text(message.get("reasoning_content")),
-            streamed_reasoning,
-        )
-    choice["message"] = message
-    choices[0] = choice
-    replay["choices"] = choices
-    return replay
-
-
 async def _run_internal_tool_loop(
     request: Request,
     body: ChatRequest,
@@ -2359,8 +2151,8 @@ async def _run_internal_tool_loop(
     meta: dict,
     log_entry: Optional[dict] = None,
 ) -> dict:
-    assert session_store is not None
-    sessions = SessionManager(session_store, cfg)
+    store = _require_session_store()
+    sessions = SessionManager(store, cfg)
     session = meta["session"]
     session_id = session["id"]
     session_tag = session["session_tag"]
@@ -2498,8 +2290,8 @@ async def _run_internal_tool_loop_stream(
     meta: dict,
     log_entry: Optional[dict] = None,
 ):
-    assert session_store is not None
-    sessions = SessionManager(session_store, cfg)
+    store = _require_session_store()
+    sessions = SessionManager(store, cfg)
     session = meta["session"]
     session_id = session["id"]
     session_tag = session["session_tag"]
@@ -3120,11 +2912,11 @@ def _record_response_text(log_entry: dict, text: str, preview_limit: int = 200) 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, body: ChatRequest):
     await verify_api_key(request)
-    assert session_store is not None
+    store = _require_session_store()
     t0 = _time.monotonic()
 
     prepared_messages, meta = await _prepare_messages(request, body)
-    sessions = SessionManager(session_store, cfg)
+    sessions = SessionManager(store, cfg)
     session = meta["session"]
     session_id = session["id"]
     sessions.log_input_messages(session_id, prepared_messages)
@@ -3652,16 +3444,16 @@ async def gateway_tools():
 
 @app.get("/api/gateway/context/preview")
 async def context_preview(session_tag: Optional[str] = None):
-    assert session_store is not None
-    builder = ContextBuilder(session_store, SessionManager(session_store, cfg), GatewayToolService())
+    store = _require_session_store()
+    builder = ContextBuilder(store, SessionManager(store, cfg), GatewayToolService())
     return await builder.preview(session_tag=session_tag)
 
 
 @app.get("/api/gateway/overview")
 async def gateway_overview():
-    assert session_store is not None
+    store = _require_session_store()
     return {
-        "overview": session_store.gateway_overview(),
+        "overview": store.gateway_overview(),
         "retention": {
             "message_retention": cfg.gateway_message_retention,
             "context_snapshot_retention": cfg.gateway_context_snapshot_retention,
@@ -3678,7 +3470,7 @@ async def gateway_overview():
 
 @app.get("/api/gateway/debug")
 async def gateway_debug():
-    assert session_store is not None
+    store = _require_session_store()
     default_upstream = _upstream_for_hisense(False)
     hisense_upstream = _upstream_for_hisense(True)
     tools = gateway_native_tools(cfg)
@@ -3717,7 +3509,7 @@ async def gateway_debug():
             "mem0_tools_enabled": cfg.enable_mem0_management_tools,
         },
         "store": {
-            "overview": session_store.gateway_overview(),
+            "overview": store.gateway_overview(),
             "db_path": cfg.gateway_db_path,
             "retention": {
                 "message_retention": cfg.gateway_message_retention,
@@ -3748,27 +3540,27 @@ async def gateway_debug():
 
 @app.post("/api/gateway/prune")
 async def prune_gateway_runtime():
-    assert session_store is not None
+    store = _require_session_store()
     deleted = _prune_runtime_state()
-    return {"ok": True, "deleted": deleted, "overview": session_store.gateway_overview()}
+    return {"ok": True, "deleted": deleted, "overview": store.gateway_overview()}
 
 
 @app.post("/api/gateway/dedupe-messages")
 async def dedupe_gateway_messages():
-    assert session_store is not None
-    deleted = session_store.dedupe_messages()
-    return {"ok": True, "deleted": deleted, "overview": session_store.gateway_overview()}
+    store = _require_session_store()
+    deleted = store.dedupe_messages()
+    return {"ok": True, "deleted": deleted, "overview": store.gateway_overview()}
 
 
 @app.get("/api/gateway/cold-start/preview")
 async def cold_start_preview(session_tag: Optional[str] = None):
-    assert session_store is not None
+    store = _require_session_store()
     exclude_session_id = None
     since = None
     reason = "new_window"
     current_message_count = 1
     if session_tag:
-        session = session_store.get_session_by_tag(session_tag)
+        session = store.get_session_by_tag(session_tag)
         if session:
             idle_minutes = _cold_start_idle_minutes(session)
             if idle_minutes >= max(cfg.cold_start_idle_minutes, 1):
@@ -3781,7 +3573,7 @@ async def cold_start_preview(session_tag: Optional[str] = None):
     target_messages = cfg.cold_start_message_limit or cfg.max_client_messages or 8
     fill_count = max(int(target_messages) - current_message_count, 0)
     if cfg.enable_cold_start and reason != "old_window_short_interval":
-        sources = session_store.latest_cross_session_context(
+        sources = store.latest_cross_session_context(
             exclude_session_id=exclude_session_id,
             since=since,
             limit_messages=fill_count or 1,
@@ -3875,38 +3667,38 @@ async def legacy_atomic_memories(limit: int = 30, session_tag: Optional[str] = N
 
 @app.get("/api/gateway/sessions")
 async def list_gateway_sessions(limit: int = 100, q: str = ""):
-    assert session_store is not None
-    sessions = session_store.list_sessions(limit=limit, query=q)
+    store = _require_session_store()
+    sessions = store.list_sessions(limit=limit, query=q)
     return {"sessions": sessions, "limit": max(1, min(int(limit or 100), 500)), "query": q}
 
 
 @app.get("/api/gateway/sessions/{session_tag}")
 async def session_detail(session_tag: str, messages_limit: Optional[int] = None, heartbeat_limit: int = 500):
-    assert session_store is not None
-    session = session_store.get_session_by_tag(session_tag)
+    store = _require_session_store()
+    session = store.get_session_by_tag(session_tag)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
     window_limit = messages_limit if messages_limit is not None else 50
-    messages = session_store.get_recent_messages(
+    messages = store.get_recent_messages(
         session["id"],
         limit=max(1, min(int(window_limit or cfg.gateway_message_retention), cfg.gateway_message_retention)),
     )
-    raw_request_windows = session_store.get_recent_raw_request_windows(
+    raw_request_windows = store.get_recent_raw_request_windows(
         session["id"],
         limit=max(1, min(int(window_limit or cfg.gateway_message_retention), cfg.gateway_message_retention)),
     )
-    context_snapshots = session_store.get_recent_context_snapshots(session["id"], limit=5)
-    cold_start = session_store.latest_cold_start_snapshot(session["id"])
-    cold_start_snapshots = session_store.recent_cold_start_snapshots(session["id"], limit=8)
+    context_snapshots = store.get_recent_context_snapshots(session["id"], limit=5)
+    cold_start = store.latest_cold_start_snapshot(session["id"])
+    cold_start_snapshots = store.recent_cold_start_snapshots(session["id"], limit=8)
     is_hisense = _is_hisense_session(session)
-    heartbeats = session_store.read_heartbeats(
+    heartbeats = store.read_heartbeats(
         None,
         state="all",
         limit=max(1, min(int(heartbeat_limit or 500), 500)),
         order="desc",
         hisense=is_hisense,
     )
-    stats = session_store.get_session_stats(session["id"])
+    stats = store.get_session_stats(session["id"])
     if is_hisense:
         stats["heartbeats"] = stats.get("hisense_heartbeats", 0)
     return {
@@ -3924,8 +3716,8 @@ async def session_detail(session_tag: str, messages_limit: Optional[int] = None,
 
 @app.post("/api/gateway/sessions/{session_tag}/heartbeats")
 async def create_gateway_heartbeat(session_tag: str, body: HeartbeatCreateRequest):
-    assert session_store is not None
-    session = session_store.get_session_by_tag(session_tag)
+    store = _require_session_store()
+    session = store.get_session_by_tag(session_tag)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
     content = (body.content or "").strip()
@@ -3935,7 +3727,7 @@ async def create_gateway_heartbeat(session_tag: str, body: HeartbeatCreateReques
     if len(content) > 4000:
         raise HTTPException(status_code=400, detail="Heartbeat content is too long.")
     turn_number = body.turn_number if body.turn_number is not None else int(session.get("message_count") or 0)
-    item = session_store.append_heartbeat(
+    item = store.append_heartbeat(
         session["id"],
         content,
         turn_number=max(0, int(turn_number or 0)),
@@ -3946,13 +3738,13 @@ async def create_gateway_heartbeat(session_tag: str, body: HeartbeatCreateReques
 
 @app.delete("/api/gateway/sessions/{session_tag}/heartbeats")
 async def delete_gateway_heartbeats(session_tag: str, body: HeartbeatDeleteRequest):
-    assert session_store is not None
-    session = session_store.get_session_by_tag(session_tag)
+    store = _require_session_store()
+    session = store.get_session_by_tag(session_tag)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
     if body.delete_all and body.confirm != "GLOBAL":
         raise HTTPException(status_code=400, detail="Confirmation must be GLOBAL for delete_all.")
-    deleted = session_store.delete_heartbeats(
+    deleted = store.delete_heartbeats(
         None,
         heartbeat_ids=body.ids,
         delete_all=body.delete_all,
@@ -3966,13 +3758,13 @@ async def list_gateway_heartbeats(limit: int = 500, order: str = "asc", scope: s
     # External contract: home-frontend reads
     # /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal|hisense.
     # Preserve query-token auth, limit/order/scope, and heartbeats[].content/created_at.
-    assert session_store is not None
+    store = _require_session_store()
     order_key = "desc" if str(order or "").lower() == "desc" else "asc"
     max_limit = max(1, min(int(limit or 500), 2000))
     scope_key = (scope or "normal").strip().lower()
     hisense = scope_key in {"hisense", "海信"}
     scope_key = "hisense" if hisense else "normal"
-    heartbeats = session_store.get_all_heartbeats(hisense=hisense)
+    heartbeats = store.get_all_heartbeats(hisense=hisense)
     if order_key == "desc":
         heartbeats = list(reversed(heartbeats))
     return {
@@ -3987,8 +3779,8 @@ async def list_gateway_heartbeats(limit: int = 500, order: str = "asc", scope: s
 
 @app.get("/api/gateway/sessions/{session_tag}/export")
 async def export_gateway_session(session_tag: str):
-    assert session_store is not None
-    bundle = session_store.export_session_bundle(session_tag)
+    store = _require_session_store()
+    bundle = store.export_session_bundle(session_tag)
     if not bundle:
         raise HTTPException(status_code=404, detail="Session not found.")
     filename = f"shenyu-session-{session_tag}-{_now().strftime('%Y%m%d-%H%M%S')}.json"
@@ -4000,13 +3792,13 @@ async def export_gateway_session(session_tag: str):
 
 @app.delete("/api/gateway/sessions/{session_tag}")
 async def delete_gateway_session(session_tag: str, body: SessionDeleteRequest):
-    assert session_store is not None
+    store = _require_session_store()
     if body.confirm != session_tag:
         raise HTTPException(status_code=400, detail="Confirmation must match session_tag.")
-    session = session_store.get_session_by_tag(session_tag)
+    session = store.get_session_by_tag(session_tag)
     if not session:
         raise HTTPException(status_code=404, detail="Session not found.")
-    deleted = session_store.delete_session(session["id"])
+    deleted = store.delete_session(session["id"])
     return {"ok": True, "session_tag": session_tag, "deleted": deleted}
 
 
@@ -4115,7 +3907,7 @@ async def calendar_send_preview(
 
 @app.get("/api/calendar/context-snapshots")
 async def calendar_context_snapshots(limit: int = 8, session_tag: Optional[str] = None):
-    assert session_store is not None
+    _require_session_store()
     service = CalendarService()
     snapshots = service._context_snapshots(limit=limit, session_tag=session_tag)
     return {
@@ -4147,10 +3939,10 @@ async def calendar_generate(request: Request, body: CalendarGenerateRequest):
 
 @app.get("/api/hisense/preview")
 async def hisense_preview():
-    assert session_store is not None
-    sessions_mgr = SessionManager(session_store, cfg)
+    store = _require_session_store()
+    sessions_mgr = SessionManager(store, cfg)
     tools = GatewayToolService()
-    builder = ContextBuilder(session_store, sessions_mgr, tools)
+    builder = ContextBuilder(store, sessions_mgr, tools)
     fake_session = {
         "id": "hisense-preview",
         "session_tag": "hisense-preview",
@@ -4247,8 +4039,8 @@ async def hisense_notebook_delete(item_id: str):
 
 @app.get("/api/hisense/sessions")
 async def hisense_sessions(limit: int = 20):
-    assert session_store is not None
-    all_sessions = session_store.list_sessions(limit=200)
+    store = _require_session_store()
+    all_sessions = store.list_sessions(limit=200)
     hisense_sessions = [
         s for s in all_sessions
         if _is_hisense_session(s)

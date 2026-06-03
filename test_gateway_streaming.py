@@ -5,8 +5,19 @@ import json
 import tempfile
 
 import gateway
+import pytest
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
+
+
+def test_require_session_store_raises_clear_runtime_error_when_uninitialized():
+    old_store = gateway.session_store
+    gateway.session_store = None
+    try:
+        with pytest.raises(RuntimeError, match="Gateway session store is not initialized"):
+            gateway._require_session_store()
+    finally:
+        gateway.session_store = old_store
 
 
 def _data_payload(event: str) -> dict:
