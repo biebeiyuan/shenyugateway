@@ -105,6 +105,83 @@ def _sanitize_openai_compatible_messages(messages: list[dict]) -> list[dict]:
     return sanitized
 
 
+def _coerce_schema_default(schema: dict) -> None:
+    if "default" not in schema:
+        return
+    expected = schema.get("type")
+    value = schema.get("default")
+
+    if expected == "boolean":
+        if isinstance(value, bool):
+            return
+        if isinstance(value, str):
+            text = value.strip().lower()
+            if text in {"true", "1", "yes", "on"}:
+                schema["default"] = True
+                return
+            if text in {"false", "0", "no", "off"}:
+                schema["default"] = False
+                return
+        schema.pop("default", None)
+        return
+
+    if expected == "integer":
+        if isinstance(value, bool):
+            schema.pop("default", None)
+            return
+        if isinstance(value, int):
+            return
+        if isinstance(value, str):
+            text = value.strip()
+            try:
+                if text and str(int(text)) == text:
+                    schema["default"] = int(text)
+                    return
+            except ValueError:
+                pass
+        schema.pop("default", None)
+        return
+
+    if expected == "number":
+        if isinstance(value, bool):
+            schema.pop("default", None)
+            return
+        if isinstance(value, (int, float)):
+            return
+        if isinstance(value, str):
+            text = value.strip()
+            try:
+                schema["default"] = float(text)
+                return
+            except ValueError:
+                pass
+        schema.pop("default", None)
+
+
+def _sanitize_json_schema(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_sanitize_json_schema(item) for item in value]
+    if not isinstance(value, dict):
+        return value
+
+    clean = {key: _sanitize_json_schema(item) for key, item in value.items()}
+    _coerce_schema_default(clean)
+    return clean
+
+
+def _sanitize_openai_compatible_tools(tools: list[dict]) -> list[dict]:
+    sanitized: list[dict] = []
+    for tool in tools:
+        if not isinstance(tool, dict):
+            continue
+        clean = _sanitize_json_schema(tool)
+        function = clean.get("function") if isinstance(clean, dict) else {}
+        if not isinstance(function, dict) or not function.get("name"):
+            continue
+        sanitized.append(clean)
+    return sanitized
+
+
 def _assistant_tool_call_message(assistant_message: dict, tool_calls: list[dict]) -> dict:
     message: dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
     content = assistant_message.get("content")
@@ -128,7 +205,7 @@ def _apply_openai_compatible_cache_control(
     layers = cache_layers or {}
     cache_paths: list[str] = []
     cached_messages = _sanitize_openai_compatible_messages(messages)
-    cached_tools = [dict(tool) for tool in tools]
+    cached_tools = _sanitize_openai_compatible_tools(tools)
 
     if cached_tools:
         _add_cache_control(cached_tools[-1], cache_paths, "tools[-1]", max_breakpoints)

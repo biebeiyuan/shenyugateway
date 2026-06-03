@@ -9,6 +9,7 @@ import pytest
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.tool_loop import InternalToolLoopContext
+from shenyu_gateway.upstream_adapter import _apply_openai_compatible_cache_control
 
 
 def test_require_session_store_raises_clear_runtime_error_when_uninitialized():
@@ -53,6 +54,35 @@ def test_stream_content_event_is_complete_openai_chunk():
     assert payload["choices"] == [
         {"index": 0, "delta": {"content": "hello"}, "finish_reason": None}
     ]
+
+
+def test_openai_compatible_tool_schema_defaults_are_type_safe():
+    _, tools, _ = _apply_openai_compatible_cache_control(
+        [{"role": "user", "content": "hello"}],
+        [
+            {
+                "type": "function",
+                "function": {
+                    "name": "client_tool",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "flag": {"type": "boolean", "default": "false"},
+                            "limit": {"type": "integer", "default": "20"},
+                            "score": {"type": "number", "default": "0.5"},
+                            "bad_expr": {"type": "integer", "default": "start_line + 99"},
+                        },
+                    },
+                },
+            }
+        ],
+    )
+
+    props = tools[0]["function"]["parameters"]["properties"]
+    assert props["flag"]["default"] is False
+    assert props["limit"]["default"] == 20
+    assert props["score"]["default"] == 0.5
+    assert "default" not in props["bad_expr"]
 
 
 def test_sse_response_disables_proxy_buffering():
