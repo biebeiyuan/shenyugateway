@@ -579,7 +579,7 @@ def _append_tool_round_log(
 
 
 def _target_tool_name(name: str, args: dict) -> str:
-    return str(args.get("tool") or "") if name == "shenyu_gateway_tool" else name
+    return str(args.get("tool") or args.get("name") or args.get("action") or "") if name == "shenyu_gateway_tool" else name
 
 
 def _tool_result_message(tool_call: dict, name: str, result: dict) -> dict:

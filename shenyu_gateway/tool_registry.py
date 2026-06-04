@@ -19,6 +19,16 @@ MEM_NOTE_PATCH_KEYS = {
     "review_note",
 }
 
+_BROKER_TOOL_HINTS = {
+    "shenyu_recall": "翻旧上下文，可 source_types 限定范围",
+    "shenyu_list_mem_notes": "列 mem 便签（status: captured / active）",
+    "shenyu_update_mem_note": "改某条 mem",
+    "shenyu_notebook_list": "读 notebook（跨窗口/海信那边）",
+    "shenyu_notebook_write": "写 notebook",
+    "shenyu_read_heartbeat": "读我自己的心跳",
+    "shenyu_supabase_guide": "忘了 Supabase 表结构看这个",
+}
+
 
 def _gateway_list_mem_notes_tool() -> dict:
     return {
@@ -502,11 +512,24 @@ def _gateway_tool_names(cfg: Any) -> list[str]:
     return [tool["function"]["name"] for tool in _expanded_gateway_native_tools(cfg)]
 
 
+def _broker_tool_summary(tool: dict) -> str:
+    function = tool.get("function") or {}
+    name = str(function.get("name") or "")
+    hint = _BROKER_TOOL_HINTS.get(name)
+    if hint:
+        return hint
+    return str(function.get("description") or "").strip().rstrip("。") or "网关工具"
+
+
 def _gateway_broker_tool(cfg: Any) -> dict:
-    names = _gateway_tool_names(cfg)
+    expanded_tools = _expanded_gateway_native_tools(cfg)
+    names = [tool["function"]["name"] for tool in expanded_tools]
+    tool_lines = "\n".join(
+        f"{tool['function']['name']:<24} {_broker_tool_summary(tool)}" for tool in expanded_tools
+    )
     description = (
-        "这是网关工具箱。想查旧记忆、mem 便签、心跳、日记、room、notebook 或 Supabase 时，"
-        "用 `tool` 选择名字，把参数放进 `arguments`。可用工具：" + ", ".join(names)
+        "记忆库总入口。调用：填 tool 字段=工具全名（带 shenyu_ 前缀），参数放 params。\n\n"
+        + tool_lines
     )
     return {
         "type": "function",
@@ -517,13 +540,18 @@ def _gateway_broker_tool(cfg: Any) -> dict:
                 "type": "object",
                 "properties": {
                     "tool": {"type": "string", "enum": names},
+                    "params": {
+                        "type": "object",
+                        "additionalProperties": True,
+                        "description": "选好的工具的参数。推荐使用这个字段。",
+                    },
                     "arguments": {
                         "type": "object",
                         "additionalProperties": True,
-                        "description": "选好的工具的参数。",
+                        "description": "旧字段；等同于 params。",
                     },
                 },
-                "required": ["tool", "arguments"],
+                "required": ["tool"],
             },
         },
     }
@@ -599,11 +627,22 @@ def _coerce_broker_arguments(value: Any) -> Optional[dict]:
     target_args = _coerce_json_object(value)
     if target_args is None:
         return None
-    if set(target_args) == {"arguments"}:
-        nested_args = _coerce_json_object(target_args.get("arguments"))
+    if set(target_args) in ({"arguments"}, {"params"}):
+        nested_args = _coerce_json_object(target_args.get("arguments", target_args.get("params")))
         if nested_args is not None:
             return nested_args
     return target_args
+
+
+def _broker_target_name(arguments: dict, cfg: Any) -> str:
+    target_name = str(arguments.get("tool") or arguments.get("name") or "").strip()
+    if not target_name and arguments.get("action"):
+        target_name = str(arguments.get("action") or "").strip()
+    if target_name and not (target_name.startswith("shenyu_") or target_name.startswith("supabase_")):
+        prefixed_name = f"shenyu_{target_name}"
+        if prefixed_name in set(_gateway_tool_names(cfg)):
+            return prefixed_name
+    return target_name
 
 
 def _mem_note_id_arg(arguments: dict) -> str:
@@ -907,18 +946,27 @@ async def execute_gateway_tool(
     arguments = arguments if isinstance(arguments, dict) else {}
     service = service or GatewayToolService(runtime_config=cfg)
     if name == "shenyu_gateway_tool":
-        target_name = str(arguments.get("tool") or arguments.get("name") or "").strip()
-        raw_target_args = arguments.get("arguments")
+        target_name = _broker_target_name(arguments, cfg)
+        raw_target_args = arguments.get("params")
         if raw_target_args is None:
-            raw_target_args = {key: value for key, value in arguments.items() if key not in {"tool", "name"}}
+            raw_target_args = arguments.get("arguments")
+        if raw_target_args is None:
+            raw_target_args = {
+                key: value
+                for key, value in arguments.items()
+                if key not in {"tool", "name", "action", "params", "arguments"}
+            }
         target_args = _coerce_broker_arguments(raw_target_args)
         if target_args is None:
-            return {"ok": False, "error": "`arguments` must be an object or a JSON object string."}
+            return {"ok": False, "error": "`params`/`arguments` must be an object or a JSON object string."}
         allowed = set(_gateway_tool_names(cfg))
         if target_name not in allowed:
             return {
                 "ok": False,
-                "error": f"Unsupported gateway broker target: {target_name}",
+                "error": (
+                    f"Unsupported gateway broker target: {target_name}. "
+                    "Use `tool` with the full shenyu_ / supabase_ name, and put arguments in `params`."
+                ),
                 "available_tools": sorted(allowed),
             }
         return await execute_gateway_tool(

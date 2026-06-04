@@ -132,6 +132,51 @@ def test_list_notes_includes_review_suggestions():
     assert "圆圆" in item["suggested_trigger_keywords"]
 
 
+def test_note_suggestions_ignore_gateway_tool_results_junk():
+    row = {
+        "id": "note-1",
+        "session_tag": "5.15",
+        "content": "我自己写的《整理元规矩》。",
+        "source_excerpt": """
+<gateway_tool_results>
+{
+  "tool_call_id": "tluse_lip_01",
+  "name": "shenyu_write_mem_note",
+  "arguments": {
+    "tool": "shenyu_write_mem_note",
+    "content": "圆圆今天帮我修好了东西",
+    "created_at": "2026-05-27 19:00:99"
+  }
+}
+</gateway_tool_results>
+""",
+        "mem_type": None,
+        "trigger_text": None,
+        "trigger_keywords": None,
+        "status": "captured",
+    }
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=[row]))
+
+    suggestions = service.suggest_note_fields(row)
+
+    assert suggestions["mem_type"] == "心里那一档"
+    assert "整理元规矩" in suggestions["trigger_keywords"]
+    junk = {
+        "tool_call_id",
+        "name",
+        "arguments",
+        "tool",
+        "tluse_lip_01",
+        "2026",
+        "05",
+        "27",
+        "19",
+        "00",
+        "99",
+    }
+    assert junk.isdisjoint({item.lower() for item in suggestions["trigger_keywords"]})
+
+
 def test_bulk_update_notes_can_activate_with_suggestions():
     rows = [
         {

@@ -712,7 +712,7 @@ def test_execute_gateway_tool_reports_invalid_broker_arguments():
         )
     )
 
-    assert result == {"ok": False, "error": "`arguments` must be an object or a JSON object string."}
+    assert result == {"ok": False, "error": "`params`/`arguments` must be an object or a JSON object string."}
 
 
 def test_execute_gateway_tool_reports_unsupported_broker_target():
@@ -727,8 +727,79 @@ def test_execute_gateway_tool_reports_unsupported_broker_target():
     )
 
     assert result["ok"] is False
-    assert result["error"] == "Unsupported gateway broker target: not_a_gateway_tool"
+    assert result["error"] == (
+        "Unsupported gateway broker target: not_a_gateway_tool. "
+        "Use `tool` with the full shenyu_ / supabase_ name, and put arguments in `params`."
+    )
     assert "shenyu_recall" in result["available_tools"]
+
+
+def test_gateway_broker_description_matches_scan_friendly_sample():
+    broker_tool = gateway_native_tools(_cfg(enable_mem0_management_tools=True))[0]
+    function = broker_tool["function"]
+    description = function["description"]
+    properties = function["parameters"]["properties"]
+
+    assert "记忆库总入口。调用：填 tool 字段=工具全名" in description
+    assert "参数放 params" in description
+    assert "shenyu_list_mem_notes" in description
+    assert "列 mem 便签" in description
+    assert "shenyu_update_mem_note" in description
+    assert properties["params"]["description"] == "选好的工具的参数。推荐使用这个字段。"
+    assert properties["arguments"]["description"] == "旧字段；等同于 params。"
+    assert function["parameters"]["required"] == ["tool"]
+
+
+def test_execute_gateway_tool_accepts_broker_params_field():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {"tool": "shenyu_list_mem_notes", "params": {"q": "home", "status": "all", "limit": 2}},
+            session_tag="default",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "q": "home", "status": "all", "limit": 2}
+    assert service.calls == [
+        {
+            "tool": "shenyu_list_mem_notes",
+            "q": "home",
+            "session_tag": "default",
+            "limit": 2,
+            "status": "all",
+            "mem_type": None,
+        }
+    ]
+
+
+def test_execute_gateway_tool_accepts_action_alias_and_adds_shenyu_prefix():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {"action": "notebook_list", "params": {"scope": "hisense", "limit": 4}},
+            session_tag="default",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "limit": 4}
+    assert service.calls == [
+        {
+            "tool": "shenyu_notebook_list",
+            "type_filter": None,
+            "status": "active",
+            "limit": 4,
+            "tag": None,
+            "scope": "hisense",
+        }
+    ]
 
 
 def test_execute_gateway_tool_raises_for_unsupported_direct_tool():

@@ -2,6 +2,61 @@
 
 This guide is the quick entrypoint for future debugging windows. Read it together with `README.md` before changing gateway logic.
 
+## Error Log Quickstart
+
+For live triage, start with the helper script before changing code:
+
+```powershell
+python scripts\vps_gateway_logs.py api --via-ssh --errors --detail
+```
+
+Set these in the shell when checking the deployed gateway:
+
+```powershell
+$env:SHENYU_GATEWAY_URL="https://gateway.example.com"
+$env:SHENYU_GATEWAY_TOKEN="gateway-api-token"
+```
+
+The helper also auto-loads a local ignored config file at `.shenyu-gateway-debug.local.json`, a home config at `~/.shenyu-gateway-debug.json`, or the path in `SHENYU_GATEWAY_LOG_CONFIG`.
+
+Example local config:
+
+```json
+{
+  "gateway_url": "https://gateway.example.com",
+  "gateway_token": "gateway-api-token",
+  "vps_host": "example.com",
+  "vps_user": "root",
+  "vps_port": 22,
+  "vps_identity": "C:/Users/曾/.ssh/cyberboss_vps_ed25519",
+  "container_match": "shenyu|gateway"
+}
+```
+
+Useful variants:
+
+```powershell
+# Watch new gateway request errors
+python scripts\vps_gateway_logs.py api --via-ssh --watch --errors --interval 5
+
+# Inspect one request by log id or request id
+python scripts\vps_gateway_logs.py api --via-ssh --id 84f8b85a
+
+# Parse a retained local JSON log
+python scripts\vps_gateway_logs.py local tmp_gateway_log_84f8b85a.json --detail
+
+# Tail VPS/Coolify/Docker logs when SSH is configured
+$env:SHENYU_VPS_HOST="root@example.com"
+python scripts\vps_gateway_logs.py ssh --list-containers
+python scripts\vps_gateway_logs.py ssh --match "shenyu|gateway" --tail 300 -f
+```
+
+Use `api` without `--via-ssh` only when public gateway API access is not blocked by Cloudflare.
+
+The script separates `tools_offered` from `gateway_tools_executed`. If tools were offered but zero gateway tools executed, the model/upstream failed before the gateway got any tool call. In that case, inspect upstream errors, relay retries, streaming behavior, request payload shape, and prompt-cache compatibility before editing `gateway_tools.py`.
+
+Do not put gateway tokens, VPS hosts, SSH keys, or API keys into repo files. Use shell environment variables or ask the user for the missing value.
+
 ## First Rule
 
 Preserve behavior before cleanup. This gateway has browser-facing contracts outside this repo, and code can look unused from the admin UI while still being used by `home-frontend`.
@@ -49,6 +104,7 @@ Gateway tool descriptions are intentionally short because they enter the model t
 
 Useful boundary map:
 
+- Broker mode exposes only `shenyu_gateway_tool`; call it with `tool` set to the full gateway tool name, including the `shenyu_` or `supabase_` prefix, and put the selected tool's arguments in `params`. The old `arguments` field is still accepted for compatibility.
 - `shenyu_recall`: visible unified recall tool; reads `shenyu_recall_index`, covering `memory`, `journal`, `room`, `board`, `calendar`, `mem_note`, and `notebook`.
 - `shenyu_list_mem_notes`: visible mem-note browse/review tool; reads Supabase `shenyu_mem_notes`.
 - `shenyu_surface_passages`, `shenyu_search_primary_texts`, `shenyu_ask_memory`, and `shenyu_search_mem_notes`: hidden compatibility handlers. They are not exposed in current model tool schemas, but old direct calls still dispatch.

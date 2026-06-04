@@ -3013,7 +3013,7 @@ async def update_config(request: Request, body: ConfigUpdate):
             env_updates[env_names[field]] = str(value).lower() if isinstance(value, bool) else value
 
     if body.max_internal_tool_rounds is not None:
-        cfg.max_internal_tool_rounds = max(1, min(body.max_internal_tool_rounds, 8))
+        cfg.max_internal_tool_rounds = max(1, body.max_internal_tool_rounds)
         changed.append("max_internal_tool_rounds")
         env_updates[env_names["max_internal_tool_rounds"]] = cfg.max_internal_tool_rounds
     if body.calendar_context_day_limit is not None:

@@ -19,6 +19,20 @@ _CONTEXT_QUERY_ATTACHMENT_RE = re.compile(
     r"\s*<attachment\b(?=[^>]*\bid\s*=\s*['\"]?message_insert_extra_bundle_[^'\"\s>]+['\"]?)[^>]*>.*?</attachment>",
     re.IGNORECASE | re.DOTALL,
 )
+# 剥 gateway_tool_results / 代码块 / JSON 块，防止切词器把里面的字段名当关键词
+_TOOL_RESULT_BLOCK_RE = re.compile(
+    r"<gateway_tool_results>.*?</gateway_tool_results>",
+    re.IGNORECASE | re.DOTALL,
+)
+_CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```")
+_JSON_LIKE_BLOCK_RE = re.compile(r"\{[^{}]*(?:tool_call_id|arguments|function)[^{}]*\}")
+# 切词时要过滤的 JSON / 协议字段名
+_TRIGGER_KEYWORD_JUNK_TOKENS = {
+    "tool_call_id", "tool_call", "tool_use", "tool_use_id",
+    "tool", "name", "arguments", "function", "type", "content",
+    "role", "assistant", "user", "system", "id", "ok", "error",
+    "status", "null", "true", "false", "string", "object", "array",
+}
 CONTEXT_KEYWORD_MIN_SCORE = 0.35
 CONTEXT_SEMANTIC_MIN_SCORE = 0.40
 CONTEXT_SEMANTIC_MIN_VECTOR_SCORE = 0.58
@@ -142,6 +156,13 @@ def _clean_context_query(query: Any) -> str:
     text = text.replace("</attachment>", " ")
     text = re.sub(r"message_insert_extra_bundle_[0-9A-Za-z_-]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _strip_tool_result_blocks(text: str) -> str:
+    text = _TOOL_RESULT_BLOCK_RE.sub(" ", text)
+    text = _CODE_BLOCK_RE.sub(" ", text)
+    text = _JSON_LIKE_BLOCK_RE.sub(" ", text)
     return text
 
 
@@ -668,12 +689,14 @@ class MemNoteService:
         source_excerpt = _normalize_text(row.get("source_excerpt")).strip()
         review_note = _normalize_text(row.get("review_note")).strip()
         suggestion_text = "\n".join(part for part in [content, source_excerpt, review_note] if part)
-        mem_type, reason = self._suggest_mem_type(suggestion_text)
+        # 切词和分类前都剥掉工具返回块 / 代码块，防止 JSON 字段或工具结果影响建议。
+        clean_text = _strip_tool_result_blocks(suggestion_text)
+        mem_type, reason = self._suggest_mem_type(clean_text)
         trigger_text = _shorten(content or source_excerpt, 180)
         return {
             "mem_type": mem_type,
             "trigger_text": trigger_text,
-            "trigger_keywords": self._suggest_trigger_keywords(suggestion_text, mem_type),
+            "trigger_keywords": self._suggest_trigger_keywords(clean_text, mem_type),
             "reason": reason,
         }
 
@@ -731,7 +754,7 @@ class MemNoteService:
         return "心里那一档", "没有明显归属，先放到心里那一档"
 
     def _suggest_trigger_keywords(self, text: str, mem_type: str) -> list[str]:
-        source = _normalize_text(text)
+        source = _strip_tool_result_blocks(_normalize_text(text))
         if not source:
             return []
         result: list[str] = []
@@ -743,6 +766,12 @@ class MemNoteService:
                 return
             normalized = keyword.lower()
             if normalized in seen or normalized in _TRIGGER_KEYWORD_STOP_TERMS:
+                return
+            if normalized in _TRIGGER_KEYWORD_JUNK_TOKENS:
+                return
+            if normalized.isdigit():
+                return
+            if re.fullmatch(r"tluse[_-][A-Za-z0-9_.+-]+", normalized):
                 return
             if len(keyword) < 2 or len(keyword) > 12:
                 return

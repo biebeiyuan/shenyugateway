@@ -6,6 +6,7 @@ import tempfile
 
 import gateway
 import pytest
+from shenyu_gateway.config import RuntimeConfig
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.tool_loop import InternalToolLoopContext
@@ -20,6 +21,14 @@ def test_require_session_store_raises_clear_runtime_error_when_uninitialized():
             gateway._require_session_store()
     finally:
         gateway.session_store = old_store
+
+
+def test_runtime_config_does_not_cap_internal_tool_rounds_at_eight(monkeypatch):
+    monkeypatch.setenv("MAX_INTERNAL_TOOL_ROUNDS", "12")
+
+    cfg = RuntimeConfig()
+
+    assert cfg.max_internal_tool_rounds == 12
 
 
 def _data_payload(event: str) -> dict:

@@ -9,3 +9,5 @@ admin/node_modules/
 admin/dist/
 
 *.log
+tmp_gateway_log_*.json
+.shenyu-gateway-debug.local.json

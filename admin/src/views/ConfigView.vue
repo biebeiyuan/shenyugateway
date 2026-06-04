@@ -426,7 +426,7 @@ function removeModel(index: number) {
         <NForm label-placement="top">
           <div class="cfg-inline">
             <NFormItem label="工具回环轮数">
-              <NInputNumber v-model:value="config.max_internal_tool_rounds" :min="1" :max="8" style="width:100%" />
+              <NInputNumber v-model:value="config.max_internal_tool_rounds" :min="1" style="width:100%" />
             </NFormItem>
             <NFormItem label="浮现数量">
               <NInputNumber v-model:value="config.default_surface_limit" :min="1" :max="8" style="width:100%" />

@@ -137,6 +137,34 @@ def test_hisense_context_can_see_both_heartbeat_pools(tmp_path):
     assert "hisense hb" in layers["heartbeat"]
 
 
+def test_gateway_tool_policy_names_broker_call_shape_and_tool_list():
+    layers = context_layers.render_layered_additions(
+        {
+            "stable_charter": "stable charter",
+            "calendar_context": {},
+            "heartbeat_digest": "",
+            "hisense_heartbeat_digest": "",
+            "notebook_items": [],
+            "last_wake_recap": "",
+            "mem_notes": [],
+        },
+        context_layers.ContextLayerSettings(
+            enable_gateway_tools=True,
+            inject_inline_memory_prompt=False,
+            heartbeat_prompt="heartbeat prompt",
+            inline_mem_prompt="inline mem prompt",
+        ),
+    )
+
+    stable = layers["stable"]
+    assert "`shenyu_gateway_tool` — 记忆库总入口" in stable
+    assert "填 `tool` 字段=工具全名" in stable
+    assert "参数放 `params`" in stable
+    assert "shenyu_list_mem_notes" in stable
+    assert "列 mem 便签" in stable
+    assert "shenyu_read_heartbeat" in stable
+
+
 def test_hisense_client_defaults_to_isolated_session_tag():
     request = SimpleNamespace(headers={})
 

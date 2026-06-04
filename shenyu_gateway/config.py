@@ -86,7 +86,7 @@ class RuntimeConfig:
         self.enable_mem0_management_tools: bool = _env_bool("ENABLE_MEM0_MANAGEMENT_TOOLS", False)
         self.expose_supabase_tools: bool = _env_bool("EXPOSE_SUPABASE_TOOLS", True)
         self.gateway_tool_mode: str = self._normalize_tool_mode(os.getenv("GATEWAY_TOOL_MODE", "broker"))
-        self.max_internal_tool_rounds: int = _env_int("MAX_INTERNAL_TOOL_ROUNDS", 4, 1, 8)
+        self.max_internal_tool_rounds: int = _env_int("MAX_INTERNAL_TOOL_ROUNDS", 4, 1)
         self.enable_recall_auto_sync: bool = _env_bool("ENABLE_RECALL_AUTO_SYNC", False)
         self.recall_candidate_limit: int = _env_int("RECALL_CANDIDATE_LIMIT", 160, 20, 1000)
         self.enable_recall_embeddings: bool = _env_bool("ENABLE_RECALL_EMBEDDINGS", False)
