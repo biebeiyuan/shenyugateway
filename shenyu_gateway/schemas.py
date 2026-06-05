@@ -63,6 +63,13 @@ class ConfigUpdate(BaseModel):
     default_surface_limit: Optional[int] = None
     mem_note_limit: Optional[int] = None
     mem_note_min_score: Optional[float] = None
+    mem_note_context_keyword_min_score: Optional[float] = None
+    mem_note_semantic_min_score: Optional[float] = None
+    mem_note_semantic_min_vector_score: Optional[float] = None
+    mem_note_anchored_semantic_min_score: Optional[float] = None
+    mem_note_anchored_semantic_min_vector_score: Optional[float] = None
+    mem_note_dedupe_turns: Optional[int] = None
+    mem_note_soft_cooldown_hours: Optional[int] = None
     mem_note_default_cooldown_hours: Optional[int] = None
     heartbeat_inject_every: Optional[int] = None
     gateway_message_retention: Optional[int] = None

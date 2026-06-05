@@ -556,6 +556,19 @@ class GatewayStore:
             ).fetchone()
             return int(row["count"]) if row else 0
 
+    def count_messages_since(self, session_id: str, since: str, role: Optional[str] = None) -> int:
+        where = "session_id = ? AND created_at > ?"
+        params: list[Any] = [session_id, since]
+        if role:
+            where += " AND role = ?"
+            params.append(role)
+        with self._connect() as conn:
+            row = conn.execute(
+                f"SELECT COUNT(*) AS count FROM gateway_messages WHERE {where}",
+                tuple(params),
+            ).fetchone()
+            return int(row["count"]) if row else 0
+
     def list_sessions(self, limit: int = 100, query: str = "") -> list[dict]:
         limit = max(1, min(int(limit or 100), 500))
         pattern = f"%{query.strip()}%"

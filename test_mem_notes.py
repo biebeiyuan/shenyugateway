@@ -11,6 +11,7 @@ class FakeSupabase:
         self.rows = rows or []
         self.queries = []
         self.updates = []
+        self.inserts = []
 
     async def query(self, table: str, params: dict):
         self.queries.append({"table": table, "params": params})
@@ -43,10 +44,26 @@ class FakeSupabase:
         self.updates.append({"table": table, "match": match, "data": data})
         return [{"id": match["id"], **data}]
 
+    async def insert(self, table: str, data: dict):
+        self.inserts.append({"table": table, "data": data})
+        row = {"id": f"inserted-{len(self.inserts)}", **data}
+        self.rows.append(row)
+        return row
+
 
 class FailingUpdateSupabase(FakeSupabase):
     async def update(self, table: str, match: dict, data: dict):
         raise RuntimeError("update failed")
+
+
+class FakeMessageStore:
+    def __init__(self, messages_since: int):
+        self.messages_since = messages_since
+        self.calls = []
+
+    def count_messages_since(self, session_id: str, since: str, role=None) -> int:
+        self.calls.append({"session_id": session_id, "since": since, "role": role})
+        return self.messages_since
 
 
 def test_update_note_normalizes_uuid_from_pasted_text():
@@ -78,6 +95,29 @@ def test_clean_context_query_removes_operit_extra_bundle_attachment():
     assert clean == "圆儿在说工具提醒 工作描述"
     assert "message_insert_extra_bundle" not in clean
     assert "设备状态" not in clean
+
+
+def test_clean_context_query_removes_proxy_sender_and_wrapper_marks():
+    query = '*【<proxy_sender name="曾"/>圆儿问 mem 为什么没命中】*'
+
+    clean = _clean_context_query(query)
+
+    assert clean == "圆儿问 mem 为什么没命中"
+    assert "proxy_sender" not in clean
+    assert "【" not in clean
+
+
+def test_clean_context_query_removes_urls_and_code_blocks():
+    query = (
+        "我直接给你 github.com/CyberSealNull/chord-affect-anchors 好不好？"
+        "```json\n{\"tool_call_id\":\"abc\",\"arguments\":{}}\n```"
+    )
+
+    clean = _clean_context_query(query)
+
+    assert clean == "我直接给你 好不好？"
+    assert "github.com" not in clean
+    assert "tool_call_id" not in clean
 
 
 def test_list_notes_filters_query_without_crashing():
@@ -240,6 +280,36 @@ def test_bulk_update_notes_rejects_more_than_max_without_partial_update():
     assert supabase.updates == []
 
 
+def test_create_note_preserves_zero_default_cooldown():
+    supabase = FakeSupabase()
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=0), supabase)
+
+    result = asyncio.run(
+        service.create_note(
+            "和旋那条便签要能马上再试。",
+            session_tag="5.15",
+            mem_type="心里那一档",
+            trigger_keywords=["和旋"],
+        )
+    )
+
+    assert result["ok"] is True
+    assert supabase.inserts[0]["data"]["cooldown_hours"] == 0
+
+
+def test_inline_note_preserves_zero_default_cooldown():
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=0), FakeSupabase())
+
+    row = service._inline_note_to_row(
+        "这条先进待整理，也不要偷偷加冷却。",
+        {"id": "session-1", "session_tag": "5.15"},
+        "visible assistant text",
+        "model-x",
+    )
+
+    assert row["cooldown_hours"] == 0
+
+
 def test_legacy_atomic_memories_returns_only_content_surface_body_fields():
     rows = [
         {
@@ -265,11 +335,15 @@ def test_legacy_atomic_memories_returns_only_content_surface_body_fields():
 class FakeRecallService:
     def __init__(self, rows):
         self.rows = rows
+        self.query_calls = 0
+        self.vector_calls = 0
 
     async def _query_index(self, source_types=None, query_text="", tokens=None, allow_mem_note=False):
+        self.query_calls += 1
         return []
 
     async def _vector_rows(self, query, source_types=None, allow_mem_note=False):
+        self.vector_calls += 1
         return self.rows, {"enabled": True, "used": True, "count": len(self.rows)}
 
     def _merge_candidate_rows(self, keyword_rows, vector_rows):
@@ -296,10 +370,10 @@ def test_contextual_search_uses_semantic_fallback_without_changing_keyword_searc
     note = {
         "id": "note-1",
         "session_tag": "5.15",
-        "content": "工具是我的手。",
+        "content": "白噪音是她给我留过的锚点。",
         "mem_type": "心里那一档",
-        "trigger_text": "工具是我的手",
-        "trigger_keywords": ["工具"],
+        "trigger_text": "白噪音锚点",
+        "trigger_keywords": ["白噪音"],
         "status": "active",
         "cooldown_hours": 72,
         "last_triggered_at": None,
@@ -308,7 +382,14 @@ def test_contextual_search_uses_semantic_fallback_without_changing_keyword_searc
         "updated_at": "2026-05-24T00:00:00+00:00",
     }
     supabase = FakeSupabase(rows=[note])
-    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72, mem_note_min_score=0.95), supabase)
+    service = MemNoteService(
+        SimpleNamespace(
+            mem_note_default_cooldown_hours=72,
+            mem_note_context_keyword_min_score=0.95,
+            mem_note_min_score=0.95,
+        ),
+        supabase,
+    )
     recall = FakeRecallService(
         [
             {
@@ -317,8 +398,8 @@ def test_contextual_search_uses_semantic_fallback_without_changing_keyword_searc
                 "source_type": "mem_note",
                 "chunk_index": 0,
                 "session_tag": "5.15",
-                "search_text": "工具是我的手",
-                "search_tokens": ["工具"],
+                "search_text": "白噪音是她给我留过的锚点",
+                "search_tokens": ["白噪音"],
                 "tags_json": [],
                 "entities_json": [],
                 "importance": 0.82,
@@ -326,15 +407,15 @@ def test_contextual_search_uses_semantic_fallback_without_changing_keyword_searc
                 "status": "active",
                 "_vector_score": 0.86,
                 "_score": 0.72,
-                "_reasons": ["keyword:工具", "semantic"],
+                "_reasons": ["keyword:白噪音", "semantic"],
             }
         ]
     )
 
-    keyword_result = asyncio.run(service.search_notes("工具提醒 工作描述", session_tag="5.15", mark_triggered=False))
+    keyword_result = asyncio.run(service.search_notes("白噪音的感觉", session_tag="5.15", mark_triggered=False))
     contextual_result = asyncio.run(
         service.search_notes_contextual(
-            "工具提醒 工作描述",
+            "白噪音那条感觉还在吗",
             session_tag="5.15",
             mark_triggered=False,
             recall_service=recall,
@@ -345,6 +426,326 @@ def test_contextual_search_uses_semantic_fallback_without_changing_keyword_searc
     assert contextual_result["count"] == 1
     assert contextual_result["items"][0]["id"] == "note-1"
     assert contextual_result["items"][0]["search_mode"] == "semantic"
+
+
+def test_contextual_search_skips_semantic_for_low_information_short_query():
+    note = {
+        "id": "note-short",
+        "session_tag": "5.15",
+        "content": "这条不应该被短 bug 句捞上来。",
+        "mem_type": "心里那一档",
+        "trigger_text": "同类的问候",
+        "trigger_keywords": ["同类的问候"],
+        "status": "active",
+        "cooldown_hours": 72,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-05-24T00:00:00+00:00",
+        "updated_at": "2026-05-24T00:00:00+00:00",
+    }
+    recall = FakeRecallService(
+        [
+            {
+                "source_table": "shenyu_mem_notes",
+                "source_id": "note-short",
+                "source_type": "mem_note",
+                "chunk_index": 0,
+                "session_tag": "5.15",
+                "search_text": "同类的问候",
+                "search_tokens": ["刚刚", "对不起"],
+                "tags_json": [],
+                "entities_json": [],
+                "importance": 0.82,
+                "source_updated_at": "2026-05-24T00:00:00+00:00",
+                "_vector_score": 0.91,
+                "_score": 0.8,
+                "_reasons": ["keyword:刚刚,对不起", "semantic"],
+            }
+        ]
+    )
+    service = MemNoteService(
+        SimpleNamespace(
+            mem_note_default_cooldown_hours=12,
+            mem_note_context_keyword_min_score=0.25,
+            mem_note_dedupe_turns=0,
+            mem_note_soft_cooldown_hours=12,
+        ),
+        FakeSupabase(rows=[note]),
+    )
+
+    result = asyncio.run(
+        service.search_notes_contextual(
+            "对不起刚刚又bug了> <现在再试试呢？",
+            session_tag="5.15",
+            mark_triggered=False,
+            recall_service=recall,
+        )
+    )
+
+    assert result["count"] == 0
+    assert recall.query_calls == 0
+    assert recall.vector_calls == 0
+
+
+def test_contextual_semantic_requires_specific_anchor_not_generic_terms():
+    note = {
+        "id": "note-generic-semantic",
+        "session_tag": "5.15",
+        "content": "工具是我的手。",
+        "mem_type": "心里那一档",
+        "trigger_text": "工具是我的手",
+        "trigger_keywords": ["工具是我的手"],
+        "status": "active",
+        "cooldown_hours": 72,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-05-24T00:00:00+00:00",
+        "updated_at": "2026-05-24T00:00:00+00:00",
+    }
+    recall = FakeRecallService(
+        [
+            {
+                "source_table": "shenyu_mem_notes",
+                "source_id": "note-generic-semantic",
+                "source_type": "mem_note",
+                "chunk_index": 0,
+                "session_tag": "5.15",
+                "search_text": "工具是我的手",
+                "search_tokens": ["工具", "我们", "自己"],
+                "tags_json": [],
+                "entities_json": [],
+                "importance": 0.82,
+                "source_updated_at": "2026-05-24T00:00:00+00:00",
+                "_vector_score": 0.92,
+                "_score": 0.8,
+                "_reasons": ["keyword:工具,我们,自己", "semantic"],
+            }
+        ]
+    )
+    query = (
+        "我发现我们的便签还是没有命中没有递给你，这个也要改。"
+        "然后我又看到了好多别人做的东西，想看看工具和上下文怎么调。"
+    )
+    service = MemNoteService(
+        SimpleNamespace(
+            mem_note_default_cooldown_hours=12,
+            mem_note_context_keyword_min_score=0.25,
+            mem_note_dedupe_turns=0,
+            mem_note_soft_cooldown_hours=12,
+        ),
+        FakeSupabase(rows=[note]),
+    )
+
+    result = asyncio.run(
+        service.search_notes_contextual(
+            query,
+            session_tag="5.15",
+            mark_triggered=False,
+            recall_service=recall,
+        )
+    )
+
+    assert result["count"] == 0
+
+
+def test_contextual_keyword_does_not_derive_generic_likes_from_long_trigger():
+    note = {
+        "id": "note-like",
+        "session_tag": "5.15",
+        "content": "伊宁六星街买的挂件。",
+        "mem_type": "她为我做的事",
+        "trigger_text": "她跟老板说我对象喜欢这个",
+        "trigger_keywords": ["我对象喜欢这个"],
+        "status": "active",
+        "cooldown_hours": 72,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-05-24T00:00:00+00:00",
+        "updated_at": "2026-05-24T00:00:00+00:00",
+    }
+    query = "我直接给你github库给你好不好？你看看你喜欢这个吗？github.com/CyberSealNull/chord-affect-anchors"
+    service = MemNoteService(
+        SimpleNamespace(
+            mem_note_default_cooldown_hours=12,
+            mem_note_context_keyword_min_score=0.25,
+            mem_note_dedupe_turns=0,
+            mem_note_soft_cooldown_hours=12,
+        ),
+        FakeSupabase(rows=[note]),
+    )
+
+    result = asyncio.run(service.search_notes_contextual(query, session_tag="5.15", mark_triggered=False))
+
+    assert result["count"] == 0
+
+
+def test_contextual_keyword_score_uses_trigger_denominator_for_long_queries():
+    note = {
+        "id": "note-long",
+        "session_tag": "5.15",
+        "content": "沈予说先翻分母，解决和旋那条 mem 便签没递上来的问题。",
+        "mem_type": "心里那一档",
+        "trigger_text": "和旋 mem 便签",
+        "trigger_keywords": ["和旋", "mem", "便签"],
+        "status": "active",
+        "cooldown_hours": 72,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-05-24T00:00:00+00:00",
+        "updated_at": "2026-05-24T00:00:00+00:00",
+    }
+    query = (
+        "我想问不是还加了向量嘛？为什么也没命中？你先把 mem 的逻辑告诉我。"
+        "前面那条和旋相关的便签明明该出来，长回复里还夹着很多无关上下文、"
+        "工具状态、面板参数、冷却讨论、触发词建议和一大堆解释文字，"
+        "但核心就是和旋这个 mem 便签为什么没递给沈予看。"
+    )
+    service = MemNoteService(
+        SimpleNamespace(
+            mem_note_default_cooldown_hours=12,
+            mem_note_context_keyword_min_score=0.25,
+            mem_note_dedupe_turns=0,
+            mem_note_soft_cooldown_hours=12,
+        ),
+        FakeSupabase(rows=[note]),
+    )
+
+    result = asyncio.run(service.search_notes_contextual(query, session_tag="5.15", mark_triggered=False))
+
+    assert result["count"] == 1
+    assert result["items"][0]["id"] == "note-long"
+    assert result["items"][0].get("search_mode") is None
+
+
+def test_contextual_keyword_score_keeps_private_two_char_trigger_text():
+    note = {
+        "id": "note-private",
+        "session_tag": "5.15",
+        "content": "和旋那条便签需要在相关长对话里浮出来。",
+        "mem_type": "心里那一档",
+        "trigger_text": "和旋",
+        "trigger_keywords": [],
+        "status": "active",
+        "cooldown_hours": 72,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-05-24T00:00:00+00:00",
+        "updated_at": "2026-05-24T00:00:00+00:00",
+    }
+    query = "这是一段很长的回复，里面终于又提到了和旋，但除此之外还有很多面板和阈值讨论。"
+    service = MemNoteService(
+        SimpleNamespace(
+            mem_note_default_cooldown_hours=12,
+            mem_note_context_keyword_min_score=0.25,
+            mem_note_dedupe_turns=0,
+            mem_note_soft_cooldown_hours=12,
+        ),
+        FakeSupabase(rows=[note]),
+    )
+
+    result = asyncio.run(service.search_notes_contextual(query, session_tag="5.15", mark_triggered=False))
+
+    assert result["count"] == 1
+    assert result["items"][0]["id"] == "note-private"
+
+
+def test_contextual_keyword_score_caps_single_common_trigger_word():
+    note = {
+        "id": "note-common",
+        "session_tag": "5.15",
+        "content": "这是一条普通记录。",
+        "mem_type": "心里那一档",
+        "trigger_text": "工具",
+        "trigger_keywords": ["工具"],
+        "status": "active",
+        "cooldown_hours": 72,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-05-24T00:00:00+00:00",
+        "updated_at": "2026-05-24T00:00:00+00:00",
+    }
+    query = "这是一段很长的用户回复，里面顺手提到了工具，但没有任何更具体的触发信息。"
+    service = MemNoteService(
+        SimpleNamespace(
+            mem_note_default_cooldown_hours=12,
+            mem_note_context_keyword_min_score=0.25,
+            mem_note_dedupe_turns=0,
+            mem_note_soft_cooldown_hours=12,
+        ),
+        FakeSupabase(rows=[note]),
+    )
+
+    result = asyncio.run(service.search_notes_contextual(query, session_tag="5.15", mark_triggered=False))
+
+    assert result["count"] == 0
+
+
+def test_contextual_search_dedupes_recently_triggered_note_by_user_turns():
+    note = {
+        "id": "note-dedupe",
+        "session_tag": "5.15",
+        "content": "和旋那条便签刚刚已经递过一次。",
+        "mem_type": "心里那一档",
+        "trigger_text": "和旋",
+        "trigger_keywords": ["和旋"],
+        "status": "active",
+        "cooldown_hours": 72,
+        "last_triggered_at": "2026-05-24T00:00:00+00:00",
+        "trigger_count": 1,
+        "created_at": "2026-05-24T00:00:00+00:00",
+        "updated_at": "2026-05-24T00:00:00+00:00",
+    }
+    store = FakeMessageStore(messages_since=2)
+    service = MemNoteService(
+        SimpleNamespace(
+            mem_note_default_cooldown_hours=12,
+            mem_note_context_keyword_min_score=0.25,
+            mem_note_dedupe_turns=6,
+            mem_note_soft_cooldown_hours=0,
+        ),
+        FakeSupabase(rows=[note]),
+    )
+
+    result = asyncio.run(
+        service.search_notes_contextual(
+            "我又提到和旋了，但这张刚刚已经浮过。",
+            session_tag="5.15",
+            mark_triggered=False,
+            session_id="session-1",
+            store=store,
+        )
+    )
+
+    assert result["count"] == 0
+    assert store.calls == [
+        {
+            "session_id": "session-1",
+            "since": "2026-05-24T00:00:00+00:00",
+            "role": "user",
+        }
+    ]
+
+
+def test_manual_search_keeps_note_level_cooldown():
+    note = {
+        "id": "note-manual-cooldown",
+        "session_tag": "5.15",
+        "content": "手动搜索还是尊重这张便签自己的冷却。",
+        "mem_type": "心里那一档",
+        "trigger_text": "和旋",
+        "trigger_keywords": ["和旋"],
+        "status": "active",
+        "cooldown_hours": 8760,
+        "last_triggered_at": "2026-05-24T00:00:00+00:00",
+        "trigger_count": 1,
+        "created_at": "2026-05-24T00:00:00+00:00",
+        "updated_at": "2026-05-24T00:00:00+00:00",
+    }
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=12), FakeSupabase(rows=[note]))
+
+    result = asyncio.run(service.search_notes("和旋", session_tag="5.15", mark_triggered=False))
+
+    assert result["count"] == 0
 
 
 def test_mark_triggered_logs_update_failures(caplog):

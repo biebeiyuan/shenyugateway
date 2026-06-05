@@ -1275,6 +1275,8 @@ class ContextBuilder:
                     current_user_text,
                     session_tag=session["session_tag"],
                     limit=cfg.mem_note_limit,
+                    session_id=session.get("id"),
+                    store=self.store,
                 )
                 package["mem_notes"] = notes.get("items") or []
         return package
@@ -2895,6 +2897,13 @@ async def get_config_full():
         "default_surface_limit": cfg.default_surface_limit,
         "mem_note_limit": cfg.mem_note_limit,
         "mem_note_min_score": cfg.mem_note_min_score,
+        "mem_note_context_keyword_min_score": cfg.mem_note_context_keyword_min_score,
+        "mem_note_semantic_min_score": cfg.mem_note_semantic_min_score,
+        "mem_note_semantic_min_vector_score": cfg.mem_note_semantic_min_vector_score,
+        "mem_note_anchored_semantic_min_score": cfg.mem_note_anchored_semantic_min_score,
+        "mem_note_anchored_semantic_min_vector_score": cfg.mem_note_anchored_semantic_min_vector_score,
+        "mem_note_dedupe_turns": cfg.mem_note_dedupe_turns,
+        "mem_note_soft_cooldown_hours": cfg.mem_note_soft_cooldown_hours,
         "mem_note_default_cooldown_hours": cfg.mem_note_default_cooldown_hours,
         "hisense_client_name": cfg.hisense_client_name,
         "hisense_heartbeat_limit": cfg.hisense_heartbeat_limit,
@@ -2954,6 +2963,13 @@ async def update_config(request: Request, body: ConfigUpdate):
         "default_surface_limit": "DEFAULT_SURFACE_LIMIT",
         "mem_note_limit": "MEM_NOTE_LIMIT",
         "mem_note_min_score": "MEM_NOTE_MIN_SCORE",
+        "mem_note_context_keyword_min_score": "MEM_NOTE_CONTEXT_KEYWORD_MIN_SCORE",
+        "mem_note_semantic_min_score": "MEM_NOTE_SEMANTIC_MIN_SCORE",
+        "mem_note_semantic_min_vector_score": "MEM_NOTE_SEMANTIC_MIN_VECTOR_SCORE",
+        "mem_note_anchored_semantic_min_score": "MEM_NOTE_ANCHORED_SEMANTIC_MIN_SCORE",
+        "mem_note_anchored_semantic_min_vector_score": "MEM_NOTE_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE",
+        "mem_note_dedupe_turns": "MEM_NOTE_DEDUPE_TURNS",
+        "mem_note_soft_cooldown_hours": "MEM_NOTE_SOFT_COOLDOWN_HOURS",
         "mem_note_default_cooldown_hours": "MEM_NOTE_DEFAULT_COOLDOWN_HOURS",
         "hisense_client_name": "HISENSE_CLIENT_NAME",
         "hisense_heartbeat_limit": "HISENSE_HEARTBEAT_LIMIT",
@@ -3070,6 +3086,38 @@ async def update_config(request: Request, body: ConfigUpdate):
         cfg.mem_note_min_score = _clamp(float(body.mem_note_min_score), 0.0, 1.0)
         changed.append("mem_note_min_score")
         env_updates[env_names["mem_note_min_score"]] = cfg.mem_note_min_score
+    if body.mem_note_context_keyword_min_score is not None:
+        cfg.mem_note_context_keyword_min_score = _clamp(float(body.mem_note_context_keyword_min_score), 0.05, 0.9)
+        changed.append("mem_note_context_keyword_min_score")
+        env_updates[env_names["mem_note_context_keyword_min_score"]] = cfg.mem_note_context_keyword_min_score
+    if body.mem_note_semantic_min_score is not None:
+        cfg.mem_note_semantic_min_score = _clamp(float(body.mem_note_semantic_min_score), 0.0, 1.0)
+        changed.append("mem_note_semantic_min_score")
+        env_updates[env_names["mem_note_semantic_min_score"]] = cfg.mem_note_semantic_min_score
+    if body.mem_note_semantic_min_vector_score is not None:
+        cfg.mem_note_semantic_min_vector_score = _clamp(float(body.mem_note_semantic_min_vector_score), 0.0, 1.0)
+        changed.append("mem_note_semantic_min_vector_score")
+        env_updates[env_names["mem_note_semantic_min_vector_score"]] = cfg.mem_note_semantic_min_vector_score
+    if body.mem_note_anchored_semantic_min_score is not None:
+        cfg.mem_note_anchored_semantic_min_score = _clamp(float(body.mem_note_anchored_semantic_min_score), 0.0, 1.0)
+        changed.append("mem_note_anchored_semantic_min_score")
+        env_updates[env_names["mem_note_anchored_semantic_min_score"]] = cfg.mem_note_anchored_semantic_min_score
+    if body.mem_note_anchored_semantic_min_vector_score is not None:
+        cfg.mem_note_anchored_semantic_min_vector_score = _clamp(
+            float(body.mem_note_anchored_semantic_min_vector_score),
+            0.0,
+            1.0,
+        )
+        changed.append("mem_note_anchored_semantic_min_vector_score")
+        env_updates[env_names["mem_note_anchored_semantic_min_vector_score"]] = cfg.mem_note_anchored_semantic_min_vector_score
+    if body.mem_note_dedupe_turns is not None:
+        cfg.mem_note_dedupe_turns = max(0, min(body.mem_note_dedupe_turns, 50))
+        changed.append("mem_note_dedupe_turns")
+        env_updates[env_names["mem_note_dedupe_turns"]] = cfg.mem_note_dedupe_turns
+    if body.mem_note_soft_cooldown_hours is not None:
+        cfg.mem_note_soft_cooldown_hours = max(0, min(body.mem_note_soft_cooldown_hours, 8760))
+        changed.append("mem_note_soft_cooldown_hours")
+        env_updates[env_names["mem_note_soft_cooldown_hours"]] = cfg.mem_note_soft_cooldown_hours
     if body.mem_note_default_cooldown_hours is not None:
         cfg.mem_note_default_cooldown_hours = max(0, min(body.mem_note_default_cooldown_hours, 8760))
         changed.append("mem_note_default_cooldown_hours")

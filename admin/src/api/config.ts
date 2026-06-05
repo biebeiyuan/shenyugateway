@@ -28,6 +28,13 @@ export interface GatewayConfig {
   inject_mem_notes?: boolean
   mem_note_limit?: number
   mem_note_min_score?: number
+  mem_note_context_keyword_min_score?: number
+  mem_note_semantic_min_score?: number
+  mem_note_semantic_min_vector_score?: number
+  mem_note_anchored_semantic_min_score?: number
+  mem_note_anchored_semantic_min_vector_score?: number
+  mem_note_dedupe_turns?: number
+  mem_note_soft_cooldown_hours?: number
   mem_note_default_cooldown_hours?: number
   // feature toggles
   inject_meta_summaries?: boolean

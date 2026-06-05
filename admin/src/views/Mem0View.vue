@@ -55,6 +55,19 @@ const statusOptions: Array<{ label: string; value: MemNoteStatus | 'all' }> = [
 
 const editStatusOptions = statusOptions.filter((item) => item.value !== 'all')
 
+const MEM_TUNING_DEFAULTS: Partial<GatewayConfig> = {
+  mem_note_limit: 3,
+  mem_note_min_score: 0.45,
+  mem_note_context_keyword_min_score: 0.25,
+  mem_note_semantic_min_score: 0.4,
+  mem_note_semantic_min_vector_score: 0.5,
+  mem_note_anchored_semantic_min_score: 0.3,
+  mem_note_anchored_semantic_min_vector_score: 0.42,
+  mem_note_dedupe_turns: 6,
+  mem_note_soft_cooldown_hours: 12,
+  mem_note_default_cooldown_hours: 12,
+}
+
 const config = ref<Partial<GatewayConfig>>({})
 const savingConfig = ref(false)
 
@@ -113,6 +126,13 @@ async function saveSettings() {
       inject_mem_notes: config.value.inject_mem_notes,
       mem_note_limit: config.value.mem_note_limit,
       mem_note_min_score: config.value.mem_note_min_score,
+      mem_note_context_keyword_min_score: config.value.mem_note_context_keyword_min_score,
+      mem_note_semantic_min_score: config.value.mem_note_semantic_min_score,
+      mem_note_semantic_min_vector_score: config.value.mem_note_semantic_min_vector_score,
+      mem_note_anchored_semantic_min_score: config.value.mem_note_anchored_semantic_min_score,
+      mem_note_anchored_semantic_min_vector_score: config.value.mem_note_anchored_semantic_min_vector_score,
+      mem_note_dedupe_turns: config.value.mem_note_dedupe_turns,
+      mem_note_soft_cooldown_hours: config.value.mem_note_soft_cooldown_hours,
       mem_note_default_cooldown_hours: config.value.mem_note_default_cooldown_hours,
       enable_mem0_management_tools: config.value.enable_mem0_management_tools,
     })
@@ -123,6 +143,11 @@ async function saveSettings() {
   } finally {
     savingConfig.value = false
   }
+}
+
+function resetMemTuningDefaults() {
+  config.value = { ...config.value, ...MEM_TUNING_DEFAULTS }
+  message.info('已恢复默认值，保存后生效')
 }
 
 async function loadNotes() {
@@ -357,17 +382,60 @@ function formatTime(value?: string | null) {
         <div class="cfg-inline">
           <NFormItem label="反上数量">
             <NInputNumber v-model:value="config.mem_note_limit" :min="1" :max="5" style="width:100%" />
+            <span class="cfg-help">默认 3 · 安全 1-5</span>
           </NFormItem>
-          <NFormItem label="命中阈值">
+          <NFormItem label="手动搜索阈值">
             <NInputNumber v-model:value="config.mem_note_min_score" :min="0" :max="1" :step="0.01" style="width:100%" />
+            <span class="cfg-help">默认 0.45 · 安全 0-1</span>
           </NFormItem>
-          <NFormItem label="默认冷却小时">
-            <NInputNumber v-model:value="config.mem_note_default_cooldown_hours" :min="0" :max="8760" style="width:100%" />
+          <NFormItem label="自动注入阈值">
+            <NInputNumber v-model:value="config.mem_note_context_keyword_min_score" :min="0.05" :max="0.9" :step="0.01" style="width:100%" />
+            <span class="cfg-help">默认 0.25 · 安全 0.05-0.9</span>
+          </NFormItem>
+        </div>
+        <div class="cfg-inline">
+          <NFormItem label="轮次去重">
+            <NInputNumber v-model:value="config.mem_note_dedupe_turns" :min="0" :max="50" style="width:100%" />
+            <span class="cfg-help">默认 6 · 安全 0-50</span>
+          </NFormItem>
+          <NFormItem label="软冷却小时">
+            <NInputNumber v-model:value="config.mem_note_soft_cooldown_hours" :min="0" :max="168" style="width:100%" />
+            <span class="cfg-help">默认 12 · 安全 0-168</span>
+          </NFormItem>
+          <NFormItem label="新便签默认冷却">
+            <NInputNumber v-model:value="config.mem_note_default_cooldown_hours" :min="0" :max="168" style="width:100%" />
+            <span class="cfg-help">默认 12 · 安全 0-168</span>
+          </NFormItem>
+        </div>
+        <div class="cfg-inline">
+          <NFormItem label="强语义 score">
+            <NInputNumber v-model:value="config.mem_note_semantic_min_score" :min="0" :max="1" :step="0.01" style="width:100%" />
+            <span class="cfg-help">默认 0.40 · 安全 0-1</span>
+          </NFormItem>
+          <NFormItem label="强语义 vector">
+            <NInputNumber v-model:value="config.mem_note_semantic_min_vector_score" :min="0" :max="1" :step="0.01" style="width:100%" />
+            <span class="cfg-help">默认 0.50 · 安全 0-1</span>
+          </NFormItem>
+          <NFormItem label="锚定语义 score">
+            <NInputNumber v-model:value="config.mem_note_anchored_semantic_min_score" :min="0" :max="1" :step="0.01" style="width:100%" />
+            <span class="cfg-help">默认 0.30 · 安全 0-1</span>
+          </NFormItem>
+        </div>
+        <div class="cfg-inline">
+          <NFormItem label="锚定语义 vector">
+            <NInputNumber v-model:value="config.mem_note_anchored_semantic_min_vector_score" :min="0" :max="1" :step="0.01" style="width:100%" />
+            <span class="cfg-help">默认 0.42 · 安全 0-1</span>
           </NFormItem>
         </div>
       </NForm>
       <NSpace>
         <NButton type="primary" :loading="savingConfig" @click="saveSettings">保存设置</NButton>
+        <NPopconfirm positive-text="恢复" negative-text="取消" @positive-click="resetMemTuningDefaults">
+          <template #trigger>
+            <NButton :disabled="savingConfig">恢复默认</NButton>
+          </template>
+          恢复后需要保存设置才会写入网关。
+        </NPopconfirm>
       </NSpace>
     </NCard>
 
@@ -509,6 +577,14 @@ function formatTime(value?: string | null) {
 
 .cfg-inline.two {
   grid-template-columns: 1fr 1fr;
+}
+
+.cfg-help {
+  display: block;
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
 }
 
 .cal-input {

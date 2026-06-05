@@ -19,6 +19,7 @@ _CONTEXT_QUERY_ATTACHMENT_RE = re.compile(
     r"\s*<attachment\b(?=[^>]*\bid\s*=\s*['\"]?message_insert_extra_bundle_[^'\"\s>]+['\"]?)[^>]*>.*?</attachment>",
     re.IGNORECASE | re.DOTALL,
 )
+_PROXY_SENDER_RE = re.compile(r"<proxy_sender\b[^>]*/?>", re.IGNORECASE)
 # 剥 gateway_tool_results / 代码块 / JSON 块，防止切词器把里面的字段名当关键词
 _TOOL_RESULT_BLOCK_RE = re.compile(
     r"<gateway_tool_results>.*?</gateway_tool_results>",
@@ -26,6 +27,7 @@ _TOOL_RESULT_BLOCK_RE = re.compile(
 )
 _CODE_BLOCK_RE = re.compile(r"```[\s\S]*?```")
 _JSON_LIKE_BLOCK_RE = re.compile(r"\{[^{}]*(?:tool_call_id|arguments|function)[^{}]*\}")
+_URL_RE = re.compile(r"https?://\S+|(?:www\.)?\b[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)+/[^\s，。！？；、]*")
 # 切词时要过滤的 JSON / 协议字段名
 _TRIGGER_KEYWORD_JUNK_TOKENS = {
     "tool_call_id", "tool_call", "tool_use", "tool_use_id",
@@ -33,11 +35,11 @@ _TRIGGER_KEYWORD_JUNK_TOKENS = {
     "role", "assistant", "user", "system", "id", "ok", "error",
     "status", "null", "true", "false", "string", "object", "array",
 }
-CONTEXT_KEYWORD_MIN_SCORE = 0.35
+CONTEXT_KEYWORD_MIN_SCORE = 0.25
 CONTEXT_SEMANTIC_MIN_SCORE = 0.40
-CONTEXT_SEMANTIC_MIN_VECTOR_SCORE = 0.58
+CONTEXT_SEMANTIC_MIN_VECTOR_SCORE = 0.50
 CONTEXT_ANCHORED_SEMANTIC_MIN_SCORE = 0.30
-CONTEXT_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE = 0.48
+CONTEXT_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE = 0.42
 CONTEXT_WEAK_KEYWORD_HITS = {
     "0",
     "mem",
@@ -53,12 +55,95 @@ CONTEXT_WEAK_KEYWORD_HITS = {
     "还是",
     "不是",
     "是不",
+    "是你",
     "自己",
+    "你自",
+    "你的",
+    "我自",
+    "我的",
+    "我们",
+    "你们",
+    "他们",
+    "她们",
     "怎么",
     "方式",
     "的方",
     "类的",
     "写的",
+}
+AUTO_STRONG_TRIGGER_TERMS = {
+    "白噪音",
+    "和弦",
+    "和旋",
+    "自由时间",
+    "heartbeat",
+}
+CONTEXT_RELATION_NAME_TERMS = {
+    "哥哥",
+    "沈予",
+    "圆圆",
+    "圆儿",
+    "予予",
+}
+_COMMON_TRIGGER_TERMS = {
+    "工具",
+    "便签",
+    "命中",
+    "逻辑",
+    "对话",
+    "回答",
+    "情绪",
+    "心情",
+    "自己",
+} | CONTEXT_RELATION_NAME_TERMS
+AUTO_TRIGGER_GENERIC_TERMS = CONTEXT_WEAK_KEYWORD_HITS | _COMMON_TRIGGER_TERMS | {
+    "喜欢",
+    "喜欢你",
+    "时候",
+    "的时候",
+    "当前",
+    "消息",
+    "系统",
+    "代码",
+    "网关",
+    "自动",
+}
+CONTEXT_SEMANTIC_STRONG_TERMS = AUTO_STRONG_TRIGGER_TERMS
+_CONTEXT_SEMANTIC_STRONG_TERMS_NORMALIZED = {item.lower() for item in CONTEXT_SEMANTIC_STRONG_TERMS}
+CONTEXT_SEMANTIC_ANCHOR_STOP_TERMS = {item.lower() for item in AUTO_TRIGGER_GENERIC_TERMS} | {
+    "bug",
+    "刚刚",
+    "对不起",
+    "试试",
+    "看看",
+    "这个吗",
+    "github",
+}
+_DERIVED_TRIGGER_STOP_TERMS = CONTEXT_WEAK_KEYWORD_HITS | {
+    "你自己",
+    "我自己",
+    "他自己",
+    "她自己",
+    "是你的",
+    "是我的",
+    "你自己",
+    "我自己",
+    "这个",
+    "那个",
+    "这样",
+    "那样",
+    "的话",
+    "现在",
+    "以后",
+    "喜欢",
+    "欢这",
+    "喜欢这",
+    "欢这个",
+    "好不",
+    "不好",
+    "好不好",
+    "个吗",
+    "这个吗",
 }
 MEM_NOTE_PATCH_FIELDS = {
     "content",
@@ -121,7 +206,7 @@ _TRIGGER_KEYWORD_STOP_TERMS = CONTEXT_WEAK_KEYWORD_HITS | {
 _TRIGGER_PHRASE_SPLIT_RE = re.compile(
     r"[，。！？；、,\s]+|今天|昨天|明天|以后|之前|之后|因为|所以|但是|然后|如果|时候|"
     r"记得|关于|感觉|觉得|知道|希望|需要|可以|不能|不要|给我|给她|帮我|帮她|陪我|陪她|"
-    r"为我|为她|让我|让她|把|被|是|有|会|要|想|在|和|跟|对"
+    r"为我|为她|让我|让她|把|被|是|有|会|要|想|在|跟|对"
 )
 
 
@@ -132,6 +217,121 @@ def _overlap(query: str, text: str) -> float:
     haystack = (text or "").lower()
     hits = sum(1 for term in terms if term in haystack)
     return hits / max(len(terms), 1)
+
+
+def _trigger_unit_weight(value: str) -> tuple[float, bool]:
+    text = (value or "").strip()
+    normalized = text.lower()
+    if not normalized or normalized in _TRIGGER_KEYWORD_JUNK_TOKENS:
+        return 0.0, False
+    if normalized.isdigit():
+        return 0.0, False
+    if re.fullmatch(r"tluse[_-][A-Za-z0-9_.+-]+", normalized):
+        return 0.0, False
+
+    weak = normalized in CONTEXT_WEAK_KEYWORD_HITS or text in _COMMON_TRIGGER_TERMS
+    if weak:
+        return 0.25, False
+    if normalized in _CONTEXT_SEMANTIC_STRONG_TERMS_NORMALIZED:
+        return 1.25, True
+    if _has_non_word_symbol(text):
+        return 1.2, True
+    if re.fullmatch(r"[A-Za-z0-9_.+-]+", text):
+        if len(text) >= 6:
+            return 1.1, True
+        if len(text) >= 3:
+            return 0.75, False
+        return 0.35, False
+    if re.fullmatch(r"[\u4e00-\u9fff]+", text):
+        if len(text) >= 3:
+            return 1.1, True
+        return 0.65, False
+    if len(text) >= 3:
+        return 0.9, True
+    return 0.45, False
+
+
+def _should_derive_keyword_terms(keyword: str) -> bool:
+    text = _normalize_text(keyword).strip()
+    if not text:
+        return False
+    if text.lower() in _CONTEXT_SEMANTIC_STRONG_TERMS_NORMALIZED:
+        return True
+    if re.fullmatch(r"[\u4e00-\u9fff]+", text):
+        return len(text) <= 6
+    return True
+
+
+def _trigger_units(trigger_text: str, keywords: list[Any]) -> list[tuple[str, float, bool]]:
+    raw_units: list[str] = []
+
+    def add_raw(value: Any) -> None:
+        text = _normalize_text(value).strip()
+        if text and text not in raw_units:
+            raw_units.append(text)
+
+    clean_keywords = [keyword for keyword in (keywords or []) if _normalize_text(keyword).strip()]
+    for keyword in clean_keywords:
+        keyword_text = _normalize_text(keyword)
+        add_raw(keyword_text)
+        if _should_derive_keyword_terms(keyword_text):
+            for term in recall_terms(keyword_text):
+                if term in _DERIVED_TRIGGER_STOP_TERMS:
+                    continue
+                add_raw(term)
+    if not clean_keywords:
+        for quoted in re.findall(r"[《「“\"]([^《》「」“”\"]{2,30})[》」”\"]", trigger_text or ""):
+            add_raw(quoted)
+        for phrase in _TRIGGER_PHRASE_SPLIT_RE.split(trigger_text or ""):
+            clean = re.sub(r"[^\w\u4e00-\u9fff_.+-]+", "", phrase, flags=re.UNICODE)
+            if 2 <= len(clean) <= 16:
+                add_raw(clean)
+            if len(raw_units) >= 16:
+                break
+        if not raw_units:
+            for term in recall_terms(trigger_text)[:16]:
+                add_raw(term)
+
+    units: list[tuple[str, float, bool]] = []
+    seen: set[str] = set()
+    for unit in raw_units:
+        normalized = unit.lower()
+        if normalized in seen:
+            continue
+        weight, strong = _trigger_unit_weight(unit)
+        if weight <= 0:
+            continue
+        seen.add(normalized)
+        units.append((unit, weight, strong))
+    return units
+
+
+def _trigger_overlap(query: str, trigger_text: str, keywords: list[Any]) -> tuple[float, list[str]]:
+    units = _trigger_units(trigger_text, keywords)
+    if not units:
+        return 0.0, []
+    query_text = (query or "").lower()
+    query_terms = set(recall_terms(query))
+    total_weight = sum(weight for _, weight, _ in units)
+    if total_weight <= 0:
+        return 0.0, []
+
+    hit_weight = 0.0
+    hits: list[str] = []
+    specific_hits = 0
+    for unit, weight, strong in units:
+        normalized = unit.lower()
+        if normalized in query_terms or normalized in query_text:
+            hit_weight += weight
+            hits.append(unit)
+            if strong or weight > 0.25:
+                specific_hits += 1
+
+    score = min(1.0, hit_weight / total_weight)
+    if hits and not specific_hits:
+        # A single generic trigger like "工具" should not make a note jump to full score.
+        score = min(score, 0.2 if len(hits) == 1 else 0.35)
+    return score, hits
 
 
 def _shorten(text: str, limit: int = 220) -> str:
@@ -151,10 +351,14 @@ def _clean_context_query(query: Any) -> str:
     text = _normalize_text(query)
     if not text:
         return ""
+    text = _strip_tool_result_blocks(text)
+    text = _PROXY_SENDER_RE.sub(" ", text)
     text = _CONTEXT_QUERY_ATTACHMENT_RE.sub(" ", text)
+    text = _URL_RE.sub(" ", text)
     text = re.sub(r"<attachment\b[^>]*>", " ", text, flags=re.IGNORECASE)
     text = text.replace("</attachment>", " ")
     text = re.sub(r"message_insert_extra_bundle_[0-9A-Za-z_-]+", " ", text)
+    text = re.sub(r"[*【】\[\]]+", " ", text)
     text = re.sub(r"\s+", " ", text).strip()
     return text
 
@@ -168,6 +372,84 @@ def _strip_tool_result_blocks(text: str) -> str:
 
 def _terms(query: Any) -> list[str]:
     return recall_terms(_normalize_text(query))
+
+
+def _has_non_word_symbol(text: str) -> bool:
+    return bool(re.search(r"[^\w\s\u4e00-\u9fff_.+-]", text, flags=re.UNICODE))
+
+
+def _generic_chinese_semantic_fragment(term: str) -> bool:
+    if not re.fullmatch(r"[\u4e00-\u9fff]+", term):
+        return False
+    if len(term) <= 1:
+        return True
+    generic_prefixes = ("是", "在", "有", "我", "你", "他", "她", "它", "这", "那", "不", "没")
+    generic_suffixes = ("的", "了", "个", "吗", "呢", "吧", "啊", "呀", "嘛")
+    if len(term) <= 4 and (term.startswith(generic_prefixes) or term.endswith(generic_suffixes)):
+        return True
+    return False
+
+
+def _valid_semantic_anchor_term(normalized: str) -> bool:
+    if not normalized or normalized in CONTEXT_SEMANTIC_ANCHOR_STOP_TERMS:
+        return False
+    if normalized.isdigit() or len(normalized) < 3:
+        return False
+    if re.fullmatch(r"[\u4e00-\u9fff]+", normalized):
+        if len(normalized) < 3:
+            return False
+        if _generic_chinese_semantic_fragment(normalized):
+            return False
+    return True
+
+
+def _semantic_anchor_hits(reasons: list[str]) -> list[str]:
+    hits: list[str] = []
+    for reason in reasons:
+        if not reason.startswith("keyword:"):
+            continue
+        raw_hits = reason.removeprefix("keyword:").split(",")
+        for hit in raw_hits:
+            normalized = hit.strip().lower()
+            if not normalized:
+                continue
+            if normalized in _CONTEXT_SEMANTIC_STRONG_TERMS_NORMALIZED:
+                hits.append(normalized)
+                continue
+            if not _valid_semantic_anchor_term(normalized):
+                continue
+            hits.append(normalized)
+    return hits
+
+
+def _query_semantic_signal_terms(query: str) -> list[str]:
+    terms = []
+    for term in recall_terms(query):
+        normalized = term.lower()
+        if normalized in _CONTEXT_SEMANTIC_STRONG_TERMS_NORMALIZED:
+            terms.append(normalized)
+            continue
+        if not _valid_semantic_anchor_term(normalized):
+            continue
+        terms.append(normalized)
+    return terms
+
+
+def _low_information_semantic_query(query: str) -> bool:
+    text = (query or "").strip()
+    if not text:
+        return True
+    if _URL_RE.fullmatch(text):
+        return True
+    signal_terms = _query_semantic_signal_terms(text)
+    has_strong_signal = any(term in _CONTEXT_SEMANTIC_STRONG_TERMS_NORMALIZED for term in signal_terms)
+    if len(text) <= 32 and not has_strong_signal:
+        return True
+    if len(signal_terms) < 2:
+        return True
+    if len(text) <= 24 and len(signal_terms) < 3:
+        return True
+    return False
 
 
 class MemNoteService:
@@ -215,6 +497,10 @@ class MemNoteService:
         limit: int = 3,
         mark_triggered: bool = True,
         min_score: Optional[float] = None,
+        session_id: Optional[str] = None,
+        store: Any = None,
+        cooldown_hours: Optional[int] = None,
+        dedupe_turns: Optional[int] = None,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "query": query, "count": 0, "items": [], "note": "Supabase is not configured."}
@@ -242,7 +528,13 @@ class MemNoteService:
         )
         scored: list[tuple[float, dict, list[str]]] = []
         for row in rows:
-            if self._in_cooldown(row):
+            if self._should_skip_retrigger(
+                row,
+                session_id=session_id,
+                store=store,
+                cooldown_hours=cooldown_hours,
+                dedupe_turns=dedupe_turns,
+            ):
                 continue
             score, reasons = self._score(query, row)
             if score >= min_score:
@@ -262,6 +554,8 @@ class MemNoteService:
         limit: int = 3,
         mark_triggered: bool = True,
         recall_service: Optional[RecallIndexService] = None,
+        session_id: Optional[str] = None,
+        store: Any = None,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "query": query, "count": 0, "items": [], "note": "Supabase is not configured."}
@@ -283,17 +577,23 @@ class MemNoteService:
             limit=target_limit,
             mark_triggered=False,
             min_score=keyword_min_score,
+            session_id=session_id,
+            store=store,
+            cooldown_hours=self._context_cooldown_hours(),
+            dedupe_turns=self._context_dedupe_turns(),
         )
         items = list(keyword_result.get("items") or [])
         selected_ids = {str(item.get("id") or "") for item in items if item.get("id")}
 
-        if not items:
+        if not items and not _low_information_semantic_query(clean_query):
             semantic_items = await self._semantic_search_notes(
                 clean_query,
                 session_tag=session_tag,
                 limit=target_limit,
                 exclude_ids=selected_ids,
                 recall_service=recall_service,
+                session_id=session_id,
+                store=store,
             )
             items.extend(semantic_items)
 
@@ -364,7 +664,7 @@ class MemNoteService:
 
         resolved_status = self._status(status, fallback="captured")
         resolved_session_tag = (session_tag or "default").strip() or "default"
-        default_cooldown = int(getattr(self.cfg, "mem_note_default_cooldown_hours", 72) or 72)
+        default_cooldown = self._default_cooldown_hours()
         payload: dict[str, Any] = {
             "session_tag": resolved_session_tag,
             "content": normalized_content,
@@ -625,7 +925,7 @@ class MemNoteService:
             "session_tag": session.get("session_tag") or "default",
             "content": content,
             "status": "captured",
-            "cooldown_hours": int(getattr(self.cfg, "mem_note_default_cooldown_hours", 72) or 72),
+            "cooldown_hours": self._default_cooldown_hours(),
             "source_model": f"inline-mem:{source_model}",
             "source_session_id": session.get("id"),
             "source_excerpt": _shorten(assistant_text, 600),
@@ -633,12 +933,11 @@ class MemNoteService:
 
     def _score(self, query: str, row: dict) -> tuple[float, list[str]]:
         keywords = row.get("trigger_keywords") or []
-        keyword_text = " ".join(str(item) for item in keywords)
         trigger_text = row.get("trigger_text") or ""
         content = row.get("content") or ""
         mem_type = row.get("mem_type") or ""
 
-        trigger_score = _overlap(query, trigger_text + "\n" + keyword_text)
+        trigger_score, trigger_hits = _trigger_overlap(query, trigger_text, keywords)
         content_score = _overlap(query, content)
         type_score = _overlap(query, mem_type)
         recency_score = self._recency_score(row.get("updated_at") or row.get("created_at"))
@@ -653,7 +952,7 @@ class MemNoteService:
         )
         reasons = []
         if trigger_score > 0:
-            reasons.append("trigger")
+            reasons.append("trigger" + (":" + ",".join(trigger_hits[:5]) if trigger_hits else ""))
         if content_score > 0:
             reasons.append("content")
         if type_score > 0:
@@ -830,6 +1129,8 @@ class MemNoteService:
         *,
         exclude_ids: Optional[set[str]] = None,
         recall_service: Optional[RecallIndexService] = None,
+        session_id: Optional[str] = None,
+        store: Any = None,
     ) -> list[dict[str, Any]]:
         if not query.strip() or not self.supabase:
             return []
@@ -874,6 +1175,22 @@ class MemNoteService:
             0.0,
             1.0,
         )
+        anchored_semantic_min_score = self._float_range(
+            getattr(self.cfg, "mem_note_anchored_semantic_min_score", CONTEXT_ANCHORED_SEMANTIC_MIN_SCORE),
+            CONTEXT_ANCHORED_SEMANTIC_MIN_SCORE,
+            0.0,
+            1.0,
+        )
+        anchored_semantic_min_vector_score = self._float_range(
+            getattr(
+                self.cfg,
+                "mem_note_anchored_semantic_min_vector_score",
+                CONTEXT_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE,
+            ),
+            CONTEXT_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE,
+            0.0,
+            1.0,
+        )
         for row in rows:
             note_id = str(row.get("source_id") or "").strip()
             if not note_id or note_id in seen_ids or note_id in exclude_ids:
@@ -885,19 +1202,30 @@ class MemNoteService:
                 continue
             if not service._row_visible_for_session(row, session_tag):
                 continue
-            if self._in_cooldown(note):
+            if self._should_skip_retrigger(
+                note,
+                session_id=session_id,
+                store=store,
+                cooldown_hours=self._context_cooldown_hours(),
+                dedupe_turns=self._context_dedupe_turns(),
+            ):
                 continue
             score, reasons = service._score_row(row, query, tokens)
             vector_score = max(0.0, min(float(row.get("_vector_score") or 0.0), 1.0))
             has_direct_match = service._has_direct_match(reasons)
             if tokens and not has_direct_match and not vector_score:
                 continue
-            strong_hits = self._context_strong_keyword_hits(reasons)
-            is_strong_semantic = score >= semantic_min_score and vector_score >= semantic_min_vector_score
+            strong_hits = _semantic_anchor_hits(reasons)
+            has_semantic_anchor = bool(strong_hits)
+            is_strong_semantic = (
+                has_semantic_anchor
+                and score >= semantic_min_score
+                and vector_score >= semantic_min_vector_score
+            )
             is_anchored_semantic = (
-                bool(strong_hits)
-                and score >= CONTEXT_ANCHORED_SEMANTIC_MIN_SCORE
-                and vector_score >= CONTEXT_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE
+                has_semantic_anchor
+                and score >= anchored_semantic_min_score
+                and vector_score >= anchored_semantic_min_vector_score
             )
             if not is_strong_semantic and not is_anchored_semantic:
                 continue
@@ -957,14 +1285,62 @@ class MemNoteService:
             ]
         )
 
-    def _in_cooldown(self, row: dict) -> bool:
-        cooldown_hours = self._int_range(row.get("cooldown_hours"), 72, 0, 8760)
+    def _context_cooldown_hours(self) -> Optional[int]:
+        if hasattr(self.cfg, "mem_note_soft_cooldown_hours"):
+            return self._int_range(getattr(self.cfg, "mem_note_soft_cooldown_hours"), 12, 0, 8760)
+        return None
+
+    def _context_dedupe_turns(self) -> int:
+        return self._int_range(getattr(self.cfg, "mem_note_dedupe_turns", 6), 6, 0, 50)
+
+    def _default_cooldown_hours(self) -> int:
+        return self._int_range(getattr(self.cfg, "mem_note_default_cooldown_hours", 72), 72, 0, 8760)
+
+    def _in_cooldown(self, row: dict, cooldown_hours: Optional[int] = None) -> bool:
+        if cooldown_hours is None:
+            cooldown_hours = self._int_range(row.get("cooldown_hours"), 72, 0, 8760)
+        else:
+            cooldown_hours = self._int_range(cooldown_hours, 12, 0, 8760)
         if cooldown_hours <= 0:
             return False
         triggered_at = _parse_ts(row.get("last_triggered_at"))
         if not triggered_at:
             return False
         return _now() < triggered_at + timedelta(hours=cooldown_hours)
+
+    def _recent_turn_duplicate(
+        self,
+        row: dict,
+        *,
+        session_id: Optional[str],
+        store: Any,
+        dedupe_turns: Optional[int],
+    ) -> bool:
+        dedupe_turns = self._int_range(dedupe_turns, 0, 0, 50) if dedupe_turns is not None else 0
+        if dedupe_turns <= 0 or not session_id or not store:
+            return False
+        triggered_at = row.get("last_triggered_at")
+        if not triggered_at:
+            return False
+        try:
+            messages_since = store.count_messages_since(session_id, triggered_at, role="user")
+        except Exception as exc:
+            logger.warning("Failed to check mem note turn dedupe: id=%s error=%s", row.get("id"), exc)
+            return False
+        return messages_since < dedupe_turns
+
+    def _should_skip_retrigger(
+        self,
+        row: dict,
+        *,
+        session_id: Optional[str] = None,
+        store: Any = None,
+        cooldown_hours: Optional[int] = None,
+        dedupe_turns: Optional[int] = None,
+    ) -> bool:
+        if self._recent_turn_duplicate(row, session_id=session_id, store=store, dedupe_turns=dedupe_turns):
+            return True
+        return self._in_cooldown(row, cooldown_hours=cooldown_hours)
 
     async def _mark_triggered(self, rows: list[dict]) -> None:
         for row in rows:

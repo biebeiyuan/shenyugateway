@@ -108,7 +108,14 @@ class RuntimeConfig:
         self.default_surface_limit: int = _env_int("DEFAULT_SURFACE_LIMIT", 3, 1, 8)
         self.mem_note_limit: int = _env_int("MEM_NOTE_LIMIT", 3, 1, 5)
         self.mem_note_min_score: float = _env_float("MEM_NOTE_MIN_SCORE", 0.45, 0.0, 1.0)
-        self.mem_note_default_cooldown_hours: int = _env_int("MEM_NOTE_DEFAULT_COOLDOWN_HOURS", 72, 0, 8760)
+        self.mem_note_context_keyword_min_score: float = _env_float("MEM_NOTE_CONTEXT_KEYWORD_MIN_SCORE", 0.25, 0.05, 0.9)
+        self.mem_note_semantic_min_score: float = _env_float("MEM_NOTE_SEMANTIC_MIN_SCORE", 0.40, 0.0, 1.0)
+        self.mem_note_semantic_min_vector_score: float = _env_float("MEM_NOTE_SEMANTIC_MIN_VECTOR_SCORE", 0.50, 0.0, 1.0)
+        self.mem_note_anchored_semantic_min_score: float = _env_float("MEM_NOTE_ANCHORED_SEMANTIC_MIN_SCORE", 0.30, 0.0, 1.0)
+        self.mem_note_anchored_semantic_min_vector_score: float = _env_float("MEM_NOTE_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE", 0.42, 0.0, 1.0)
+        self.mem_note_dedupe_turns: int = _env_int("MEM_NOTE_DEDUPE_TURNS", 6, 0, 50)
+        self.mem_note_soft_cooldown_hours: int = _env_int("MEM_NOTE_SOFT_COOLDOWN_HOURS", 12, 0, 8760)
+        self.mem_note_default_cooldown_hours: int = _env_int("MEM_NOTE_DEFAULT_COOLDOWN_HOURS", 12, 0, 8760)
         self.heartbeat_inject_every: int = _env_int("HEARTBEAT_INJECT_EVERY", 5, 1, 50)
         self.gateway_message_retention: int = _env_int("GATEWAY_MESSAGE_RETENTION", 1500, 50, 200000)
         self.gateway_context_snapshot_retention: int = _env_int("GATEWAY_CONTEXT_SNAPSHOT_RETENTION", 3, 1, 100)
@@ -170,6 +177,13 @@ class RuntimeConfig:
             "default_surface_limit": self.default_surface_limit,
             "mem_note_limit": self.mem_note_limit,
             "mem_note_min_score": self.mem_note_min_score,
+            "mem_note_context_keyword_min_score": self.mem_note_context_keyword_min_score,
+            "mem_note_semantic_min_score": self.mem_note_semantic_min_score,
+            "mem_note_semantic_min_vector_score": self.mem_note_semantic_min_vector_score,
+            "mem_note_anchored_semantic_min_score": self.mem_note_anchored_semantic_min_score,
+            "mem_note_anchored_semantic_min_vector_score": self.mem_note_anchored_semantic_min_vector_score,
+            "mem_note_dedupe_turns": self.mem_note_dedupe_turns,
+            "mem_note_soft_cooldown_hours": self.mem_note_soft_cooldown_hours,
             "mem_note_default_cooldown_hours": self.mem_note_default_cooldown_hours,
             "heartbeat_inject_every": self.heartbeat_inject_every,
             "gateway_message_retention": self.gateway_message_retention,
