@@ -47,6 +47,7 @@ const config = ref<GatewayConfig>({
   upstream_protocol: 'auto',
   upstream_proxy: '',
   upstream_trust_env: false,
+  enable_openai_cache_control: false,
   hisense_upstream_url: '',
   hisense_api_key: '',
   hisense_protocol: '',
@@ -167,6 +168,7 @@ async function doSave() {
       upstream_protocol: config.value.upstream_protocol,
       upstream_proxy: config.value.upstream_proxy,
       upstream_trust_env: config.value.upstream_trust_env,
+      enable_openai_cache_control: config.value.enable_openai_cache_control,
       hisense_upstream_url: config.value.hisense_upstream_url,
       hisense_api_key: config.value.hisense_api_key,
       hisense_protocol: config.value.hisense_protocol,
@@ -357,6 +359,9 @@ function removeModel(index: number) {
             </NFormItem>
             <NFormItem label="读取环境代理">
               <NSwitch v-model:value="config.upstream_trust_env" />
+            </NFormItem>
+            <NFormItem label="OpenAI cache_control">
+              <NSwitch v-model:value="config.enable_openai_cache_control" />
             </NFormItem>
             <NFormItem label="海信专用接口地址">
               <NInput v-model:value="config.hisense_upstream_url" placeholder="留空继承全局上游" />

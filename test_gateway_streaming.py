@@ -7,6 +7,7 @@ import tempfile
 import gateway
 import pytest
 from shenyu_gateway.config import RuntimeConfig
+from shenyu_gateway.schemas import ChatRequest
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.tool_loop import InternalToolLoopContext
@@ -92,6 +93,55 @@ def test_openai_compatible_tool_schema_defaults_are_type_safe():
     assert props["limit"]["default"] == 20
     assert props["score"]["default"] == 0.5
     assert "default" not in props["bad_expr"]
+
+
+def _contains_cache_control(value):
+    if isinstance(value, dict):
+        return "cache_control" in value or any(_contains_cache_control(item) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_cache_control(item) for item in value)
+    return False
+
+
+def test_build_upstream_request_omits_openai_cache_control_when_disabled(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "openai")
+    monkeypatch.setenv("UPSTREAM_URL", "https://example.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_OPENAI_CACHE_CONTROL", "false")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "client_tool",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+        )
+
+        payload, _, _, cache_meta, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[
+                    {"role": "system", "content": "stable"},
+                    {"role": "user", "content": "hello"},
+                ],
+                meta={"cache_layers": {"stable": "stable"}},
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert cache_meta["enabled"] is False
+    assert cache_meta["breakpoints"] == []
+    assert _contains_cache_control(payload) is False
 
 
 def test_sse_response_disables_proxy_buffering():

@@ -29,6 +29,7 @@ class ConfigUpdate(BaseModel):
     upstream_protocol: Optional[str] = None
     upstream_proxy: Optional[str] = None
     upstream_trust_env: Optional[bool] = None
+    enable_openai_cache_control: Optional[bool] = None
     hisense_upstream_url: Optional[str] = None
     hisense_api_key: Optional[str] = None
     hisense_protocol: Optional[str] = None

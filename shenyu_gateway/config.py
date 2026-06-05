@@ -61,6 +61,7 @@ class RuntimeConfig:
         self.upstream_protocol: str = os.getenv("UPSTREAM_PROTOCOL", "openai").strip().lower()
         self.upstream_proxy: str = os.getenv("UPSTREAM_PROXY", "").strip()
         self.upstream_trust_env: bool = _env_bool("UPSTREAM_TRUST_ENV", False)
+        self.enable_openai_cache_control: bool = _env_bool("ENABLE_OPENAI_CACHE_CONTROL", False)
         self.hisense_upstream_url: str = os.getenv("HISENSE_UPSTREAM_URL", "").strip()
         self.hisense_api_key: str = os.getenv("HISENSE_API_KEY", "").strip()
         self.hisense_protocol: str = os.getenv("HISENSE_PROTOCOL", "").strip().lower()
@@ -135,6 +136,7 @@ class RuntimeConfig:
             "upstream_protocol": self.upstream_protocol,
             "upstream_proxy": self.upstream_proxy,
             "upstream_trust_env": self.upstream_trust_env,
+            "enable_openai_cache_control": self.enable_openai_cache_control,
             "hisense_upstream_url": self.hisense_upstream_url,
             "hisense_api_key": mask(self.hisense_api_key),
             "hisense_protocol": self.hisense_protocol,

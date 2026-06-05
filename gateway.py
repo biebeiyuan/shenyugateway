@@ -137,6 +137,8 @@ from shenyu_gateway.upstream_adapter import (
     _convert_openai_tools_to_anthropic,
     _models_url_for,
     _openai_to_anthropic,
+    _sanitize_openai_compatible_messages,
+    _sanitize_openai_compatible_tools,
 )
 from shenyu_gateway.utils import normalize_text as _normalize_text
 
@@ -1603,14 +1605,21 @@ async def _build_upstream_request(
         cache_meta["note"] = "cache_control breakpoints added to stable Anthropic blocks."
         return payload, headers, model_name, cache_meta, upstream
 
-    cache_messages, cache_tools, cache_paths = _apply_openai_compatible_cache_control(
-        raw_messages,
-        merged_tools or [],
-        cache_layers=(meta or {}).get("cache_layers"),
-    )
-    cache_meta["enabled"] = bool(cache_paths)
-    cache_meta["breakpoints"] = cache_paths
-    cache_meta["note"] = "cache_control breakpoints added to OpenAI-compatible payload for upstream passthrough."
+    if cfg.enable_openai_cache_control:
+        cache_messages, cache_tools, cache_paths = _apply_openai_compatible_cache_control(
+            raw_messages,
+            merged_tools or [],
+            cache_layers=(meta or {}).get("cache_layers"),
+        )
+        cache_meta["enabled"] = bool(cache_paths)
+        cache_meta["breakpoints"] = cache_paths
+        cache_meta["note"] = "cache_control breakpoints added to OpenAI-compatible payload for upstream passthrough."
+    else:
+        cache_messages = _sanitize_openai_compatible_messages(raw_messages)
+        cache_tools = _sanitize_openai_compatible_tools(merged_tools or [])
+        cache_meta["enabled"] = False
+        cache_meta["breakpoints"] = []
+        cache_meta["note"] = "OpenAI-compatible cache_control is disabled by ENABLE_OPENAI_CACHE_CONTROL."
 
     payload = {"model": model_name, "messages": cache_messages, "max_tokens": body.max_tokens or 4096}
     if body.temperature is not None:
@@ -2833,6 +2842,7 @@ async def health():
         "hisense_protocol": hisense_upstream["protocol"],
         "upstream_proxy_configured": bool(cfg.upstream_proxy),
         "upstream_trust_env": cfg.upstream_trust_env,
+        "enable_openai_cache_control": cfg.enable_openai_cache_control,
         "enable_gateway_tools": cfg.enable_gateway_tools,
         "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
         "expose_supabase_tools": cfg.expose_supabase_tools,
@@ -2863,6 +2873,7 @@ async def get_config_full():
         "upstream_protocol": cfg.upstream_protocol,
         "upstream_proxy": cfg.upstream_proxy,
         "upstream_trust_env": cfg.upstream_trust_env,
+        "enable_openai_cache_control": cfg.enable_openai_cache_control,
         "hisense_upstream_url": cfg.hisense_upstream_url,
         "hisense_api_key": cfg.hisense_api_key,
         "hisense_protocol": cfg.hisense_protocol,
@@ -2924,6 +2935,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "upstream_protocol": "UPSTREAM_PROTOCOL",
         "upstream_proxy": "UPSTREAM_PROXY",
         "upstream_trust_env": "UPSTREAM_TRUST_ENV",
+        "enable_openai_cache_control": "ENABLE_OPENAI_CACHE_CONTROL",
         "hisense_upstream_url": "HISENSE_UPSTREAM_URL",
         "hisense_api_key": "HISENSE_API_KEY",
         "hisense_protocol": "HISENSE_PROTOCOL",
@@ -2983,6 +2995,7 @@ async def update_config(request: Request, body: ConfigUpdate):
         "upstream_protocol",
         "upstream_proxy",
         "upstream_trust_env",
+        "enable_openai_cache_control",
         "hisense_upstream_url",
         "hisense_api_key",
         "hisense_protocol",
