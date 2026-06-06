@@ -69,10 +69,26 @@ class InternalToolLoopContext:
         return self.session["session_tag"]
 
 
+def _content_text_only(content: Any) -> str:
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, str):
+                if item.strip():
+                    parts.append(item)
+                continue
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                text = item["text"]
+                if text.strip():
+                    parts.append(text)
+        return "\n".join(parts)
+    return _normalize_text(content)
+
+
 def _latest_user_text(messages: list[dict]) -> str:
     for msg in reversed(messages):
         if msg.get("role") == "user":
-            return _normalize_text(msg.get("content"))
+            return _content_text_only(msg.get("content"))
     return ""
 
 

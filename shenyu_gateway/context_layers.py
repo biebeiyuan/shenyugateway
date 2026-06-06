@@ -36,6 +36,8 @@ _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+IMAGE_SEEN_PLACEHOLDER = "圆圆发来的照片我已经看过。"
+
 
 def shorten(text: str, limit: int = 240) -> str:
     text = (text or "").strip()
@@ -309,6 +311,106 @@ def trim_client_extra_bundle_attachments(
             clean["content"] = clean_content
             meta["client_attachment_messages_trimmed"] += 1
             meta["client_attachment_blocks_trimmed"] += removed
+        trimmed.append(clean)
+    return trimmed, meta
+
+
+def _is_image_content_block(item: Any) -> bool:
+    if not isinstance(item, dict):
+        return False
+    block_type = str(item.get("type") or "").lower()
+    if block_type in {"image_url", "input_image", "image"}:
+        return True
+    image_url = item.get("image_url")
+    if isinstance(image_url, dict) and image_url.get("url"):
+        return True
+    if isinstance(image_url, str) and image_url:
+        return True
+    source = item.get("source")
+    if isinstance(source, dict):
+        media_type = str(source.get("media_type") or "").lower()
+        if media_type.startswith("image/"):
+            return True
+    return False
+
+
+def _message_image_block_count(msg: dict) -> int:
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return 0
+    return sum(1 for item in content if _is_image_content_block(item))
+
+
+def _strip_image_content_blocks(content: Any, placeholder: str) -> tuple[Any, int, bool]:
+    if not isinstance(content, list):
+        return content, 0, False
+
+    cleaned_blocks: list[Any] = []
+    removed_total = 0
+    for item in content:
+        if _is_image_content_block(item):
+            removed_total += 1
+            continue
+        cleaned_blocks.append(item)
+
+    if not removed_total:
+        return content, 0, False
+
+    has_content = False
+    for item in cleaned_blocks:
+        if isinstance(item, str) and item.strip():
+            has_content = True
+            break
+        if isinstance(item, dict):
+            if item.get("type") == "text" and str(item.get("text") or "").strip():
+                has_content = True
+                break
+            if item.get("type") != "text":
+                has_content = True
+                break
+
+    if has_content:
+        return cleaned_blocks, removed_total, False
+    return placeholder, removed_total, True
+
+
+def trim_client_image_blocks(
+    messages: list[dict],
+    keep_recent_messages: int = 2,
+    placeholder: str = IMAGE_SEEN_PLACEHOLDER,
+) -> tuple[list[dict], dict]:
+    """Remove older user image blocks after the model has had a recent chance to see them."""
+    keep_recent_messages = max(int(keep_recent_messages or 0), 0)
+    image_message_indices = [
+        idx
+        for idx, msg in enumerate(messages)
+        if msg.get("role") == "user" and _message_image_block_count(msg) > 0
+    ]
+    keep_indices = set(image_message_indices[-keep_recent_messages:]) if keep_recent_messages else set()
+    meta = {
+        "client_image_keep_messages": keep_recent_messages,
+        "client_image_messages_seen": len(image_message_indices),
+        "client_image_messages_trimmed": 0,
+        "client_image_blocks_trimmed": 0,
+        "client_image_placeholders_added": 0,
+    }
+    if len(image_message_indices) <= keep_recent_messages:
+        return messages, meta
+
+    trimmed: list[dict] = []
+    trim_index_set = set(image_message_indices) - keep_indices
+    for idx, msg in enumerate(messages):
+        if idx not in trim_index_set:
+            trimmed.append(msg)
+            continue
+        clean = dict(msg)
+        clean_content, removed, placeholder_added = _strip_image_content_blocks(clean.get("content"), placeholder)
+        if removed:
+            clean["content"] = clean_content
+            meta["client_image_messages_trimmed"] += 1
+            meta["client_image_blocks_trimmed"] += removed
+            if placeholder_added:
+                meta["client_image_placeholders_added"] += 1
         trimmed.append(clean)
     return trimmed, meta
 

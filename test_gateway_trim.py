@@ -4,8 +4,10 @@ from shenyu_gateway.context_layers import (
     assemble_layered_messages,
     tool_safe_trim_start,
     trim_client_extra_bundle_attachments,
+    trim_client_image_blocks,
     trim_client_messages,
 )
+from shenyu_gateway.tool_loop import _latest_user_text
 
 
 _tool_safe_trim_start = tool_safe_trim_start
@@ -175,3 +177,83 @@ def test_trim_client_extra_bundle_attachments_preserves_images_and_user_text_blo
     assert trimmed[0]["content"][1]["text"] == "cake"
     assert "message_insert_extra_bundle_assistant" in trimmed[1]["content"]
     assert "message_insert_extra_bundle_new" in trimmed[2]["content"]
+
+
+def test_trim_client_image_blocks_keeps_latest_two_image_messages():
+    messages = [
+        {
+            "role": "user",
+            "content": [{"type": "image_url", "image_url": {"url": f"data:image/png;base64,img{idx}"}}],
+        }
+        for idx in range(4)
+    ]
+
+    trimmed, meta = trim_client_image_blocks(messages, keep_recent_messages=2)
+
+    assert meta["client_image_messages_seen"] == 4
+    assert meta["client_image_messages_trimmed"] == 2
+    assert meta["client_image_blocks_trimmed"] == 2
+    assert meta["client_image_placeholders_added"] == 2
+    assert trimmed[0]["content"] == "圆圆发来的照片我已经看过。"
+    assert trimmed[1]["content"] == "圆圆发来的照片我已经看过。"
+    assert trimmed[2]["content"][0]["image_url"]["url"] == "data:image/png;base64,img2"
+    assert trimmed[3]["content"][0]["image_url"]["url"] == "data:image/png;base64,img3"
+
+
+def test_trim_client_image_blocks_preserves_text_from_old_image_message():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "圆圆说这个小身体很重。"},
+                {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,old"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,new"}}],
+        },
+    ]
+
+    trimmed, meta = trim_client_image_blocks(messages, keep_recent_messages=1)
+
+    assert meta["client_image_messages_trimmed"] == 1
+    assert trimmed[0]["content"] == [{"type": "text", "text": "圆圆说这个小身体很重。"}]
+    assert trimmed[1]["content"][0]["image_url"]["url"] == "data:image/jpeg;base64,new"
+
+
+def test_trim_client_image_blocks_can_remove_all_images_for_storage():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "看这个。"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+        },
+        {
+            "role": "user",
+            "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,def"}}],
+        },
+    ]
+
+    trimmed, meta = trim_client_image_blocks(messages, keep_recent_messages=0)
+
+    assert meta["client_image_messages_trimmed"] == 2
+    assert meta["client_image_blocks_trimmed"] == 2
+    assert trimmed[0]["content"] == [{"type": "text", "text": "看这个。"}]
+    assert trimmed[1]["content"] == "圆圆发来的照片我已经看过。"
+
+
+def test_latest_user_text_ignores_image_urls():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "看这个。"},
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+            ],
+        }
+    ]
+
+    assert _latest_user_text(messages) == "看这个。"

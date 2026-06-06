@@ -48,6 +48,7 @@ from shenyu_gateway.context_layers import (
     render_layered_additions as _render_layered_additions,
     render_system_additions as _render_system_additions,
     trim_client_extra_bundle_attachments as _trim_client_extra_bundle_attachments,
+    trim_client_image_blocks as _trim_client_image_blocks,
     trim_client_messages as _trim_client_messages,
     trim_cold_start_sources as _trim_cold_start_sources,
 )
@@ -1645,17 +1646,20 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     is_first_turn = non_system_count <= 1 or sessions.is_first_turn(session)
 
     raw_messages = [message.model_dump(exclude_none=True) for message in body.messages]
-    raw_user_text = _latest_user_text(raw_messages)
+    raw_messages_for_storage, _ = _trim_client_image_blocks(raw_messages, keep_recent_messages=0)
+    raw_user_text = _latest_user_text(raw_messages_for_storage)
     store.write_raw_request_window(
         session_id=session["id"],
         session_tag=session_tag,
         client_name=client_name,
-        messages=raw_messages,
+        messages=raw_messages_for_storage,
         latest_user_text=raw_user_text,
     )
     messages, trim_meta = _trim_client_messages(raw_messages, cfg.max_client_messages)
     messages, attachment_trim_meta = _trim_client_extra_bundle_attachments(messages, keep_recent_messages=3)
     trim_meta.update(attachment_trim_meta)
+    messages, image_trim_meta = _trim_client_image_blocks(messages, keep_recent_messages=2)
+    trim_meta.update(image_trim_meta)
     user_text = _latest_user_text(messages)
     current_message_count = _non_system_message_count(messages)
     is_hisense = _is_hisense_client(client_name)
@@ -1663,12 +1667,13 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     cold_start_snapshot = None
     if not is_hisense:
         cold_start_snapshot = _maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count)
+    snapshot_messages, _ = _trim_client_image_blocks(messages, keep_recent_messages=0)
     store.write_request_context_snapshot(
         session_id=session["id"],
         session_tag=session_tag,
         client_name=client_name,
-        messages=messages,
-        latest_user_text=user_text,
+        messages=snapshot_messages,
+        latest_user_text=_latest_user_text(snapshot_messages),
     )
     messages, pending_gateway_meta = _inject_pending_gateway_tool_turns(
         messages,
@@ -2562,7 +2567,21 @@ def _record_upstream_payload(log_entry: Optional[dict], payload: dict) -> None:
         return
     log_entry["upstream_payload_summary"] = _upstream_payload_summary(payload)
     if log_entry.get("request_payloads_retained"):
-        log_entry["upstream_payload"] = payload
+        log_entry["upstream_payload"] = _payload_without_image_blocks(payload)
+
+
+def _payload_without_image_blocks(payload: dict) -> dict:
+    clean = dict(payload)
+    messages = clean.get("messages")
+    if isinstance(messages, list):
+        clean["messages"] = _trim_client_image_blocks(messages, keep_recent_messages=0)[0]
+    system = clean.get("system")
+    if isinstance(system, list):
+        clean["system"] = _trim_client_image_blocks(
+            [{"role": "system", "content": system}],
+            keep_recent_messages=0,
+        )[0][0]["content"]
+    return clean
 
 
 def _record_response_text(log_entry: dict, text: str, preview_limit: int = 200) -> None:
@@ -2594,7 +2613,8 @@ async def chat_completions(request: Request, body: ChatRequest):
     sessions = SessionManager(store, cfg)
     session = meta["session"]
     session_id = session["id"]
-    sessions.log_input_messages(session_id, prepared_messages)
+    prepared_messages_for_log, _ = _trim_client_image_blocks(prepared_messages, keep_recent_messages=0)
+    sessions.log_input_messages(session_id, prepared_messages_for_log)
 
     merged_tools = merge_tools(body.tools, cfg)
     has_gateway_managed_tools = any(
@@ -2645,8 +2665,8 @@ async def chat_completions(request: Request, body: ChatRequest):
         "upstream_url": request_upstream["chat_url"],
         "upstream_scope": request_upstream["scope"],
         "request_payloads_retained": retain_payloads,
-        "prepared_messages": prepared_messages if retain_payloads else None,
-        "prepared_messages_preview": [_message_log_preview(msg) for msg in prepared_messages],
+        "prepared_messages": prepared_messages_for_log if retain_payloads else None,
+        "prepared_messages_preview": [_message_log_preview(msg) for msg in prepared_messages_for_log],
         "upstream_payload": None,
         "upstream_payload_summary": None,
         "cache_layers": {
