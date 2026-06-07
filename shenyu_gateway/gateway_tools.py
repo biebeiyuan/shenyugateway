@@ -671,7 +671,7 @@ class GatewayToolService:
         start, end = period_bounds(period_type, period_key)
         author = (author or "沈予").strip() or "沈予"
         title = (title or "").strip() or f"{period_key} 手写日历"
-        summary = (summary or "").strip() or _shorten(body, 120)
+        summary = (summary or "").strip()
         digest = (digest or "").strip() or summary or _shorten(body, 180)
 
         rows = await self._safe_query(

@@ -285,7 +285,7 @@ The calendar layer writes private day/week/month memory pages. It is manually tr
 Before ordinary chat replies, the gateway also injects a compact calendar memory block when Supabase is configured:
 by default latest 3 day pages, latest 1 week page, and latest 1 month page. Day/week/month injection can be
 enabled or disabled independently, and each period has its own injected-page limit. Chat context injection includes
-the stored `digest` only, without the listing `summary` and without additional digest truncation.
+the stored `content` body only, without the listing `summary` or short `digest`.
 
 Tables:
 
@@ -304,8 +304,8 @@ Chat injection:
 - `ContextBuilder` reads latest calendar pages into the `slow` layer.
 - `CALENDAR_INJECT_DAY`, `CALENDAR_INJECT_WEEK`, and `CALENDAR_INJECT_MONTH` toggle period injection.
 - `CALENDAR_CONTEXT_DAY_LIMIT`, `CALENDAR_CONTEXT_WEEK_LIMIT`, and `CALENDAR_CONTEXT_MONTH_LIMIT` set injected counts.
-- Only full stored `digest` values are rendered into chat context; `summary` remains for calendar listings.
-- The rendered block uses short labels: `这几天`, `这周`, `这个月`.
+- Only stored `content` bodies are rendered into chat context; `summary` remains for calendar listings and `digest` remains a short memory snippet.
+- The rendered block uses labels: `recent days`, `this week`, `this month`.
 - Missing Supabase or empty pages are skipped silently.
 
 The active source renderer is snapshot-based. It no longer injects the retired summary/window blocks.

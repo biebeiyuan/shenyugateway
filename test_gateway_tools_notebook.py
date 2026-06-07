@@ -85,3 +85,27 @@ def test_notebook_list_filters_hisense_scope_by_tag():
             },
         )
     ]
+
+
+def test_add_calendar_does_not_derive_summary_from_content():
+    supabase = FakeSupabase()
+    service = GatewayToolService(
+        runtime_config=SimpleNamespace(),
+        supabase=supabase,
+        store=None,
+    )
+
+    result = asyncio.run(
+        service.add_calendar(
+            content="这是一段手写日历正文，应该只进入正文和 digest 兜底，不应该被截成 summary。",
+            period_key="2026-05-18",
+            period_type="day",
+        )
+    )
+
+    assert result["ok"] is True
+    assert supabase.inserts[0][0] == "calendar_pages"
+    payload = supabase.inserts[0][1]
+    assert payload["content"].startswith("这是一段手写日历正文")
+    assert payload["summary"] == ""
+    assert payload["digest"]

@@ -114,6 +114,29 @@ ContextBuilder, GatewayToolService, cfg, gateway_namespace = _load_gateway_class
 configure_gateway_tools(runtime_config=cfg, supabase=None, store=None)
 
 
+class _FakeCalendarSupabase:
+    def __init__(self, rows: list[dict[str, Any]]):
+        self.rows = rows
+        self.queries: list[tuple[str, dict[str, Any]]] = []
+
+    async def query(self, table: str, params: dict[str, Any]) -> list[dict[str, Any]]:
+        self.queries.append((table, dict(params)))
+        if table != "calendar_pages":
+            return []
+
+        rows = [dict(row) for row in self.rows]
+        period_filter = params.get("period_type")
+        if isinstance(period_filter, str) and period_filter.startswith("eq."):
+            period_type = period_filter.removeprefix("eq.")
+            rows = [row for row in rows if row.get("period_type") == period_type]
+        latest_filter = params.get("is_latest")
+        if latest_filter == "eq.true":
+            rows = [row for row in rows if row.get("is_latest") is True]
+        rows.sort(key=lambda row: row.get("period_start") or "", reverse=True)
+        limit = int(params.get("limit") or len(rows))
+        return rows[:limit]
+
+
 def test_hisense_context_can_see_both_heartbeat_pools(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     normal_session = store.get_or_create_session("main", "operit")
@@ -163,6 +186,94 @@ def test_gateway_tool_policy_names_broker_call_shape_and_tool_list():
     assert "shenyu_list_mem_notes" in stable
     assert "列 mem 便签" in stable
     assert "shenyu_read_heartbeat" in stable
+
+
+def test_calendar_memory_renders_page_content_not_summary_or_digest():
+    layers = context_layers.render_layered_additions(
+        {
+            "stable_charter": "stable charter",
+            "calendar_context": {
+                "day": [
+                    {
+                        "period_key": "2026-05-18",
+                        "summary": "Day summary should stay out",
+                        "digest": "Day digest should stay out",
+                        "content": "Full day content goes in",
+                    }
+                ],
+                "week": [],
+                "month": [],
+            },
+            "heartbeat_digest": "",
+            "hisense_heartbeat_digest": "",
+            "notebook_items": [],
+            "last_wake_recap": "",
+            "mem_notes": [],
+        },
+        context_layers.ContextLayerSettings(
+            enable_gateway_tools=False,
+            inject_inline_memory_prompt=False,
+            heartbeat_prompt="heartbeat prompt",
+            inline_mem_prompt="inline mem prompt",
+        ),
+    )
+
+    assert "Full day content goes in" in layers["slow"]
+    assert "Day summary should stay out" not in layers["slow"]
+    assert "Day digest should stay out" not in layers["slow"]
+
+
+def test_calendar_context_pages_loads_and_filters_by_content():
+    fake_supabase = _FakeCalendarSupabase(
+        [
+            {
+                "period_type": "day",
+                "period_key": "2026-05-19",
+                "title": "Empty content",
+                "summary": "Summary should not be enough",
+                "digest": "Digest should not be enough",
+                "content": "",
+                "period_start": "2026-05-19T00:00:00+00:00",
+                "is_latest": True,
+            },
+            {
+                "period_type": "day",
+                "period_key": "2026-05-18",
+                "title": "Full content",
+                "summary": "Summary stays out",
+                "digest": "Digest stays out",
+                "content": "Full day content goes in",
+                "period_start": "2026-05-18T00:00:00+00:00",
+                "is_latest": True,
+            },
+        ]
+    )
+
+    old_supabase = gateway_namespace["supabase_client"]
+    old_day_enabled = cfg.calendar_inject_day
+    old_day_limit = cfg.calendar_context_day_limit
+    old_week_enabled = cfg.calendar_inject_week
+    old_month_enabled = cfg.calendar_inject_month
+    try:
+        gateway_namespace["supabase_client"] = fake_supabase
+        cfg.calendar_inject_day = True
+        cfg.calendar_context_day_limit = 5
+        cfg.calendar_inject_week = False
+        cfg.calendar_inject_month = False
+
+        builder = ContextBuilder(None, None, SimpleNamespace())
+        calendar_context = asyncio.run(builder.calendar_context_pages())
+    finally:
+        gateway_namespace["supabase_client"] = old_supabase
+        cfg.calendar_inject_day = old_day_enabled
+        cfg.calendar_context_day_limit = old_day_limit
+        cfg.calendar_inject_week = old_week_enabled
+        cfg.calendar_inject_month = old_month_enabled
+
+    assert "content" in fake_supabase.queries[0][1]["select"]
+    assert [row["period_key"] for row in calendar_context["day"]] == ["2026-05-18"]
+    assert calendar_context["day"][0]["content"] == "Full day content goes in"
+    assert calendar_context["day"][0]["digest"] == "Digest stays out"
 
 
 def test_hisense_client_defaults_to_isolated_session_tag():

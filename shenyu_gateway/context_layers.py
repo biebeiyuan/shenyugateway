@@ -66,9 +66,9 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
             continue
         calendar_lines.append(f"{label}:")
         for row in rows:
-            digest = (row.get("digest") or "").strip()
-            if digest:
-                calendar_lines.append(f"- {row.get('period_key') or ''} digest: {digest}")
+            content = (row.get("content") or "").strip()
+            if content:
+                calendar_lines.append(f"- {row.get('period_key') or ''} content: {content}")
     if calendar_lines:
         slow_blocks.append("## Calendar Memory\n" + "\n".join(calendar_lines))
 

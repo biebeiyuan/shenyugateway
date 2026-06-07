@@ -85,7 +85,7 @@ def extract_json_object(text: str) -> dict[str, Any]:
 
     raw = (text or "").strip()
     if not raw:
-        return {"title": "未写下标题", "content": "今天还没有写下具体内容。", "summary": "今天还没有写下具体内容。", "digest": "今天还没有写下具体内容。"}
+        return {"title": "未写下标题", "content": "今天还没有写下具体内容。", "summary": "", "digest": "今天还没有写下具体内容。"}
     if raw.startswith("```"):
         lines = raw.splitlines()
         if lines and lines[0].strip().startswith("```"):
@@ -117,7 +117,7 @@ def extract_json_object(text: str) -> dict[str, Any]:
             parsed = parsed[0]
         if isinstance(parsed, dict):
             return _normalize_calendar_json(parsed)
-    return {"title": "日历记忆", "content": raw, "summary": raw[:120], "digest": raw[:220]}
+    return {"title": "日历记忆", "content": raw, "summary": "", "digest": raw[:220]}
 
 
 def _normalize_calendar_json(value: dict[str, Any]) -> dict[str, Any]:
