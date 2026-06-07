@@ -424,8 +424,6 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "period_key": "2026-W23",
             "period_type": "week",
             "title": "标题",
-            "summary": "摘要",
-            "digest": "摘要 digest",
             "author": "圆圆",
         },
         "shenyu_list_mem_notes": {"query": "list", "status": "all", "mem_type": "memory", "limit": 8},
@@ -564,8 +562,8 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "period_key": "2026-W23",
             "period_type": "week",
             "title": "标题",
-            "summary": "摘要",
-            "digest": "摘要 digest",
+            "summary": "",
+            "digest": "",
             "author": "圆圆",
         },
         "shenyu_list_mem_notes": {
@@ -746,14 +744,14 @@ def test_gateway_broker_description_matches_scan_friendly_sample():
     assert "列 mem 便签" in description
     assert "shenyu_update_mem_note" in description
     assert "shenyu_add_calendar" in description
-    assert "content 是会反上来的正文" in description
-    assert "summary 只给列表看" in description
+    assert "写想记住的正文" in description
+    assert "之后反上来的也是正文" in description
     assert properties["params"]["description"] == "选好的工具的参数。推荐使用这个字段。"
     assert properties["arguments"]["description"] == "旧字段；等同于 params。"
     assert function["parameters"]["required"] == ["tool"]
 
 
-def test_add_calendar_tool_schema_explains_calendar_field_roles():
+def test_add_calendar_tool_schema_exposes_only_body_and_period_fields():
     cfg = _cfg()
     cfg.gateway_tool_mode = "full"
 
@@ -762,13 +760,13 @@ def test_add_calendar_tool_schema_explains_calendar_field_roles():
     description = function["description"]
     properties = function["parameters"]["properties"]
 
-    assert "content 是以后会反上来的正文" in description
-    assert "summary 只给日历列表看" in description
-    assert "不会自动截正文" in description
-    assert "digest 是短记忆片段" in description
+    assert "手写一页日/周/月日历日记" in description
+    assert "写想记住的正文就好" in description
+    assert "之后聊天上下文反上来的也是这份正文" in description
     assert properties["content"]["description"] == "日历日记正文。之后聊天上下文反上来的就是这个正文。"
-    assert properties["summary"]["description"] == "只给日历列表展示的一句话摘要。不填就留空，不会从正文截取。"
-    assert "聊天注入不使用它" in properties["digest"]["description"]
+    assert set(properties) == {"content", "period_key", "period_type", "title", "author"}
+    assert "summary" not in properties
+    assert "digest" not in properties
 
 
 def test_execute_gateway_tool_accepts_broker_params_field():

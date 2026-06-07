@@ -25,7 +25,7 @@ _BROKER_TOOL_HINTS = {
     "shenyu_update_mem_note": "改某条 mem",
     "shenyu_notebook_list": "读 notebook（跨窗口/海信那边）",
     "shenyu_notebook_write": "写 notebook",
-    "shenyu_add_calendar": "手写日/周/月日历日记；content 是会反上来的正文，summary 只给列表看",
+    "shenyu_add_calendar": "手写日/周/月日历日记；写想记住的正文，之后反上来的也是正文",
     "shenyu_read_heartbeat": "读我自己的心跳",
     "shenyu_supabase_guide": "忘了 Supabase 表结构看这个",
 }
@@ -199,9 +199,8 @@ def _gateway_core_tools() -> list[dict]:
             "function": {
                 "name": "shenyu_add_calendar",
                 "description": (
-                    "手写一页日历日记，可以是 day / week / month。"
-                    "content 是以后会反上来的正文；summary 只给日历列表看，没写就留空，不会自动截正文；"
-                    "digest 是短记忆片段，没写时会用 summary 或正文短兜底。"
+                    "手写一页日/周/月日历日记。"
+                    "写想记住的正文就好，之后聊天上下文反上来的也是这份正文。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -221,14 +220,6 @@ def _gateway_core_tools() -> list[dict]:
                             "description": "写日、周、月哪一种日历日记。",
                         },
                         "title": {"type": "string", "description": "标题。不填会用周期默认标题。"},
-                        "summary": {
-                            "type": "string",
-                            "description": "只给日历列表展示的一句话摘要。不填就留空，不会从正文截取。",
-                        },
-                        "digest": {
-                            "type": "string",
-                            "description": "短记忆片段。没写时会用 summary 或正文短兜底；聊天注入不使用它。",
-                        },
                         "author": {"type": "string", "default": "沈予"},
                     },
                     "required": ["content"],
@@ -786,8 +777,6 @@ async def _handle_add_calendar(ctx: ToolContext) -> dict:
         period_key=ctx.arguments.get("period_key"),
         period_type=ctx.arguments.get("period_type", "day"),
         title=ctx.arguments.get("title", ""),
-        summary=ctx.arguments.get("summary", ""),
-        digest=ctx.arguments.get("digest", ""),
         author=ctx.arguments.get("author", "沈予"),
     )
 

@@ -186,8 +186,8 @@ def test_gateway_tool_policy_names_broker_call_shape_and_tool_list():
     assert "shenyu_list_mem_notes" in stable
     assert "列 mem 便签" in stable
     assert "shenyu_add_calendar" in stable
-    assert "`content` 是以后会反上来的正文" in stable
-    assert "`summary` 只给列表看" in stable
+    assert "写想记住的正文就好" in stable
+    assert "之后反上来的也是这份正文" in stable
     assert "shenyu_read_heartbeat" in stable
 
 

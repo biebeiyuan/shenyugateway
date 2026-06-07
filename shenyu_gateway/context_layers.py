@@ -24,7 +24,7 @@ _GATEWAY_TOOL_POLICY = (
     "- `shenyu_update_mem_note` 改某条 mem\n"
     "- `shenyu_notebook_list`   读 notebook（跨窗口/海信那边）\n"
     "- `shenyu_notebook_write`  写 notebook\n"
-    "- `shenyu_add_calendar`    手写日/周/月日历日记；`content` 是以后会反上来的正文，`summary` 只给列表看，不会自动截正文。\n"
+    "- `shenyu_add_calendar`    手写日/周/月日历日记；写想记住的正文就好，之后反上来的也是这份正文。\n"
     "- `shenyu_read_heartbeat`  读我自己的心跳\n"
     "- `shenyu_supabase_guide`  忘了 Supabase 表结构看这个\n"
     "- 工具返回的东西网关会自己处理，我不用手动格式化。\n"
