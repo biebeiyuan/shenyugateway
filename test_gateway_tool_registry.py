@@ -4,7 +4,7 @@ import asyncio
 import pytest
 from types import SimpleNamespace
 
-from shenyu_gateway.tool_registry import execute_gateway_tool, gateway_native_tools
+from shenyu_gateway.tool_registry import execute_gateway_tool, gateway_native_tools, merge_tools
 
 
 class FakeToolService:
@@ -1259,3 +1259,29 @@ def test_shenyu_recall_source_types_are_public_set_only():
     assert "note" not in source_types
     assert "atomic" not in source_types
     assert "meta" not in source_types
+
+
+def test_lightweight_cfg_defaults_to_core_gateway_tools_enabled():
+    cfg = SimpleNamespace(gateway_tool_mode="broker")
+
+    broker_tool = gateway_native_tools(cfg)[0]
+    broker_names = set(broker_tool["function"]["parameters"]["properties"]["tool"]["enum"])
+
+    assert broker_tool["function"]["name"] == "shenyu_gateway_tool"
+    assert "shenyu_recall" in broker_names
+    assert "shenyu_list_mem_notes" in broker_names
+
+
+def test_upstream_tools_toggle_is_total_forwarding_gate():
+    cfg = _cfg()
+    cfg.enable_upstream_tools = False
+    client_tool = {
+        "type": "function",
+        "function": {
+            "name": "client_tool",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+    assert gateway_native_tools(cfg) == []
+    assert merge_tools([client_tool], cfg) == []

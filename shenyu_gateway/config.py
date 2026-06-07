@@ -83,7 +83,8 @@ class RuntimeConfig:
         self.calendar_inject_month: bool = _env_bool("CALENDAR_INJECT_MONTH", True)
         self.inject_mem_notes: bool = _env_bool("INJECT_MEM_NOTES", False)
         self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
-        self.enable_gateway_tools: bool = _env_bool("ENABLE_GATEWAY_TOOLS", False)
+        self.enable_upstream_tools: bool = _env_bool("ENABLE_UPSTREAM_TOOLS", True)
+        self.enable_gateway_tools: bool = _env_bool("ENABLE_GATEWAY_TOOLS", True)
         self.enable_mem0_management_tools: bool = _env_bool("ENABLE_MEM0_MANAGEMENT_TOOLS", False)
         self.expose_supabase_tools: bool = _env_bool("EXPOSE_SUPABASE_TOOLS", True)
         self.gateway_tool_mode: str = self._normalize_tool_mode(os.getenv("GATEWAY_TOOL_MODE", "broker"))
@@ -154,6 +155,7 @@ class RuntimeConfig:
             "calendar_inject_month": self.calendar_inject_month,
             "inject_mem_notes": self.inject_mem_notes,
             "enable_cold_start": self.enable_cold_start,
+            "enable_upstream_tools": self.enable_upstream_tools,
             "enable_gateway_tools": self.enable_gateway_tools,
             "enable_mem0_management_tools": self.enable_mem0_management_tools,
             "expose_supabase_tools": self.expose_supabase_tools,

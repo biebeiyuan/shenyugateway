@@ -144,6 +144,42 @@ def test_build_upstream_request_omits_openai_cache_control_when_disabled(monkeyp
     assert _contains_cache_control(payload) is False
 
 
+def test_build_upstream_request_omits_all_tools_when_upstream_tools_disabled(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "openai")
+    monkeypatch.setenv("UPSTREAM_URL", "https://example.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_UPSTREAM_TOOLS", "false")
+    monkeypatch.setenv("ENABLE_GATEWAY_TOOLS", "true")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "client_tool",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+        )
+
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert "tools" not in payload
+
+
 def test_sse_response_disables_proxy_buffering():
     async def generate():
         yield "data: [DONE]\n\n"

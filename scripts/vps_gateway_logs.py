@@ -19,6 +19,7 @@ DEFAULT_LIMIT = 30
 LOCAL_CONFIG_ENV = "SHENYU_GATEWAY_LOG_CONFIG"
 LOCAL_CONFIG_NAME = ".shenyu-gateway-debug.local.json"
 HOME_CONFIG_NAME = ".shenyu-gateway-debug.json"
+DEFAULT_CONTAINER_MATCH = "shenyu|gateway"
 
 
 def _configure_stdio() -> None:
@@ -81,6 +82,14 @@ def _load_local_config(path: str = "") -> dict[str, Any]:
 def _config_first(config: dict[str, Any], *names: str) -> str:
     for name in names:
         value = config.get(name)
+        if value is not None and str(value).strip():
+            return str(value).strip()
+    return ""
+
+
+def _args_first(args: argparse.Namespace, *names: str) -> str:
+    for name in names:
+        value = getattr(args, name, None)
         if value is not None and str(value).strip():
             return str(value).strip()
     return ""
@@ -175,20 +184,103 @@ def _ssh_args(args: argparse.Namespace, config: dict[str, Any], remote: str) -> 
     return ssh_args
 
 
-def _remote_gateway_api_command(args: argparse.Namespace, config: dict[str, Any], path: str, timeout: float) -> str:
-    container = (
-        getattr(args, "container", None)
-        or _config_first(config, "container", "docker_container")
+def _looks_like_container_id(value: str) -> bool:
+    return bool(re.fullmatch(r"[0-9a-fA-F]{4,64}", value.strip()))
+
+
+def _configured_container(config: dict[str, Any]) -> str:
+    return _config_first(
+        config,
+        "container_name",
+        "docker_container_name",
+        "container",
+        "docker_container",
+        "container_id",
+        "docker_container_id",
     )
-    if container:
-        resolve_container = f"name={sh_quote(container)}"
-    else:
-        pattern = _config_first(config, "container_match", "match") or "shenyu|gateway"
-        resolve_container = (
-            "name=$(docker ps --format '{{.Names}}' | grep -Ei "
-            + sh_quote(pattern)
-            + " | head -n 1)"
+
+
+def _container_match(args: argparse.Namespace, config: dict[str, Any]) -> str:
+    return _args_first(args, "match") or _config_first(config, "container_match", "match") or DEFAULT_CONTAINER_MATCH
+
+
+def _container_label(args: argparse.Namespace, config: dict[str, Any]) -> str:
+    return _args_first(args, "label") or _config_first(config, "container_label", "docker_label", "label")
+
+
+def _container_service(args: argparse.Namespace, config: dict[str, Any]) -> str:
+    return _args_first(args, "service") or _config_first(config, "service", "compose_service", "container_service")
+
+
+def _remote_container_exact_lookup(target: str) -> str:
+    condition = "$1 == target || $2 == target"
+    if _looks_like_container_id(target):
+        condition += " || index($1, target) == 1 || index(target, $1) == 1"
+    return (
+        "docker ps --no-trunc --format '{{.ID}} {{.Names}}' | "
+        "awk -v target="
+        + sh_quote(target)
+        + " '"
+        + condition
+        + " {print $2; exit}'"
+    )
+
+
+def _remote_container_resolver(args: argparse.Namespace, config: dict[str, Any], *, purpose: str) -> str:
+    target_from_args = _args_first(args, "container")
+    target = target_from_args or _configured_container(config)
+    label = _container_label(args, config)
+    service = _container_service(args, config)
+    pattern = _container_match(args, config)
+    steps = ["name=''"]
+
+    if target:
+        steps.append(f"name=$({_remote_container_exact_lookup(target)})")
+        steps.append(
+            "if [ -z \"$name\" ]; then "
+            + "echo '# configured container "
+            + sh_quote(target)
+            + " is not running; falling back to label/service/match resolution' >&2; "
+            + "fi"
         )
+    if label:
+        steps.append(
+            "if [ -z \"$name\" ]; then "
+            + "name=$(docker ps --filter "
+            + sh_quote(f"label={label}")
+            + " --format '{{.Names}}' | head -n 1); "
+            + "fi"
+        )
+    if service:
+        steps.append(
+            "if [ -z \"$name\" ]; then "
+            + "name=$(docker ps --filter "
+            + sh_quote(f"label=com.docker.compose.service={service}")
+            + " --format '{{.Names}}' | head -n 1); "
+            + "fi"
+        )
+    if pattern:
+        steps.append(
+            "if [ -z \"$name\" ]; then "
+            + "name=$(docker ps --format '{{.Names}} {{.Image}} {{.Labels}}' | grep -Ei "
+            + sh_quote(pattern)
+            + " | awk '{print $1; exit}'); "
+            + "fi"
+        )
+
+    steps.append(
+        "if [ -z \"$name\" ]; then "
+        + f"echo 'No gateway container found for {purpose}. "
+        + "Set container_name, container_label, compose_service, or container_match in local config.' >&2; "
+        + "docker ps --format 'table {{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}' >&2; "
+        + "exit 1; "
+        + "fi"
+    )
+    return "; ".join(steps)
+
+
+def _remote_gateway_api_command(args: argparse.Namespace, config: dict[str, Any], path: str, timeout: float) -> str:
+    resolve_container = _remote_container_resolver(args, config, purpose="gateway API")
     code = (
         "import os, sys, urllib.parse, urllib.request\n"
         "path = sys.argv[1]\n"
@@ -205,11 +297,6 @@ def _remote_gateway_api_command(args: argparse.Namespace, config: dict[str, Any]
     return (
         resolve_container
         + "; "
-        + "if [ -z \"$name\" ]; then "
-        + "echo 'No gateway container found. Set container or container_match in local config.' >&2; "
-        + "docker ps --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}' >&2; "
-        + "exit 1; "
-        + "fi; "
         + "docker exec \"$name\" python -c "
         + sh_quote(code)
         + " "
@@ -581,10 +668,12 @@ def _remote_command(args: argparse.Namespace, config: dict[str, Any]) -> str:
     if args.remote_command:
         return args.remote_command
     if args.list_containers:
-        return "docker ps --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}'"
-    container = args.container or _config_first(config, "container", "docker_container")
-    if container:
-        return f"docker logs --tail {tail}{follow} {sh_quote(container)}"
+        return "docker ps --format 'table {{.ID}}\\t{{.Names}}\\t{{.Image}}\\t{{.Status}}\\t{{.Ports}}'"
+    container = args.container or _configured_container(config)
+    label = _container_label(args, config)
+    if container or label:
+        resolve_container = _remote_container_resolver(args, config, purpose="docker logs")
+        return resolve_container + "; echo \"# docker logs $name\"; " + f"docker logs --tail {tail}{follow} \"$name\""
     service = args.service or _config_first(config, "service", "compose_service")
     if service:
         base = f"docker compose logs --tail {tail}"
@@ -596,19 +685,8 @@ def _remote_command(args: argparse.Namespace, config: dict[str, Any]) -> str:
             return f"cd {sh_quote(cwd)} && {base}"
         return base
 
-    pattern = args.match or _config_first(config, "container_match", "match") or "shenyu|gateway"
-    return (
-        "name=$(docker ps --format '{{.Names}}' | grep -Ei "
-        + sh_quote(pattern)
-        + " | head -n 1); "
-        + "if [ -z \"$name\" ]; then "
-        + "echo 'No matching container. Use --list-containers or --container NAME.'; "
-        + "docker ps --format 'table {{.Names}}\\t{{.Image}}\\t{{.Status}}'; "
-        + "exit 1; "
-        + "fi; "
-        + "echo \"# docker logs $name\"; "
-        + f"docker logs --tail {tail}{follow} \"$name\""
-    )
+    resolve_container = _remote_container_resolver(args, config, purpose="docker logs")
+    return resolve_container + "; echo \"# docker logs $name\"; " + f"docker logs --tail {tail}{follow} \"$name\""
 
 
 def sh_quote(value: str) -> str:
@@ -648,7 +726,10 @@ def build_parser() -> argparse.ArgumentParser:
     api.add_argument("--interval", type=float, default=3.0)
     api.add_argument("--timeout", type=float, default=30.0)
     api.add_argument("--via-ssh", action="store_true", help="Read gateway API from inside the configured VPS/container.")
-    api.add_argument("--container", help="Container name/id for --via-ssh. Defaults to local config.")
+    api.add_argument("--container", help="Container name/id candidate for --via-ssh. Falls back if it is no longer running.")
+    api.add_argument("--match", help="Regex used to auto-pick a running container for --via-ssh.")
+    api.add_argument("--label", help="Docker label used to auto-pick a running container for --via-ssh.")
+    api.add_argument("--service", help="Docker compose service name used to auto-pick a running container for --via-ssh.")
     api.add_argument("--host", help="SSH host for --via-ssh. Defaults to local config.")
     api.add_argument("--user", help="SSH user for --via-ssh. Defaults to local config.")
     api.add_argument("--port", type=int, help="SSH port for --via-ssh. Defaults to local config.")
@@ -671,8 +752,9 @@ def build_parser() -> argparse.ArgumentParser:
     ssh.add_argument("--identity", help="SSH identity file.")
     ssh.add_argument("--tail", type=int, default=200)
     ssh.add_argument("--follow", "-f", action="store_true")
-    ssh.add_argument("--container", help="Docker container name/id to tail.")
+    ssh.add_argument("--container", help="Docker container name/id candidate to tail. Falls back if it is no longer running.")
     ssh.add_argument("--match", help="Regex used to auto-pick a running container. Default: shenyu|gateway.")
+    ssh.add_argument("--label", help="Docker label used to auto-pick a running container.")
     ssh.add_argument("--service", help="docker compose service name to tail.")
     ssh.add_argument("--cwd", help="Remote compose directory, used with --service.")
     ssh.add_argument("--list-containers", action="store_true")

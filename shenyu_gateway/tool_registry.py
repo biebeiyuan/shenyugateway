@@ -30,6 +30,22 @@ _BROKER_TOOL_HINTS = {
 }
 
 
+def _upstream_tools_enabled(cfg: Any) -> bool:
+    return bool(getattr(cfg, "enable_upstream_tools", True))
+
+
+def _core_gateway_tools_enabled(cfg: Any) -> bool:
+    return bool(getattr(cfg, "enable_gateway_tools", True))
+
+
+def _mem0_management_tools_enabled(cfg: Any) -> bool:
+    return bool(getattr(cfg, "enable_mem0_management_tools", False))
+
+
+def _supabase_tools_enabled(cfg: Any) -> bool:
+    return bool(getattr(cfg, "expose_supabase_tools", False))
+
+
 def _gateway_list_mem_notes_tool() -> dict:
     return {
         "type": "function",
@@ -407,13 +423,13 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
 
 def _expanded_gateway_native_tools(cfg: Any) -> list[dict]:
     tools = []
-    if cfg.enable_gateway_tools:
+    if _core_gateway_tools_enabled(cfg):
         tools.extend(_gateway_core_tools())
-    if cfg.enable_mem0_management_tools:
-        if not cfg.enable_gateway_tools:
+    if _mem0_management_tools_enabled(cfg):
+        if not _core_gateway_tools_enabled(cfg):
             tools.append(_gateway_list_mem_notes_tool())
         tools.extend(_gateway_mem0_management_tools())
-    if cfg.expose_supabase_tools:
+    if _supabase_tools_enabled(cfg):
         tools.extend(
             [
                 {
@@ -558,7 +574,13 @@ def _gateway_broker_tool(cfg: Any) -> dict:
 
 
 def gateway_native_tools(cfg: Any) -> list[dict]:
-    tools_enabled = bool(cfg.enable_gateway_tools or cfg.enable_mem0_management_tools or cfg.expose_supabase_tools)
+    if not _upstream_tools_enabled(cfg):
+        return []
+    tools_enabled = bool(
+        _core_gateway_tools_enabled(cfg)
+        or _mem0_management_tools_enabled(cfg)
+        or _supabase_tools_enabled(cfg)
+    )
     if not tools_enabled:
         return []
     if getattr(cfg, "gateway_tool_mode", "full") == "broker":
@@ -567,8 +589,14 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
 
 
 def merge_tools(client_tools: Optional[list[dict]], cfg: Any) -> list[dict]:
+    if not _upstream_tools_enabled(cfg):
+        return []
     merged = list(client_tools or [])
-    if not cfg.enable_gateway_tools and not cfg.enable_mem0_management_tools and not cfg.expose_supabase_tools:
+    if not (
+        _core_gateway_tools_enabled(cfg)
+        or _mem0_management_tools_enabled(cfg)
+        or _supabase_tools_enabled(cfg)
+    ):
         return merged
     existing = {tool.get("function", {}).get("name") for tool in merged if isinstance(tool, dict)}
     for tool in gateway_native_tools(cfg):

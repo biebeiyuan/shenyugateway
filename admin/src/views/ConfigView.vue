@@ -59,6 +59,8 @@ const config = ref<GatewayConfig>({
   cold_start_message_limit: null,
   cold_start_idle_minutes: 120,
   model_mapping: {},
+  enable_upstream_tools: true,
+  enable_gateway_tools: true,
   gateway_tool_mode: 'broker',
   inject_inline_memory_prompt: false,
   enable_inline_memory_capture: false,
@@ -182,6 +184,7 @@ async function doSave() {
       model_mapping: Object.fromEntries(modelEntries.value.filter(([key, value]) => key && value)),
       inject_meta_summaries: config.value.inject_meta_summaries,
 
+      enable_upstream_tools: config.value.enable_upstream_tools,
       enable_gateway_tools: config.value.enable_gateway_tools,
       inject_inline_memory_prompt: memPromptAndCapture.value,
       enable_inline_memory_capture: memPromptAndCapture.value,
@@ -409,6 +412,9 @@ function removeModel(index: number) {
             <NSwitch v-model:value="config.inject_meta_summaries" />
           </NFormItem>
 
+          <NFormItem label="上游 tools 总开关">
+            <NSwitch v-model:value="config.enable_upstream_tools" />
+          </NFormItem>
           <NFormItem label="启用 shenyu_* 工具">
             <NSwitch v-model:value="config.enable_gateway_tools" />
           </NFormItem>
