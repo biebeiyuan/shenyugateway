@@ -25,6 +25,7 @@ _BROKER_TOOL_HINTS = {
     "shenyu_update_mem_note": "改某条 mem",
     "shenyu_notebook_list": "读 notebook（跨窗口/海信那边）",
     "shenyu_notebook_write": "写 notebook",
+    "shenyu_add_calendar": "手写日/周/月日历日记；content 是会反上来的正文，summary 只给列表看",
     "shenyu_read_heartbeat": "读我自己的心跳",
     "shenyu_supabase_guide": "忘了 Supabase 表结构看这个",
 }
@@ -197,16 +198,37 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_add_calendar",
-                "description": "写一页日历记忆，可以是 day / week / month。",
+                "description": (
+                    "手写一页日历日记，可以是 day / week / month。"
+                    "content 是以后会反上来的正文；summary 只给日历列表看，没写就留空，不会自动截正文；"
+                    "digest 是短记忆片段，没写时会用 summary 或正文短兜底。"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "content": {"type": "string"},
-                        "period_key": {"type": "string"},
-                        "period_type": {"type": "string", "enum": ["day", "week", "month"], "default": "day"},
-                        "title": {"type": "string"},
-                        "summary": {"type": "string"},
-                        "digest": {"type": "string"},
+                        "content": {
+                            "type": "string",
+                            "description": "日历日记正文。之后聊天上下文反上来的就是这个正文。",
+                        },
+                        "period_key": {
+                            "type": "string",
+                            "description": "day 用 YYYY-MM-DD，week 用 YYYY-Www，month 用 YYYY-MM；不填则用当前周期。",
+                        },
+                        "period_type": {
+                            "type": "string",
+                            "enum": ["day", "week", "month"],
+                            "default": "day",
+                            "description": "写日、周、月哪一种日历日记。",
+                        },
+                        "title": {"type": "string", "description": "标题。不填会用周期默认标题。"},
+                        "summary": {
+                            "type": "string",
+                            "description": "只给日历列表展示的一句话摘要。不填就留空，不会从正文截取。",
+                        },
+                        "digest": {
+                            "type": "string",
+                            "description": "短记忆片段。没写时会用 summary 或正文短兜底；聊天注入不使用它。",
+                        },
                         "author": {"type": "string", "default": "沈予"},
                     },
                     "required": ["content"],
