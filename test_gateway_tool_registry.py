@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import pytest
 from types import SimpleNamespace
 
 from shenyu_gateway.tool_registry import execute_gateway_tool, gateway_native_tools, merge_tools
+from shenyu_gateway.tool_loop import _tool_call_arguments
 
 
 class FakeToolService:
@@ -700,8 +702,7 @@ def test_gateway_broker_description_matches_scan_friendly_sample():
     description = function["description"]
     properties = function["parameters"]["properties"]
 
-    assert "记忆库总入口。调用：填 tool 字段=工具全名" in description
-    assert "参数放 params" in description
+    assert "记忆库总入口。tool=工具全名，params=参数对象。" in description
     assert "shenyu_list_mem_notes" in description
     assert "列 mem 便签" in description
     assert "shenyu_update_mem_note" in description
@@ -709,8 +710,8 @@ def test_gateway_broker_description_matches_scan_friendly_sample():
     assert "写想记住的正文" in description
     assert "之后反上来的也是正文" in description
     assert "shenyu_get_meta_summaries" not in description
-    assert properties["params"]["description"] == "选好的工具的参数。推荐使用这个字段。"
-    assert properties["arguments"]["description"] == "旧字段；等同于 params。"
+    assert properties["params"]["description"] == "选中工具的参数对象。"
+    assert properties["arguments"]["description"] == "旧兼容字段，优先用 params。"
     assert function["parameters"]["required"] == ["tool"]
 
 
@@ -1041,6 +1042,95 @@ def test_execute_gateway_tool_accepts_broker_json_string_arguments():
             "auto_sync": False,
         }
     ]
+
+
+def test_execute_gateway_tool_accepts_broker_params_json_string_for_notebook_write():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_notebook_write",
+                "params": "{\"content\":\"给海信那边留一句。\",\"scope\":\"hisense\",\"tags\":[\"handoff\"]}",
+            },
+            session_tag="5.29",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "content": "给海信那边留一句。"}
+    assert service.calls == [
+        {
+            "tool": "shenyu_notebook_write",
+            "type": None,
+            "content": "给海信那边留一句。",
+            "tags": ["handoff"],
+            "metadata": None,
+            "session_tag": "5.29",
+            "scope": "hisense",
+        }
+    ]
+
+
+def test_execute_gateway_tool_rejects_plain_notebook_write_params_string():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_notebook_write",
+                "params": "直接把这句记进 notebook。",
+            },
+            session_tag="5.29",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": False, "error": "`params`/`arguments` must be an object or a JSON object string."}
+    assert service.calls == []
+
+
+def test_execute_gateway_tool_rejects_malformed_notebook_write_params_json():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_notebook_write",
+                "params": "{\"content\":",
+            },
+            session_tag="5.29",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result["ok"] is False
+    assert result["error"] == "`params`/`arguments` must be an object or a JSON object string."
+    assert service.calls == []
+
+
+def test_tool_call_arguments_unwraps_double_encoded_gateway_arguments():
+    args = {
+        "tool": "shenyu_gateway_tool",
+        "params": {"content": "双层编码也别把参数吞掉。"},
+    }
+
+    parsed = _tool_call_arguments(
+        {
+            "function": {
+                "name": "shenyu_gateway_tool",
+                "arguments": json.dumps(json.dumps(args, ensure_ascii=False), ensure_ascii=False),
+            }
+        }
+    )
+
+    assert parsed == args
 
 
 def test_execute_gateway_tool_routes_shenyu_recall():

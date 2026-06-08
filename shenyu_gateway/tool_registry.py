@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import json
 from typing import Any, Awaitable, Callable, Optional
 
 from shenyu_gateway.gateway_tools import GatewayToolService
 from shenyu_gateway.mem_notes import MEM_NOTE_TYPES
+from shenyu_gateway.utils import coerce_json_object as _coerce_json_object
 
 
 MEM_NOTE_TYPE_ENUM = list(MEM_NOTE_TYPES)
@@ -484,7 +484,7 @@ def _gateway_broker_tool(cfg: Any) -> dict:
         f"{tool['function']['name']:<24} {_broker_tool_summary(tool)}" for tool in expanded_tools
     )
     description = (
-        "记忆库总入口。调用：填 tool 字段=工具全名（带 shenyu_ 前缀），参数放 params。\n\n"
+        "记忆库总入口。tool=工具全名，params=参数对象。\n\n"
         + tool_lines
     )
     return {
@@ -499,12 +499,12 @@ def _gateway_broker_tool(cfg: Any) -> dict:
                     "params": {
                         "type": "object",
                         "additionalProperties": True,
-                        "description": "选好的工具的参数。推荐使用这个字段。",
+                        "description": "选中工具的参数对象。",
                     },
                     "arguments": {
                         "type": "object",
                         "additionalProperties": True,
-                        "description": "旧字段；等同于 params。",
+                        "description": "旧兼容字段，优先用 params。",
                     },
                 },
                 "required": ["tool"],
@@ -574,21 +574,6 @@ def _bool_arg(arguments: dict, key: str, default: bool) -> bool:
 
 def _query_arg(arguments: dict) -> str:
     return arguments.get("query") or arguments.get("q") or ""
-
-
-def _coerce_json_object(value: Any) -> Optional[dict]:
-    current = value
-    for _ in range(2):
-        if not isinstance(current, str):
-            break
-        text = current.strip()
-        if not text:
-            return {}
-        try:
-            current = json.loads(text)
-        except json.JSONDecodeError:
-            return None
-    return current if isinstance(current, dict) else None
 
 
 def _coerce_broker_arguments(value: Any) -> Optional[dict]:
@@ -920,9 +905,6 @@ async def execute_gateway_tool(
                 for key, value in arguments.items()
                 if key not in {"tool", "name", "action", "params", "arguments"}
             }
-        target_args = _coerce_broker_arguments(raw_target_args)
-        if target_args is None:
-            return {"ok": False, "error": "`params`/`arguments` must be an object or a JSON object string."}
         exposed = set(_gateway_tool_names(cfg))
         allowed = exposed | HIDDEN_COMPAT_TOOL_NAMES
         if target_name not in allowed:
@@ -933,6 +915,12 @@ async def execute_gateway_tool(
                     "Use `tool` with the full shenyu_ / supabase_ name, and put arguments in `params`."
                 ),
                 "available_tools": sorted(exposed),
+            }
+        target_args = _coerce_broker_arguments(raw_target_args)
+        if target_args is None:
+            return {
+                "ok": False,
+                "error": "`params`/`arguments` must be an object or a JSON object string.",
             }
         return await execute_gateway_tool(
             target_name,

@@ -68,7 +68,7 @@ Context is assembled in the order Shenyu should wake into it:
 
 The retired rolling and frozen context layers have been removed from the active flow. Their legacy SQLite tables are only cleaned up during session deletion when they exist in an older database.
 
-`GATEWAY_TOOL_MODE=broker` is the default and exposes one compact `shenyu_gateway_tool` dispatcher that calls the same gateway-native tools with fewer schema tokens. Broker calls should set `tool` to the full gateway tool name, including the `shenyu_` or `supabase_` prefix, and put the selected tool's arguments in `params`; the old `arguments` field remains compatible. Use `full` when strict per-tool parameter guidance matters more than prompt size.
+`GATEWAY_TOOL_MODE=broker` is the default and exposes one compact `shenyu_gateway_tool` dispatcher that calls the same gateway-native tools with fewer schema tokens. Broker calls should set `tool` to the full gateway tool name, including the `shenyu_` or `supabase_` prefix, and put the selected tool's arguments in the `params` object, not a JSON-encoded string. The old `arguments` field remains compatible. Use `full` when strict per-tool parameter guidance matters more than prompt size.
 
 ## Prompt Cache
 

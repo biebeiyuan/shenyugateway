@@ -7,6 +7,7 @@ from shenyu_gateway.upstream_adapter import (
     _anthropic_to_openai_chunk,
     _anthropic_to_openai_completion,
     _completion_to_stream_events,
+    _openai_to_anthropic,
 )
 
 
@@ -187,6 +188,55 @@ def test_anthropic_completion_maps_max_tokens_to_length():
         "completion_tokens": 2,
         "total_tokens": 3,
     }
+
+
+def test_openai_to_anthropic_unwraps_double_encoded_tool_arguments():
+    double_encoded = json.dumps(
+        json.dumps({"path": "notes.txt"}, ensure_ascii=False),
+        ensure_ascii=False,
+    )
+
+    _system, messages = _openai_to_anthropic(
+        [
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    {
+                        "id": "call_1",
+                        "type": "function",
+                        "function": {"name": "read_file", "arguments": double_encoded},
+                    }
+                ],
+            }
+        ]
+    )
+
+    tool_block = messages[0]["content"][0]
+    assert tool_block["type"] == "tool_use"
+    assert tool_block["name"] == "read_file"
+    assert tool_block["input"] == {"path": "notes.txt"}
+
+
+def test_anthropic_completion_unwraps_string_tool_input():
+    completion = _anthropic_to_openai_completion(
+        "test-model",
+        {
+            "stop_reason": "tool_use",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "read_file",
+                    "input": "{\"path\":\"notes.txt\"}",
+                }
+            ],
+            "usage": {"input_tokens": 1, "output_tokens": 2},
+        },
+    )
+
+    tool_call = completion["choices"][0]["message"]["tool_calls"][0]
+    assert tool_call["function"]["name"] == "read_file"
+    assert json.loads(tool_call["function"]["arguments"]) == {"path": "notes.txt"}
 
 
 def test_anthropic_stream_chunk_uses_supplied_id_and_length_finish_reason():

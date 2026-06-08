@@ -5,6 +5,7 @@ import uuid
 from typing import Any, Optional
 
 from .runtime import now_ts as _now_ts
+from .utils import coerce_json_object as _coerce_json_object
 from .utils import normalize_text as _normalize_text
 
 
@@ -423,9 +424,8 @@ def _openai_to_anthropic(
             for tool_call in msg.get("tool_calls") or []:
                 function = tool_call.get("function", {})
                 args = function.get("arguments") or "{}"
-                try:
-                    parsed_args = json.loads(args) if isinstance(args, str) else args
-                except json.JSONDecodeError:
+                parsed_args = _coerce_json_object(args)
+                if parsed_args is None:
                     parsed_args = {"raw_arguments": args}
                 blocks.append(
                     {
@@ -486,13 +486,17 @@ def _anthropic_to_openai_completion(model: str, response: dict) -> dict:
         elif block_type == "text":
             text_parts.append(block.get("text", ""))
         elif block_type == "tool_use":
+            tool_input = block.get("input", {})
+            parsed_input = _coerce_json_object(tool_input)
+            if parsed_input is None:
+                parsed_input = {"raw_arguments": tool_input}
             tool_calls.append(
                 {
                     "id": block.get("id") or f"call_{uuid.uuid4().hex[:10]}",
                     "type": "function",
                     "function": {
                         "name": block.get("name", "unknown_tool"),
-                        "arguments": json.dumps(block.get("input", {}), ensure_ascii=False),
+                        "arguments": json.dumps(parsed_input, ensure_ascii=False),
                     },
                 }
             )

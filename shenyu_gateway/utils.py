@@ -4,6 +4,21 @@ import json
 from typing import Any
 
 
+def coerce_json_object(value: Any, *, max_depth: int = 3) -> dict[str, Any] | None:
+    current = value
+    for _ in range(max_depth):
+        if not isinstance(current, str):
+            break
+        text = current.strip()
+        if not text:
+            return {}
+        try:
+            current = json.loads(text)
+        except json.JSONDecodeError:
+            return None
+    return current if isinstance(current, dict) else None
+
+
 def normalize_text(value: Any) -> str:
     if value is None:
         return ""

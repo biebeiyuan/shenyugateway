@@ -30,6 +30,7 @@ from .upstream_adapter import (
     _assistant_tool_call_message,
     _completion_to_stream_events,
 )
+from .utils import coerce_json_object as _coerce_json_object
 from .utils import normalize_text as _normalize_text
 
 
@@ -130,12 +131,13 @@ def _tool_call_arguments(tool_call: dict) -> dict:
     function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
     if not isinstance(function, dict):
         function = {}
-    raw_args = function.get("arguments") or "{}"
-    try:
-        args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-    except json.JSONDecodeError:
-        args = {"raw_arguments": raw_args}
-    return args or {}
+    raw_args = function.get("arguments")
+    if raw_args is None:
+        return {}
+    args = _coerce_json_object(raw_args)
+    if args is not None:
+        return args
+    return {} if not raw_args else {"raw_arguments": raw_args}
 
 
 def _tool_call_log_preview(tool_calls: list[dict]) -> list[dict]:
