@@ -56,6 +56,10 @@ const statusOptions: Array<{ label: string; value: MemNoteStatus | 'all' }> = [
 const editStatusOptions = statusOptions.filter((item) => item.value !== 'all')
 
 const MEM_TUNING_DEFAULTS: Partial<GatewayConfig> = {
+  inject_inline_memory_prompt: true,
+  enable_inline_memory_capture: true,
+  inject_mem_notes: true,
+  enable_mem0_management_tools: true,
   mem_note_limit: 3,
   mem_note_min_score: 0.45,
   mem_note_context_keyword_min_score: 0.25,
@@ -68,7 +72,12 @@ const MEM_TUNING_DEFAULTS: Partial<GatewayConfig> = {
   mem_note_default_cooldown_hours: 12,
 }
 
-const config = ref<Partial<GatewayConfig>>({})
+const config = ref<Partial<GatewayConfig>>({
+  inject_inline_memory_prompt: true,
+  enable_inline_memory_capture: true,
+  inject_mem_notes: true,
+  enable_mem0_management_tools: true,
+})
 const savingConfig = ref(false)
 
 const notes = ref<MemNoteItem[]>([])

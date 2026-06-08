@@ -7,9 +7,11 @@ from typing import Any, Optional
 from .runtime import mask, _env_bool
 
 
-def _env_optional_int(name: str) -> Optional[int]:
+def _env_optional_int(name: str, default: Optional[int] = None) -> Optional[int]:
     raw = os.getenv(name)
-    if raw is None or not raw.strip():
+    if raw is None:
+        return default
+    if not raw.strip():
         return None
     try:
         value = int(raw)
@@ -61,7 +63,7 @@ class RuntimeConfig:
         self.upstream_protocol: str = os.getenv("UPSTREAM_PROTOCOL", "openai").strip().lower()
         self.upstream_proxy: str = os.getenv("UPSTREAM_PROXY", "").strip()
         self.upstream_trust_env: bool = _env_bool("UPSTREAM_TRUST_ENV", False)
-        self.enable_openai_cache_control: bool = _env_bool("ENABLE_OPENAI_CACHE_CONTROL", False)
+        self.enable_openai_cache_control: bool = _env_bool("ENABLE_OPENAI_CACHE_CONTROL", True)
         self.hisense_upstream_url: str = os.getenv("HISENSE_UPSTREAM_URL", "").strip()
         self.hisense_api_key: str = os.getenv("HISENSE_API_KEY", "").strip()
         self.hisense_protocol: str = os.getenv("HISENSE_PROTOCOL", "").strip().lower()
@@ -70,7 +72,7 @@ class RuntimeConfig:
         self.calendar_protocol: str = os.getenv("CALENDAR_PROTOCOL", "auto").strip().lower()
         self.calendar_model: str = os.getenv("CALENDAR_MODEL", "claude-opus-4-7").strip()
         self.wake_welcome_message: str = os.getenv("WAKE_WELCOME_MESSAGE", "").strip()
-        self.enable_inline_memory_capture: bool = _env_bool("ENABLE_INLINE_MEMORY_CAPTURE", False)
+        self.enable_inline_memory_capture: bool = _env_bool("ENABLE_INLINE_MEMORY_CAPTURE", True)
         self.inject_inline_memory_prompt: bool = _env_bool(
             "INJECT_INLINE_MEMORY_PROMPT",
             self.enable_inline_memory_capture,
@@ -80,14 +82,14 @@ class RuntimeConfig:
         self.calendar_inject_day: bool = _env_bool("CALENDAR_INJECT_DAY", True)
         self.calendar_inject_week: bool = _env_bool("CALENDAR_INJECT_WEEK", True)
         self.calendar_inject_month: bool = _env_bool("CALENDAR_INJECT_MONTH", True)
-        self.inject_mem_notes: bool = _env_bool("INJECT_MEM_NOTES", False)
+        self.inject_mem_notes: bool = _env_bool("INJECT_MEM_NOTES", True)
         self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
         self.enable_upstream_tools: bool = _env_bool("ENABLE_UPSTREAM_TOOLS", True)
         self.enable_gateway_tools: bool = _env_bool("ENABLE_GATEWAY_TOOLS", True)
-        self.enable_mem0_management_tools: bool = _env_bool("ENABLE_MEM0_MANAGEMENT_TOOLS", False)
+        self.enable_mem0_management_tools: bool = _env_bool("ENABLE_MEM0_MANAGEMENT_TOOLS", True)
         self.expose_supabase_tools: bool = _env_bool("EXPOSE_SUPABASE_TOOLS", True)
         self.gateway_tool_mode: str = self._normalize_tool_mode(os.getenv("GATEWAY_TOOL_MODE", "broker"))
-        self.max_internal_tool_rounds: int = _env_int("MAX_INTERNAL_TOOL_ROUNDS", 4, 1)
+        self.max_internal_tool_rounds: int = _env_int("MAX_INTERNAL_TOOL_ROUNDS", 15, 1)
         self.enable_recall_auto_sync: bool = _env_bool("ENABLE_RECALL_AUTO_SYNC", False)
         self.recall_candidate_limit: int = _env_int("RECALL_CANDIDATE_LIMIT", 160, 20, 1000)
         self.enable_recall_embeddings: bool = _env_bool("ENABLE_RECALL_EMBEDDINGS", False)
@@ -103,7 +105,7 @@ class RuntimeConfig:
         self.calendar_context_day_limit: int = _env_int("CALENDAR_CONTEXT_DAY_LIMIT", 3, 1, 30)
         self.calendar_context_week_limit: int = _env_int("CALENDAR_CONTEXT_WEEK_LIMIT", 1, 1, 12)
         self.calendar_context_month_limit: int = _env_int("CALENDAR_CONTEXT_MONTH_LIMIT", 1, 1, 12)
-        self.max_client_messages: Optional[int] = _env_optional_int("MAX_CLIENT_MESSAGES")
+        self.max_client_messages: Optional[int] = _env_optional_int("MAX_CLIENT_MESSAGES", 75)
         self.cold_start_message_limit: Optional[int] = _env_optional_int("COLD_START_MESSAGE_LIMIT")
         self.cold_start_idle_minutes: int = _env_int("COLD_START_IDLE_MINUTES", 120, 1, 10080)
         self.default_surface_limit: int = _env_int("DEFAULT_SURFACE_LIMIT", 3, 1, 8)

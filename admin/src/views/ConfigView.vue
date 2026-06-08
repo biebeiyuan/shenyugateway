@@ -48,14 +48,14 @@ const config = ref<GatewayConfig>({
   upstream_protocol: 'auto',
   upstream_proxy: '',
   upstream_trust_env: false,
-  enable_openai_cache_control: false,
+  enable_openai_cache_control: true,
   hisense_upstream_url: '',
   hisense_api_key: '',
   hisense_protocol: '',
   wake_welcome_message: '',
   supabase_url: '',
   supabase_key: '',
-  max_client_messages: null,
+  max_client_messages: 75,
   enable_cold_start: true,
   cold_start_message_limit: null,
   cold_start_idle_minutes: 120,
@@ -63,9 +63,7 @@ const config = ref<GatewayConfig>({
   enable_upstream_tools: true,
   enable_gateway_tools: true,
   gateway_tool_mode: 'broker',
-  inject_inline_memory_prompt: false,
-  enable_inline_memory_capture: false,
-  inject_mem_notes: false,
+  max_internal_tool_rounds: 15,
 })
 
 const health = ref<HealthStatus | null>(null)
@@ -97,14 +95,6 @@ const activePresetName = computed(() => {
       preset.protocol === config.value.upstream_protocol,
   )
   return match?.name || null
-})
-
-const memPromptAndCapture = computed({
-  get: () => Boolean(config.value.inject_inline_memory_prompt && config.value.enable_inline_memory_capture),
-  set: (enabled: boolean) => {
-    config.value.inject_inline_memory_prompt = enabled
-    config.value.enable_inline_memory_capture = enabled
-  },
 })
 
 let healthTimer: ReturnType<typeof setInterval> | null = null
@@ -185,9 +175,6 @@ async function doSave() {
       model_mapping: Object.fromEntries(modelEntries.value.filter(([key, value]) => key && value)),
       enable_upstream_tools: config.value.enable_upstream_tools,
       enable_gateway_tools: config.value.enable_gateway_tools,
-      inject_inline_memory_prompt: memPromptAndCapture.value,
-      enable_inline_memory_capture: memPromptAndCapture.value,
-      inject_mem_notes: config.value.inject_mem_notes,
       expose_supabase_tools: config.value.expose_supabase_tools,
       gateway_tool_mode: config.value.gateway_tool_mode,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
@@ -445,12 +432,6 @@ function removeModel(index: number) {
           </NFormItem>
           <NFormItem label="启用 shenyu_* 工具">
             <NSwitch v-model:value="config.enable_gateway_tools" />
-          </NFormItem>
-          <NFormItem label="Inline Mem 提示 + 捕获">
-            <NSwitch v-model:value="memPromptAndCapture" />
-          </NFormItem>
-          <NFormItem label="Mem 便签反上来">
-            <NSwitch v-model:value="config.inject_mem_notes" />
           </NFormItem>
           <NFormItem label="启用 supabase_* 工具">
             <NSwitch v-model:value="config.expose_supabase_tools" />
