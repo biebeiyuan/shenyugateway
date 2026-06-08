@@ -8,6 +8,9 @@ from .runtime import now_ts as _now_ts
 from .utils import normalize_text as _normalize_text
 
 
+_CACHE_LAYER_BREAKPOINT_ORDER = ("stable", "slow", "format")
+
+
 def _clean_config_text(value: Any) -> str:
     return str(value or "").strip()
 
@@ -210,7 +213,7 @@ def _apply_openai_compatible_cache_control(
     if cached_tools:
         _add_cache_control(cached_tools[-1], cache_paths, "tools[-1]", max_breakpoints)
 
-    for layer_name in ("stable", "slow"):
+    for layer_name in _CACHE_LAYER_BREAKPOINT_ORDER:
         layer_text = layers.get(layer_name) or ""
         if not layer_text:
             continue
@@ -397,10 +400,10 @@ def _openai_to_anthropic(
                     pending_volatile = text
                     continue
                 block = {"type": "text", "text": text}
-                if text == layers.get("stable"):
-                    _add_cache_control(block, cache_paths, "system.stable", max_breakpoints)
-                elif text == layers.get("slow"):
-                    _add_cache_control(block, cache_paths, "system.slow", max_breakpoints)
+                for layer_name in _CACHE_LAYER_BREAKPOINT_ORDER:
+                    if text == layers.get(layer_name):
+                        _add_cache_control(block, cache_paths, f"system.{layer_name}", max_breakpoints)
+                        break
                 system_blocks.append(block)
             continue
 

@@ -18,6 +18,12 @@ MEM_NOTE_PATCH_KEYS = {
     "cooldown_hours",
     "review_note",
 }
+HIDDEN_COMPAT_TOOL_NAMES = {
+    "shenyu_ask_memory",
+    "shenyu_get_meta_summaries",
+    "shenyu_search_primary_texts",
+    "shenyu_surface_passages",
+}
 
 _BROKER_TOOL_HINTS = {
     "shenyu_recall": "翻旧上下文，可 source_types 限定范围",
@@ -106,75 +112,6 @@ def _gateway_core_tools() -> list[dict]:
                 "name": "shenyu_supabase_guide",
                 "description": "不知道该查哪个 Supabase 表时，先看这个。",
                 "parameters": {"type": "object", "properties": {}},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_surface_passages",
-                "description": "从 room 和留言板里浮现一些旧片段，想找点灵感的时候用。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "session_tag": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 8, "default": 3},
-                    },
-                    "required": ["query"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_search_primary_texts",
-                "description": "查日记、信、纸、room 或留言板的原文片段。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "categories": {
-                            "type": "array",
-                            "items": {
-                                "type": "string",
-                                "enum": [
-                                    "all",
-                                    "journal",
-                                    "diary",
-                                    "letter",
-                                    "paper",
-                                    "lock",
-                                    "annotation",
-                                    "life_tick",
-                                    "room",
-                                    "message_board",
-                                ],
-                            },
-                        },
-                        "session_tag": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
-                    },
-                    "required": ["query"],
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_ask_memory",
-                "description": "找旧的记忆摘要和情绪上下文，可按日期过滤。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "query": {"type": "string"},
-                        "session_tag": {"type": "string"},
-                        "date": {"type": "string"},
-                        "date_from": {"type": "string"},
-                        "date_to": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 8},
-                    },
-                    "required": ["query"],
-                },
             },
         },
         {
@@ -272,14 +209,6 @@ def _gateway_core_tools() -> list[dict]:
         {
             "type": "function",
             "function": {
-                "name": "shenyu_get_meta_summaries",
-                "description": "看看现在的元摘要。",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
                 "name": "shenyu_last_seen",
                 "description": "上次我们聊了什么。",
                 "parameters": {"type": "object", "properties": {}},
@@ -317,14 +246,12 @@ def _gateway_mem0_management_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_bulk_update_mem_notes",
-                "description": "一口气改好几条便签。传 source_status 可以按状态选，use_suggestions=true 帮我自动补全分类和触发词。",
+                "description": "一口气改好几条明确选中的便签。必须传 ids 或 updates；use_suggestions=true 帮我自动补全分类和触发词。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "ids": {"type": "array", "items": {"type": "string"}},
                         "note_ids": {"type": "array", "items": {"type": "string"}, "description": "ids 的别名"},
-                        "source_status": {"type": "string", "enum": ["captured", "active", "paused", "archived"], "description": "按状态选目标便签，代替手动传 ids"},
-                        "exclude_ids": {"type": "array", "items": {"type": "string"}, "description": "排除不想动的便签"},
                         "patch": {"type": "object", "additionalProperties": True},
                         "updates": {"type": "array", "items": {"type": "object", "additionalProperties": True}},
                         "use_suggestions": {"type": "boolean", "default": False},
@@ -681,7 +608,7 @@ def _broker_target_name(arguments: dict, cfg: Any) -> str:
         target_name = str(arguments.get("action") or "").strip()
     if target_name and not (target_name.startswith("shenyu_") or target_name.startswith("supabase_")):
         prefixed_name = f"shenyu_{target_name}"
-        if prefixed_name in set(_gateway_tool_names(cfg)):
+        if prefixed_name in set(_gateway_tool_names(cfg)) | HIDDEN_COMPAT_TOOL_NAMES:
             return prefixed_name
     return target_name
 
@@ -866,8 +793,6 @@ async def _handle_bulk_update_mem_notes(ctx: ToolContext) -> dict:
         patch=_mem_note_bulk_patch_arg(ctx.arguments),
         updates=ctx.arguments.get("updates") if isinstance(ctx.arguments.get("updates"), list) else [],
         use_suggestions=_bool_arg(ctx.arguments, "use_suggestions", False),
-        source_status=ctx.arguments.get("source_status"),
-        exclude_ids=ctx.arguments.get("exclude_ids"),
     )
 
 
@@ -998,7 +923,8 @@ async def execute_gateway_tool(
         target_args = _coerce_broker_arguments(raw_target_args)
         if target_args is None:
             return {"ok": False, "error": "`params`/`arguments` must be an object or a JSON object string."}
-        allowed = set(_gateway_tool_names(cfg))
+        exposed = set(_gateway_tool_names(cfg))
+        allowed = exposed | HIDDEN_COMPAT_TOOL_NAMES
         if target_name not in allowed:
             return {
                 "ok": False,
@@ -1006,7 +932,7 @@ async def execute_gateway_tool(
                     f"Unsupported gateway broker target: {target_name}. "
                     "Use `tool` with the full shenyu_ / supabase_ name, and put arguments in `params`."
                 ),
-                "available_tools": sorted(allowed),
+                "available_tools": sorted(exposed),
             }
         return await execute_gateway_tool(
             target_name,

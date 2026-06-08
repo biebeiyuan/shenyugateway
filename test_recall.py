@@ -172,6 +172,7 @@ def test_recall_ranks_keyword_title_and_tag_hits():
         "title": "长隆海洋馆",
         "source_type": "memory",
         "source_table": "memories",
+        "content_kind": "memory",
         "event_date": "2026-05-21T00:00:00+00:00",
     }
     assert result["items"][0]["title"] == "长隆海洋馆"
@@ -215,6 +216,7 @@ def test_recall_public_item_includes_title_only_for_journal():
             "title": "长隆日记",
             "source_type": "journal",
             "source_table": "journal",
+            "content_kind": "diary",
             "event_date": "2026-05-20T00:00:00+00:00",
         }
     ]
@@ -269,6 +271,7 @@ def test_recall_public_item_includes_any_source_title_and_full_source_chunks():
             "title": "海洋馆房间",
             "source_type": "room",
             "source_table": "room",
+            "content_kind": "room",
             "event_date": "2026-05-20T00:00:00+00:00",
         }
     ]
@@ -309,6 +312,7 @@ def test_recall_falls_back_to_keyword_when_embedding_fails():
                 "title": "长隆日记",
                 "source_type": "journal",
                 "source_table": "journal",
+                "content_kind": "diary",
                 "event_date": "2026-05-20T00:00:00+00:00",
             }
         ],
@@ -350,6 +354,7 @@ def test_recall_returns_vector_only_candidate_when_keywords_miss():
                 "title": "海洋馆房间",
                 "source_type": "room",
                 "source_table": "room",
+                "content_kind": "room",
                 "event_date": "2026-05-20T00:00:00+00:00",
             }
         ],

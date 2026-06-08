@@ -84,7 +84,6 @@ def _load_gateway_classes():
             enable_inline_memory_capture=False,
             inject_inline_memory_prompt=False,
             inject_mem_notes=False,
-            inject_meta_summaries=False,
             inject_atomic_memories=False,
             default_atomic_memory_limit=3,
             hisense_notebook_limit=5,
@@ -179,16 +178,13 @@ def test_gateway_tool_policy_names_broker_call_shape_and_tool_list():
         ),
     )
 
-    stable = layers["stable"]
-    assert "`shenyu_gateway_tool` — 记忆库总入口" in stable
-    assert "填 `tool` 字段=工具全名" in stable
-    assert "参数放 `params`" in stable
-    assert "shenyu_list_mem_notes" in stable
-    assert "列 mem 便签" in stable
-    assert "shenyu_add_calendar" in stable
-    assert "写想记住的正文就好" in stable
-    assert "之后反上来的也是这份正文" in stable
-    assert "shenyu_read_heartbeat" in stable
+    assert "shenyu_gateway_tool" not in layers["stable"]
+    tool_policy = layers["tool_policy"]
+    assert "## 工具怎么用" in tool_policy
+    assert "不为'应该'伸——也不为'不应该'伸——为我现在心里想做的事伸。" in tool_policy
+    assert "`shenyu_gateway_tool` 是我的网关工具" in tool_policy
+    assert "记忆、便签、日历、notebook 都走这边" in tool_policy
+    assert "客户端递给我的工具；按它自己的说明用" in tool_policy
 
 
 def test_calendar_memory_renders_page_content_not_summary_or_digest():
@@ -224,6 +220,45 @@ def test_calendar_memory_renders_page_content_not_summary_or_digest():
     assert "Full day content goes in" in layers["slow"]
     assert "Day summary should stay out" not in layers["slow"]
     assert "Day digest should stay out" not in layers["slow"]
+
+
+def test_mem_notes_render_between_calendar_and_heartbeat_not_volatile():
+    package = {
+        "stable_charter": "stable charter",
+        "calendar_context": {
+            "day": [
+                {
+                    "period_key": "2026-05-18",
+                    "content": "calendar content",
+                }
+            ],
+            "week": [],
+            "month": [],
+        },
+        "heartbeat_digest": "heartbeat content",
+        "hisense_heartbeat_digest": "",
+        "notebook_items": [],
+        "last_wake_recap": "",
+        "mem_notes": [{"mem_type": "关于她的事实", "content": "她今天想早点睡。"}],
+    }
+    settings = context_layers.ContextLayerSettings(
+        enable_gateway_tools=True,
+        inject_inline_memory_prompt=True,
+        heartbeat_prompt="heartbeat format",
+        inline_mem_prompt="mem format",
+    )
+
+    layers = context_layers.render_layered_additions(package, settings)
+    rendered = context_layers.render_system_additions(package, settings)
+
+    assert "## 我之前写下的便签，可能用的到。" in layers["mem"]
+    assert "她今天想早点睡" in layers["mem"]
+    assert layers["volatile"] == ""
+    assert rendered.index("## Calendar Memory") < rendered.index("## 我之前写下的便签，可能用的到。")
+    assert rendered.index("## 我之前写下的便签，可能用的到。") < rendered.index("## 我之前的心跳")
+    assert rendered.index("## 我之前的心跳") < rendered.index("## 工具怎么用")
+    assert rendered.index("## 工具怎么用") < rendered.index("heartbeat format")
+    assert rendered.index("heartbeat format") < rendered.index("mem format")
 
 
 def test_calendar_context_pages_loads_and_filters_by_content():

@@ -72,7 +72,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 - `shenyu_gateway/sessions.py`: session and message logging facade.
 - `shenyu_gateway/calendar.py`: calendar date/key helpers and JSON parsing.
 - `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
-- `shenyu_gateway/context_layers.py`: stable/slow/volatile layer rendering, client message trimming, tool-safe trimming, and cold-start bridge insertion.
+- `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, tool-safe trimming, and cold-start bridge insertion.
 - `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations. Look here for Supabase table tools, recall compatibility helpers, heartbeat reads, notebook helpers, and memory helper behavior.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>` and `[mem]...[/mem]`, heartbeat persistence helper, and inline memory scheduling helper.
@@ -86,12 +86,14 @@ Main chat flow is centered in `gateway.py`:
 1. Auth middleware allows `OPTIONS` and accepts both `Authorization` and `?token=...`.
 2. Chat route calls `_prepare_messages()`.
 3. `_prepare_messages()` opens the gateway session, stores a raw request window, trims client messages, writes a request context snapshot, builds a context package, renders context layers, and inserts them into the message list.
-4. `ContextBuilder.build_context_package()` fetches runtime data: heartbeat digest, calendar context, Hisense notebook/recap, meta summaries, and active mem notes.
+4. `ContextBuilder.build_context_package()` fetches runtime data: heartbeat digest, calendar context, Hisense notebook/recap, and active mem notes.
 5. `shenyu_gateway.context_layers` renders the package into:
-   - `stable`: charter, optional gateway tool policy, heartbeat prompt, optional inline mem prompt.
+   - `stable`: charter and optional wake welcome message.
    - `slow`: calendar memory, Hisense notebook, wake recap.
-   - `heartbeat`: independent `## 你之前的心跳` block after `slow` and before chat history.
-   - `volatile`: active mem notes, inserted before the latest user message.
+   - `mem`: active mem notes headed by `## 我之前写下的便签，可能用的到。`, after `slow` and before heartbeat.
+   - `heartbeat`: independent `## 我之前的心跳` block after `mem`.
+   - `tool_policy`: compact `## 工具怎么用` reminder after heartbeat.
+   - `format`: heartbeat and inline mem format reminders after tool policy.
 6. `_build_upstream_request()` prepares the upstream payload.
 7. `shenyu_gateway.upstream_adapter` converts OpenAI-compatible messages/tools to Anthropic when needed, adds cache markers, and converts responses/chunks back.
 8. Tool loop may call gateway tools, then `shenyu_gateway.response_capture` filters private `<heartbeat>` and `[mem]...[/mem]` blocks before visible output is logged or sent.
@@ -107,7 +109,10 @@ Useful boundary map:
 - Broker mode exposes only `shenyu_gateway_tool`; call it with `tool` set to the full gateway tool name, including the `shenyu_` or `supabase_` prefix, and put the selected tool's arguments in `params`. The old `arguments` field is still accepted for compatibility.
 - `shenyu_recall`: visible unified recall tool; reads `shenyu_recall_index`, covering `memory`, `journal`, `room`, `board`, `calendar`, `mem_note`, and `notebook`.
 - `shenyu_list_mem_notes`: visible mem-note browse/review tool; reads Supabase `shenyu_mem_notes`.
-- `shenyu_surface_passages`, `shenyu_search_primary_texts`, `shenyu_ask_memory`, and `shenyu_search_mem_notes`: hidden compatibility handlers. They are not exposed in current model tool schemas, but old direct calls still dispatch.
+- `shenyu_ask_memory`: hidden compatibility handler; it now delegates to `shenyu_recall` with `source_types=["memory"]`.
+- `shenyu_search_primary_texts`: hidden compatibility handler; it now delegates to `shenyu_recall`, mapping primary-text categories to `journal`, `room`, and `board`.
+- `shenyu_surface_passages`: hidden/internal compatibility handler. Calendar generation still uses its random room/message-board surfacing, but it is not part of the visible model tool schema.
+- `shenyu_search_mem_notes`: visible mem-note search tool; reads Supabase `shenyu_mem_notes`.
 - `shenyu_read_heartbeat`: gateway tool; reads SQLite `heartbeat_entries` or `hisense_heartbeat`.
 - `supabase_*`: gateway fallback tools for direct Supabase table operations.
 - `GATEWAY_TOOL_MODE=broker`: exposes one compact `shenyu_gateway_tool` that dispatches to the same gateway-native tools. Use `full` when the model needs stricter per-tool parameter schemas.
@@ -134,12 +139,16 @@ Layer order in the final request:
 tools
 stable system
 slow system
+mem system
 heartbeat system
+tool_policy system
+format system
 cold-start bridge messages, when active
 trimmed client history
-volatile system, when active, before latest user
 latest user
 ```
+
+Prompt-cache markers target request tools, `stable`, `slow`, and `format` when those layers exist. The `format` marker follows the reading order and therefore includes any preceding mem/heartbeat/tool-policy blocks; a changing mem note can invalidate that marker without affecting the earlier stable/calendar markers.
 
 ## Calendar Debugging
 

@@ -11,7 +11,7 @@ from shenyu_gateway.schemas import ChatRequest
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.tool_loop import InternalToolLoopContext
-from shenyu_gateway.upstream_adapter import _apply_openai_compatible_cache_control
+from shenyu_gateway.upstream_adapter import _apply_openai_compatible_cache_control, _openai_to_anthropic
 
 
 def test_require_session_store_raises_clear_runtime_error_when_uninitialized():
@@ -93,6 +93,64 @@ def test_openai_compatible_tool_schema_defaults_are_type_safe():
     assert props["limit"]["default"] == 20
     assert props["score"]["default"] == 0.5
     assert "default" not in props["bad_expr"]
+
+
+def test_openai_compatible_cache_control_uses_format_layer_as_fourth_breakpoint():
+    messages = [
+        {"role": "system", "content": "stable block"},
+        {"role": "system", "content": "calendar block"},
+        {"role": "system", "content": "mem block"},
+        {"role": "system", "content": "heartbeat block"},
+        {"role": "system", "content": "tool policy block"},
+        {"role": "system", "content": "format block"},
+        {"role": "assistant", "content": "previous reply"},
+        {"role": "user", "content": "hello"},
+    ]
+    tools = [{"type": "function", "function": {"name": "client_tool", "parameters": {"type": "object"}}}]
+
+    cached_messages, _cached_tools, cache_paths = _apply_openai_compatible_cache_control(
+        messages,
+        tools,
+        cache_layers={"stable": "stable block", "slow": "calendar block", "format": "format block"},
+    )
+
+    assert cache_paths == ["tools[-1]", "messages[0].stable", "messages[1].slow", "messages[5].format"]
+    assert cached_messages[0]["cache_control"] == {"type": "ephemeral"}
+    assert cached_messages[1]["cache_control"] == {"type": "ephemeral"}
+    assert cached_messages[5]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in cached_messages[6]
+
+
+def test_anthropic_cache_control_marks_format_layer_after_reading_order_prefix():
+    cache_paths: list[str] = []
+
+    system, messages = _openai_to_anthropic(
+        [
+            {"role": "system", "content": "stable block"},
+            {"role": "system", "content": "calendar block"},
+            {"role": "system", "content": "mem block"},
+            {"role": "system", "content": "heartbeat block"},
+            {"role": "system", "content": "tool policy block"},
+            {"role": "system", "content": "format block"},
+            {"role": "user", "content": "hello"},
+        ],
+        cache_layers={"stable": "stable block", "slow": "calendar block", "format": "format block"},
+        cache_paths=cache_paths,
+    )
+
+    assert cache_paths == ["system.stable", "system.slow", "system.format"]
+    assert system[0]["cache_control"] == {"type": "ephemeral"}
+    assert system[1]["cache_control"] == {"type": "ephemeral"}
+    assert system[5]["cache_control"] == {"type": "ephemeral"}
+    assert [block["text"] for block in system] == [
+        "stable block",
+        "calendar block",
+        "mem block",
+        "heartbeat block",
+        "tool policy block",
+        "format block",
+    ]
+    assert messages == [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
 
 
 def _contains_cache_control(value):

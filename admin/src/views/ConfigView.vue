@@ -182,8 +182,6 @@ async function doSave() {
       cold_start_message_limit: config.value.cold_start_message_limit || null,
       cold_start_idle_minutes: config.value.cold_start_idle_minutes,
       model_mapping: Object.fromEntries(modelEntries.value.filter(([key, value]) => key && value)),
-      inject_meta_summaries: config.value.inject_meta_summaries,
-
       enable_upstream_tools: config.value.enable_upstream_tools,
       enable_gateway_tools: config.value.enable_gateway_tools,
       inject_inline_memory_prompt: memPromptAndCapture.value,
@@ -408,10 +406,6 @@ function removeModel(index: number) {
 
       <NCard title="功能开关" size="small">
         <NForm label-placement="top">
-          <NFormItem label="注入元摘要">
-            <NSwitch v-model:value="config.inject_meta_summaries" />
-          </NFormItem>
-
           <NFormItem label="上游 tools 总开关">
             <NSwitch v-model:value="config.enable_upstream_tools" />
           </NFormItem>

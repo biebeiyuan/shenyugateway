@@ -398,20 +398,6 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "limit": "4",
         },
         "shenyu_supabase_guide": {},
-        "shenyu_surface_passages": {"query": "room", "session_tag": "arg-tag", "limit": 2},
-        "shenyu_search_primary_texts": {
-            "query": "paper",
-            "categories": ["journal"],
-            "session_tag": "arg-tag",
-            "limit": 7,
-        },
-        "shenyu_ask_memory": {
-            "q": "memory",
-            "limit": 6,
-            "date": "2026-06-03",
-            "date_from": "2026-06-01",
-            "date_to": "2026-06-03",
-        },
         "shenyu_search_mem_notes": {
             "query": "note",
             "session_tag": "arg-tag",
@@ -449,7 +435,6 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "created_from": "2026-05-01",
             "created_to": "2026-06-01",
         },
-        "shenyu_get_meta_summaries": {},
         "shenyu_last_seen": {},
         "shenyu_update_mem_note": {"noteId": "note-1", "content": "正文", "status": "active"},
         "shenyu_bulk_update_mem_notes": {
@@ -526,28 +511,6 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "auto_sync": False,
         },
         "shenyu_supabase_guide": {"tool": "shenyu_supabase_guide"},
-        "shenyu_surface_passages": {
-            "tool": "shenyu_surface_passages",
-            "query": "room",
-            "session_tag": "arg-tag",
-            "limit": 2,
-        },
-        "shenyu_search_primary_texts": {
-            "tool": "shenyu_search_primary_texts",
-            "query": "paper",
-            "categories": ["journal"],
-            "session_tag": "arg-tag",
-            "limit": 7,
-        },
-        "shenyu_ask_memory": {
-            "tool": "shenyu_ask_memory",
-            "query": "memory",
-            "session_tag": None,
-            "limit": 6,
-            "date": "2026-06-03",
-            "date_from": "2026-06-01",
-            "date_to": "2026-06-03",
-        },
         "shenyu_search_mem_notes": {
             "tool": "shenyu_search_mem_notes",
             "query": "note",
@@ -599,7 +562,6 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "created_from": "2026-05-01",
             "created_to": "2026-06-01",
         },
-        "shenyu_get_meta_summaries": {"tool": "shenyu_get_meta_summaries"},
         "shenyu_last_seen": {"tool": "shenyu_last_seen"},
         "shenyu_update_mem_note": {
             "tool": "shenyu_update_mem_note",
@@ -746,6 +708,7 @@ def test_gateway_broker_description_matches_scan_friendly_sample():
     assert "shenyu_add_calendar" in description
     assert "写想记住的正文" in description
     assert "之后反上来的也是正文" in description
+    assert "shenyu_get_meta_summaries" not in description
     assert properties["params"]["description"] == "选好的工具的参数。推荐使用这个字段。"
     assert properties["arguments"]["description"] == "旧字段；等同于 params。"
     assert function["parameters"]["required"] == ["tool"]
@@ -941,6 +904,111 @@ def test_execute_gateway_tool_routes_hidden_search_mem_notes_for_compat():
             "mem_type": None,
         }
     ]
+
+
+def test_execute_gateway_tool_routes_hidden_ask_memory_for_compat():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_ask_memory",
+                "params": {
+                    "q": "北海道",
+                    "limit": 6,
+                    "date": "2026-06-03",
+                    "date_from": "2026-06-01",
+                    "date_to": "2026-06-03",
+                },
+            },
+            session_tag="default",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "query": "北海道", "limit": 6}
+    assert service.calls == [
+        {
+            "tool": "shenyu_ask_memory",
+            "query": "北海道",
+            "session_tag": None,
+            "limit": 6,
+            "date": "2026-06-03",
+            "date_from": "2026-06-01",
+            "date_to": "2026-06-03",
+        }
+    ]
+
+
+def test_execute_gateway_tool_routes_hidden_primary_text_search_for_compat():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_search_primary_texts",
+                "params": {"q": "海獭", "categories": ["journal"], "limit": 5},
+            },
+            session_tag="5.15",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "query": "海獭", "limit": 5}
+    assert service.calls == [
+        {
+            "tool": "shenyu_search_primary_texts",
+            "query": "海獭",
+            "categories": ["journal"],
+            "session_tag": "5.15",
+            "limit": 5,
+        }
+    ]
+
+
+def test_execute_gateway_tool_routes_hidden_surface_passages_for_compat():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {"tool": "shenyu_surface_passages", "params": {"q": "海獭", "limit": 2}},
+            session_tag="5.15",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "limit": 2, "session_tag": "5.15"}
+    assert service.calls == [
+        {
+            "tool": "shenyu_surface_passages",
+            "query": "海獭",
+            "session_tag": "5.15",
+            "limit": 2,
+        }
+    ]
+
+
+def test_execute_gateway_tool_routes_hidden_meta_summaries_for_compat():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {"tool": "shenyu_get_meta_summaries", "params": {}},
+            session_tag="default",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"meta_summaries": [{"summary": "meta"}]}
+    assert service.calls == [{"tool": "shenyu_get_meta_summaries"}]
 
 
 def test_execute_gateway_tool_accepts_broker_json_string_arguments():
@@ -1144,6 +1212,53 @@ def test_execute_gateway_tool_routes_bulk_mem_note_update():
     ]
 
 
+def test_bulk_mem_note_tool_schema_requires_explicit_ids_or_updates():
+    cfg = _cfg(enable_mem0_management_tools=True)
+    cfg.gateway_tool_mode = "full"
+
+    tool = next(
+        tool
+        for tool in gateway_native_tools(cfg)
+        if tool["function"]["name"] == "shenyu_bulk_update_mem_notes"
+    )
+    properties = tool["function"]["parameters"]["properties"]
+
+    assert "source_status" not in properties
+    assert "exclude_ids" not in properties
+    assert "必须传 ids 或 updates" in tool["function"]["description"]
+
+
+def test_execute_bulk_mem_note_tool_ignores_source_status_argument():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_bulk_update_mem_notes",
+            {
+                "source_status": "captured",
+                "status": "active",
+                "use_suggestions": True,
+            },
+            session_tag="default",
+            cfg=_cfg(enable_mem0_management_tools=True),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "updated_count": 0}
+    assert service.calls == [
+        {
+            "tool": "shenyu_bulk_update_mem_notes",
+            "ids": [],
+            "patch": {"status": "active"},
+            "updates": [],
+            "use_suggestions": True,
+            "source_status": None,
+            "exclude_ids": None,
+        }
+    ]
+
+
 def test_execute_gateway_tool_routes_notebook_scope_arguments():
     service = FakeToolService()
 
@@ -1239,26 +1354,31 @@ def test_core_and_mem0_management_tools_do_not_duplicate_mem_note_list_tool():
     assert full_names.count("shenyu_list_mem_notes") == 1
 
 
-def test_gateway_tools_expose_all_registered_query_tools():
+def test_gateway_tools_hide_compat_query_tools_but_keep_recall_and_mem_notes_visible():
     cfg = _cfg()
-    registered = {
-        "shenyu_surface_passages",
-        "shenyu_search_primary_texts",
-        "shenyu_ask_memory",
+    visible_query_tools = {
         "shenyu_search_mem_notes",
+    }
+    hidden_query_tools = {
+        "shenyu_ask_memory",
+        "shenyu_get_meta_summaries",
+        "shenyu_search_primary_texts",
+        "shenyu_surface_passages",
     }
 
     broker_tool = gateway_native_tools(cfg)[0]
     broker_names = set(broker_tool["function"]["parameters"]["properties"]["tool"]["enum"])
-    assert registered.issubset(broker_names)
+    assert visible_query_tools.issubset(broker_names)
     assert "shenyu_recall" in broker_names
     assert "shenyu_list_mem_notes" in broker_names
+    assert hidden_query_tools.isdisjoint(broker_names)
 
     cfg.gateway_tool_mode = "full"
     full_names = {tool["function"]["name"] for tool in gateway_native_tools(cfg)}
-    assert registered.issubset(full_names)
+    assert visible_query_tools.issubset(full_names)
     assert "shenyu_recall" in full_names
     assert "shenyu_list_mem_notes" in full_names
+    assert hidden_query_tools.isdisjoint(full_names)
 
 
 def test_shenyu_recall_source_types_are_public_set_only():

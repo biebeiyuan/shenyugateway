@@ -43,7 +43,6 @@ class ConfigUpdate(BaseModel):
     model_mapping: Optional[dict[str, str]] = None
     supabase_url: Optional[str] = None
     supabase_key: Optional[str] = None
-    inject_meta_summaries: Optional[bool] = None
     calendar_inject_day: Optional[bool] = None
     calendar_inject_week: Optional[bool] = None
     calendar_inject_month: Optional[bool] = None

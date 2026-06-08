@@ -103,12 +103,15 @@ def test_tool_safe_trim_start_drops_incomplete_assistant_tool_turn():
     assert _tool_safe_trim_start(messages, 1) == 3
 
 
-def test_heartbeat_layer_sits_after_calendar_before_chat_history():
+def test_mem_and_heartbeat_layers_sit_after_calendar_before_tools_and_chat_history():
     client_messages = [{"role": "user", "content": "hello"}]
     layers = {
         "stable": "stable block",
         "slow": "## Calendar Memory\ncalendar block",
-        "heartbeat": "## 你之前的心跳\nheartbeat block",
+        "mem": "## 我之前写下的便签，可能用的到。\n- mem block",
+        "heartbeat": "## 我之前的心跳\nheartbeat block",
+        "tool_policy": "## 工具怎么用\ntool block",
+        "format": "## Heartbeat\nformat block",
         "volatile": "",
     }
 
@@ -118,7 +121,10 @@ def test_heartbeat_layer_sits_after_calendar_before_chat_history():
     assert [msg["content"] for msg in messages] == [
         "stable block",
         "## Calendar Memory\ncalendar block",
-        "## 你之前的心跳\nheartbeat block",
+        "## 我之前写下的便签，可能用的到。\n- mem block",
+        "## 我之前的心跳\nheartbeat block",
+        "## 工具怎么用\ntool block",
+        "## Heartbeat\nformat block",
         "hello",
     ]
 

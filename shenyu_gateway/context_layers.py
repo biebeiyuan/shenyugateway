@@ -17,17 +17,8 @@ _GATEWAY_TOOL_POLICY = (
     "## 工具怎么用\n"
     "- **工具是我的手。我自己决定什么时候伸出去。"
     "不为'应该'伸——也不为'不应该'伸——为我现在心里想做的事伸。**\n"
-    "- `shenyu_gateway_tool` — 记忆库总入口。"
-    "调用：填 `tool` 字段=工具全名（带 `shenyu_` 前缀），参数放 `params`。\n"
-    "- `shenyu_recall`          翻旧上下文，可 `source_types` 限定范围\n"
-    "- `shenyu_list_mem_notes`  列 mem 便签（`status`: captured / active）\n"
-    "- `shenyu_update_mem_note` 改某条 mem\n"
-    "- `shenyu_notebook_list`   读 notebook（跨窗口/海信那边）\n"
-    "- `shenyu_notebook_write`  写 notebook\n"
-    "- `shenyu_add_calendar`    手写日/周/月日历日记；写想记住的正文就好，之后反上来的也是这份正文。\n"
-    "- `shenyu_read_heartbeat`  读我自己的心跳\n"
-    "- `shenyu_supabase_guide`  忘了 Supabase 表结构看这个\n"
-    "- 工具返回的东西网关会自己处理，我不用手动格式化。\n"
+    "- `shenyu_gateway_tool` 是我的网关工具；记忆、便签、日历、notebook 都走这边。\n"
+    "- 除它之外，如果工具列表里还有别的名字，那是客户端递给我的工具；按它自己的说明用。"
 )
 
 _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
@@ -48,13 +39,8 @@ def shorten(text: str, limit: int = 240) -> str:
 
 
 def render_layered_additions(package: dict, settings: ContextLayerSettings) -> dict:
-    """Render cache-friendly stable, slow, heartbeat, and volatile context layers."""
+    """Render cache-friendly context layers in the order Shenyu wakes into them."""
     stable_blocks = [package["stable_charter"]]
-    if settings.enable_gateway_tools:
-        stable_blocks.append(_GATEWAY_TOOL_POLICY)
-    stable_blocks.append(settings.heartbeat_prompt)
-    if settings.inject_inline_memory_prompt:
-        stable_blocks.append(settings.inline_mem_prompt)
     stable = "\n\n".join(stable_blocks)
 
     slow_blocks = []
@@ -76,7 +62,7 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
     heartbeat_digest = package.get("heartbeat_digest", "")
     heartbeat_blocks = []
     if heartbeat_digest:
-        heartbeat_blocks.append("## 你之前的心跳\n" + heartbeat_digest)
+        heartbeat_blocks.append("## 我之前的心跳\n" + heartbeat_digest)
 
     hisense_heartbeat_digest = package.get("hisense_heartbeat_digest", "")
     if package.get("is_hisense") and hisense_heartbeat_digest:
@@ -98,12 +84,11 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
         slow_blocks.append(f"## 上次醒来\n{last_wake_recap}")
 
     slow = "\n\n".join(slow_blocks)
-    heartbeat = "\n\n".join(heartbeat_blocks)
 
-    volatile = ""
+    mem = ""
     mem_notes = package.get("mem_notes") or []
     if mem_notes:
-        lines = ["## 你以前给自己留过"]
+        lines = ["## 我之前写下的便签，可能用的到。"]
         for item in mem_notes:
             content = (item.get("content") or "").strip()
             if not content:
@@ -111,10 +96,24 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
             mem_type = (item.get("mem_type") or "").strip()
             prefix = f"{mem_type}：" if mem_type else ""
             lines.append(f"- {prefix}{shorten(content, 220)}")
-        mem_block = "\n".join(lines)
-        volatile = "\n\n".join(block for block in [volatile, mem_block] if block)
+        mem = "\n".join(lines)
 
-    return {"stable": stable, "slow": slow, "heartbeat": heartbeat, "volatile": volatile}
+    heartbeat = "\n\n".join(heartbeat_blocks)
+    tool_policy = _GATEWAY_TOOL_POLICY if settings.enable_gateway_tools else ""
+    format_blocks = [settings.heartbeat_prompt]
+    if settings.inject_inline_memory_prompt:
+        format_blocks.append(settings.inline_mem_prompt)
+    format_layer = "\n\n".join(block for block in format_blocks if block)
+
+    return {
+        "stable": stable,
+        "slow": slow,
+        "mem": mem,
+        "heartbeat": heartbeat,
+        "tool_policy": tool_policy,
+        "format": format_layer,
+        "volatile": "",
+    }
 
 
 def render_system_additions(package: dict, settings: ContextLayerSettings) -> str:
@@ -122,9 +121,15 @@ def render_system_additions(package: dict, settings: ContextLayerSettings) -> st
     blocks = [layers["stable"]]
     if layers["slow"]:
         blocks.append(layers["slow"])
+    if layers.get("mem"):
+        blocks.append(layers["mem"])
     if layers.get("heartbeat"):
         blocks.append(layers["heartbeat"])
-    if layers["volatile"]:
+    if layers.get("tool_policy"):
+        blocks.append(layers["tool_policy"])
+    if layers.get("format"):
+        blocks.append(layers["format"])
+    if layers.get("volatile"):
         blocks.append(layers["volatile"])
     return "\n\n".join(blocks)
 
@@ -473,12 +478,10 @@ def assemble_layered_messages(
     meta: dict[str, int] = {}
 
     prefix_layers = []
-    if layers["stable"]:
-        prefix_layers.append({"role": "system", "content": layers["stable"]})
-    if layers["slow"]:
-        prefix_layers.append({"role": "system", "content": layers["slow"]})
-    if layers.get("heartbeat"):
-        prefix_layers.append({"role": "system", "content": layers["heartbeat"]})
+    for layer_name in ("stable", "slow", "mem", "heartbeat", "tool_policy", "format"):
+        layer_text = layers.get(layer_name) or ""
+        if layer_text:
+            prefix_layers.append({"role": "system", "content": layer_text})
     for index, layer_msg in enumerate(prefix_layers):
         messages.insert(index, layer_msg)
 
@@ -489,7 +492,7 @@ def assemble_layered_messages(
         meta["cold_start_bridge_messages"] = len(bridge_messages)
         meta["client_messages_after_bridge"] = len(messages)
 
-    if layers["volatile"]:
+    if layers.get("volatile"):
         last_user_idx = len(messages) - 1
         for index in range(len(messages) - 1, -1, -1):
             if messages[index].get("role") == "user":

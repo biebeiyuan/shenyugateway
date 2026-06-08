@@ -77,7 +77,6 @@ class RuntimeConfig:
         )
         self.model_mapping: dict[str, str] = self._load_model_mapping()
 
-        self.inject_meta_summaries: bool = _env_bool("INJECT_META_SUMMARIES", True)
         self.calendar_inject_day: bool = _env_bool("CALENDAR_INJECT_DAY", True)
         self.calendar_inject_week: bool = _env_bool("CALENDAR_INJECT_WEEK", True)
         self.calendar_inject_month: bool = _env_bool("CALENDAR_INJECT_MONTH", True)
@@ -149,7 +148,6 @@ class RuntimeConfig:
             "inject_inline_memory_prompt": self.inject_inline_memory_prompt,
             "enable_inline_memory_capture": self.enable_inline_memory_capture,
             "model_mapping": self.model_mapping,
-            "inject_meta_summaries": self.inject_meta_summaries,
             "calendar_inject_day": self.calendar_inject_day,
             "calendar_inject_week": self.calendar_inject_week,
             "calendar_inject_month": self.calendar_inject_month,

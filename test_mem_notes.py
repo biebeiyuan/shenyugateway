@@ -280,6 +280,37 @@ def test_bulk_update_notes_rejects_more_than_max_without_partial_update():
     assert supabase.updates == []
 
 
+def test_bulk_update_notes_rejects_source_status_without_touching_rows():
+    rows = [
+        {
+            "id": "note-1",
+            "session_tag": "5.15",
+            "content": "这条不能被按状态全选改掉。",
+            "mem_type": None,
+            "trigger_text": None,
+            "trigger_keywords": None,
+            "status": "captured",
+            "cooldown_hours": 72,
+        },
+    ]
+    supabase = FakeSupabase(rows=rows)
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), supabase)
+
+    result = asyncio.run(
+        service.bulk_update_notes(
+            source_status="captured",
+            patch={"status": "active"},
+            use_suggestions=True,
+        )
+    )
+
+    assert result["ok"] is False
+    assert "source_status is disabled" in result["error"]
+    assert result["updated_count"] == 0
+    assert supabase.queries == []
+    assert supabase.updates == []
+
+
 def test_create_note_preserves_zero_default_cooldown():
     supabase = FakeSupabase()
     service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=0), supabase)

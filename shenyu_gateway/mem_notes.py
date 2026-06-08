@@ -754,35 +754,16 @@ class MemNoteService:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured."}
 
-        # 如果没传 ids 但传了 source_status，按状态查出目标便签
-        if not ids and source_status:
-            resolved_source = self._status(source_status, fallback="")
-            if not resolved_source:
-                return {
-                    "ok": False,
-                    "error": f"invalid source_status: {source_status}",
-                    "requested_count": 0,
-                    "updated_count": 0,
-                    "failed_count": 0,
-                    "updated_ids": [],
-                    "failures": [],
-                }
-            rows = await self.supabase.query(
-                "shenyu_mem_notes",
-                {
-                    "status": f"eq.{resolved_source}",
-                    "limit": str(MEM_NOTE_BULK_UPDATE_MAX),
-                    "select": "id",
-                },
-            )
-            exclude_set = set(
-                _normalize_note_id(item) for item in (exclude_ids or []) if item
-            )
-            ids = [
-                str(row.get("id"))
-                for row in (rows or [])
-                if row.get("id") and str(row.get("id")) not in exclude_set
-            ]
+        if source_status:
+            return {
+                "ok": False,
+                "error": "bulk update by source_status is disabled; pass explicit ids or updates.",
+                "requested_count": 0,
+                "updated_count": 0,
+                "failed_count": 0,
+                "updated_ids": [],
+                "failures": [],
+            }
 
         specs = self._bulk_update_specs(ids=ids, patch=patch, updates=updates)
         if not specs:
@@ -894,7 +875,7 @@ class MemNoteService:
     def render_notes_for_context(self, notes: list[dict[str, Any]]) -> str:
         if not notes:
             return ""
-        lines = ["## 你以前给自己留过"]
+        lines = ["## 我之前写下的便签，可能用的到。"]
         for note in notes:
             mem_type = (note.get("mem_type") or "").strip()
             content = _shorten(note.get("content") or "", 260)

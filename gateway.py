@@ -1281,11 +1281,6 @@ class ContextBuilder:
             package["notebook_items"] = await self._hisense_notebook_items()
             package["last_wake_recap"] = await self._hisense_last_wake_recap(session)
         else:
-            if cfg.inject_meta_summaries:
-                meta_block = await self.meta_block()
-                if meta_block:
-                    package["stable_charter"] = package["stable_charter"] + "\n\n" + meta_block
-
             if cfg.inject_mem_notes and current_user_text.strip():
                 notes = await MemNoteService(cfg, supabase_client).search_notes_contextual(
                     current_user_text,
@@ -1374,29 +1369,15 @@ class ContextBuilder:
             return hbs[0]["content"]
         return ""
 
-    async def meta_block(self) -> str:
-        if not supabase_client:
-            return ""
-        try:
-            rows = await supabase_client.rpc("get_meta_summaries")
-        except Exception:
-            return ""
-        if not rows:
-            return ""
-        lines = ["## Active Context Summaries"]
-        for row in rows[:6]:
-            title = row.get("title") or row.get("category") or "summary"
-            content = (row.get("content") or "").strip()
-            if content:
-                lines.append(f"- {title}: {content}")
-        return "\n".join(lines)
-
     def render_layered_additions(self, package: dict) -> dict:
         """返回分层的 system 内容，用于缓存友好的消息组织。
-        按变化频率从低到高排列：
-          stable:   charter + tool_policy + heartbeat_prompt（尽量不变）
-          slow:     calendar_context + heartbeat_digest（低频变化）
-          volatile: mem_notes（经常变，放在对话消息之后）
+        按沈予醒来时的阅读顺序排列：
+          stable:    醒来锚点 + 身份关系底座（断点）
+          slow:      calendar / notebook / wake recap（断点）
+          mem:       本轮命中的便签（不打断点）
+          heartbeat: 之前的心跳（不打断点）
+          tool_policy: 压缩工具说明（不打断点）
+          format:    heartbeat / mem 格式契约（尾部断点）
         """
         return _render_layered_additions(package, self._layer_settings())
 
@@ -1616,7 +1597,7 @@ async def _build_upstream_request(
             "content-type": "application/json",
         }
         cache_meta["breakpoints"] = cache_paths
-        cache_meta["note"] = "cache_control breakpoints added to stable Anthropic blocks."
+        cache_meta["note"] = "cache_control breakpoints added to configured Anthropic layer blocks."
         return payload, headers, model_name, cache_meta, upstream
 
     if cfg.enable_openai_cache_control:
@@ -2731,7 +2712,6 @@ async def health():
         "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
         "expose_supabase_tools": cfg.expose_supabase_tools,
         "gateway_tool_mode": cfg.gateway_tool_mode,
-        "inject_meta_summaries": cfg.inject_meta_summaries,
         "calendar_inject_day": cfg.calendar_inject_day,
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
@@ -2771,7 +2751,6 @@ async def get_config_full():
         "model_mapping": cfg.model_mapping,
         "supabase_url": cfg.supabase_url,
         "supabase_key": cfg.supabase_key,
-        "inject_meta_summaries": cfg.inject_meta_summaries,
         "calendar_inject_day": cfg.calendar_inject_day,
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
@@ -2834,7 +2813,6 @@ async def update_config(request: Request, body: ConfigUpdate):
         "model_mapping": "MODEL_MAPPING",
         "supabase_url": "SUPABASE_URL",
         "supabase_key": "SUPABASE_SERVICE_KEY",
-        "inject_meta_summaries": "INJECT_META_SUMMARIES",
         "calendar_inject_day": "CALENDAR_INJECT_DAY",
         "calendar_inject_week": "CALENDAR_INJECT_WEEK",
         "calendar_inject_month": "CALENDAR_INJECT_MONTH",
@@ -2894,7 +2872,6 @@ async def update_config(request: Request, body: ConfigUpdate):
         "enable_inline_memory_capture",
         "supabase_url",
         "supabase_key",
-        "inject_meta_summaries",
         "calendar_inject_day",
         "calendar_inject_week",
         "calendar_inject_month",

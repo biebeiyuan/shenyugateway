@@ -30,7 +30,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/supabase.py`: low-level Supabase REST client.
 - `shenyu_gateway/calendar.py`: date/key helpers and calendar JSON parsing.
 - `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
-- `shenyu_gateway/context_layers.py`: stable/slow/volatile layer rendering, client message trimming, and cold-start bridge insertion.
+- `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, and cold-start bridge insertion.
 - `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations, including Supabase table tools, recall compatibility helpers, heartbeats, notebook, and memory helpers.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>` and `[mem]...[/mem]`, heartbeat persistence helper, and inline memory scheduling helper.
@@ -52,16 +52,18 @@ When cleaning or refactoring, preserve behavior first and move code by boundary:
 
 ## Context Layers
 
-Context is assembled from low-change to high-change content:
+Context is assembled in the order Shenyu should wake into it:
 
 | Layer | Placement | Contents | Cache policy |
 |---|---|---|---|
-| `tools` | request tools | client tools + `shenyu_*` / `supabase_*` tools | breakpoint at `tools[-1]` |
-| `stable` | first system message | stable charter, active meta summaries, gateway tool policy, heartbeat instructions | breakpoint |
+| request tools | request tools | client tools + `shenyu_*` / `supabase_*` tools | breakpoint at `tools[-1]` |
+| `stable` | first system message | stable charter and optional wake welcome message | breakpoint |
 | `slow` | second system message when present | calendar memory, Hisense notebook/recap | breakpoint |
-| `heartbeat` | after `slow`, before client history | `## 你之前的心跳` and optional Hisense heartbeat block | no breakpoint |
+| `mem` | after `slow`, before heartbeat | active mem notes headed by `## 我之前写下的便签，可能用的到。` | no breakpoint |
+| `heartbeat` | after `mem`, before tool/format reminders | `## 我之前的心跳` and optional Hisense heartbeat block | no breakpoint |
+| `tool_policy` | after heartbeat | compact gateway/client tool reminder rendered as `## 工具怎么用` | no breakpoint |
+| `format` | after tool policy | heartbeat and inline mem format instructions | no breakpoint |
 | client history | original messages | trimmed client messages when `MAX_CLIENT_MESSAGES` is set | fallback breakpoint only if one is free |
-| `volatile` | inserted before latest user message | active mem notes | no breakpoint |
 | current user | latest user message | current request | no breakpoint |
 
 The retired rolling and frozen context layers have been removed from the active flow. Their legacy SQLite tables are only cleaned up during session deletion when they exist in an older database.
@@ -76,9 +78,10 @@ The gateway adds Anthropic-compatible `cache_control` markers on stable prefixes
 tools[-1]
 messages[0].stable
 messages[1].slow
+messages[n].format
 ```
 
-If `slow` is empty, the gateway may use the remaining breakpoint on the previous stable conversation message. Heartbeat and volatile retrieval results are deliberately left uncached so random or frequently changing content does not poison the prefix cache.
+The `format` breakpoint follows the current reading order, so it also covers any preceding mem, heartbeat, and tool-policy blocks. If a mem note appears and changes the prefix, that breakpoint may miss, while the earlier tools/stable/slow breakpoints remain usable. If tools, `slow`, or `format` are empty and a breakpoint slot is still free, the gateway may use the remaining slot on the previous stable conversation message.
 
 Real cache hits still depend on the upstream or OpenAI-compatible relay honoring Anthropic `cache_control`. Check:
 
@@ -344,7 +347,7 @@ Mem notes are small personal notes, separate from event memories and calendar pa
 
 Two switches control it:
 
-- `INJECT_MEM_NOTES`: before a reply, search active mem notes and inject relevant hits in `volatile`.
+- `INJECT_MEM_NOTES`: before a reply, search active mem notes and inject relevant hits in the `mem` layer.
 - `ENABLE_INLINE_MEMORY_CAPTURE`: after a reply, capture explicit `[mem]...[/mem]` notes.
 
 Explicit inline memory flow:
@@ -360,7 +363,7 @@ Search/injection flow:
 
 1. `ContextBuilder` calls `MemNoteService.search_notes()` when enabled.
 2. Active rows are matched mainly by `trigger_text` and `trigger_keywords` together, with content as a fallback. Contextual injection also has a semantic fallback through the recall index.
-3. Cooldown blocks frequent repeats. Relevant hits are rendered cleanly in `volatile`, without tier/importance/heat.
+3. Cooldown blocks frequent repeats. Relevant hits are rendered cleanly in the `mem` layer, without tier/importance/heat.
 
 Endpoints:
 
@@ -533,7 +536,7 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 ## Verification Checklist
 
 - Search the active code paths for retired summary/window env vars and the removed short-lived notes table; they should not appear.
-- `GET /api/gateway/context/preview` should show `stable`, optional `slow`, and `volatile`.
+- `GET /api/gateway/context/preview` should show `stable`, optional `slow`, optional `mem`, `heartbeat`, `tool_policy`, and `format`.
 - `GET /api/calendar/send-preview?...` should show `Current Client Context Snapshots`, not rolling/frozen blocks.
 - `GET /api/gateway/logs` should show prompt cache breakpoints and cold-start metadata.
 - `GET /api/gateway/logs/{id}` should show `response_full` for retained payloads; the list view should keep using short previews.

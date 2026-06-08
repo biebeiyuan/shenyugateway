@@ -39,7 +39,6 @@ export interface GatewayConfig {
   mem_note_default_cooldown_hours?: number
   // feature toggles
   enable_upstream_tools?: boolean
-  inject_meta_summaries?: boolean
   calendar_inject_day?: boolean
   calendar_inject_week?: boolean
   calendar_inject_month?: boolean
@@ -86,8 +85,6 @@ export interface HealthStatus {
   enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
   gateway_tool_mode?: string
-  inject_meta_summaries?: boolean
-
   inject_mem_notes?: boolean
   enable_cold_start?: boolean
 }

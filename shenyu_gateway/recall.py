@@ -736,8 +736,17 @@ class RecallIndexService:
         item = {"content": content}
         if row.get("title"):
             item["title"] = row.get("title") or ""
-        item["source_type"] = row.get("source_type") or ""
-        item["source_table"] = row.get("source_table") or ""
+        source_type = row.get("source_type") or ""
+        source_table = row.get("source_table") or ""
+        item["source_type"] = source_type
+        item["source_table"] = source_table
+        metadata = _json_dict(row.get("metadata_json"))
+        if source_type == "journal":
+            item["content_kind"] = (metadata.get("category") or "diary")
+        elif source_type == "board":
+            item["content_kind"] = "message"
+        else:
+            item["content_kind"] = source_type or source_table
         item["event_date"] = row.get("event_date") or row.get("source_updated_at") or ""
         return item
 

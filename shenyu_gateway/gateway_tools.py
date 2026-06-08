@@ -176,7 +176,7 @@ insert / update / delete 会尽量返回写入或影响到的行。
 找旧上下文优先用 `shenyu_recall`，可按 source_types 限定范围；当前相关的 active mem 由网关自动带上来。
 翻自己的便签用 `shenyu_list_mem_notes`，改单条用 `shenyu_update_mem_note`，写新的用 `shenyu_write_mem_note`（默认直接 active）。
 几条旧的揉成一条新的，写的时候传 replaces=[旧id]，旧的自动归档。
-想一口气处理剩下的 captured，用 `shenyu_bulk_update_mem_notes(source_status="captured", use_suggestions=true, patch={"status":"active"})`。
+整理 captured 便签时先列出来，只改明确选中的 id；不要按状态一口气全量改。
 notebook 是共享手边事项；海信那边或跨窗口要留事用 `shenyu_notebook_write` / `shenyu_notebook_list`。
 翻某天心跳用 `shenyu_read_heartbeat`，一般只填 date，比如 2026-05-11。
 
@@ -454,72 +454,43 @@ class GatewayToolService:
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
     ) -> dict:
-        if not self.supabase:
-            return {
-                "ok": False,
-                "error": "Supabase is not configured.",
-                "query": query,
-                "count": 0,
-                "memories": [],
-                "note": "Supabase is not configured.",
-            }
-
-        query_text = query or ""
-        params: list[tuple[str, str]] = [
-            ("is_deleted", "eq.false"),
-            ("order", "weight.desc,date.desc"),
-            ("limit", str(max(1, min(limit, 20)))),
-            ("select", "id,title,date,summary,facts,emotional_context"),
-        ]
-        if query_text.strip() and query_text.strip() != "*":
-            escaped = query_text.replace(",", " ").replace("(", " ").replace(")", " ")
-            params.append((
-                "or",
-                f"(title.ilike.*{escaped}*,summary.ilike.*{escaped}*,"
-                f"facts.ilike.*{escaped}*,emotional_context.ilike.*{escaped}*)"
-            ))
         if date:
-            params.append(("date", f"eq.{date}"))
-        else:
-            if date_from:
-                params.append(("date", f"gte.{date_from}"))
-            if date_to:
-                params.append(("date", f"lte.{date_to}"))
-        if session_tag:
-            params.append(("session_tag", f"eq.{session_tag}"))
-
+            date_from = date_to = date
+        has_date_filter = bool(date_from or date_to)
         try:
-            memories = await self.supabase.query("memories", params)
-        except Exception as exc:
+            safe_limit = int(limit or 8)
+        except (TypeError, ValueError):
+            safe_limit = 8
+        result = await self.recall(
+            query=query,
+            source_types=["memory"],
+            session_tag=session_tag,
+            date_from=date_from,
+            date_to=date_to,
+            include_undated=not has_date_filter,
+            limit=max(1, min(safe_limit, 20)),
+        )
+        items = result.get("items") if isinstance(result.get("items"), list) else []
+        if not result.get("ok"):
             return {
                 "ok": False,
-                "error": str(exc),
+                "error": result.get("error", "memory recall failed"),
                 "query": query,
                 "count": 0,
+                "items": [],
                 "memories": [],
+                "source": "shenyu_recall",
+                "source_types": ["memory"],
             }
-
-        cards = []
-        for memory in memories:
-            memory_id = memory.get("id")
-            cards.append(
-                {
-                    "title": memory.get("title"),
-                    "date": memory.get("date"),
-                    "summary": memory.get("summary"),
-                    "facts": memory.get("facts"),
-                    "emotional_context": memory.get("emotional_context"),
-                }
-            )
-
-            if memory_id:
-                await self._boost_memory(memory_id)
-
         return {
-            "ok": True,
+            **result,
             "query": query,
-            "count": len(cards),
-            "memories": cards,
+            "count": len(items),
+            "items": items,
+            "memories": items,
+            "source": "shenyu_recall",
+            "source_types": ["memory"],
+            "compat_note": "shenyu_ask_memory now delegates to shenyu_recall with source_types=['memory'].",
         }
 
     async def read_heartbeat(
@@ -621,31 +592,33 @@ class GatewayToolService:
         limit: int = 5,
     ) -> dict:
         selected = self._normalize_primary_categories(categories, default={"diary", "letter", "paper"})
-        candidates = await self._collect_primary_text_candidates(
+        source_types = self._primary_categories_to_recall_source_types(selected)
+        try:
+            safe_limit = int(limit or 5)
+        except (TypeError, ValueError):
+            safe_limit = 5
+        result = await self.recall(
+            query=query,
+            source_types=source_types,
             session_tag=session_tag,
-            categories=selected,
+            limit=max(1, min(max(safe_limit * 3, safe_limit), 30)),
         )
-        scored = []
-        for item in candidates:
-            score = self._score_passage(query, item)
-            if score <= 0:
-                continue
-            scored.append(
-                {
-                    **item,
-                    "score": round(score, 3),
-                    "why": self._why_passage(query, item, score),
-                }
-            )
-
-        scored.sort(key=lambda row: row["score"], reverse=True)
-        passages = scored[: max(1, min(int(limit or 5), 20))]
+        items = result.get("items") if isinstance(result.get("items"), list) else []
+        requested_limit = max(1, min(safe_limit, 20))
+        passages = [
+            passage
+            for passage in (self._recall_item_to_primary_passage(item) for item in items)
+            if self._primary_passage_matches_categories(passage, selected)
+        ][:requested_limit]
         return {
-            "ok": True,
+            "ok": bool(result.get("ok")),
             "query": query,
             "categories": sorted(selected),
+            "source": "shenyu_recall",
+            "source_types": source_types,
             "count": len(passages),
             "passages": passages,
+            **({"error": result.get("error")} if not result.get("ok") and result.get("error") else {}),
         }
 
     async def add_calendar(
@@ -903,6 +876,42 @@ class GatewayToolService:
             return {"ok": True, "data": result}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
+
+    def _primary_categories_to_recall_source_types(self, categories: set[str]) -> list[str]:
+        source_types: list[str] = []
+        if categories & {"diary", "letter", "paper", "lock", "annotation", "life_tick"}:
+            source_types.append("journal")
+        if "room" in categories:
+            source_types.append("room")
+        if "message_board" in categories:
+            source_types.append("board")
+        return source_types or ["journal"]
+
+    def _recall_item_to_primary_passage(self, item: dict) -> dict:
+        content = item.get("content") or ""
+        event_date = item.get("event_date") or ""
+        return {
+            "source_table": item.get("source_table") or "",
+            "title": item.get("title") or "untitled",
+            "excerpt": _shorten(content, 260),
+            "full_text": content,
+            "created_at": event_date,
+            "chunk_index": 0,
+            "content_kind": item.get("content_kind") or item.get("source_type") or item.get("source_table") or "",
+        }
+
+    def _primary_passage_matches_categories(self, passage: dict, categories: set[str]) -> bool:
+        journal_categories = {"diary", "letter", "paper", "lock", "annotation", "life_tick"}
+        source_table = str(passage.get("source_table") or "").strip()
+        content_kind = str(passage.get("content_kind") or "").strip()
+        if source_table == "journal" or content_kind in journal_categories or content_kind == "journal":
+            journal_kind = content_kind if content_kind in journal_categories else "diary"
+            return journal_kind in categories
+        if source_table == "room" or content_kind == "room":
+            return "room" in categories
+        if source_table == "message_board" or content_kind in {"board", "message"}:
+            return "message_board" in categories
+        return True
 
     def _normalize_primary_categories(self, categories: Any, default: set[str]) -> set[str]:
         supported = {"diary", "letter", "paper", "lock", "annotation", "life_tick", "room", "message_board"}
