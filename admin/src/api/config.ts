@@ -95,6 +95,10 @@ export interface SaveConfigResult {
   config: GatewayConfig
 }
 
+export type GatewayConfigPatch = Partial<GatewayConfig> & {
+  clear_wake_welcome_message?: boolean
+}
+
 export interface GatewayOverview {
   messages_total: number
   messages_today: number
@@ -190,7 +194,7 @@ export async function fetchConfig(): Promise<GatewayConfig> {
   return data
 }
 
-export async function saveConfig(patch: Partial<GatewayConfig>): Promise<SaveConfigResult> {
+export async function saveConfig(patch: GatewayConfigPatch): Promise<SaveConfigResult> {
   const { data } = await api.post('/api/config', patch)
   return data
 }

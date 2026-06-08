@@ -8,6 +8,7 @@ import {
   NInput,
   NInputNumber,
   NLayoutFooter,
+  NPopconfirm,
   NSelect,
   NSpace,
   NSwitch,
@@ -69,6 +70,7 @@ const config = ref<GatewayConfig>({
 
 const health = ref<HealthStatus | null>(null)
 const saving = ref(false)
+const clearingWelcome = ref(false)
 const switchingPreset = ref('')
 const presetName = ref('')
 const presets = ref<UpstreamPreset[]>([])
@@ -174,7 +176,6 @@ async function doSave() {
       hisense_upstream_url: config.value.hisense_upstream_url,
       hisense_api_key: config.value.hisense_api_key,
       hisense_protocol: config.value.hisense_protocol,
-      wake_welcome_message: config.value.wake_welcome_message,
       supabase_url: config.value.supabase_url,
       supabase_key: config.value.supabase_key,
       max_client_messages: config.value.max_client_messages || null,
@@ -192,6 +193,10 @@ async function doSave() {
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
       default_surface_limit: config.value.default_surface_limit,
     }
+    const wakeWelcomeMessage = config.value.wake_welcome_message?.trim()
+    if (wakeWelcomeMessage) {
+      body.wake_welcome_message = wakeWelcomeMessage
+    }
     const result = await saveConfig(body)
     config.value = result.config
     modelEntries.value = Object.entries(result.config.model_mapping || {})
@@ -201,6 +206,20 @@ async function doSave() {
     message.error('Save failed')
   } finally {
     saving.value = false
+  }
+}
+
+async function clearWakeWelcomeMessage() {
+  clearingWelcome.value = true
+  try {
+    const result = await saveConfig({ clear_wake_welcome_message: true })
+    config.value = result.config
+    modelEntries.value = Object.entries(result.config.model_mapping || {})
+    message.success('已清空醒来欢迎词')
+  } catch {
+    message.error('清空失败')
+  } finally {
+    clearingWelcome.value = false
   }
 }
 
@@ -398,8 +417,23 @@ function removeModel(index: number) {
               v-model:value="config.wake_welcome_message"
               type="textarea"
               :autosize="{ minRows: 5, maxRows: 12 }"
-              placeholder="留空则只使用默认欢迎词"
+              placeholder="留空则保留上一次保存的欢迎词"
             />
+            <div class="welcome-actions">
+              <NPopconfirm @positive-click="clearWakeWelcomeMessage">
+                <template #trigger>
+                  <NButton
+                    size="tiny"
+                    type="error"
+                    quaternary
+                    :loading="clearingWelcome"
+                  >
+                    清空欢迎词
+                  </NButton>
+                </template>
+                确认清空醒来欢迎词？
+              </NPopconfirm>
+            </div>
           </NFormItem>
         </NForm>
       </NCard>
@@ -521,6 +555,12 @@ function removeModel(index: number) {
 
 .actions {
   margin-top: 16px;
+}
+
+.welcome-actions {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 8px;
 }
 
 .footer {

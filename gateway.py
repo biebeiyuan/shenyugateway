@@ -2886,9 +2886,20 @@ async def update_config(request: Request, body: ConfigUpdate):
         "gateway_db_path",
         "hisense_client_name",
     ]
+    if body.clear_wake_welcome_message:
+        cfg.wake_welcome_message = ""
+        changed.append("wake_welcome_message")
+        env_updates[env_names["wake_welcome_message"]] = ""
+
     for field in simple_fields:
         value = getattr(body, field)
         if value is not None:
+            if field == "wake_welcome_message":
+                if body.clear_wake_welcome_message:
+                    continue
+                value = value.strip() if isinstance(value, str) else value
+                if not value:
+                    continue
             if field in {"upstream_url", "hisense_upstream_url", "calendar_upstream_url"}:
                 value = _validate_http_url(env_names[field], value, allow_empty=(field != "upstream_url"))
             elif field == "upstream_proxy":

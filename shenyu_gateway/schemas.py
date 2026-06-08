@@ -38,6 +38,7 @@ class ConfigUpdate(BaseModel):
     calendar_protocol: Optional[str] = None
     calendar_model: Optional[str] = None
     wake_welcome_message: Optional[str] = None
+    clear_wake_welcome_message: Optional[bool] = None
     inject_inline_memory_prompt: Optional[bool] = None
     enable_inline_memory_capture: Optional[bool] = None
     model_mapping: Optional[dict[str, str]] = None
