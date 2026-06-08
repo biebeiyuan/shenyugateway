@@ -2,21 +2,21 @@ from __future__ import annotations
 
 import ast
 import asyncio
-import logging
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
 
 from shenyu_gateway import context_layers
 from shenyu_gateway import upstream_adapter
-from shenyu_gateway.gateway_tools import GatewayToolService as RealGatewayToolService
+from shenyu_gateway.context_builder import ContextBuilder
+from shenyu_gateway.gateway_tools import GatewayToolService
 from shenyu_gateway.gateway_tools import configure_gateway_tools
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.tool_registry import gateway_native_tools
 from shenyu_gateway.utils import normalize_text as _normalize_text
 
 
-def _load_gateway_classes():
+def _load_gateway_helpers():
     source = Path(__file__).with_name("gateway.py").read_text(encoding="utf-8")
     module = ast.parse(source)
     adapter_functions = {
@@ -25,13 +25,8 @@ def _load_gateway_classes():
         "_sanitize_openai_content_blocks",
         "_sanitize_openai_compatible_messages",
     }
-    context_layer_functions = {
-        "_render_layered_additions": context_layers.render_layered_additions,
-        "_render_system_additions": context_layers.render_system_additions,
-    }
     wanted_functions = {
         "_clean_config_text",
-        "_date_range_bounds",
         "_detect_protocol_for",
         "_chat_url_for",
         "_ensure_visible_assistant_content",
@@ -42,24 +37,19 @@ def _load_gateway_classes():
         "_private_capture_fallback_text",
         "_private_capture_kinds",
         "_upstream_for_hisense",
-        "_shorten",
         "_stable_charter_block",
         "_session_tag_from_request",
         "_is_hisense_client",
         "_is_hisense_session",
     }
-    wanted_constants = {"_EMPTY_VISIBLE_ASSISTANT_REPLY", "_HEARTBEAT_PROMPT", "_INLINE_MEM_PROMPT"}
+    wanted_constants = {"_EMPTY_VISIBLE_ASSISTANT_REPLY"}
     namespace = {
         "Any": Any,
         "Optional": Optional,
-        "ContextLayerSettings": context_layers.ContextLayerSettings,
         "Request": object,
         "GatewayStore": object,
         "SessionManager": object,
-        "GatewayToolService": RealGatewayToolService,
         "gateway_native_tools": gateway_native_tools,
-        "asyncio": asyncio,
-        "logger": logging.getLogger("test"),
         "_normalize_text": _normalize_text,
         "split_private_assistant_tags": None,
         "session_store": None,
@@ -99,18 +89,27 @@ def _load_gateway_classes():
             exec(ast.get_source_segment(source, node), namespace)
         elif isinstance(node, ast.FunctionDef) and node.name in wanted_functions:
             exec(ast.get_source_segment(source, node), namespace)
-        elif isinstance(node, ast.ClassDef) and node.name == "ContextBuilder":
-            exec(ast.get_source_segment(source, node), namespace)
     namespace.update({name: getattr(upstream_adapter, name) for name in adapter_functions})
-    namespace.update(context_layer_functions)
     from shenyu_gateway.response_capture import split_private_assistant_tags
 
     namespace["split_private_assistant_tags"] = split_private_assistant_tags
-    return namespace["ContextBuilder"], namespace["GatewayToolService"], namespace["cfg"], namespace
+    return namespace["cfg"], namespace
 
 
-ContextBuilder, GatewayToolService, cfg, gateway_namespace = _load_gateway_classes()
+cfg, gateway_namespace = _load_gateway_helpers()
 configure_gateway_tools(runtime_config=cfg, supabase=None, store=None)
+
+
+def _context_builder(store, *, supabase=None):
+    return ContextBuilder(
+        store,
+        None,
+        GatewayToolService(),
+        cfg=cfg,
+        supabase_client=supabase,
+        stable_charter_block=gateway_namespace["_stable_charter_block"],
+        is_hisense_client=gateway_namespace["_is_hisense_client"],
+    )
 
 
 class _FakeCalendarSupabase:
@@ -143,7 +142,7 @@ def test_hisense_context_can_see_both_heartbeat_pools(tmp_path):
     store.append_heartbeat(normal_session["id"], "normal hb")
     store.append_heartbeat(hisense_session["id"], "hisense hb", hisense=True)
 
-    builder = ContextBuilder(store, None, SimpleNamespace())
+    builder = _context_builder(store)
     package = asyncio.run(
         builder.build_context_package(
             hisense_session,
@@ -287,22 +286,19 @@ def test_calendar_context_pages_loads_and_filters_by_content():
         ]
     )
 
-    old_supabase = gateway_namespace["supabase_client"]
     old_day_enabled = cfg.calendar_inject_day
     old_day_limit = cfg.calendar_context_day_limit
     old_week_enabled = cfg.calendar_inject_week
     old_month_enabled = cfg.calendar_inject_month
     try:
-        gateway_namespace["supabase_client"] = fake_supabase
         cfg.calendar_inject_day = True
         cfg.calendar_context_day_limit = 5
         cfg.calendar_inject_week = False
         cfg.calendar_inject_month = False
 
-        builder = ContextBuilder(None, None, SimpleNamespace())
+        builder = _context_builder(None, supabase=fake_supabase)
         calendar_context = asyncio.run(builder.calendar_context_pages())
     finally:
-        gateway_namespace["supabase_client"] = old_supabase
         cfg.calendar_inject_day = old_day_enabled
         cfg.calendar_context_day_limit = old_day_limit
         cfg.calendar_inject_week = old_week_enabled
@@ -462,7 +458,7 @@ def test_normal_context_does_not_see_hisense_heartbeat_pool(tmp_path):
     store.append_heartbeat(normal_session["id"], "normal hb")
     store.append_heartbeat(hisense_session["id"], "hisense hb", hisense=True)
 
-    builder = ContextBuilder(store, None, SimpleNamespace())
+    builder = _context_builder(store)
     package = asyncio.run(
         builder.build_context_package(
             normal_session,
@@ -485,7 +481,7 @@ def test_hisense_context_returns_three_pending_heartbeat_ids_for_deferred_markin
     for index in range(heartbeat_limit):
         store.append_heartbeat(hisense_session["id"], f"hisense pending {index + 1}", hisense=True)
 
-    builder = ContextBuilder(store, None, SimpleNamespace())
+    builder = _context_builder(store)
     package = asyncio.run(
         builder.build_context_package(
             hisense_session,
@@ -518,7 +514,7 @@ def test_hisense_context_waits_for_three_pending_heartbeats(tmp_path):
     for index in range(heartbeat_limit - 1):
         store.append_heartbeat(hisense_session["id"], f"hisense pending {index + 1}", hisense=True)
 
-    builder = ContextBuilder(store, None, SimpleNamespace())
+    builder = _context_builder(store)
     package = asyncio.run(
         builder.build_context_package(
             hisense_session,

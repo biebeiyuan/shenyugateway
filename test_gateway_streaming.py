@@ -7,11 +7,40 @@ import tempfile
 import gateway
 import pytest
 from shenyu_gateway.config import RuntimeConfig
+from shenyu_gateway.request_logs import (
+    _finalize_stale_tool_stream_log,
+    _finalize_tool_stream_log,
+    _record_response_text,
+)
 from shenyu_gateway.schemas import ChatRequest
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
-from shenyu_gateway.tool_loop import InternalToolLoopContext
-from shenyu_gateway.upstream_adapter import _apply_openai_compatible_cache_control, _openai_to_anthropic
+from shenyu_gateway.streaming import (
+    StreamReplayAccumulator,
+    _apply_openai_stream_chunk,
+    _completion_with_unstreamed_deltas,
+    _new_stream_completion,
+    _sse_response,
+    _stream_content_event,
+    _stream_final_event,
+    _stream_keepalive_event,
+    _stream_role_event,
+    close_stream_reader,
+    read_next_stream_chunk,
+)
+from shenyu_gateway.tool_loop import (
+    InternalToolLoopContext,
+    _execute_mixed_gateway_tool_calls,
+    _extract_tool_calls,
+    _tool_call_name,
+    run_internal_tool_loop_stream,
+)
+from shenyu_gateway.upstream_adapter import (
+    _anthropic_tool_index_override,
+    _apply_openai_compatible_cache_control,
+    _completion_to_stream_events,
+    _openai_to_anthropic,
+)
 
 
 def test_require_session_store_raises_clear_runtime_error_when_uninitialized():
@@ -38,7 +67,7 @@ def _data_payload(event: str) -> dict:
 
 
 def test_internal_tool_keepalive_is_openai_compatible_empty_delta():
-    payload = _data_payload(gateway._stream_keepalive_event("test-model"))
+    payload = _data_payload(_stream_keepalive_event("test-model"))
 
     assert payload["object"] == "chat.completion.chunk"
     assert payload["model"] == "test-model"
@@ -49,7 +78,7 @@ def test_internal_tool_keepalive_is_openai_compatible_empty_delta():
 
 def test_stream_content_event_is_complete_openai_chunk():
     payload = _data_payload(
-        gateway._stream_content_event(
+        _stream_content_event(
             "test-model",
             "hello",
             chunk_id="chatcmpl-fixed",
@@ -242,7 +271,7 @@ def test_sse_response_disables_proxy_buffering():
     async def generate():
         yield "data: [DONE]\n\n"
 
-    response = gateway._sse_response(generate())
+    response = _sse_response(generate())
 
     assert response.media_type == "text/event-stream"
     assert response.headers["cache-control"] == "no-cache, no-transform"
@@ -251,7 +280,7 @@ def test_sse_response_disables_proxy_buffering():
 
 def test_record_response_text_keeps_full_detail_when_payloads_retained():
     entry = {"request_payloads_retained": True}
-    gateway._record_response_text(entry, "x" * 250)
+    _record_response_text(entry, "x" * 250)
 
     assert entry["response_preview"].endswith("...")
     assert len(entry["response_preview"]) == 200
@@ -261,7 +290,7 @@ def test_record_response_text_keeps_full_detail_when_payloads_retained():
 def test_finalize_tool_stream_log_closes_unfinished_streaming_status():
     entry = {"status": "streaming_tools", "error": None}
 
-    gateway._finalize_tool_stream_log(entry, 1234)
+    _finalize_tool_stream_log(entry, 1234)
 
     assert entry["status"] == "client_disconnected"
     assert entry["duration_ms"] == 1234
@@ -271,7 +300,7 @@ def test_finalize_tool_stream_log_closes_unfinished_streaming_status():
 def test_finalize_tool_stream_log_preserves_terminal_status():
     entry = {"status": "error", "error": "upstream failed"}
 
-    gateway._finalize_tool_stream_log(entry, 5678)
+    _finalize_tool_stream_log(entry, 5678)
 
     assert entry["status"] == "error"
     assert entry["duration_ms"] == 5678
@@ -287,7 +316,7 @@ def test_finalize_stale_tool_stream_log_closes_inactive_stream():
         "_tool_stream_last_activity_monotonic": 20.0,
     }
 
-    changed = gateway._finalize_stale_tool_stream_log(entry, now_monotonic=30.0, stale_seconds=5.0)
+    changed = _finalize_stale_tool_stream_log(entry, now_monotonic=30.0, stale_seconds=5.0)
 
     assert changed is True
     assert entry["status"] == "client_disconnected"
@@ -305,7 +334,7 @@ def test_finalize_stale_tool_stream_log_keeps_recent_stream_active():
         "_tool_stream_last_activity_monotonic": 28.0,
     }
 
-    changed = gateway._finalize_stale_tool_stream_log(entry, now_monotonic=30.0, stale_seconds=5.0)
+    changed = _finalize_stale_tool_stream_log(entry, now_monotonic=30.0, stale_seconds=5.0)
 
     assert changed is False
     assert entry["status"] == "streaming_tools"
@@ -313,13 +342,13 @@ def test_finalize_stale_tool_stream_log_keeps_recent_stream_active():
 
 
 def test_openai_stream_accumulator_collects_content_and_tool_arguments():
-    completion = gateway._new_stream_completion("test-model")
+    completion = _new_stream_completion("test-model")
 
-    gateway._apply_openai_stream_chunk(
+    _apply_openai_stream_chunk(
         completion,
         {"choices": [{"delta": {"content": "hello "}, "finish_reason": None}]},
     )
-    gateway._apply_openai_stream_chunk(
+    _apply_openai_stream_chunk(
         completion,
         {
             "choices": [
@@ -339,7 +368,7 @@ def test_openai_stream_accumulator_collects_content_and_tool_arguments():
             ]
         },
     )
-    gateway._apply_openai_stream_chunk(
+    _apply_openai_stream_chunk(
         completion,
         {
             "choices": [
@@ -361,9 +390,9 @@ def test_openai_stream_accumulator_collects_content_and_tool_arguments():
 
 
 def test_openai_stream_accumulator_treats_null_arguments_as_empty_delta():
-    completion = gateway._new_stream_completion("test-model")
+    completion = _new_stream_completion("test-model")
 
-    gateway._apply_openai_stream_chunk(
+    _apply_openai_stream_chunk(
         completion,
         {
             "choices": [
@@ -382,7 +411,7 @@ def test_openai_stream_accumulator_treats_null_arguments_as_empty_delta():
             ]
         },
     )
-    gateway._apply_openai_stream_chunk(
+    _apply_openai_stream_chunk(
         completion,
         {"choices": [{"delta": {"tool_calls": [{"index": 0, "function": {"arguments": "{\"path\":\"a.txt\"}"}}]}}]},
     )
@@ -392,9 +421,9 @@ def test_openai_stream_accumulator_treats_null_arguments_as_empty_delta():
 
 
 def test_openai_stream_accumulator_drops_empty_sparse_tool_placeholders():
-    completion = gateway._new_stream_completion("test-model")
+    completion = _new_stream_completion("test-model")
 
-    gateway._apply_openai_stream_chunk(
+    _apply_openai_stream_chunk(
         completion,
         {
             "choices": [
@@ -423,13 +452,13 @@ def test_openai_stream_accumulator_drops_empty_sparse_tool_placeholders():
     assert len(tool_calls) == 1
     assert tool_calls[0]["id"] == "tooluse_1"
     assert tool_calls[0]["function"]["name"] == "shenyu_gateway_tool"
-    assert gateway._extract_tool_calls(completion) == tool_calls
+    assert _extract_tool_calls(completion) == tool_calls
 
 
 def test_openai_stream_accumulator_drops_only_empty_tool_calls():
-    completion = gateway._new_stream_completion("test-model")
+    completion = _new_stream_completion("test-model")
 
-    gateway._apply_openai_stream_chunk(
+    _apply_openai_stream_chunk(
         completion,
         {
             "choices": [
@@ -453,20 +482,20 @@ def test_openai_stream_accumulator_drops_only_empty_tool_calls():
     message = completion["choices"][0]["message"]
     assert "tool_calls" not in message
     assert completion["choices"][0]["finish_reason"] == "stop"
-    assert gateway._extract_tool_calls(completion) == []
+    assert _extract_tool_calls(completion) == []
 
 
 def test_openai_stream_accumulator_clears_tool_finish_without_tool_calls():
-    completion = gateway._new_stream_completion("test-model")
+    completion = _new_stream_completion("test-model")
 
-    gateway._apply_openai_stream_chunk(
+    _apply_openai_stream_chunk(
         completion,
         {"choices": [{"delta": {}, "finish_reason": "tool_calls"}]},
     )
 
     assert "tool_calls" not in completion["choices"][0]["message"]
     assert completion["choices"][0]["finish_reason"] == "stop"
-    assert gateway._extract_tool_calls(completion) == []
+    assert _extract_tool_calls(completion) == []
 
 
 def test_extract_tool_calls_preserves_real_client_tools_after_empty_placeholder():
@@ -490,9 +519,9 @@ def test_extract_tool_calls_preserves_real_client_tools_after_empty_placeholder(
         ]
     }
 
-    tool_calls = gateway._extract_tool_calls(completion)
+    tool_calls = _extract_tool_calls(completion)
 
-    assert [gateway._tool_call_name(call) for call in tool_calls] == ["read_file"]
+    assert [_tool_call_name(call) for call in tool_calls] == ["read_file"]
     assert completion["choices"][0]["message"]["tool_calls"] == tool_calls
     assert completion["choices"][0]["finish_reason"] == "tool_calls"
 
@@ -513,7 +542,7 @@ def test_extract_tool_calls_ignores_malformed_function_payloads():
         ]
     }
 
-    assert gateway._extract_tool_calls(completion) == []
+    assert _extract_tool_calls(completion) == []
     assert "tool_calls" not in completion["choices"][0]["message"]
     assert completion["choices"][0]["finish_reason"] == "stop"
 
@@ -531,15 +560,15 @@ def test_extract_tool_calls_clears_non_list_tool_calls():
         ]
     }
 
-    assert gateway._extract_tool_calls(completion) == []
+    assert _extract_tool_calls(completion) == []
     assert "tool_calls" not in completion["choices"][0]["message"]
     assert completion["choices"][0]["finish_reason"] == "stop"
 
 
 def test_stream_role_and_final_events_are_openai_compatible():
-    role_payload = _data_payload(gateway._stream_role_event("test-model", chunk_id="chatcmpl-fixed", created=123))
+    role_payload = _data_payload(_stream_role_event("test-model", chunk_id="chatcmpl-fixed", created=123))
     final_payload = _data_payload(
-        gateway._stream_final_event("test-model", "tool_calls", chunk_id="chatcmpl-fixed", created=123)
+        _stream_final_event("test-model", "tool_calls", chunk_id="chatcmpl-fixed", created=123)
     )
 
     assert role_payload["id"] == final_payload["id"] == "chatcmpl-fixed"
@@ -558,10 +587,10 @@ def test_anthropic_tool_block_indexes_are_compacted_for_openai():
     tool_delta = {"type": "content_block_delta", "index": 1, "delta": {"type": "input_json_delta"}}
     second_tool = {"type": "content_block_start", "index": 3, "content_block": {"type": "tool_use"}}
 
-    assert gateway._anthropic_tool_index_override(text_start, state) is None
-    assert gateway._anthropic_tool_index_override(tool_start, state) == 0
-    assert gateway._anthropic_tool_index_override(tool_delta, state) == 0
-    assert gateway._anthropic_tool_index_override(second_tool, state) == 1
+    assert _anthropic_tool_index_override(text_start, state) is None
+    assert _anthropic_tool_index_override(tool_start, state) == 0
+    assert _anthropic_tool_index_override(tool_delta, state) == 0
+    assert _anthropic_tool_index_override(second_tool, state) == 1
 
 
 def test_completion_replay_skips_already_streamed_text_for_mixed_tools():
@@ -585,7 +614,7 @@ def test_completion_replay_skips_already_streamed_text_for_mixed_tools():
         ],
     }
 
-    replay = gateway._completion_with_unstreamed_deltas(
+    replay = _completion_with_unstreamed_deltas(
         completion,
         streamed_content="I will check.",
     )
@@ -596,7 +625,7 @@ def test_completion_replay_skips_already_streamed_text_for_mixed_tools():
 
 
 def test_stream_replay_accumulator_replays_only_unstreamed_deltas():
-    accumulator = gateway.StreamReplayAccumulator()
+    accumulator = StreamReplayAccumulator()
 
     assert accumulator.record_reasoning("thinking ") == "thinking "
     assert accumulator.record_content("I will check.") == "I will check."
@@ -655,7 +684,7 @@ def test_read_next_stream_chunk_returns_chunk_when_upstream_task_finishes():
         upstream = _ClosableAsyncIterator([{"choices": [{"delta": {"content": "hello"}}]}])
         next_chunk = asyncio.create_task(anext(upstream))
 
-        result = await gateway.read_next_stream_chunk(
+        result = await read_next_stream_chunk(
             upstream_chunks=upstream,
             next_chunk=next_chunk,
             request=_DisconnectProbe(),
@@ -677,7 +706,7 @@ def test_read_next_stream_chunk_returns_keepalive_while_upstream_is_pending():
         upstream = _ClosableAsyncIterator([])
         next_chunk = asyncio.create_task(pending_forever())
         try:
-            result = await gateway.read_next_stream_chunk(
+            result = await read_next_stream_chunk(
                 upstream_chunks=upstream,
                 next_chunk=next_chunk,
                 request=_DisconnectProbe(),
@@ -701,7 +730,7 @@ def test_read_next_stream_chunk_closes_upstream_when_client_disconnects():
         upstream = _ClosableAsyncIterator([])
         next_chunk = asyncio.create_task(pending_forever())
 
-        result = await gateway.read_next_stream_chunk(
+        result = await read_next_stream_chunk(
             upstream_chunks=upstream,
             next_chunk=next_chunk,
             request=_DisconnectProbe(disconnected=True),
@@ -723,7 +752,7 @@ def test_close_stream_reader_cancels_pending_task_and_closes_upstream():
         upstream = _ClosableAsyncIterator([])
         next_chunk = asyncio.create_task(pending_forever())
 
-        await gateway.close_stream_reader(upstream_chunks=upstream, next_chunk=next_chunk)
+        await close_stream_reader(upstream_chunks=upstream, next_chunk=next_chunk)
 
         assert next_chunk.cancelled() is True
         assert upstream.closed is True
@@ -819,7 +848,7 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
 
         events = [
             event
-            async for event in gateway._run_internal_tool_loop_stream_impl(ctx)
+            async for event in run_internal_tool_loop_stream(ctx)
             if isinstance(event, str) and event.startswith("data: ")
         ]
 
@@ -839,7 +868,7 @@ def test_read_next_stream_chunk_returns_exhausted_at_end_of_stream():
         upstream = _ClosableAsyncIterator([])
         next_chunk = asyncio.create_task(anext(upstream))
 
-        result = await gateway.read_next_stream_chunk(
+        result = await read_next_stream_chunk(
             upstream_chunks=upstream,
             next_chunk=next_chunk,
             request=_DisconnectProbe(),
@@ -1137,12 +1166,17 @@ def test_execute_mixed_gateway_tool_calls_stores_hidden_result_and_returns_only_
                     ],
                 }
 
-                result, gateway_calls, client_calls = await gateway._execute_mixed_gateway_tool_calls(
+                ctx = gateway._make_internal_tool_loop_context(
+                    request=None,
+                    body=None,
+                    prepared_messages=[],
+                    meta={"session": {"id": session["id"], "session_tag": session["session_tag"]}},
+                    sessions=sessions,
+                )
+                result, gateway_calls, client_calls = await _execute_mixed_gateway_tool_calls(
+                    ctx,
                     completion,
                     completion["choices"][0]["message"]["tool_calls"],
-                    session["session_tag"],
-                    sessions,
-                    session["id"],
                 )
             finally:
                 gateway.session_store = old_store
@@ -1151,7 +1185,7 @@ def test_execute_mixed_gateway_tool_calls_stores_hidden_result_and_returns_only_
             message = result["choices"][0]["message"]
             pending = store.find_pending_gateway_tool_turn(session["id"], ["call_client"])
             replay_events = list(
-                gateway._completion_to_stream_events(
+                _completion_to_stream_events(
                     result,
                     include_role=False,
                     content_chunk_chars=1200,
@@ -1160,9 +1194,9 @@ def test_execute_mixed_gateway_tool_calls_stores_hidden_result_and_returns_only_
             )
             response_text = json.dumps(result, ensure_ascii=False) + "\n".join(replay_events)
 
-            assert [gateway._tool_call_name(call) for call in gateway_calls] == ["shenyu_recall"]
-            assert [gateway._tool_call_name(call) for call in client_calls] == ["read_file"]
-            assert [gateway._tool_call_name(call) for call in message["tool_calls"]] == ["read_file"]
+            assert [_tool_call_name(call) for call in gateway_calls] == ["shenyu_recall"]
+            assert [_tool_call_name(call) for call in client_calls] == ["read_file"]
+            assert [_tool_call_name(call) for call in message["tool_calls"]] == ["read_file"]
             assert message["content"] == "I will check."
             assert pending is not None
             assert "hidden gateway result" in pending["gateway_tool_messages"][0]["content"]
@@ -1210,12 +1244,17 @@ def test_execute_mixed_gateway_tool_calls_stores_clean_pending_assistant_copy():
                     ]
                 }
 
-                result, _, _ = await gateway._execute_mixed_gateway_tool_calls(
+                ctx = gateway._make_internal_tool_loop_context(
+                    request=None,
+                    body=None,
+                    prepared_messages=[],
+                    meta={"session": {"id": session["id"], "session_tag": session["session_tag"]}},
+                    sessions=sessions,
+                )
+                result, _, _ = await _execute_mixed_gateway_tool_calls(
+                    ctx,
                     completion,
                     completion["choices"][0]["message"]["tool_calls"],
-                    session["session_tag"],
-                    sessions,
-                    session["id"],
                 )
             finally:
                 gateway.session_store = old_store

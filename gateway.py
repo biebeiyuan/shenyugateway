@@ -13,12 +13,9 @@ import asyncio
 import json
 import logging
 import os
-import random
-import re
 import time as _time
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
@@ -29,23 +26,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
-from shenyu_gateway.calendar import (
-    default_period_key,
-    extract_json_object,
-    fill_template,
-    latest_page_by_key,
-    month_grid,
-    period_bounds,
-    rows_to_prompt_configs,
-)
-from shenyu_gateway.calendar_sources import CalendarSourceCollector
+from shenyu_gateway.calendar_service import CalendarService
 from shenyu_gateway.config import RuntimeConfig
+from shenyu_gateway.context_builder import ContextBuilder
 from shenyu_gateway.context_layers import (
-    ContextLayerSettings,
     assemble_layered_messages,
     non_system_message_count as _non_system_message_count,
-    render_layered_additions as _render_layered_additions,
-    render_system_additions as _render_system_additions,
     trim_client_extra_bundle_attachments as _trim_client_extra_bundle_attachments,
     trim_client_image_blocks as _trim_client_image_blocks,
     trim_client_messages as _trim_client_messages,
@@ -53,7 +39,7 @@ from shenyu_gateway.context_layers import (
 )
 from shenyu_gateway.gateway_tools import GatewayToolService, configure_gateway_tools
 from shenyu_gateway.mem_notes import MemNoteService
-from shenyu_gateway.recall import RecallIndexService, recall_terms
+from shenyu_gateway.recall import RecallIndexService
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
     json_dumps as _json_dumps,
@@ -71,25 +57,20 @@ from shenyu_gateway.response_capture import (
     store_heartbeat,
 )
 from shenyu_gateway.request_logs import (
-    _TOOL_STREAM_STALE_SECONDS,
     _finalize_stale_tool_stream_logs,
-    _finalize_stale_tool_stream_log,
     _finalize_tool_stream_log,
     _mark_tool_stream_activity,
     _message_log_preview,
-    _payload_without_image_blocks,
     _record_response_text,
     _record_upstream_payload,
     _request_logs,
     _retain_request_log_payloads,
-    _tool_stream_stale_seconds,
-    _upstream_payload_summary,
 )
 from shenyu_gateway.schemas import (
-    CalendarGenerateRequest,
-    CalendarPromptUpdate,
     ChatRequest,
     ConfigUpdate,
+    CalendarGenerateRequest,
+    CalendarPromptUpdate,
     HeartbeatCreateRequest,
     HeartbeatDeleteRequest,
     MemNoteBulkPatch,
@@ -99,25 +80,12 @@ from shenyu_gateway.schemas import (
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.streaming import (
-    StreamReplayAccumulator,
-    _apply_openai_stream_chunk,
-    _completion_with_unstreamed_deltas,
-    _ensure_stream_tool_call,
     _gateway_error_completion,
     _gateway_error_text,
     _new_stream_chunk_id,
-    _new_stream_completion,
     _sse_response,
-    _stream_chunk_base,
     _stream_content_event,
-    _stream_final_event,
     _stream_gateway_error_events,
-    _stream_keepalive_event,
-    _stream_reasoning_event,
-    _stream_role_event,
-    _unstreamed_text_suffix,
-    close_stream_reader,
-    read_next_stream_chunk,
 )
 from shenyu_gateway.supabase import SupabaseClient
 from shenyu_gateway.tool_registry import (
@@ -128,12 +96,7 @@ from shenyu_gateway.tool_registry import (
 )
 from shenyu_gateway.tool_loop import (
     InternalToolLoopContext,
-    _all_tool_calls_are_gateway_native,
-    _execute_mixed_gateway_tool_calls as _execute_mixed_gateway_tool_calls_impl,
-    _extract_tool_calls,
     _latest_user_text,
-    _tool_call_cache_key,
-    _tool_call_log_preview,
     _tool_call_name,
     run_internal_tool_loop as _run_internal_tool_loop_impl,
     run_internal_tool_loop_stream as _run_internal_tool_loop_stream_impl,
@@ -145,9 +108,7 @@ from shenyu_gateway.upstream_adapter import (
     _anthropic_to_openai_chunk,
     _anthropic_to_openai_completion,
     _apply_openai_compatible_cache_control,
-    _assistant_tool_call_message,
     _cache_usage_summary,
-    _completion_to_stream_events,
     _convert_openai_tools_to_anthropic,
     _models_url_for,
     _openai_to_anthropic,
@@ -159,111 +120,8 @@ from shenyu_gateway.utils import normalize_text as _normalize_text
 logging.basicConfig(level=logging.INFO)
 
 
-def _shorten(text: str, limit: int = 240) -> str:
-    text = (text or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
-
-
 def _clamp(value: float, min_value: float, max_value: float) -> float:
     return max(min_value, min(value, max_value))
-
-
-def _split_paragraph_chunks(text: str, min_len: int = 80, max_len: int = 420) -> list[str]:
-    text = (text or "").strip()
-    if not text:
-        return []
-
-    paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
-    chunks: list[str] = []
-    buffer = ""
-
-    for paragraph in paragraphs:
-        candidate = f"{buffer}\n\n{paragraph}".strip() if buffer else paragraph
-        if len(candidate) <= max_len:
-            buffer = candidate
-            continue
-
-        if buffer:
-            chunks.append(buffer)
-            buffer = ""
-
-        if len(paragraph) <= max_len:
-            buffer = paragraph
-            continue
-
-        start = 0
-        while start < len(paragraph):
-            end = min(len(paragraph), start + max_len)
-            piece = paragraph[start:end].strip()
-            if piece:
-                chunks.append(piece)
-            start = end
-
-    if buffer:
-        chunks.append(buffer)
-
-    merged: list[str] = []
-    for chunk in chunks:
-        if merged and len(merged[-1]) < min_len and len(merged[-1]) + len(chunk) + 2 <= max_len:
-            merged[-1] = merged[-1] + "\n\n" + chunk
-        else:
-            merged.append(chunk)
-    return merged
-
-
-def _keyword_terms(query: str) -> list[str]:
-    return recall_terms(query)
-
-
-def _keyword_overlap_score(query: str, text: str) -> float:
-    terms = _keyword_terms(query)
-    if not terms:
-        return 0.25
-    hay = (text or "").lower()
-    hits = sum(1 for term in terms if term in hay)
-    return hits / max(len(terms), 1)
-
-
-def _today_utc_key() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
-
-
-_LOCAL_DAY_TZ = timezone(timedelta(hours=8))
-
-
-def _date_range_bounds(created_from: Optional[str], created_to: Optional[str]) -> tuple[Optional[str], Optional[str]]:
-    def start_bound(value: Optional[str]) -> Optional[str]:
-        raw = (value or "").strip()
-        if not raw:
-            return None
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
-            dt = datetime.fromisoformat(raw).replace(tzinfo=_LOCAL_DAY_TZ)
-            return dt.astimezone(timezone.utc).isoformat()
-        return raw
-
-    def end_bound(value: Optional[str]) -> Optional[str]:
-        raw = (value or "").strip()
-        if not raw:
-            return None
-        if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
-            dt = datetime.fromisoformat(raw).replace(tzinfo=_LOCAL_DAY_TZ)
-            return (dt + timedelta(days=1)).astimezone(timezone.utc).isoformat()
-        return raw
-
-    return start_bound(created_from), end_bound(created_to)
-
-
-def _safe_json_loads(value: Any, fallback: Any):
-    if value is None:
-        return fallback
-    if isinstance(value, (list, dict)):
-        return value
-    try:
-        return json.loads(value)
-    except Exception:
-        return fallback
 
 
 _DNS_ERROR_MARKERS = (
@@ -352,6 +210,30 @@ def _require_session_store() -> GatewayStore:
     if store is None:
         raise RuntimeError("Gateway session store is not initialized.")
     return store
+
+
+def _calendar_service(request: Optional[Request] = None) -> CalendarService:
+    return CalendarService(
+        cfg=cfg,
+        supabase_client=supabase_client,
+        session_store=session_store,
+        call_upstream_json_at=_call_upstream_json_at,
+        detect_protocol_for=_detect_protocol_for,
+        chat_url_for=_chat_url_for,
+        request=request,
+    )
+
+
+def _context_builder(store: GatewayStore, sessions: SessionManager, tools: GatewayToolService) -> ContextBuilder:
+    return ContextBuilder(
+        store,
+        sessions,
+        tools,
+        cfg=cfg,
+        supabase_client=supabase_client,
+        stable_charter_block=_stable_charter_block,
+        is_hisense_client=_is_hisense_client,
+    )
 
 
 def _make_upstream_http_client() -> httpx.AsyncClient:
@@ -666,726 +548,6 @@ def _stable_charter_block() -> str:
     return base
 
 
-_HEARTBEAT_PROMPT = """## Heartbeat（仅网关可见）
-我自己留给自己的心跳。写完会被网关保存，圆儿看不到。有感触再写，没有就空着。过几轮会反上来给我回顾。
-需要留就在最后附上一个 <heartbeat> 块，<heartbeat>...</heartbeat>
-"""
-
-_INLINE_MEM_PROMPT = """## Inline Mem（仅网关可见）
-如果我觉得“这个以后还想记得”，在最后留一个 [mem]...[/mem]。
-是一张我自己的便签，写完会被网关保存进“待整理”，有空我再去整理，整理完后聊到相关的会贴到我的上下文里。
-没有想记就不写。如果当时有复杂或者颇有感触的心情，我也许会想用一段和弦写在最后面把那一刻定格下来。
-如果同时记下来 heartbeat 和 mem，放在独立块里，不要互相嵌套。
-"""
-
-
-class CalendarService:
-    def __init__(self, request: Optional[Request] = None):
-        self.request = request
-
-    def _source_collector(self) -> CalendarSourceCollector:
-        async def query_calendar_pages(params: dict[str, str]) -> list[dict[str, Any]]:
-            return await self._safe_supabase_query("calendar_pages", params)
-
-        async def surface_passages(query: str, session_tag: Optional[str], limit: int) -> dict[str, Any]:
-            return await GatewayToolService().surface_passages(query, session_tag=session_tag, limit=limit)
-
-        return CalendarSourceCollector(
-            session_store=session_store,
-            calendar_page_query=query_calendar_pages,
-            surface_passages=surface_passages,
-            default_surface_limit=cfg.default_surface_limit,
-        )
-
-    def _require_supabase(self):
-        if not supabase_client:
-            raise HTTPException(status_code=400, detail="Supabase is not configured.")
-
-    async def _safe_supabase_query(self, table: str, params: dict) -> list[dict]:
-        try:
-            return await supabase_client.query(table, params)
-        except Exception:
-            return []
-
-    async def list_prompt_configs(self) -> dict[str, Any]:
-        self._require_supabase()
-        rows = await supabase_client.query(
-            "calendar_prompt_configs",
-            {"select": "*", "order": "prompt_type.asc,updated_at.desc", "limit": "50"},
-        )
-        configs = rows_to_prompt_configs(rows)
-        grouped: dict[str, list[dict[str, Any]]] = {"day": [], "week": [], "month": []}
-        active: dict[str, Optional[dict[str, Any]]] = {"day": None, "week": None, "month": None}
-        for config in configs:
-            item = {
-                "id": config.id,
-                "prompt_type": config.prompt_type,
-                "name": config.name,
-                "content": config.content,
-                "version": config.version,
-                "is_default": config.is_default,
-                "is_active": config.is_active,
-                "note": config.note,
-                "updated_at": config.updated_at,
-            }
-            if config.prompt_type in grouped:
-                grouped[config.prompt_type].append(item)
-                if config.is_active:
-                    active[config.prompt_type] = item
-        return {"items": grouped, "active": active}
-
-    async def save_prompt_config(self, body: CalendarPromptUpdate) -> dict[str, Any]:
-        self._require_supabase()
-        prompt_type = body.prompt_type.strip().lower()
-        if prompt_type not in {"day", "week", "month"}:
-            raise HTTPException(status_code=400, detail="Unsupported prompt_type.")
-        rows = await self._safe_supabase_query(
-            "calendar_prompt_configs",
-            {
-                "prompt_type": f"eq.{prompt_type}",
-                "select": "version",
-                "order": "version.desc",
-                "limit": "1",
-            },
-        )
-        next_version = int(rows[0]["version"]) + 1 if rows else 1
-        if body.is_active:
-            active_rows = await self._safe_supabase_query(
-                "calendar_prompt_configs",
-                {
-                    "prompt_type": f"eq.{prompt_type}",
-                    "is_active": "eq.true",
-                    "select": "id",
-                    "limit": "20",
-                },
-            )
-            for row in active_rows:
-                await supabase_client.update("calendar_prompt_configs", {"id": row.get("id")}, {"is_active": False})
-
-        created = await supabase_client.insert(
-            "calendar_prompt_configs",
-            {
-                "prompt_type": prompt_type,
-                "name": body.name or f"{prompt_type.title()} Prompt v{next_version}",
-                "content": body.content,
-                "note": body.note or "",
-                "version": next_version,
-                "is_default": False,
-                "is_active": bool(body.is_active),
-            },
-        )
-        return {"ok": True, "item": created}
-
-    async def activate_prompt_config(self, prompt_id: str) -> dict[str, Any]:
-        self._require_supabase()
-        rows = await self._safe_supabase_query(
-            "calendar_prompt_configs",
-            {"id": f"eq.{prompt_id}", "select": "*", "limit": "1"},
-        )
-        if not rows:
-            raise HTTPException(status_code=404, detail="Prompt config not found.")
-        prompt = rows[0]
-        prompt_type = prompt.get("prompt_type") or ""
-        active_rows = await self._safe_supabase_query(
-            "calendar_prompt_configs",
-            {
-                "prompt_type": f"eq.{prompt_type}",
-                "is_active": "eq.true",
-                "select": "id",
-                "limit": "20",
-            },
-        )
-        for row in active_rows:
-            await supabase_client.update("calendar_prompt_configs", {"id": row.get("id")}, {"is_active": False})
-        updated = await supabase_client.update("calendar_prompt_configs", {"id": prompt_id}, {"is_active": True})
-        return {"ok": True, "item": updated[0] if updated else prompt}
-
-    async def month_status(self, month_key: Optional[str]) -> dict[str, Any]:
-        self._require_supabase()
-        month_key = month_key or default_period_key("month")
-        rows = await self._safe_supabase_query(
-            "calendar_pages",
-            {"select": "*", "limit": "500", "order": "period_start.asc,updated_at.desc"},
-        )
-        latest = latest_page_by_key(rows)
-        pages = list(latest.values())
-        days_by_key = {row["period_key"]: row for row in pages if row.get("period_type") == "day"}
-        weeks_by_key = {row["period_key"]: row for row in pages if row.get("period_type") == "week"}
-        months_by_key = {row["period_key"]: row for row in pages if row.get("period_type") == "month"}
-
-        grid = month_grid(month_key)
-        for item in grid:
-            item["has_day"] = item["date"] in days_by_key
-            item["has_week"] = item["week_key"] in weeks_by_key
-            item["has_month"] = month_key in months_by_key
-            if item["has_day"]:
-                row = days_by_key[item["date"]]
-                item["day_page"] = {
-                    "id": row.get("id"),
-                    "title": row.get("title") or "",
-                    "summary": row.get("summary") or "",
-                    "status": row.get("status") or "final",
-                }
-        return {
-            "month_key": month_key,
-            "grid": grid,
-            "pages": {
-                "day": [
-                    {
-                        "id": row.get("id"),
-                        "period_key": row.get("period_key"),
-                        "title": row.get("title") or "",
-                        "summary": row.get("summary") or "",
-                        "updated_at": row.get("updated_at") or row.get("created_at"),
-                    }
-                    for row in sorted(days_by_key.values(), key=lambda item: item.get("period_key", ""), reverse=True)
-                    if (row.get("period_key") or "").startswith(month_key)
-                ],
-                "week": [
-                    {
-                        "id": row.get("id"),
-                        "period_key": row.get("period_key"),
-                        "title": row.get("title") or "",
-                        "summary": row.get("summary") or "",
-                        "updated_at": row.get("updated_at") or row.get("created_at"),
-                    }
-                    for row in sorted(weeks_by_key.values(), key=lambda item: item.get("period_key", ""), reverse=True)
-                ],
-                "month": [
-                    {
-                        "id": row.get("id"),
-                        "period_key": row.get("period_key"),
-                        "title": row.get("title") or "",
-                        "summary": row.get("summary") or "",
-                        "updated_at": row.get("updated_at") or row.get("created_at"),
-                    }
-                    for row in sorted(months_by_key.values(), key=lambda item: item.get("period_key", ""), reverse=True)
-                ],
-            },
-        }
-
-    async def page_detail(self, page_id: str) -> dict[str, Any]:
-        self._require_supabase()
-        rows = await self._safe_supabase_query("calendar_pages", {"id": f"eq.{page_id}", "select": "*", "limit": "1"})
-        if not rows:
-            raise HTTPException(status_code=404, detail="Calendar page not found.")
-        row = rows[0]
-        row["source_refs"] = _safe_json_loads(row.get("source_refs"), [])
-        row["session_tags"] = _safe_json_loads(row.get("session_tags"), [])
-        row["meta"] = _safe_json_loads(row.get("meta"), {})
-        return row
-
-    async def preview_sources(self, period_type: str, period_key: Optional[str], session_tag: Optional[str] = None) -> dict[str, Any]:
-        self._require_supabase()
-        period_type = (period_type or "").strip().lower()
-        if period_type not in {"day", "week", "month"}:
-            raise HTTPException(status_code=400, detail="Unsupported period_type.")
-        period_key = period_key or default_period_key(period_type)
-        return await self._collect_sources(period_type, period_key, session_tag=session_tag)
-
-    async def send_preview(
-        self,
-        period_type: str,
-        period_key: Optional[str],
-        model_override: Optional[str] = None,
-        session_tag: Optional[str] = None,
-    ) -> dict[str, Any]:
-        self._require_supabase()
-        period_type = (period_type or "").strip().lower()
-        if period_type not in {"day", "week", "month"}:
-            raise HTTPException(status_code=400, detail="Unsupported period_type.")
-        period_key = period_key or default_period_key(period_type)
-        prompt_row = await self._active_prompt(period_type)
-        sources = await self._collect_sources(period_type, period_key, session_tag=session_tag)
-        prompt_pack = await self._build_generation_prompt(period_type, period_key, prompt_row, sources)
-        upstream = self._calendar_upstream(model_override)
-        return {
-            "period_type": period_type,
-            "period_key": period_key,
-            "protocol": upstream["protocol"],
-            "model": upstream["model"],
-            "upstream_url": upstream["chat_url"],
-            "prompt_name": prompt_row.get("name") or "",
-            "prompt_version": prompt_row.get("version"),
-            "system_prompt": prompt_pack["system_prompt"],
-            "user_prompt": prompt_pack["user_prompt"],
-            "source_block": prompt_pack["source_block"],
-            "source_counts": CalendarSourceCollector.source_counts(sources),
-        }
-
-    async def generate_page(self, body: CalendarGenerateRequest) -> dict[str, Any]:
-        self._require_supabase()
-        if not self.request:
-            raise HTTPException(status_code=500, detail="Calendar generation requires request context.")
-        period_type = (body.period_type or "").strip().lower()
-        if period_type not in {"day", "week", "month"}:
-            raise HTTPException(status_code=400, detail="Unsupported period_type.")
-        period_key = body.period_key or default_period_key(period_type)
-        prompt_row = await self._active_prompt(period_type)
-        sources = await self._collect_sources(period_type, period_key, session_tag=body.session_tag)
-        run = await supabase_client.insert(
-            "calendar_generation_runs",
-            {
-                "period_type": period_type,
-                "period_key": period_key,
-                "status": "running",
-                "initiated_by": "manual_ui",
-                "source_model": body.model or getattr(cfg, "calendar_model", "") or "",
-                "source_refs": _json_dumps(sources.get("source_refs") or []),
-                "started_at": _iso_now(),
-            },
-        )
-        try:
-            generated = await self._run_generation_model(
-                period_type=period_type,
-                period_key=period_key,
-                prompt_row=prompt_row,
-                sources=sources,
-                model_override=body.model,
-            )
-            page = await self._upsert_page(
-                period_type=period_type,
-                period_key=period_key,
-                prompt_row=prompt_row,
-                sources=sources,
-                generated=generated,
-                source_model=body.model or getattr(cfg, "calendar_model", "") or "manual",
-            )
-            await supabase_client.update(
-                "calendar_generation_runs",
-                {"id": run.get("id")},
-                {"status": "done", "page_id": page.get("id"), "finished_at": _iso_now()},
-            )
-            return {"ok": True, "run": run, "page": page}
-        except Exception as exc:
-            await supabase_client.update(
-                "calendar_generation_runs",
-                {"id": run.get("id")},
-                {"status": "failed", "error_message": str(exc)[:1000], "finished_at": _iso_now()},
-            )
-            raise
-
-    async def _active_prompt(self, period_type: str) -> dict[str, Any]:
-        rows = await self._safe_supabase_query(
-            "calendar_prompt_configs",
-            {
-                "prompt_type": f"eq.{period_type}",
-                "is_active": "eq.true",
-                "select": "*",
-                "limit": "1",
-            },
-        )
-        if rows:
-            return rows[0]
-        rows = await self._safe_supabase_query(
-            "calendar_prompt_configs",
-            {
-                "prompt_type": f"eq.{period_type}",
-                "is_default": "eq.true",
-                "select": "*",
-                "limit": "1",
-            },
-        )
-        if not rows:
-            raise HTTPException(status_code=404, detail=f"No prompt config found for {period_type}.")
-        return rows[0]
-
-    async def _collect_sources(self, period_type: str, period_key: str, session_tag: Optional[str] = None) -> dict[str, Any]:
-        return await self._source_collector().collect_sources(period_type, period_key, session_tag=session_tag)
-
-    def _context_snapshots(self, limit: int = 5, session_tag: Optional[str] = None, message_limit: Optional[int] = None) -> list[dict[str, Any]]:
-        return self._source_collector().context_snapshots(limit=limit, session_tag=session_tag, message_limit=message_limit)
-
-    async def _build_generation_prompt(
-        self,
-        period_type: str,
-        period_key: str,
-        prompt_row: dict[str, Any],
-        sources: dict[str, Any],
-    ) -> dict[str, Any]:
-        rows = await self._safe_supabase_query(
-            "calendar_pages",
-            {"select": "period_end", "period_type": f"eq.{period_type}", "is_latest": "eq.true", "order": "period_end.desc", "limit": "1"},
-        )
-        days_since_last = 0
-        if rows:
-            last_end = _parse_ts(rows[0].get("period_end"))
-            current_start = _parse_ts(sources.get("period_start"))
-            if last_end and current_start:
-                days_since_last = max((current_start.date() - last_end.date()).days, 0)
-
-        today_date = period_key if period_type == "day" else _today_utc_key()
-        user_prompt = fill_template(prompt_row.get("content") or "", today_date=today_date, days_since_last=days_since_last)
-        system_prompt = (
-            "You are write a private calendar memory page in Chinese.\n"
-            "It may be intimate, partial, tender, blunt, playful, or quiet; do not make it sound like a product report.\n"
-            "Return exactly one valid JSON object with string keys: title, content, summary, digest.\n"
-            "The JSON object is only a storage envelope; content must be the actual page text, not another JSON string, not markdown, and not an array.\n"
-            "Use Chinese corner quotes like 「」 inside strings when quoting speech, so the JSON stays valid.\n"
-            "content can be short or long as needed, usually around 0-300 Chinese characters but flexible.\n"
-            "summary is one concise line for calendar listing.\n"
-            "digest is a short, tender memory snippet under 180 Chinese characters to help us recall and revisit our moments later.\n"
-        )
-        source_block = CalendarSourceCollector.render_source_block(period_type, sources)
-        messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": user_prompt + "\n\n我们刚刚聊了这些：\n\n" + source_block},
-        ]
-        return {
-            "days_since_last": days_since_last,
-            "system_prompt": system_prompt,
-            "user_prompt": user_prompt,
-            "source_block": source_block,
-            "messages": messages,
-        }
-
-    def _calendar_upstream(self, model_override: Optional[str] = None) -> dict[str, str]:
-        calendar_url = (getattr(cfg, "calendar_upstream_url", "") or "").strip()
-        base_url = calendar_url or cfg.upstream_url.strip()
-        configured_protocol = getattr(cfg, "calendar_protocol", "auto") or "auto"
-        if not calendar_url and configured_protocol == "auto":
-            configured_protocol = cfg.upstream_protocol
-        protocol = _detect_protocol_for(base_url, configured_protocol)
-        model = (model_override or getattr(cfg, "calendar_model", "") or "default").strip()
-        api_key = (getattr(cfg, "calendar_api_key", "") or cfg.upstream_api_key).strip()
-        return {
-            "base_url": base_url,
-            "chat_url": _chat_url_for(base_url, protocol),
-            "protocol": protocol,
-            "model": model,
-            "api_key": api_key,
-        }
-
-    async def _run_generation_model(
-        self,
-        *,
-        period_type: str,
-        period_key: str,
-        prompt_row: dict[str, Any],
-        sources: dict[str, Any],
-        model_override: Optional[str],
-    ) -> dict[str, Any]:
-        prompt_pack = await self._build_generation_prompt(period_type, period_key, prompt_row, sources)
-        upstream = self._calendar_upstream(model_override)
-        if not upstream["base_url"] or not upstream["api_key"]:
-            raise HTTPException(status_code=400, detail="Calendar upstream URL/API key is not configured.")
-
-        if upstream["protocol"] == "anthropic":
-            system, messages = _openai_to_anthropic(prompt_pack["messages"], cache_layers={}, cache_paths=[])
-            payload: dict[str, Any] = {
-                "model": upstream["model"],
-                "messages": messages,
-                "max_tokens": 700,
-                "temperature": 0.9,
-            }
-            if system:
-                payload["system"] = system
-            headers = {
-                "x-api-key": upstream["api_key"],
-                "anthropic-version": cfg.upstream_version,
-                "content-type": "application/json",
-            }
-            raw_response = await _call_upstream_json_at(self.request, upstream["chat_url"], payload, headers)
-            raw = _anthropic_to_openai_completion(upstream["model"], raw_response)
-        else:
-            payload = {
-                "model": upstream["model"],
-                "messages": prompt_pack["messages"],
-                "max_tokens": 700,
-                "temperature": 0.9,
-            }
-            headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
-            raw = await _call_upstream_json_at(self.request, upstream["chat_url"], payload, headers)
-
-        content = raw.get("choices", [{}])[0].get("message", {}).get("content", "") or ""
-        generated = extract_json_object(content)
-        if not (generated.get("content") or "").strip():
-            generated["content"] = content.strip() or "No concrete content was written today."
-        if not (generated.get("digest") or "").strip():
-            generated["digest"] = _shorten(generated.get("content") or "", 180)
-        return generated
-
-    async def _upsert_page(
-        self,
-        *,
-        period_type: str,
-        period_key: str,
-        prompt_row: dict[str, Any],
-        sources: dict[str, Any],
-        generated: dict[str, Any],
-        source_model: str,
-    ) -> dict[str, Any]:
-        start, end = period_bounds(period_type, period_key)
-        rows = await self._safe_supabase_query(
-            "calendar_pages",
-            {
-                "select": "*",
-                "period_type": f"eq.{period_type}",
-                "period_key": f"eq.{period_key}",
-                "is_latest": "eq.true",
-                "limit": "1",
-            },
-        )
-        version = 1
-        if rows:
-            version = int(rows[0].get("version") or 1) + 1
-            await supabase_client.update("calendar_pages", {"id": rows[0].get("id")}, {"is_latest": False})
-
-        page = await supabase_client.insert(
-            "calendar_pages",
-            {
-                "period_type": period_type,
-                "period_key": period_key,
-                "period_start": start.isoformat(),
-                "period_end": end.isoformat(),
-                "version": version,
-                "is_latest": True,
-                "title": (generated.get("title") or "").strip(),
-                "content": (generated.get("content") or "").strip(),
-                "summary": (generated.get("summary") or "").strip(),
-                "digest": (generated.get("digest") or generated.get("summary") or "").strip(),
-                "author": "沈予",
-                "source_model": source_model,
-                "source_refs": _json_dumps(sources.get("source_refs") or []),
-                "session_tags": _json_dumps(sources.get("session_tags") or []),
-                "meta": _json_dumps({"source_counts": CalendarSourceCollector.source_counts(sources)}),
-                "status": "final",
-                "prompt_snapshot": prompt_row.get("content") or "",
-                "generated_by": "manual",
-            },
-        )
-        page["source_refs"] = sources.get("source_refs") or []
-        page["session_tags"] = sources.get("session_tags") or []
-        page["meta"] = {"source_counts": CalendarSourceCollector.source_counts(sources)}
-        return page
-
-
-class ContextBuilder:
-    def __init__(self, store: GatewayStore, sessions: SessionManager, tools: GatewayToolService):
-        self.store = store
-        self.sessions = sessions
-        self.tools = tools
-
-    def _layer_settings(self) -> ContextLayerSettings:
-        return ContextLayerSettings(
-            enable_gateway_tools=bool(getattr(cfg, "enable_upstream_tools", True))
-            and bool(getattr(cfg, "enable_gateway_tools", True)),
-            inject_inline_memory_prompt=cfg.inject_inline_memory_prompt,
-            heartbeat_prompt=_HEARTBEAT_PROMPT,
-            inline_mem_prompt=_INLINE_MEM_PROMPT,
-        )
-
-    async def calendar_context_pages(self) -> dict[str, list[dict[str, Any]]]:
-        if not supabase_client:
-            return {"day": [], "week": [], "month": []}
-
-        async def load(period_type: str, enabled: bool, limit: int) -> list[dict[str, Any]]:
-            if not enabled or limit <= 0:
-                return []
-            try:
-                rows = await supabase_client.query(
-                    "calendar_pages",
-                    {
-                        "select": "period_type,period_key,title,summary,digest,content,period_start",
-                        "period_type": f"eq.{period_type}",
-                        "is_latest": "eq.true",
-                        "order": "period_start.desc",
-                        "limit": str(limit),
-                    },
-                )
-            except Exception:
-                return []
-            return [
-                {
-                    "period_type": row.get("period_type") or period_type,
-                    "period_key": row.get("period_key") or "",
-                    "title": row.get("title") or "",
-                    "summary": row.get("summary") or "",
-                    "digest": row.get("digest") or "",
-                    "content": row.get("content") or "",
-                }
-                for row in rows
-                if row.get("content")
-            ]
-
-        days, weeks, months = await asyncio.gather(
-            load("day", cfg.calendar_inject_day, cfg.calendar_context_day_limit),
-            load("week", cfg.calendar_inject_week, cfg.calendar_context_week_limit),
-            load("month", cfg.calendar_inject_month, cfg.calendar_context_month_limit),
-        )
-        return {"day": days, "week": weeks, "month": months}
-
-    async def build_context_package(
-        self,
-        session: dict,
-        current_user_text: str,
-        is_first_turn: bool,
-        cold_start_snapshot: Optional[dict] = None,
-        client_name: str = "",
-        consume_heartbeat_pending: bool = True,
-    ) -> dict:
-        session_id = session["id"]
-        is_hisense = _is_hisense_client(client_name)
-
-        heartbeat_digest, heartbeat_pending_ids = self._normal_heartbeat_context(
-            session_id=session_id,
-            consume_pending=consume_heartbeat_pending and not is_hisense,
-        )
-        hisense_heartbeat_digest, hisense_heartbeat_pending_ids = (
-            self._hisense_heartbeat_context(consume_pending=consume_heartbeat_pending)
-            if is_hisense
-            else ("", [])
-        )
-
-        package = {
-            "is_hisense": is_hisense,
-            "stable_charter": _stable_charter_block(),
-            "heartbeat_digest": heartbeat_digest,
-            "heartbeat_pending_ids": heartbeat_pending_ids,
-            "hisense_heartbeat_digest": hisense_heartbeat_digest,
-            "hisense_heartbeat_pending_ids": hisense_heartbeat_pending_ids,
-            "cold_start_snapshot": cold_start_snapshot,
-            "calendar_context": {"day": [], "week": [], "month": []},
-            "mem_notes": [],
-            "notebook_items": [],
-            "last_wake_recap": "",
-        }
-
-        package["calendar_context"] = await self.calendar_context_pages()
-
-        if is_hisense:
-            package["notebook_items"] = await self._hisense_notebook_items()
-            package["last_wake_recap"] = await self._hisense_last_wake_recap(session)
-        else:
-            if cfg.inject_mem_notes and current_user_text.strip():
-                notes = await MemNoteService(cfg, supabase_client).search_notes_contextual(
-                    current_user_text,
-                    session_tag=session["session_tag"],
-                    limit=cfg.mem_note_limit,
-                    session_id=session.get("id"),
-                    store=self.store,
-                )
-                package["mem_notes"] = notes.get("items") or []
-        return package
-
-    def _normal_heartbeat_digest(self, session_id: str, consume_pending: bool = True) -> str:
-        digest, _ = self._normal_heartbeat_context(session_id=session_id, consume_pending=consume_pending)
-        return digest
-
-    def _normal_heartbeat_context(self, session_id: str, consume_pending: bool = True) -> tuple[str, list[str]]:
-        heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
-        if consume_pending:
-            pending_hbs = self.store.get_pending_heartbeats(limit=heartbeat_batch_size)
-            if len(pending_hbs) >= heartbeat_batch_size:
-                return "\n".join(hb["content"] for hb in pending_hbs), [hb["id"] for hb in pending_hbs]
-            return self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size), []
-        return self._heartbeat_digest(hisense=False, limit=heartbeat_batch_size), []
-
-    def _heartbeat_digest(self, hisense: bool, limit: int, state: str = "all") -> str:
-        hbs = self.store.read_heartbeats(
-            session_id=None, state=state,
-            limit=max(1, int(limit or 10)), order="desc",
-            hisense=hisense,
-        )
-        if not hbs:
-            return ""
-        return "\n".join(hb["content"] for hb in reversed(hbs))
-
-    def _hisense_heartbeat_digest(self, consume_pending: bool = True) -> str:
-        digest, _ = self._hisense_heartbeat_context(consume_pending=consume_pending)
-        return digest
-
-    def _hisense_heartbeat_context(self, consume_pending: bool = True) -> tuple[str, list[str]]:
-        heartbeat_batch_size = max(int(cfg.hisense_heartbeat_limit or 3), 1)
-        if consume_pending:
-            pending_hbs = self.store.get_pending_heartbeats(limit=heartbeat_batch_size, hisense=True)
-            if len(pending_hbs) >= heartbeat_batch_size:
-                return "\n".join(hb["content"] for hb in pending_hbs), [hb["id"] for hb in pending_hbs]
-            return self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size, hisense=True), []
-        return self._heartbeat_digest(hisense=True, limit=cfg.hisense_heartbeat_limit), []
-
-    def _preview_normal_heartbeat_digest(self) -> str:
-        heartbeat_batch_size = max(int(cfg.heartbeat_inject_every or 5), 1)
-        digest = self._heartbeat_digest(hisense=False, limit=heartbeat_batch_size, state="pending")
-        if digest:
-            return digest
-        return self._heartbeat_digest(hisense=False, limit=heartbeat_batch_size, state="injected")
-
-    async def _hisense_notebook_items(self) -> list[dict]:
-        if not supabase_client:
-            return []
-        try:
-            rows = await supabase_client.query("shenyu_notebook", {
-                "status": "eq.active",
-                "order": "pinned.desc,updated_at.desc",
-                "limit": str(cfg.hisense_notebook_limit),
-                "select": "id,type,content,tags,status,pinned,updated_at",
-            })
-            return rows or []
-        except Exception:
-            return []
-
-    async def _hisense_last_wake_recap(self, session: dict) -> str:
-        # 优先读 notebook 里 tag:handoff 的最新一条
-        if supabase_client:
-            try:
-                rows = await supabase_client.query("shenyu_notebook", {
-                    "tags": "cs.{handoff}",
-                    "order": "updated_at.desc",
-                    "limit": "1",
-                    "select": "content,updated_at",
-                })
-                if rows:
-                    return rows[0].get("content") or ""
-            except Exception:
-                pass
-        # fallback: 最后一条已注入的海信 heartbeat
-        hbs = self.store.read_heartbeats(session_id=None, state="injected", limit=1, order="desc", hisense=True)
-        if hbs:
-            return hbs[0]["content"]
-        return ""
-
-    def render_layered_additions(self, package: dict) -> dict:
-        """返回分层的 system 内容，用于缓存友好的消息组织。
-        按沈予醒来时的阅读顺序排列：
-          stable:    醒来锚点 + 身份关系底座（断点）
-          slow:      calendar / notebook / wake recap（断点）
-          mem:       本轮命中的便签（不打断点）
-          heartbeat: 之前的心跳（不打断点）
-          tool_policy: 压缩工具说明（不打断点）
-          format:    heartbeat / mem 格式契约（尾部断点）
-        """
-        return _render_layered_additions(package, self._layer_settings())
-
-    def render_system_additions(self, package: dict) -> str:
-        """兼容接口：返回拼合后的完整 system 内容（用于 preview 等）。"""
-        return _render_system_additions(package, self._layer_settings())
-
-    async def preview(self, session_tag: Optional[str]) -> dict:
-        session = self.store.get_session_by_tag(session_tag or "default") if session_tag else None
-        fake_session = session or {
-            "id": "preview",
-            "session_tag": session_tag or "default",
-            "client_name": "preview",
-            "message_count": 0,
-        }
-        package = await self.build_context_package(
-            fake_session,
-            current_user_text="",
-            is_first_turn=True,
-            client_name=fake_session.get("client_name") or "preview",
-            consume_heartbeat_pending=False,
-        )
-        package["heartbeat_digest"] = self._preview_normal_heartbeat_digest()
-        return {
-            "session_tag": fake_session["session_tag"],
-            "package": package,
-            "system_additions": self.render_system_additions(package),
-            "cache_layers": self.render_layered_additions(package),
-            "tools": gateway_native_tools(cfg),
-        }
-
-
 def _cold_start_idle_minutes(session: dict) -> float:
     last_active = _parse_ts(session.get("last_active_at"))
     if not last_active:
@@ -1605,7 +767,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     store = _require_session_store()
     sessions = SessionManager(store, cfg)
     tools = GatewayToolService()
-    builder = ContextBuilder(store, sessions, tools)
+    builder = _context_builder(store, sessions, tools)
 
     client_name = _client_name_from_request(request)
     session_tag = _session_tag_from_request(request, client_name=client_name)
@@ -2043,31 +1205,6 @@ def _make_internal_tool_loop_context(
         mark_context_consumed=_mark_context_consumed,
         record_response_text=_record_response_text,
     )
-
-
-async def _execute_mixed_gateway_tool_calls(
-    completion: dict,
-    tool_calls: list[dict],
-    session_tag: Optional[str],
-    sessions: SessionManager,
-    session_id: str,
-) -> tuple[dict, list[dict], list[dict]]:
-    """Execute gateway-native calls from a mixed tool batch and leave client calls for the client.
-
-    Some clients provide their own tools (filesystem, package_proxy, etc.). If the model asks for
-    client tools and gateway-native tools in the same assistant turn, returning the whole batch makes
-    the client try to execute supabase_/shenyu_ tools locally. We consume the gateway calls here,
-    persist their hidden tool transcript, and return only the client-executable calls. The next
-    upstream request reconstructs the original mixed assistant turn plus gateway tool results.
-    """
-    ctx = _make_internal_tool_loop_context(
-        request=None,
-        body=None,
-        prepared_messages=[],
-        meta={"session": {"id": session_id, "session_tag": session_tag or ""}},
-        sessions=sessions,
-    )
-    return await _execute_mixed_gateway_tool_calls_impl(ctx, completion, tool_calls)
 
 
 async def _run_internal_tool_loop(
@@ -3028,7 +2165,7 @@ async def gateway_tools():
 @app.get("/api/gateway/context/preview")
 async def context_preview(session_tag: Optional[str] = None):
     store = _require_session_store()
-    builder = ContextBuilder(store, SessionManager(store, cfg), GatewayToolService())
+    builder = _context_builder(store, SessionManager(store, cfg), GatewayToolService())
     return await builder.preview(session_tag=session_tag)
 
 
@@ -3443,19 +2580,19 @@ async def gateway_log_detail(log_id: str):
 
 @app.get("/api/calendar/prompts")
 async def calendar_prompts():
-    service = CalendarService()
+    service = _calendar_service()
     return await service.list_prompt_configs()
 
 
 @app.post("/api/calendar/prompts")
 async def calendar_save_prompt(body: CalendarPromptUpdate):
-    service = CalendarService()
+    service = _calendar_service()
     return await service.save_prompt_config(body)
 
 
 @app.post("/api/calendar/prompts/{prompt_id}/activate")
 async def calendar_activate_prompt(prompt_id: str):
-    service = CalendarService()
+    service = _calendar_service()
     return await service.activate_prompt_config(prompt_id)
 
 
@@ -3463,20 +2600,20 @@ async def calendar_activate_prompt(prompt_id: str):
 async def calendar_month(month: Optional[str] = None):
     # External contract: home-frontend renders the month grid from grid[].date/day/
     # in_month/has_day/has_week/day_page{id,title,summary,status}.
-    service = CalendarService()
+    service = _calendar_service()
     return await service.month_status(month)
 
 
 @app.get("/api/calendar/page/{page_id}")
 async def calendar_page(page_id: str):
     # External contract: home-frontend expands calendar memories using id/title/summary/content.
-    service = CalendarService()
+    service = _calendar_service()
     return await service.page_detail(page_id)
 
 
 @app.get("/api/calendar/preview-sources")
 async def calendar_preview_sources(period_type: str, period_key: Optional[str] = None, session_tag: Optional[str] = None):
-    service = CalendarService()
+    service = _calendar_service()
     return await service.preview_sources(period_type, period_key, session_tag=session_tag)
 
 
@@ -3487,14 +2624,14 @@ async def calendar_send_preview(
     model: Optional[str] = None,
     session_tag: Optional[str] = None,
 ):
-    service = CalendarService()
+    service = _calendar_service()
     return await service.send_preview(period_type, period_key, model, session_tag=session_tag)
 
 
 @app.get("/api/calendar/context-snapshots")
 async def calendar_context_snapshots(limit: int = 8, session_tag: Optional[str] = None):
     _require_session_store()
-    service = CalendarService()
+    service = _calendar_service()
     snapshots = service._context_snapshots(limit=limit, session_tag=session_tag)
     return {
         "items": [
@@ -3516,7 +2653,7 @@ async def calendar_context_snapshots(limit: int = 8, session_tag: Optional[str] 
 
 @app.post("/api/calendar/generate")
 async def calendar_generate(request: Request, body: CalendarGenerateRequest):
-    service = CalendarService(request)
+    service = _calendar_service(request)
     return await service.generate_page(body)
 
 
@@ -3528,7 +2665,7 @@ async def hisense_preview():
     store = _require_session_store()
     sessions_mgr = SessionManager(store, cfg)
     tools = GatewayToolService()
-    builder = ContextBuilder(store, sessions_mgr, tools)
+    builder = _context_builder(store, sessions_mgr, tools)
     fake_session = {
         "id": "hisense-preview",
         "session_tag": "hisense-preview",
