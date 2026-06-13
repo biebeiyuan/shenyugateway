@@ -13,7 +13,6 @@ import asyncio
 import json
 import logging
 import os
-import time as _time
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -23,11 +22,17 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
+from shenyu_gateway.admin_shell_routes import AdminShellRouteDeps, build_admin_shell_router
+from shenyu_gateway.archive_routes import ArchiveRouteDeps, build_archive_router
 from shenyu_gateway.calendar_service import CalendarService
+from shenyu_gateway.calendar_routes import CalendarRouteDeps, build_calendar_router
+from shenyu_gateway.chat_archive import ChatArchiveService, archive_window_safely
+from shenyu_gateway.chat_pipeline import ChatPipeline
 from shenyu_gateway.config import RuntimeConfig
+from shenyu_gateway.config_routes import ConfigRouteDeps, build_config_router
 from shenyu_gateway.context_builder import ContextBuilder
 from shenyu_gateway.context_layers import (
     assemble_layered_messages,
@@ -38,6 +43,9 @@ from shenyu_gateway.context_layers import (
     trim_cold_start_sources as _trim_cold_start_sources,
 )
 from shenyu_gateway.gateway_tools import GatewayToolService, configure_gateway_tools
+from shenyu_gateway.heartbeat_archive import HeartbeatArchiveService, heartbeat_archive_worker
+from shenyu_gateway.gateway_admin_routes import GatewayAdminRouteDeps, build_gateway_admin_router
+from shenyu_gateway.hisense_routes import HisenseRouteDeps, build_hisense_router
 from shenyu_gateway.mem_notes import MemNoteService
 from shenyu_gateway.recall import RecallIndexService
 from shenyu_gateway.runtime import (
@@ -57,40 +65,23 @@ from shenyu_gateway.response_capture import (
     store_heartbeat,
 )
 from shenyu_gateway.request_logs import (
-    _finalize_stale_tool_stream_logs,
-    _finalize_tool_stream_log,
-    _mark_tool_stream_activity,
-    _message_log_preview,
     _record_response_text,
     _record_upstream_payload,
     _request_logs,
-    _retain_request_log_payloads,
 )
 from shenyu_gateway.schemas import (
     ChatRequest,
-    ConfigUpdate,
-    CalendarGenerateRequest,
-    CalendarPromptUpdate,
-    HeartbeatCreateRequest,
-    HeartbeatDeleteRequest,
-    MemNoteBulkPatch,
-    MemNotePatch,
-    SessionDeleteRequest,
 )
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.streaming import (
-    _gateway_error_completion,
-    _gateway_error_text,
     _new_stream_chunk_id,
     _sse_response,
     _stream_content_event,
-    _stream_gateway_error_events,
 )
 from shenyu_gateway.supabase import SupabaseClient
 from shenyu_gateway.tool_registry import (
     execute_gateway_tool,
-    gateway_native_tools,
     is_gateway_native_tool,
     merge_tools,
 )
@@ -187,6 +178,7 @@ cfg = RuntimeConfig()
 supabase_client: Optional["SupabaseClient"] = None
 session_store: Optional["GatewayStore"] = None
 recall_embedding_worker_task: Optional[asyncio.Task] = None
+heartbeat_archive_worker_task: Optional[asyncio.Task] = None
 configure_gateway_tools(runtime_config=cfg, supabase=supabase_client, store=session_store)
 
 
@@ -210,6 +202,27 @@ def _require_session_store() -> GatewayStore:
     if store is None:
         raise RuntimeError("Gateway session store is not initialized.")
     return store
+
+
+def _chat_pipeline(store: GatewayStore) -> ChatPipeline:
+    return ChatPipeline(
+        cfg=cfg,
+        store=store,
+        prepare_messages=_prepare_messages,
+        build_upstream_request=_build_upstream_request,
+        run_internal_tool_loop=_run_internal_tool_loop,
+        run_internal_tool_loop_stream=_run_internal_tool_loop_stream,
+        stream_chat=_stream_chat,
+        nonstream_chat=_nonstream_chat,
+        upstream_for_hisense=_upstream_for_hisense,
+        mapped_model_name=_mapped_model_name,
+        private_capture_fallback_text=_private_capture_fallback_text,
+        private_capture_kinds=_private_capture_kinds,
+        finalize_assistant_private_content=_finalize_assistant_private_content,
+        schedule_inline_memory_capture=_schedule_inline_memory_capture,
+        store_heartbeat=_store_heartbeat,
+        mark_context_consumed=_mark_context_consumed,
+    )
 
 
 def _calendar_service(request: Optional[Request] = None) -> CalendarService:
@@ -279,11 +292,18 @@ async def _recall_embedding_worker():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    global recall_embedding_worker_task
+    global recall_embedding_worker_task, heartbeat_archive_worker_task
     _init_supabase()
     _init_store()
     if cfg.enable_recall_embedding_worker and cfg.enable_recall_embeddings and supabase_client:
         recall_embedding_worker_task = asyncio.create_task(_recall_embedding_worker())
+    if cfg.enable_heartbeat_archive and supabase_client and session_store:
+        heartbeat_archive_worker_task = asyncio.create_task(
+            heartbeat_archive_worker(
+                HeartbeatArchiveService(session_store, supabase_client, cfg),
+                cfg.heartbeat_archive_interval_seconds,
+            )
+        )
     # connect/write/pool 保持合理超时；read 设为 None，因为流式场景下
     # LLM 可能 thinking 很久才开始输出，读取不能有固定超时。
     app.state.http = _make_upstream_http_client()
@@ -295,6 +315,13 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
         recall_embedding_worker_task = None
+    if heartbeat_archive_worker_task:
+        heartbeat_archive_worker_task.cancel()
+        try:
+            await heartbeat_archive_worker_task
+        except asyncio.CancelledError:
+            pass
+        heartbeat_archive_worker_task = None
     if supabase_client:
         await supabase_client.close()
     await app.state.http.aclose()
@@ -796,6 +823,17 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     current_message_count = _non_system_message_count(messages)
     is_hisense = _is_hisense_client(client_name)
     upstream = _upstream_for_hisense(is_hisense)
+    archive_service = ChatArchiveService(store, supabase_client, cfg)
+    if archive_service.enabled():
+        asyncio.create_task(
+            archive_window_safely(
+                archive_service,
+                session_tag=session_tag,
+                client_name=client_name,
+                messages=raw_messages_for_storage,
+                is_hisense=is_hisense,
+            )
+        )
     cold_start_snapshot = None
     if not is_hisense:
         cold_start_snapshot = _maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count)
@@ -1537,6 +1575,67 @@ async def _nonstream_chat(request: Request, payload: dict, headers: dict, model:
     return _anthropic_to_openai_completion(model, raw)
 
 
+app.include_router(
+    build_config_router(
+        ConfigRouteDeps(
+            cfg=cfg,
+            validate_http_url=_validate_http_url,
+            validate_protocol=_validate_protocol,
+            clamp=_clamp,
+            persist_env=_persist_env,
+            get_supabase_client=lambda: supabase_client,
+            init_supabase=_init_supabase,
+            init_store=_init_store,
+            make_upstream_http_client=_make_upstream_http_client,
+        )
+    )
+)
+app.include_router(
+    build_gateway_admin_router(
+        GatewayAdminRouteDeps(
+            cfg=cfg,
+            get_supabase_client=lambda: supabase_client,
+            get_session_store=lambda: session_store,
+            require_session_store=_require_session_store,
+            context_builder=_context_builder,
+            upstream_for_hisense=_upstream_for_hisense,
+            prune_runtime_state=_prune_runtime_state,
+            cold_start_idle_minutes=_cold_start_idle_minutes,
+            is_hisense_session=_is_hisense_session,
+            now=_now,
+            request_logs=_request_logs,
+        )
+    )
+)
+app.include_router(
+    build_calendar_router(
+        CalendarRouteDeps(
+            require_session_store=_require_session_store,
+            calendar_service=_calendar_service,
+        )
+    )
+)
+app.include_router(
+    build_hisense_router(
+        HisenseRouteDeps(
+            cfg=cfg,
+            get_supabase_client=lambda: supabase_client,
+            require_session_store=_require_session_store,
+            context_builder=_context_builder,
+            is_hisense_session=_is_hisense_session,
+        )
+    )
+)
+app.include_router(
+    build_archive_router(
+        ArchiveRouteDeps(
+            get_supabase_client=lambda: supabase_client,
+        )
+    )
+)
+app.include_router(build_admin_shell_router(AdminShellRouteDeps(admin_dist_dir=ADMIN_DIST_DIR)))
+
+
 @app.get("/v1/models")
 async def list_models(request: Request):
     await verify_api_key(request)
@@ -1564,241 +1663,7 @@ async def list_models(request: Request):
 async def chat_completions(request: Request, body: ChatRequest):
     await verify_api_key(request)
     store = _require_session_store()
-    t0 = _time.monotonic()
-
-    prepared_messages, meta = await _prepare_messages(request, body)
-    sessions = SessionManager(store, cfg)
-    session = meta["session"]
-    session_id = session["id"]
-    prepared_messages_for_log, _ = _trim_client_image_blocks(prepared_messages, keep_recent_messages=0)
-    sessions.log_input_messages(session_id, prepared_messages_for_log)
-
-    merged_tools = merge_tools(body.tools, cfg)
-    has_gateway_managed_tools = any(
-        is_gateway_native_tool(tool.get("function", {}).get("name", ""))
-        for tool in merged_tools
-    )
-
-    # 构建日志条目
-    log_id = uuid.uuid4().hex[:8]
-    is_first = meta.get("is_first_turn", False)
-    request_upstream = meta.get("upstream") or _upstream_for_hisense(meta.get("is_hisense", False))
-    system_additions = ""
-    sys_parts = []
-    for msg in prepared_messages:
-        if msg.get("role") == "system":
-            sys_parts.append(msg.get("content", ""))
-    system_additions = "\n\n---\n\n".join(sys_parts)
-    retain_payloads = _retain_request_log_payloads()
-    log_entry = {
-        "id": log_id,
-        "request_id": getattr(request.state, "shenyu_request_id", log_id),
-        "timestamp": _iso_now(),
-        "model": body.model,
-        "client_model": body.model,
-        "upstream_model": _mapped_model_name(body.model),
-        "model_mapped": _mapped_model_name(body.model) != body.model,
-        "stream": body.stream,
-        "session_tag": session.get("session_tag", "default"),
-        "is_first_turn": is_first,
-        "original_messages_count": len(body.messages),
-        "prepared_messages_count": len(prepared_messages),
-        "client_message_window": meta.get("client_message_window", {}),
-        "cold_start": {
-            "injected": bool(meta.get("cold_start_snapshot")),
-            "snapshot_id": (meta.get("cold_start_snapshot") or {}).get("id"),
-            "reason": (meta.get("cold_start_snapshot") or {}).get("reason"),
-            "source_message_count": (meta.get("cold_start_snapshot") or {}).get("source_message_count", 0),
-            "source_session_tags": (meta.get("cold_start_snapshot") or {}).get("source_session_tags", []),
-            "bridge_messages": meta.get("client_message_window", {}).get("cold_start_bridge_messages", 0),
-        },
-        "system_additions_preview": system_additions[:500],
-        "system_additions_full": system_additions if retain_payloads else None,
-        "system_additions_chars": len(system_additions),
-        "tools_count": len(merged_tools),
-        "tool_names": [t.get("function", {}).get("name", "") for t in merged_tools[:20]],
-        "tool_names_all": [t.get("function", {}).get("name", "") for t in merged_tools],
-        "has_internal_tools": has_gateway_managed_tools,
-        "upstream_url": request_upstream["chat_url"],
-        "upstream_scope": request_upstream["scope"],
-        "request_payloads_retained": retain_payloads,
-        "prepared_messages": prepared_messages_for_log if retain_payloads else None,
-        "prepared_messages_preview": [_message_log_preview(msg) for msg in prepared_messages_for_log],
-        "upstream_payload": None,
-        "upstream_payload_summary": None,
-        "cache_layers": {
-            k: f"{len(v)} chars" if v else "(empty)"
-            for k, v in meta.get("cache_layers", {}).items()
-        },
-        "prompt_cache": {
-            "enabled": request_upstream["protocol"] == "anthropic",
-            "protocol": request_upstream["protocol"],
-            "upstream_scope": request_upstream["scope"],
-            "breakpoints": [],
-            "note": "Prompt cache metadata is populated when the upstream payload is built.",
-        },
-        "usage": None,
-        "cache_usage": _cache_usage_summary({}),
-        "status": "pending",
-        "duration_ms": 0,
-        "error": None,
-        "response_preview": None,
-        "response_full": None,
-        "empty_visible_response_fallback": False,
-        "empty_visible_response_fallback_detail": None,
-    }
-
-    try:
-        if has_gateway_managed_tools:
-            if body.stream:
-                async def _tool_loop_stream():
-                    log_entry["status"] = "streaming_tools"
-                    _mark_tool_stream_activity(log_entry)
-                    try:
-                        async for chunk in _run_internal_tool_loop_stream(
-                            request,
-                            body,
-                            prepared_messages,
-                            meta,
-                            log_entry=log_entry,
-                        ):
-                            _mark_tool_stream_activity(log_entry)
-                            yield chunk
-                    except asyncio.CancelledError:
-                        log_entry["status"] = "client_disconnected"
-                        log_entry["error"] = "Client disconnected during native internal gateway tool stream."
-                        raise
-                    except HTTPException as exc:
-                        log_entry["status"] = "error"
-                        log_entry["error"] = _gateway_error_text(exc)[:500]
-                        for chunk in _stream_gateway_error_events(body.model, log_entry["error"]):
-                            _mark_tool_stream_activity(log_entry)
-                            yield chunk
-                    except Exception as exc:
-                        logger.exception("Internal gateway tool stream failed")
-                        log_entry["status"] = "error"
-                        log_entry["error"] = str(exc)[:500]
-                        for chunk in _stream_gateway_error_events(body.model, log_entry["error"]):
-                            _mark_tool_stream_activity(log_entry)
-                            yield chunk
-                    finally:
-                        _finalize_tool_stream_log(
-                            log_entry,
-                            int((_time.monotonic() - t0) * 1000),
-                        )
-                return _sse_response(_tool_loop_stream())
-            try:
-                completion = await _run_internal_tool_loop(request, body, prepared_messages, meta, log_entry=log_entry)
-            except HTTPException as exc:
-                log_entry["status"] = "error"
-                log_entry["error"] = _gateway_error_text(exc)[:500]
-                completion = _gateway_error_completion(body.model, log_entry["error"])
-                _record_response_text(log_entry, completion["choices"][0]["message"]["content"])
-                return completion
-            except Exception as exc:
-                logger.exception("Internal gateway tool request failed")
-                log_entry["status"] = "error"
-                log_entry["error"] = _gateway_error_text(exc)[:500]
-                completion = _gateway_error_completion(body.model, log_entry["error"])
-                _record_response_text(log_entry, completion["choices"][0]["message"]["content"])
-                return completion
-            _mark_context_consumed(meta)
-            log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
-            log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
-            log_entry["status"] = "ok"
-            _record_response_text(
-                log_entry,
-                str(completion.get("choices", [{}])[0].get("message", {}).get("content", "")),
-            )
-            return completion
-
-        payload, headers, _, cache_meta, upstream = await _build_upstream_request(
-            request,
-            body,
-            messages_override=prepared_messages,
-            meta=meta,
-        )
-        _record_upstream_payload(log_entry, payload)
-        log_entry["prompt_cache"] = cache_meta
-        if body.stream:
-            log_entry["status"] = "streaming"
-            log_entry["usage"] = {"note": "Streaming usage is not available in this gateway log path."}
-
-            def _on_stream_complete(
-                collected_text: str,
-                heartbeat_content: str = "",
-                inline_memories: Optional[list[str]] = None,
-                fallback_applied: bool = False,
-            ):
-                """Persist assistant output after streaming completes."""
-                log_entry["status"] = "ok"
-                if fallback_applied:
-                    log_entry["empty_visible_response_fallback"] = True
-                    fallback_text, fallback_context = _private_capture_fallback_text(
-                        _latest_user_text(prepared_messages),
-                        _private_capture_kinds(
-                            heartbeat_content=heartbeat_content,
-                            inline_memories=inline_memories,
-                        ),
-                    )
-                    log_entry["empty_visible_response_fallback_detail"] = {
-                        "applied": True,
-                        "text": fallback_text,
-                        "kinds": _private_capture_kinds(
-                            heartbeat_content=heartbeat_content,
-                            inline_memories=inline_memories,
-                        ),
-                        "context": fallback_context,
-                    }
-                if collected_text:
-                    assistant_msg = {"role": "assistant", "content": collected_text}
-                    sessions.log_assistant_output(session_id, assistant_msg)
-                    _schedule_inline_memory_capture(request, session, inline_memories or [], collected_text, body.model)
-                    _record_response_text(log_entry, collected_text)
-                else:
-                    _record_response_text(log_entry, "")
-                if heartbeat_content:
-                    _store_heartbeat(session_id, session, heartbeat_content)
-                _mark_context_consumed(meta)
-
-            return await _stream_chat(
-                request,
-                payload,
-                headers,
-                body.model,
-                upstream,
-                on_complete=_on_stream_complete,
-                latest_user_text=_latest_user_text(prepared_messages),
-            )
-
-        # 非流式路径：也需要过滤 heartbeat
-        completion = await _nonstream_chat(request, payload, headers, body.model, upstream)
-        log_entry["usage"] = completion.get("usage", {})
-        log_entry["cache_usage"] = _cache_usage_summary(completion.get("usage", {}))
-        assistant_message = completion.get("choices", [{}])[0].get("message", {})
-        clean_content, heartbeat_content, inline_memories, fallback_meta = _finalize_assistant_private_content(
-            assistant_message,
-            latest_user_text=_latest_user_text(prepared_messages),
-        )
-        if heartbeat_content:
-            _store_heartbeat(session_id, session, heartbeat_content)
-        if fallback_meta["applied"]:
-            log_entry["empty_visible_response_fallback"] = True
-            log_entry["empty_visible_response_fallback_detail"] = fallback_meta
-
-        sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content})
-        _schedule_inline_memory_capture(request, session, inline_memories, clean_content, body.model)
-        _mark_context_consumed(meta)
-        log_entry["status"] = "ok"
-        _record_response_text(log_entry, clean_content)
-        return completion
-    except Exception as exc:
-        log_entry["status"] = "error"
-        log_entry["error"] = str(exc)[:500]
-        raise
-    finally:
-        log_entry["duration_ms"] = int((_time.monotonic() - t0) * 1000)
-        _request_logs.appendleft(log_entry)
+    return await _chat_pipeline(store).run(request, body)
 
 
 @app.get("/health")
@@ -1834,957 +1699,6 @@ async def health():
         "enable_cold_start": cfg.enable_cold_start,
         "gateway_db_path": cfg.gateway_db_path,
     }
-
-
-@app.get("/api/config")
-async def get_config():
-    return cfg.to_dict()
-
-
-@app.get("/api/config/full")
-async def get_config_full():
-    return {
-        "gateway_key": cfg.gateway_key,
-        "upstream_url": cfg.upstream_url,
-        "upstream_api_key": cfg.upstream_api_key,
-        "upstream_protocol": cfg.upstream_protocol,
-        "upstream_proxy": cfg.upstream_proxy,
-        "upstream_trust_env": cfg.upstream_trust_env,
-        "enable_openai_cache_control": cfg.enable_openai_cache_control,
-        "hisense_upstream_url": cfg.hisense_upstream_url,
-        "hisense_api_key": cfg.hisense_api_key,
-        "hisense_protocol": cfg.hisense_protocol,
-        "calendar_upstream_url": cfg.calendar_upstream_url,
-        "calendar_api_key": cfg.calendar_api_key,
-        "calendar_protocol": cfg.calendar_protocol,
-        "calendar_model": cfg.calendar_model,
-        "wake_welcome_message": cfg.wake_welcome_message,
-        "inject_inline_memory_prompt": cfg.inject_inline_memory_prompt,
-        "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
-        "model_mapping": cfg.model_mapping,
-        "supabase_url": cfg.supabase_url,
-        "supabase_key": cfg.supabase_key,
-        "calendar_inject_day": cfg.calendar_inject_day,
-        "calendar_inject_week": cfg.calendar_inject_week,
-        "calendar_inject_month": cfg.calendar_inject_month,
-        "inject_mem_notes": cfg.inject_mem_notes,
-        "enable_cold_start": cfg.enable_cold_start,
-        "enable_upstream_tools": cfg.enable_upstream_tools,
-        "enable_gateway_tools": cfg.enable_gateway_tools,
-        "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
-        "expose_supabase_tools": cfg.expose_supabase_tools,
-        "gateway_tool_mode": cfg.gateway_tool_mode,
-        "max_internal_tool_rounds": cfg.max_internal_tool_rounds,
-        "gateway_db_path": cfg.gateway_db_path,
-        "calendar_context_day_limit": cfg.calendar_context_day_limit,
-        "calendar_context_week_limit": cfg.calendar_context_week_limit,
-        "calendar_context_month_limit": cfg.calendar_context_month_limit,
-        "max_client_messages": cfg.max_client_messages,
-        "cold_start_message_limit": cfg.cold_start_message_limit,
-        "cold_start_idle_minutes": cfg.cold_start_idle_minutes,
-        "default_surface_limit": cfg.default_surface_limit,
-        "mem_note_limit": cfg.mem_note_limit,
-        "mem_note_min_score": cfg.mem_note_min_score,
-        "mem_note_context_keyword_min_score": cfg.mem_note_context_keyword_min_score,
-        "mem_note_semantic_min_score": cfg.mem_note_semantic_min_score,
-        "mem_note_semantic_min_vector_score": cfg.mem_note_semantic_min_vector_score,
-        "mem_note_anchored_semantic_min_score": cfg.mem_note_anchored_semantic_min_score,
-        "mem_note_anchored_semantic_min_vector_score": cfg.mem_note_anchored_semantic_min_vector_score,
-        "mem_note_dedupe_turns": cfg.mem_note_dedupe_turns,
-        "mem_note_soft_cooldown_hours": cfg.mem_note_soft_cooldown_hours,
-        "mem_note_default_cooldown_hours": cfg.mem_note_default_cooldown_hours,
-        "hisense_client_name": cfg.hisense_client_name,
-        "hisense_heartbeat_limit": cfg.hisense_heartbeat_limit,
-        "hisense_notebook_limit": cfg.hisense_notebook_limit,
-    }
-
-
-@app.post("/api/config")
-async def update_config(request: Request, body: ConfigUpdate):
-    global session_store
-    changed = []
-    env_updates: dict[str, Any] = {}
-
-    env_names = {
-        "gateway_key": "GATEWAY_API_KEY",
-        "upstream_url": "UPSTREAM_URL",
-        "upstream_api_key": "ANTHROPIC_API_KEY",
-        "upstream_protocol": "UPSTREAM_PROTOCOL",
-        "upstream_proxy": "UPSTREAM_PROXY",
-        "upstream_trust_env": "UPSTREAM_TRUST_ENV",
-        "enable_openai_cache_control": "ENABLE_OPENAI_CACHE_CONTROL",
-        "hisense_upstream_url": "HISENSE_UPSTREAM_URL",
-        "hisense_api_key": "HISENSE_API_KEY",
-        "hisense_protocol": "HISENSE_PROTOCOL",
-        "calendar_upstream_url": "CALENDAR_UPSTREAM_URL",
-        "calendar_api_key": "CALENDAR_API_KEY",
-        "calendar_protocol": "CALENDAR_PROTOCOL",
-        "calendar_model": "CALENDAR_MODEL",
-        "wake_welcome_message": "WAKE_WELCOME_MESSAGE",
-        "inject_inline_memory_prompt": "INJECT_INLINE_MEMORY_PROMPT",
-        "enable_inline_memory_capture": "ENABLE_INLINE_MEMORY_CAPTURE",
-        "model_mapping": "MODEL_MAPPING",
-        "supabase_url": "SUPABASE_URL",
-        "supabase_key": "SUPABASE_SERVICE_KEY",
-        "calendar_inject_day": "CALENDAR_INJECT_DAY",
-        "calendar_inject_week": "CALENDAR_INJECT_WEEK",
-        "calendar_inject_month": "CALENDAR_INJECT_MONTH",
-
-        "inject_mem_notes": "INJECT_MEM_NOTES",
-        "enable_cold_start": "ENABLE_COLD_START",
-        "enable_upstream_tools": "ENABLE_UPSTREAM_TOOLS",
-        "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
-        "enable_mem0_management_tools": "ENABLE_MEM0_MANAGEMENT_TOOLS",
-        "expose_supabase_tools": "EXPOSE_SUPABASE_TOOLS",
-        "gateway_tool_mode": "GATEWAY_TOOL_MODE",
-        "gateway_db_path": "GATEWAY_DB_PATH",
-        "max_internal_tool_rounds": "MAX_INTERNAL_TOOL_ROUNDS",
-        "calendar_context_day_limit": "CALENDAR_CONTEXT_DAY_LIMIT",
-        "calendar_context_week_limit": "CALENDAR_CONTEXT_WEEK_LIMIT",
-        "calendar_context_month_limit": "CALENDAR_CONTEXT_MONTH_LIMIT",
-        "heartbeat_inject_every": "HEARTBEAT_INJECT_EVERY",
-        "gateway_message_retention": "GATEWAY_MESSAGE_RETENTION",
-        "gateway_context_snapshot_retention": "GATEWAY_CONTEXT_SNAPSHOT_RETENTION",
-        "gateway_cold_start_retention": "GATEWAY_COLD_START_RETENTION",
-        "max_client_messages": "MAX_CLIENT_MESSAGES",
-        "cold_start_message_limit": "COLD_START_MESSAGE_LIMIT",
-        "cold_start_idle_minutes": "COLD_START_IDLE_MINUTES",
-        "default_surface_limit": "DEFAULT_SURFACE_LIMIT",
-        "mem_note_limit": "MEM_NOTE_LIMIT",
-        "mem_note_min_score": "MEM_NOTE_MIN_SCORE",
-        "mem_note_context_keyword_min_score": "MEM_NOTE_CONTEXT_KEYWORD_MIN_SCORE",
-        "mem_note_semantic_min_score": "MEM_NOTE_SEMANTIC_MIN_SCORE",
-        "mem_note_semantic_min_vector_score": "MEM_NOTE_SEMANTIC_MIN_VECTOR_SCORE",
-        "mem_note_anchored_semantic_min_score": "MEM_NOTE_ANCHORED_SEMANTIC_MIN_SCORE",
-        "mem_note_anchored_semantic_min_vector_score": "MEM_NOTE_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE",
-        "mem_note_dedupe_turns": "MEM_NOTE_DEDUPE_TURNS",
-        "mem_note_soft_cooldown_hours": "MEM_NOTE_SOFT_COOLDOWN_HOURS",
-        "mem_note_default_cooldown_hours": "MEM_NOTE_DEFAULT_COOLDOWN_HOURS",
-        "hisense_client_name": "HISENSE_CLIENT_NAME",
-        "hisense_heartbeat_limit": "HISENSE_HEARTBEAT_LIMIT",
-        "hisense_notebook_limit": "HISENSE_NOTEBOOK_LIMIT",
-    }
-
-    simple_fields = [
-        "gateway_key",
-        "upstream_url",
-        "upstream_api_key",
-        "upstream_protocol",
-        "upstream_proxy",
-        "upstream_trust_env",
-        "enable_openai_cache_control",
-        "hisense_upstream_url",
-        "hisense_api_key",
-        "hisense_protocol",
-        "calendar_upstream_url",
-        "calendar_api_key",
-        "calendar_protocol",
-        "calendar_model",
-        "wake_welcome_message",
-        "inject_inline_memory_prompt",
-        "enable_inline_memory_capture",
-        "supabase_url",
-        "supabase_key",
-        "calendar_inject_day",
-        "calendar_inject_week",
-        "calendar_inject_month",
-
-        "inject_mem_notes",
-        "enable_cold_start",
-        "enable_upstream_tools",
-        "enable_gateway_tools",
-        "enable_mem0_management_tools",
-        "expose_supabase_tools",
-        "gateway_tool_mode",
-        "gateway_db_path",
-        "hisense_client_name",
-    ]
-    if body.clear_wake_welcome_message:
-        cfg.wake_welcome_message = ""
-        changed.append("wake_welcome_message")
-        env_updates[env_names["wake_welcome_message"]] = ""
-
-    for field in simple_fields:
-        value = getattr(body, field)
-        if value is not None:
-            if field == "wake_welcome_message":
-                if body.clear_wake_welcome_message:
-                    continue
-                value = value.strip() if isinstance(value, str) else value
-                if not value:
-                    continue
-            if field in {"upstream_url", "hisense_upstream_url", "calendar_upstream_url"}:
-                value = _validate_http_url(env_names[field], value, allow_empty=(field != "upstream_url"))
-            elif field == "upstream_proxy":
-                value = _validate_http_url(env_names[field], value, allow_empty=True)
-            elif field in {"upstream_protocol", "hisense_protocol", "calendar_protocol"}:
-                value = _validate_protocol(env_names[field], value, allow_empty=(field == "hisense_protocol"))
-            elif field == "gateway_tool_mode":
-                value = str(value or "").strip().lower()
-                if value not in {"full", "broker"}:
-                    raise HTTPException(status_code=400, detail="GATEWAY_TOOL_MODE must be full or broker.")
-            elif isinstance(value, str):
-                value = value.strip()
-            setattr(cfg, field, value)
-            changed.append(field)
-            env_updates[env_names[field]] = str(value).lower() if isinstance(value, bool) else value
-
-    if body.max_internal_tool_rounds is not None:
-        cfg.max_internal_tool_rounds = max(1, body.max_internal_tool_rounds)
-        changed.append("max_internal_tool_rounds")
-        env_updates[env_names["max_internal_tool_rounds"]] = cfg.max_internal_tool_rounds
-    if body.calendar_context_day_limit is not None:
-        cfg.calendar_context_day_limit = max(1, min(body.calendar_context_day_limit, 30))
-        changed.append("calendar_context_day_limit")
-        env_updates[env_names["calendar_context_day_limit"]] = cfg.calendar_context_day_limit
-    if body.calendar_context_week_limit is not None:
-        cfg.calendar_context_week_limit = max(1, min(body.calendar_context_week_limit, 12))
-        changed.append("calendar_context_week_limit")
-        env_updates[env_names["calendar_context_week_limit"]] = cfg.calendar_context_week_limit
-    if body.calendar_context_month_limit is not None:
-        cfg.calendar_context_month_limit = max(1, min(body.calendar_context_month_limit, 12))
-        changed.append("calendar_context_month_limit")
-        env_updates[env_names["calendar_context_month_limit"]] = cfg.calendar_context_month_limit
-    if body.heartbeat_inject_every is not None:
-        cfg.heartbeat_inject_every = max(1, min(body.heartbeat_inject_every, 50))
-        changed.append("heartbeat_inject_every")
-        env_updates[env_names["heartbeat_inject_every"]] = cfg.heartbeat_inject_every
-    if body.gateway_message_retention is not None:
-        cfg.gateway_message_retention = max(50, min(body.gateway_message_retention, 200000))
-        changed.append("gateway_message_retention")
-        env_updates[env_names["gateway_message_retention"]] = cfg.gateway_message_retention
-    if body.gateway_context_snapshot_retention is not None:
-        cfg.gateway_context_snapshot_retention = max(1, min(body.gateway_context_snapshot_retention, 100))
-        changed.append("gateway_context_snapshot_retention")
-        env_updates[env_names["gateway_context_snapshot_retention"]] = cfg.gateway_context_snapshot_retention
-    if body.gateway_cold_start_retention is not None:
-        cfg.gateway_cold_start_retention = max(1, min(body.gateway_cold_start_retention, 1000))
-        changed.append("gateway_cold_start_retention")
-        env_updates[env_names["gateway_cold_start_retention"]] = cfg.gateway_cold_start_retention
-    if "max_client_messages" in body.model_fields_set:
-        value = body.max_client_messages
-        cfg.max_client_messages = max(1, min(int(value), 500)) if value and int(value) > 0 else None
-        changed.append("max_client_messages")
-        env_updates[env_names["max_client_messages"]] = cfg.max_client_messages
-    if "cold_start_message_limit" in body.model_fields_set:
-        value = body.cold_start_message_limit
-        cfg.cold_start_message_limit = max(1, min(int(value), 500)) if value and int(value) > 0 else None
-        changed.append("cold_start_message_limit")
-        env_updates[env_names["cold_start_message_limit"]] = cfg.cold_start_message_limit
-    if body.cold_start_idle_minutes is not None:
-        cfg.cold_start_idle_minutes = max(1, min(body.cold_start_idle_minutes, 10080))
-        changed.append("cold_start_idle_minutes")
-        env_updates[env_names["cold_start_idle_minutes"]] = cfg.cold_start_idle_minutes
-    if body.default_surface_limit is not None:
-        cfg.default_surface_limit = max(1, min(body.default_surface_limit, 8))
-        changed.append("default_surface_limit")
-        env_updates[env_names["default_surface_limit"]] = cfg.default_surface_limit
-    if body.mem_note_limit is not None:
-        cfg.mem_note_limit = max(1, min(body.mem_note_limit, 5))
-        changed.append("mem_note_limit")
-        env_updates[env_names["mem_note_limit"]] = cfg.mem_note_limit
-    if body.mem_note_min_score is not None:
-        cfg.mem_note_min_score = _clamp(float(body.mem_note_min_score), 0.0, 1.0)
-        changed.append("mem_note_min_score")
-        env_updates[env_names["mem_note_min_score"]] = cfg.mem_note_min_score
-    if body.mem_note_context_keyword_min_score is not None:
-        cfg.mem_note_context_keyword_min_score = _clamp(float(body.mem_note_context_keyword_min_score), 0.05, 0.9)
-        changed.append("mem_note_context_keyword_min_score")
-        env_updates[env_names["mem_note_context_keyword_min_score"]] = cfg.mem_note_context_keyword_min_score
-    if body.mem_note_semantic_min_score is not None:
-        cfg.mem_note_semantic_min_score = _clamp(float(body.mem_note_semantic_min_score), 0.0, 1.0)
-        changed.append("mem_note_semantic_min_score")
-        env_updates[env_names["mem_note_semantic_min_score"]] = cfg.mem_note_semantic_min_score
-    if body.mem_note_semantic_min_vector_score is not None:
-        cfg.mem_note_semantic_min_vector_score = _clamp(float(body.mem_note_semantic_min_vector_score), 0.0, 1.0)
-        changed.append("mem_note_semantic_min_vector_score")
-        env_updates[env_names["mem_note_semantic_min_vector_score"]] = cfg.mem_note_semantic_min_vector_score
-    if body.mem_note_anchored_semantic_min_score is not None:
-        cfg.mem_note_anchored_semantic_min_score = _clamp(float(body.mem_note_anchored_semantic_min_score), 0.0, 1.0)
-        changed.append("mem_note_anchored_semantic_min_score")
-        env_updates[env_names["mem_note_anchored_semantic_min_score"]] = cfg.mem_note_anchored_semantic_min_score
-    if body.mem_note_anchored_semantic_min_vector_score is not None:
-        cfg.mem_note_anchored_semantic_min_vector_score = _clamp(
-            float(body.mem_note_anchored_semantic_min_vector_score),
-            0.0,
-            1.0,
-        )
-        changed.append("mem_note_anchored_semantic_min_vector_score")
-        env_updates[env_names["mem_note_anchored_semantic_min_vector_score"]] = cfg.mem_note_anchored_semantic_min_vector_score
-    if body.mem_note_dedupe_turns is not None:
-        cfg.mem_note_dedupe_turns = max(0, min(body.mem_note_dedupe_turns, 50))
-        changed.append("mem_note_dedupe_turns")
-        env_updates[env_names["mem_note_dedupe_turns"]] = cfg.mem_note_dedupe_turns
-    if body.mem_note_soft_cooldown_hours is not None:
-        cfg.mem_note_soft_cooldown_hours = max(0, min(body.mem_note_soft_cooldown_hours, 8760))
-        changed.append("mem_note_soft_cooldown_hours")
-        env_updates[env_names["mem_note_soft_cooldown_hours"]] = cfg.mem_note_soft_cooldown_hours
-    if body.mem_note_default_cooldown_hours is not None:
-        cfg.mem_note_default_cooldown_hours = max(0, min(body.mem_note_default_cooldown_hours, 8760))
-        changed.append("mem_note_default_cooldown_hours")
-        env_updates[env_names["mem_note_default_cooldown_hours"]] = cfg.mem_note_default_cooldown_hours
-    if body.hisense_heartbeat_limit is not None:
-        cfg.hisense_heartbeat_limit = max(1, min(body.hisense_heartbeat_limit, 30))
-        changed.append("hisense_heartbeat_limit")
-        env_updates[env_names["hisense_heartbeat_limit"]] = cfg.hisense_heartbeat_limit
-    if body.hisense_notebook_limit is not None:
-        cfg.hisense_notebook_limit = max(1, min(body.hisense_notebook_limit, 20))
-        changed.append("hisense_notebook_limit")
-        env_updates[env_names["hisense_notebook_limit"]] = cfg.hisense_notebook_limit
-    if body.model_mapping is not None:
-        cfg.model_mapping = {
-            str(key).strip(): str(value).strip()
-            for key, value in body.model_mapping.items()
-            if str(key).strip() and str(value).strip()
-        }
-        changed.append("model_mapping")
-        env_updates[env_names["model_mapping"]] = json.dumps(cfg.model_mapping, ensure_ascii=False)
-
-    _persist_env(env_updates)
-
-    if "supabase_url" in changed or "supabase_key" in changed:
-        if supabase_client:
-            await supabase_client.close()
-        _init_supabase()
-
-    if "gateway_db_path" in changed:
-        _init_store()
-    if "upstream_proxy" in changed or "upstream_trust_env" in changed:
-        old_client = request.app.state.http
-        request.app.state.http = _make_upstream_http_client()
-        await old_client.aclose()
-
-    return {"ok": True, "changed": changed, "config": await get_config_full()}
-
-
-@app.get("/api/gateway/tools")
-async def gateway_tools():
-    return {"tools": gateway_native_tools(cfg)}
-
-
-@app.get("/api/gateway/context/preview")
-async def context_preview(session_tag: Optional[str] = None):
-    store = _require_session_store()
-    builder = _context_builder(store, SessionManager(store, cfg), GatewayToolService())
-    return await builder.preview(session_tag=session_tag)
-
-
-@app.get("/api/gateway/overview")
-async def gateway_overview():
-    store = _require_session_store()
-    return {
-        "overview": store.gateway_overview(),
-        "retention": {
-            "message_retention": cfg.gateway_message_retention,
-            "context_snapshot_retention": cfg.gateway_context_snapshot_retention,
-            "cold_start_retention": cfg.gateway_cold_start_retention,
-            "heartbeat_retention": "keep",
-        },
-        "cold_start": {
-            "enabled": cfg.enable_cold_start,
-            "message_limit": cfg.cold_start_message_limit,
-            "idle_minutes": cfg.cold_start_idle_minutes,
-        },
-    }
-
-
-@app.get("/api/gateway/debug")
-async def gateway_debug():
-    store = _require_session_store()
-    default_upstream = _upstream_for_hisense(False)
-    hisense_upstream = _upstream_for_hisense(True)
-    tools = gateway_native_tools(cfg)
-    logs = list(_request_logs)
-    latest_log = logs[0] if logs else None
-    latest_error = next((item for item in logs if item.get("status") == "error"), None)
-    return {
-        "ok": True,
-        "generated_at": _iso_now(),
-        "runtime": {
-            "config": cfg.to_dict(),
-            "store_ready": session_store is not None,
-            "supabase_ready": supabase_client is not None,
-            "request_payloads_retained": _retain_request_log_payloads(),
-        },
-        "upstream": {
-            "default": {
-                "scope": default_upstream["scope"],
-                "chat_url": default_upstream["chat_url"],
-                "protocol": default_upstream["protocol"],
-                "api_key_configured": bool(default_upstream["api_key"]),
-            },
-            "hisense": {
-                "scope": hisense_upstream["scope"],
-                "chat_url": hisense_upstream["chat_url"],
-                "protocol": hisense_upstream["protocol"],
-                "api_key_configured": bool(hisense_upstream["api_key"]),
-            },
-        },
-        "tools": {
-            "mode": cfg.gateway_tool_mode,
-            "count": len(tools),
-            "names": [tool.get("function", {}).get("name", "") for tool in tools],
-            "upstream_tools_enabled": cfg.enable_upstream_tools,
-            "gateway_tools_enabled": cfg.enable_gateway_tools,
-            "supabase_tools_enabled": cfg.expose_supabase_tools,
-            "mem0_tools_enabled": cfg.enable_mem0_management_tools,
-        },
-        "store": {
-            "overview": store.gateway_overview(),
-            "db_path": cfg.gateway_db_path,
-            "retention": {
-                "message_retention": cfg.gateway_message_retention,
-                "context_snapshot_retention": cfg.gateway_context_snapshot_retention,
-                "cold_start_retention": cfg.gateway_cold_start_retention,
-            },
-        },
-        "logs": {
-            "count": len(logs),
-            "capacity": getattr(_request_logs, "maxlen", None),
-            "latest": {
-                "id": latest_log.get("id"),
-                "request_id": latest_log.get("request_id"),
-                "status": latest_log.get("status"),
-                "timestamp": latest_log.get("timestamp"),
-                "tools_count": latest_log.get("tools_count"),
-                "duration_ms": latest_log.get("duration_ms"),
-            } if latest_log else None,
-            "latest_error": {
-                "id": latest_error.get("id"),
-                "request_id": latest_error.get("request_id"),
-                "timestamp": latest_error.get("timestamp"),
-                "error": latest_error.get("error"),
-            } if latest_error else None,
-        },
-    }
-
-
-@app.post("/api/gateway/prune")
-async def prune_gateway_runtime():
-    store = _require_session_store()
-    deleted = _prune_runtime_state()
-    return {"ok": True, "deleted": deleted, "overview": store.gateway_overview()}
-
-
-@app.post("/api/gateway/dedupe-messages")
-async def dedupe_gateway_messages():
-    store = _require_session_store()
-    deleted = store.dedupe_messages()
-    return {"ok": True, "deleted": deleted, "overview": store.gateway_overview()}
-
-
-@app.get("/api/gateway/cold-start/preview")
-async def cold_start_preview(session_tag: Optional[str] = None):
-    store = _require_session_store()
-    exclude_session_id = None
-    since = None
-    reason = "new_window"
-    current_message_count = 1
-    if session_tag:
-        session = store.get_session_by_tag(session_tag)
-        if session:
-            idle_minutes = _cold_start_idle_minutes(session)
-            if idle_minutes >= max(cfg.cold_start_idle_minutes, 1):
-                exclude_session_id = session["id"]
-                since = session.get("last_active_at")
-                reason = "stale_window_cross_activity"
-            else:
-                reason = "new_window"
-    sources = []
-    target_messages = cfg.cold_start_message_limit or cfg.max_client_messages or 8
-    fill_count = max(int(target_messages) - current_message_count, 0)
-    if cfg.enable_cold_start and reason != "old_window_short_interval":
-        sources = store.latest_cross_session_context(
-            exclude_session_id=exclude_session_id,
-            since=since,
-            limit_messages=fill_count or 1,
-        )
-    return {
-        "enabled": cfg.enable_cold_start,
-        "reason": reason,
-        "would_inject": bool(sources),
-        "sources": sources,
-        "config": {
-            "message_limit": cfg.cold_start_message_limit,
-            "effective_message_limit": target_messages,
-            "preview_fill_count": fill_count,
-            "idle_minutes": cfg.cold_start_idle_minutes,
-        },
-    }
-
-
-@app.get("/api/gateway/mem-notes/search")
-async def mem_note_search(q: str, session_tag: Optional[str] = None, limit: int = 3):
-    return await MemNoteService(cfg, supabase_client).search_notes(
-        q,
-        session_tag=session_tag,
-        limit=limit,
-        mark_triggered=False,
-    )
-
-
-@app.get("/api/gateway/mem-notes")
-async def list_mem_notes(
-    status: str = "captured",
-    limit: int = 50,
-    session_tag: Optional[str] = None,
-    q: str = "",
-    mem_type: Optional[str] = None,
-):
-    result = await MemNoteService(cfg, supabase_client).list_notes(
-        status=status,
-        limit=limit,
-        session_tag=session_tag,
-        q=q,
-        mem_type=mem_type,
-    )
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error") or "mem note query failed")
-    return result
-
-
-@app.patch("/api/gateway/mem-notes/bulk")
-async def bulk_update_mem_notes(body: MemNoteBulkPatch):
-    result = await MemNoteService(cfg, supabase_client).bulk_update_notes(
-        ids=body.ids,
-        patch=body.patch,
-        updates=body.updates,
-        use_suggestions=body.use_suggestions,
-    )
-    return result
-
-
-@app.patch("/api/gateway/mem-notes/{note_id}")
-async def update_mem_note(note_id: str, body: MemNotePatch):
-    patch = {
-        key: getattr(body, key)
-        for key in body.model_fields_set
-    }
-    result = await MemNoteService(cfg, supabase_client).update_note(note_id, patch)
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error") or "mem note update failed")
-    return result
-
-
-@app.delete("/api/gateway/mem-notes/{note_id}")
-async def delete_mem_note(note_id: str):
-    result = await MemNoteService(cfg, supabase_client).delete_note(note_id)
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error") or "mem note delete failed")
-    return result
-
-
-@app.get("/api/gateway/legacy-atomic-memories")
-async def legacy_atomic_memories(limit: int = 30, session_tag: Optional[str] = None, q: str = ""):
-    result = await MemNoteService(cfg, supabase_client).legacy_atomic_memories(
-        limit=limit,
-        session_tag=session_tag,
-        q=q,
-    )
-    if not result.get("ok"):
-        raise HTTPException(status_code=400, detail=result.get("error") or "legacy atomic query failed")
-    return result
-
-
-@app.get("/api/gateway/sessions")
-async def list_gateway_sessions(limit: int = 100, q: str = ""):
-    store = _require_session_store()
-    sessions = store.list_sessions(limit=limit, query=q)
-    return {"sessions": sessions, "limit": max(1, min(int(limit or 100), 500)), "query": q}
-
-
-@app.get("/api/gateway/sessions/{session_tag}")
-async def session_detail(session_tag: str, messages_limit: Optional[int] = None, heartbeat_limit: int = 500):
-    store = _require_session_store()
-    session = store.get_session_by_tag(session_tag)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found.")
-    window_limit = messages_limit if messages_limit is not None else 50
-    messages = store.get_recent_messages(
-        session["id"],
-        limit=max(1, min(int(window_limit or cfg.gateway_message_retention), cfg.gateway_message_retention)),
-    )
-    raw_request_windows = store.get_recent_raw_request_windows(
-        session["id"],
-        limit=max(1, min(int(window_limit or cfg.gateway_message_retention), cfg.gateway_message_retention)),
-    )
-    context_snapshots = store.get_recent_context_snapshots(session["id"], limit=5)
-    cold_start = store.latest_cold_start_snapshot(session["id"])
-    cold_start_snapshots = store.recent_cold_start_snapshots(session["id"], limit=8)
-    is_hisense = _is_hisense_session(session)
-    heartbeats = store.read_heartbeats(
-        None,
-        state="all",
-        limit=max(1, min(int(heartbeat_limit or 500), 500)),
-        order="desc",
-        hisense=is_hisense,
-    )
-    stats = store.get_session_stats(session["id"])
-    if is_hisense:
-        stats["heartbeats"] = stats.get("hisense_heartbeats", 0)
-    return {
-        "session": session,
-        "stats": stats,
-        "latest_cold_start_snapshot": cold_start,
-        "context_snapshots": context_snapshots,
-        "raw_request_windows": raw_request_windows,
-        "cold_start_snapshots": cold_start_snapshots,
-        "recent_messages": messages,
-        "heartbeats": heartbeats,
-        "hisense_heartbeats": heartbeats if is_hisense else [],
-    }
-
-
-@app.post("/api/gateway/sessions/{session_tag}/heartbeats")
-async def create_gateway_heartbeat(session_tag: str, body: HeartbeatCreateRequest):
-    store = _require_session_store()
-    session = store.get_session_by_tag(session_tag)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found.")
-    content = (body.content or "").strip()
-    content = content.replace("<heartbeat>", "").replace("</heartbeat>", "").strip()
-    if not content:
-        raise HTTPException(status_code=400, detail="Heartbeat content is required.")
-    if len(content) > 4000:
-        raise HTTPException(status_code=400, detail="Heartbeat content is too long.")
-    turn_number = body.turn_number if body.turn_number is not None else int(session.get("message_count") or 0)
-    item = store.append_heartbeat(
-        session["id"],
-        content,
-        turn_number=max(0, int(turn_number or 0)),
-        hisense=_is_hisense_session(session),
-    )
-    return {"ok": True, "heartbeat": item}
-
-
-@app.delete("/api/gateway/sessions/{session_tag}/heartbeats")
-async def delete_gateway_heartbeats(session_tag: str, body: HeartbeatDeleteRequest):
-    store = _require_session_store()
-    session = store.get_session_by_tag(session_tag)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found.")
-    if body.delete_all and body.confirm != "GLOBAL":
-        raise HTTPException(status_code=400, detail="Confirmation must be GLOBAL for delete_all.")
-    deleted = store.delete_heartbeats(
-        None,
-        heartbeat_ids=body.ids,
-        delete_all=body.delete_all,
-        hisense=_is_hisense_session(session),
-    )
-    return {"ok": True, "deleted": deleted}
-
-
-@app.get("/api/gateway/heartbeats")
-async def list_gateway_heartbeats(limit: int = 500, order: str = "asc", scope: str = "normal"):
-    # External contract: home-frontend reads
-    # /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal|hisense.
-    # Preserve query-token auth, limit/order/scope, and heartbeats[].content/created_at.
-    store = _require_session_store()
-    order_key = "desc" if str(order or "").lower() == "desc" else "asc"
-    max_limit = max(1, min(int(limit or 500), 2000))
-    scope_key = (scope or "normal").strip().lower()
-    hisense = scope_key in {"hisense", "海信"}
-    scope_key = "hisense" if hisense else "normal"
-    heartbeats = store.get_all_heartbeats(hisense=hisense)
-    if order_key == "desc":
-        heartbeats = list(reversed(heartbeats))
-    return {
-        "ok": True,
-        "scope": scope_key,
-        "count": len(heartbeats),
-        "limit": max_limit,
-        "order": order_key,
-        "heartbeats": heartbeats[:max_limit],
-    }
-
-
-@app.get("/api/gateway/sessions/{session_tag}/export")
-async def export_gateway_session(session_tag: str):
-    store = _require_session_store()
-    bundle = store.export_session_bundle(session_tag)
-    if not bundle:
-        raise HTTPException(status_code=404, detail="Session not found.")
-    filename = f"shenyu-session-{session_tag}-{_now().strftime('%Y%m%d-%H%M%S')}.json"
-    return JSONResponse(
-        content=bundle,
-        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
-    )
-
-
-@app.delete("/api/gateway/sessions/{session_tag}")
-async def delete_gateway_session(session_tag: str, body: SessionDeleteRequest):
-    store = _require_session_store()
-    if body.confirm != session_tag:
-        raise HTTPException(status_code=400, detail="Confirmation must match session_tag.")
-    session = store.get_session_by_tag(session_tag)
-    if not session:
-        raise HTTPException(status_code=404, detail="Session not found.")
-    deleted = store.delete_session(session["id"])
-    return {"ok": True, "session_tag": session_tag, "deleted": deleted}
-
-
-# --- 请求日志 API ---
-
-@app.get("/api/gateway/logs")
-async def gateway_logs(limit: int = 30):
-    _finalize_stale_tool_stream_logs()
-    logs = list(_request_logs)[:limit]
-    return {"logs": [
-        {
-            "id": l["id"],
-            "request_id": l.get("request_id"),
-            "timestamp": l["timestamp"],
-            "model": l["model"],
-            "client_model": l.get("client_model", l["model"]),
-            "upstream_model": l.get("upstream_model", l["model"]),
-            "model_mapped": l.get("model_mapped", False),
-            "stream": l["stream"],
-            "session_tag": l["session_tag"],
-            "is_first_turn": l["is_first_turn"],
-            "original_messages_count": l["original_messages_count"],
-            "prepared_messages_count": l["prepared_messages_count"],
-            "client_message_window": l.get("client_message_window"),
-            "cold_start": l.get("cold_start"),
-            "system_additions_preview": l["system_additions_preview"],
-            "system_additions_chars": l.get("system_additions_chars"),
-            "tools_count": l["tools_count"],
-            "tool_names": l["tool_names"],
-            "has_internal_tools": l["has_internal_tools"],
-            "upstream_url": l["upstream_url"],
-            "upstream_scope": l.get("upstream_scope", "default"),
-            "prompt_cache": l.get("prompt_cache"),
-            "request_payloads_retained": l.get("request_payloads_retained", False),
-            "upstream_payload_summary": l.get("upstream_payload_summary"),
-            "usage": l.get("usage"),
-            "cache_usage": l.get("cache_usage"),
-            "internal_tool_rounds": len(l.get("internal_tool_rounds") or []),
-            "empty_visible_response_fallback": l.get("empty_visible_response_fallback", False),
-            "empty_visible_response_fallback_detail": l.get("empty_visible_response_fallback_detail"),
-            "status": l["status"],
-            "duration_ms": l["duration_ms"],
-            "error": l["error"],
-            "response_preview": l["response_preview"],
-        }
-        for l in logs
-    ]}
-
-
-@app.get("/api/gateway/logs/{log_id}")
-async def gateway_log_detail(log_id: str):
-    _finalize_stale_tool_stream_logs()
-    for l in _request_logs:
-        if l["id"] == log_id or l.get("request_id") == log_id:
-            return l
-    raise HTTPException(status_code=404, detail="Log not found")
-
-
-@app.get("/api/calendar/prompts")
-async def calendar_prompts():
-    service = _calendar_service()
-    return await service.list_prompt_configs()
-
-
-@app.post("/api/calendar/prompts")
-async def calendar_save_prompt(body: CalendarPromptUpdate):
-    service = _calendar_service()
-    return await service.save_prompt_config(body)
-
-
-@app.post("/api/calendar/prompts/{prompt_id}/activate")
-async def calendar_activate_prompt(prompt_id: str):
-    service = _calendar_service()
-    return await service.activate_prompt_config(prompt_id)
-
-
-@app.get("/api/calendar/month")
-async def calendar_month(month: Optional[str] = None):
-    # External contract: home-frontend renders the month grid from grid[].date/day/
-    # in_month/has_day/has_week/day_page{id,title,summary,status}.
-    service = _calendar_service()
-    return await service.month_status(month)
-
-
-@app.get("/api/calendar/page/{page_id}")
-async def calendar_page(page_id: str):
-    # External contract: home-frontend expands calendar memories using id/title/summary/content.
-    service = _calendar_service()
-    return await service.page_detail(page_id)
-
-
-@app.get("/api/calendar/preview-sources")
-async def calendar_preview_sources(period_type: str, period_key: Optional[str] = None, session_tag: Optional[str] = None):
-    service = _calendar_service()
-    return await service.preview_sources(period_type, period_key, session_tag=session_tag)
-
-
-@app.get("/api/calendar/send-preview")
-async def calendar_send_preview(
-    period_type: str,
-    period_key: Optional[str] = None,
-    model: Optional[str] = None,
-    session_tag: Optional[str] = None,
-):
-    service = _calendar_service()
-    return await service.send_preview(period_type, period_key, model, session_tag=session_tag)
-
-
-@app.get("/api/calendar/context-snapshots")
-async def calendar_context_snapshots(limit: int = 8, session_tag: Optional[str] = None):
-    _require_session_store()
-    service = _calendar_service()
-    snapshots = service._context_snapshots(limit=limit, session_tag=session_tag)
-    return {
-        "items": [
-            {
-                "id": item.get("id"),
-                "session_tag": item.get("session_tag"),
-                "client_name": item.get("client_name"),
-                "created_at": item.get("created_at"),
-                "last_active_at": item.get("last_active_at"),
-                "message_count": item.get("message_count"),
-                "stored_message_count": item.get("stored_message_count"),
-                "latest_user_text": item.get("latest_user_text"),
-                "messages": item.get("messages") or [],
-            }
-            for item in snapshots
-        ]
-    }
-
-
-@app.post("/api/calendar/generate")
-async def calendar_generate(request: Request, body: CalendarGenerateRequest):
-    service = _calendar_service(request)
-    return await service.generate_page(body)
-
-
-# ─── Hisense Profile Management ───────────────────────────────────────────────
-
-
-@app.get("/api/hisense/preview")
-async def hisense_preview():
-    store = _require_session_store()
-    sessions_mgr = SessionManager(store, cfg)
-    tools = GatewayToolService()
-    builder = _context_builder(store, sessions_mgr, tools)
-    fake_session = {
-        "id": "hisense-preview",
-        "session_tag": "hisense-preview",
-        "client_name": cfg.hisense_client_name,
-        "message_count": 0,
-    }
-    package = await builder.build_context_package(
-        fake_session,
-        current_user_text="",
-        is_first_turn=True,
-        cold_start_snapshot=None,
-        client_name=cfg.hisense_client_name,
-        consume_heartbeat_pending=False,
-    )
-    layers = builder.render_layered_additions(package)
-    return {
-        "config": {
-            "hisense_client_name": cfg.hisense_client_name,
-            "hisense_heartbeat_limit": cfg.hisense_heartbeat_limit,
-            "hisense_notebook_limit": cfg.hisense_notebook_limit,
-        },
-        "package": {
-            "heartbeat_digest": package.get("heartbeat_digest", ""),
-            "hisense_heartbeat_digest": package.get("hisense_heartbeat_digest", ""),
-            "calendar_context": package.get("calendar_context", {}),
-            "notebook_items": package.get("notebook_items", []),
-            "last_wake_recap": package.get("last_wake_recap", ""),
-        },
-        "rendered_slow_layer": layers.get("slow", ""),
-        "rendered_heartbeat_layer": layers.get("heartbeat", ""),
-    }
-
-
-@app.get("/api/hisense/notebook")
-async def hisense_notebook_list(type: Optional[str] = None, status: str = "active", limit: int = 50):
-    if not supabase_client:
-        raise HTTPException(status_code=503, detail="Supabase not configured")
-    params: dict[str, str] = {
-        "order": "pinned.desc,updated_at.desc",
-        "limit": str(max(1, min(int(limit or 50), 100))),
-        "status": f"eq.{status}",
-        "select": "id,type,content,tags,status,pinned,metadata,session_tag,created_at,updated_at",
-    }
-    if type:
-        params["type"] = f"eq.{type}"
-    rows = await supabase_client.query("shenyu_notebook", params)
-    return {"ok": True, "count": len(rows or []), "data": rows or []}
-
-
-@app.post("/api/hisense/notebook")
-async def hisense_notebook_create(request: Request):
-    if not supabase_client:
-        raise HTTPException(status_code=503, detail="Supabase not configured")
-    body = await request.json()
-    content = (body.get("content") or "").strip()
-    if not content:
-        raise HTTPException(status_code=400, detail="content is required")
-    data: dict[str, Any] = {
-        "type": body.get("type", "note"),
-        "content": content,
-        "status": body.get("status", "active"),
-    }
-    if body.get("tags"):
-        data["tags"] = body["tags"]
-    if body.get("metadata"):
-        data["metadata"] = body["metadata"]
-    result = await supabase_client.insert("shenyu_notebook", data)
-    return {"ok": True, "data": result}
-
-
-@app.patch("/api/hisense/notebook/{item_id}")
-async def hisense_notebook_update(item_id: str, request: Request):
-    if not supabase_client:
-        raise HTTPException(status_code=503, detail="Supabase not configured")
-    body = await request.json()
-    update_data: dict[str, Any] = {}
-    for field in ("content", "status", "type", "tags", "metadata", "pinned"):
-        if field in body:
-            update_data[field] = body[field]
-    if not update_data:
-        raise HTTPException(status_code=400, detail="Nothing to update")
-    update_data["updated_at"] = _iso_now()
-    result = await supabase_client.update("shenyu_notebook", match={"id": item_id}, data=update_data)
-    return {"ok": True, "data": result}
-
-
-@app.delete("/api/hisense/notebook/{item_id}")
-async def hisense_notebook_delete(item_id: str):
-    if not supabase_client:
-        raise HTTPException(status_code=503, detail="Supabase not configured")
-    result = await supabase_client.delete("shenyu_notebook", match={"id": item_id})
-    return {"ok": True, "data": result}
-
-
-@app.get("/api/hisense/sessions")
-async def hisense_sessions(limit: int = 20):
-    store = _require_session_store()
-    all_sessions = store.list_sessions(limit=200)
-    hisense_sessions = [
-        s for s in all_sessions
-        if _is_hisense_session(s)
-    ][:max(1, min(int(limit or 20), 50))]
-    for item in hisense_sessions:
-        item["heartbeat_count"] = item.get("hisense_heartbeat_count", 0)
-    return {"sessions": hisense_sessions, "count": len(hisense_sessions)}
-
-
-@app.get("/")
-async def root_page():
-    return RedirectResponse("/admin")
-
-
-@app.get("/admin")
-@app.get("/admin/")
-async def admin_page():
-    html_path = ADMIN_DIST_DIR / "index.html"
-    if html_path.exists():
-        return FileResponse(html_path)
-    return HTMLResponse("<h1>admin dist not found</h1><p>Run <code>npm run build</code> in <code>admin/</code>, or use <code>npm run dev</code> during development.</p>")
 
 
 if __name__ == "__main__":

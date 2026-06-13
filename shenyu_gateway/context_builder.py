@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable, Optional
 
+from .conflict_books import ConflictBookService
 from .context_layers import (
     ContextLayerSettings,
     render_layered_additions as _render_layered_additions,
@@ -135,9 +136,12 @@ class ContextBuilder:
             "mem_notes": [],
             "notebook_items": [],
             "last_wake_recap": "",
+            "conflict_books": [],
         }
 
         package["calendar_context"] = await self.calendar_context_pages()
+        if not is_hisense and getattr(self.cfg, "inject_conflict_shelf", True):
+            package["conflict_books"] = await self._conflict_shelf_books()
 
         if is_hisense:
             package["notebook_items"] = await self._hisense_notebook_items()
@@ -153,6 +157,15 @@ class ContextBuilder:
                 )
                 package["mem_notes"] = notes.get("items") or []
         return package
+
+    async def _conflict_shelf_books(self) -> list[dict]:
+        if not self.supabase_client:
+            return []
+        try:
+            result = await ConflictBookService(self.supabase_client).list_books()
+            return result.get("books") or []
+        except Exception:
+            return []
 
     def _normal_heartbeat_digest(self, session_id: str, consume_pending: bool = True) -> str:
         digest, _ = self._normal_heartbeat_context(session_id=session_id, consume_pending=consume_pending)

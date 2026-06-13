@@ -10,4 +10,5 @@ admin/dist/
 
 *.log
 tmp_gateway_log_*.json
+tmp_gateway_logs*/
 .shenyu-gateway-debug.local.json

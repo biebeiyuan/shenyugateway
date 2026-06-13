@@ -170,8 +170,20 @@ class GatewayStore:
                     ON pending_gateway_tool_turns(session_id, consumed_at, client_tool_call_ids_json, expires_at, created_at DESC);
                 CREATE INDEX IF NOT EXISTS idx_pending_gateway_tool_turns_expires
                     ON pending_gateway_tool_turns(expires_at);
+
+                CREATE TABLE IF NOT EXISTS chat_archive_seen (
+                    session_tag TEXT NOT NULL,
+                    content_hash TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY (session_tag, content_hash)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_chat_archive_seen_tag_created
+                    ON chat_archive_seen(session_tag, created_at);
                 """
             )
+            self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")
+            self._ensure_column(conn, HISENSE_HEARTBEAT_TABLE, "synced_at", "TEXT")
             rows = conn.execute(
                 "SELECT id, client_tool_call_ids_json FROM pending_gateway_tool_turns"
             ).fetchall()
@@ -186,6 +198,11 @@ class GatewayStore:
                         "UPDATE pending_gateway_tool_turns SET client_tool_call_ids_json = ? WHERE id = ?",
                         (canonical_json, row["id"]),
                     )
+
+    def _ensure_column(self, conn: sqlite3.Connection, table: str, column: str, decl: str):
+        existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in existing:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
 
     def get_or_create_session(self, session_tag: str, client_name: str) -> dict:
         with self._connect() as conn:
@@ -1532,6 +1549,79 @@ class GatewayStore:
                 params,
             ).fetchall()
             return [dict(row) for row in rows]
+
+    def get_settled_unsynced_heartbeats(self, settle_hours: int, limit: int = 200, hisense: bool = False) -> list[dict]:
+        table = self._heartbeat_table(hisense)
+        cutoff = dt_to_iso(now() - timedelta(hours=max(int(settle_hours or 0), 0)))
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT * FROM {table}
+                WHERE synced_at IS NULL AND created_at <= ?
+                ORDER BY created_at ASC
+                LIMIT ?
+                """,
+                (cutoff, max(1, min(int(limit or 200), 1000))),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def mark_heartbeats_synced(self, heartbeat_ids: list[str], hisense: bool = False):
+        table = self._heartbeat_table(hisense)
+        heartbeat_ids = [item for item in (heartbeat_ids or []) if item]
+        if not heartbeat_ids:
+            return
+        placeholders = ",".join("?" for _ in heartbeat_ids)
+        with self._connect() as conn:
+            conn.execute(
+                f"UPDATE {table} SET synced_at = ? WHERE id IN ({placeholders})",
+                (iso_now(), *heartbeat_ids),
+            )
+
+    def get_all_heartbeat_ids(self, hisense: bool = False) -> set[str]:
+        table = self._heartbeat_table(hisense)
+        with self._connect() as conn:
+            rows = conn.execute(f"SELECT id FROM {table}").fetchall()
+            return {row["id"] for row in rows}
+
+    def filter_unseen_archive_hashes(self, session_tag: str, content_hashes: list[str]) -> set[str]:
+        """Return the subset of hashes not yet archived for this session_tag."""
+        hashes = [item for item in dict.fromkeys(content_hashes or []) if item]
+        if not hashes:
+            return set()
+        unseen = set(hashes)
+        with self._connect() as conn:
+            for start in range(0, len(hashes), 200):
+                chunk = hashes[start : start + 200]
+                placeholders = ",".join("?" for _ in chunk)
+                rows = conn.execute(
+                    f"SELECT content_hash FROM chat_archive_seen WHERE session_tag = ? AND content_hash IN ({placeholders})",
+                    (session_tag, *chunk),
+                ).fetchall()
+                unseen -= {row["content_hash"] for row in rows}
+        return unseen
+
+    def mark_archive_hashes_seen(self, session_tag: str, content_hashes: list[str], keep_recent: int = 2000):
+        hashes = [item for item in dict.fromkeys(content_hashes or []) if item]
+        if not hashes:
+            return
+        timestamp = iso_now()
+        with self._connect() as conn:
+            conn.executemany(
+                "INSERT OR IGNORE INTO chat_archive_seen (session_tag, content_hash, created_at) VALUES (?, ?, ?)",
+                [(session_tag, item, timestamp) for item in hashes],
+            )
+            conn.execute(
+                """
+                DELETE FROM chat_archive_seen
+                WHERE session_tag = ? AND content_hash NOT IN (
+                    SELECT content_hash FROM chat_archive_seen
+                    WHERE session_tag = ?
+                    ORDER BY created_at DESC
+                    LIMIT ?
+                )
+                """,
+                (session_tag, session_tag, max(int(keep_recent or 2000), 100)),
+            )
 
     def export_session_bundle(self, session_tag: str) -> Optional[dict]:
         session = self.get_session_by_tag(session_tag)

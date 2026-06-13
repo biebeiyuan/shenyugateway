@@ -341,6 +341,40 @@ Preserve these response contracts:
 - `GET /api/calendar/month?token=...&month=YYYY-MM` returns `grid`; each day item must keep `date`, `day`, `in_month`, `has_day`, `has_week`, and when present `day_page.id/title/summary/status`.
 - `GET /api/calendar/page/{page_id}?token=...` returns at least `id`, `title`, `summary`, and `content`.
 
+## Durable Archive Layer
+
+SQLite holds only rebuildable runtime state. Anything whose loss would hurt lives in Supabase. Three archive subsystems enforce this:
+
+### Heartbeat archive (disaster recovery)
+
+`shenyu_heartbeat_archive` in Supabase is the durable copy of both SQLite heartbeat pools. The worker (`shenyu_gateway/heartbeat_archive.py`):
+
+- syncs heartbeats only after a settle window (`HEARTBEAT_ARCHIVE_SETTLE_HOURS=6`), so manual cleanup of re-roll duplicates or runaway heartbeats done in SQLite first never reaches the archive;
+- reconciles afterwards: rows deleted from SQLite after archiving are soft-deleted (`deleted_at`) in the archive, never erased;
+- backfills all history automatically on first run.
+
+SQLite stays the live read path; injection behavior is unchanged. Config: `ENABLE_HEARTBEAT_ARCHIVE`, `HEARTBEAT_ARCHIVE_SETTLE_HOURS`, `HEARTBEAT_ARCHIVE_INTERVAL_SECONDS`, `HEARTBEAT_ARCHIVE_BATCH_SIZE`.
+
+### Chat archive (L0 source of truth)
+
+`shenyu_chat_archive` in Supabase stores verbatim user/assistant messages, message by message, archived from the client window in `_prepare_messages()` (fire-and-forget; failures never affect chat). Dedup uses `chat_archive_seen` in SQLite (recent hashes per session_tag), so resent sliding windows archive each message once while a genuinely repeated message months later is a new event. Re-rolled replies never return in the client window, so they are naturally excluded. Threads are derived as `main` / `hisense` / custom session tags.
+
+- Backfill from existing SQLite history: `python scripts/backfill_chat_archive.py` (idempotent; `--dry-run` to preview).
+- Admin reader: `/admin` → 档案 tab; API under `/api/archive/*`.
+- Config: `ENABLE_CHAT_ARCHIVE`.
+- This table is the source of truth: recall indexes and conflict books are derived from it; soft-delete only.
+
+### Conflict books（矛盾书）
+
+Frozen verbatim excerpts of arguments, clipped by the user from the archive reader, readable and annotatable by Shenyu. Invariants enforced in `shenyu_gateway/conflict_books.py` (no API path can violate them):
+
+- `original_text` is frozen at clip time; update paths drop it and a text-only patch is rejected.
+- Shenyu's annotations are append-only with timestamps; no update or delete endpoint exists.
+- Every `shenyu_conflict_read` appends a row to `shenyu_conflict_reads` and bumps `read_count`, so the shelf shows 翻过几次/最近何时.
+- Books are never auto-injected as content. The only passive surface is the `## 矛盾书` shelf block (titles + status only) in the `slow` layer, toggled by `INJECT_CONFLICT_SHELF`.
+
+Tools: `shenyu_conflict_list`, `shenyu_conflict_read`, `shenyu_conflict_annotate`. Admin UI: 档案 tab (clip flow) and 矛盾书 tab (edit title/notes/epilogue/status; soft delete). Migrations: `20260613_shenyu_heartbeat_archive.sql`, `20260613_shenyu_chat_archive.sql`, `20260613_shenyu_conflict_books.sql`.
+
 ## Mem Note Layer
 
 Mem notes are small personal notes, separate from event memories and calendar pages.

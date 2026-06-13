@@ -74,6 +74,14 @@ class SupabaseClient:
         result = response.json()
         return result[0] if isinstance(result, list) and result else result
 
+    async def insert_many(self, table: str, rows: list[dict]) -> list:
+        if not rows:
+            return []
+        response = await self._request("POST", f"{self.base_url}/{table}", json=rows)
+        _raise_for_status(response)
+        result = response.json()
+        return result if isinstance(result, list) else [result]
+
     async def upsert(self, table: str, data: Any, on_conflict: Optional[str] = None) -> list:
         params = {"on_conflict": on_conflict} if on_conflict else {}
         headers = dict(self.headers)

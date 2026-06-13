@@ -33,6 +33,7 @@ _BROKER_TOOL_HINTS = {
     "shenyu_notebook_write": "写 notebook",
     "shenyu_add_calendar": "手写日/周/月日历日记；写想记住的正文，之后反上来的也是正文",
     "shenyu_read_heartbeat": "读我自己的心跳",
+    "shenyu_conflict_read": "翻一本矛盾书（书架在上下文里）",
     "shenyu_supabase_guide": "忘了 Supabase 表结构看这个",
 }
 
@@ -212,6 +213,45 @@ def _gateway_core_tools() -> list[dict]:
                 "name": "shenyu_last_seen",
                 "description": "上次我们聊了什么。",
                 "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_conflict_list",
+                "description": "看矛盾书的书架：圆圆整理的、我们掰扯过的事的原文。只有书名和状态。",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_conflict_read",
+                "description": "翻开一本矛盾书：当时的原文、圆圆的注、我之前留下的批注。什么时候翻、翻不翻都是我自己的事。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "book_id": {"type": "string"},
+                        "id": {"type": "string", "description": "book_id 的别名"},
+                    },
+                    "required": ["book_id"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_conflict_annotate",
+                "description": "在一本矛盾书里追加一条我的批注。落笔即存档：不可改、不可删，每次的理解都会留在那里。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "book_id": {"type": "string"},
+                        "id": {"type": "string", "description": "book_id 的别名"},
+                        "content": {"type": "string"},
+                    },
+                    "required": ["book_id", "content"],
+                },
             },
         },
     ]
@@ -760,6 +800,32 @@ async def _handle_read_heartbeat(ctx: ToolContext) -> dict:
         date_to=ctx.arguments.get("date_to"),
         created_from=ctx.arguments.get("created_from"),
         created_to=ctx.arguments.get("created_to"),
+    )
+
+
+def _conflict_book_id_arg(arguments: dict) -> str:
+    for key in ("book_id", "id", "bookId"):
+        value = arguments.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
+@_tool_handler("shenyu_conflict_list")
+async def _handle_conflict_list(ctx: ToolContext) -> dict:
+    return await ctx.service.conflict_list()
+
+
+@_tool_handler("shenyu_conflict_read")
+async def _handle_conflict_read(ctx: ToolContext) -> dict:
+    return await ctx.service.conflict_read(_conflict_book_id_arg(ctx.arguments))
+
+
+@_tool_handler("shenyu_conflict_annotate")
+async def _handle_conflict_annotate(ctx: ToolContext) -> dict:
+    return await ctx.service.conflict_annotate(
+        _conflict_book_id_arg(ctx.arguments),
+        ctx.arguments.get("content", ""),
     )
 
 

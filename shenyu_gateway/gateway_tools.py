@@ -8,6 +8,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from shenyu_gateway.calendar import default_period_key, period_bounds
+from shenyu_gateway.conflict_books import ConflictBookService
 from shenyu_gateway.mem_notes import MemNoteService
 from shenyu_gateway.recall import RecallIndexService, recall_terms
 from shenyu_gateway.runtime import (
@@ -259,6 +260,18 @@ class GatewayToolService:
 
     def _recall_index(self) -> RecallIndexService:
         return RecallIndexService(self.supabase, cfg=self.cfg)
+
+    def _conflict_books(self) -> ConflictBookService:
+        return ConflictBookService(self.supabase)
+
+    async def conflict_list(self) -> dict:
+        return await self._conflict_books().list_books()
+
+    async def conflict_read(self, book_id: str) -> dict:
+        return await self._conflict_books().read_book(book_id)
+
+    async def conflict_annotate(self, book_id: str, content: str) -> dict:
+        return await self._conflict_books().annotate_book(book_id, content)
 
     def _recall_source_types(self, value: Any) -> Optional[list[str]]:
         if isinstance(value, list):

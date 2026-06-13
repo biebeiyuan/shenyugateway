@@ -50,6 +50,8 @@ async function checkHealth() {
       <RouterLink to="/calendar" class="tab" active-class="active">日历</RouterLink>
       <RouterLink to="/mem0" class="tab" active-class="active">记忆</RouterLink>
       <RouterLink to="/hisense" class="tab" active-class="active">海信</RouterLink>
+      <RouterLink to="/archive" class="tab" active-class="active">档案</RouterLink>
+      <RouterLink to="/conflict" class="tab" active-class="active">矛盾书</RouterLink>
     </nav>
 
     <main class="main">

@@ -4,6 +4,8 @@ from dataclasses import dataclass
 import re
 from typing import Any, Optional
 
+from .conflict_books import render_conflict_shelf
+
 
 @dataclass(frozen=True)
 class ContextLayerSettings:
@@ -78,6 +80,10 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
                 prefix += f" ({', '.join(tags)})"
             nb_lines.append(f"- {prefix} {item.get('content', '')}")
         slow_blocks.append("\n".join(nb_lines))
+
+    conflict_shelf = render_conflict_shelf(package.get("conflict_books") or [])
+    if conflict_shelf:
+        slow_blocks.append(conflict_shelf)
 
     last_wake_recap = package.get("last_wake_recap") or ""
     if last_wake_recap:

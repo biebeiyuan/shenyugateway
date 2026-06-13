@@ -83,6 +83,7 @@ class RuntimeConfig:
         self.calendar_inject_week: bool = _env_bool("CALENDAR_INJECT_WEEK", True)
         self.calendar_inject_month: bool = _env_bool("CALENDAR_INJECT_MONTH", True)
         self.inject_mem_notes: bool = _env_bool("INJECT_MEM_NOTES", True)
+        self.inject_conflict_shelf: bool = _env_bool("INJECT_CONFLICT_SHELF", True)
         self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
         self.enable_upstream_tools: bool = _env_bool("ENABLE_UPSTREAM_TOOLS", True)
         self.enable_gateway_tools: bool = _env_bool("ENABLE_GATEWAY_TOOLS", True)
@@ -120,6 +121,11 @@ class RuntimeConfig:
         self.mem_note_soft_cooldown_hours: int = _env_int("MEM_NOTE_SOFT_COOLDOWN_HOURS", 12, 0, 8760)
         self.mem_note_default_cooldown_hours: int = _env_int("MEM_NOTE_DEFAULT_COOLDOWN_HOURS", 12, 0, 8760)
         self.heartbeat_inject_every: int = _env_int("HEARTBEAT_INJECT_EVERY", 5, 1, 50)
+        self.enable_heartbeat_archive: bool = _env_bool("ENABLE_HEARTBEAT_ARCHIVE", True)
+        self.enable_chat_archive: bool = _env_bool("ENABLE_CHAT_ARCHIVE", True)
+        self.heartbeat_archive_settle_hours: int = _env_int("HEARTBEAT_ARCHIVE_SETTLE_HOURS", 6, 0, 720)
+        self.heartbeat_archive_interval_seconds: int = _env_int("HEARTBEAT_ARCHIVE_INTERVAL_SECONDS", 600, 60, 86400)
+        self.heartbeat_archive_batch_size: int = _env_int("HEARTBEAT_ARCHIVE_BATCH_SIZE", 200, 1, 1000)
         self.gateway_message_retention: int = _env_int("GATEWAY_MESSAGE_RETENTION", 1500, 50, 200000)
         self.gateway_context_snapshot_retention: int = _env_int("GATEWAY_CONTEXT_SNAPSHOT_RETENTION", 3, 1, 100)
         self.gateway_cold_start_retention: int = _env_int("GATEWAY_COLD_START_RETENTION", 20, 1, 1000)
@@ -154,6 +160,7 @@ class RuntimeConfig:
             "calendar_inject_week": self.calendar_inject_week,
             "calendar_inject_month": self.calendar_inject_month,
             "inject_mem_notes": self.inject_mem_notes,
+            "inject_conflict_shelf": self.inject_conflict_shelf,
             "enable_cold_start": self.enable_cold_start,
             "enable_upstream_tools": self.enable_upstream_tools,
             "enable_gateway_tools": self.enable_gateway_tools,
@@ -190,6 +197,11 @@ class RuntimeConfig:
             "mem_note_soft_cooldown_hours": self.mem_note_soft_cooldown_hours,
             "mem_note_default_cooldown_hours": self.mem_note_default_cooldown_hours,
             "heartbeat_inject_every": self.heartbeat_inject_every,
+            "enable_heartbeat_archive": self.enable_heartbeat_archive,
+            "enable_chat_archive": self.enable_chat_archive,
+            "heartbeat_archive_settle_hours": self.heartbeat_archive_settle_hours,
+            "heartbeat_archive_interval_seconds": self.heartbeat_archive_interval_seconds,
+            "heartbeat_archive_batch_size": self.heartbeat_archive_batch_size,
             "gateway_message_retention": self.gateway_message_retention,
             "gateway_context_snapshot_retention": self.gateway_context_snapshot_retention,
             "gateway_cold_start_retention": self.gateway_cold_start_retention,
