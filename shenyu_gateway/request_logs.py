@@ -9,17 +9,11 @@ from typing import Any, Optional
 from shenyu_gateway.context_layers import trim_client_image_blocks
 from shenyu_gateway.tool_loop import _tool_call_arguments, _tool_call_name
 from shenyu_gateway.utils import normalize_text
+from shenyu_gateway.utils import shorten as _shorten
 
 
 _request_logs: deque = deque(maxlen=30)
 _TOOL_STREAM_STALE_SECONDS = 30.0
-
-
-def _shorten(text: str, limit: int = 240) -> str:
-    text = (text or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
 
 
 def _retain_request_log_payloads() -> bool:

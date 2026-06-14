@@ -32,6 +32,7 @@ from .upstream_adapter import (
 )
 from .utils import coerce_json_object as _coerce_json_object
 from .utils import normalize_text as _normalize_text
+from .utils import shorten as _shorten
 
 
 @dataclass
@@ -164,13 +165,6 @@ def _tool_call_cache_key(name: str, args: dict) -> str:
     except TypeError:
         args_text = _json_dumps(args or {})
     return f"{name}:{args_text}"
-
-
-def _shorten(text: str, limit: int = 240) -> str:
-    text = (text or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
 
 
 async def _execute_mixed_gateway_tool_calls(

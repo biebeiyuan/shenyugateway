@@ -7,13 +7,7 @@ from typing import Any, Optional
 
 from .calendar import period_bounds
 from .utils import normalize_text as _normalize_text
-
-
-def _shorten(text: str, limit: int = 240) -> str:
-    text = (text or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
+from .utils import shorten as _shorten
 
 
 def _safe_json_loads(value: Any, fallback: Any):

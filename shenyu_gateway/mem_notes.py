@@ -7,6 +7,7 @@ from typing import Any, Optional
 from shenyu_gateway.recall import RecallIndexService, recall_terms
 from shenyu_gateway.runtime import logger
 from shenyu_gateway.utils import normalize_text as _normalize_text
+from shenyu_gateway.utils import shorten as _shorten
 from .runtime import iso_now, now as _now, parse_ts as _parse_ts
 
 
@@ -332,13 +333,6 @@ def _trigger_overlap(query: str, trigger_text: str, keywords: list[Any]) -> tupl
         # A single generic trigger like "工具" should not make a note jump to full score.
         score = min(score, 0.2 if len(hits) == 1 else 0.35)
     return score, hits
-
-
-def _shorten(text: str, limit: int = 220) -> str:
-    text = (text or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
 
 
 def _normalize_note_id(value: Any) -> str:

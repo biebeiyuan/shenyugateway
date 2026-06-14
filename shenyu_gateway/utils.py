@@ -4,6 +4,17 @@ import json
 from typing import Any
 
 
+def shorten(text: str, limit: int = 240) -> str:
+    text = (text or "").strip()
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3].rstrip() + "..."
+
+
+def clean_config_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
 def coerce_json_object(value: Any, *, max_depth: int = 3) -> dict[str, Any] | None:
     current = value
     for _ in range(max_depth):

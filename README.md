@@ -37,7 +37,12 @@ The codebase is partly layered already:
 - `shenyu_gateway/mem_notes.py`: inline `[mem]` capture, clean note search, review/update/delete helpers, and old atomic read-only lookup.
 - `shenyu_gateway/sessions.py`: session/message logging facade.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
-- `gateway.py`: FastAPI routes, middleware, upstream HTTP calls, context orchestration, tool-loop orchestration, calendar generation service, and Hisense routes.
+- `shenyu_gateway/auth.py`: admin auth middleware, API key verification, login page HTML, and `ADMIN_PROTECTED_PREFIXES`.
+- `shenyu_gateway/upstream_client.py`: upstream HTTP client construction, protocol detection, URL routing, request building, streaming chunk iteration, model listing, and connection error formatting.
+- `shenyu_gateway/prepare_messages.py`: cold-start snapshot preparation, runtime state pruning, pending gateway tool turn injection, and message/tool-call helpers.
+- `shenyu_gateway/private_capture.py`: private assistant content finalization (`<heartbeat>` / `[mem]` extraction), context-consumed marking, fallback text generation, and free-time detection.
+- `shenyu_gateway/utils.py`: shared utilities (`shorten`, `clean_config_text`, `normalize_text`) used across multiple modules.
+- `gateway.py`: FastAPI app entrypoint, lifespan, CORS, route handlers, context orchestration, tool-loop orchestration, streaming chat pipeline, calendar generation service, and Hisense routes.
 
 When cleaning or refactoring, preserve behavior first and move code by boundary:
 
@@ -47,7 +52,7 @@ When cleaning or refactoring, preserve behavior first and move code by boundary:
 4. Context data fetching belongs around `ContextBuilder`; layer rendering and message-window assembly belong in `shenyu_gateway/context_layers.py`.
 5. Private response tag filtering and capture helpers belong in `shenyu_gateway/response_capture.py`.
 6. Gateway-native tool behavior belongs in `shenyu_gateway/gateway_tools.py`; tool schemas, merge logic, and name dispatch belong in `shenyu_gateway/tool_registry.py`. Keep tool descriptions short: one-line purpose plus backing table/pool.
-7. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing and HTTP calls stay near `_build_upstream_request`.
+7. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing, HTTP calls, and streaming iteration belong in `shenyu_gateway/upstream_client.py`.
 8. External frontend contracts below are not dead code just because admin UI does not import them.
 
 ## Context Layers
@@ -432,7 +437,7 @@ Closed private assistant blocks are removed from visible replies:
 
 If all visible text is removed and there are no client-executable tool calls, the gateway sends a short visible fallback instead of returning an empty successful assistant message. This prevents clients and automated workflows from treating a successful private capture as a malformed empty response.
 
-Fallback text is generated in `gateway.py` by `_finalize_assistant_private_content()`, `_private_capture_fallback_text()`, and `_is_free_time_fallback_context()`:
+Fallback text is generated in `shenyu_gateway/private_capture.py` by `finalize_assistant_private_content()`, `private_capture_fallback_text()`, and `is_free_time_fallback_context()`:
 
 - free-time workflow context: `沈予在自由时间 · 已存 heartbeat`, `沈予在自由时间 · 已存 mem`, or `沈予在自由时间 · 已存 heartbeat + mem`
 - generic context: `沈予已记录 · 已存 heartbeat`, `沈予已记录 · 已存 mem`, or `沈予已记录 · 已存 heartbeat + mem`
@@ -596,7 +601,7 @@ Recommended order:
 |---|---|---|---|---|
 | 1 | B3 `execute_gateway_tool` dispatch refactor | Highest maintenance risk in the remaining report. It also gives the next refactors a cleaner tool boundary. | Add handler snapshot tests first, then replace the giant handler dict/lambdas with `ToolContext` plus registered async handler functions. Keep broker behavior identical. | All existing tool-registry tests pass; new parameter snapshot tests cover aliases, session_tag fallback, cfg defaults, broker nested arguments, and unsupported tools. |
 | 2 | B7 return format normalization | Small, easy win after B3 tests make tool behavior visible. | Add `ok: true` to successful tool results that currently omit it, especially memory/search style results. Keep error shape as `{ok: false, error: ...}`. | Tests assert both success and error shapes for direct and broker calls. |
-| 3 | B1 `gateway.py` split | Worth doing once dispatch is stable, because the file still owns too many independent concerns. | Extract by dependency order: calendar service, context/cold-start helpers, streaming helpers, tool-loop orchestration, then admin routes. Move code without behavior changes. | `gateway.py` remains the app entrypoint and chat route coordinator; moved modules have focused imports; streaming/tool-loop tests still pass. |
+| 3 | B1 `gateway.py` split | **Partially done.** Auth, upstream HTTP, prepare-messages, and private-capture logic have been extracted into `auth.py`, `upstream_client.py`, `prepare_messages.py`, and `private_capture.py`. Remaining candidates: calendar service, admin routes, streaming helpers. | Extract remaining concerns by dependency order. Move code without behavior changes. | `gateway.py` remains the app entrypoint and chat route coordinator; moved modules have focused imports; streaming/tool-loop tests still pass. |
 | 4 | B2 `GatewayToolService` composition split | Useful only after B3/B1 reduce the surrounding noise. | Keep `GatewayToolService` as a compatibility facade and delegate to Supabase, memory, calendar, heartbeat, and notebook operation classes. | Tool registry does not change; service tests prove old method signatures still work. |
 
 Phase 1 executable checklist:
@@ -617,10 +622,17 @@ python -m py_compile gateway.py shenyu_gateway/*.py
 
 Phase 3 split guidance:
 
-- Prefer pure move commits. Avoid behavior edits in the same step as file extraction.
-- Move `streaming.py` before `tool_loop.py` if the tool loop needs `_stream_*_event` helpers.
-- Keep FastAPI app construction, middleware, auth, and the main `/v1/chat/completions` route in `gateway.py` until the end.
-- Extract admin routes last; they have the most surface area but the least bearing on chat correctness.
+Completed extractions:
+- `shenyu_gateway/auth.py` — admin auth middleware, API key verification, login page.
+- `shenyu_gateway/upstream_client.py` — all upstream HTTP communication: protocol detection, URL routing, request building, streaming, error formatting.
+- `shenyu_gateway/prepare_messages.py` — cold-start snapshot, runtime pruning, pending gateway tool turn injection, message helpers.
+- `shenyu_gateway/private_capture.py` — private content finalization, fallback text, context-consumed marking.
+- `shenyu_gateway/utils.py` — consolidated `shorten` and `clean_config_text` from duplicated definitions across modules.
+
+Remaining candidates:
+- Calendar service extraction.
+- Admin routes extraction (most surface area, least bearing on chat correctness — extract last).
+- Streaming helpers if `_stream_chat` / `_nonstream_chat` grow further.
 
 ## DevOps Plan | 部署计划
 

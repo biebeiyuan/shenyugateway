@@ -5,15 +5,12 @@ import uuid
 from typing import Any, Optional
 
 from .runtime import now_ts as _now_ts
+from .utils import clean_config_text as _clean_config_text
 from .utils import coerce_json_object as _coerce_json_object
 from .utils import normalize_text as _normalize_text
 
 
 _CACHE_LAYER_BREAKPOINT_ORDER = ("stable", "slow", "format")
-
-
-def _clean_config_text(value: Any) -> str:
-    return str(value or "").strip()
 
 
 def _add_cache_control(block: dict, cache_paths: list[str], path: str, max_breakpoints: int = 4) -> bool:

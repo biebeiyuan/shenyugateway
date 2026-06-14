@@ -22,7 +22,7 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from shenyu_gateway.admin_shell_routes import AdminShellRouteDeps, build_admin_shell_router
@@ -40,7 +40,6 @@ from shenyu_gateway.context_layers import (
     trim_client_extra_bundle_attachments as _trim_client_extra_bundle_attachments,
     trim_client_image_blocks as _trim_client_image_blocks,
     trim_client_messages as _trim_client_messages,
-    trim_cold_start_sources as _trim_cold_start_sources,
 )
 from shenyu_gateway.gateway_tools import GatewayToolService, configure_gateway_tools
 from shenyu_gateway.heartbeat_archive import HeartbeatArchiveService, heartbeat_archive_worker
@@ -54,14 +53,12 @@ from shenyu_gateway.runtime import (
     logger,
     now as _now,
     now_ts as _now_ts,
-    parse_ts as _parse_ts,
     persist_env as _persist_env,
 )
 from shenyu_gateway.response_capture import (
     AssistantTagFilter,
     clean_text_from_filter_source,
     schedule_inline_memory_capture,
-    split_private_assistant_tags,
     store_heartbeat,
 )
 from shenyu_gateway.request_logs import (
@@ -82,13 +79,10 @@ from shenyu_gateway.streaming import (
 from shenyu_gateway.supabase import SupabaseClient
 from shenyu_gateway.tool_registry import (
     execute_gateway_tool,
-    is_gateway_native_tool,
-    merge_tools,
 )
 from shenyu_gateway.tool_loop import (
     InternalToolLoopContext,
     _latest_user_text,
-    _tool_call_name,
     run_internal_tool_loop as _run_internal_tool_loop_impl,
     run_internal_tool_loop_stream as _run_internal_tool_loop_stream_impl,
 )
@@ -98,15 +92,9 @@ from shenyu_gateway.upstream_adapter import (
     _anthropic_usage_to_openai,
     _anthropic_to_openai_chunk,
     _anthropic_to_openai_completion,
-    _apply_openai_compatible_cache_control,
     _cache_usage_summary,
-    _convert_openai_tools_to_anthropic,
-    _models_url_for,
-    _openai_to_anthropic,
-    _sanitize_openai_compatible_messages,
-    _sanitize_openai_compatible_tools,
 )
-from shenyu_gateway.utils import normalize_text as _normalize_text
+from shenyu_gateway.utils import clean_config_text as _clean_config_text
 
 logging.basicConfig(level=logging.INFO)
 
@@ -115,63 +103,54 @@ def _clamp(value: float, min_value: float, max_value: float) -> float:
     return max(min_value, min(value, max_value))
 
 
-_DNS_ERROR_MARKERS = (
-    "getaddrinfo",
-    "name or service not known",
-    "temporary failure in name resolution",
-    "nodename nor servname",
-    "no address associated",
-    "failed to resolve",
-    "could not resolve",
-    "无法解析",
+from shenyu_gateway.upstream_client import (
+    validate_http_url as _validate_http_url_impl,
+    validate_protocol as _validate_protocol_impl,
+    connection_route_hint as _connection_route_hint_impl,
+    connect_error_detail as _connect_error_detail_impl,
+    detect_protocol_for as _detect_protocol_for,
+    chat_url_for as _chat_url_for,
+    upstream_for_hisense as _upstream_for_hisense_impl,
+    mapped_model_name as _mapped_model_name_impl,
+    make_upstream_http_client as _make_upstream_http_client_impl,
+    fetch_upstream_models as _fetch_upstream_models_impl,
+    call_upstream_json_at as _call_upstream_json_at_impl,
+    build_upstream_request as _build_upstream_request_impl,
+    stream_upstream_openai_chunks as _stream_upstream_openai_chunks_impl,
 )
 
 
-def _clean_config_text(value: Any) -> str:
-    return str(value or "").strip()
+def _validate_http_url(field_name, value, *, allow_empty=True):
+    return _validate_http_url_impl(field_name, value, allow_empty=allow_empty)
 
 
-def _validate_http_url(field_name: str, value: Any, *, allow_empty: bool = True) -> str:
-    url = _clean_config_text(value)
-    if not url:
-        if allow_empty:
-            return ""
-        raise HTTPException(status_code=400, detail=f"{field_name} 不能为空。")
-    parsed = urlsplit(url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
-        raise HTTPException(
-            status_code=400,
-            detail=f"{field_name} 必须是包含 http(s):// 和主机名的完整 URL。",
-        )
-    return url
+def _validate_protocol(field_name, value, *, allow_empty=False):
+    return _validate_protocol_impl(field_name, value, allow_empty=allow_empty)
 
 
-def _validate_protocol(field_name: str, value: Any, *, allow_empty: bool = False) -> str:
-    protocol = _clean_config_text(value).lower()
-    if not protocol:
-        if allow_empty:
-            return ""
-        return "auto"
-    if protocol not in {"auto", "openai", "anthropic"}:
-        raise HTTPException(status_code=400, detail=f"{field_name} 只能是 auto、openai 或 anthropic。")
-    return protocol
+def _connection_route_hint():
+    return _connection_route_hint_impl(cfg)
 
 
-def _connection_route_hint() -> str:
-    if cfg.upstream_proxy:
-        return "UPSTREAM_PROXY 已配置，出站请求会走显式代理。"
-    if cfg.upstream_trust_env:
-        return "UPSTREAM_TRUST_ENV=true，出站请求会读取环境代理。"
-    return "UPSTREAM_PROXY 为空且 UPSTREAM_TRUST_ENV=false，出站请求会直连上游。"
+def _connect_error_detail(chat_url, exc):
+    return _connect_error_detail_impl(chat_url, exc, cfg=cfg)
 
 
-def _connect_error_detail(chat_url: str, exc: Exception) -> str:
-    host = urlsplit(chat_url or "").hostname or "(unknown host)"
-    raw = str(exc)
-    lowered = raw.lower()
-    if any(marker in lowered for marker in _DNS_ERROR_MARKERS):
-        return f"无法解析上游主机 {host}（{chat_url}）。{_connection_route_hint()} 原始错误: {raw}"
-    return f"无法连接上游 {chat_url}: {raw}"
+from shenyu_gateway.prepare_messages import (
+    cold_start_idle_minutes as _cold_start_idle_minutes_impl,
+    maybe_prepare_cold_start_snapshot as _maybe_prepare_cold_start_snapshot_impl,
+    prune_runtime_state as _prune_runtime_state_impl,
+    inject_pending_gateway_tool_turns as _inject_pending_gateway_tool_turns_impl,
+)
+
+from shenyu_gateway.private_capture import (
+    mark_context_consumed as _mark_context_consumed_impl,
+    is_free_time_fallback_context as _is_free_time_fallback_context,
+    private_capture_kinds as _private_capture_kinds,
+    private_capture_fallback_text as _private_capture_fallback_text,
+    ensure_visible_assistant_content as _ensure_visible_assistant_content,
+    finalize_assistant_private_content as _finalize_assistant_private_content,
+)
 
 
 cfg = RuntimeConfig()
@@ -249,19 +228,8 @@ def _context_builder(store: GatewayStore, sessions: SessionManager, tools: Gatew
     )
 
 
-def _make_upstream_http_client() -> httpx.AsyncClient:
-    kwargs: dict[str, Any] = {
-        "timeout": httpx.Timeout(connect=15.0, read=None, write=30.0, pool=15.0),
-    }
-    if cfg.upstream_proxy:
-        kwargs["proxy"] = cfg.upstream_proxy
-        kwargs["trust_env"] = False
-    elif cfg.upstream_trust_env:
-        kwargs["trust_env"] = True
-    else:
-        kwargs["proxy"] = None
-        kwargs["trust_env"] = False
-    return httpx.AsyncClient(**kwargs)
+def _make_upstream_http_client():
+    return _make_upstream_http_client_impl(cfg)
 
 
 async def _recall_embedding_worker():
@@ -383,153 +351,24 @@ async def log_unhandled_exceptions(request: Request, call_next):
 
 
 # --- 管理端鉴权 ---
-_ADMIN_PROTECTED_PREFIXES = ("/api/",)
 
 @app.middleware("http")
 async def admin_auth_middleware(request: Request, call_next):
-    """保护管理端点：/api/*, /admin*
-    支持 Bearer 头和 ?token= 参数两种方式验证。
-    GATEWAY_API_KEY 为空时不校验（本地开发模式）。
-    """
-    # External contract: home-frontend uses ?token= instead of Authorization so simple
-    # browser GET requests do not require CORS preflight. Never require headers here.
-    if request.method == "OPTIONS":
-        return await call_next(request)
-
-    path = request.url.path
-    needs_auth = any(path.startswith(p) for p in _ADMIN_PROTECTED_PREFIXES)
-    # /admin 是静态文件挂载，也需要保护。
-    if path.startswith("/admin"):
-        needs_auth = True
-
-    if needs_auth and cfg.gateway_key:
-        # 方式1: Authorization: Bearer xxx
-        auth = request.headers.get("Authorization", "")
-        token = auth.removeprefix("Bearer ").strip() if auth.startswith("Bearer ") else ""
-        # 方式2: ?token=xxx（浏览器直接访问用）
-        if not token:
-            token = request.query_params.get("token", "")
-        # 方式3: Cookie
-        if not token:
-            token = request.cookies.get("shenyu_token", "")
-
-        if token != cfg.gateway_key:
-            # 对浏览器请求返回友好的登录页面。
-            accept = request.headers.get("Accept", "")
-            if "text/html" in accept:
-                return HTMLResponse(_login_page_html(), status_code=401)
-            return JSONResponse(status_code=401, content={"error": "Unauthorized. Set GATEWAY_API_KEY or pass ?token=xxx"})
-
-    return await call_next(request)
+    from shenyu_gateway.auth import admin_auth_middleware_handler
+    return await admin_auth_middleware_handler(request, call_next, cfg=cfg)
 
 
-def _login_page_html() -> str:
-    return """<!DOCTYPE html>
-<html lang="zh-CN"><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>沈予网关 · 登录</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e1e4e8;display:flex;align-items:center;justify-content:center;min-height:100vh}
-.box{background:#161b22;border:1px solid #30363d;border-radius:12px;padding:32px;width:340px;text-align:center}
-.box h2{color:#8b5cf6;margin-bottom:8px;font-size:18px}
-.box p{color:#7d8590;font-size:12px;margin-bottom:20px}
-.box input{width:100%;background:#0d1117;border:1px solid #30363d;color:#e1e4e8;padding:10px 14px;border-radius:8px;font-size:14px;margin-bottom:12px}
-.box input:focus{outline:none;border-color:#8b5cf6}
-.box button{width:100%;background:#8b5cf6;border:none;color:#fff;padding:10px;border-radius:8px;font-size:14px;cursor:pointer}
-.box button:hover{background:#7c3aed}
-.err{color:#f85149;font-size:12px;margin-top:8px;display:none}
-</style></head><body>
-<div class="box">
-  <h2>沈予网关</h2>
-  <p>请输入管理密钥</p>
-  <input id="pw" type="password" placeholder="GATEWAY_API_KEY" autofocus
-    onkeydown="if(event.key==='Enter')doLogin()">
-  <button onclick="doLogin()">进入</button>
-  <div class="err" id="err">密钥错误</div>
-</div>
-<script>
-function doLogin(){
-  const pw=document.getElementById('pw').value.trim();
-  if(!pw) return;
-  // 记 cookie 并刷新。
-  document.cookie='shenyu_token='+encodeURIComponent(pw)+';path=/;max-age=86400;SameSite=Lax';
-  // 同时存 localStorage 给 fetch 用。
-  localStorage.setItem('shenyu_token',pw);
-  location.reload();
-}
-</script>
-</body></html>"""
+def _upstream_for_hisense(is_hisense=False):
+    return _upstream_for_hisense_impl(cfg, is_hisense)
 
 
-def _detect_protocol_for(url: str, protocol: str = "auto") -> str:
-    if protocol and protocol != "auto":
-        return protocol
-    if "anthropic.com" in (url or "").lower():
-        return "anthropic"
-    return "openai"
-
-
-def _chat_url_for(base_url: str, protocol: str = "auto") -> str:
-    """根据协议自动拼接正确的聊天端点 URL。
-    用户只需填写基础 URL（如 https://api.treegpt.cc），自动补全路径。
-    如果已经填写完整路径，则原样使用。
-    """
-    url = _clean_config_text(base_url).rstrip("/")
-    proto = _detect_protocol_for(url, protocol)
-    if proto == "anthropic":
-        if url.endswith("/v1"):
-            url += "/messages"
-        elif not url.endswith("/messages"):
-            url += "/v1/messages"
-    else:  # openai
-        if url.endswith("/v1"):
-            url += "/chat/completions"
-        elif not url.endswith("/chat/completions"):
-            url += "/v1/chat/completions"
-    return url
-
-
-def _upstream_for_hisense(is_hisense: bool = False) -> dict[str, str]:
-    base_url = _clean_config_text(cfg.upstream_url)
-    api_key = _clean_config_text(cfg.upstream_api_key)
-    protocol = _clean_config_text(cfg.upstream_protocol) or "auto"
-    scope = "default"
-
-    if is_hisense:
-        hisense_url = _clean_config_text(getattr(cfg, "hisense_upstream_url", ""))
-        hisense_key = _clean_config_text(getattr(cfg, "hisense_api_key", ""))
-        hisense_protocol = _clean_config_text(getattr(cfg, "hisense_protocol", ""))
-        if hisense_url:
-            base_url = hisense_url
-            scope = "hisense"
-        if hisense_key:
-            api_key = hisense_key
-            scope = "hisense"
-        if hisense_protocol:
-            protocol = hisense_protocol
-            scope = "hisense"
-
-    resolved_protocol = _detect_protocol_for(base_url, protocol)
-    return {
-        "scope": scope,
-        "base_url": base_url,
-        "chat_url": _chat_url_for(base_url, resolved_protocol),
-        "protocol": resolved_protocol,
-        "api_key": api_key,
-    }
-
-def _mapped_model_name(model_name: str) -> str:
-    model = (model_name or "").strip()
-    return cfg.model_mapping.get(model, model)
+def _mapped_model_name(model_name):
+    return _mapped_model_name_impl(cfg, model_name)
 
 
 async def verify_api_key(request: Request):
-    auth = request.headers.get("Authorization", "")
-    if cfg.gateway_key:
-        if not auth.startswith("Bearer "):
-            raise HTTPException(status_code=401, detail="Missing API key")
-        if auth.removeprefix("Bearer ") != cfg.gateway_key:
-            raise HTTPException(status_code=401, detail="Invalid API key")
+    from shenyu_gateway.auth import verify_api_key as _verify
+    await _verify(request, cfg=cfg)
 
 
 def _session_tag_from_request(request: Request, client_name: Optional[str] = None) -> str:
@@ -576,74 +415,18 @@ def _stable_charter_block() -> str:
 
 
 def _cold_start_idle_minutes(session: dict) -> float:
-    last_active = _parse_ts(session.get("last_active_at"))
-    if not last_active:
-        return 0.0
-    return max((_now() - last_active).total_seconds() / 60.0, 0.0)
+    return _cold_start_idle_minutes_impl(session)
 
 
-def _maybe_prepare_cold_start_snapshot(
-    session: dict,
-    is_first_turn: bool,
-    current_message_count: int,
-) -> Optional[dict]:
-    if not cfg.enable_cold_start:
-        return None
-    store = _require_session_store()
-
-    target_messages = cfg.cold_start_message_limit or cfg.max_client_messages or 8
-    fill_count = max(int(target_messages) - max(int(current_message_count or 0), 0), 0)
-    if fill_count <= 0:
-        active = store.latest_active_cold_start_snapshot(session["id"])
-        if active:
-            store.complete_cold_start_snapshot(active["id"])
-        return None
-
-    active = store.latest_active_cold_start_snapshot(session["id"])
-    if active:
-        active["sources"] = _trim_cold_start_sources(active.get("sources") or [], fill_count)
-        active["source_message_count"] = sum(len(source.get("messages") or []) for source in active.get("sources") or [])
-        return active
-
-    reason = ""
-    since = None
-    idle_minutes = _cold_start_idle_minutes(session)
-    if is_first_turn:
-        reason = "new_window"
-    elif idle_minutes >= max(cfg.cold_start_idle_minutes, 1):
-        reason = "stale_window_cross_activity"
-        since = session.get("last_active_at")
-    else:
-        return None
-
-    sources = store.latest_cross_session_context(
-        exclude_session_id=None if is_first_turn else session["id"],
-        since=since,
-        limit_messages=fill_count,
-    )
-    if not sources:
-        return None
-
-    return store.write_cold_start_snapshot(
-        session_id=session["id"],
-        session_tag=session["session_tag"],
-        reason=reason,
-        sources=sources,
-        trigger_last_active_at=session.get("last_active_at"),
-        max_injections=max(cfg.max_client_messages or cfg.cold_start_message_limit or 8, 1),
+def _maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count):
+    return _maybe_prepare_cold_start_snapshot_impl(
+        session, is_first_turn, current_message_count,
+        cfg=cfg, store=_require_session_store(),
     )
 
 
 def _prune_runtime_state(session_id: Optional[str] = None) -> dict[str, int]:
-    if session_store is None:
-        return {}
-    return session_store.prune_runtime_state(
-        session_id=session_id,
-        message_retention=cfg.gateway_message_retention,
-        context_snapshot_retention=cfg.gateway_context_snapshot_retention,
-        raw_window_retention=cfg.gateway_context_snapshot_retention,
-        cold_start_retention=cfg.gateway_cold_start_retention,
-    )
+    return _prune_runtime_state_impl(cfg=cfg, store=session_store, session_id=session_id)
 
 
 def _aggregate_cache_usage(usages: list[dict]) -> dict:
@@ -666,128 +449,22 @@ def _aggregate_cache_usage(usages: list[dict]) -> dict:
     }
 
 
-async def _fetch_upstream_models(request: Request) -> list:
+async def _fetch_upstream_models(request):
     client_name = _client_name_from_request(request)
     upstream = _upstream_for_hisense(_is_hisense_client(client_name))
-    proto = upstream["protocol"]
-    client = request.app.state.http
-    try:
-        if proto == "anthropic":
-            return []
-        url = _models_url_for(upstream)
-        if not url or not upstream["api_key"]:
-            return []
-        headers = {"Authorization": f"Bearer {upstream['api_key']}"}
-        response = await client.get(url, headers=headers)
-        response.raise_for_status()
-        data = response.json()
-        return [
-            {"id": model["id"], "object": "model", "created": model.get("created", 1700000000), "owned_by": "upstream"}
-            for model in data.get("data", [])
-            if model.get("id")
-        ]
-    except Exception:
-        return []
+    return await _fetch_upstream_models_impl(request, cfg=cfg, upstream=upstream)
 
 
-async def _call_upstream_json_at(request: Request, chat_url: str, payload: dict, headers: dict) -> dict:
-    client = request.app.state.http
-    try:
-        response = await client.post(chat_url, json=payload, headers=headers)
-        response.raise_for_status()
-        return response.json()
-    except httpx.ConnectError as exc:
-        raise HTTPException(status_code=502, detail=_connect_error_detail(chat_url, exc))
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail=f"连接上游超时 {chat_url}: {exc}")
-    except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text[:500])
-    except httpx.HTTPError as exc:
-        logger.exception("Upstream request failed for %s", chat_url)
-        raise HTTPException(status_code=502, detail=f"上游请求失败 {chat_url}: {exc}")
+async def _call_upstream_json_at(request, chat_url, payload, headers):
+    return await _call_upstream_json_at_impl(request, chat_url, payload, headers, cfg=cfg)
 
 
-async def _call_upstream_json(request: Request, chat_url: str, payload: dict, headers: dict) -> dict:
+async def _call_upstream_json(request, chat_url, payload, headers):
     return await _call_upstream_json_at(request, chat_url, payload, headers)
 
 
-async def _build_upstream_request(
-    request: Request,
-    body: ChatRequest,
-    messages_override: Optional[list[dict]] = None,
-    meta: Optional[dict] = None,
-) -> tuple[dict, dict, str, dict, dict]:
-    model_name = _mapped_model_name(body.model)
-    upstream = (meta or {}).get("upstream") or _upstream_for_hisense(
-        bool(((meta or {}).get("package") or {}).get("is_hisense"))
-    )
-    proto = upstream["protocol"]
-    raw_messages = messages_override or [message.model_dump(exclude_none=True) for message in body.messages]
-    merged_tools = merge_tools(body.tools, cfg)
-    cache_meta: dict[str, Any] = {
-        "enabled": proto == "anthropic",
-        "protocol": proto,
-        "upstream_scope": upstream["scope"],
-        "upstream_url": upstream["chat_url"],
-        "breakpoints": [],
-        "note": "Prompt cache breakpoints are added when the upstream protocol can carry cache_control.",
-    }
-
-    if proto == "anthropic":
-        cache_paths: list[str] = []
-        anthropic_tools = (
-            _convert_openai_tools_to_anthropic(merged_tools, cache_paths=cache_paths)
-            if merged_tools
-            else []
-        )
-        system, messages = _openai_to_anthropic(
-            raw_messages,
-            cache_layers=(meta or {}).get("cache_layers"),
-            cache_paths=cache_paths,
-        )
-        payload: dict[str, Any] = {
-            "model": model_name,
-            "messages": messages,
-            "max_tokens": body.max_tokens or 4096,
-        }
-        if system:
-            payload["system"] = system
-        if body.temperature is not None:
-            payload["temperature"] = body.temperature
-        if anthropic_tools:
-            payload["tools"] = anthropic_tools
-        headers = {
-            "x-api-key": upstream["api_key"],
-            "anthropic-version": cfg.upstream_version,
-            "content-type": "application/json",
-        }
-        cache_meta["breakpoints"] = cache_paths
-        cache_meta["note"] = "cache_control breakpoints added to configured Anthropic layer blocks."
-        return payload, headers, model_name, cache_meta, upstream
-
-    if cfg.enable_openai_cache_control:
-        cache_messages, cache_tools, cache_paths = _apply_openai_compatible_cache_control(
-            raw_messages,
-            merged_tools or [],
-            cache_layers=(meta or {}).get("cache_layers"),
-        )
-        cache_meta["enabled"] = bool(cache_paths)
-        cache_meta["breakpoints"] = cache_paths
-        cache_meta["note"] = "cache_control breakpoints added to OpenAI-compatible payload for upstream passthrough."
-    else:
-        cache_messages = _sanitize_openai_compatible_messages(raw_messages)
-        cache_tools = _sanitize_openai_compatible_tools(merged_tools or [])
-        cache_meta["enabled"] = False
-        cache_meta["breakpoints"] = []
-        cache_meta["note"] = "OpenAI-compatible cache_control is disabled by ENABLE_OPENAI_CACHE_CONTROL."
-
-    payload = {"model": model_name, "messages": cache_messages, "max_tokens": body.max_tokens or 4096}
-    if body.temperature is not None:
-        payload["temperature"] = body.temperature
-    if cache_tools:
-        payload["tools"] = cache_tools
-    headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
-    return payload, headers, model_name, cache_meta, upstream
+async def _build_upstream_request(request, body, messages_override=None, meta=None):
+    return await _build_upstream_request_impl(request, body, messages_override, meta, cfg=cfg)
 
 
 async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[dict], dict]:
@@ -881,134 +558,12 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     }
 
 
-def _json_clone(value: Any) -> Any:
-    return json.loads(_json_dumps(value))
-
-
-def _message_tool_call_ids(message: dict) -> list[str]:
-    ids: list[str] = []
-    for tool_call in message.get("tool_calls") or []:
-        if isinstance(tool_call, dict) and tool_call.get("id"):
-            ids.append(str(tool_call["id"]))
-    return ids
-
-
-def _trailing_client_tool_results(
-    messages: list[dict],
-    assistant_idx: int,
-    expected_ids: set[str],
-) -> tuple[int, list[dict]]:
-    if not expected_ids:
-        return assistant_idx + 1, []
-    found: set[str] = set()
-    tool_results: list[dict] = []
-    next_idx = assistant_idx + 1
-    while next_idx < len(messages) and messages[next_idx].get("role") == "tool":
-        tool_call_id = str(messages[next_idx].get("tool_call_id") or "")
-        if tool_call_id not in expected_ids:
-            return assistant_idx + 1, []
-        found.add(tool_call_id)
-        tool_results.append(messages[next_idx])
-        next_idx += 1
-    if found != expected_ids:
-        return assistant_idx + 1, []
-    return next_idx, tool_results
-
-
-def _inject_pending_gateway_tool_turns(
-    messages: list[dict],
-    store: GatewayStore,
-    session_id: str,
-) -> tuple[list[dict], dict[str, Any]]:
-    rebuilt: list[dict] = []
-    pending_ids: list[str] = []
-    gateway_tool_messages_count = 0
-    idx = 0
-
-    while idx < len(messages):
-        message = messages[idx]
-        tool_calls = message.get("tool_calls") or []
-        if message.get("role") != "assistant" or not isinstance(tool_calls, list) or not tool_calls:
-            rebuilt.append(message)
-            idx += 1
-            continue
-        if any(is_gateway_native_tool(_tool_call_name(call)) for call in tool_calls if isinstance(call, dict)):
-            rebuilt.append(message)
-            idx += 1
-            continue
-
-        client_tool_call_ids = _message_tool_call_ids(message)
-        next_idx, client_tool_results = _trailing_client_tool_results(
-            messages,
-            idx,
-            set(client_tool_call_ids),
-        )
-        if not client_tool_results:
-            rebuilt.append(message)
-            idx += 1
-            continue
-
-        pending = store.find_pending_gateway_tool_turn(session_id, client_tool_call_ids)
-        if not pending:
-            pending_count = store.count_pending_gateway_tool_turns(session_id)
-            logger.info(
-                "[GatewayTool] No pending mixed transcript found for client tool ids: %s (active_pending=%d)",
-                ",".join(client_tool_call_ids),
-                pending_count,
-            )
-            rebuilt.append(message)
-            idx += 1
-            continue
-
-        original_assistant_message = pending.get("original_assistant_message") or message
-        gateway_tool_messages = pending.get("gateway_tool_messages") or []
-        rebuilt.append(_json_clone(original_assistant_message))
-        rebuilt.extend(_json_clone(gateway_tool_messages))
-        rebuilt.extend(client_tool_results)
-        pending_ids.append(str(pending.get("id")))
-        gateway_tool_messages_count += len(gateway_tool_messages)
-        idx = next_idx
-
-    return rebuilt, {
-        "pending_gateway_tool_turns_injected": len(pending_ids),
-        "pending_gateway_tool_turn_ids": pending_ids,
-        "pending_gateway_tool_messages": gateway_tool_messages_count,
-    }
+def _inject_pending_gateway_tool_turns(messages, store, session_id):
+    return _inject_pending_gateway_tool_turns_impl(messages, store, session_id)
 
 
 def _mark_context_consumed(meta: dict):
-    """Mark one-shot injected context only after an upstream request succeeds."""
-    if meta.get("_context_consumed") or session_store is None:
-        return
-    meta["_context_consumed"] = True
-    try:
-        package = meta.get("package") or {}
-        session = meta.get("session") or {}
-        heartbeat_ids = [str(item) for item in package.get("heartbeat_pending_ids") or [] if item]
-        if heartbeat_ids:
-            session_store.mark_heartbeats_injected(heartbeat_ids=heartbeat_ids)
-            logger.info(
-                "[Heartbeat] 标记 %d 条全局心跳已注入 (session=%s)",
-                len(heartbeat_ids),
-                str(session.get("id") or "")[:8],
-            )
-
-        hisense_heartbeat_ids = [str(item) for item in package.get("hisense_heartbeat_pending_ids") or [] if item]
-        if hisense_heartbeat_ids:
-            session_store.mark_heartbeats_injected(heartbeat_ids=hisense_heartbeat_ids, hisense=True)
-            logger.info("[HisenseHeartbeat] 标记 %d 条海信心跳已注入", len(hisense_heartbeat_ids))
-
-        cold_start_snapshot = meta.get("cold_start_snapshot")
-        bridge_count = int((meta.get("client_message_window") or {}).get("cold_start_bridge_messages") or 0)
-        if cold_start_snapshot and bridge_count > 0:
-            session_store.mark_cold_start_injected(cold_start_snapshot["id"])
-
-        pending_ids = [str(item) for item in meta.get("pending_gateway_tool_turn_ids") or [] if item]
-        if pending_ids:
-            marked = session_store.mark_pending_gateway_tool_turns_consumed(pending_ids)
-            logger.info("[GatewayTool] 标记 %d 个 mixed pending transcript 已消费", marked)
-    except Exception:
-        logger.exception("Failed to mark injected context as consumed")
+    _mark_context_consumed_impl(meta, store=session_store)
 
 
 def _store_heartbeat(session_id: str, session: dict, content: str):
@@ -1042,174 +597,9 @@ def _schedule_inline_memory_capture(
     )
 
 
-_EMPTY_VISIBLE_ASSISTANT_REPLY = "沈予已记录。"
-
-
-def _is_free_time_fallback_context(latest_user_text: str) -> bool:
-    text = latest_user_text or ""
-    lower = text.lower()
-    if "自由时间" in text or "free_time" in lower or "free-time" in lower:
-        return True
-    return "proxy_sender" in lower and "沈予" in text and ("提醒" in text or "自动" in text)
-
-
-def _private_capture_kinds(
-    *,
-    heartbeat_content: str = "",
-    inline_memories: Optional[list[dict[str, Any]]] = None,
-    mem_note_written: bool = False,
-) -> list[str]:
-    kinds: list[str] = []
-    if (heartbeat_content or "").strip():
-        kinds.append("heartbeat")
-    if mem_note_written or bool(inline_memories):
-        kinds.append("mem")
-    return kinds
-
-
-def _private_capture_fallback_text(latest_user_text: str, stored_kinds: list[str]) -> tuple[str, str]:
-    context = "free_time" if _is_free_time_fallback_context(latest_user_text) else "generic"
-    prefix = "沈予在自由时间" if context == "free_time" else "沈予已记录"
-    if stored_kinds:
-        return f"{prefix} · 已存 {' + '.join(stored_kinds)}", context
-    if context == "free_time":
-        return f"{prefix} · 已记录", context
-    return _EMPTY_VISIBLE_ASSISTANT_REPLY, context
-
-
-def _ensure_visible_assistant_content(assistant_message: dict, fallback_text: str = _EMPTY_VISIBLE_ASSISTANT_REPLY) -> bool:
-    if assistant_message.get("tool_calls"):
-        return False
-    if _normalize_text(assistant_message.get("content")).strip():
-        return False
-    assistant_message["content"] = fallback_text
-    return True
-
-
-def _finalize_assistant_private_content(
-    assistant_message: dict,
-    *,
-    latest_user_text: str = "",
-    mem_note_written: bool = False,
-) -> tuple[str, str, list[dict[str, Any]], dict[str, Any]]:
-    clean_content, heartbeat_content, inline_memories = split_private_assistant_tags(
-        _normalize_text(assistant_message.get("content"))
-    )
-    if heartbeat_content or inline_memories:
-        assistant_message["content"] = clean_content
-    stored_kinds = _private_capture_kinds(
-        heartbeat_content=heartbeat_content,
-        inline_memories=inline_memories,
-        mem_note_written=mem_note_written,
-    )
-    fallback_text, fallback_context = _private_capture_fallback_text(latest_user_text, stored_kinds)
-    fallback_applied = _ensure_visible_assistant_content(assistant_message, fallback_text)
-    fallback_meta = {
-        "applied": fallback_applied,
-        "text": fallback_text if fallback_applied else "",
-        "kinds": stored_kinds if fallback_applied else [],
-        "context": fallback_context if fallback_applied else "",
-    }
-    return _normalize_text(assistant_message.get("content")), heartbeat_content, inline_memories, fallback_meta
-
-
-async def _stream_upstream_openai_chunks(
-    request: Request,
-    payload: dict,
-    headers: dict,
-    model: str,
-    upstream: dict,
-):
-    proto = upstream["protocol"]
-    client = request.app.state.http
-    chat_url = upstream["chat_url"]
-    stream_payload = dict(payload)
-    stream_payload["stream"] = True
-    try:
-        req = client.build_request("POST", chat_url, json=stream_payload, headers=headers)
-        resp = await client.send(req, stream=True)
-    except httpx.ConnectError as exc:
-        raise HTTPException(status_code=502, detail=_connect_error_detail(chat_url, exc))
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail=f"连接上游超时 {chat_url}: {exc}")
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"上游请求失败 {chat_url}: {exc}")
-
-    if resp.status_code >= 400:
-        error_body = await resp.aread()
-        await resp.aclose()
-        raise HTTPException(status_code=resp.status_code, detail=error_body.decode("utf-8", errors="replace")[:500])
-
-    try:
-        if proto == "openai":
-            async for raw_line in resp.aiter_lines():
-                line = raw_line.strip()
-                if not line:
-                    continue
-                if line == "data: [DONE]":
-                    break
-                if not line.startswith("data: "):
-                    continue
-                try:
-                    data = json.loads(line[6:])
-                except json.JSONDecodeError:
-                    continue
-                yield data
-            return
-
-        anthropic_stop_reason = ""
-        anthropic_usage: dict[str, Any] = {}
-        chunk_id = _new_stream_chunk_id()
-        created = _now_ts()
-        tool_call_seen = False
-        tool_index_by_block: dict[int, int] = {}
-        async for raw_line in resp.aiter_lines():
-            line = raw_line.strip()
-            if not line or line == "data: [DONE]" or line.startswith("event:"):
-                continue
-            if line.startswith("data: "):
-                line = line[6:]
-            try:
-                data = json.loads(line)
-            except json.JSONDecodeError:
-                continue
-            if data.get("type") == "message_start":
-                usage = (data.get("message") or {}).get("usage")
-                if isinstance(usage, dict):
-                    anthropic_usage.update(usage)
-            elif data.get("type") == "content_block_start":
-                if (data.get("content_block") or {}).get("type") == "tool_use":
-                    tool_call_seen = True
-            elif data.get("type") == "message_delta":
-                anthropic_stop_reason = data.get("delta", {}).get("stop_reason") or anthropic_stop_reason
-                usage = data.get("usage")
-                if isinstance(usage, dict):
-                    anthropic_usage.update(usage)
-            finish_reason = _anthropic_stop_reason_to_openai(anthropic_stop_reason)
-            if data.get("type") == "message_stop" and tool_call_seen and finish_reason is None:
-                finish_reason = "tool_calls"
-            chunk = _anthropic_to_openai_chunk(
-                model,
-                data,
-                finish_reason_override=finish_reason,
-                tool_index_override=_anthropic_tool_index_override(data, tool_index_by_block),
-                chunk_id=chunk_id,
-                created=created,
-            )
-            if not chunk:
-                continue
-            try:
-                converted = json.loads(chunk)
-            except json.JSONDecodeError:
-                continue
-            usage = data.get("usage") or (data.get("message") or {}).get("usage")
-            if isinstance(usage, dict):
-                converted["usage"] = _anthropic_usage_to_openai(usage)
-            elif data.get("type") == "message_stop" and anthropic_usage:
-                converted["usage"] = _anthropic_usage_to_openai(anthropic_usage)
-            yield converted
-    finally:
-        await resp.aclose()
+async def _stream_upstream_openai_chunks(request, payload, headers, model, upstream):
+    async for chunk in _stream_upstream_openai_chunks_impl(request, payload, headers, model, upstream, cfg=cfg):
+        yield chunk
 
 
 def _make_internal_tool_loop_context(

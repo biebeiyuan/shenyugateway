@@ -25,13 +25,7 @@ from .runtime import (
 )
 from .schemas import CalendarGenerateRequest, CalendarPromptUpdate
 from .upstream_adapter import _anthropic_to_openai_completion, _openai_to_anthropic
-
-
-def _shorten(text: str, limit: int = 240) -> str:
-    text = (text or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
+from .utils import shorten as _shorten
 
 
 def _today_utc_key() -> str:

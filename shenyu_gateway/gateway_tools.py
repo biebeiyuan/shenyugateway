@@ -18,6 +18,7 @@ from shenyu_gateway.runtime import (
     now as _now,
     parse_ts as _parse_ts,
 )
+from shenyu_gateway.utils import shorten as _shorten
 
 _UNSET = object()
 
@@ -40,13 +41,6 @@ def configure_gateway_tools(*, runtime_config: Any = _UNSET, supabase: Any = _UN
         _runtime.supabase_client = supabase
     if store is not _UNSET:
         _runtime.session_store = store
-
-
-def _shorten(text: str, limit: int = 240) -> str:
-    text = (text or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
 
 
 def _clamp(value: float, min_value: float, max_value: float) -> float:

@@ -13,7 +13,21 @@ from shenyu_gateway.gateway_tools import GatewayToolService
 from shenyu_gateway.gateway_tools import configure_gateway_tools
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.tool_registry import gateway_native_tools
-from shenyu_gateway.utils import normalize_text as _normalize_text
+from shenyu_gateway.utils import normalize_text as _normalize_text, clean_config_text as _clean_config_text
+from shenyu_gateway.upstream_client import (
+    detect_protocol_for as _detect_protocol_for,
+    chat_url_for as _chat_url_for,
+    upstream_for_hisense as _upstream_for_hisense,
+)
+from shenyu_gateway.private_capture import (
+    EMPTY_VISIBLE_ASSISTANT_REPLY as _EMPTY_VISIBLE_ASSISTANT_REPLY,
+    is_free_time_fallback_context as _is_free_time_fallback_context,
+    private_capture_kinds as _private_capture_kinds,
+    private_capture_fallback_text as _private_capture_fallback_text,
+    ensure_visible_assistant_content as _ensure_visible_assistant_content,
+    finalize_assistant_private_content as _finalize_assistant_private_content,
+)
+from shenyu_gateway.response_capture import split_private_assistant_tags
 
 
 def _load_gateway_helpers():
@@ -26,23 +40,36 @@ def _load_gateway_helpers():
         "_sanitize_openai_compatible_messages",
     }
     wanted_functions = {
-        "_clean_config_text",
-        "_detect_protocol_for",
-        "_chat_url_for",
-        "_ensure_visible_assistant_content",
-        "_finalize_assistant_private_content",
-        "_is_free_time_fallback_context",
-        "_mem_charter_line",
-        "_normalize_text",
-        "_private_capture_fallback_text",
-        "_private_capture_kinds",
-        "_upstream_for_hisense",
         "_stable_charter_block",
         "_session_tag_from_request",
         "_is_hisense_client",
         "_is_hisense_session",
     }
-    wanted_constants = {"_EMPTY_VISIBLE_ASSISTANT_REPLY"}
+    cfg = SimpleNamespace(
+        hisense_client_name="hisense",
+        hisense_upstream_url="",
+        hisense_api_key="",
+        hisense_protocol="",
+        upstream_url="https://api.treegpt.cc",
+        upstream_api_key="default-key",
+        upstream_protocol="openai",
+        heartbeat_inject_every=5,
+        hisense_heartbeat_limit=3,
+        calendar_inject_day=False,
+        calendar_context_day_limit=0,
+        calendar_inject_week=False,
+        calendar_context_week_limit=0,
+        calendar_inject_month=False,
+        calendar_context_month_limit=0,
+        enable_gateway_tools=False,
+        enable_inline_memory_capture=False,
+        inject_inline_memory_prompt=False,
+        inject_mem_notes=False,
+        inject_atomic_memories=False,
+        default_atomic_memory_limit=3,
+        hisense_notebook_limit=5,
+        wake_welcome_message="",
+    )
     namespace = {
         "Any": Any,
         "Optional": Optional,
@@ -51,48 +78,25 @@ def _load_gateway_helpers():
         "SessionManager": object,
         "gateway_native_tools": gateway_native_tools,
         "_normalize_text": _normalize_text,
-        "split_private_assistant_tags": None,
+        "_clean_config_text": _clean_config_text,
+        "split_private_assistant_tags": split_private_assistant_tags,
         "session_store": None,
         "supabase_client": None,
-        "cfg": SimpleNamespace(
-            hisense_client_name="hisense",
-            hisense_upstream_url="",
-            hisense_api_key="",
-            hisense_protocol="",
-            upstream_url="https://api.treegpt.cc",
-            upstream_api_key="default-key",
-            upstream_protocol="openai",
-            heartbeat_inject_every=5,
-            hisense_heartbeat_limit=3,
-            calendar_inject_day=False,
-            calendar_context_day_limit=0,
-            calendar_inject_week=False,
-            calendar_context_week_limit=0,
-            calendar_inject_month=False,
-            calendar_context_month_limit=0,
-            enable_gateway_tools=False,
-            enable_inline_memory_capture=False,
-            inject_inline_memory_prompt=False,
-            inject_mem_notes=False,
-            inject_atomic_memories=False,
-            default_atomic_memory_limit=3,
-            hisense_notebook_limit=5,
-        ),
+        "cfg": cfg,
+        "_detect_protocol_for": _detect_protocol_for,
+        "_chat_url_for": _chat_url_for,
+        "_upstream_for_hisense": lambda is_hisense=False: _upstream_for_hisense(cfg, is_hisense),
+        "_EMPTY_VISIBLE_ASSISTANT_REPLY": _EMPTY_VISIBLE_ASSISTANT_REPLY,
+        "_is_free_time_fallback_context": _is_free_time_fallback_context,
+        "_private_capture_kinds": _private_capture_kinds,
+        "_private_capture_fallback_text": _private_capture_fallback_text,
+        "_ensure_visible_assistant_content": _ensure_visible_assistant_content,
+        "_finalize_assistant_private_content": _finalize_assistant_private_content,
     }
     for node in module.body:
-        if (
-            isinstance(node, ast.Assign)
-            and len(node.targets) == 1
-            and isinstance(node.targets[0], ast.Name)
-            and node.targets[0].id in wanted_constants
-        ):
-            exec(ast.get_source_segment(source, node), namespace)
-        elif isinstance(node, ast.FunctionDef) and node.name in wanted_functions:
+        if isinstance(node, ast.FunctionDef) and node.name in wanted_functions:
             exec(ast.get_source_segment(source, node), namespace)
     namespace.update({name: getattr(upstream_adapter, name) for name in adapter_functions})
-    from shenyu_gateway.response_capture import split_private_assistant_tags
-
-    namespace["split_private_assistant_tags"] = split_private_assistant_tags
     return namespace["cfg"], namespace
 
 

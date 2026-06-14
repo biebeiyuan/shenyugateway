@@ -5,6 +5,7 @@ import re
 from typing import Any, Optional
 
 from .conflict_books import render_conflict_shelf
+from .utils import shorten
 
 
 @dataclass(frozen=True)
@@ -31,13 +32,6 @@ _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
 )
 
 IMAGE_SEEN_PLACEHOLDER = "圆圆发来的照片我已经看过。"
-
-
-def shorten(text: str, limit: int = 240) -> str:
-    text = (text or "").strip()
-    if len(text) <= limit:
-        return text
-    return text[: limit - 3].rstrip() + "..."
 
 
 def render_layered_additions(package: dict, settings: ContextLayerSettings) -> dict:
