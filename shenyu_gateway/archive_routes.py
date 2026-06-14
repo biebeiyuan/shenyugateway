@@ -70,7 +70,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         client = _supabase()
         rows = await _query_all(
             client,
-            {"select": "thread", "deleted_at": "is.null", "order": "thread.asc,archived_at.asc"},
+            {"select": "thread", "deleted_at": "is.null", "order": "thread.asc,id.asc"},
         )
         threads: dict[str, int] = {}
         for row in rows or []:
@@ -86,7 +86,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             "select": "event_at",
             "thread": f"eq.{thread}",
             "deleted_at": "is.null",
-            "order": "event_at.asc",
+            "order": "event_at.asc,id.asc",
         }
         if month:
             params["event_at"] = f"gte.{month}-01"

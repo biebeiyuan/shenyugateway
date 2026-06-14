@@ -89,18 +89,18 @@ def _iter_windows(store: GatewayStore, session_tag_filter: str):
                 yield tag, row["client_name"] or session["client_name"], messages, row["created_at"]
 
 
-async def _load_existing_archive_hashes(
+async def _load_existing_archive_hashes_by_tag(
     supabase: SupabaseClient,
     session_tag_filter: str,
     page_size: int = 1000,
-) -> set[tuple[str, str]]:
-    existing: set[tuple[str, str]] = set()
+) -> dict[str, set[str]]:
+    existing: dict[str, set[str]] = {}
     start = 0
     while True:
         params = {
             "select": "session_tag,content_hash",
             "deleted_at": "is.null",
-            "order": "archived_at.asc",
+            "order": "id.asc",
             "limit": str(page_size),
             "offset": str(start),
         }
@@ -111,11 +111,30 @@ async def _load_existing_archive_hashes(
             tag = str(row.get("session_tag") or "")
             digest = str(row.get("content_hash") or "")
             if tag and digest:
-                existing.add((tag, digest))
+                existing.setdefault(tag, set()).add(digest)
         if len(rows or []) < page_size:
             break
         start += page_size
     return existing
+
+
+def _flatten_existing(existing_by_tag: dict[str, set[str]]) -> set[tuple[str, str]]:
+    return {
+        (tag, digest)
+        for tag, hashes in existing_by_tag.items()
+        for digest in hashes
+    }
+
+
+def _seed_seen_from_existing(store: GatewayStore, cfg: RuntimeConfig, existing_by_tag: dict[str, set[str]]) -> int:
+    total = 0
+    retention = getattr(cfg, "chat_archive_seen_retention", 10000)
+    for tag, hashes in existing_by_tag.items():
+        if not hashes:
+            continue
+        store.mark_archive_hashes_seen(tag, list(hashes), keep_recent=retention)
+        total += len(hashes)
+    return total
 
 
 def _candidate_rows(
@@ -194,8 +213,12 @@ async def main() -> None:
     try:
         existing = set()
         if not args.ignore_supabase_existing:
-            existing = await _load_existing_archive_hashes(supabase, args.session_tag)
+            existing_by_tag = await _load_existing_archive_hashes_by_tag(supabase, args.session_tag)
+            seeded = _seed_seen_from_existing(store, cfg, existing_by_tag)
+            existing = _flatten_existing(existing_by_tag)
             print(f"Loaded {len(existing)} existing Supabase archive hashes.")
+            if seeded:
+                print(f"Seeded {seeded} existing archive hashes into local chat_archive_seen.")
         for tag, client_name, messages, _created in _iter_windows(store, args.session_tag):
             windows += 1
             is_hisense = (client_name or "").casefold() == hisense_name or (client_name or "") == "海信"
