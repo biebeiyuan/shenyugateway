@@ -16,12 +16,21 @@ while a genuinely repeated message months later is archived again as a new event
 """
 
 import hashlib
+import re
+from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
 from .context_layers import _strip_client_extra_bundle_text
-from .runtime import iso_now, logger
+from .runtime import dt_to_iso, iso_now, logger
 
 CHAT_ARCHIVE_TABLE = "shenyu_chat_archive"
+
+_CLIENT_CURRENT_TIME_RE = re.compile(
+    r"【当前时间】\s*\n(?P<date>\d{4}-\d{2}-\d{2})\s+(?P<time>\d{2}:\d{2}:\d{2})"
+)
+_CLIENT_ATTACHMENT_FILENAME_TIME_RE = re.compile(
+    r'filename="Time:(?P<hour>\d{1,2}):(?P<minute>\d{2})\s+(?P<day>\d{1,2})/(?P<year>\d{4})/(?P<month>\d{1,2})"'
+)
 
 
 def _message_text(content: Any) -> str:
@@ -40,6 +49,33 @@ def _message_text(content: Any) -> str:
 
 def _content_hash(role: str, text: str) -> str:
     return hashlib.sha256(f"{role}\n{text}".encode("utf-8")).hexdigest()
+
+
+def _client_time_from_text(text: str) -> Optional[str]:
+    """Extract Operit-injected local time and return UTC ISO when present."""
+    if not text:
+        return None
+    match = _CLIENT_CURRENT_TIME_RE.search(text)
+    if match:
+        raw = f"{match.group('date')}T{match.group('time')}"
+    else:
+        match = _CLIENT_ATTACHMENT_FILENAME_TIME_RE.search(text)
+        if not match:
+            return None
+        raw = (
+            f"{int(match.group('year')):04d}-"
+            f"{int(match.group('month')):02d}-"
+            f"{int(match.group('day')):02d}T"
+            f"{int(match.group('hour')):02d}:{match.group('minute')}:00"
+        )
+    try:
+        dt = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    # Operit's injected clock is the client local clock. The current client is
+    # Asia/Shanghai; keep this path explicit rather than treating it as UTC.
+    dt = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+    return dt_to_iso(dt.astimezone(timezone.utc))
 
 
 def derive_thread(session_tag: str, is_hisense: bool) -> str:
@@ -79,6 +115,7 @@ class ChatArchiveService:
 
         thread = derive_thread(session_tag, is_hisense)
         candidates: list[dict] = []
+        latest_client_event_at = event_at
         for msg in messages or []:
             role = msg.get("role")
             if role not in {"user", "assistant"}:
@@ -87,6 +124,9 @@ class ChatArchiveService:
             text = _message_text(msg.get("content"))
             if not text:
                 continue
+            client_event_at = _client_time_from_text(text)
+            if client_event_at:
+                latest_client_event_at = client_event_at
             text, _ = _strip_client_extra_bundle_text(text)
             if not text:
                 continue
@@ -95,6 +135,7 @@ class ChatArchiveService:
                     "role": role,
                     "content": text,
                     "content_hash": _content_hash(role, text),
+                    "event_at": client_event_at or latest_client_event_at,
                 }
             )
         if not candidates:
@@ -123,10 +164,7 @@ class ChatArchiveService:
                     "role": item["role"],
                     "content": item["content"],
                     "content_hash": digest,
-                    # Window messages carry no client timestamps; dedup means a
-                    # message is archived close to when it first appeared, so
-                    # first-seen time is the best available event time.
-                    "event_at": event_at,
+                    "event_at": item.get("event_at") or event_at,
                 }
             )
 

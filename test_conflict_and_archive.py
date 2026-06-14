@@ -6,6 +6,7 @@ from pathlib import Path
 
 from shenyu_gateway.archive_routes import ArchiveRouteDeps, build_archive_router
 from shenyu_gateway.chat_archive import ChatArchiveService, derive_thread
+from scripts.backfill_chat_archive import _candidate_rows
 from shenyu_gateway.conflict_books import ConflictBookService, render_conflict_shelf
 from shenyu_gateway.store import GatewayStore
 
@@ -160,6 +161,53 @@ def test_chat_archive_dedup():
     asyncio.run(run())
 
 
+def test_chat_archive_uses_client_attachment_time():
+    async def run():
+        supabase = FakeSupabase()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            store = GatewayStore(str(Path(tmp) / "test.db"))
+            service = ChatArchiveService(store, supabase, Cfg())
+
+            window = [
+                {
+                    "role": "user",
+                    "content": '你好 <attachment id="message_insert_extra_bundle_1" filename="Time:21:08 15/2026/5" type="text/plain">ignored</attachment>',
+                },
+                {"role": "assistant", "content": "我在。"},
+            ]
+            result = await service.archive_window(
+                session_tag="5.15", client_name="operit", messages=window, is_hisense=False
+            )
+            assert result["archived"] == 2, result
+            rows = supabase.tables["shenyu_chat_archive"]
+            assert rows[0]["event_at"] == "2026-05-15T13:08:00+00:00"
+            assert rows[1]["event_at"] == "2026-05-15T13:08:00+00:00"
+            assert "<attachment" not in rows[0]["content"]
+
+    asyncio.run(run())
+
+
+def test_chat_archive_backfill_uses_client_attachment_time():
+    rows = _candidate_rows(
+        tag="5.15",
+        client_name="operit",
+        messages=[
+            {
+                "role": "user",
+                "content": '你好 <attachment id="message_insert_extra_bundle_1" filename="Time:21:08 15/2026/5" type="text/plain">ignored</attachment>',
+            },
+            {"role": "assistant", "content": "我在。"},
+        ],
+        created_at="2026-06-14T10:00:00+00:00",
+        is_hisense=False,
+        existing=set(),
+    )
+    assert [row["event_at"] for row in rows] == [
+        "2026-05-15T13:08:00+00:00",
+        "2026-05-15T13:08:00+00:00",
+    ]
+
+
 def test_derive_thread():
     assert derive_thread("default", False) == "main"
     assert derive_thread("", False) == "main"
@@ -192,6 +240,8 @@ def test_archive_routes_page_threads_and_days():
 if __name__ == "__main__":
     test_conflict_book_invariants()
     test_chat_archive_dedup()
+    test_chat_archive_uses_client_attachment_time()
+    test_chat_archive_backfill_uses_client_attachment_time()
     test_derive_thread()
     test_archive_routes_page_threads_and_days()
     print("ALL_OK")

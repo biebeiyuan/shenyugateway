@@ -24,7 +24,14 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import json
 
-from shenyu_gateway.chat_archive import CHAT_ARCHIVE_TABLE, ChatArchiveService, derive_thread, _content_hash, _message_text
+from shenyu_gateway.chat_archive import (
+    CHAT_ARCHIVE_TABLE,
+    ChatArchiveService,
+    derive_thread,
+    _client_time_from_text,
+    _content_hash,
+    _message_text,
+)
 from shenyu_gateway.context_layers import _strip_client_extra_bundle_text
 from shenyu_gateway.config import RuntimeConfig
 from shenyu_gateway.runtime import iso_now
@@ -148,6 +155,7 @@ def _candidate_rows(
 ) -> list[dict]:
     rows: list[dict] = []
     event_at = created_at or iso_now()
+    latest_client_event_at = event_at
     thread = derive_thread(tag, is_hisense)
     taken: set[str] = set()
     for msg in messages or []:
@@ -157,6 +165,9 @@ def _candidate_rows(
         text = _message_text(msg.get("content"))
         if not text:
             continue
+        client_event_at = _client_time_from_text(text)
+        if client_event_at:
+            latest_client_event_at = client_event_at
         text, _ = _strip_client_extra_bundle_text(text)
         if not text:
             continue
@@ -173,7 +184,7 @@ def _candidate_rows(
                 "role": role,
                 "content": text,
                 "content_hash": digest,
-                "event_at": event_at,
+                "event_at": client_event_at or latest_client_event_at,
             }
         )
     return rows
