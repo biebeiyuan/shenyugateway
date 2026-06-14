@@ -208,6 +208,26 @@ def test_chat_archive_backfill_uses_client_attachment_time():
     ]
 
 
+def test_chat_archive_skips_numbered_transcript_messages():
+    async def run():
+        supabase = FakeSupabase()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            store = GatewayStore(str(Path(tmp) / "test.db"))
+            service = ChatArchiveService(store, supabase, Cfg())
+
+            window = [
+                {"role": "user", "content": "#1: 予予🥺你看到了吗"},
+                {"role": "assistant", "content": "#2: 看到了。"},
+            ]
+            result = await service.archive_window(
+                session_tag="5.15", client_name="operit", messages=window, is_hisense=False
+            )
+            assert result["archived"] == 0, result
+            assert supabase.tables.get("shenyu_chat_archive", []) == []
+
+    asyncio.run(run())
+
+
 def test_derive_thread():
     assert derive_thread("default", False) == "main"
     assert derive_thread("", False) == "main"
@@ -242,6 +262,7 @@ if __name__ == "__main__":
     test_chat_archive_dedup()
     test_chat_archive_uses_client_attachment_time()
     test_chat_archive_backfill_uses_client_attachment_time()
+    test_chat_archive_skips_numbered_transcript_messages()
     test_derive_thread()
     test_archive_routes_page_threads_and_days()
     print("ALL_OK")

@@ -31,6 +31,7 @@ _CLIENT_CURRENT_TIME_RE = re.compile(
 _CLIENT_ATTACHMENT_FILENAME_TIME_RE = re.compile(
     r'filename="Time:(?P<hour>\d{1,2}):(?P<minute>\d{2})\s+(?P<day>\d{1,2})/(?P<year>\d{4})/(?P<month>\d{1,2})"'
 )
+_NUMBERED_TRANSCRIPT_RE = re.compile(r"^#\d+:\s*", re.MULTILINE)
 
 
 def _message_text(content: Any) -> str:
@@ -76,6 +77,11 @@ def _client_time_from_text(text: str) -> Optional[str]:
     # Asia/Shanghai; keep this path explicit rather than treating it as UTC.
     dt = dt.replace(tzinfo=timezone(timedelta(hours=8)))
     return dt_to_iso(dt.astimezone(timezone.utc))
+
+
+def _looks_like_numbered_transcript(text: str) -> bool:
+    stripped = (text or "").lstrip()
+    return bool(_NUMBERED_TRANSCRIPT_RE.match(stripped))
 
 
 def derive_thread(session_tag: str, is_hisense: bool) -> str:
@@ -129,6 +135,8 @@ class ChatArchiveService:
                 latest_client_event_at = client_event_at
             text, _ = _strip_client_extra_bundle_text(text)
             if not text:
+                continue
+            if _looks_like_numbered_transcript(text):
                 continue
             candidates.append(
                 {

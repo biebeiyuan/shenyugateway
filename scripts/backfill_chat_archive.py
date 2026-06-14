@@ -30,6 +30,7 @@ from shenyu_gateway.chat_archive import (
     derive_thread,
     _client_time_from_text,
     _content_hash,
+    _looks_like_numbered_transcript,
     _message_text,
 )
 from shenyu_gateway.context_layers import _strip_client_extra_bundle_text
@@ -170,6 +171,8 @@ def _candidate_rows(
             latest_client_event_at = client_event_at
         text, _ = _strip_client_extra_bundle_text(text)
         if not text:
+            continue
+        if _looks_like_numbered_transcript(text):
             continue
         digest = _content_hash(role, text)
         key = (tag, digest)
