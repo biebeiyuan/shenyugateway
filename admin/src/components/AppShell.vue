@@ -1,5 +1,9 @@
 <script setup lang="ts">
-import { onMounted, onUnmounted, ref } from 'vue'
+import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { useRoute } from 'vue-router'
+
+const route = useRoute()
+const isHome = computed(() => route.path === '/')
 
 const health = ref({ supabase: false, protocol: '', upstream: '' })
 const live = ref(true)
@@ -28,13 +32,16 @@ async function checkHealth() {
 
 <template>
   <div class="app-shell">
-    <header class="header">
-      <h1>UwU</h1>
+    <header class="header" :class="{ 'header-minimal': isHome }">
+      <RouterLink to="/" class="header-home">
+        <h1>UwU</h1>
+      </RouterLink>
+      <RouterLink v-if="!isHome" to="/" class="back-link">&larr; 返回</RouterLink>
       <span class="live-indicator">
         <span class="dot" :class="live ? 'live' : 'off'"></span>
         {{ live ? '在线' : '离线' }}
       </span>
-      <div class="health-tags">
+      <div v-if="!isHome" class="health-tags">
         <span class="ht" :class="health.supabase ? 'ok' : 'err'">
           Supabase {{ health.supabase ? '正常' : '异常' }}
         </span>
@@ -43,18 +50,7 @@ async function checkHealth() {
       </div>
     </header>
 
-    <nav class="tabs">
-      <RouterLink to="/" class="tab" active-class="active">配置</RouterLink>
-      <RouterLink to="/sessions" class="tab" active-class="active">线程</RouterLink>
-      <RouterLink to="/logs" class="tab" active-class="active">日志</RouterLink>
-      <RouterLink to="/calendar" class="tab" active-class="active">日历</RouterLink>
-      <RouterLink to="/mem0" class="tab" active-class="active">记忆</RouterLink>
-      <RouterLink to="/hisense" class="tab" active-class="active">海信</RouterLink>
-      <RouterLink to="/archive" class="tab" active-class="active">档案</RouterLink>
-      <RouterLink to="/conflict" class="tab" active-class="active">矛盾书</RouterLink>
-    </nav>
-
-    <main class="main">
+    <main class="main" :class="{ 'main-home': isHome }">
       <slot />
     </main>
   </div>
@@ -67,55 +63,57 @@ async function checkHealth() {
   box-sizing: border-box;
 }
 
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400;1,500&display=swap');
+
 body {
-  font-family: -apple-system, 'Segoe UI', sans-serif;
-  background: #faf8f5;
-  color: #3d3535;
+  font-family: 'Georgia', 'Noto Serif SC', -apple-system, 'Segoe UI', serif;
+  background: #fdf6f4;
+  color: #4a3535;
 }
 
 :root {
   --n-color: #fff !important;
   --n-color-modal: #fff !important;
-  --n-action-color: #faf9f7 !important;
+  --n-action-color: #fdf6f4 !important;
 }
 
 .n-card {
   --n-color: #fff !important;
-  --n-border-color: #f0ece8 !important;
-  --n-title-text-color: #3d3535 !important;
-  --n-action-color: #faf9f7 !important;
-  --n-embedded-color: #faf9f7 !important;
-  border-radius: 14px !important;
+  --n-border-color: #f2ddd8 !important;
+  --n-title-text-color: #4a3535 !important;
+  --n-action-color: #fdf6f4 !important;
+  --n-embedded-color: #fdf6f4 !important;
+  border-radius: 18px !important;
 }
 
 .n-card-header {
-  border-bottom: 1px solid #f0ece8 !important;
+  border-bottom: 1px solid #f2ddd8 !important;
 }
 
 .n-form-item-label {
-  --n-label-text-color: #888 !important;
+  --n-label-text-color: #b8a8a3 !important;
 }
 
 .n-input {
   --n-color: #fff !important;
-  --n-border: 1px solid #e8e4df !important;
-  --n-text-color: #3d3535 !important;
-  --n-caret-color: #9b8ec4 !important;
+  --n-border: 1px solid #f2ddd8 !important;
+  --n-text-color: #4a3535 !important;
+  --n-caret-color: #c094a8 !important;
   --n-color-focus: #fff !important;
-  --n-border-focus: 1px solid #9b8ec4 !important;
-  --n-color-disabled: #faf8f5 !important;
+  --n-border-focus: 1px solid #c094a8 !important;
+  --n-color-disabled: #fdf6f4 !important;
 }
 
 .n-input-number {
   --n-color: #fff !important;
-  --n-border: 1px solid #e8e4df !important;
-  --n-text-color: #3d3535 !important;
+  --n-border: 1px solid #f2ddd8 !important;
+  --n-text-color: #4a3535 !important;
 }
 
 .n-select {
   --n-color: #fff !important;
-  --n-border: 1px solid #e8e4df !important;
-  --n-text-color: #3d3535 !important;
+  --n-border: 1px solid #f2ddd8 !important;
+  --n-text-color: #4a3535 !important;
 }
 
 .n-select .n-base-selection {
@@ -123,60 +121,60 @@ body {
 }
 
 .n-switch {
-  --n-color: #e0dbd6 !important;
-  --n-color-active: #9b8ec4 !important;
+  --n-color: #e8d8d4 !important;
+  --n-color-active: #c094a8 !important;
 }
 
 .n-popconfirm {
   --n-color: #fff !important;
-  --n-border-color: #e8e4df !important;
+  --n-border-color: #f2ddd8 !important;
 }
 
 .n-tag {
-  --n-color: #f5f2ef !important;
-  --n-text-color: #888 !important;
+  --n-color: #fdf0ed !important;
+  --n-text-color: #b8a8a3 !important;
   --n-border: none !important;
 }
 
 .n-data-table {
   --n-color: #fff !important;
-  --n-border-color: #f0ece8 !important;
-  --n-th-color: #faf9f7 !important;
+  --n-border-color: #f2ddd8 !important;
+  --n-th-color: #fdf6f4 !important;
   --n-td-color: #fff !important;
-  --n-th-text-color: #888 !important;
-  --n-td-text-color: #3d3535 !important;
-  --n-action-color: #faf9f7 !important;
+  --n-th-text-color: #b8a8a3 !important;
+  --n-td-text-color: #4a3535 !important;
+  --n-action-color: #fdf6f4 !important;
 }
 
 .n-data-table .n-data-table-tr--striped {
-  --n-td-color: #faf9f7 !important;
+  --n-td-color: #fdf6f4 !important;
 }
 
 .n-data-table .n-data-table-th {
-  border-bottom: 1px solid #f0ece8 !important;
+  border-bottom: 1px solid #f2ddd8 !important;
 }
 
 .n-descriptions {
   --n-color: #fff !important;
-  --n-border-color: #f0ece8 !important;
-  --n-th-color: #faf9f7 !important;
+  --n-border-color: #f2ddd8 !important;
+  --n-th-color: #fdf6f4 !important;
   --n-td-color: #fff !important;
-  --n-th-text-color: #888 !important;
-  --n-td-text-color: #3d3535 !important;
+  --n-th-text-color: #b8a8a3 !important;
+  --n-td-text-color: #4a3535 !important;
 }
 
 .n-button--default-type {
   --n-color: #fff !important;
-  --n-border: 1px solid #e8e4df !important;
-  --n-text-color: #3d3535 !important;
-  --n-color-hover: #faf8f5 !important;
-  --n-border-hover: 1px solid #9b8ec4 !important;
+  --n-border: 1px solid #f2ddd8 !important;
+  --n-text-color: #4a3535 !important;
+  --n-color-hover: #fdf6f4 !important;
+  --n-border-hover: 1px solid #c094a8 !important;
 }
 
 .n-button--primary-type {
-  --n-color: #9b8ec4 !important;
+  --n-color: #c094a8 !important;
   --n-text-color: #fff !important;
-  --n-color-hover: #8b7eb8 !important;
+  --n-color-hover: #b08898 !important;
 }
 
 .n-button--error-type {
@@ -193,23 +191,23 @@ body {
 
 .n-button--quaternary {
   --n-color: transparent !important;
-  --n-text-color: #999 !important;
+  --n-text-color: #b8a8a3 !important;
 }
 
 .n-layout-footer {
-  --n-color: #faf9f7 !important;
-  --n-border-color: #f0ece8 !important;
-  --n-text-color: #bbb !important;
+  --n-color: #fdf6f4 !important;
+  --n-border-color: #f2ddd8 !important;
+  --n-text-color: #cbb !important;
 }
 
 .n-popover {
   --n-color: #fff !important;
-  --n-border-color: #e8e4df !important;
+  --n-border-color: #f2ddd8 !important;
 }
 
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 ::-webkit-scrollbar-track {
@@ -217,12 +215,12 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #e0dbd6;
+  background: #e8d8d4;
   border-radius: 3px;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: #c8c2bb;
+  background: #d4c0bb;
 }
 </style>
 
@@ -230,22 +228,45 @@ body {
 .header {
   padding: 14px 24px;
   background: #fff;
-  border-bottom: 1px solid #f0ece8;
+  border-bottom: 1px solid #f0e0dc;
   display: flex;
   align-items: center;
   gap: 16px;
 }
 
+.header-minimal {
+  background: transparent;
+  border-bottom: none;
+  padding: 10px 24px;
+}
+
+.header-home {
+  text-decoration: none;
+}
+
 .header h1 {
+  font-family: 'Cormorant Garamond', 'Georgia', serif;
   font-size: 18px;
-  color: #9b8ec4;
-  font-weight: 700;
-  letter-spacing: -0.5px;
+  color: #a08090;
+  font-weight: 500;
+  letter-spacing: 0.5px;
+  font-style: italic;
+}
+
+.back-link {
+  font-size: 12.5px;
+  color: #c4b0ab;
+  text-decoration: none;
+  transition: 0.2s;
+}
+
+.back-link:hover {
+  color: #c094a8;
 }
 
 .live-indicator {
   font-size: 12px;
-  color: #b0a8a0;
+  color: #c4b0ab;
   display: flex;
   align-items: center;
   gap: 4px;
@@ -259,7 +280,7 @@ body {
 }
 
 .dot.live {
-  background: #8bc49b;
+  background: #a8c4a0;
   animation: pulse 2.5s infinite;
 }
 
@@ -283,9 +304,10 @@ body {
   padding: 2px 8px;
   border-radius: 10px;
   font-size: 10px;
-  background: #f5f2ef;
-  color: #b0a8a0;
+  background: #fdf0ed;
+  color: #c4b0ab;
   letter-spacing: 0.3px;
+  font-family: -apple-system, 'Segoe UI', sans-serif;
 }
 
 .ht.ok {
@@ -298,35 +320,11 @@ body {
   color: #d4726a;
 }
 
-.tabs {
-  display: flex;
-  background: #fff;
-  border-bottom: 1px solid #f0ece8;
-  padding: 0 24px;
-  gap: 0;
-}
-
-.tab {
-  padding: 11px 18px;
-  font-size: 12.5px;
-  color: #b0a8a0;
-  cursor: pointer;
-  text-decoration: none;
-  border-bottom: 2px solid transparent;
-  transition: 0.2s;
-  letter-spacing: 0.3px;
-}
-
-.tab:hover {
-  color: #3d3535;
-}
-
-.tab.active {
-  color: #9b8ec4;
-  border-bottom-color: #9b8ec4;
-}
-
 .main {
   padding: 20px 24px;
+}
+
+.main-home {
+  padding: 0 16px 20px;
 }
 </style>
