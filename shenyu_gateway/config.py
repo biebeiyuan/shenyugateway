@@ -123,6 +123,7 @@ class RuntimeConfig:
         self.heartbeat_inject_every: int = _env_int("HEARTBEAT_INJECT_EVERY", 5, 1, 50)
         self.enable_heartbeat_archive: bool = _env_bool("ENABLE_HEARTBEAT_ARCHIVE", True)
         self.enable_chat_archive: bool = _env_bool("ENABLE_CHAT_ARCHIVE", True)
+        self.chat_archive_seen_retention: int = _env_int("CHAT_ARCHIVE_SEEN_RETENTION", 10000, 1000, 200000)
         self.heartbeat_archive_settle_hours: int = _env_int("HEARTBEAT_ARCHIVE_SETTLE_HOURS", 6, 0, 720)
         self.heartbeat_archive_interval_seconds: int = _env_int("HEARTBEAT_ARCHIVE_INTERVAL_SECONDS", 600, 60, 86400)
         self.heartbeat_archive_batch_size: int = _env_int("HEARTBEAT_ARCHIVE_BATCH_SIZE", 200, 1, 1000)
@@ -199,6 +200,7 @@ class RuntimeConfig:
             "heartbeat_inject_every": self.heartbeat_inject_every,
             "enable_heartbeat_archive": self.enable_heartbeat_archive,
             "enable_chat_archive": self.enable_chat_archive,
+            "chat_archive_seen_retention": self.chat_archive_seen_retention,
             "heartbeat_archive_settle_hours": self.heartbeat_archive_settle_hours,
             "heartbeat_archive_interval_seconds": self.heartbeat_archive_interval_seconds,
             "heartbeat_archive_batch_size": self.heartbeat_archive_batch_size,

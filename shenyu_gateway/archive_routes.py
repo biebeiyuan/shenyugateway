@@ -51,12 +51,26 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             raise HTTPException(status_code=503, detail="Supabase is not configured.")
         return client
 
+    async def _query_all(client: Any, params: dict[str, Any], *, page_size: int = 1000, max_rows: int = 50000) -> list[dict]:
+        rows: list[dict] = []
+        page_size = max(1, min(int(page_size or 1000), 1000))
+        max_rows = max(page_size, int(max_rows or page_size))
+        for start in range(0, max_rows, page_size):
+            page_params = dict(params)
+            page_params["limit"] = str(page_size)
+            page_params["offset"] = str(start)
+            page = await client.query(ARCHIVE_TABLE, params=page_params)
+            rows.extend(page or [])
+            if len(page or []) < page_size:
+                break
+        return rows
+
     @router.get("/api/archive/threads")
     async def archive_threads():
         client = _supabase()
-        rows = await client.query(
-            ARCHIVE_TABLE,
-            params={"select": "thread", "deleted_at": "is.null", "limit": "10000"},
+        rows = await _query_all(
+            client,
+            {"select": "thread", "deleted_at": "is.null", "order": "thread.asc,archived_at.asc"},
         )
         threads: dict[str, int] = {}
         for row in rows or []:
@@ -73,7 +87,6 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             "thread": f"eq.{thread}",
             "deleted_at": "is.null",
             "order": "event_at.asc",
-            "limit": "20000",
         }
         if month:
             params["event_at"] = f"gte.{month}-01"
@@ -83,7 +96,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
                 params["and"] = f"(event_at.lt.{next_month}-01)"
             except ValueError:
                 pass
-        rows = await client.query(ARCHIVE_TABLE, params=params)
+        rows = await _query_all(client, params)
         days: dict[str, int] = {}
         for row in rows or []:
             day = str(row.get("event_at") or "")[:10]

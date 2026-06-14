@@ -4,6 +4,7 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+from shenyu_gateway.archive_routes import ArchiveRouteDeps, build_archive_router
 from shenyu_gateway.chat_archive import ChatArchiveService, derive_thread
 from shenyu_gateway.conflict_books import ConflictBookService, render_conflict_shelf
 from shenyu_gateway.store import GatewayStore
@@ -35,12 +36,24 @@ class FakeSupabase:
         params = params or {}
         rows = list(self._table(table))
         for key, value in params.items():
-            if key in {"select", "order", "limit", "and"}:
+            if key in {"select", "order", "limit", "offset", "and"}:
                 continue
             if isinstance(value, str) and value.startswith("eq."):
                 rows = [r for r in rows if str(r.get(key)) == value[3:]]
             elif isinstance(value, str) and value == "is.null":
                 rows = [r for r in rows if r.get(key) is None]
+            elif isinstance(value, str) and value.startswith("gte."):
+                rows = [r for r in rows if str(r.get(key) or "") >= value[4:]]
+        order = str(params.get("order") or "").split(",", 1)[0]
+        if order:
+            field, _, direction = order.partition(".")
+            rows.sort(key=lambda r: str(r.get(field) or ""), reverse=direction == "desc")
+        offset = int(params.get("offset") or 0)
+        limit = params.get("limit")
+        if limit is not None:
+            rows = rows[offset : offset + int(limit)]
+        elif offset:
+            rows = rows[offset:]
         return rows
 
     async def update(self, table: str, match, data: dict) -> list:
@@ -65,6 +78,7 @@ class FakeSupabase:
 
 class Cfg:
     enable_chat_archive = True
+    chat_archive_seen_retention = 10000
 
 
 def test_conflict_book_invariants():
@@ -153,8 +167,31 @@ def test_derive_thread():
     assert derive_thread("anything", True) == "hisense"
 
 
+def test_archive_routes_page_threads_and_days():
+    async def run():
+        supabase = FakeSupabase()
+        for idx in range(1205):
+            await supabase.insert(
+                "shenyu_chat_archive",
+                {
+                    "thread": "5.15",
+                    "event_at": "2026-06-14T00:00:00+00:00",
+                    "deleted_at": None,
+                },
+            )
+        router = build_archive_router(ArchiveRouteDeps(get_supabase_client=lambda: supabase))
+        endpoints = {route.path: route.endpoint for route in router.routes}
+        threads = await endpoints["/api/archive/threads"]()
+        days = await endpoints["/api/archive/days"](thread="5.15", month="2026-06")
+        assert threads["threads"] == [{"thread": "5.15", "count": 1205}]
+        assert days["days"] == [{"date": "2026-06-14", "count": 1205}]
+
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     test_conflict_book_invariants()
     test_chat_archive_dedup()
     test_derive_thread()
+    test_archive_routes_page_threads_and_days()
     print("ALL_OK")

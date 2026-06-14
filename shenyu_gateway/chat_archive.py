@@ -131,7 +131,11 @@ class ChatArchiveService:
             )
 
         await self.supabase.insert_many(CHAT_ARCHIVE_TABLE, rows)
-        self.store.mark_archive_hashes_seen(session_tag, [row["content_hash"] for row in rows])
+        self.store.mark_archive_hashes_seen(
+            session_tag,
+            [row["content_hash"] for row in rows],
+            keep_recent=getattr(self.cfg, "chat_archive_seen_retention", 10000),
+        )
         return {"archived": len(rows), "thread": thread}
 
 

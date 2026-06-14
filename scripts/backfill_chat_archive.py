@@ -24,8 +24,10 @@ if hasattr(sys.stdout, "reconfigure"):
 
 import json
 
-from shenyu_gateway.chat_archive import ChatArchiveService, _content_hash, _message_text
+from shenyu_gateway.chat_archive import CHAT_ARCHIVE_TABLE, ChatArchiveService, derive_thread, _content_hash, _message_text
+from shenyu_gateway.context_layers import _strip_client_extra_bundle_text
 from shenyu_gateway.config import RuntimeConfig
+from shenyu_gateway.runtime import iso_now
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.supabase import SupabaseClient
 
@@ -34,6 +36,12 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Backfill shenyu_chat_archive from SQLite history.")
     parser.add_argument("--dry-run", action="store_true", help="Report what would be archived without writing.")
     parser.add_argument("--session-tag", default="", help="Limit to one session tag.")
+    parser.add_argument("--batch-size", type=int, default=250, help="Supabase insert batch size.")
+    parser.add_argument(
+        "--ignore-supabase-existing",
+        action="store_true",
+        help="Only use local chat_archive_seen for dedup. By default existing Supabase hashes are skipped too.",
+    )
     return parser.parse_args()
 
 
@@ -81,6 +89,93 @@ def _iter_windows(store: GatewayStore, session_tag_filter: str):
                 yield tag, row["client_name"] or session["client_name"], messages, row["created_at"]
 
 
+async def _load_existing_archive_hashes(
+    supabase: SupabaseClient,
+    session_tag_filter: str,
+    page_size: int = 1000,
+) -> set[tuple[str, str]]:
+    existing: set[tuple[str, str]] = set()
+    start = 0
+    while True:
+        params = {
+            "select": "session_tag,content_hash",
+            "deleted_at": "is.null",
+            "order": "archived_at.asc",
+            "limit": str(page_size),
+            "offset": str(start),
+        }
+        if session_tag_filter:
+            params["session_tag"] = f"eq.{session_tag_filter}"
+        rows = await supabase.query(CHAT_ARCHIVE_TABLE, params)
+        for row in rows or []:
+            tag = str(row.get("session_tag") or "")
+            digest = str(row.get("content_hash") or "")
+            if tag and digest:
+                existing.add((tag, digest))
+        if len(rows or []) < page_size:
+            break
+        start += page_size
+    return existing
+
+
+def _candidate_rows(
+    *,
+    tag: str,
+    client_name: str | None,
+    messages: list[dict],
+    created_at: str | None,
+    is_hisense: bool,
+    existing: set[tuple[str, str]],
+) -> list[dict]:
+    rows: list[dict] = []
+    event_at = created_at or iso_now()
+    thread = derive_thread(tag, is_hisense)
+    taken: set[str] = set()
+    for msg in messages or []:
+        role = msg.get("role")
+        if role not in {"user", "assistant"}:
+            continue
+        text = _message_text(msg.get("content"))
+        if not text:
+            continue
+        text, _ = _strip_client_extra_bundle_text(text)
+        if not text:
+            continue
+        digest = _content_hash(role, text)
+        key = (tag, digest)
+        if digest in taken or key in existing:
+            continue
+        taken.add(digest)
+        rows.append(
+            {
+                "session_tag": tag,
+                "thread": thread,
+                "client_name": client_name,
+                "role": role,
+                "content": text,
+                "content_hash": digest,
+                "event_at": event_at,
+            }
+        )
+    return rows
+
+
+async def _insert_batch(service: ChatArchiveService, rows: list[dict]) -> int:
+    if not rows:
+        return 0
+    await service.supabase.insert_many(CHAT_ARCHIVE_TABLE, rows)
+    by_tag: dict[str, list[str]] = {}
+    for row in rows:
+        by_tag.setdefault(row["session_tag"], []).append(row["content_hash"])
+    for tag, hashes in by_tag.items():
+        service.store.mark_archive_hashes_seen(
+            tag,
+            hashes,
+            keep_recent=getattr(service.cfg, "chat_archive_seen_retention", 10000),
+        )
+    return len(rows)
+
+
 async def main() -> None:
     args = parse_args()
     cfg = RuntimeConfig()
@@ -90,35 +185,48 @@ async def main() -> None:
     store = GatewayStore(cfg.gateway_db_path)
     supabase = SupabaseClient(cfg.supabase_url, cfg.supabase_key)
     service = ChatArchiveService(store, supabase, cfg)
+    batch_size = max(1, min(int(args.batch_size or 250), 1000))
 
     hisense_name = (cfg.hisense_client_name or "hisense").casefold()
     total = 0
     windows = 0
+    pending: list[dict] = []
     try:
+        existing = set()
+        if not args.ignore_supabase_existing:
+            existing = await _load_existing_archive_hashes(supabase, args.session_tag)
+            print(f"Loaded {len(existing)} existing Supabase archive hashes.")
         for tag, client_name, messages, _created in _iter_windows(store, args.session_tag):
             windows += 1
             is_hisense = (client_name or "").casefold() == hisense_name or (client_name or "") == "海信"
-            if args.dry_run:
-                hashes = []
-                for m in messages:
-                    if m.get("role") not in {"user", "assistant"}:
-                        continue
-                    text = _message_text(m.get("content"))
-                    if text:
-                        hashes.append(_content_hash(m["role"], text))
-                total += len(store.filter_unseen_archive_hashes(tag, hashes))
-                continue
-            result = await service.archive_window(
-                session_tag=tag,
+            rows = _candidate_rows(
+                tag=tag,
                 client_name=client_name,
                 messages=messages,
+                created_at=_created,
                 is_hisense=is_hisense,
-                event_at=_created,
+                existing=existing,
             )
-            archived = int(result.get("archived") or 0)
-            total += archived
-            if archived:
-                print(f"[{tag}] +{archived} (window {windows})")
+            if args.dry_run:
+                hashes = [row["content_hash"] for row in rows]
+                unseen = store.filter_unseen_archive_hashes(tag, hashes)
+                total += len(unseen)
+                for row in rows:
+                    if row["content_hash"] in unseen:
+                        existing.add((row["session_tag"], row["content_hash"]))
+                continue
+            unseen = store.filter_unseen_archive_hashes(tag, [row["content_hash"] for row in rows])
+            rows = [row for row in rows if row["content_hash"] in unseen]
+            for row in rows:
+                existing.add((row["session_tag"], row["content_hash"]))
+            pending.extend(rows)
+            if len(pending) >= batch_size:
+                total += await _insert_batch(service, pending)
+                print(f"+{len(pending)} (through window {windows})")
+                pending = []
+        if not args.dry_run and pending:
+            total += await _insert_batch(service, pending)
+            print(f"+{len(pending)} (final)")
     finally:
         await supabase.close()
 
