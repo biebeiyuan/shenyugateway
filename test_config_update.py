@@ -4,6 +4,8 @@ from fastapi.testclient import TestClient
 
 import gateway
 from shenyu_gateway.config import RuntimeConfig
+from shenyu_gateway.runtime import persist_env
+from shenyu_gateway.store import GatewayStore
 
 
 DEFAULTED_ENV_KEYS = [
@@ -20,7 +22,7 @@ DEFAULTED_ENV_KEYS = [
 def _config_client(monkeypatch):
     persisted: list[dict[str, object]] = []
     monkeypatch.setattr(gateway.cfg, "gateway_key", "")
-    monkeypatch.setattr(gateway, "_persist_env", lambda updates: persisted.append(dict(updates)))
+    monkeypatch.setattr(gateway, "_persist_env", lambda updates, **kwargs: persisted.append(dict(updates)))
     return TestClient(gateway.app), persisted
 
 
@@ -90,3 +92,48 @@ def test_wake_welcome_message_can_be_cleared_explicitly(monkeypatch):
     assert "wake_welcome_message" in payload["changed"]
     assert gateway.cfg.wake_welcome_message == ""
     assert persisted[-1]["WAKE_WELCOME_MESSAGE"] == ""
+
+
+def test_persist_env_saves_config_overrides_to_sqlite(tmp_path, monkeypatch):
+    env_path = tmp_path / ".env"
+    monkeypatch.setattr("shenyu_gateway.runtime.ENV_PATH", env_path)
+    for key in ["UPSTREAM_URL", "ENABLE_GATEWAY_TOOLS", "WAKE_WELCOME_MESSAGE"]:
+        monkeypatch.delenv(key, raising=False)
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+
+    persist_env(
+        {
+            "UPSTREAM_URL": "https://persisted.example.com",
+            "ENABLE_GATEWAY_TOOLS": False,
+            "WAKE_WELCOME_MESSAGE": "persist me",
+        },
+        store=store,
+    )
+
+    overrides = store.load_config_overrides()
+    assert overrides["UPSTREAM_URL"] == "https://persisted.example.com"
+    assert overrides["ENABLE_GATEWAY_TOOLS"] == "false"
+    assert overrides["WAKE_WELCOME_MESSAGE"] == "persist me"
+    assert "UPSTREAM_URL=https://persisted.example.com" in env_path.read_text(encoding="utf-8")
+
+
+def test_restore_config_overrides_from_sqlite_feeds_runtime_config(tmp_path, monkeypatch):
+    db_path = tmp_path / "gateway.db"
+    store = GatewayStore(str(db_path))
+    store.save_config_overrides(
+        {
+            "UPSTREAM_URL": "https://restored.example.com",
+            "ENABLE_GATEWAY_TOOLS": "false",
+            "MAX_CLIENT_MESSAGES": "",
+        }
+    )
+    monkeypatch.setenv("UPSTREAM_URL", "https://default.example.com")
+    monkeypatch.setenv("ENABLE_GATEWAY_TOOLS", "true")
+    monkeypatch.delenv("MAX_CLIENT_MESSAGES", raising=False)
+
+    gateway._restore_config_overrides_from_db(str(db_path))
+    cfg = RuntimeConfig()
+
+    assert cfg.upstream_url == "https://restored.example.com"
+    assert cfg.enable_gateway_tools is False
+    assert cfg.max_client_messages is None

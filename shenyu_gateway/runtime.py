@@ -79,7 +79,7 @@ def env_file_value(value: Any) -> str:
     return text
 
 
-def persist_env(updates: dict[str, Any]) -> None:
+def persist_env(updates: dict[str, Any], *, store: Any = None) -> None:
     if not updates:
         return
 
@@ -109,3 +109,6 @@ def persist_env(updates: dict[str, Any]) -> None:
 
     for key, value in updates.items():
         os.environ[key] = env_value(value)
+
+    if store is not None:
+        store.save_config_overrides({key: env_value(value) for key, value in updates.items()})

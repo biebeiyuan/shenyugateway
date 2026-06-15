@@ -88,3 +88,17 @@ def test_latest_cross_session_context_accumulates_multiple_snapshots(tmp_path):
         "new a1",
         "new u1",
     ]
+
+
+def test_config_overrides_round_trip(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    assert store.load_config_overrides() == {}
+
+    store.save_config_overrides({"WAKE_WELCOME_MESSAGE": "hello", "UPSTREAM_URL": "https://example.com"})
+    result = store.load_config_overrides()
+    assert result == {"WAKE_WELCOME_MESSAGE": "hello", "UPSTREAM_URL": "https://example.com"}
+
+    store.save_config_overrides({"WAKE_WELCOME_MESSAGE": "updated"})
+    result = store.load_config_overrides()
+    assert result["WAKE_WELCOME_MESSAGE"] == "updated"
+    assert result["UPSTREAM_URL"] == "https://example.com"

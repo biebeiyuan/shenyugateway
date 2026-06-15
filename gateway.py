@@ -153,6 +153,33 @@ from shenyu_gateway.private_capture import (
 )
 
 
+def _restore_config_overrides_from_db(db_path: str) -> None:
+    def load_if_present(path_text: str) -> dict[str, str]:
+        path = Path(path_text)
+        if not path.exists():
+            return {}
+        return GatewayStore(str(path)).load_config_overrides()
+
+    try:
+        initial_db_path = db_path or "./data/shenyu_gateway.db"
+        overrides = load_if_present(initial_db_path)
+        restored_db_path = overrides.get("GATEWAY_DB_PATH")
+        if restored_db_path and Path(restored_db_path) != Path(initial_db_path):
+            overrides.update(load_if_present(restored_db_path))
+        for key, value in overrides.items():
+            os.environ[key] = value
+        if overrides:
+            logger.info(
+                "Applied %d config override(s) from SQLite: %s",
+                len(overrides),
+                ", ".join(sorted(overrides)),
+            )
+    except Exception:
+        logger.warning("Failed to restore config overrides from SQLite", exc_info=True)
+
+
+_restore_config_overrides_from_db(os.getenv("GATEWAY_DB_PATH") or "./data/shenyu_gateway.db")
+
 cfg = RuntimeConfig()
 supabase_client: Optional["SupabaseClient"] = None
 session_store: Optional["GatewayStore"] = None
@@ -174,6 +201,10 @@ def _init_store():
     global session_store
     session_store = GatewayStore(cfg.gateway_db_path)
     configure_gateway_tools(store=session_store)
+
+
+def _persist_env_with_store(updates: dict[str, Any]) -> None:
+    _persist_env(updates, store=session_store)
 
 
 def _require_session_store() -> GatewayStore:
@@ -972,7 +1003,7 @@ app.include_router(
             validate_http_url=_validate_http_url,
             validate_protocol=_validate_protocol,
             clamp=_clamp,
-            persist_env=_persist_env,
+            persist_env=_persist_env_with_store,
             get_supabase_client=lambda: supabase_client,
             init_supabase=_init_supabase,
             init_store=_init_store,

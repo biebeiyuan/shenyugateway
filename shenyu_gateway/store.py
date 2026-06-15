@@ -180,6 +180,12 @@ class GatewayStore:
 
                 CREATE INDEX IF NOT EXISTS idx_chat_archive_seen_tag_created
                     ON chat_archive_seen(session_tag, created_at);
+
+                CREATE TABLE IF NOT EXISTS config_overrides (
+                    env_key TEXT PRIMARY KEY,
+                    env_value TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
                 """
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")
@@ -1640,3 +1646,25 @@ class GatewayStore:
             "heartbeats": self.get_all_heartbeats(session_id),
             "hisense_heartbeats": self.get_all_heartbeats(session_id, hisense=True),
         }
+
+    def save_config_overrides(self, updates: dict[str, str]) -> None:
+        if not updates:
+            return
+        ts = iso_now()
+        with self._connect() as conn:
+            for key, value in updates.items():
+                conn.execute(
+                    """
+                    INSERT INTO config_overrides (env_key, env_value, updated_at)
+                    VALUES (?, ?, ?)
+                    ON CONFLICT(env_key) DO UPDATE SET
+                        env_value = excluded.env_value,
+                        updated_at = excluded.updated_at
+                    """,
+                    (key, str(value) if value is not None else "", ts),
+                )
+
+    def load_config_overrides(self) -> dict[str, str]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT env_key, env_value FROM config_overrides").fetchall()
+            return {row["env_key"]: row["env_value"] for row in rows}
