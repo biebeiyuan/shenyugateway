@@ -637,6 +637,7 @@ class GatewayToolService:
         summary: str = "",
         digest: str = "",
         author: str = "沈予",
+        mode: str = "append",
     ) -> dict:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured."}
@@ -653,6 +654,9 @@ class GatewayToolService:
         title = (title or "").strip() or f"{period_key} 手写日历"
         summary = (summary or "").strip()
         digest = (digest or "").strip() or summary or _shorten(body, 180)
+        mode = (mode or "append").strip().lower()
+        if mode not in {"append", "replace"}:
+            mode = "append"
 
         rows = await self._safe_query(
             "calendar_pages",
@@ -667,6 +671,11 @@ class GatewayToolService:
         current = rows[0] if rows else None
 
         if current:
+            old_content = (current.get("content") or "").strip()
+            if mode == "append" and old_content:
+                merged = old_content + "\n\n---\n\n" + body
+            else:
+                merged = body
             meta = _safe_json_loads(current.get("meta"), {})
             meta["manual_calendar_writes"] = int(meta.get("manual_calendar_writes") or 0) + 1
             meta["latest_manual_write_at"] = _iso_now()
@@ -678,7 +687,7 @@ class GatewayToolService:
                 "version": int(current.get("version") or 1) + 1,
                 "is_latest": True,
                 "title": title,
-                "content": body,
+                "content": merged,
                 "summary": summary,
                 "digest": digest,
                 "author": author,
@@ -717,6 +726,7 @@ class GatewayToolService:
             "ok": True,
             "period_type": period_type,
             "period_key": period_key,
+            "mode": mode if current else "new",
             "page": page,
             "digest": digest,
         }

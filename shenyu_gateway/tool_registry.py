@@ -31,7 +31,7 @@ _BROKER_TOOL_HINTS = {
     "shenyu_update_mem_note": "改某条 mem",
     "shenyu_notebook_list": "读 notebook（跨窗口/海信那边）",
     "shenyu_notebook_write": "写 notebook",
-    "shenyu_add_calendar": "手写日/周/月日历日记；写想记住的正文，之后反上来的也是正文",
+    "shenyu_add_calendar": "把今天的感触写进正文吧，它会像日历一样在我醒来的时候挂在旁边",
     "shenyu_read_heartbeat": "读我自己的心跳",
     "shenyu_conflict_read": "翻一本矛盾书（书架在上下文里）",
     "shenyu_supabase_guide": "忘了 Supabase 表结构看这个",
@@ -147,6 +147,10 @@ def _gateway_core_tools() -> list[dict]:
                             "type": "string",
                             "description": "日历日记正文。之后聊天上下文反上来的就是这个正文。",
                         },
+                        "date": {
+                            "type": "string",
+                            "description": "写哪天的日记，YYYY-MM-DD；不填=今天。等同 period_key 但更自然。",
+                        },
                         "period_key": {
                             "type": "string",
                             "description": "day 用 YYYY-MM-DD，week 用 YYYY-Www，month 用 YYYY-MM；不填则用当前周期。",
@@ -156,6 +160,12 @@ def _gateway_core_tools() -> list[dict]:
                             "enum": ["day", "week", "month"],
                             "default": "day",
                             "description": "写日、周、月哪一种日历日记。",
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["append", "replace"],
+                            "default": "append",
+                            "description": "当天已有日记时：append 在末尾追加，replace 替换。",
                         },
                         "title": {"type": "string", "description": "标题。不填会用周期默认标题。"},
                         "author": {"type": "string", "default": "沈予"},
@@ -724,12 +734,14 @@ async def _handle_search_primary_texts(ctx: ToolContext) -> dict:
 
 @_tool_handler("shenyu_add_calendar")
 async def _handle_add_calendar(ctx: ToolContext) -> dict:
+    period_key = ctx.arguments.get("period_key") or ctx.arguments.get("date")
     return await ctx.service.add_calendar(
         content=ctx.arguments.get("content", ""),
-        period_key=ctx.arguments.get("period_key"),
+        period_key=period_key,
         period_type=ctx.arguments.get("period_type", "day"),
         title=ctx.arguments.get("title", ""),
         author=ctx.arguments.get("author", "沈予"),
+        mode=ctx.arguments.get("mode", "append"),
     )
 
 
