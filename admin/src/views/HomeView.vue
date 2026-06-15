@@ -8,7 +8,7 @@ const START_DATE = new Date('2026-03-07')
 const daysTogether = computed(() => {
   const now = new Date()
   const diff = now.getTime() - START_DATE.getTime()
-  return Math.floor(diff / (1000 * 60 * 60 * 24))
+  return Math.floor(diff / (1000 * 60 * 60 * 24)) + 1
 })
 
 const modules = [
@@ -20,7 +20,7 @@ const modules = [
   { icon: '❀', title: '日历', desc: '日记', path: '/calendar', size: 'third' },
   { icon: '☆', title: '海信', desc: '通道', path: '/hisense', size: 'third' },
   { icon: '⚙', title: '配置', desc: '参数', path: '/config', size: 'third' },
-  { icon: '⚡', title: '工具报错', desc: '错误记录', path: '/tool-errors', size: 'third' },
+  { icon: '△', title: '工具报错', desc: '错误记录', path: '/tool-errors', size: 'third' },
 ]
 
 function go(path: string) {

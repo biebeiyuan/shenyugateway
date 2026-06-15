@@ -501,7 +501,7 @@ function previewText() {
 }
 
 .day-cell:hover {
-  border-color: #4f46e5;
+  border-color: #c094a8;
 }
 
 .day-cell.off {
@@ -566,7 +566,7 @@ function previewText() {
 }
 
 .thread.active {
-  border-color: #4f46e5;
+  border-color: #c094a8;
 }
 
 pre {

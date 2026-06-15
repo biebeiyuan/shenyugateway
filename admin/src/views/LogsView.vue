@@ -316,7 +316,7 @@ function renderContent(detail: LogDetail, tab: string): string {
 }
 
 .log-card.streaming {
-  border-left: 3px solid #3b82f6;
+  border-left: 3px solid #c094a8;
 }
 
 .log-card.pending {
@@ -378,8 +378,8 @@ function renderContent(detail: LogDetail, tab: string): string {
 }
 
 .dtab.active {
-  color: #4f46e5;
-  border-bottom-color: #4f46e5;
+  color: #8b7082;
+  border-bottom-color: #c094a8;
 }
 
 .dcont {
@@ -418,8 +418,8 @@ function renderContent(detail: LogDetail, tab: string): string {
 }
 
 .mr.system {
-  background: #eef2ff;
-  color: #4f46e5;
+  background: #faf0ee;
+  color: #8b7082;
 }
 
 .mr.user {

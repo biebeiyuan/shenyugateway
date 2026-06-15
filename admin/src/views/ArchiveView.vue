@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch, nextTick } from 'vue'
 import { NButton, NCheckbox, NInput, NModal, NPopconfirm, NSelect, NSpin, useMessage } from 'naive-ui'
 import {
   createConflictBook,
@@ -15,13 +15,14 @@ import {
 const message = useMessage()
 
 const threads = ref<ArchiveThread[]>([])
-const thread = ref('main')
+const thread = ref('')
 const month = ref(new Date().toISOString().slice(0, 7))
 const days = ref<ArchiveDay[]>([])
 const selectedDate = ref('')
 const messages = ref<ArchiveMessage[]>([])
 const loading = ref(false)
-const calendarOpen = ref(true)
+const calendarOpen = ref(false)
+const msgListRef = ref<HTMLElement>()
 
 const selecting = ref(false)
 const selectedIds = ref<Set<string>>(new Set())
@@ -84,8 +85,9 @@ const totalThisMonth = computed(() => days.value.reduce((sum, d) => sum + d.coun
 onMounted(async () => {
   try {
     threads.value = await fetchArchiveThreads()
-    if (threads.value.length && !threads.value.some((t) => t.thread === thread.value)) {
-      thread.value = threads.value[0].thread
+    if (threads.value.length) {
+      const sorted = [...threads.value].sort((a, b) => b.count - a.count)
+      thread.value = sorted[0].thread
     }
   } catch {
     message.error('加载线程列表失败')
@@ -96,6 +98,7 @@ onMounted(async () => {
 watch([thread, month], loadDays)
 
 async function loadDays() {
+  if (!thread.value) return
   try {
     days.value = await fetchArchiveDays(thread.value, month.value)
     if (days.value.length && !days.value.some((d) => d.date === selectedDate.value)) {
@@ -113,6 +116,7 @@ async function loadDays() {
 async function selectDay(date: string, count: number) {
   if (!count) return
   selectedDate.value = date
+  calendarOpen.value = false
   await loadMessages()
 }
 
@@ -121,6 +125,8 @@ async function loadMessages() {
   loading.value = true
   try {
     messages.value = await fetchArchiveMessages({ thread: thread.value, date: selectedDate.value, limit: 500 })
+    await nextTick()
+    if (msgListRef.value) msgListRef.value.scrollTop = msgListRef.value.scrollHeight
   } catch {
     message.error('加载消息失败')
   } finally {
@@ -211,24 +217,27 @@ async function saveClip() {
 
 <template>
   <div class="archive-view">
-    <!-- Calendar Panel -->
-    <div class="calendar-panel" :class="{ collapsed: !calendarOpen }">
-      <div class="calendar-header">
+    <!-- Control Panel (calendar + thread + tools) -->
+    <div class="control-panel" :class="{ collapsed: !calendarOpen }">
+      <!-- Collapsed bar -->
+      <div class="control-bar">
         <button class="cal-toggle" @click="calendarOpen = !calendarOpen">
           <span class="cal-toggle-icon" :class="{ open: calendarOpen }">&#9662;</span>
         </button>
-        <div class="cal-title-area">
-          <span class="cal-title">{{ monthLabel }}</span>
-          <span v-if="totalThisMonth" class="cal-subtitle">{{ totalThisMonth }} 条对话</span>
-        </div>
-        <div class="cal-nav">
-          <button class="cal-arrow" @click="shiftMonth(-1)">&lsaquo;</button>
-          <button class="cal-arrow" @click="shiftMonth(1)">&rsaquo;</button>
+        <span v-if="selectedDate" class="bar-date">{{ selectedDateLabel }}</span>
+        <span v-if="selectedDate" class="bar-sep">&#183;</span>
+        <span class="bar-month">{{ monthLabel }}</span>
+        <span v-if="totalThisMonth" class="bar-count">{{ totalThisMonth }} 条</span>
+        <div class="bar-right">
+          <button class="cal-arrow" @click.stop="shiftMonth(-1)">&lsaquo;</button>
+          <button class="cal-arrow" @click.stop="shiftMonth(1)">&rsaquo;</button>
         </div>
       </div>
 
-      <Transition name="calendar-slide">
-        <div v-if="calendarOpen" class="calendar-body">
+      <!-- Expanded content -->
+      <Transition name="panel-slide">
+        <div v-if="calendarOpen" class="control-body">
+          <!-- Calendar grid -->
           <div class="cal-weekdays">
             <span v-for="w in weekdayLabels" :key="w" class="cal-wd">{{ w }}</span>
           </div>
@@ -251,62 +260,55 @@ async function saveClip() {
               </template>
             </div>
           </div>
+
+          <!-- Thread + tools row -->
+          <div class="control-tools">
+            <NSelect v-model:value="thread" :options="threadOptions" class="thread-select" size="small" />
+            <div class="tools-right">
+              <NButton size="small" :type="selecting ? 'warning' : 'default'" @click="toggleSelecting">
+                {{ selecting ? '取消' : '选取' }}
+              </NButton>
+              <NButton v-if="selecting" size="small" type="primary" :disabled="!selectedIds.size" @click="openClipModal">
+                截入矛盾书（{{ selectedIds.size }}）
+              </NButton>
+            </div>
+          </div>
         </div>
       </Transition>
-
-      <div v-if="selectedDate" class="cal-selected-badge">
-        <span class="badge-date">{{ selectedDateLabel }}</span>
-        <span class="badge-sep">&#183;</span>
-        <span class="badge-count">{{ messages.length }} 条</span>
-      </div>
     </div>
 
-    <!-- Toolbar -->
-    <div class="toolbar">
-      <NSelect v-model:value="thread" :options="threadOptions" class="thread-select" size="small" />
-      <div class="toolbar-right">
-        <NButton size="small" :type="selecting ? 'warning' : 'default'" @click="toggleSelecting">
-          {{ selecting ? '取消选取' : '选取消息' }}
-        </NButton>
-        <NButton v-if="selecting" size="small" type="primary" :disabled="!selectedIds.size" @click="openClipModal">
-          截入矛盾书（{{ selectedIds.size }}）
-        </NButton>
-      </div>
-    </div>
-
-    <!-- Messages -->
-    <section class="messages-panel">
+    <!-- Chat Messages -->
+    <section ref="msgListRef" class="chat-panel">
       <NSpin :show="loading">
         <div v-if="!messages.length && !loading" class="empty">
           <div class="empty-icon">&#9825;</div>
-          <div>{{ selectedDate ? '这天很安静' : '在日历上选一天' }}</div>
+          <div>{{ selectedDate ? '这天很安静' : '选一天看看' }}</div>
         </div>
+
         <div
           v-for="msg in messages"
           :key="msg.id"
-          class="msg"
+          class="bubble-row"
           :class="msg.role"
         >
           <NCheckbox
             v-if="selecting"
-            class="msg-check"
+            class="bubble-check"
             :checked="selectedIds.has(msg.id)"
             @update:checked="(checked: boolean) => toggleMessage(msg.id, checked)"
           />
-          <div class="msg-body">
-            <div class="msg-meta">
-              <span class="msg-who">{{ msg.role === 'user' ? '圆圆' : '沈予' }}</span>
-              <span class="msg-time">{{ (msg.event_at || '').slice(11, 16) }}</span>
-              <span class="msg-thread">{{ threadLabel(thread) }}</span>
+          <div class="bubble" :class="msg.role">
+            <div class="bubble-content">{{ msg.content }}</div>
+            <div class="bubble-meta">
+              <span class="bubble-time">{{ (msg.event_at || '').slice(11, 16) }}</span>
             </div>
-            <div class="msg-content">{{ msg.content }}</div>
+            <NPopconfirm @positive-click="deleteMessage(msg.id)">
+              <template #trigger>
+                <button class="bubble-delete">&times;</button>
+              </template>
+              删除这条记录？
+            </NPopconfirm>
           </div>
-          <NPopconfirm @positive-click="deleteMessage(msg.id)">
-            <template #trigger>
-              <button class="msg-delete">&times;</button>
-            </template>
-            删除这条记录？
-          </NPopconfirm>
         </div>
       </NSpin>
     </section>
@@ -336,44 +338,46 @@ async function saveClip() {
 
 <style scoped>
 .archive-view {
-  max-width: 720px;
+  max-width: 520px;
   margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 70px);
 }
 
-/* Calendar Panel */
-.calendar-panel {
+/* ── Control Panel ── */
+.control-panel {
   background: #fff;
-  border: 1px solid #f2ddd8;
-  border-radius: 18px;
-  padding: 20px 22px;
-  margin-bottom: 16px;
-  transition: 0.3s ease;
-  box-shadow: 0 2px 12px rgba(192, 148, 168, 0.06);
+  border: 1px solid #f0e0dc;
+  border-radius: 16px;
+  padding: 12px 16px;
+  margin-bottom: 10px;
+  flex-shrink: 0;
+  transition: 0.25s ease;
 }
 
-.calendar-panel.collapsed {
-  padding-bottom: 16px;
-}
-
-.calendar-header {
+/* Collapsed bar */
+.control-bar {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  min-height: 28px;
 }
 
 .cal-toggle {
-  width: 26px;
-  height: 26px;
+  width: 24px;
+  height: 24px;
   border: none;
   background: #fdf0ed;
-  border-radius: 8px;
+  border-radius: 7px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: 0.2s;
   color: #c4b0ab;
-  font-size: 11px;
+  font-size: 10px;
+  flex-shrink: 0;
 }
 
 .cal-toggle:hover {
@@ -383,7 +387,7 @@ async function saveClip() {
 
 .cal-toggle-icon {
   display: inline-block;
-  transition: transform 0.3s ease;
+  transition: transform 0.25s ease;
 }
 
 .cal-toggle-icon.open {
@@ -394,39 +398,42 @@ async function saveClip() {
   transform: rotate(-90deg);
 }
 
-.cal-title-area {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-}
-
-.cal-title {
-  font-size: 15px;
+.bar-date {
+  font-size: 13px;
   font-weight: 600;
-  color: #4a3535;
-  letter-spacing: -0.3px;
+  color: #8b7082;
 }
 
-.cal-subtitle {
-  font-size: 11.5px;
+.bar-sep {
+  color: #d4c0bb;
+  font-size: 14px;
+}
+
+.bar-month {
+  font-size: 12px;
+  color: #b8a8a3;
+}
+
+.bar-count {
+  font-size: 11px;
   color: #c4b0ab;
   font-style: italic;
 }
 
-.cal-nav {
+.bar-right {
   margin-left: auto;
   display: flex;
   gap: 4px;
 }
 
 .cal-arrow {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border: 1px solid #f2ddd8;
   background: #fff;
-  border-radius: 9px;
+  border-radius: 8px;
   cursor: pointer;
-  font-size: 16px;
+  font-size: 15px;
   color: #c094a8;
   display: flex;
   align-items: center;
@@ -439,30 +446,30 @@ async function saveClip() {
   border-color: #e8c4bc;
 }
 
-/* Calendar Body */
-.calendar-body {
-  margin-top: 16px;
+/* Expanded body */
+.control-body {
+  padding-top: 12px;
   overflow: hidden;
 }
 
 .cal-weekdays {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  margin-bottom: 6px;
+  margin-bottom: 4px;
 }
 
 .cal-wd {
   text-align: center;
-  font-size: 10.5px;
+  font-size: 10px;
   color: #c4b0ab;
   font-weight: 500;
-  padding: 4px 0;
+  padding: 2px 0;
 }
 
 .cal-grid {
   display: grid;
   grid-template-columns: repeat(7, 1fr);
-  gap: 4px;
+  gap: 3px;
 }
 
 .cal-cell {
@@ -471,8 +478,8 @@ async function saveClip() {
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  height: 40px;
-  border-radius: 12px;
+  height: 36px;
+  border-radius: 10px;
   cursor: default;
   transition: all 0.2s ease;
 }
@@ -488,12 +495,12 @@ async function saveClip() {
 
 .cal-cell.has-data:hover {
   background: #f8e4df;
-  transform: scale(1.08);
+  transform: scale(1.06);
 }
 
 .cal-cell.active {
   background: #c094a8;
-  box-shadow: 0 2px 10px rgba(192, 148, 168, 0.25);
+  box-shadow: 0 2px 8px rgba(192, 148, 168, 0.25);
 }
 
 .cal-cell.active .cal-day-num {
@@ -510,7 +517,7 @@ async function saveClip() {
 }
 
 .cal-day-num {
-  font-size: 12.5px;
+  font-size: 12px;
   color: #4a3535;
   line-height: 1;
   font-family: -apple-system, 'Segoe UI', sans-serif;
@@ -521,94 +528,60 @@ async function saveClip() {
 }
 
 .cal-dot {
-  width: 4px;
-  height: 4px;
+  width: 3px;
+  height: 3px;
   border-radius: 50%;
   background: #c094a8;
-  margin-top: 3px;
-  animation: dot-breathe 3s ease-in-out infinite;
+  margin-top: 2px;
 }
 
-@keyframes dot-breathe {
-  0%, 100% { opacity: 0.6; transform: scale(1); }
-  50% { opacity: 1; transform: scale(1.4); }
-}
-
-.cal-selected-badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 14px;
-  padding: 6px 14px;
-  background: linear-gradient(135deg, #fdf0ed 0%, #f8eef5 100%);
-  border-radius: 20px;
-  border: 1px solid #f2ddd8;
-}
-
-.badge-date {
-  font-size: 12.5px;
-  color: #9b7a8a;
-  font-weight: 600;
-}
-
-.badge-sep {
-  color: #d4c0bb;
-}
-
-.badge-count {
-  font-size: 11px;
-  color: #c4b0ab;
-  font-style: italic;
-}
-
-/* Transition */
-.calendar-slide-enter-active,
-.calendar-slide-leave-active {
-  transition: all 0.3s ease;
-  max-height: 300px;
-}
-
-.calendar-slide-enter-from,
-.calendar-slide-leave-to {
-  opacity: 0;
-  max-height: 0;
-  margin-top: 0;
-}
-
-/* Toolbar */
-.toolbar {
+/* Tools row inside panel */
+.control-tools {
   display: flex;
   align-items: center;
-  gap: 14px;
-  margin-bottom: 14px;
+  gap: 10px;
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #f5ece9;
 }
 
 .thread-select {
-  width: 130px;
+  width: 120px;
 }
 
-.toolbar-right {
+.tools-right {
   margin-left: auto;
   display: flex;
-  gap: 8px;
+  gap: 6px;
 }
 
-/* Messages */
-.messages-panel {
-  background: #fff;
-  border: 1px solid #f2ddd8;
-  border-radius: 18px;
-  padding: 20px 22px;
-  max-height: calc(100vh - 440px);
+/* Transition */
+.panel-slide-enter-active,
+.panel-slide-leave-active {
+  transition: all 0.25s ease;
+  max-height: 340px;
+}
+
+.panel-slide-enter-from,
+.panel-slide-leave-to {
+  opacity: 0;
+  max-height: 0;
+  padding-top: 0;
+}
+
+/* ── Chat Panel ── */
+.chat-panel {
+  flex: 1;
+  min-height: 0;
   overflow-y: auto;
-  box-shadow: 0 2px 12px rgba(192, 148, 168, 0.06);
+  padding: 8px 4px 16px;
 }
 
 .empty {
   color: #c4b0ab;
   font-size: 13px;
   text-align: center;
-  padding: 48px 0;
+  padding: 60px 0;
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -617,107 +590,106 @@ async function saveClip() {
 }
 
 .empty-icon {
-  font-size: 32px;
+  font-size: 28px;
   color: #e8c4bc;
-  animation: float 4s ease-in-out infinite;
 }
 
-@keyframes float {
-  0%, 100% { transform: translateY(0); }
-  50% { transform: translateY(-5px); }
-}
-
-.msg {
+/* ── Bubble Messages ── */
+.bubble-row {
   display: flex;
-  gap: 8px;
-  padding: 14px 16px;
-  border-radius: 14px;
+  align-items: flex-end;
+  margin-bottom: 6px;
+  gap: 6px;
+}
+
+.bubble-row.user {
+  justify-content: flex-end;
+}
+
+.bubble-row.assistant {
+  justify-content: flex-start;
+}
+
+.bubble-check {
+  flex-shrink: 0;
   margin-bottom: 8px;
-  transition: 0.2s;
-  border: 1px solid transparent;
 }
 
-.msg.user {
-  background: #fdf6f4;
-  border-color: #f8ebe7;
+.bubble {
+  position: relative;
+  max-width: 78%;
+  padding: 10px 14px;
+  border-radius: 18px;
+  font-size: 13.5px;
+  line-height: 1.7;
+  word-break: break-word;
+  white-space: pre-wrap;
+  transition: 0.15s;
 }
 
-.msg.assistant {
-  background: linear-gradient(135deg, #f8eef5 0%, #fdf6f4 100%);
-  border-color: #f2ddd8;
+.bubble.user {
+  background: linear-gradient(135deg, #f0e4df 0%, #f5ece9 100%);
+  border-bottom-right-radius: 6px;
+  color: #4a3535;
 }
 
-.msg:hover {
-  box-shadow: 0 2px 10px rgba(192, 148, 168, 0.08);
-  transform: translateY(-1px);
+.bubble.assistant {
+  background: #fff;
+  border: 1px solid #f0e0dc;
+  border-bottom-left-radius: 6px;
+  color: #4a3535;
 }
 
-.msg-check {
-  margin-top: 3px;
+.bubble:hover {
+  box-shadow: 0 2px 12px rgba(139, 112, 130, 0.08);
 }
 
-.msg-body {
-  flex: 1;
-  min-width: 0;
+.bubble-content {
+  /* text content */
 }
 
-.msg-meta {
+.bubble-meta {
   display: flex;
-  gap: 8px;
-  align-items: baseline;
-  margin-bottom: 5px;
+  justify-content: flex-end;
+  margin-top: 4px;
 }
 
-.msg-who {
-  font-size: 12px;
-  font-weight: 600;
-  color: #c094a8;
-}
-
-.msg.user .msg-who {
-  color: #c8956a;
-}
-
-.msg-time,
-.msg-thread {
-  font-size: 10.5px;
+.bubble-time {
+  font-size: 10px;
   color: #c4b0ab;
 }
 
-.msg-content {
-  font-size: 13px;
-  line-height: 1.75;
-  color: #4a3535;
-  white-space: pre-wrap;
-  word-break: break-word;
+.bubble.user .bubble-time {
+  color: #bba89e;
 }
 
-.msg-delete {
-  flex-shrink: 0;
-  width: 22px;
-  height: 22px;
+.bubble-delete {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
   border: none;
   background: transparent;
   color: #d4726a;
-  font-size: 16px;
+  font-size: 14px;
   line-height: 1;
-  border-radius: 6px;
+  border-radius: 5px;
   cursor: pointer;
   opacity: 0;
   transition: 0.15s;
-  margin-top: 2px;
 }
 
-.msg:hover .msg-delete {
-  opacity: 0.4;
+.bubble:hover .bubble-delete {
+  opacity: 0.35;
 }
 
-.msg-delete:hover {
+.bubble-delete:hover {
   opacity: 1 !important;
   background: #fdf2f0;
 }
 
-/* Clip Modal */
+/* ── Clip Modal ── */
 .clip-form {
   display: flex;
   flex-direction: column;

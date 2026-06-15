@@ -580,9 +580,9 @@ function removeModel(index: number) {
 }
 
 .preset-chip.active {
-  background: #eef2ff;
-  color: #4f46e5;
-  border-color: #4f46e5;
+  background: #faf0ee;
+  color: #8b7082;
+  border-color: #c094a8;
 }
 
 .preset-chip .del {
@@ -614,7 +614,7 @@ function removeModel(index: number) {
 
 .cal-input:focus {
   outline: none;
-  border-color: #4f46e5;
+  border-color: #c094a8;
 }
 
 .rev-toolbar {

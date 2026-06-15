@@ -18,7 +18,6 @@ import {
   createGatewayHeartbeat,
   dedupeGatewayMessages,
   deleteGatewaySession,
-  deleteGatewayHeartbeats,
   exportGatewaySession,
   fetchGatewaySession,
   fetchGatewaySessions,
@@ -44,7 +43,6 @@ const selectedTag = ref('')
 const detail = ref<GatewaySessionDetail | null>(null)
 const heartbeatDraft = ref('')
 const savingHeartbeat = ref(false)
-const deletingHeartbeats = ref(false)
 const heartbeatVisibleCount = ref(100)
 
 const selectedSession = computed(() => detail.value?.session || sessions.value.find((item) => item.session_tag === selectedTag.value))
@@ -149,34 +147,6 @@ async function saveHeartbeat() {
     message.error(errorText(error, 'Heartbeat 写入失败'))
   } finally {
     savingHeartbeat.value = false
-  }
-}
-
-async function deleteHeartbeat(id: string) {
-  if (!selectedTag.value) return
-  deletingHeartbeats.value = true
-  try {
-    await deleteGatewayHeartbeats(selectedTag.value, { ids: [id] })
-    message.success('已删除 heartbeat')
-    await loadSessionDetail(selectedTag.value)
-  } catch (error) {
-    message.error(errorText(error, 'Heartbeat 删除失败'))
-  } finally {
-    deletingHeartbeats.value = false
-  }
-}
-
-async function deleteAllHeartbeats() {
-  if (!selectedTag.value) return
-  deletingHeartbeats.value = true
-  try {
-    await deleteGatewayHeartbeats(selectedTag.value, { delete_all: true, confirm: 'GLOBAL' })
-    message.success('已清空全局 heartbeat')
-    await loadSessionDetail(selectedTag.value)
-  } catch (error) {
-    message.error(errorText(error, 'Heartbeat 批量删除失败'))
-  } finally {
-    deletingHeartbeats.value = false
   }
 }
 
@@ -386,12 +356,6 @@ function showMoreHeartbeats() {
                 />
                 <div class="heartbeat-actions">
                   <NButton type="primary" :loading="savingHeartbeat" @click="saveHeartbeat">写入 Heartbeat</NButton>
-                  <NPopconfirm positive-text="清空" negative-text="取消" @positive-click="deleteAllHeartbeats">
-                    <template #trigger>
-                      <NButton type="error" :loading="deletingHeartbeats">清空全局 Heartbeat</NButton>
-                    </template>
-                    清空全局 heartbeat？这个操作不会删除消息或上下文快照。
-                  </NPopconfirm>
                 </div>
               </div>
               <div v-if="heartbeats.length" class="chat-list">
@@ -400,7 +364,6 @@ function showMoreHeartbeats() {
                     <NTag size="small" type="warning">Heartbeat</NTag>
                     <span>{{ formatTime(item.created_at) }}</span>
                     <span>{{ heartbeatState(item) }}</span>
-                    <NButton size="tiny" quaternary type="error" :loading="deletingHeartbeats" @click="deleteHeartbeat(item.id)">删除</NButton>
                   </div>
                   <div class="chat-body">{{ item.content }}</div>
                 </div>
@@ -470,8 +433,8 @@ function showMoreHeartbeats() {
 }
 
 .thread-chip.active {
-  border-color: #4f46e5;
-  box-shadow: inset 3px 0 0 #4f46e5;
+  border-color: #c094a8;
+  box-shadow: inset 3px 0 0 #c094a8;
 }
 
 .thread-chip strong {
