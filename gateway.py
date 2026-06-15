@@ -40,6 +40,7 @@ from shenyu_gateway.context_layers import (
     trim_client_extra_bundle_attachments as _trim_client_extra_bundle_attachments,
     trim_client_image_blocks as _trim_client_image_blocks,
     trim_client_messages as _trim_client_messages,
+    trim_package_install_tool_results as _trim_package_install_tool_results,
 )
 from shenyu_gateway.gateway_tools import GatewayToolService, configure_gateway_tools
 from shenyu_gateway.heartbeat_archive import HeartbeatArchiveService, heartbeat_archive_worker
@@ -525,6 +526,8 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     messages, trim_meta = _trim_client_messages(raw_messages, cfg.max_client_messages)
     messages, attachment_trim_meta = _trim_client_extra_bundle_attachments(messages, keep_recent_messages=3)
     trim_meta.update(attachment_trim_meta)
+    messages, package_trim_meta = _trim_package_install_tool_results(messages, keep_recent=1)
+    trim_meta.update(package_trim_meta)
     messages, image_trim_meta = _trim_client_image_blocks(messages, keep_recent_messages=2)
     trim_meta.update(image_trim_meta)
     user_text = _latest_user_text(messages)

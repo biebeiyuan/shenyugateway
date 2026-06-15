@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import defaultdict
 from dataclasses import dataclass
 import re
 from typing import Any, Optional
@@ -466,6 +467,134 @@ def trim_cold_start_sources(sources: list[dict], limit: int) -> list[dict]:
             break
 
     return list(reversed(selected_reversed))
+
+
+_PACKAGE_TOOL_NAMES = {"use_package", "package_proxy"}
+
+_PACKAGE_DOC_MIN_CHARS = 2000
+
+
+def _tool_call_name_from_msg(tool_call: dict) -> str:
+    function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
+    if not isinstance(function, dict):
+        return ""
+    return str(function.get("name") or "")
+
+
+def _extract_package_name(content: str) -> str:
+    """Best-effort extraction of a package identifier from a tool result."""
+    for line in content[:500].splitlines():
+        stripped = line.strip().strip("#").strip()
+        if stripped:
+            return stripped[:120]
+    return ""
+
+
+def trim_package_install_tool_results(
+    messages: list[dict],
+    keep_recent: int = 1,
+) -> tuple[list[dict], dict]:
+    """Compress old package-install documentation injected by the Operit client.
+
+    For each unique package, only the most recent ``keep_recent`` full doc
+    bodies are preserved; older ones are replaced with a short stub.
+    Exact-duplicate install docs (same tool name + identical content) are
+    deduplicated regardless of recency — only the latest copy survives.
+    """
+    keep_recent = max(int(keep_recent or 1), 0)
+
+    # Phase 1: build a map  tool_call_id -> tool_name  for package-related calls
+    package_call_ids: dict[str, str] = {}
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls") or []:
+            name = _tool_call_name_from_msg(tc)
+            if name in _PACKAGE_TOOL_NAMES:
+                tc_id = str(tc.get("id") or "")
+                if tc_id:
+                    package_call_ids[tc_id] = name
+
+    if not package_call_ids:
+        return messages, {
+            "package_tool_results_seen": 0,
+            "package_tool_results_compressed": 0,
+            "package_tool_results_deduped": 0,
+        }
+
+    # Phase 2: collect indices of tool-result messages that are package docs
+    PackageHit = tuple  # (msg_index, tool_name, package_key, content)
+    hits: list[PackageHit] = []
+    for idx, msg in enumerate(messages):
+        if msg.get("role") != "tool":
+            continue
+        tc_id = str(msg.get("tool_call_id") or "")
+        if tc_id not in package_call_ids:
+            continue
+        tool_name = package_call_ids[tc_id]
+        content = str(msg.get("content") or "")
+        if tool_name == "use_package" and len(content) >= _PACKAGE_DOC_MIN_CHARS:
+            pkg_key = _extract_package_name(content)
+            hits.append((idx, tool_name, pkg_key, content))
+
+    if not hits:
+        return messages, {
+            "package_tool_results_seen": 0,
+            "package_tool_results_compressed": 0,
+            "package_tool_results_deduped": 0,
+        }
+
+    # Phase 3: per package_key, keep the latest `keep_recent` unique docs
+    per_package: dict[str, list[int]] = defaultdict(list)
+    for hit_idx, (msg_idx, _tn, pkg_key, _content) in enumerate(hits):
+        per_package[pkg_key].append(hit_idx)
+
+    compress_indices: set[int] = set()  # msg indices to compress
+    deduped_count = 0
+
+    for pkg_key, hit_indices in per_package.items():
+        # hit_indices are in message order; reverse so latest first
+        ordered = list(reversed(hit_indices))
+        seen_contents: set[str] = set()
+        unique_kept = 0
+        for h_idx in ordered:
+            msg_idx, _tn, _pk, content = hits[h_idx]
+            content_hash = content[:4000]
+            if content_hash in seen_contents:
+                # exact duplicate — always compress
+                compress_indices.add(msg_idx)
+                deduped_count += 1
+                continue
+            seen_contents.add(content_hash)
+            if unique_kept < keep_recent:
+                unique_kept += 1
+            else:
+                compress_indices.add(msg_idx)
+
+    if not compress_indices:
+        return messages, {
+            "package_tool_results_seen": len(hits),
+            "package_tool_results_compressed": 0,
+            "package_tool_results_deduped": 0,
+        }
+
+    # Phase 4: rebuild message list with compressed docs
+    result: list[dict] = []
+    for idx, msg in enumerate(messages):
+        if idx not in compress_indices:
+            result.append(msg)
+            continue
+        clean = dict(msg)
+        original_content = str(msg.get("content") or "")
+        pkg_name = _extract_package_name(original_content)
+        clean["content"] = f"[包 {pkg_name} 的安装文档已省略，如需使用请重新激活]"
+        result.append(clean)
+
+    return result, {
+        "package_tool_results_seen": len(hits),
+        "package_tool_results_compressed": len(compress_indices),
+        "package_tool_results_deduped": deduped_count,
+    }
 
 
 def assemble_layered_messages(
