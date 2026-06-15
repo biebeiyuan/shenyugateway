@@ -186,6 +186,21 @@ class GatewayStore:
                     env_value TEXT NOT NULL,
                     updated_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS tool_error_log (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    session_tag TEXT,
+                    tool_name TEXT NOT NULL,
+                    target_tool TEXT,
+                    args_json TEXT,
+                    error_text TEXT NOT NULL,
+                    error_source TEXT NOT NULL DEFAULT 'execute',
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_tool_error_log_created
+                    ON tool_error_log(created_at DESC);
                 """
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")
@@ -1668,3 +1683,42 @@ class GatewayStore:
         with self._connect() as conn:
             rows = conn.execute("SELECT env_key, env_value FROM config_overrides").fetchall()
             return {row["env_key"]: row["env_value"] for row in rows}
+
+    def log_tool_error(
+        self,
+        session_id: str,
+        session_tag: Optional[str],
+        tool_name: str,
+        target_tool: Optional[str],
+        args: Optional[dict],
+        error_text: str,
+        error_source: str = "execute",
+    ) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO tool_error_log
+                    (id, session_id, session_tag, tool_name, target_tool,
+                     args_json, error_text, error_source, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    str(uuid.uuid4()),
+                    session_id,
+                    session_tag,
+                    tool_name,
+                    target_tool,
+                    json_dumps(args) if args else None,
+                    error_text[:4000],
+                    error_source,
+                    iso_now(),
+                ),
+            )
+
+    def list_tool_errors(self, limit: int = 50) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM tool_error_log ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]

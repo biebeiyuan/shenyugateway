@@ -194,6 +194,8 @@ async def _execute_mixed_gateway_tool_calls(
             logger.exception("[GatewayTool] Mixed tool call failed: %s", name)
             result = {"ok": False, "error": str(exc)}
         ctx.sessions.log_tool_result(ctx.session_id, name, args, result)
+        if isinstance(result, dict) and result.get("ok") is False:
+            _record_tool_error(ctx, name, args, result)
         gateway_tool_messages.append(
             {
                 "role": "tool",
@@ -570,6 +572,8 @@ async def _execute_internal_tool_call(
             result = {"ok": False, "error": str(exc)}
         tool_result_cache[cache_key] = result
         ctx.sessions.log_tool_result(ctx.session_id, name, args, result)
+        if isinstance(result, dict) and result.get("ok") is False:
+            _record_tool_error(ctx, name, args, result)
     return result, args, name, cached
 
 
@@ -592,6 +596,24 @@ def _append_tool_round_log(
 
 def _target_tool_name(name: str, args: dict) -> str:
     return str(args.get("tool") or args.get("name") or args.get("action") or "") if name == "shenyu_gateway_tool" else name
+
+
+def _record_tool_error(ctx: InternalToolLoopContext, name: str, args: dict, result: dict) -> None:
+    try:
+        target = _target_tool_name(name, args)
+        error_text = result.get("error") or result.get("message") or str(result)
+        error_source = "execute" if "Traceback" in str(error_text) or "Exception" in str(error_text) else "result"
+        ctx.store.log_tool_error(
+            session_id=ctx.session_id,
+            session_tag=getattr(ctx, "session_tag", None),
+            tool_name=name,
+            target_tool=target or None,
+            args=args,
+            error_text=str(error_text),
+            error_source=error_source,
+        )
+    except Exception:
+        logger.debug("[ToolErrorLog] Failed to record tool error", exc_info=True)
 
 
 def _tool_result_message(tool_call: dict, name: str, result: dict) -> dict:

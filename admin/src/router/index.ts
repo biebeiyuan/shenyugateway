@@ -48,6 +48,11 @@ const router = createRouter({
       name: 'conflict',
       component: () => import('@/views/ConflictView.vue'),
     },
+    {
+      path: '/tool-errors',
+      name: 'tool-errors',
+      component: () => import('@/views/ToolErrorsView.vue'),
+    },
   ],
 })
 

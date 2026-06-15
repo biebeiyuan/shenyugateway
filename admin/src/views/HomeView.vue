@@ -20,6 +20,7 @@ const modules = [
   { icon: '❀', title: '日历', desc: '日记', path: '/calendar', size: 'third' },
   { icon: '☆', title: '海信', desc: '通道', path: '/hisense', size: 'third' },
   { icon: '⚙', title: '配置', desc: '参数', path: '/config', size: 'third' },
+  { icon: '⚡', title: '工具报错', desc: '错误记录', path: '/tool-errors', size: 'third' },
 ]
 
 function go(path: string) {

@@ -44,6 +44,11 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
     async def gateway_tools():
         return {"tools": gateway_native_tools(cfg)}
 
+    @router.get("/api/gateway/tool-errors")
+    async def tool_errors(limit: int = 50):
+        store = deps.require_session_store()
+        return {"errors": store.list_tool_errors(limit=limit)}
+
     @router.get("/api/gateway/context/preview")
     async def context_preview(session_tag: Optional[str] = None):
         store = deps.require_session_store()
