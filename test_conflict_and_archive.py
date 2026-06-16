@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
+from datetime import datetime
 from pathlib import Path
 
 from shenyu_gateway.archive_routes import ArchiveRouteDeps, build_archive_router
@@ -23,6 +24,15 @@ class FakeSupabase:
         self._next_id += 1
         return f"fake-{self._next_id}"
 
+    def _filter_compare(self, row: dict, key: str, op: str, raw_value: str) -> bool:
+        value = row.get(key)
+        if key == "event_at" and value:
+            left = datetime.fromisoformat(str(value))
+            right = datetime.fromisoformat(raw_value)
+            return left >= right if op == "gte" else left < right
+        text = str(value or "")
+        return text >= raw_value if op == "gte" else text < raw_value
+
     async def insert(self, table: str, data: dict) -> dict:
         row = dict(data)
         row.setdefault("id", self._gen_id())
@@ -36,6 +46,7 @@ class FakeSupabase:
     async def query(self, table: str, params=None) -> list:
         params = params or {}
         rows = list(self._table(table))
+        and_clause = str(params.get("and") or "")
         for key, value in params.items():
             if key in {"select", "order", "limit", "offset", "and"}:
                 continue
@@ -44,7 +55,12 @@ class FakeSupabase:
             elif isinstance(value, str) and value == "is.null":
                 rows = [r for r in rows if r.get(key) is None]
             elif isinstance(value, str) and value.startswith("gte."):
-                rows = [r for r in rows if str(r.get(key) or "") >= value[4:]]
+                rows = [r for r in rows if self._filter_compare(r, key, "gte", value[4:])]
+            elif isinstance(value, str) and value.startswith("lt."):
+                rows = [r for r in rows if self._filter_compare(r, key, "lt", value[3:])]
+        if and_clause.startswith("(event_at.lt.") and and_clause.endswith(")"):
+            before = and_clause[len("(event_at.lt.") : -1]
+            rows = [r for r in rows if self._filter_compare(r, "event_at", "lt", before)]
         order = str(params.get("order") or "").split(",", 1)[0]
         if order:
             field, _, direction = order.partition(".")
@@ -257,6 +273,43 @@ def test_archive_routes_page_threads_and_days():
     asyncio.run(run())
 
 
+def test_archive_routes_use_cst_day_boundaries():
+    async def run():
+        supabase = FakeSupabase()
+        rows = [
+            ("before", "2026-06-13T15:59:59+00:00"),
+            ("inside-early", "2026-06-13T16:00:00+00:00"),
+            ("inside-late", "2026-06-14T15:59:59+00:00"),
+            ("after", "2026-06-14T16:00:00+00:00"),
+        ]
+        for content, event_at in rows:
+            await supabase.insert(
+                "shenyu_chat_archive",
+                {
+                    "thread": "main",
+                    "session_tag": "default",
+                    "role": "user",
+                    "content": content,
+                    "event_at": event_at,
+                    "deleted_at": None,
+                },
+            )
+        router = build_archive_router(ArchiveRouteDeps(get_supabase_client=lambda: supabase))
+        endpoints = {route.path: route.endpoint for route in router.routes}
+
+        days = await endpoints["/api/archive/days"](thread="main", month="2026-06")
+        messages = await endpoints["/api/archive/messages"](thread="main", date="2026-06-14")
+
+        assert days["days"] == [
+            {"date": "2026-06-13", "count": 1},
+            {"date": "2026-06-14", "count": 2},
+            {"date": "2026-06-15", "count": 1},
+        ]
+        assert [row["content"] for row in messages["messages"]] == ["inside-early", "inside-late"]
+
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
     test_conflict_book_invariants()
     test_chat_archive_dedup()
@@ -265,4 +318,5 @@ if __name__ == "__main__":
     test_chat_archive_skips_numbered_transcript_messages()
     test_derive_thread()
     test_archive_routes_page_threads_and_days()
+    test_archive_routes_use_cst_day_boundaries()
     print("ALL_OK")

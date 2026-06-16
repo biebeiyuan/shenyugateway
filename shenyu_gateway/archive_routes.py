@@ -8,6 +8,7 @@ archive, edit title/epilogue/notes/status, never the original text.
 """
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -16,6 +17,7 @@ from pydantic import BaseModel, Field
 from .conflict_books import ConflictBookService
 
 ARCHIVE_TABLE = "shenyu_chat_archive"
+_CST = timezone(timedelta(hours=8))
 
 
 class ConflictBookCreate(BaseModel):
@@ -70,7 +72,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         client = _supabase()
         rows = await _query_all(
             client,
-            {"select": "thread", "deleted_at": "is.null", "order": "thread.asc,id.asc"},
+            {"select": "thread", "deleted_at": "is.null", "order": "thread.asc"},
         )
         threads: dict[str, int] = {}
         for row in rows or []:
@@ -86,20 +88,27 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             "select": "event_at",
             "thread": f"eq.{thread}",
             "deleted_at": "is.null",
-            "order": "event_at.asc,id.asc",
+            "order": "event_at.asc,archived_at.asc,role.desc",
         }
         if month:
-            params["event_at"] = f"gte.{month}-01"
+            params["event_at"] = f"gte.{month}-01T00:00:00+08:00"
             year, _, mon = month.partition("-")
             try:
                 next_month = f"{int(year) + 1}-01" if mon == "12" else f"{year}-{int(mon) + 1:02d}"
-                params["and"] = f"(event_at.lt.{next_month}-01)"
+                params["and"] = f"(event_at.lt.{next_month}-01T00:00:00+08:00)"
             except ValueError:
                 pass
         rows = await _query_all(client, params)
         days: dict[str, int] = {}
         for row in rows or []:
-            day = str(row.get("event_at") or "")[:10]
+            raw = row.get("event_at") or ""
+            if raw:
+                try:
+                    day = datetime.fromisoformat(raw).astimezone(_CST).strftime("%Y-%m-%d")
+                except (ValueError, TypeError):
+                    day = raw[:10]
+            else:
+                day = ""
             if day:
                 days[day] = days.get(day, 0) + 1
         return {"days": [{"date": day, "count": count} for day, count in sorted(days.items())]}
@@ -120,14 +129,19 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             "limit": str(max(1, min(int(limit or 200), 500))),
         }
         if date:
-            params["event_at"] = f"gte.{date}T00:00:00+00:00"
-            params["and"] = f"(event_at.lt.{date}T23:59:59.999+00:00)"
-            params["order"] = "event_at.asc"
+            from datetime import date as date_cls
+            params["event_at"] = f"gte.{date}T00:00:00+08:00"
+            try:
+                next_day = (date_cls.fromisoformat(date) + timedelta(days=1)).isoformat()
+            except ValueError:
+                next_day = date
+            params["and"] = f"(event_at.lt.{next_day}T00:00:00+08:00)"
+            params["order"] = "event_at.asc,archived_at.asc,role.desc"
         elif before:
             params["event_at"] = f"lt.{before}"
-            params["order"] = "event_at.desc"
+            params["order"] = "event_at.desc,archived_at.desc,role.asc"
         else:
-            params["order"] = "event_at.desc"
+            params["order"] = "event_at.desc,archived_at.desc,role.asc"
         rows = await client.query(ARCHIVE_TABLE, params=params)
         if not date:
             rows = list(reversed(rows or []))

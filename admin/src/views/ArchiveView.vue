@@ -16,7 +16,7 @@ const message = useMessage()
 
 const threads = ref<ArchiveThread[]>([])
 const thread = ref('')
-const month = ref(new Date().toISOString().slice(0, 7))
+const month = ref(localDateStr().slice(0, 7))
 const days = ref<ArchiveDay[]>([])
 const selectedDate = ref('')
 const messages = ref<ArchiveMessage[]>([])
@@ -40,6 +40,23 @@ const threadOptions = computed(() =>
 )
 
 const threadLabel = (key: string) => (key === 'main' ? '主聊天' : key === 'hisense' ? '海信' : key)
+
+function toLocalHHMM(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function toLocalDateTime(iso: string): string {
+  if (!iso) return ''
+  const d = new Date(iso)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function localDateStr(): string {
+  const d = new Date()
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
 
 const selectedMessages = computed(() =>
   messages.value.filter((m) => selectedIds.value.has(m.id)),
@@ -177,7 +194,7 @@ function buildOriginalText(items: ArchiveMessage[]): string {
   return items
     .map((m) => {
       const who = m.role === 'user' ? '圆圆' : '沈予'
-      const when = (m.event_at || '').slice(0, 16).replace('T', ' ')
+      const when = toLocalDateTime(m.event_at || '')
       return `[${when}] ${who}：\n${m.content}`
     })
     .join('\n\n')
@@ -250,7 +267,7 @@ async function saveClip() {
                 empty: !cell,
                 'has-data': cell && cell.count > 0,
                 active: cell && cell.date === selectedDate,
-                today: cell && cell.date === new Date().toISOString().slice(0, 10),
+                today: cell && cell.date === localDateStr(),
               }"
               @click="cell && selectDay(cell.date, cell.count)"
             >
@@ -300,7 +317,7 @@ async function saveClip() {
           <div class="bubble" :class="msg.role">
             <div class="bubble-content">{{ msg.content }}</div>
             <div class="bubble-meta">
-              <span class="bubble-time">{{ (msg.event_at || '').slice(11, 16) }}</span>
+              <span class="bubble-time">{{ toLocalHHMM(msg.event_at || '') }}</span>
             </div>
             <NPopconfirm @positive-click="deleteMessage(msg.id)">
               <template #trigger>
