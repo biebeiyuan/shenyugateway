@@ -133,6 +133,7 @@ class FakeToolService:
         summary="",
         digest="",
         author="沈予",
+        mode="append",
     ):
         self.calls.append(
             {
@@ -144,6 +145,7 @@ class FakeToolService:
                 "summary": summary,
                 "digest": digest,
                 "author": author,
+                "mode": mode,
             }
         )
         return {"ok": True, "content": content, "period_type": period_type}
@@ -250,6 +252,18 @@ class FakeToolService:
     async def last_seen(self):
         self.calls.append({"tool": "shenyu_last_seen"})
         return {"at": "2026-06-03T00:00:00Z"}
+
+    async def conflict_list(self):
+        self.calls.append({"tool": "shenyu_conflict_list"})
+        return {"ok": True, "books": []}
+
+    async def conflict_read(self, book_id):
+        self.calls.append({"tool": "shenyu_conflict_read", "book_id": book_id})
+        return {"ok": True, "book": {"id": book_id}}
+
+    async def conflict_annotate(self, book_id, content):
+        self.calls.append({"tool": "shenyu_conflict_annotate", "book_id": book_id, "content": content})
+        return {"ok": True}
 
     async def supabase_query(
         self,
@@ -438,6 +452,9 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "created_to": "2026-06-01",
         },
         "shenyu_last_seen": {},
+        "shenyu_conflict_list": {},
+        "shenyu_conflict_read": {"book_id": "book-1"},
+        "shenyu_conflict_annotate": {"book_id": "book-1", "content": "我的批注"},
         "shenyu_update_mem_note": {"noteId": "note-1", "content": "正文", "status": "active"},
         "shenyu_bulk_update_mem_notes": {
             "note_ids": "note-1，note-2",
@@ -530,6 +547,7 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "summary": "",
             "digest": "",
             "author": "圆圆",
+            "mode": "append",
         },
         "shenyu_list_mem_notes": {
             "tool": "shenyu_list_mem_notes",
@@ -565,6 +583,13 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "created_to": "2026-06-01",
         },
         "shenyu_last_seen": {"tool": "shenyu_last_seen"},
+        "shenyu_conflict_list": {"tool": "shenyu_conflict_list"},
+        "shenyu_conflict_read": {"tool": "shenyu_conflict_read", "book_id": "book-1"},
+        "shenyu_conflict_annotate": {
+            "tool": "shenyu_conflict_annotate",
+            "book_id": "book-1",
+            "content": "我的批注",
+        },
         "shenyu_update_mem_note": {
             "tool": "shenyu_update_mem_note",
             "note_id": "note-1",
@@ -707,8 +732,8 @@ def test_gateway_broker_description_matches_scan_friendly_sample():
     assert "列 mem 便签" in description
     assert "shenyu_update_mem_note" in description
     assert "shenyu_add_calendar" in description
-    assert "写想记住的正文" in description
-    assert "之后反上来的也是正文" in description
+    assert "把今天的感触写进正文吧" in description
+    assert "它会像日历一样在我醒来的时候挂在旁边" in description
     assert "shenyu_get_meta_summaries" not in description
     assert properties["params"]["description"] == "选中工具的参数对象。"
     assert properties["arguments"]["description"] == "旧兼容字段，优先用 params。"
@@ -728,7 +753,7 @@ def test_add_calendar_tool_schema_exposes_only_body_and_period_fields():
     assert "写想记住的正文就好" in description
     assert "之后聊天上下文反上来的也是这份正文" in description
     assert properties["content"]["description"] == "日历日记正文。之后聊天上下文反上来的就是这个正文。"
-    assert set(properties) == {"content", "period_key", "period_type", "title", "author"}
+    assert set(properties) == {"content", "date", "period_key", "period_type", "mode", "title", "author"}
     assert "summary" not in properties
     assert "digest" not in properties
 

@@ -705,6 +705,13 @@ async def _stream_chat(
 
     # 确保 payload 中有 stream 标记。
     payload["stream"] = True
+    # 请求上游在流式结束时一并回报 usage（OpenAI 兼容上游默认不发；不支持的上游会忽略）。
+    if proto == "openai":
+        stream_options = payload.get("stream_options")
+        if not isinstance(stream_options, dict):
+            stream_options = {}
+        stream_options["include_usage"] = True
+        payload["stream_options"] = stream_options
 
     # 用 build_request + send(stream=True) 实现真正的流式传输。
     try:
@@ -733,6 +740,7 @@ async def _stream_chat(
             visible_output_sent = False
             tool_call_seen = False
             fallback_applied = False
+            stream_usage: dict[str, Any] = {}
             stream_chunk_id = _new_stream_chunk_id()
             stream_created = _now_ts()
             try:
@@ -777,6 +785,8 @@ async def _stream_chat(
                             data = json.loads(line[6:])
                             stream_chunk_id = data.get("id") or stream_chunk_id
                             stream_created = data.get("created") or stream_created
+                            if isinstance(data.get("usage"), dict):
+                                stream_usage.update(data["usage"])
                             choice = (data.get("choices") or [{}])[0]
                             delta = choice.get("delta", {})
                             if delta.get("tool_calls"):
@@ -830,7 +840,13 @@ async def _stream_chat(
                                     inline_memories=tag_filter.get_memories(),
                                 ),
                             )
-                        on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories(), fallback_applied)
+                        on_complete(
+                            clean_text,
+                            tag_filter.get_heartbeat(),
+                            tag_filter.get_memories(),
+                            fallback_applied,
+                            stream_usage or None,
+                        )
                     except Exception:
                         logger.exception("流式回调执行失败")
 
@@ -967,7 +983,13 @@ async def _stream_chat(
                                 inline_memories=tag_filter.get_memories(),
                             ),
                         )
-                    on_complete(clean_text, tag_filter.get_heartbeat(), tag_filter.get_memories(), fallback_applied)
+                    on_complete(
+                        clean_text,
+                        tag_filter.get_heartbeat(),
+                        tag_filter.get_memories(),
+                        fallback_applied,
+                        _anthropic_usage_to_openai(anthropic_usage) or None,
+                    )
                 except Exception:
                     logger.exception("流式回调执行失败")
 

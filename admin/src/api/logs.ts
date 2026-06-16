@@ -1,5 +1,12 @@
 import { api } from './http'
 
+export interface CacheUsage {
+  cache_read_input_tokens: number
+  cache_creation_input_tokens: number
+  hit: boolean
+  write: boolean
+}
+
 export interface LogEntry {
   id: string
   request_id?: string | null
@@ -26,6 +33,16 @@ export interface LogEntry {
   request_payloads_retained?: boolean
   upstream_payload_summary?: Record<string, any> | null
   system_additions_chars?: number | null
+  usage?: Record<string, any> | null
+  cache_usage?: CacheUsage | null
+}
+
+export interface ToolRoundEntry {
+  round: number
+  messages_count: number
+  stream?: boolean
+  usage?: Record<string, any>
+  tools: Array<{ name: string; cached_duplicate: boolean; args_preview: string }>
 }
 
 export interface LogDetail extends LogEntry {
@@ -35,6 +52,7 @@ export interface LogDetail extends LogEntry {
   prepared_messages_preview?: any[] | null
   upstream_payload: Record<string, any> | null
   tool_names_all?: string[] | null
+  internal_tool_rounds?: ToolRoundEntry[] | null
 }
 
 export interface LogsResponse {

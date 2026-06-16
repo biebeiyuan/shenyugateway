@@ -296,8 +296,12 @@ class ChatPipeline:
                 heartbeat_content: str = "",
                 inline_memories: Optional[list[str]] = None,
                 fallback_applied: bool = False,
+                usage: Optional[dict] = None,
             ):
                 log_entry["status"] = "ok"
+                if usage:
+                    log_entry["usage"] = usage
+                    log_entry["cache_usage"] = _cache_usage_summary(usage)
                 if fallback_applied:
                     log_entry["empty_visible_response_fallback"] = True
                     fallback_text, fallback_context = self.private_capture_fallback_text(

@@ -14,6 +14,41 @@ const loadingDet = ref(new Set<string>())
 const aTabs = ref<Record<string, string>>({})
 let timer: ReturnType<typeof setInterval> | null = null
 
+// 网关工具名 → 这条工具大致做了什么（给非技术视角看的）
+const GATEWAY_TOOL_HINTS: Record<string, string> = {
+  shenyu_recall: '翻找以前的事',
+  shenyu_recall_main_thread: '查最近主线对话',
+  shenyu_search_mem_notes: '搜便签',
+  shenyu_list_mem_notes: '列便签',
+  shenyu_write_mem_note: '写一条便签',
+  shenyu_update_mem_note: '改一条便签',
+  shenyu_bulk_update_mem_notes: '批量改便签',
+  shenyu_delete_mem_note: '删一条便签',
+  shenyu_add_calendar: '写一页日历日记',
+  shenyu_read_heartbeat: '读自己留的心跳',
+  shenyu_last_seen: '看上次聊了什么',
+  shenyu_conflict_list: '看矛盾书书架',
+  shenyu_conflict_read: '翻开一本矛盾书',
+  shenyu_conflict_annotate: '在矛盾书里批注',
+  shenyu_notebook_list: '看手边的事',
+  shenyu_notebook_write: '记一条手边的事',
+  shenyu_notebook_update: '改一条手边的事',
+  shenyu_supabase_guide: '查 Supabase 表结构',
+  shenyu_gateway_tool: '记忆库总入口（broker）',
+  supabase_query: '查 Supabase 表',
+  supabase_insert: '往 Supabase 写一行',
+  supabase_update: '改 Supabase 的行',
+  supabase_delete: '删 Supabase 的行',
+}
+
+function isGatewayTool(name: string): boolean {
+  return name.startsWith('shenyu_') || name.startsWith('supabase_')
+}
+
+function toolHint(name: string): string {
+  return GATEWAY_TOOL_HINTS[name] || ''
+}
+
 const TAB_NAMES = ['system', 'messages', 'upstream', 'tools', 'response', 'meta', 'raw'] as const
 const TAB_LABELS: Record<string, string> = {
   system: 'System', messages: 'Messages', upstream: 'Upstream',
@@ -64,6 +99,36 @@ function clsName(status: string): string {
 
 function timeStr(ts: string | null | undefined): string {
   return (ts || '').substring(11, 19)
+}
+
+function fmtNum(n: number): string {
+  if (n >= 1000) return (n / 1000).toFixed(n >= 10000 ? 0 : 1) + 'k'
+  return String(n)
+}
+
+// 从 usage 里取总 token 数，兼容 OpenAI / Anthropic 两种字段
+function totalTokens(log: LogEntry): number | null {
+  const u = log.usage
+  if (!u || typeof u !== 'object') return null
+  const total = u.total_tokens
+  if (typeof total === 'number' && total > 0) return total
+  const inTok = u.prompt_tokens ?? u.input_tokens
+  const outTok = u.completion_tokens ?? u.output_tokens
+  const sum = (typeof inTok === 'number' ? inTok : 0) + (typeof outTok === 'number' ? outTok : 0)
+  return sum > 0 ? sum : null
+}
+
+function tokenLabel(log: LogEntry): string {
+  const t = totalTokens(log)
+  return t === null ? '' : `${fmtNum(t)} tok`
+}
+
+// 命中缓存时返回 "⚡缓存 1.2k"，否则空串
+function cacheLabel(log: LogEntry): string {
+  const c = log.cache_usage
+  if (!c || !c.hit) return ''
+  const read = c.cache_read_input_tokens || 0
+  return read > 0 ? `⚡缓存 ${fmtNum(read)}` : '⚡缓存'
 }
 
 async function toggleDetail(id: string) {
@@ -148,10 +213,44 @@ function renderContent(detail: LogDetail, tab: string): string {
   if (tab === 'tools') {
     const names = detail.tool_names_all || detail.tool_names || []
     if (!names.length) return '(无工具)'
-    let html = names.map((n, i) => `${i + 1}. ${n}`).join('\n')
-    html += `\n\n总计 ${names.length} 个工具`
-    if (detail.has_internal_tools) html += '\n含内部工具'
-    return esc(html)
+
+    // 上半部分：保持原样，工具名清单
+    let listText = names.map((n, i) => `${i + 1}. ${n}`).join('\n')
+    listText += `\n\n总计 ${names.length} 个工具`
+    if (detail.has_internal_tools) listText += '\n含内部工具'
+    let out = `<div class="tools-list">${esc(listText)}</div>`
+
+    // 下半部分一：这条请求里，沈予实际调用了哪些网关工具、做了什么
+    const rounds = detail.internal_tool_rounds || []
+    const calls: Array<{ name: string; cached: boolean }> = []
+    if (Array.isArray(rounds)) {
+      for (const r of rounds) {
+        for (const t of r.tools || []) {
+          calls.push({ name: t.name, cached: !!t.cached_duplicate })
+        }
+      }
+    }
+    if (calls.length) {
+      const items = calls.map((c) => {
+        const hint = toolHint(c.name)
+        const cachedMark = c.cached ? '<span class="tc-cached">（命中缓存，未重复执行）</span>' : ''
+        return `<div class="tool-call-row"><span class="tc-call-name">🔧 ${esc(c.name)}</span>${hint ? `<span class="tc-call-hint">${esc(hint)}</span>` : ''}${cachedMark}</div>`
+      }).join('')
+      out += `<div class="tool-section"><div class="tool-section-title">本次调用的网关工具 · ${calls.length} 次</div>${items}</div>`
+    } else if (detail.has_internal_tools) {
+      out += `<div class="tool-section"><div class="tool-section-title">本次调用的网关工具</div><div class="tool-empty">这条请求挂了网关工具，但沈予没有实际调用。</div></div>`
+    }
+
+    // 下半部分二：这条请求上下文里展开的客户端工具（非网关的）
+    const clientTools = names.filter((n) => !isGatewayTool(n))
+    if (clientTools.length) {
+      const items = clientTools.map((n) => `<div class="tool-call-row"><span class="tc-call-name">🧩 ${esc(n)}</span></div>`).join('')
+      out += `<div class="tool-section"><div class="tool-section-title">上下文里的客户端工具 · ${clientTools.length} 个</div>${items}</div>`
+    } else {
+      out += `<div class="tool-section"><div class="tool-section-title">上下文里的客户端工具</div><div class="tool-empty">无（这条请求只带了网关工具）。</div></div>`
+    }
+
+    return out
   }
 
   if (tab === 'upstream') {
@@ -235,9 +334,9 @@ function renderContent(detail: LogDetail, tab: string): string {
         <NTag v-if="log.is_first_turn" size="tiny" :bordered="false" class="tag-f">首轮</NTag>
         <NTag v-if="log.stream" size="tiny" :bordered="false" class="tag-s">流式</NTag>
         <NTag v-if="log.tools_count" size="tiny" :bordered="false" class="tag-t">{{ log.tools_count }} tools</NTag>
-        <NTag size="tiny" :bordered="false" :class="log.status === 'error' ? 'tag-e' : 'tag-ok'">{{ log.status }}</NTag>
         <NTag size="tiny" :bordered="false" class="tag-d">{{ log.duration_ms }}ms</NTag>
-        <NTag v-if="log.request_id" size="tiny" :bordered="false" class="tag-d">{{ log.request_id }}</NTag>
+        <NTag v-if="tokenLabel(log)" size="tiny" :bordered="false" class="tag-tok">{{ tokenLabel(log) }}</NTag>
+        <NTag v-if="cacheLabel(log)" size="tiny" :bordered="false" class="tag-cache">{{ cacheLabel(log) }}</NTag>
         <span class="msg-count">{{ log.original_messages_count }}→{{ log.prepared_messages_count }}</span>
         <span class="arrow" :class="{ open: expIds.has(log.id) }">▶</span>
       </div>
@@ -346,6 +445,16 @@ function renderContent(detail: LogDetail, tab: string): string {
 .msg-count {
   color: #bbb;
   font-size: 11px;
+}
+
+:deep(.tag-tok) {
+  color: #6b7280;
+  background: #f3f4f6;
+}
+
+:deep(.tag-cache) {
+  color: #15803d;
+  background: #ecfdf3;
 }
 
 .arrow {
@@ -482,5 +591,54 @@ function renderContent(detail: LogDetail, tab: string): string {
   font-family: 'SF Mono', monospace;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+/* tools tab: 工具名清单 + 调用记录 + 客户端工具 */
+.tools-list {
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+.tool-section {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px dashed #e0e0e0;
+}
+
+.tool-section-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: #8b7082;
+  margin-bottom: 6px;
+}
+
+.tool-call-row {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 4px 0;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.tc-call-name {
+  font-weight: 600;
+  color: #0891b2;
+  font-family: 'SF Mono', monospace;
+}
+
+.tc-call-hint {
+  color: #4b5563;
+}
+
+.tc-cached {
+  color: #9ca3af;
+  font-size: 10px;
+}
+
+.tool-empty {
+  font-size: 11px;
+  color: #9ca3af;
 }
 </style>
