@@ -3,14 +3,27 @@ from __future__ import annotations
 import asyncio
 import json
 import tempfile
+from collections import deque
+from types import SimpleNamespace
 
 import gateway
 import pytest
+from fastapi import HTTPException
+from fastapi.responses import StreamingResponse
+from starlette.requests import Request
+from starlette.types import Scope
+
+from shenyu_gateway.chat_pipeline import ChatPipeline
 from shenyu_gateway.config import RuntimeConfig
 from shenyu_gateway.request_logs import (
+    _active_http_requests,
     _finalize_stale_tool_stream_log,
     _finalize_tool_stream_log,
+    _finish_http_request_event,
+    _http_request_diagnostics,
+    _http_request_events,
     _record_response_text,
+    _start_http_request_event,
 )
 from shenyu_gateway.schemas import ChatRequest
 from shenyu_gateway.sessions import SessionManager
@@ -43,6 +56,71 @@ from shenyu_gateway.upstream_adapter import (
 )
 
 
+class _FakeStore:
+    def __init__(self) -> None:
+        self.messages: list[dict] = []
+
+    def append_message(self, **kwargs):
+        self.messages.append(kwargs)
+
+    def touch_session(self, *args, **kwargs):
+        return None
+
+
+def _fake_request(headers: dict[str, str] | None = None) -> Request:
+    raw_headers = [
+        (key.lower().encode("latin-1"), value.encode("latin-1"))
+        for key, value in (headers or {}).items()
+    ]
+    scope: Scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/v1/chat/completions",
+        "headers": raw_headers,
+        "query_string": b"",
+        "server": ("testserver", 80),
+        "client": ("127.0.0.1", 12345),
+        "scheme": "http",
+    }
+    return Request(scope)
+
+
+def _test_pipeline(*, prepare_messages, nonstream_chat=None) -> ChatPipeline:
+    cfg = RuntimeConfig()
+    cfg.enable_gateway_tools = False
+    cfg.enable_upstream_tools = False
+    cfg.model_mapping = {}
+    store = _FakeStore()
+    return ChatPipeline(
+        cfg=cfg,
+        store=store,
+        prepare_messages=prepare_messages,
+        build_upstream_request=lambda *args, **kwargs: None,
+        run_internal_tool_loop=lambda *args, **kwargs: None,
+        run_internal_tool_loop_stream=lambda *args, **kwargs: None,
+        stream_chat=lambda *args, **kwargs: None,
+        nonstream_chat=nonstream_chat or (lambda *args, **kwargs: None),
+        upstream_for_hisense=lambda is_hisense=False: {
+            "chat_url": "https://example.test/v1/chat/completions",
+            "scope": "default",
+            "protocol": "openai",
+            "api_key": "test",
+        },
+        mapped_model_name=lambda model: model,
+        private_capture_fallback_text=lambda *args, **kwargs: ("fallback", "generic"),
+        private_capture_kinds=lambda *args, **kwargs: [],
+        finalize_assistant_private_content=lambda message, **kwargs: (
+            message.get("content") or "",
+            "",
+            [],
+            {"applied": False},
+        ),
+        schedule_inline_memory_capture=lambda *args, **kwargs: None,
+        store_heartbeat=lambda *args, **kwargs: None,
+        mark_context_consumed=lambda *args, **kwargs: None,
+    )
+
+
 def test_require_session_store_raises_clear_runtime_error_when_uninitialized():
     old_store = gateway.session_store
     gateway.session_store = None
@@ -51,6 +129,125 @@ def test_require_session_store_raises_clear_runtime_error_when_uninitialized():
             gateway._require_session_store()
     finally:
         gateway.session_store = old_store
+
+
+def test_chat_pipeline_logs_request_before_prepare_messages_fails(monkeypatch):
+    from shenyu_gateway import chat_pipeline
+
+    request_logs = deque(maxlen=30)
+    monkeypatch.setattr(chat_pipeline, "_request_logs", request_logs)
+
+    async def prepare_messages(_request, _body):
+        raise RuntimeError("context store stalled")
+
+    pipeline = _test_pipeline(prepare_messages=prepare_messages)
+    body = ChatRequest(model="test-model", messages=[{"role": "user", "content": "hello"}])
+
+    with pytest.raises(RuntimeError, match="context store stalled"):
+        asyncio.run(pipeline.run(_fake_request({"X-Shenyu-Session-Tag": "new-test-thread"}), body))
+
+    assert len(request_logs) == 1
+    entry = request_logs[0]
+    assert entry["status"] == "error"
+    assert entry["stage"] == "prepare_messages"
+    assert entry["session_tag"] == "new-test-thread"
+    assert entry["original_messages_count"] == 1
+    assert entry["error"] == "context store stalled"
+
+
+def test_chat_pipeline_updates_single_early_log_on_success(monkeypatch):
+    from shenyu_gateway import chat_pipeline
+
+    request_logs = deque(maxlen=30)
+    monkeypatch.setattr(chat_pipeline, "_request_logs", request_logs)
+
+    session = {"id": "session-1", "session_tag": "new-test-thread", "message_count": 0}
+
+    async def prepare_messages(_request, _body):
+        return (
+            [{"role": "user", "content": "hello"}],
+            {
+                "session": session,
+                "is_first_turn": True,
+                "client_message_window": {},
+                "cache_layers": {},
+                "is_hisense": False,
+                "upstream": {
+                    "chat_url": "https://example.test/v1/chat/completions",
+                    "scope": "default",
+                    "protocol": "openai",
+                    "api_key": "test",
+                },
+            },
+        )
+
+    async def build_upstream_request(*_args, **_kwargs):
+        return (
+            {"model": "test-model", "messages": [{"role": "user", "content": "hello"}]},
+            {},
+            "test-model",
+            {"enabled": False, "protocol": "openai", "breakpoints": []},
+            {
+                "chat_url": "https://example.test/v1/chat/completions",
+                "scope": "default",
+                "protocol": "openai",
+                "api_key": "test",
+            },
+        )
+
+    async def nonstream_chat(*_args, **_kwargs):
+        return {
+            "choices": [{"message": {"role": "assistant", "content": "ok"}}],
+            "usage": {"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
+        }
+
+    pipeline = _test_pipeline(prepare_messages=prepare_messages, nonstream_chat=nonstream_chat)
+    pipeline.build_upstream_request = build_upstream_request
+    body = ChatRequest(model="test-model", messages=[{"role": "user", "content": "hello"}])
+
+    result = asyncio.run(pipeline.run(_fake_request({"X-Shenyu-Session-Tag": "new-test-thread"}), body))
+
+    assert result["choices"][0]["message"]["content"] == "ok"
+    assert len(request_logs) == 1
+    entry = request_logs[0]
+    assert entry["status"] == "ok"
+    assert entry["stage"] == "plain_upstream_path"
+    assert entry["session_tag"] == "new-test-thread"
+    assert entry["upstream_url"] == "https://example.test/v1/chat/completions"
+    assert entry["response_preview"] == "ok"
+
+
+def test_http_request_diagnostics_track_active_and_recent_events():
+    _active_http_requests.clear()
+    _http_request_events.clear()
+
+    _start_http_request_event(
+        request_id="req-1",
+        method="POST",
+        path="/v1/chat/completions",
+        client="127.0.0.1",
+        session_tag="session-a",
+        client_name="operit",
+        now_iso="2026-06-17T00:00:00+00:00",
+    )
+
+    diagnostics = _http_request_diagnostics()
+    assert diagnostics["active"][0]["request_id"] == "req-1"
+    assert diagnostics["active"][0]["session_tag"] == "session-a"
+    assert "Authorization" not in json.dumps(diagnostics)
+
+    _finish_http_request_event(
+        request_id="req-1",
+        now_iso="2026-06-17T00:00:01+00:00",
+        duration_ms=1000,
+        http_status=200,
+    )
+
+    diagnostics = _http_request_diagnostics()
+    assert diagnostics["active"] == []
+    assert diagnostics["recent"][0]["status"] == "complete"
+    assert diagnostics["recent"][0]["http_status"] == 200
+    assert diagnostics["recent"][0]["duration_ms"] == 1000
 
 
 def test_runtime_config_does_not_cap_internal_tool_rounds_at_eight(monkeypatch):

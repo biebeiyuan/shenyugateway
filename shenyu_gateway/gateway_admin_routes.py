@@ -8,7 +8,7 @@ from fastapi.responses import JSONResponse
 
 from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
-from .request_logs import _finalize_stale_tool_stream_logs, _retain_request_log_payloads
+from .request_logs import _finalize_stale_tool_stream_logs, _http_request_diagnostics, _retain_request_log_payloads
 from .runtime import iso_now as _iso_now
 from .schemas import (
     HeartbeatCreateRequest,
@@ -126,11 +126,14 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             "logs": {
                 "count": len(logs),
                 "capacity": getattr(deps.request_logs, "maxlen", None),
+                "http_requests": _http_request_diagnostics(),
                 "latest": {
                     "id": latest_log.get("id"),
                     "request_id": latest_log.get("request_id"),
                     "status": latest_log.get("status"),
+                    "stage": latest_log.get("stage"),
                     "timestamp": latest_log.get("timestamp"),
+                    "last_activity_at": latest_log.get("last_activity_at"),
                     "tools_count": latest_log.get("tools_count"),
                     "duration_ms": latest_log.get("duration_ms"),
                 } if latest_log else None,
@@ -399,6 +402,8 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 "id": item["id"],
                 "request_id": item.get("request_id"),
                 "timestamp": item["timestamp"],
+                "last_activity_at": item.get("last_activity_at"),
+                "stage": item.get("stage"),
                 "model": item["model"],
                 "client_model": item.get("client_model", item["model"]),
                 "upstream_model": item.get("upstream_model", item["model"]),

@@ -53,32 +53,36 @@ class ChatPipeline:
 
     async def run(self, request: Request, body: Any):
         t0 = _time.monotonic()
-
-        prepared_messages, meta = await self.prepare_messages(request, body)
-        sessions = SessionManager(self.store, self.cfg)
-        session = meta["session"]
-        session_id = session["id"]
-        prepared_messages_for_log, _ = _trim_client_image_blocks(prepared_messages, keep_recent_messages=0)
-        sessions.log_input_messages(session_id, prepared_messages_for_log)
-
-        merged_tools = merge_tools(body.tools, self.cfg)
-        has_gateway_managed_tools = any(
-            is_gateway_native_tool(tool.get("function", {}).get("name", ""))
-            for tool in merged_tools
-        )
-
-        log_entry = self._build_log_entry(
-            request=request,
-            body=body,
-            prepared_messages=prepared_messages,
-            prepared_messages_for_log=prepared_messages_for_log,
-            meta=meta,
-            merged_tools=merged_tools,
-            has_gateway_managed_tools=has_gateway_managed_tools,
-        )
+        log_entry = self._build_initial_log_entry(request=request, body=body)
+        _request_logs.appendleft(log_entry)
 
         try:
+            self._mark_log_stage(log_entry, "prepare_messages")
+            prepared_messages, meta = await self.prepare_messages(request, body)
+            sessions = SessionManager(self.store, self.cfg)
+            session = meta["session"]
+            session_id = session["id"]
+            prepared_messages_for_log, _ = _trim_client_image_blocks(prepared_messages, keep_recent_messages=0)
+            sessions.log_input_messages(session_id, prepared_messages_for_log)
+
+            merged_tools = merge_tools(body.tools, self.cfg)
+            has_gateway_managed_tools = any(
+                is_gateway_native_tool(tool.get("function", {}).get("name", ""))
+                for tool in merged_tools
+            )
+
+            self._update_log_entry(
+                log_entry=log_entry,
+                body=body,
+                prepared_messages=prepared_messages,
+                prepared_messages_for_log=prepared_messages_for_log,
+                meta=meta,
+                merged_tools=merged_tools,
+                has_gateway_managed_tools=has_gateway_managed_tools,
+            )
+
             if has_gateway_managed_tools:
+                self._mark_log_stage(log_entry, "gateway_tool_path")
                 return await self._run_gateway_tool_path(
                     request=request,
                     body=body,
@@ -88,6 +92,7 @@ class ChatPipeline:
                     t0=t0,
                 )
 
+            self._mark_log_stage(log_entry, "plain_upstream_path")
             return await self._run_plain_upstream_path(
                 request=request,
                 body=body,
@@ -104,20 +109,94 @@ class ChatPipeline:
             raise
         finally:
             log_entry["duration_ms"] = int((_time.monotonic() - t0) * 1000)
-            _request_logs.appendleft(log_entry)
+            log_entry["last_activity_at"] = _iso_now()
 
-    def _build_log_entry(
+    def _build_initial_log_entry(self, *, request: Request, body: Any) -> dict:
+        log_id = uuid.uuid4().hex[:8]
+        request_id = getattr(request.state, "shenyu_request_id", log_id)
+        now_value = _iso_now()
+        return {
+            "id": log_id,
+            "request_id": request_id,
+            "timestamp": now_value,
+            "last_activity_at": now_value,
+            "stage": "received",
+            "model": body.model,
+            "client_model": body.model,
+            "upstream_model": body.model,
+            "model_mapped": False,
+            "stream": body.stream,
+            "session_tag": request.headers.get("X-Shenyu-Session-Tag")
+            or request.headers.get("X-Session-Tag")
+            or "unknown",
+            "is_first_turn": False,
+            "original_messages_count": len(body.messages),
+            "prepared_messages_count": 0,
+            "client_message_window": {},
+            "cold_start": {
+                "injected": False,
+                "snapshot_id": None,
+                "reason": None,
+                "source_message_count": 0,
+                "source_session_tags": [],
+                "bridge_messages": 0,
+            },
+            "system_additions_preview": "",
+            "system_additions_full": None,
+            "system_additions_chars": 0,
+            "tools_count": len(body.tools or []),
+            "tool_names": [
+                tool.get("function", {}).get("name", "")
+                for tool in (body.tools or [])[:20]
+                if isinstance(tool, dict)
+            ],
+            "tool_names_all": [
+                tool.get("function", {}).get("name", "")
+                for tool in (body.tools or [])
+                if isinstance(tool, dict)
+            ],
+            "has_internal_tools": False,
+            "upstream_url": "",
+            "upstream_scope": "unknown",
+            "request_payloads_retained": _retain_request_log_payloads(),
+            "prepared_messages": None,
+            "prepared_messages_preview": [],
+            "upstream_payload": None,
+            "upstream_payload_summary": None,
+            "cache_layers": {},
+            "prompt_cache": {
+                "enabled": False,
+                "protocol": "unknown",
+                "upstream_scope": "unknown",
+                "breakpoints": [],
+                "note": "Request log was created before context preparation finished.",
+            },
+            "usage": None,
+            "cache_usage": _cache_usage_summary({}),
+            "status": "preparing",
+            "duration_ms": 0,
+            "error": None,
+            "response_preview": None,
+            "response_full": None,
+            "empty_visible_response_fallback": False,
+            "empty_visible_response_fallback_detail": None,
+        }
+
+    def _mark_log_stage(self, log_entry: dict, stage: str) -> None:
+        log_entry["stage"] = stage
+        log_entry["last_activity_at"] = _iso_now()
+
+    def _update_log_entry(
         self,
         *,
-        request: Request,
+        log_entry: dict,
         body: Any,
         prepared_messages: list[dict],
         prepared_messages_for_log: list[dict],
         meta: dict,
         merged_tools: list[dict],
         has_gateway_managed_tools: bool,
-    ) -> dict:
-        log_id = uuid.uuid4().hex[:8]
+    ) -> None:
         request_upstream = meta.get("upstream") or self.upstream_for_hisense(meta.get("is_hisense", False))
         sys_parts = [
             msg.get("content", "")
@@ -125,12 +204,12 @@ class ChatPipeline:
             if msg.get("role") == "system"
         ]
         system_additions = "\n\n---\n\n".join(sys_parts)
-        retain_payloads = _retain_request_log_payloads()
+        retain_payloads = bool(log_entry.get("request_payloads_retained"))
         upstream_model = self.mapped_model_name(body.model)
-        return {
-            "id": log_id,
-            "request_id": getattr(request.state, "shenyu_request_id", log_id),
-            "timestamp": _iso_now(),
+        log_entry.update({
+            "stage": "prepared",
+            "prepared_at": _iso_now(),
+            "last_activity_at": _iso_now(),
             "model": body.model,
             "client_model": body.model,
             "upstream_model": upstream_model,
@@ -183,7 +262,7 @@ class ChatPipeline:
             "response_full": None,
             "empty_visible_response_fallback": False,
             "empty_visible_response_fallback_detail": None,
-        }
+        })
 
     async def _run_gateway_tool_path(
         self,
@@ -196,8 +275,10 @@ class ChatPipeline:
         t0: float,
     ):
         if body.stream:
+            log_entry["status"] = "streaming_tools"
+            _mark_tool_stream_activity(log_entry)
+
             async def _tool_loop_stream():
-                log_entry["status"] = "streaming_tools"
                 _mark_tool_stream_activity(log_entry)
                 try:
                     async for chunk in self.run_internal_tool_loop_stream(

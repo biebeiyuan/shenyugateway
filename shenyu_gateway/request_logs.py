@@ -13,6 +13,8 @@ from shenyu_gateway.utils import shorten as _shorten
 
 
 _request_logs: deque = deque(maxlen=30)
+_http_request_events: deque = deque(maxlen=60)
+_active_http_requests: dict[str, dict[str, Any]] = {}
 _TOOL_STREAM_STALE_SECONDS = 30.0
 
 
@@ -37,6 +39,63 @@ def _mark_tool_stream_activity(log_entry: Optional[dict]) -> None:
         now_value = _time.monotonic()
         log_entry.setdefault("_tool_stream_started_monotonic", now_value)
         log_entry["_tool_stream_last_activity_monotonic"] = now_value
+
+
+def _start_http_request_event(
+    *,
+    request_id: str,
+    method: str,
+    path: str,
+    client: str = "",
+    session_tag: str = "",
+    client_name: str = "",
+    now_iso: str = "",
+) -> None:
+    event = {
+        "request_id": request_id,
+        "method": method,
+        "path": path,
+        "client": client,
+        "session_tag": session_tag,
+        "client_name": client_name,
+        "started_at": now_iso,
+        "last_activity_at": now_iso,
+        "status": "active",
+        "duration_ms": 0,
+        "http_status": None,
+        "error": None,
+    }
+    _active_http_requests[request_id] = event
+    _http_request_events.appendleft(event)
+
+
+def _finish_http_request_event(
+    *,
+    request_id: str,
+    now_iso: str = "",
+    duration_ms: int = 0,
+    http_status: Optional[int] = None,
+    error: Optional[str] = None,
+) -> None:
+    event = _active_http_requests.pop(request_id, None)
+    if event is None:
+        return
+    event["last_activity_at"] = now_iso
+    event["duration_ms"] = duration_ms
+    event["http_status"] = http_status
+    if error:
+        event["status"] = "error"
+        event["error"] = error[:500]
+    else:
+        event["status"] = "complete"
+
+
+def _http_request_diagnostics(limit: int = 20) -> dict[str, Any]:
+    return {
+        "active": list(_active_http_requests.values()),
+        "recent": list(_http_request_events)[:limit],
+        "capacity": getattr(_http_request_events, "maxlen", None),
+    }
 
 
 def _finalize_stale_tool_stream_log(
