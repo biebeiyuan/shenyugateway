@@ -411,6 +411,8 @@ def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
     log_id = log.get("id") or "?"
     request_id = log.get("request_id") or ""
     timestamp = log.get("timestamp") or ""
+    stage = log.get("stage") or ""
+    last_activity = log.get("last_activity_at") or ""
     model = log.get("client_model") or log.get("model") or "?"
     duration = log.get("duration_ms")
     stream = log.get("stream")
@@ -423,6 +425,13 @@ def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
     if request_id:
         head += f" request_id={request_id}"
     print(head)
+    stage_bits = []
+    if stage:
+        stage_bits.append(f"stage={stage}")
+    if last_activity:
+        stage_bits.append(f"last_activity_at={last_activity}")
+    if stage_bits:
+        print("  " + " | ".join(stage_bits))
     print(
         "  "
         + " | ".join(
@@ -475,6 +484,85 @@ def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
     if detail:
         _print_detail_sections(log)
     print()
+
+
+def _print_debug_summary(data: dict[str, Any]) -> None:
+    logs = data.get("logs") if isinstance(data.get("logs"), dict) else {}
+    http_requests = logs.get("http_requests") if isinstance(logs.get("http_requests"), dict) else {}
+    active = http_requests.get("active") if isinstance(http_requests.get("active"), list) else []
+    recent = http_requests.get("recent") if isinstance(http_requests.get("recent"), list) else []
+    latest = logs.get("latest") if isinstance(logs.get("latest"), dict) else {}
+    upstream = data.get("upstream") if isinstance(data.get("upstream"), dict) else {}
+    default_upstream = upstream.get("default") if isinstance(upstream.get("default"), dict) else {}
+
+    print("# gateway debug")
+    print(f"generated_at={data.get('generated_at')}")
+    if default_upstream:
+        print(
+            "upstream: "
+            + " | ".join(
+                [
+                    f"chat_url={default_upstream.get('chat_url')}",
+                    f"protocol={default_upstream.get('protocol')}",
+                    f"api_key_configured={default_upstream.get('api_key_configured')}",
+                ]
+            )
+        )
+    print(
+        "logs: "
+        + " | ".join(
+            [
+                f"count={logs.get('count')}",
+                f"capacity={logs.get('capacity')}",
+            ]
+        )
+    )
+    if latest:
+        print(
+            "latest_log: "
+            + " | ".join(
+                [
+                    f"id={latest.get('id')}",
+                    f"request_id={latest.get('request_id')}",
+                    f"status={latest.get('status')}",
+                    f"stage={latest.get('stage')}",
+                    f"last_activity_at={latest.get('last_activity_at')}",
+                    f"duration_ms={latest.get('duration_ms')}",
+                ]
+            )
+        )
+    print(f"active_http_requests={len(active)} recent_http_requests={len(recent)}")
+    for item in active[:10]:
+        if not isinstance(item, dict):
+            continue
+        print(
+            "  active: "
+            + " | ".join(
+                [
+                    f"request_id={item.get('request_id')}",
+                    f"session={item.get('session_tag')}",
+                    f"client={item.get('client_name')}",
+                    f"started_at={item.get('started_at')}",
+                    f"last_activity_at={item.get('last_activity_at')}",
+                    f"duration_ms={item.get('duration_ms')}",
+                ]
+            )
+        )
+    for item in recent[:5]:
+        if not isinstance(item, dict):
+            continue
+        print(
+            "  recent: "
+            + " | ".join(
+                [
+                    f"request_id={item.get('request_id')}",
+                    f"status={item.get('status')}",
+                    f"http_status={item.get('http_status')}",
+                    f"session={item.get('session_tag')}",
+                    f"duration_ms={item.get('duration_ms')}",
+                ]
+            )
+        )
 
 
 def _print_detail_sections(log: dict[str, Any]) -> None:
@@ -576,7 +664,7 @@ def command_api(args: argparse.Namespace) -> int:
         if args.raw:
             print(_json_dumps(data))
         else:
-            print(_json_dumps(data))
+            _print_debug_summary(data)
         return 0
 
     if args.log_id:

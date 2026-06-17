@@ -1,5 +1,4 @@
 import argparse
-
 from scripts import vps_gateway_logs as logs
 
 
@@ -58,3 +57,61 @@ def test_container_label_takes_priority_before_regex_match():
     assert label_lookup in remote
     assert match_lookup in remote
     assert remote.index(label_lookup) < remote.index(match_lookup)
+
+
+def test_log_summary_prints_stage_and_last_activity(capsys):
+    logs._print_log_summary(
+        {
+            "id": "abc123",
+            "request_id": "req123",
+            "timestamp": "2026-06-17T00:00:00+00:00",
+            "stage": "prepare_messages",
+            "last_activity_at": "2026-06-17T00:00:01+00:00",
+            "status": "preparing",
+            "client_model": "test-model",
+            "stream": True,
+            "session_tag": "test-session",
+            "duration_ms": 1000,
+            "tools_count": 0,
+        }
+    )
+
+    output = capsys.readouterr().out
+    assert "stage=prepare_messages" in output
+    assert "last_activity_at=2026-06-17T00:00:01+00:00" in output
+
+
+def test_debug_summary_prints_active_http_requests(capsys):
+    logs._print_debug_summary(
+        {
+            "ok": True,
+            "logs": {
+                "latest": {
+                    "id": "log1",
+                    "request_id": "req1",
+                    "status": "preparing",
+                    "stage": "prepare_messages",
+                    "last_activity_at": "2026-06-17T00:00:01+00:00",
+                    "duration_ms": 1000,
+                },
+                "http_requests": {
+                    "active": [
+                        {
+                            "request_id": "req1",
+                            "session_tag": "test-session",
+                            "client_name": "operit",
+                            "started_at": "2026-06-17T00:00:00+00:00",
+                            "last_activity_at": "2026-06-17T00:00:01+00:00",
+                            "duration_ms": 0,
+                        }
+                    ],
+                    "recent": [],
+                },
+            },
+        }
+    )
+
+    output = capsys.readouterr().out
+    assert "# gateway debug" in output
+    assert "active_http_requests=1" in output
+    assert "active: request_id=req1" in output
