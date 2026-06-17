@@ -64,6 +64,8 @@ class RuntimeConfig:
         self.upstream_proxy: str = os.getenv("UPSTREAM_PROXY", "").strip()
         self.upstream_trust_env: bool = _env_bool("UPSTREAM_TRUST_ENV", False)
         self.enable_openai_cache_control: bool = _env_bool("ENABLE_OPENAI_CACHE_CONTROL", True)
+        self.upstream_provider_order_enabled: bool = _env_bool("UPSTREAM_PROVIDER_ORDER_ENABLED", False)
+        self.upstream_provider_order: list[str] = self._load_provider_order()
         self.hisense_upstream_url: str = os.getenv("HISENSE_UPSTREAM_URL", "").strip()
         self.hisense_api_key: str = os.getenv("HISENSE_API_KEY", "").strip()
         self.hisense_protocol: str = os.getenv("HISENSE_PROTOCOL", "").strip().lower()
@@ -146,6 +148,8 @@ class RuntimeConfig:
             "upstream_proxy": self.upstream_proxy,
             "upstream_trust_env": self.upstream_trust_env,
             "enable_openai_cache_control": self.enable_openai_cache_control,
+            "upstream_provider_order_enabled": self.upstream_provider_order_enabled,
+            "upstream_provider_order": self.upstream_provider_order,
             "hisense_upstream_url": self.hisense_upstream_url,
             "hisense_api_key": mask(self.hisense_api_key),
             "hisense_protocol": self.hisense_protocol,
@@ -227,6 +231,28 @@ class RuntimeConfig:
             for key, value in data.items()
             if str(key).strip() and str(value).strip()
         }
+
+    def _load_provider_order(self) -> list[str]:
+        raw = os.getenv("UPSTREAM_PROVIDER_ORDER", "").strip()
+        if not raw:
+            return []
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = raw.split(",")
+        if isinstance(data, str):
+            data = [data]
+        if not isinstance(data, list):
+            return []
+        seen: set[str] = set()
+        providers: list[str] = []
+        for item in data:
+            provider = str(item or "").strip()
+            if not provider or provider in seen:
+                continue
+            seen.add(provider)
+            providers.append(provider)
+        return providers
 
     def _normalize_tool_mode(self, value: Any) -> str:
         raw = str(value or "").strip().lower()

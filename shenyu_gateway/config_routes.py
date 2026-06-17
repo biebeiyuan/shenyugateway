@@ -31,6 +31,8 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "upstream_proxy": cfg.upstream_proxy,
         "upstream_trust_env": cfg.upstream_trust_env,
         "enable_openai_cache_control": cfg.enable_openai_cache_control,
+        "upstream_provider_order_enabled": cfg.upstream_provider_order_enabled,
+        "upstream_provider_order": cfg.upstream_provider_order,
         "hisense_upstream_url": cfg.hisense_upstream_url,
         "hisense_api_key": cfg.hisense_api_key,
         "hisense_protocol": cfg.hisense_protocol,
@@ -104,6 +106,8 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "upstream_proxy": "UPSTREAM_PROXY",
             "upstream_trust_env": "UPSTREAM_TRUST_ENV",
             "enable_openai_cache_control": "ENABLE_OPENAI_CACHE_CONTROL",
+            "upstream_provider_order_enabled": "UPSTREAM_PROVIDER_ORDER_ENABLED",
+            "upstream_provider_order": "UPSTREAM_PROVIDER_ORDER",
             "hisense_upstream_url": "HISENSE_UPSTREAM_URL",
             "hisense_api_key": "HISENSE_API_KEY",
             "hisense_protocol": "HISENSE_PROTOCOL",
@@ -163,6 +167,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "upstream_proxy",
             "upstream_trust_env",
             "enable_openai_cache_control",
+            "upstream_provider_order_enabled",
             "hisense_upstream_url",
             "hisense_api_key",
             "hisense_protocol",
@@ -217,6 +222,26 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                 setattr(cfg, field, value)
                 changed.append(field)
                 env_updates[env_names[field]] = str(value).lower() if isinstance(value, bool) else value
+
+        if body.upstream_provider_order is not None:
+            raw_order = body.upstream_provider_order
+            if isinstance(raw_order, str):
+                raw_items = raw_order.split(",")
+            elif isinstance(raw_order, list):
+                raw_items = raw_order
+            else:
+                raw_items = []
+            seen: set[str] = set()
+            provider_order: list[str] = []
+            for item in raw_items:
+                provider = str(item or "").strip()
+                if not provider or provider in seen:
+                    continue
+                seen.add(provider)
+                provider_order.append(provider)
+            cfg.upstream_provider_order = provider_order
+            changed.append("upstream_provider_order")
+            env_updates[env_names["upstream_provider_order"]] = json.dumps(provider_order, ensure_ascii=False)
 
         if body.max_internal_tool_rounds is not None:
             cfg.max_internal_tool_rounds = max(1, body.max_internal_tool_rounds)

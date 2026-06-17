@@ -139,6 +139,29 @@ def mapped_model_name(cfg: Any, model_name: str) -> str:
     return cfg.model_mapping.get(model, model)
 
 
+def upstream_provider_order(cfg: Any, proto: str) -> list[str]:
+    if proto != "openai":
+        return []
+    if not bool(getattr(cfg, "upstream_provider_order_enabled", False)):
+        return []
+    raw_order = getattr(cfg, "upstream_provider_order", [])
+    if isinstance(raw_order, str):
+        raw_items = raw_order.split(",")
+    elif isinstance(raw_order, list):
+        raw_items = raw_order
+    else:
+        return []
+    seen: set[str] = set()
+    providers: list[str] = []
+    for item in raw_items:
+        provider = str(item or "").strip()
+        if not provider or provider in seen:
+            continue
+        seen.add(provider)
+        providers.append(provider)
+    return providers
+
+
 def make_upstream_http_client(cfg: Any) -> httpx.AsyncClient:
     kwargs: dict[str, Any] = {
         "timeout": httpx.Timeout(connect=15.0, read=None, write=30.0, pool=15.0),
@@ -199,7 +222,14 @@ async def call_upstream_json_at(
     except httpx.TimeoutException as exc:
         raise HTTPException(status_code=504, detail=f"连接上游超时 {chat_url}: {exc}")
     except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=exc.response.status_code, detail=exc.response.text[:500])
+        detail = exc.response.text[:500]
+        if payload.get("provider"):
+            detail = (
+                f"{detail}\n\n"
+                "提示: 本次请求包含 provider.order。若上游不支持 provider 参数、provider 名称不匹配，"
+                "或当前模型不能走指定 provider，上游通常会在这里返回 400/422/404 类错误。"
+            )
+        raise HTTPException(status_code=exc.response.status_code, detail=detail[:900])
     except httpx.HTTPError as exc:
         logger.exception("Upstream request failed for %s", chat_url)
         raise HTTPException(status_code=502, detail=f"上游请求失败 {chat_url}: {exc}")
@@ -280,6 +310,9 @@ async def build_upstream_request(
     payload = {"model": model_name, "messages": cache_messages, "max_tokens": body.max_tokens or 4096}
     if body.temperature is not None:
         payload["temperature"] = body.temperature
+    provider_order = upstream_provider_order(cfg, proto)
+    if provider_order:
+        payload["provider"] = {"order": provider_order}
     if cache_tools:
         payload["tools"] = cache_tools
     headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
@@ -313,7 +346,14 @@ async def stream_upstream_openai_chunks(
     if resp.status_code >= 400:
         error_body = await resp.aread()
         await resp.aclose()
-        raise HTTPException(status_code=resp.status_code, detail=error_body.decode("utf-8", errors="replace")[:500])
+        detail = error_body.decode("utf-8", errors="replace")[:500]
+        if stream_payload.get("provider"):
+            detail = (
+                f"{detail}\n\n"
+                "提示: 本次请求包含 provider.order。若上游不支持 provider 参数、provider 名称不匹配，"
+                "或当前模型不能走指定 provider，上游通常会在这里返回 400/422/404 类错误。"
+            )
+        raise HTTPException(status_code=resp.status_code, detail=detail[:900])
 
     try:
         if proto == "openai":

@@ -8,6 +8,8 @@ export interface GatewayConfig {
   upstream_proxy?: string
   upstream_trust_env?: boolean
   enable_openai_cache_control?: boolean
+  upstream_provider_order_enabled?: boolean
+  upstream_provider_order?: string[]
   hisense_upstream_url?: string
   hisense_api_key?: string
   hisense_protocol?: string
@@ -72,6 +74,8 @@ export interface HealthStatus {
   upstream_proxy_configured?: boolean
   upstream_trust_env?: boolean
   enable_openai_cache_control?: boolean
+  upstream_provider_order_enabled?: boolean
+  upstream_provider_order?: string[]
   hisense_upstream?: string
   hisense_upstream_chat_url?: string
   hisense_upstream_scope?: string

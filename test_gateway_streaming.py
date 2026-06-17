@@ -464,6 +464,60 @@ def test_build_upstream_request_omits_all_tools_when_upstream_tools_disabled(mon
     assert "tools" not in payload
 
 
+def test_build_upstream_request_includes_provider_order_for_openai(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "openai")
+    monkeypatch.setenv("UPSTREAM_URL", "https://example.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER_ENABLED", "true")
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER", '["Amazon Bedrock", "OpenAI"]')
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert payload["provider"] == {"order": ["Amazon Bedrock", "OpenAI"]}
+
+
+def test_build_upstream_request_omits_provider_order_for_anthropic(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "anthropic")
+    monkeypatch.setenv("UPSTREAM_URL", "https://api.anthropic.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER_ENABLED", "true")
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER", '["Amazon Bedrock"]')
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert "provider" not in payload
+
+
 def test_sse_response_disables_proxy_buffering():
     async def generate():
         yield "data: [DONE]\n\n"

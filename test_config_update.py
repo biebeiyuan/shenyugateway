@@ -33,6 +33,8 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     cfg = RuntimeConfig()
 
     assert cfg.enable_openai_cache_control is True
+    assert cfg.upstream_provider_order_enabled is False
+    assert cfg.upstream_provider_order == []
     assert cfg.inject_inline_memory_prompt is True
     assert cfg.enable_inline_memory_capture is True
     assert cfg.inject_mem_notes is True
@@ -47,6 +49,22 @@ def test_blank_max_client_messages_still_means_unlimited(monkeypatch):
     cfg = RuntimeConfig()
 
     assert cfg.max_client_messages is None
+
+
+def test_provider_order_env_accepts_json_and_dedupes(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER", '["Amazon Bedrock", "Amazon Bedrock", "OpenAI"]')
+
+    cfg = RuntimeConfig()
+
+    assert cfg.upstream_provider_order == ["Amazon Bedrock", "OpenAI"]
+
+
+def test_provider_order_env_accepts_comma_list(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER", "Amazon Bedrock, OpenAI")
+
+    cfg = RuntimeConfig()
+
+    assert cfg.upstream_provider_order == ["Amazon Bedrock", "OpenAI"]
 
 
 def test_blank_wake_welcome_message_preserves_existing_value(monkeypatch):
@@ -92,6 +110,32 @@ def test_wake_welcome_message_can_be_cleared_explicitly(monkeypatch):
     assert "wake_welcome_message" in payload["changed"]
     assert gateway.cfg.wake_welcome_message == ""
     assert persisted[-1]["WAKE_WELCOME_MESSAGE"] == ""
+
+
+def test_config_update_saves_provider_order(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "upstream_provider_order_enabled", False)
+    monkeypatch.setattr(gateway.cfg, "upstream_provider_order", [])
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={
+                "upstream_provider_order_enabled": True,
+                "upstream_provider_order": ["Amazon Bedrock", "Amazon Bedrock", "OpenAI"],
+            },
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["upstream_provider_order_enabled"] is True
+    assert payload["config"]["upstream_provider_order"] == ["Amazon Bedrock", "OpenAI"]
+    assert "upstream_provider_order_enabled" in payload["changed"]
+    assert "upstream_provider_order" in payload["changed"]
+    assert persisted[-1]["UPSTREAM_PROVIDER_ORDER_ENABLED"] == "true"
+    assert persisted[-1]["UPSTREAM_PROVIDER_ORDER"] == '["Amazon Bedrock", "OpenAI"]'
 
 
 def test_persist_env_saves_config_overrides_to_sqlite(tmp_path, monkeypatch):

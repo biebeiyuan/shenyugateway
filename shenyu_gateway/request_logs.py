@@ -169,6 +169,9 @@ def _upstream_payload_summary(payload: Optional[dict]) -> Optional[dict[str, Any
         "temperature": payload.get("temperature"),
         "stream": payload.get("stream", False),
     }
+    provider = payload.get("provider")
+    if isinstance(provider, dict):
+        summary["provider_order"] = provider.get("order") or []
     system = payload.get("system")
     if isinstance(system, list):
         summary["system_blocks_count"] = len(system)

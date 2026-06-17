@@ -49,6 +49,8 @@ const config = ref<GatewayConfig>({
   upstream_proxy: '',
   upstream_trust_env: false,
   enable_openai_cache_control: true,
+  upstream_provider_order_enabled: false,
+  upstream_provider_order: [],
   hisense_upstream_url: '',
   hisense_api_key: '',
   hisense_protocol: '',
@@ -85,6 +87,9 @@ const inheritedProtocolOptions = [{ label: 'Inherit global', value: '' }, ...pro
 const toolModeOptions = [
   { label: 'Full schemas', value: 'full' },
   { label: 'Compact broker', value: 'broker' },
+]
+const providerOrderOptions = [
+  { label: 'Amazon Bedrock', value: 'Amazon Bedrock' },
 ]
 
 const activePresetName = computed(() => {
@@ -163,6 +168,8 @@ async function doSave() {
       upstream_proxy: config.value.upstream_proxy,
       upstream_trust_env: config.value.upstream_trust_env,
       enable_openai_cache_control: config.value.enable_openai_cache_control,
+      upstream_provider_order_enabled: config.value.upstream_provider_order_enabled,
+      upstream_provider_order: config.value.upstream_provider_order || [],
       hisense_upstream_url: config.value.hisense_upstream_url,
       hisense_api_key: config.value.hisense_api_key,
       hisense_protocol: config.value.hisense_protocol,
@@ -370,6 +377,28 @@ function removeModel(index: number) {
             <NFormItem label="OpenAI cache_control">
               <NSwitch v-model:value="config.enable_openai_cache_control" />
             </NFormItem>
+            <div class="provider-order-box">
+              <div class="provider-order-head">
+                <div>
+                  <div class="provider-order-title">Provider order</div>
+                  <div class="provider-order-sub">仅 OpenAI-compatible 上游会收到 provider.order</div>
+                </div>
+                <NSwitch v-model:value="config.upstream_provider_order_enabled" />
+              </div>
+              <NSelect
+                v-model:value="config.upstream_provider_order"
+                multiple
+                filterable
+                tag
+                clearable
+                :disabled="!config.upstream_provider_order_enabled"
+                :options="providerOrderOptions"
+                placeholder="例如 Amazon Bedrock"
+              />
+              <div class="provider-order-hint">
+                关闭时不会发送 provider 字段；上游不支持、名称不匹配或模型不可用时会由上游返回错误。
+              </div>
+            </div>
             <NFormItem label="海信专用接口地址">
               <NInput v-model:value="config.hisense_upstream_url" placeholder="留空继承全局上游" />
             </NFormItem>
@@ -601,6 +630,38 @@ function removeModel(index: number) {
   display: flex;
   gap: 6px;
   align-items: center;
+}
+
+.provider-order-box {
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.provider-order-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.provider-order-title {
+  color: #1f1f1f;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.provider-order-sub,
+.provider-order-hint {
+  color: #7d8590;
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.provider-order-hint {
+  margin-top: 6px;
 }
 
 .cal-input {
