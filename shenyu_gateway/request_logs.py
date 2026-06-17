@@ -171,7 +171,11 @@ def _upstream_payload_summary(payload: Optional[dict]) -> Optional[dict[str, Any
     }
     provider = payload.get("provider")
     if isinstance(provider, dict):
+        summary["provider_format"] = "order_object"
         summary["provider_order"] = provider.get("order") or []
+    elif isinstance(provider, str):
+        summary["provider_format"] = "string"
+        summary["provider"] = provider
     system = payload.get("system")
     if isinstance(system, list):
         summary["system_blocks_count"] = len(system)

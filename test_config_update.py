@@ -10,6 +10,9 @@ from shenyu_gateway.store import GatewayStore
 
 DEFAULTED_ENV_KEYS = [
     "ENABLE_OPENAI_CACHE_CONTROL",
+    "UPSTREAM_PROVIDER_ORDER_ENABLED",
+    "UPSTREAM_PROVIDER_FORMAT",
+    "UPSTREAM_PROVIDER_ORDER",
     "ENABLE_INLINE_MEMORY_CAPTURE",
     "INJECT_INLINE_MEMORY_PROMPT",
     "INJECT_MEM_NOTES",
@@ -34,6 +37,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
 
     assert cfg.enable_openai_cache_control is True
     assert cfg.upstream_provider_order_enabled is False
+    assert cfg.upstream_provider_format == "string"
     assert cfg.upstream_provider_order == []
     assert cfg.inject_inline_memory_prompt is True
     assert cfg.enable_inline_memory_capture is True
@@ -115,6 +119,7 @@ def test_wake_welcome_message_can_be_cleared_explicitly(monkeypatch):
 def test_config_update_saves_provider_order(monkeypatch):
     client, persisted = _config_client(monkeypatch)
     monkeypatch.setattr(gateway.cfg, "upstream_provider_order_enabled", False)
+    monkeypatch.setattr(gateway.cfg, "upstream_provider_format", "string")
     monkeypatch.setattr(gateway.cfg, "upstream_provider_order", [])
 
     try:
@@ -122,6 +127,7 @@ def test_config_update_saves_provider_order(monkeypatch):
             "/api/config",
             json={
                 "upstream_provider_order_enabled": True,
+                "upstream_provider_format": "order_object",
                 "upstream_provider_order": ["Amazon Bedrock", "Amazon Bedrock", "OpenAI"],
             },
         )
@@ -131,10 +137,13 @@ def test_config_update_saves_provider_order(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["config"]["upstream_provider_order_enabled"] is True
+    assert payload["config"]["upstream_provider_format"] == "order_object"
     assert payload["config"]["upstream_provider_order"] == ["Amazon Bedrock", "OpenAI"]
     assert "upstream_provider_order_enabled" in payload["changed"]
+    assert "upstream_provider_format" in payload["changed"]
     assert "upstream_provider_order" in payload["changed"]
     assert persisted[-1]["UPSTREAM_PROVIDER_ORDER_ENABLED"] == "true"
+    assert persisted[-1]["UPSTREAM_PROVIDER_FORMAT"] == "order_object"
     assert persisted[-1]["UPSTREAM_PROVIDER_ORDER"] == '["Amazon Bedrock", "OpenAI"]'
 
 

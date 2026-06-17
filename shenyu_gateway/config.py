@@ -65,6 +65,7 @@ class RuntimeConfig:
         self.upstream_trust_env: bool = _env_bool("UPSTREAM_TRUST_ENV", False)
         self.enable_openai_cache_control: bool = _env_bool("ENABLE_OPENAI_CACHE_CONTROL", True)
         self.upstream_provider_order_enabled: bool = _env_bool("UPSTREAM_PROVIDER_ORDER_ENABLED", False)
+        self.upstream_provider_format: str = self._normalize_provider_format(os.getenv("UPSTREAM_PROVIDER_FORMAT", "string"))
         self.upstream_provider_order: list[str] = self._load_provider_order()
         self.hisense_upstream_url: str = os.getenv("HISENSE_UPSTREAM_URL", "").strip()
         self.hisense_api_key: str = os.getenv("HISENSE_API_KEY", "").strip()
@@ -149,6 +150,7 @@ class RuntimeConfig:
             "upstream_trust_env": self.upstream_trust_env,
             "enable_openai_cache_control": self.enable_openai_cache_control,
             "upstream_provider_order_enabled": self.upstream_provider_order_enabled,
+            "upstream_provider_format": self.upstream_provider_format,
             "upstream_provider_order": self.upstream_provider_order,
             "hisense_upstream_url": self.hisense_upstream_url,
             "hisense_api_key": mask(self.hisense_api_key),
@@ -253,6 +255,10 @@ class RuntimeConfig:
             seen.add(provider)
             providers.append(provider)
         return providers
+
+    def _normalize_provider_format(self, value: Any) -> str:
+        raw = str(value or "").strip().lower().replace("-", "_")
+        return raw if raw in {"string", "order_object"} else "string"
 
     def _normalize_tool_mode(self, value: Any) -> str:
         raw = str(value or "").strip().lower()

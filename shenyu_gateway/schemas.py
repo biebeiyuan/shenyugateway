@@ -31,6 +31,7 @@ class ConfigUpdate(BaseModel):
     upstream_trust_env: Optional[bool] = None
     enable_openai_cache_control: Optional[bool] = None
     upstream_provider_order_enabled: Optional[bool] = None
+    upstream_provider_format: Optional[str] = None
     upstream_provider_order: Optional[list[str] | str] = None
     hisense_upstream_url: Optional[str] = None
     hisense_api_key: Optional[str] = None

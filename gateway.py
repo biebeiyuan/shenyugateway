@@ -1169,6 +1169,7 @@ async def health():
         "upstream_trust_env": cfg.upstream_trust_env,
         "enable_openai_cache_control": cfg.enable_openai_cache_control,
         "upstream_provider_order_enabled": cfg.upstream_provider_order_enabled,
+        "upstream_provider_format": cfg.upstream_provider_format,
         "upstream_provider_order": cfg.upstream_provider_order,
         "enable_upstream_tools": cfg.enable_upstream_tools,
         "enable_gateway_tools": cfg.enable_gateway_tools,

@@ -50,6 +50,7 @@ const config = ref<GatewayConfig>({
   upstream_trust_env: false,
   enable_openai_cache_control: true,
   upstream_provider_order_enabled: false,
+  upstream_provider_format: 'string',
   upstream_provider_order: [],
   hisense_upstream_url: '',
   hisense_api_key: '',
@@ -90,6 +91,10 @@ const toolModeOptions = [
 ]
 const providerOrderOptions = [
   { label: 'Amazon Bedrock', value: 'Amazon Bedrock' },
+]
+const providerFormatOptions = [
+  { label: 'provider 字符串', value: 'string' },
+  { label: 'provider.order 对象', value: 'order_object' },
 ]
 
 const activePresetName = computed(() => {
@@ -169,6 +174,7 @@ async function doSave() {
       upstream_trust_env: config.value.upstream_trust_env,
       enable_openai_cache_control: config.value.enable_openai_cache_control,
       upstream_provider_order_enabled: config.value.upstream_provider_order_enabled,
+      upstream_provider_format: config.value.upstream_provider_format,
       upstream_provider_order: config.value.upstream_provider_order || [],
       hisense_upstream_url: config.value.hisense_upstream_url,
       hisense_api_key: config.value.hisense_api_key,
@@ -381,10 +387,16 @@ function removeModel(index: number) {
               <div class="provider-order-head">
                 <div>
                   <div class="provider-order-title">Provider order</div>
-                  <div class="provider-order-sub">仅 OpenAI-compatible 上游会收到 provider.order</div>
+                  <div class="provider-order-sub">仅 OpenAI-compatible 上游会收到 provider</div>
                 </div>
                 <NSwitch v-model:value="config.upstream_provider_order_enabled" />
               </div>
+              <NSelect
+                v-model:value="config.upstream_provider_format"
+                :disabled="!config.upstream_provider_order_enabled"
+                :options="providerFormatOptions"
+                class="provider-format-select"
+              />
               <NSelect
                 v-model:value="config.upstream_provider_order"
                 multiple
@@ -396,7 +408,7 @@ function removeModel(index: number) {
                 placeholder="例如 Amazon Bedrock"
               />
               <div class="provider-order-hint">
-                关闭时不会发送 provider 字段；上游不支持、名称不匹配或模型不可用时会由上游返回错误。
+                Pioneer 这类上游通常用字符串；OpenRouter 风格上游才用 provider.order 对象。
               </div>
             </div>
             <NFormItem label="海信专用接口地址">
@@ -651,6 +663,10 @@ function removeModel(index: number) {
   color: #1f1f1f;
   font-size: 13px;
   font-weight: 600;
+}
+
+.provider-format-select {
+  margin-bottom: 8px;
 }
 
 .provider-order-sub,

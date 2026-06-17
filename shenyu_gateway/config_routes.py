@@ -32,6 +32,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "upstream_trust_env": cfg.upstream_trust_env,
         "enable_openai_cache_control": cfg.enable_openai_cache_control,
         "upstream_provider_order_enabled": cfg.upstream_provider_order_enabled,
+        "upstream_provider_format": cfg.upstream_provider_format,
         "upstream_provider_order": cfg.upstream_provider_order,
         "hisense_upstream_url": cfg.hisense_upstream_url,
         "hisense_api_key": cfg.hisense_api_key,
@@ -107,6 +108,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "upstream_trust_env": "UPSTREAM_TRUST_ENV",
             "enable_openai_cache_control": "ENABLE_OPENAI_CACHE_CONTROL",
             "upstream_provider_order_enabled": "UPSTREAM_PROVIDER_ORDER_ENABLED",
+            "upstream_provider_format": "UPSTREAM_PROVIDER_FORMAT",
             "upstream_provider_order": "UPSTREAM_PROVIDER_ORDER",
             "hisense_upstream_url": "HISENSE_UPSTREAM_URL",
             "hisense_api_key": "HISENSE_API_KEY",
@@ -168,6 +170,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "upstream_trust_env",
             "enable_openai_cache_control",
             "upstream_provider_order_enabled",
+            "upstream_provider_format",
             "hisense_upstream_url",
             "hisense_api_key",
             "hisense_protocol",
@@ -217,6 +220,13 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                     value = str(value or "").strip().lower()
                     if value not in {"full", "broker"}:
                         raise HTTPException(status_code=400, detail="GATEWAY_TOOL_MODE must be full or broker.")
+                elif field == "upstream_provider_format":
+                    value = str(value or "").strip().lower().replace("-", "_")
+                    if value not in {"string", "order_object"}:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="UPSTREAM_PROVIDER_FORMAT must be string or order_object.",
+                        )
                 elif isinstance(value, str):
                     value = value.strip()
                 setattr(cfg, field, value)
