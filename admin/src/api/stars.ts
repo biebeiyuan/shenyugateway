@@ -71,6 +71,27 @@ export interface StarConnectRequest {
   note?: string
 }
 
+export interface StarGraphLink {
+  id?: string | null
+  source: string
+  target: string
+  relation_type: string
+  confidence?: number
+  weight?: number
+  bidirectional?: boolean
+  times_confirmed?: number
+  last_confirmed_at?: string | null
+  name?: string
+  note?: string
+  scored_by?: string
+}
+
+export interface StarGraphResult {
+  ok: boolean
+  stars: StarItem[]
+  links: StarGraphLink[]
+}
+
 export async function fetchStars(params: {
   status?: StarStatus | 'all'
   reviewed?: StarReviewedFilter
@@ -100,6 +121,19 @@ export async function searchStars(params: {
   if (params.limit) qs.set('limit', String(params.limit))
   if (params.log_run !== undefined) qs.set('log_run', String(params.log_run))
   const { data } = await api.get(`/api/gateway/stars/search?${qs.toString()}`)
+  return data
+}
+
+export async function fetchStarGraph(params: {
+  status?: StarStatus | 'all'
+  session_tag?: string
+  limit?: number
+} = {}): Promise<StarGraphResult> {
+  const qs = new URLSearchParams()
+  if (params.status) qs.set('status', params.status)
+  if (params.session_tag) qs.set('session_tag', params.session_tag)
+  if (params.limit) qs.set('limit', String(params.limit))
+  const { data } = await api.get(`/api/gateway/stars/graph?${qs.toString()}`)
   return data
 }
 

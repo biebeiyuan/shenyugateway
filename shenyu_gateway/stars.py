@@ -398,6 +398,69 @@ class StarService:
             **({"error": result.get("error")} if result.get("error") else {}),
         }
 
+    async def graph(
+        self,
+        *,
+        status: str = "active",
+        limit: int = 250,
+        session_tag: Optional[str] = None,
+    ) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "stars": [], "links": [], "error": "Supabase is not configured."}
+        star_result = await self.list_stars(
+            status=status,
+            limit=max(1, min(int(limit or 250), 1000)),
+            session_tag=session_tag,
+            reviewed="all",
+        )
+        if not star_result.get("ok"):
+            return {"ok": False, "stars": [], "links": [], "error": star_result.get("error") or "star query failed"}
+        stars = star_result.get("items") or []
+        star_ids = {_node_id(item.get("id")) for item in stars if item.get("id")}
+        if not star_ids:
+            return {"ok": True, "stars": [], "links": []}
+
+        rows: list[dict[str, Any]] = []
+        try:
+            rows = await self.supabase.query(
+                STAR_LINK_TABLE,
+                {
+                    "select": "id,from_node_type,from_node_id,to_node_type,to_node_id,relation_type,source,confidence,weight,bidirectional,times_confirmed,last_confirmed_at,metadata,status,created_at,updated_at",
+                    "from_node_type": "eq.star",
+                    "to_node_type": "eq.star",
+                    "status": "eq.active",
+                    "limit": "2000",
+                },
+            )
+        except Exception as exc:
+            logger.warning("[Star] Failed to load graph links: %s", exc)
+            rows = []
+
+        links = []
+        for row in rows:
+            left = _node_id(row.get("from_node_id"))
+            right = _node_id(row.get("to_node_id"))
+            if left not in star_ids or right not in star_ids:
+                continue
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            links.append(
+                {
+                    "id": row.get("id"),
+                    "source": left,
+                    "target": right,
+                    "relation_type": row.get("relation_type") or "manual",
+                    "confidence": _safe_float(row.get("confidence"), 0.5),
+                    "weight": _safe_float(row.get("weight"), 1.0),
+                    "bidirectional": bool(row.get("bidirectional")),
+                    "times_confirmed": int(row.get("times_confirmed") or 0),
+                    "last_confirmed_at": row.get("last_confirmed_at"),
+                    "name": metadata.get("constellation_name") or "",
+                    "note": metadata.get("note") or "",
+                    "scored_by": metadata.get("scored_by") or "",
+                }
+            )
+        return {"ok": True, "stars": stars, "links": links}
+
     async def search_context(
         self,
         query: str,
@@ -574,6 +637,7 @@ class StarService:
                     "weight": 1.0,
                     "position": idx,
                     "bidirectional": True,
+                    "status": "active",
                     "times_confirmed": 1,
                     "last_confirmed_at": iso_now(),
                     "metadata": metadata,

@@ -128,3 +128,28 @@ def test_review_limits_candidates_and_missed_feedback():
     assert feedback["ok"] is True
     assert feedback["feedback"]["feedback"] == "missed"
     assert feedback["feedback"]["expected_node_id"] == "shenyu_stars-3"
+
+
+def test_star_graph_returns_links():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        first = await service.create_star("Am · 第一颗星")
+        second = await service.create_star("C · 第二颗星")
+        await service.connect_constellation(
+            [first["star_id"], second["star_id"]],
+            name="第一束光",
+            scored_by="圆圆",
+            note="真实连线",
+        )
+        return await service.graph()
+
+    graph = asyncio.run(run())
+
+    assert graph["ok"] is True
+    assert len(graph["stars"]) == 2
+    assert len(graph["links"]) == 1
+    assert graph["links"][0]["name"] == "第一束光"
+    assert graph["links"][0]["source"] == "shenyu_stars-1"
+    assert graph["links"][0]["target"] == "shenyu_stars-2"

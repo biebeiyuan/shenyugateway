@@ -288,6 +288,17 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             raise HTTPException(status_code=400, detail=result.get("error") or "star search failed")
         return result
 
+    @router.get("/api/gateway/stars/graph")
+    async def graph_stars(status: str = "active", limit: int = 250, session_tag: Optional[str] = None):
+        result = await StarService(cfg, deps.get_supabase_client()).graph(
+            status=status,
+            limit=limit,
+            session_tag=session_tag,
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error") or "star graph failed")
+        return result
+
     @router.post("/api/gateway/stars")
     async def create_star(body: StarCreateRequest):
         result = await StarService(cfg, deps.get_supabase_client()).create_star(

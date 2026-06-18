@@ -528,13 +528,16 @@ Admin API:
 - `POST /api/gateway/stars/feedback`
 - `POST /api/gateway/stars/connect`
 - `PATCH /api/gateway/stars/{star_id}/constant`
+- `GET /api/gateway/stars/graph`: returns active stars plus `shenyu_star_links` edges for the admin memory star map.
 
 Admin UI:
 
-- `/admin/#/stars` is the Star workbench.
+- `/admin/#/stars` is the Star workbench and memory star map.
 - `admin/src/api/stars.ts` holds the frontend contract.
-- `admin/src/views/StarsView.vue` contains settings, manual star creation, search, review feedback, missed recording, constant marking, and manual constellation linking.
+- `admin/src/views/StarsView.vue` contains the Three.js star map, settings, manual star creation, search, review feedback, missed recording, constant marking, and manual constellation linking.
 - The "quiet Star" button disables prompt/capture/injection while keeping gateway tools on, so Shenyu can still choose to search/write/review manually.
+- The map uses live `shenyu_stars` and `shenyu_star_links`: star brightness/size follows activation count, recency, and constant status; constellation links are drawn from confirmed edges.
+- Current frontend positioning is deterministic and replaceable: chord root gives the main circular slot, stable content/id hash gives local drift, and activation/constant state affects radius/brightness. If backend embedding/UMAP coordinates are added later, replace `positionForStar()` in `StarsView.vue` rather than rewriting the UI.
 
 Maintenance notes:
 
@@ -543,6 +546,7 @@ Maintenance notes:
 - If adding new score signals, store both raw features and final contribution in `shenyu_star_recall_candidates.scores`; otherwise later tuning loses observability.
 - If adding a new feedback value, update the SQL check constraint, `FEEDBACK_VALUES`, frontend type `StarFeedbackValue`, tool schema, and admin labels together.
 - If changing default limits, keep daily chat injection small. Normal chat should feel like "three small lights," not a memory dump.
+- If changing star-map rendering, keep graph data and visual layout separate: `StarService.graph()` returns durable data; `StarsView.vue` decides layout and interaction.
 
 ## Private Capture Empty Reply Fallback
 
