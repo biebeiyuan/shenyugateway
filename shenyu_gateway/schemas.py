@@ -61,6 +61,10 @@ class ConfigUpdate(BaseModel):
     star_review_total_candidate_limit: Optional[int] = None
     star_candidate_limit: Optional[int] = None
     star_shadow_candidate_limit: Optional[int] = None
+    star_min_score: Optional[float] = None
+    star_related_min_score: Optional[float] = None
+    star_recent_fatigue_hours: Optional[int] = None
+    star_recent_fatigue_penalty: Optional[float] = None
     star_weight_content: Optional[float] = None
     star_weight_keyword: Optional[float] = None
     star_weight_harmony: Optional[float] = None

@@ -44,6 +44,10 @@ const STAR_DEFAULTS: Partial<GatewayConfig> = {
   star_review_total_candidate_limit: 9,
   star_candidate_limit: 500,
   star_shadow_candidate_limit: 20,
+  star_min_score: 0.18,
+  star_related_min_score: 0.22,
+  star_recent_fatigue_hours: 6,
+  star_recent_fatigue_penalty: 0.14,
   star_weight_content: 0.3,
   star_weight_keyword: 0.2,
   star_weight_harmony: 0.35,
@@ -182,6 +186,10 @@ async function saveSettings() {
       star_review_total_candidate_limit: config.value.star_review_total_candidate_limit,
       star_candidate_limit: config.value.star_candidate_limit,
       star_shadow_candidate_limit: config.value.star_shadow_candidate_limit,
+      star_min_score: config.value.star_min_score,
+      star_related_min_score: config.value.star_related_min_score,
+      star_recent_fatigue_hours: config.value.star_recent_fatigue_hours,
+      star_recent_fatigue_penalty: config.value.star_recent_fatigue_penalty,
       star_weight_content: config.value.star_weight_content,
       star_weight_keyword: config.value.star_weight_keyword,
       star_weight_harmony: config.value.star_weight_harmony,
@@ -914,6 +922,18 @@ function updateHighlights() {
           </NFormItem>
           <NFormItem label="总候选">
             <NInputNumber v-model:value="config.star_review_total_candidate_limit" :min="1" :max="30" />
+          </NFormItem>
+          <NFormItem label="最低分">
+            <NInputNumber v-model:value="config.star_min_score" :min="0" :max="1" :step="0.01" />
+          </NFormItem>
+          <NFormItem label="相关门槛">
+            <NInputNumber v-model:value="config.star_related_min_score" :min="0" :max="1" :step="0.01" />
+          </NFormItem>
+          <NFormItem label="疲劳小时">
+            <NInputNumber v-model:value="config.star_recent_fatigue_hours" :min="0" :max="168" />
+          </NFormItem>
+          <NFormItem label="疲劳惩罚">
+            <NInputNumber v-model:value="config.star_recent_fatigue_penalty" :min="0" :max="1" :step="0.01" />
           </NFormItem>
         </div>
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
+from datetime import datetime, timedelta, timezone
 
 from shenyu_gateway.response_capture import AssistantTagFilter, split_private_assistant_tags
 from shenyu_gateway.stars import StarService, parse_star_payload
@@ -35,7 +36,11 @@ class FakeSupabase:
                 rows = [row for row in rows if row.get(key) is not None]
             elif isinstance(value, str) and value.startswith("eq."):
                 expected = value[3:]
-                rows = [row for row in rows if str(row.get(key)) == expected]
+                if expected in {"true", "false"}:
+                    expected_bool = expected == "true"
+                    rows = [row for row in rows if bool(row.get(key)) is expected_bool]
+                else:
+                    rows = [row for row in rows if str(row.get(key)) == expected]
             elif isinstance(value, str) and value.startswith("in.(") and value.endswith(")"):
                 expected = set(value[4:-1].split(","))
                 rows = [row for row in rows if str(row.get(key)) in expected]
@@ -69,6 +74,10 @@ def _cfg():
         inject_stars=True,
         star_candidate_limit=50,
         star_shadow_candidate_limit=20,
+        star_min_score=0.18,
+        star_related_min_score=0.22,
+        star_recent_fatigue_hours=6,
+        star_recent_fatigue_penalty=0.14,
         star_weight_content=0.30,
         star_weight_keyword=0.20,
         star_weight_harmony=0.35,
@@ -153,3 +162,54 @@ def test_star_graph_returns_links():
     assert graph["links"][0]["name"] == "第一束光"
     assert graph["links"][0]["source"] == "shenyu_stars-1"
     assert graph["links"][0]["target"] == "shenyu_stars-2"
+
+
+def test_chat_injection_requires_score_thresholds():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        await service.create_star("Cm(add9) · 我们搭了一整天宇宙")
+        weak = await service.search_context("完全无关的普通句子", limit=3)
+        strong = await service.search_context("宇宙", limit=3)
+        return weak, strong
+
+    weak, strong = asyncio.run(run())
+
+    assert weak["ok"] is True
+    assert weak["items"] == []
+    assert strong["count"] == 1
+    assert "宇宙" in strong["items"][0]["content"]
+
+
+def test_recent_chat_injection_fatigue_can_suppress_borderline_star():
+    supabase = FakeSupabase()
+    cfg = _cfg()
+    cfg.star_min_score = 0.48
+    cfg.star_related_min_score = 0.22
+    cfg.star_recent_fatigue_hours = 6
+    cfg.star_recent_fatigue_penalty = 0.14
+    service = StarService(cfg, supabase)
+
+    async def run():
+        created = await service.create_star("Am · 宇宙")
+        before = await service.search_context("宇宙", limit=3)
+        recent_time = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+        await supabase.insert(
+            "shenyu_star_activations",
+            {
+                "star_id": created["star_id"],
+                "activated_at": recent_time,
+                "surface": "chat_inject",
+                "trigger_text": "宇宙",
+                "score": 0.3,
+                "injected": True,
+            },
+        )
+        after = await service.search_context("宇宙", limit=3)
+        return before, after
+
+    before, after = asyncio.run(run())
+
+    assert before["count"] == 1
+    assert after["items"] == []

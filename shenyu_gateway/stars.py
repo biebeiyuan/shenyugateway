@@ -218,6 +218,10 @@ class StarWeights:
     ignored_penalty: float = 0.18
 
 
+def _cfg_float(cfg: Any, name: str, default: float, min_value: float = 0.0, max_value: float = 1.0) -> float:
+    return _clamp(_safe_float(getattr(cfg, name, default), default), min_value, max_value)
+
+
 class StarService:
     def __init__(self, cfg: Any, supabase_client: Any):
         self.cfg = cfg
@@ -253,6 +257,15 @@ class StarService:
     def _inject_limit(self, limit: Optional[int] = None) -> int:
         configured = getattr(self.cfg, "star_inject_limit", 3)
         return _safe_int(limit if limit is not None else configured, 3, 1, 5)
+
+    def _min_score(self) -> float:
+        return _cfg_float(self.cfg, "star_min_score", 0.18)
+
+    def _related_min_score(self) -> float:
+        return _cfg_float(self.cfg, "star_related_min_score", 0.22)
+
+    def _recent_fatigue_penalty(self) -> float:
+        return _cfg_float(self.cfg, "star_recent_fatigue_penalty", 0.14)
 
     async def process_inline_stars(
         self,
@@ -682,8 +695,8 @@ class StarService:
         rows, query_embedding_status = await self._candidate_rows(clean_query)
         if not rows:
             return {"ok": True, "query": clean_query, "count": 0, "items": []}
-        scored = await self._score_rows(query=clean_query, rows=rows, seed=None)
-        selected = scored[: max(1, min(int(limit or 3), 30))]
+        scored = await self._score_rows(query=clean_query, rows=rows, seed=None, surface=surface)
+        selected = self._select_for_surface(scored, limit=max(1, min(int(limit or 3), 30)), surface=surface)
         run_id = await self._log_run_and_candidates(
             surface=surface,
             trigger_text=clean_query,
@@ -722,8 +735,8 @@ class StarService:
         rows, query_embedding_status = await self._candidate_rows(seed.get("content") or "")
         seed_id = _node_id(seed.get("id"))
         rows = [row for row in rows if _node_id(row.get("id")) != seed_id]
-        scored = await self._score_rows(query=seed.get("content") or "", rows=rows, seed=seed)
-        selected = scored[: max(1, min(int(limit or 3), 10))]
+        scored = await self._score_rows(query=seed.get("content") or "", rows=rows, seed=seed, surface=surface)
+        selected = self._select_for_surface(scored, limit=max(1, min(int(limit or 3), 10)), surface=surface)
         run_id = await self._log_run_and_candidates(
             surface=surface,
             trigger_text=seed.get("content") or "",
@@ -767,6 +780,19 @@ class StarService:
             rows_by_id[star_id] = existing
         return list(rows_by_id.values()), embedding_status
 
+    def _select_for_surface(self, scored: list[dict[str, Any]], *, limit: int, surface: str) -> list[dict[str, Any]]:
+        if surface != "chat_inject":
+            return scored[:limit]
+        min_score = self._min_score()
+        related_min = self._related_min_score()
+        selected = [
+            item
+            for item in scored
+            if float(item.get("final_score") or 0.0) >= min_score
+            and float((item.get("features") or {}).get("related_signal") or 0.0) >= related_min
+        ]
+        return selected[:limit]
+
     async def _vector_rows(self, query: str) -> list[dict[str, Any]]:
         client = self._embedding_client()
         if not client or not query.strip() or not hasattr(self.supabase, "rpc"):
@@ -794,9 +820,13 @@ class StarService:
         query: str,
         rows: list[dict[str, Any]],
         seed: Optional[dict[str, Any]],
+        surface: str = "",
     ) -> list[dict[str, Any]]:
         star_ids = [_node_id(row.get("id")) for row in rows if row.get("id")]
-        actr_scores, ignored_penalties = await self._activity_features(star_ids)
+        actr_scores, ignored_penalties, recent_fatigue = await self._activity_features(
+            star_ids,
+            include_recent_fatigue=surface == "chat_inject",
+        )
         seed_chord = seed or _extract_chord_from_query(query)
         base_items: list[dict[str, Any]] = []
         for row in rows:
@@ -823,6 +853,7 @@ class StarService:
                         "constant_bonus": 1.0 if row.get("is_constant") else 0.0,
                         "novelty_bonus": 0.0 if row.get("activation_count") else 1.0,
                         "ignored_penalty": ignored_penalties.get(star_id, 0.0),
+                        "recent_fatigue_penalty": recent_fatigue.get(star_id, 0.0),
                     },
                 }
             )
@@ -840,6 +871,7 @@ class StarService:
                 features["chord_score"],
                 features["harmony_score"],
             )
+            features["related_signal"] = related_signal
             if related_signal <= 0:
                 continue
             final = (
@@ -851,6 +883,7 @@ class StarService:
                 + features["constant_bonus"] * weights.constant_bonus
                 + features["novelty_bonus"] * weights.novelty_bonus
                 - features["ignored_penalty"] * weights.ignored_penalty
+                - features["recent_fatigue_penalty"]
             )
             if final <= 0 and not seed:
                 continue
@@ -920,10 +953,16 @@ class StarService:
             scores[target] = max(scores.get(target, 0.0), score)
         return scores
 
-    async def _activity_features(self, star_ids: list[str]) -> tuple[dict[str, float], dict[str, float]]:
+    async def _activity_features(
+        self,
+        star_ids: list[str],
+        *,
+        include_recent_fatigue: bool = False,
+    ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
         if not star_ids:
-            return {}, {}
-        return await self._actr_scores(star_ids), await self._ignored_penalties(star_ids)
+            return {}, {}, {}
+        recent_fatigue = await self._recent_fatigue_scores(star_ids) if include_recent_fatigue else {}
+        return await self._actr_scores(star_ids), await self._ignored_penalties(star_ids), recent_fatigue
 
     async def _actr_scores(self, star_ids: list[str]) -> dict[str, float]:
         try:
@@ -984,6 +1023,37 @@ class StarService:
             if all(action in {"", "skipped", "negative"} for action in actions):
                 penalties[star_id] = 1.0
         return penalties
+
+    async def _recent_fatigue_scores(self, star_ids: list[str]) -> dict[str, float]:
+        hours = _safe_int(getattr(self.cfg, "star_recent_fatigue_hours", 6), 6, 0, 168)
+        if hours <= 0:
+            return {}
+        try:
+            rows = await self.supabase.query(
+                STAR_ACTIVATION_TABLE,
+                {
+                    "select": "star_id,activated_at,injected",
+                    "star_id": "in.(" + ",".join(star_ids) + ")",
+                    "injected": "eq.true",
+                    "order": "activated_at.desc",
+                    "limit": str(min(max(len(star_ids) * 6, 100), 3000)),
+                },
+            )
+        except Exception:
+            return {}
+        now_dt = _now()
+        scores: dict[str, float] = {}
+        window_seconds = max(hours * 3600.0, 1.0)
+        for row in rows:
+            star_id = _node_id(row.get("star_id"))
+            dt = _parse_ts(row.get("activated_at"))
+            if not star_id or not dt or star_id in scores:
+                continue
+            age_seconds = (now_dt - dt).total_seconds()
+            if age_seconds < 0 or age_seconds > window_seconds:
+                continue
+            scores[star_id] = self._recent_fatigue_penalty() * (1.0 - age_seconds / window_seconds)
+        return scores
 
     async def _log_run_and_candidates(
         self,
@@ -1051,6 +1121,8 @@ class StarService:
                     "feature_json": {
                         "ranker_version": STAR_RANKER_VERSION,
                         "keyword_hits": item.get("keyword_hits") or [],
+                        "related_signal": features.get("related_signal") or 0.0,
+                        "recent_fatigue_penalty": features.get("recent_fatigue_penalty") or 0.0,
                     },
                 }
             )

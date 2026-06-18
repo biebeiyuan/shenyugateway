@@ -365,6 +365,7 @@ final =
 + W_constant * constant_bonus
 + W_novelty * novelty_bonus
 - W_ignored * ignored_penalty
+- recent_fatigue_penalty
 ```
 
 日常注入和 review 建议使用不同权重。
@@ -384,6 +385,8 @@ final =
 - 内容相似和关键词要过基础门槛。
 - 和声引力可以参与，但需要限流。
 - 自动边只作为辅助，不让它压过沈予确认的星座。
+- `STAR_INJECT_LIMIT` 只是上限；低于 `STAR_MIN_SCORE` 或 `STAR_RELATED_MIN_SCORE` 时，一颗都不注入。
+- 刚在日常聊天里注入过的星进入短冷却，避免前期新星因为反复命中而滚雪球。
 
 ### 8.2 Review 初始倾向
 

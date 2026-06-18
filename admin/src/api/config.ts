@@ -51,6 +51,10 @@ export interface GatewayConfig {
   star_review_total_candidate_limit?: number
   star_candidate_limit?: number
   star_shadow_candidate_limit?: number
+  star_min_score?: number
+  star_related_min_score?: number
+  star_recent_fatigue_hours?: number
+  star_recent_fatigue_penalty?: number
   star_weight_content?: number
   star_weight_keyword?: number
   star_weight_harmony?: number

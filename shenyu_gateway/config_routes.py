@@ -61,6 +61,10 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "star_review_total_candidate_limit": cfg.star_review_total_candidate_limit,
         "star_candidate_limit": cfg.star_candidate_limit,
         "star_shadow_candidate_limit": cfg.star_shadow_candidate_limit,
+        "star_min_score": cfg.star_min_score,
+        "star_related_min_score": cfg.star_related_min_score,
+        "star_recent_fatigue_hours": cfg.star_recent_fatigue_hours,
+        "star_recent_fatigue_penalty": cfg.star_recent_fatigue_penalty,
         "star_weight_content": cfg.star_weight_content,
         "star_weight_keyword": cfg.star_weight_keyword,
         "star_weight_harmony": cfg.star_weight_harmony,
@@ -155,6 +159,10 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "star_review_total_candidate_limit": "STAR_REVIEW_TOTAL_CANDIDATE_LIMIT",
             "star_candidate_limit": "STAR_CANDIDATE_LIMIT",
             "star_shadow_candidate_limit": "STAR_SHADOW_CANDIDATE_LIMIT",
+            "star_min_score": "STAR_MIN_SCORE",
+            "star_related_min_score": "STAR_RELATED_MIN_SCORE",
+            "star_recent_fatigue_hours": "STAR_RECENT_FATIGUE_HOURS",
+            "star_recent_fatigue_penalty": "STAR_RECENT_FATIGUE_PENALTY",
             "star_weight_content": "STAR_WEIGHT_CONTENT",
             "star_weight_keyword": "STAR_WEIGHT_KEYWORD",
             "star_weight_harmony": "STAR_WEIGHT_HARMONY",
@@ -419,6 +427,22 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.star_shadow_candidate_limit = max(3, min(body.star_shadow_candidate_limit, 100))
             changed.append("star_shadow_candidate_limit")
             env_updates[env_names["star_shadow_candidate_limit"]] = cfg.star_shadow_candidate_limit
+        if body.star_min_score is not None:
+            cfg.star_min_score = deps.clamp(float(body.star_min_score), 0.0, 1.0)
+            changed.append("star_min_score")
+            env_updates[env_names["star_min_score"]] = cfg.star_min_score
+        if body.star_related_min_score is not None:
+            cfg.star_related_min_score = deps.clamp(float(body.star_related_min_score), 0.0, 1.0)
+            changed.append("star_related_min_score")
+            env_updates[env_names["star_related_min_score"]] = cfg.star_related_min_score
+        if body.star_recent_fatigue_hours is not None:
+            cfg.star_recent_fatigue_hours = max(0, min(body.star_recent_fatigue_hours, 168))
+            changed.append("star_recent_fatigue_hours")
+            env_updates[env_names["star_recent_fatigue_hours"]] = cfg.star_recent_fatigue_hours
+        if body.star_recent_fatigue_penalty is not None:
+            cfg.star_recent_fatigue_penalty = deps.clamp(float(body.star_recent_fatigue_penalty), 0.0, 1.0)
+            changed.append("star_recent_fatigue_penalty")
+            env_updates[env_names["star_recent_fatigue_penalty"]] = cfg.star_recent_fatigue_penalty
         for field in (
             "star_weight_content",
             "star_weight_keyword",

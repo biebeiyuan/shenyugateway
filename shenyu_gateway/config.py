@@ -96,6 +96,10 @@ class RuntimeConfig:
         self.star_review_total_candidate_limit: int = _env_int("STAR_REVIEW_TOTAL_CANDIDATE_LIMIT", 9, 1, 30)
         self.star_candidate_limit: int = _env_int("STAR_CANDIDATE_LIMIT", 500, 50, 5000)
         self.star_shadow_candidate_limit: int = _env_int("STAR_SHADOW_CANDIDATE_LIMIT", 20, 3, 100)
+        self.star_min_score: float = _env_float("STAR_MIN_SCORE", 0.18, 0.0, 1.0)
+        self.star_related_min_score: float = _env_float("STAR_RELATED_MIN_SCORE", 0.22, 0.0, 1.0)
+        self.star_recent_fatigue_hours: int = _env_int("STAR_RECENT_FATIGUE_HOURS", 6, 0, 168)
+        self.star_recent_fatigue_penalty: float = _env_float("STAR_RECENT_FATIGUE_PENALTY", 0.14, 0.0, 1.0)
         self.star_weight_content: float = _env_float("STAR_WEIGHT_CONTENT", 0.30, 0.0, 2.0)
         self.star_weight_keyword: float = _env_float("STAR_WEIGHT_KEYWORD", 0.20, 0.0, 2.0)
         self.star_weight_harmony: float = _env_float("STAR_WEIGHT_HARMONY", 0.35, 0.0, 2.0)
@@ -195,6 +199,10 @@ class RuntimeConfig:
             "star_review_total_candidate_limit": self.star_review_total_candidate_limit,
             "star_candidate_limit": self.star_candidate_limit,
             "star_shadow_candidate_limit": self.star_shadow_candidate_limit,
+            "star_min_score": self.star_min_score,
+            "star_related_min_score": self.star_related_min_score,
+            "star_recent_fatigue_hours": self.star_recent_fatigue_hours,
+            "star_recent_fatigue_penalty": self.star_recent_fatigue_penalty,
             "star_weight_content": self.star_weight_content,
             "star_weight_keyword": self.star_weight_keyword,
             "star_weight_harmony": self.star_weight_harmony,

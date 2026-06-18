@@ -461,9 +461,10 @@ Chat injection flow:
 
 1. `ContextBuilder.build_context_package()` calls `StarService.search_context()` when `INJECT_STARS=true`.
 2. `StarService` ranks active stars using related signals first: content similarity, keyword hits, chord distance, and existing harmony/constellation links.
-3. ACT-R brightness, constant bonus, novelty bonus, and repeated-ignore penalty adjust the score, but they do not make an unrelated star appear by themselves.
-4. The top `STAR_INJECT_LIMIT` stars are rendered into the `mem` layer before mem notes.
-5. Candidate rows and activation rows are logged so later tuning can use actual shown/accepted/missed data.
+3. ACT-R brightness, constant bonus, novelty bonus, repeated-ignore penalty, and recent-injection fatigue adjust the score, but they do not make an unrelated star appear by themselves.
+4. Chat injection applies both `STAR_RELATED_MIN_SCORE` and `STAR_MIN_SCORE`; `STAR_INJECT_LIMIT` is only an upper bound, so zero stars may be injected when nothing clears the line.
+5. The selected stars are rendered into the `mem` layer before mem notes.
+6. Candidate rows and activation rows are logged so later tuning can use actual shown/accepted/missed data.
 
 Review flow:
 
@@ -483,6 +484,8 @@ Scoring signals:
 - `constant_bonus`: small stable boost for manually marked constant stars.
 - `novelty_bonus`: small boost for new stars in review-like surfaces.
 - `ignored_penalty`: weak penalty after repeated ignored displays.
+- `recent_fatigue_penalty`: short cooldown for stars recently injected into normal chat. It prevents fresh stars from snowballing only because they were just surfaced.
+- `related_signal`: max of content, keyword, chord, and harmony. Daily injection requires this to pass `STAR_RELATED_MIN_SCORE`.
 
 Config:
 
@@ -498,6 +501,10 @@ STAR_REVIEW_CANDIDATES_PER_STAR=3
 STAR_REVIEW_TOTAL_CANDIDATE_LIMIT=9
 STAR_CANDIDATE_LIMIT=500
 STAR_SHADOW_CANDIDATE_LIMIT=20
+STAR_MIN_SCORE=0.18
+STAR_RELATED_MIN_SCORE=0.22
+STAR_RECENT_FATIGUE_HOURS=6
+STAR_RECENT_FATIGUE_PENALTY=0.14
 
 STAR_WEIGHT_CONTENT=0.30
 STAR_WEIGHT_KEYWORD=0.20
@@ -613,6 +620,10 @@ STAR_INJECT_LIMIT=3
 STAR_REVIEW_NEW_LIMIT=5
 STAR_REVIEW_CANDIDATES_PER_STAR=3
 STAR_REVIEW_TOTAL_CANDIDATE_LIMIT=9
+STAR_MIN_SCORE=0.18
+STAR_RELATED_MIN_SCORE=0.22
+STAR_RECENT_FATIGUE_HOURS=6
+STAR_RECENT_FATIGUE_PENALTY=0.14
 
 DEFAULT_SURFACE_LIMIT=3
 
@@ -711,7 +722,7 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 
 - Search the active code paths for retired summary/window env vars and the removed short-lived notes table; they should not appear.
 - `GET /api/gateway/context/preview` should show `stable`, optional `slow`, optional `mem`, `heartbeat`, `tool_policy`, and `format`.
-- When `INJECT_STARS=true`, relevant stars should appear in the `mem` layer before mem notes, and `STAR_INJECT_LIMIT` should bound normal chat injection.
+- When `INJECT_STARS=true`, relevant stars that clear `STAR_RELATED_MIN_SCORE` and `STAR_MIN_SCORE` should appear in the `mem` layer before mem notes; `STAR_INJECT_LIMIT` is an upper bound, not a promise to always inject that many.
 - `GET /api/calendar/send-preview?...` should show `Current Client Context Snapshots`, not rolling/frozen blocks.
 - `GET /api/gateway/logs` should show prompt cache breakpoints and cold-start metadata.
 - `GET /api/gateway/logs/{id}` should show `response_full` for retained payloads; the list view should keep using short previews.
