@@ -29,17 +29,21 @@ def maybe_prepare_cold_start_snapshot(
 
     target_messages = cfg.cold_start_message_limit or cfg.max_client_messages or 8
     fill_count = max(int(target_messages) - max(int(current_message_count or 0), 0), 0)
-    if fill_count <= 0:
-        active = store.latest_active_cold_start_snapshot(session["id"])
-        if active:
-            store.complete_cold_start_snapshot(active["id"])
-        return None
 
     active = store.latest_active_cold_start_snapshot(session["id"])
     if active:
+        if fill_count <= 0:
+            store.complete_cold_start_snapshot(active["id"])
+            return None
         active["sources"] = _trim_cold_start_sources(active.get("sources") or [], fill_count)
         active["source_message_count"] = sum(len(source.get("messages") or []) for source in active.get("sources") or [])
+        active["source_session_tags"] = sorted(
+            {source.get("session_tag") for source in active.get("sources") or [] if source.get("session_tag")}
+        )
         return active
+
+    if fill_count <= 0:
+        return None
 
     reason = ""
     since = None
@@ -52,11 +56,15 @@ def maybe_prepare_cold_start_snapshot(
     else:
         return None
 
-    sources = store.latest_cross_session_context(
+    source_session = store.latest_context_source_session(
         exclude_session_id=None if is_first_turn else session["id"],
         since=since,
-        limit_messages=fill_count,
     )
+    sources = store.latest_session_context(
+        source_session["session_tag"],
+        limit_messages=fill_count,
+        since=since,
+    ) if source_session else []
     if not sources:
         return None
 

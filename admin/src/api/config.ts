@@ -208,8 +208,31 @@ export interface LegacyAtomicMemoryItem {
 }
 
 export interface ColdStartPreview {
+  enabled?: boolean
   would_inject: boolean
   reason: string | null
+  persisted?: boolean
+  target_session_tag?: string | null
+  source_session_tag?: string | null
+  snapshot?: {
+    id: string
+    created_at: string
+    source_message_count: number
+    source_session_tags: string[]
+  } | null
+  resolved_source?: {
+    session_tag?: string
+    client_name?: string | null
+    snapshot_at?: string
+    latest_user_text?: string | null
+  } | null
+  config?: {
+    message_limit?: number | null
+    effective_message_limit?: number
+    preview_fill_count?: number
+    idle_minutes?: number
+    target_idle_minutes?: number | null
+  }
   sources: Array<{
     session_tag: string
     client_name: string
@@ -238,7 +261,12 @@ export async function fetchGatewayOverview(): Promise<GatewayOverview> {
   return data.overview || data
 }
 
-export async function fetchColdStartPreview(): Promise<ColdStartPreview> {
-  const { data } = await api.get('/api/gateway/cold-start/preview')
+export async function fetchColdStartPreview(params: {
+  target_session_tag?: string
+  source_session_tag?: string
+  current_message_count?: number
+  persist?: boolean
+} = {}): Promise<ColdStartPreview> {
+  const { data } = await api.post('/api/gateway/cold-start/preview', params)
   return data
 }

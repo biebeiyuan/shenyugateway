@@ -122,6 +122,13 @@ class HeartbeatDeleteRequest(BaseModel):
     confirm: Optional[str] = None
 
 
+class ColdStartPreviewRequest(BaseModel):
+    target_session_tag: Optional[str] = None
+    source_session_tag: Optional[str] = None
+    current_message_count: Optional[int] = None
+    persist: bool = True
+
+
 class CalendarPromptUpdate(BaseModel):
     prompt_type: str
     name: Optional[str] = None

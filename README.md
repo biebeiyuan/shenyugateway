@@ -271,17 +271,25 @@ python scripts/inspect_recall_sources.py
 ## Cold Start Layer
 
 Cold start bridges context across windows without reintroducing the retired frozen context layer. It now behaves like
-the normal client window at the start of a new thread: the latest previous request snapshot is inserted as ordinary
-user/assistant history before the new thread's messages, then it shrinks as the new thread grows.
+the normal client window at the start of a new thread: a bounded snapshot from one selected source thread is inserted
+as ordinary user/assistant history before the new thread's messages, then it shrinks as the new thread grows.
+
+Admin preview is a freezing step, not just a dry render. `POST /api/gateway/cold-start/preview` can select a
+`target_session_tag` and an optional `source_session_tag`; when it finds source messages it writes a
+`cold_start_snapshot` for that target. The next chat request for that target reuses the active snapshot and trims it
+to the live client-window gap, so the previewed bridge does not drift into another thread between preview and use.
+If no preview snapshot exists, automatic cold start chooses the latest source thread that has a request context
+snapshot, then reads only that thread.
 
 Flow:
 
 1. `_prepare_messages()` opens the session and stores a `request_context_snapshot`.
 2. `_maybe_prepare_cold_start_snapshot()` checks whether the request is a new window or a stale window.
 3. It calculates the gap between the target window and the current client message count.
-4. It reads recent previous request snapshots via `latest_cross_session_context()`.
-5. It dedupes overlapping `user`/`assistant` messages and inserts only the number needed to fill that gap.
-6. Once the new thread reaches the target window size, the bridge automatically stops.
+4. It first reuses an active preview snapshot if one exists for this target session.
+5. Otherwise it chooses one latest source thread and reads its recent snapshots via `latest_session_context()`.
+6. It dedupes overlapping `user`/`assistant` messages and inserts only the number needed to fill that gap.
+7. Once the new thread reaches the target window size, the bridge automatically stops.
 
 Config:
 
@@ -294,6 +302,7 @@ Inspection endpoints:
 
 - `GET /api/gateway/overview`
 - `GET /api/gateway/cold-start/preview`
+- `POST /api/gateway/cold-start/preview`
 - `GET /api/gateway/sessions/{session_tag}`
 
 ## Calendar Layer

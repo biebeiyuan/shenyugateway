@@ -11,6 +11,7 @@ from .mem_notes import MemNoteService
 from .request_logs import _finalize_stale_tool_stream_logs, _http_request_diagnostics, _retain_request_log_payloads
 from .runtime import iso_now as _iso_now
 from .schemas import (
+    ColdStartPreviewRequest,
     HeartbeatCreateRequest,
     HeartbeatDeleteRequest,
     MemNoteBulkPatch,
@@ -168,41 +169,108 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         return {"ok": True, "deleted": deleted, "overview": store.gateway_overview()}
 
     @router.get("/api/gateway/cold-start/preview")
-    async def cold_start_preview(session_tag: Optional[str] = None):
+    async def cold_start_preview(
+        session_tag: Optional[str] = None,
+        source_session_tag: Optional[str] = None,
+        current_message_count: int = 1,
+        persist: bool = True,
+    ):
+        return await _build_cold_start_preview(
+            target_session_tag=session_tag,
+            source_session_tag=source_session_tag,
+            current_message_count=current_message_count,
+            persist=persist,
+        )
+
+    @router.post("/api/gateway/cold-start/preview")
+    async def cold_start_preview_post(body: ColdStartPreviewRequest):
+        return await _build_cold_start_preview(
+            target_session_tag=body.target_session_tag,
+            source_session_tag=body.source_session_tag,
+            current_message_count=body.current_message_count or 1,
+            persist=body.persist,
+        )
+
+    async def _build_cold_start_preview(
+        *,
+        target_session_tag: Optional[str],
+        source_session_tag: Optional[str],
+        current_message_count: int,
+        persist: bool,
+    ):
         store = deps.require_session_store()
+        current_message_count = max(0, int(current_message_count or 0))
+        target_tag = (target_session_tag or "default").strip() or "default"
+        source_tag = (source_session_tag or "").strip()
+        target_session = store.get_session_by_tag(target_tag)
         exclude_session_id = None
         since = None
         reason = "new_window"
-        current_message_count = 1
-        if session_tag:
-            session = store.get_session_by_tag(session_tag)
-            if session:
-                idle_minutes = deps.cold_start_idle_minutes(session)
-                if idle_minutes >= max(cfg.cold_start_idle_minutes, 1):
-                    exclude_session_id = session["id"]
-                    since = session.get("last_active_at")
-                    reason = "stale_window_cross_activity"
-                else:
-                    reason = "new_window"
+        idle_minutes = None
+        if target_session:
+            idle_minutes = deps.cold_start_idle_minutes(target_session)
+            if idle_minutes >= max(cfg.cold_start_idle_minutes, 1):
+                exclude_session_id = target_session["id"]
+                since = target_session.get("last_active_at")
+                reason = "stale_window_cross_activity"
         sources = []
         target_messages = cfg.cold_start_message_limit or cfg.max_client_messages or 8
         fill_count = max(int(target_messages) - current_message_count, 0)
-        if cfg.enable_cold_start and reason != "old_window_short_interval":
-            sources = store.latest_cross_session_context(
-                exclude_session_id=exclude_session_id,
-                since=since,
-                limit_messages=fill_count or 1,
+        resolved_source = None
+        if cfg.enable_cold_start and fill_count > 0:
+            if source_tag:
+                sources = store.latest_session_context(
+                    source_tag,
+                    limit_messages=fill_count,
+                    since=since,
+                )
+                if sources:
+                    resolved_source = {
+                        "session_id": sources[0].get("session_id"),
+                        "session_tag": sources[0].get("session_tag"),
+                        "client_name": sources[0].get("client_name"),
+                        "snapshot_at": sources[0].get("snapshot_at"),
+                        "latest_user_text": sources[0].get("latest_user_text"),
+                    }
+            else:
+                resolved_source = store.latest_context_source_session(
+                    exclude_session_id=exclude_session_id,
+                    since=since,
+                )
+                if resolved_source:
+                    sources = store.latest_session_context(
+                        resolved_source["session_tag"],
+                        limit_messages=fill_count,
+                        since=since,
+                    )
+        snapshot = None
+        if persist and cfg.enable_cold_start and sources:
+            if not target_session:
+                target_session = store.get_or_create_session(target_tag, "preview")
+            snapshot = store.write_cold_start_snapshot(
+                session_id=target_session["id"],
+                session_tag=target_session["session_tag"],
+                reason=f"manual_preview:{reason}",
+                sources=sources,
+                trigger_last_active_at=(target_session or {}).get("last_active_at"),
+                max_injections=max(cfg.max_client_messages or cfg.cold_start_message_limit or 8, 1),
             )
         return {
             "enabled": cfg.enable_cold_start,
             "reason": reason,
             "would_inject": bool(sources),
+            "persisted": bool(snapshot),
+            "snapshot": snapshot,
+            "target_session_tag": target_tag,
+            "source_session_tag": (sources[0].get("session_tag") if sources else source_tag) or None,
+            "resolved_source": resolved_source,
             "sources": sources,
             "config": {
                 "message_limit": cfg.cold_start_message_limit,
                 "effective_message_limit": target_messages,
                 "preview_fill_count": fill_count,
                 "idle_minutes": cfg.cold_start_idle_minutes,
+                "target_idle_minutes": idle_minutes,
             },
         }
 

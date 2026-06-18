@@ -927,6 +927,109 @@ class GatewayStore:
             snapshots.append(item)
         return snapshots
 
+    def latest_context_source_session(
+        self,
+        exclude_session_id: Optional[str] = None,
+        since: Optional[str] = None,
+    ) -> Optional[dict]:
+        where = []
+        params: list[Any] = []
+        if exclude_session_id:
+            where.append("r.session_id != ?")
+            params.append(exclude_session_id)
+        if since:
+            where.append("r.created_at > ?")
+            params.append(since)
+        where_sql = "WHERE " + " AND ".join(where) if where else ""
+        with self._connect() as conn:
+            row = conn.execute(
+                f"""
+                SELECT
+                    r.session_id,
+                    s.session_tag,
+                    s.client_name,
+                    r.created_at AS snapshot_at,
+                    r.latest_user_text
+                FROM request_context_snapshots r
+                JOIN gateway_sessions s ON s.id = r.session_id
+                {where_sql}
+                ORDER BY r.created_at DESC, r.rowid DESC
+                LIMIT 1
+                """,
+                tuple(params),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def latest_session_context(
+        self,
+        session_tag: str,
+        limit_messages: int,
+        since: Optional[str] = None,
+    ) -> list[dict]:
+        session_tag = (session_tag or "").strip()
+        if not session_tag:
+            return []
+        limit_messages = max(1, min(int(limit_messages or 1), 500))
+        fetch_limit = max(20, min(limit_messages * 3, 500))
+        where = ["r.session_tag = ?"]
+        params: list[Any] = [session_tag]
+        if since:
+            where.append("r.created_at > ?")
+            params.append(since)
+        where_sql = "WHERE " + " AND ".join(where)
+        with self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT r.*, s.session_tag AS resolved_session_tag, s.client_name AS resolved_client_name
+                FROM request_context_snapshots r
+                JOIN gateway_sessions s ON s.id = r.session_id
+                {where_sql}
+                ORDER BY r.created_at DESC, r.rowid DESC
+                LIMIT ?
+                """,
+                (*params, fetch_limit),
+            ).fetchall()
+        if not rows:
+            return []
+
+        newest = dict(rows[0])
+        selected_reversed: list[dict[str, Any]] = []
+        seen_messages: set[tuple[str, str]] = set()
+        remaining = limit_messages
+
+        for row in rows:
+            item = dict(row)
+            raw_messages = json.loads(item.get("messages_json") or "[]")
+            for msg in reversed(raw_messages):
+                role = msg.get("role")
+                content = msg.get("content")
+                if role not in {"user", "assistant"} or not content:
+                    continue
+                key = (str(role), str(content))
+                if key in seen_messages:
+                    continue
+                seen_messages.add(key)
+                selected_reversed.append({"role": role, "content": content})
+                remaining -= 1
+                if remaining <= 0:
+                    break
+            if remaining <= 0:
+                break
+
+        selected = list(reversed(selected_reversed))
+        if not selected:
+            return []
+        return [
+            {
+                "session_id": newest.get("session_id"),
+                "session_tag": newest.get("resolved_session_tag") or newest.get("session_tag"),
+                "client_name": newest.get("resolved_client_name") or newest.get("client_name"),
+                "snapshot_at": newest.get("created_at"),
+                "latest_user_text": newest.get("latest_user_text"),
+                "messages": selected,
+            }
+        ]
+
     def recent_cross_session_context(
         self,
         exclude_session_id: Optional[str],

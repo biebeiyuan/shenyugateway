@@ -27,6 +27,7 @@ import {
   type GatewayOverview,
   type HealthStatus,
 } from '@/api/config'
+import { fetchGatewaySessions, type GatewaySession } from '@/api/sessions'
 
 interface UpstreamPreset {
   name: string
@@ -78,6 +79,10 @@ const presets = ref<UpstreamPreset[]>([])
 const modelEntries = ref<[string, string][]>([])
 const overview = ref<GatewayOverview | null>(null)
 const coldPreview = ref<ColdStartPreview | null>(null)
+const sessions = ref<GatewaySession[]>([])
+const selectedColdTarget = ref('default')
+const selectedColdSource = ref<string | null>(null)
+const coldPreviewLoading = ref(false)
 
 const protocolOptions = [
   { label: 'Auto detect', value: 'auto' },
@@ -96,6 +101,14 @@ const providerFormatOptions = [
   { label: 'provider 字符串', value: 'string' },
   { label: 'provider.order 对象', value: 'order_object' },
 ]
+const sessionOptions = computed(() => sessions.value.map((item) => ({
+  label: `${item.session_tag}${item.latest_user_text ? ` · ${item.latest_user_text.slice(0, 24)}` : ''}`,
+  value: item.session_tag,
+})))
+const sourceSessionOptions = computed(() => [
+  { label: '自动选择最新线程', value: '__auto__' },
+  ...sessionOptions.value,
+])
 
 const activePresetName = computed(() => {
   const match = presets.value.find(
@@ -114,6 +127,7 @@ onMounted(async () => {
   await loadConfig()
   await checkHealth()
   await loadOverview()
+  await loadSessions()
   healthTimer = setInterval(checkHealth, 15000)
 })
 
@@ -305,13 +319,36 @@ async function loadOverview() {
   }
 }
 
-async function loadColdPreview() {
+async function loadSessions() {
   try {
-    await loadOverview()
-    coldPreview.value = await fetchColdStartPreview()
+    const data = await fetchGatewaySessions({ limit: 80 })
+    sessions.value = data.sessions
+    if (!selectedColdTarget.value && data.sessions.length) {
+      selectedColdTarget.value = data.sessions[0].session_tag
+    }
+  } catch {
+    sessions.value = []
+  }
+}
+
+async function loadColdPreview() {
+  coldPreviewLoading.value = true
+  try {
+    await Promise.all([loadOverview(), loadSessions()])
+    coldPreview.value = await fetchColdStartPreview({
+      target_session_tag: selectedColdTarget.value || 'default',
+      source_session_tag: selectedColdSource.value || undefined,
+      current_message_count: 1,
+      persist: true,
+    })
+    if (coldPreview.value.persisted) {
+      message.success('已生成下一次冷启动快照')
+    }
   } catch {
     coldPreview.value = null
     message.error('Cold start preview failed')
+  } finally {
+    coldPreviewLoading.value = false
   }
 }
 
@@ -509,7 +546,25 @@ function removeModel(index: number) {
           </div>
         </NForm>
         <div class="rev-toolbar">
-          <NButton size="tiny" @click="loadColdPreview">预览下一次冷启动</NButton>
+          <NSelect
+            v-model:value="selectedColdTarget"
+            filterable
+            tag
+            :options="sessionOptions"
+            size="small"
+            class="cold-session-select"
+            placeholder="目标线程"
+          />
+          <NSelect
+            :value="selectedColdSource || '__auto__'"
+            filterable
+            :options="sourceSessionOptions"
+            size="small"
+            class="cold-session-select"
+            placeholder="来源线程"
+            @update:value="(value) => { selectedColdSource = value === '__auto__' ? null : value }"
+          />
+          <NButton size="tiny" :loading="coldPreviewLoading" @click="loadColdPreview">预览并生成快照</NButton>
           <NButton size="tiny" @click="loadOverview">刷新统计</NButton>
         </div>
         <div v-if="overview" class="overview-text">
@@ -520,14 +575,23 @@ function removeModel(index: number) {
         <div v-else class="rev-empty">尚未加载统计</div>
         <div v-if="coldPreview" class="cold-preview">
           <div v-if="!coldPreview.would_inject" class="rev-empty">按当前配置，下一次不会注入冷启动内容</div>
-          <div v-else v-for="source in coldPreview.sources" :key="source.session_tag" class="rev-card">
-            <h4>{{ source.session_tag }} · {{ source.client_name }}</h4>
+          <template v-else>
             <div class="rev-meta">
-              <span class="rev-pill">{{ coldPreview.reason }}</span>
-              <span class="rev-pill">{{ source.snapshot_at }}</span>
+              <span class="rev-pill">目标 {{ coldPreview.target_session_tag || '-' }}</span>
+              <span class="rev-pill">来源 {{ coldPreview.source_session_tag || '-' }}</span>
+              <span class="rev-pill">补足 {{ coldPreview.config?.preview_fill_count || 0 }} 条</span>
+              <span class="rev-pill">{{ coldPreview.persisted ? '快照已冻结' : '仅预览' }}</span>
             </div>
-            <div class="rev-body">{{ (source.messages || []).map((m) => `- ${m.role}: ${m.content}`).join('\n') }}</div>
-          </div>
+            <div v-for="source in coldPreview.sources" :key="source.session_tag" class="rev-card">
+              <h4>{{ source.session_tag }} · {{ source.client_name }}</h4>
+              <div class="rev-meta">
+                <span class="rev-pill">{{ coldPreview.reason }}</span>
+                <span class="rev-pill">{{ source.snapshot_at }}</span>
+                <span v-if="coldPreview.snapshot?.id" class="rev-pill">{{ coldPreview.snapshot.id }}</span>
+              </div>
+              <div class="rev-body">{{ (source.messages || []).map((m) => `- ${m.role}: ${m.content}`).join('\n') }}</div>
+            </div>
+          </template>
         </div>
       </NCard>
 
@@ -700,6 +764,11 @@ function removeModel(index: number) {
   align-items: center;
   flex-wrap: wrap;
   margin-bottom: 10px;
+}
+
+.cold-session-select {
+  min-width: 190px;
+  max-width: 260px;
 }
 
 .overview-text {
