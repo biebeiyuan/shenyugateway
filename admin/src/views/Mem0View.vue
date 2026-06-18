@@ -59,6 +59,7 @@ const MEM_TUNING_DEFAULTS: Partial<GatewayConfig> = {
   inject_inline_memory_prompt: true,
   enable_inline_memory_capture: true,
   inject_mem_notes: true,
+  enable_gateway_tools: true,
   enable_mem0_management_tools: true,
   mem_note_limit: 3,
   mem_note_min_score: 0.45,
@@ -76,6 +77,7 @@ const config = ref<Partial<GatewayConfig>>({
   inject_inline_memory_prompt: true,
   enable_inline_memory_capture: true,
   inject_mem_notes: true,
+  enable_gateway_tools: true,
   enable_mem0_management_tools: true,
 })
 const savingConfig = ref(false)
@@ -100,14 +102,6 @@ const legacyQuery = ref('')
 const legacySessionTag = ref('')
 const legacyLimit = ref(30)
 
-const memPromptAndCapture = computed({
-  get: () => Boolean(config.value.inject_inline_memory_prompt && config.value.enable_inline_memory_capture),
-  set: (enabled: boolean) => {
-    config.value.inject_inline_memory_prompt = enabled
-    config.value.enable_inline_memory_capture = enabled
-  },
-})
-
 const selectedNotes = computed(() => notes.value.filter((item) => selectedNoteIds.value.includes(item.id)))
 const selectedActivationMissing = computed(() => {
   const missing = selectedNotes.value.map((item) => activationMissing(item)).filter(Boolean)
@@ -130,8 +124,8 @@ async function saveSettings() {
   savingConfig.value = true
   try {
     const result = await saveMem0Config({
-      inject_inline_memory_prompt: memPromptAndCapture.value,
-      enable_inline_memory_capture: memPromptAndCapture.value,
+      inject_inline_memory_prompt: config.value.inject_inline_memory_prompt,
+      enable_inline_memory_capture: config.value.enable_inline_memory_capture,
       inject_mem_notes: config.value.inject_mem_notes,
       mem_note_limit: config.value.mem_note_limit,
       mem_note_min_score: config.value.mem_note_min_score,
@@ -143,6 +137,7 @@ async function saveSettings() {
       mem_note_dedupe_turns: config.value.mem_note_dedupe_turns,
       mem_note_soft_cooldown_hours: config.value.mem_note_soft_cooldown_hours,
       mem_note_default_cooldown_hours: config.value.mem_note_default_cooldown_hours,
+      enable_gateway_tools: config.value.enable_gateway_tools,
       enable_mem0_management_tools: config.value.enable_mem0_management_tools,
     })
     config.value = { ...config.value, ...result.config }
@@ -157,6 +152,24 @@ async function saveSettings() {
 function resetMemTuningDefaults() {
   config.value = { ...config.value, ...MEM_TUNING_DEFAULTS }
   message.info('已恢复默认值，保存后生效')
+}
+
+function setMemToolsOnly() {
+  config.value.inject_inline_memory_prompt = false
+  config.value.enable_inline_memory_capture = false
+  config.value.inject_mem_notes = false
+  config.value.enable_gateway_tools = true
+  config.value.enable_mem0_management_tools = true
+  message.info('已切到静音工具模式，保存后生效')
+}
+
+function setMemAllOn() {
+  config.value.inject_inline_memory_prompt = true
+  config.value.enable_inline_memory_capture = true
+  config.value.inject_mem_notes = true
+  config.value.enable_gateway_tools = true
+  config.value.enable_mem0_management_tools = true
+  message.info('已打开 Mem 提示、捕获、注入和工具，保存后生效')
 }
 
 async function loadNotes() {
@@ -378,11 +391,19 @@ function formatTime(value?: string | null) {
     <NCard title="Mem 设置" size="small">
       <NForm label-placement="top">
         <div class="cfg-inline">
-          <NFormItem label="Inline Mem 提示 + 捕获">
-            <NSwitch v-model:value="memPromptAndCapture" />
+          <NFormItem label="Mem 写法提示">
+            <NSwitch v-model:value="config.inject_inline_memory_prompt" />
+          </NFormItem>
+          <NFormItem label="自动捕获 mem">
+            <NSwitch v-model:value="config.enable_inline_memory_capture" />
           </NFormItem>
           <NFormItem label="便签反上来">
             <NSwitch v-model:value="config.inject_mem_notes" />
+          </NFormItem>
+        </div>
+        <div class="cfg-inline">
+          <NFormItem label="网关工具">
+            <NSwitch v-model:value="config.enable_gateway_tools" />
           </NFormItem>
           <NFormItem label="整理工具">
             <NSwitch v-model:value="config.enable_mem0_management_tools" />
@@ -439,6 +460,8 @@ function formatTime(value?: string | null) {
       </NForm>
       <NSpace>
         <NButton type="primary" :loading="savingConfig" @click="saveSettings">保存设置</NButton>
+        <NButton :disabled="savingConfig" @click="setMemToolsOnly">静音但保留工具</NButton>
+        <NButton :disabled="savingConfig" @click="setMemAllOn">全部开启</NButton>
         <NPopconfirm positive-text="恢复" negative-text="取消" @positive-click="resetMemTuningDefaults">
           <template #trigger>
             <NButton :disabled="savingConfig">恢复默认</NButton>

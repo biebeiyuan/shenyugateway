@@ -29,6 +29,11 @@ const router = createRouter({
       component: () => import('@/views/Mem0View.vue'),
     },
     {
+      path: '/stars',
+      name: 'stars',
+      component: () => import('@/views/StarsView.vue'),
+    },
+    {
       path: '/logs',
       name: 'logs',
       component: () => import('@/views/LogsView.vue'),

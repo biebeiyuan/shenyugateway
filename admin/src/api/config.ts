@@ -40,6 +40,25 @@ export interface GatewayConfig {
   mem_note_dedupe_turns?: number
   mem_note_soft_cooldown_hours?: number
   mem_note_default_cooldown_hours?: number
+  // star memory
+  inject_stars?: boolean
+  inject_star_prompt?: boolean
+  enable_inline_star_capture?: boolean
+  enable_star_embeddings?: boolean
+  star_inject_limit?: number
+  star_review_new_limit?: number
+  star_review_candidates_per_star?: number
+  star_review_total_candidate_limit?: number
+  star_candidate_limit?: number
+  star_shadow_candidate_limit?: number
+  star_weight_content?: number
+  star_weight_keyword?: number
+  star_weight_harmony?: number
+  star_weight_chord?: number
+  star_weight_actr?: number
+  star_constant_bonus?: number
+  star_novelty_bonus?: number
+  star_ignored_penalty?: number
   // feature toggles
   enable_upstream_tools?: boolean
   calendar_inject_day?: boolean
