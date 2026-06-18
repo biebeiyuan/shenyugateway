@@ -34,6 +34,11 @@ const router = createRouter({
       component: () => import('@/views/StarsView.vue'),
     },
     {
+      path: '/stars/map',
+      name: 'stars-map',
+      component: () => import('@/views/StarsView.vue'),
+    },
+    {
       path: '/logs',
       name: 'logs',
       component: () => import('@/views/LogsView.vue'),

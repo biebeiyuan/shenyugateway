@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import {
   NButton,
   NCheckbox,
@@ -28,6 +29,8 @@ import {
 } from '@/api/stars'
 
 const message = useMessage()
+const route = useRoute()
+const router = useRouter()
 
 const STAR_DEFAULTS: Partial<GatewayConfig> = {
   inject_star_prompt: true,
@@ -120,6 +123,7 @@ const unscoredCount = computed(() =>
   reviewItems.value.reduce((total, item) => total + item.candidates.filter((candidate) => !feedbackFor(item.star, candidate)).length, 0),
 )
 const selectedMapStar = computed(() => graphStars.value.find((item) => item.id === selectedMapStarId.value) || null)
+const isMapRoute = computed(() => route.path === '/stars/map')
 const connectedMapStars = computed(() => {
   const selected = selectedMapStarId.value
   if (!selected) return []
@@ -132,13 +136,26 @@ const connectedMapStars = computed(() => {
 })
 
 onMounted(async () => {
-  await nextTick()
-  initStarfield()
   await Promise.all([loadConfig(), loadGraph()])
+  if (isMapRoute.value) {
+    await nextTick()
+    initStarfield()
+  }
 })
 
 onBeforeUnmount(() => {
   teardownStarfield()
+})
+
+watch(isMapRoute, async (enabled) => {
+  if (!enabled) {
+    teardownStarfield()
+    return
+  }
+  await nextTick()
+  initStarfield()
+  resizeStarfield()
+  rebuildStarfield()
 })
 
 async function loadConfig() {
@@ -539,6 +556,7 @@ function initStarfield() {
 
 function teardownStarfield() {
   if (frameId) cancelAnimationFrame(frameId)
+  frameId = 0
   canvasRef.value?.removeEventListener('pointerdown', onMapPointer)
   window.removeEventListener('resize', resizeStarfield)
   clearGroup(starGroup)
@@ -612,7 +630,7 @@ function createAmbientStars(): THREE.Points {
 
 function rebuildStarfield() {
   if (!scene || !starGroup || !lineGroup || !starGeometry || !glowTexture) return
-  clearGroup(starGroup)
+  clearGroup(starGroup, false)
   clearGroup(lineGroup)
   starObjects.clear()
   linkObjects.length = 0
@@ -670,14 +688,14 @@ function rebuildStarfield() {
   updateHighlights()
 }
 
-function clearGroup(group: THREE.Group | null) {
+function clearGroup(group: THREE.Group | null, disposeGeometry = true) {
   if (!group) return
   while (group.children.length) {
     const child = group.children.pop()
     if (!child) continue
     child.traverse((object) => {
       const mesh = object as THREE.Mesh
-      mesh.geometry?.dispose?.()
+      if (disposeGeometry) mesh.geometry?.dispose?.()
       const material = mesh.material as THREE.Material | THREE.Material[] | undefined
       if (Array.isArray(material)) material.forEach((item) => item.dispose())
       else material?.dispose?.()
@@ -748,8 +766,8 @@ function updateHighlights() {
 </script>
 
 <template>
-  <div class="stars-page">
-    <section class="sky-section">
+  <div class="stars-page" :class="{ 'map-page': isMapRoute }">
+    <section v-if="isMapRoute" class="sky-section">
       <div class="sky-shell">
         <canvas ref="canvasRef" class="star-canvas" />
         <div class="sky-vignette"></div>
@@ -758,10 +776,13 @@ function updateHighlights() {
             <div class="eyebrow">Star Memory</div>
             <h2>记忆星图</h2>
           </div>
-          <div class="sky-stats">
-            <span>{{ starCount }} stars</span>
-            <span>{{ linkCount }} links</span>
-            <span v-if="mapLoading">syncing</span>
+          <div class="sky-nav">
+            <div class="sky-stats">
+              <span>{{ starCount }} stars</span>
+              <span>{{ linkCount }} links</span>
+              <span v-if="mapLoading">syncing</span>
+            </div>
+            <NButton size="small" ghost @click="router.push('/stars')">回到星星</NButton>
           </div>
         </div>
         <div class="sky-controls">
@@ -801,7 +822,19 @@ function updateHighlights() {
       </div>
     </section>
 
-    <section class="workbench">
+    <section v-else class="workbench">
+      <div class="stars-head">
+        <div>
+          <div class="page-eyebrow">Star Memory</div>
+          <h2>星星</h2>
+          <p>一次一小口，连线、漏反、该反不该反都从这里记。</p>
+        </div>
+        <div class="head-actions">
+          <NButton size="small" @click="router.push('/stars/map')">记忆星图</NButton>
+          <NButton size="small" type="primary" :loading="reviewing" @click="runReview">拿一小批</NButton>
+        </div>
+      </div>
+
       <div class="mode-rail">
         <button type="button" :class="{ active: mode === 'score' }" @click="mode = 'score'">
           评分
@@ -939,13 +972,17 @@ function updateHighlights() {
   margin: 0 auto;
 }
 
+.stars-page.map-page {
+  max-width: min(1440px, calc(100vw - 24px));
+}
+
 .sky-section {
-  min-height: 560px;
+  min-height: calc(100vh - 92px);
 }
 
 .sky-shell {
   position: relative;
-  min-height: 580px;
+  min-height: calc(100vh - 92px);
   overflow: hidden;
   border: 1px solid rgba(244, 210, 186, 0.24);
   border-radius: 8px;
@@ -993,6 +1030,13 @@ function updateHighlights() {
   gap: 12px;
   align-items: flex-start;
   pointer-events: none;
+}
+
+.sky-nav {
+  display: grid;
+  gap: 10px;
+  justify-items: end;
+  pointer-events: auto;
 }
 
 .eyebrow {
@@ -1145,11 +1189,56 @@ function updateHighlights() {
 }
 
 .workbench {
-  margin-top: 12px;
+  max-width: 980px;
+  margin: 0 auto;
   border: 1px solid #f2ddd8;
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.76);
-  padding: 14px;
+  padding: 16px;
+}
+
+.stars-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  align-items: flex-start;
+  margin-bottom: 14px;
+  padding: 16px;
+  border: 1px solid #f0e0dc;
+  border-radius: 8px;
+  background:
+    radial-gradient(circle at 12% 18%, rgba(255, 224, 174, 0.26), transparent 34%),
+    linear-gradient(135deg, #fffdfb 0%, #f8eef2 58%, #eff7f2 100%);
+}
+
+.page-eyebrow {
+  color: #a08090;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+}
+
+.stars-head h2 {
+  margin: 2px 0 3px;
+  color: #4a3535;
+  font-family: 'Cormorant Garamond', 'Georgia', serif;
+  font-size: 34px;
+  font-weight: 500;
+  letter-spacing: 0;
+}
+
+.stars-head p {
+  margin: 0;
+  color: #8b7b79;
+  font-size: 13px;
+}
+
+.head-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .mode-rail {
@@ -1448,6 +1537,10 @@ function updateHighlights() {
     flex-direction: column;
   }
 
+  .sky-nav {
+    justify-items: start;
+  }
+
   .memory-lens {
     left: 16px;
     right: 16px;
@@ -1480,6 +1573,14 @@ function updateHighlights() {
   .soft-input,
   .soft-input.wide {
     width: 100%;
+  }
+
+  .stars-head {
+    flex-direction: column;
+  }
+
+  .head-actions {
+    justify-content: flex-start;
   }
 }
 </style>
