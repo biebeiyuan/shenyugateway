@@ -970,7 +970,6 @@ class GatewayStore:
         if not session_tag:
             return []
         limit_messages = max(1, min(int(limit_messages or 1), 500))
-        fetch_limit = max(20, min(limit_messages * 3, 500))
         where = ["r.session_tag = ?"]
         params: list[Any] = [session_tag]
         if since:
@@ -978,45 +977,28 @@ class GatewayStore:
             params.append(since)
         where_sql = "WHERE " + " AND ".join(where)
         with self._connect() as conn:
-            rows = conn.execute(
+            row = conn.execute(
                 f"""
                 SELECT r.*, s.session_tag AS resolved_session_tag, s.client_name AS resolved_client_name
                 FROM request_context_snapshots r
                 JOIN gateway_sessions s ON s.id = r.session_id
                 {where_sql}
                 ORDER BY r.created_at DESC, r.rowid DESC
-                LIMIT ?
+                LIMIT 1
                 """,
-                (*params, fetch_limit),
-            ).fetchall()
-        if not rows:
+                tuple(params),
+            ).fetchone()
+        if not row:
             return []
 
-        newest = dict(rows[0])
-        selected_reversed: list[dict[str, Any]] = []
-        seen_messages: set[tuple[str, str]] = set()
-        remaining = limit_messages
-
-        for row in rows:
-            item = dict(row)
-            raw_messages = json.loads(item.get("messages_json") or "[]")
-            for msg in reversed(raw_messages):
-                role = msg.get("role")
-                content = msg.get("content")
-                if role not in {"user", "assistant"} or not content:
-                    continue
-                key = (str(role), str(content))
-                if key in seen_messages:
-                    continue
-                seen_messages.add(key)
-                selected_reversed.append({"role": role, "content": content})
-                remaining -= 1
-                if remaining <= 0:
-                    break
-            if remaining <= 0:
-                break
-
-        selected = list(reversed(selected_reversed))
+        newest = dict(row)
+        raw_messages = json.loads(newest.get("messages_json") or "[]")
+        messages = [
+            {"role": msg.get("role"), "content": msg.get("content")}
+            for msg in raw_messages
+            if msg.get("role") in {"user", "assistant"} and msg.get("content")
+        ]
+        selected = messages[-limit_messages:]
         if not selected:
             return []
         return [

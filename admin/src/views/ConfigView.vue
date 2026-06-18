@@ -80,7 +80,7 @@ const modelEntries = ref<[string, string][]>([])
 const overview = ref<GatewayOverview | null>(null)
 const coldPreview = ref<ColdStartPreview | null>(null)
 const sessions = ref<GatewaySession[]>([])
-const selectedColdTarget = ref('default')
+const selectedColdTarget = ref('')
 const selectedColdSource = ref<string | null>(null)
 const coldPreviewLoading = ref(false)
 
@@ -106,6 +106,7 @@ const sessionOptions = computed(() => sessions.value.map((item) => ({
   value: item.session_tag,
 })))
 const sourceSessionOptions = computed(() => [
+  { label: '同接上线程', value: '__same__' },
   { label: '自动选择最新线程', value: '__auto__' },
   ...sessionOptions.value,
 ])
@@ -335,9 +336,12 @@ async function loadColdPreview() {
   coldPreviewLoading.value = true
   try {
     await Promise.all([loadOverview(), loadSessions()])
+    const target = selectedColdTarget.value || sessions.value[0]?.session_tag || 'default'
+    const source = selectedColdSource.value === null ? target : selectedColdSource.value || undefined
+    selectedColdTarget.value = target
     coldPreview.value = await fetchColdStartPreview({
-      target_session_tag: selectedColdTarget.value || 'default',
-      source_session_tag: selectedColdSource.value || undefined,
+      target_session_tag: target,
+      source_session_tag: source,
       current_message_count: 1,
       persist: true,
     })
@@ -553,16 +557,18 @@ function removeModel(index: number) {
             :options="sessionOptions"
             size="small"
             class="cold-session-select"
-            placeholder="目标线程"
+            placeholder="接上线程"
           />
           <NSelect
-            :value="selectedColdSource || '__auto__'"
+            :value="selectedColdSource === null ? '__same__' : selectedColdSource || '__auto__'"
             filterable
             :options="sourceSessionOptions"
             size="small"
             class="cold-session-select"
             placeholder="来源线程"
-            @update:value="(value) => { selectedColdSource = value === '__auto__' ? null : value }"
+            @update:value="(value) => {
+              selectedColdSource = value === '__same__' ? null : value === '__auto__' ? '' : value
+            }"
           />
           <NButton size="tiny" :loading="coldPreviewLoading" @click="loadColdPreview">预览并生成快照</NButton>
           <NButton size="tiny" @click="loadOverview">刷新统计</NButton>

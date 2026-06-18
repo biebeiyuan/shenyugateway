@@ -130,6 +130,48 @@ def test_latest_session_context_stays_on_selected_thread(tmp_path):
     ]
 
 
+def test_latest_session_context_uses_latest_snapshot_tail_without_splicing_old_windows(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("5.15", "operit")
+
+    store.write_request_context_snapshot(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        client_name=session["client_name"],
+        latest_user_text="old tail",
+        messages=[
+            {"role": "user", "content": "old u1"},
+            {"role": "assistant", "content": "old a1"},
+            {"role": "user", "content": "old tail"},
+        ],
+    )
+    store.write_request_context_snapshot(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        client_name=session["client_name"],
+        latest_user_text="new tail",
+        messages=[
+            {"role": "user", "content": "new u1"},
+            {"role": "assistant", "content": "new a1"},
+            {"role": "user", "content": "new u2"},
+            {"role": "assistant", "content": "new a2"},
+            {"role": "user", "content": "new tail"},
+        ],
+    )
+
+    sources = store.latest_session_context("5.15", limit_messages=8)
+
+    assert len(sources) == 1
+    assert sources[0]["latest_user_text"] == "new tail"
+    assert [msg["content"] for msg in sources[0]["messages"]] == [
+        "new u1",
+        "new a1",
+        "new u2",
+        "new a2",
+        "new tail",
+    ]
+
+
 def test_cold_start_uses_active_preview_snapshot_before_auto_source(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     target = store.get_or_create_session("default", "operit")

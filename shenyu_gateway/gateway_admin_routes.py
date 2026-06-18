@@ -201,7 +201,9 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         store = deps.require_session_store()
         current_message_count = max(0, int(current_message_count or 0))
         target_tag = (target_session_tag or "default").strip() or "default"
-        source_tag = (source_session_tag or "").strip()
+        explicit_source_tag = (source_session_tag or "").strip()
+        auto_source = explicit_source_tag == "__auto__"
+        source_tag = "" if auto_source else (explicit_source_tag or target_tag)
         target_session = store.get_session_by_tag(target_tag)
         exclude_session_id = None
         since = None
@@ -219,10 +221,11 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         resolved_source = None
         if cfg.enable_cold_start and fill_count > 0:
             if source_tag:
+                source_since = None if source_tag == target_tag else since
                 sources = store.latest_session_context(
                     source_tag,
                     limit_messages=fill_count,
-                    since=since,
+                    since=source_since,
                 )
                 if sources:
                     resolved_source = {
@@ -232,7 +235,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                         "snapshot_at": sources[0].get("snapshot_at"),
                         "latest_user_text": sources[0].get("latest_user_text"),
                     }
-            else:
+            elif auto_source:
                 resolved_source = store.latest_context_source_session(
                     exclude_session_id=exclude_session_id,
                     since=since,
