@@ -12,6 +12,7 @@ from .context_layers import trim_client_image_blocks as _trim_client_image_block
 from .request_logs import (
     _finalize_tool_stream_log,
     _mark_tool_stream_activity,
+    _mark_request_log_phase,
     _message_log_preview,
     _record_response_text,
     _record_upstream_payload,
@@ -65,6 +66,8 @@ class ChatPipeline:
         t0 = _time.monotonic()
         log_entry = self._build_initial_log_entry(request=request, body=body)
         _request_logs.appendleft(log_entry)
+        request.state.shenyu_log_entry = log_entry
+        _mark_request_log_phase(log_entry, "pipeline.received", now_iso=log_entry["timestamp"])
 
         try:
             self._mark_log_stage(log_entry, "prepare_messages")
@@ -120,6 +123,7 @@ class ChatPipeline:
         finally:
             log_entry["duration_ms"] = int((_time.monotonic() - t0) * 1000)
             log_entry["last_activity_at"] = _iso_now()
+            _mark_request_log_phase(log_entry, "pipeline.returned", now_iso=log_entry["last_activity_at"])
 
     def _build_initial_log_entry(self, *, request: Request, body: Any) -> dict:
         log_id = uuid.uuid4().hex[:8]
@@ -194,7 +198,9 @@ class ChatPipeline:
 
     def _mark_log_stage(self, log_entry: dict, stage: str) -> None:
         log_entry["stage"] = stage
-        log_entry["last_activity_at"] = _iso_now()
+        now_value = _iso_now()
+        log_entry["last_activity_at"] = now_value
+        _mark_request_log_phase(log_entry, f"stage.{stage}", now_iso=now_value)
 
     def _update_log_entry(
         self,

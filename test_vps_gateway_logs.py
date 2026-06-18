@@ -73,12 +73,17 @@ def test_log_summary_prints_stage_and_last_activity(capsys):
             "session_tag": "test-session",
             "duration_ms": 1000,
             "tools_count": 0,
+            "slow_phases": [
+                {"phase": "prepare.client_messages_trimmed", "elapsed_ms": 900, "delta_ms": 500}
+            ],
         }
     )
 
     output = capsys.readouterr().out
     assert "stage=prepare_messages" in output
     assert "last_activity_at=2026-06-17T00:00:01+00:00" in output
+    assert "slow_phases:" in output
+    assert "prepare.client_messages_trimmed" in output
 
 
 def test_debug_summary_prints_active_http_requests(capsys):
@@ -103,6 +108,10 @@ def test_debug_summary_prints_active_http_requests(capsys):
                             "started_at": "2026-06-17T00:00:00+00:00",
                             "last_activity_at": "2026-06-17T00:00:01+00:00",
                             "duration_ms": 0,
+                            "timeline": [
+                                {"phase": "http.entry", "elapsed_ms": 0, "delta_ms": 0},
+                                {"phase": "handler.entered", "elapsed_ms": 1000, "delta_ms": 1000},
+                            ],
                         }
                     ],
                     "recent": [],
@@ -115,3 +124,4 @@ def test_debug_summary_prints_active_http_requests(capsys):
     assert "# gateway debug" in output
     assert "active_http_requests=1" in output
     assert "active: request_id=req1" in output
+    assert "phase=handler.entered" in output

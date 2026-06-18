@@ -9,6 +9,7 @@ from typing import Any, Optional
 
 from .embeddings import EmbeddingClient
 from .recall import recall_terms
+from .request_logs import _mark_request_log_phase
 from .runtime import iso_now, logger, now as _now, parse_ts as _parse_ts
 from .utils import normalize_text as _normalize_text
 from .utils import shorten as _shorten
@@ -481,9 +482,15 @@ class StarService:
         session_tag: Optional[str] = None,
         session_id: Optional[str] = None,
         limit: Optional[int] = None,
+        trace_log: Optional[dict] = None,
     ) -> dict[str, Any]:
         if not getattr(self.cfg, "inject_stars", True):
             return {"ok": True, "query": query, "count": 0, "items": []}
+        _mark_request_log_phase(
+            trace_log,
+            "stars.search_context_start",
+            detail={"limit": self._inject_limit(limit), "query_chars": len(query or "")},
+        )
         return await self._rank_for_query(
             query=query,
             surface="chat_inject",
@@ -493,6 +500,7 @@ class StarService:
             shown=True,
             injected=True,
             mark_activation=True,
+            trace_log=trace_log,
         )
 
     async def review(
@@ -686,16 +694,28 @@ class StarService:
         shown: bool,
         injected: bool,
         mark_activation: bool,
+        trace_log: Optional[dict] = None,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "query": query, "count": 0, "items": [], "error": "Supabase is not configured."}
         clean_query = (query or "").strip()
         if not clean_query:
             return {"ok": True, "query": clean_query, "count": 0, "items": []}
-        rows, query_embedding_status = await self._candidate_rows(clean_query)
+        _mark_request_log_phase(
+            trace_log,
+            "stars.rank_start",
+            detail={"surface": surface, "query_chars": len(clean_query), "limit": limit},
+        )
+        rows, query_embedding_status = await self._candidate_rows(clean_query, trace_log=trace_log)
+        _mark_request_log_phase(
+            trace_log,
+            "stars.candidates_done",
+            detail={"rows": len(rows), "query_embedding_status": query_embedding_status},
+        )
         if not rows:
             return {"ok": True, "query": clean_query, "count": 0, "items": []}
-        scored = await self._score_rows(query=clean_query, rows=rows, seed=None, surface=surface)
+        scored = await self._score_rows(query=clean_query, rows=rows, seed=None, surface=surface, trace_log=trace_log)
+        _mark_request_log_phase(trace_log, "stars.score_done", detail={"scored": len(scored)})
         selected = self._select_for_surface(scored, limit=max(1, min(int(limit or 3), 30)), surface=surface)
         run_id = await self._log_run_and_candidates(
             surface=surface,
@@ -709,6 +729,12 @@ class StarService:
             selected_ids={item["row"].get("id") for item in selected},
             shown=shown,
             injected=injected,
+            trace_log=trace_log,
+        )
+        _mark_request_log_phase(
+            trace_log,
+            "stars.log_run_done",
+            detail={"selected": len(selected), "run_logged": bool(run_id)},
         )
         if mark_activation and selected:
             await self._mark_activated(
@@ -719,8 +745,11 @@ class StarService:
                 session_tag=session_tag,
                 session_id=session_id,
                 injected=injected,
+                trace_log=trace_log,
             )
+            _mark_request_log_phase(trace_log, "stars.activation_done", detail={"selected": len(selected)})
         items = [self._public_candidate(item, run_id=run_id) for item in selected]
+        _mark_request_log_phase(trace_log, "stars.search_context_done", detail={"items": len(items)})
         return {"ok": True, "query": clean_query, "count": len(items), "items": items, "run_id": run_id}
 
     async def _rank_for_seed(
@@ -757,17 +786,28 @@ class StarService:
             "run_id": run_id,
         }
 
-    async def _candidate_rows(self, query: str) -> tuple[list[dict[str, Any]], str]:
+    async def _candidate_rows(
+        self,
+        query: str,
+        *,
+        trace_log: Optional[dict] = None,
+    ) -> tuple[list[dict[str, Any]], str]:
         params = {
             "select": STAR_SELECT,
             "status": "eq.active",
             "order": "is_constant.desc,last_activated_at.desc,updated_at.desc",
             "limit": str(self._candidate_limit()),
         }
+        _mark_request_log_phase(
+            trace_log,
+            "stars.candidates_query_start",
+            detail={"limit": self._candidate_limit()},
+        )
         rows = await self.supabase.query(STAR_TABLE, params)
+        _mark_request_log_phase(trace_log, "stars.candidates_query_done", detail={"rows": len(rows)})
         rows_by_id = {_node_id(row.get("id")): dict(row) for row in rows if row.get("id")}
         embedding_status = "skipped"
-        vector_rows = await self._vector_rows(query)
+        vector_rows = await self._vector_rows(query, trace_log=trace_log)
         if vector_rows:
             embedding_status = "used"
         for row in vector_rows:
@@ -793,14 +833,39 @@ class StarService:
         ]
         return selected[:limit]
 
-    async def _vector_rows(self, query: str) -> list[dict[str, Any]]:
+    async def _vector_rows(self, query: str, *, trace_log: Optional[dict] = None) -> list[dict[str, Any]]:
         client = self._embedding_client()
         if not client or not query.strip() or not hasattr(self.supabase, "rpc"):
+            _mark_request_log_phase(
+                trace_log,
+                "stars.vector_skipped",
+                detail={
+                    "embedding_client": bool(client),
+                    "has_query": bool(query.strip()),
+                    "has_rpc": hasattr(self.supabase, "rpc"),
+                },
+            )
             return []
+        _mark_request_log_phase(
+            trace_log,
+            "stars.embedding_start",
+            detail={"model": client.model, "query_chars": min(len(query), 1600)},
+        )
         vector, error = await client.embed(query[:1600])
         if error or vector is None:
+            _mark_request_log_phase(
+                trace_log,
+                "stars.embedding_failed",
+                detail={"error": _shorten(error or "embedding failed", 240)},
+            )
             return []
+        _mark_request_log_phase(trace_log, "stars.embedding_done", detail={"dimensions": len(vector)})
         try:
+            _mark_request_log_phase(
+                trace_log,
+                "stars.vector_rpc_start",
+                detail={"match_count": min(self._candidate_limit(), 120)},
+            )
             rows = await self.supabase.rpc(
                 "match_shenyu_stars",
                 {
@@ -811,7 +876,17 @@ class StarService:
             )
         except Exception as exc:
             logger.warning("[Star] vector search failed: %s", exc)
+            _mark_request_log_phase(
+                trace_log,
+                "stars.vector_rpc_failed",
+                detail={"error": _shorten(str(exc), 240)},
+            )
             return []
+        _mark_request_log_phase(
+            trace_log,
+            "stars.vector_rpc_done",
+            detail={"rows": len(rows) if isinstance(rows, list) else 0},
+        )
         return rows if isinstance(rows, list) else []
 
     async def _score_rows(
@@ -821,11 +896,23 @@ class StarService:
         rows: list[dict[str, Any]],
         seed: Optional[dict[str, Any]],
         surface: str = "",
+        trace_log: Optional[dict] = None,
     ) -> list[dict[str, Any]]:
         star_ids = [_node_id(row.get("id")) for row in rows if row.get("id")]
+        _mark_request_log_phase(trace_log, "stars.activity_features_start", detail={"star_ids": len(star_ids)})
         actr_scores, ignored_penalties, recent_fatigue = await self._activity_features(
             star_ids,
             include_recent_fatigue=surface == "chat_inject",
+            trace_log=trace_log,
+        )
+        _mark_request_log_phase(
+            trace_log,
+            "stars.activity_features_done",
+            detail={
+                "actr": len(actr_scores),
+                "ignored": len(ignored_penalties),
+                "recent_fatigue": len(recent_fatigue),
+            },
         )
         seed_chord = seed or _extract_chord_from_query(query)
         base_items: list[dict[str, Any]] = []
@@ -858,7 +945,9 @@ class StarService:
                 }
             )
         anchors = self._anchor_ids(base_items, seed)
-        harmony_scores = await self._harmony_scores(anchors)
+        _mark_request_log_phase(trace_log, "stars.harmony_start", detail={"anchors": len(anchors)})
+        harmony_scores = await self._harmony_scores(anchors, trace_log=trace_log)
+        _mark_request_log_phase(trace_log, "stars.harmony_done", detail={"scores": len(harmony_scores)})
         weights = self._weights()
         scored: list[dict[str, Any]] = []
         for item in base_items:
@@ -904,13 +993,14 @@ class StarService:
         anchors.sort(key=lambda item: item["base_score"], reverse=True)
         return [_node_id(item["row"].get("id")) for item in anchors[:5] if item["row"].get("id")]
 
-    async def _harmony_scores(self, anchor_ids: list[str]) -> dict[str, float]:
+    async def _harmony_scores(self, anchor_ids: list[str], *, trace_log: Optional[dict] = None) -> dict[str, float]:
         anchor_ids = [item for item in anchor_ids if item]
         if not anchor_ids:
             return {}
         id_filter = "in.(" + ",".join(anchor_ids) + ")"
         rows: list[dict[str, Any]] = []
         try:
+            _mark_request_log_phase(trace_log, "stars.harmony_from_query_start", detail={"anchors": len(anchor_ids)})
             from_rows = await self.supabase.query(
                 STAR_LINK_TABLE,
                 {
@@ -923,9 +1013,12 @@ class StarService:
                 },
             )
             rows.extend(from_rows)
+            _mark_request_log_phase(trace_log, "stars.harmony_from_query_done", detail={"rows": len(from_rows)})
         except Exception:
+            _mark_request_log_phase(trace_log, "stars.harmony_from_query_failed")
             pass
         try:
+            _mark_request_log_phase(trace_log, "stars.harmony_to_query_start", detail={"anchors": len(anchor_ids)})
             to_rows = await self.supabase.query(
                 STAR_LINK_TABLE,
                 {
@@ -938,7 +1031,9 @@ class StarService:
                 },
             )
             rows.extend([row for row in to_rows if row.get("bidirectional")])
+            _mark_request_log_phase(trace_log, "stars.harmony_to_query_done", detail={"rows": len(to_rows)})
         except Exception:
+            _mark_request_log_phase(trace_log, "stars.harmony_to_query_failed")
             pass
         anchors = set(anchor_ids)
         scores: dict[str, float] = {}
@@ -958,11 +1053,23 @@ class StarService:
         star_ids: list[str],
         *,
         include_recent_fatigue: bool = False,
+        trace_log: Optional[dict] = None,
     ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
         if not star_ids:
             return {}, {}, {}
-        recent_fatigue = await self._recent_fatigue_scores(star_ids) if include_recent_fatigue else {}
-        return await self._actr_scores(star_ids), await self._ignored_penalties(star_ids), recent_fatigue
+        if include_recent_fatigue:
+            _mark_request_log_phase(trace_log, "stars.recent_fatigue_start", detail={"star_ids": len(star_ids)})
+            recent_fatigue = await self._recent_fatigue_scores(star_ids)
+            _mark_request_log_phase(trace_log, "stars.recent_fatigue_done", detail={"scores": len(recent_fatigue)})
+        else:
+            recent_fatigue = {}
+        _mark_request_log_phase(trace_log, "stars.actr_start", detail={"star_ids": len(star_ids)})
+        actr_scores = await self._actr_scores(star_ids)
+        _mark_request_log_phase(trace_log, "stars.actr_done", detail={"scores": len(actr_scores)})
+        _mark_request_log_phase(trace_log, "stars.ignored_penalties_start", detail={"star_ids": len(star_ids)})
+        ignored_penalties = await self._ignored_penalties(star_ids)
+        _mark_request_log_phase(trace_log, "stars.ignored_penalties_done", detail={"scores": len(ignored_penalties)})
+        return actr_scores, ignored_penalties, recent_fatigue
 
     async def _actr_scores(self, star_ids: list[str]) -> dict[str, float]:
         try:
@@ -1069,9 +1176,11 @@ class StarService:
         selected_ids: set[Any],
         shown: bool,
         injected: bool,
+        trace_log: Optional[dict] = None,
     ) -> Optional[str]:
         shadow_limit = _safe_int(getattr(self.cfg, "star_shadow_candidate_limit", 20), 20, 3, 100)
         try:
+            _mark_request_log_phase(trace_log, "stars.run_insert_start", detail={"scored": len(scored)})
             run = await self.supabase.insert(
                 STAR_RUN_TABLE,
                 {
@@ -1090,8 +1199,10 @@ class StarService:
                 },
             )
             run_id = run.get("id") if isinstance(run, dict) else None
+            _mark_request_log_phase(trace_log, "stars.run_insert_done", detail={"run_logged": bool(run_id)})
         except Exception as exc:
             logger.warning("[Star] failed to create recall run: %s", exc)
+            _mark_request_log_phase(trace_log, "stars.run_insert_failed", detail={"error": _shorten(str(exc), 240)})
             return None
         if not run_id:
             return None
@@ -1128,6 +1239,7 @@ class StarService:
             )
         if rows:
             try:
+                _mark_request_log_phase(trace_log, "stars.candidates_insert_start", detail={"rows": len(rows)})
                 inserted = await self.supabase.insert_many(STAR_CANDIDATE_TABLE, rows)
                 inserted_by_star = {
                     _node_id(row.get("candidate_node_id")): row.get("id")
@@ -1138,8 +1250,18 @@ class StarService:
                     star_id = _node_id(item["row"].get("id"))
                     if star_id in inserted_by_star:
                         item["candidate_id"] = inserted_by_star[star_id]
+                _mark_request_log_phase(
+                    trace_log,
+                    "stars.candidates_insert_done",
+                    detail={"rows": len(inserted or [])},
+                )
             except Exception as exc:
                 logger.warning("[Star] failed to log candidates: %s", exc)
+                _mark_request_log_phase(
+                    trace_log,
+                    "stars.candidates_insert_failed",
+                    detail={"error": _shorten(str(exc), 240)},
+                )
         return run_id
 
     async def _mark_activated(
@@ -1152,6 +1274,7 @@ class StarService:
         session_tag: Optional[str],
         session_id: Optional[str],
         injected: bool,
+        trace_log: Optional[dict] = None,
     ) -> None:
         now_text = iso_now()
         rows = []
@@ -1173,15 +1296,23 @@ class StarService:
             )
         if rows:
             try:
+                _mark_request_log_phase(trace_log, "stars.activation_insert_start", detail={"rows": len(rows)})
                 await self.supabase.insert_many(STAR_ACTIVATION_TABLE, rows)
+                _mark_request_log_phase(trace_log, "stars.activation_insert_done", detail={"rows": len(rows)})
             except Exception as exc:
                 logger.warning("[Star] failed to insert activations: %s", exc)
+                _mark_request_log_phase(
+                    trace_log,
+                    "stars.activation_insert_failed",
+                    detail={"error": _shorten(str(exc), 240)},
+                )
         for item in selected:
             row = item["row"]
             star_id = _node_id(row.get("id"))
             if not star_id:
                 continue
             try:
+                _mark_request_log_phase(trace_log, "stars.activation_update_start", detail={"star_id": star_id})
                 await self.supabase.update(
                     STAR_TABLE,
                     {"id": star_id},
@@ -1190,8 +1321,14 @@ class StarService:
                         "last_activated_at": now_text,
                     },
                 )
+                _mark_request_log_phase(trace_log, "stars.activation_update_done", detail={"star_id": star_id})
             except Exception as exc:
                 logger.warning("[Star] failed to mark activation: id=%s error=%s", star_id, exc)
+                _mark_request_log_phase(
+                    trace_log,
+                    "stars.activation_update_failed",
+                    detail={"star_id": star_id, "error": _shorten(str(exc), 240)},
+                )
 
     async def _attach_embedding(self, payload: dict[str, Any], chord: str, content: str) -> None:
         client = self._embedding_client()

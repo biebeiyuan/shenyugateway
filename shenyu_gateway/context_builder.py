@@ -11,6 +11,7 @@ from .context_layers import (
 )
 from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
+from .request_logs import _mark_request_log_phase
 from .stars import StarService
 from .tool_registry import gateway_native_tools
 
@@ -133,7 +134,9 @@ class ContextBuilder:
         cold_start_snapshot: Optional[dict] = None,
         client_name: str = "",
         consume_heartbeat_pending: bool = True,
+        trace_log: Optional[dict] = None,
     ) -> dict:
+        _mark_request_log_phase(trace_log, "context.start")
         session_id = session["id"]
         is_hisense = self.is_hisense_client(client_name)
 
@@ -163,13 +166,35 @@ class ContextBuilder:
             "conflict_books": [],
         }
 
+        _mark_request_log_phase(trace_log, "context.calendar_start")
         package["calendar_context"] = await self.calendar_context_pages()
+        _mark_request_log_phase(
+            trace_log,
+            "context.calendar_done",
+            detail={
+                "day": len(package["calendar_context"].get("day") or []),
+                "week": len(package["calendar_context"].get("week") or []),
+                "month": len(package["calendar_context"].get("month") or []),
+            },
+        )
         if not is_hisense and getattr(self.cfg, "inject_conflict_shelf", True):
+            _mark_request_log_phase(trace_log, "context.conflict_shelf_start")
             package["conflict_books"] = await self._conflict_shelf_books()
+            _mark_request_log_phase(
+                trace_log,
+                "context.conflict_shelf_done",
+                detail={"books": len(package.get("conflict_books") or [])},
+            )
 
         if is_hisense:
+            _mark_request_log_phase(trace_log, "context.hisense_start")
             package["notebook_items"] = await self._hisense_notebook_items()
             package["last_wake_recap"] = await self._hisense_last_wake_recap(session)
+            _mark_request_log_phase(
+                trace_log,
+                "context.hisense_done",
+                detail={"notebook_items": len(package.get("notebook_items") or [])},
+            )
         else:
             tasks = []
             if current_user_text.strip() and self.cfg.inject_mem_notes:
@@ -192,14 +217,33 @@ class ContextBuilder:
                         session_tag=session["session_tag"],
                         session_id=session.get("id"),
                         limit=getattr(self.cfg, "star_inject_limit", 3),
+                        trace_log=trace_log,
                     )
                 )
             else:
                 tasks.append(asyncio.sleep(0, result={"ok": True, "items": []}))
 
+            _mark_request_log_phase(
+                trace_log,
+                "context.memory_tasks_start",
+                detail={
+                    "inject_mem_notes": bool(current_user_text.strip() and self.cfg.inject_mem_notes),
+                    "inject_stars": bool(current_user_text.strip() and getattr(self.cfg, "inject_stars", True)),
+                },
+            )
             notes_result, stars_result = await asyncio.gather(*tasks)
+            _mark_request_log_phase(
+                trace_log,
+                "context.memory_tasks_done",
+                detail={
+                    "mem_notes": len(notes_result.get("items") or []),
+                    "stars": len(stars_result.get("items") or []),
+                    "stars_ok": bool(stars_result.get("ok")),
+                },
+            )
             package["mem_notes"] = notes_result.get("items") or []
             package["stars"] = stars_result.get("items") or []
+        _mark_request_log_phase(trace_log, "context.done")
         return package
 
     async def _conflict_shelf_books(self) -> list[dict]:

@@ -4,10 +4,9 @@ import json
 import os
 import time as _time
 from collections import deque
+from datetime import datetime, timezone
 from typing import Any, Optional
 
-from shenyu_gateway.context_layers import trim_client_image_blocks
-from shenyu_gateway.tool_loop import _tool_call_arguments, _tool_call_name
 from shenyu_gateway.utils import normalize_text
 from shenyu_gateway.utils import shorten as _shorten
 
@@ -16,6 +15,83 @@ _request_logs: deque = deque(maxlen=30)
 _http_request_events: deque = deque(maxlen=60)
 _active_http_requests: dict[str, dict[str, Any]] = {}
 _TOOL_STREAM_STALE_SECONDS = 30.0
+
+
+def _event_elapsed_ms(event: dict[str, Any], now_monotonic: float) -> int:
+    started = event.get("_started_monotonic")
+    if not isinstance(started, (int, float)):
+        return int(event.get("duration_ms") or 0)
+    return max(0, int((now_monotonic - float(started)) * 1000))
+
+
+def _event_delta_ms(event: dict[str, Any], now_monotonic: float) -> int:
+    previous = event.get("_last_phase_monotonic")
+    if not isinstance(previous, (int, float)):
+        previous = event.get("_started_monotonic")
+    if not isinstance(previous, (int, float)):
+        return 0
+    return max(0, int((now_monotonic - float(previous)) * 1000))
+
+
+def _append_timeline_event(
+    event: dict[str, Any],
+    phase: str,
+    *,
+    now_iso: str = "",
+    now_monotonic: Optional[float] = None,
+    detail: Optional[dict[str, Any]] = None,
+) -> None:
+    now_value = _time.monotonic() if now_monotonic is None else now_monotonic
+    now_iso = now_iso or datetime.now(timezone.utc).isoformat()
+    item: dict[str, Any] = {
+        "phase": phase,
+        "at": now_iso,
+        "elapsed_ms": _event_elapsed_ms(event, now_value),
+        "delta_ms": _event_delta_ms(event, now_value),
+    }
+    if detail:
+        item["detail"] = detail
+    event.setdefault("timeline", []).append(item)
+    event["_last_phase_monotonic"] = now_value
+    if now_iso:
+        event["last_activity_at"] = now_iso
+
+
+def _public_http_event(event: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in event.items() if not key.startswith("_")}
+
+
+def _timeline_slow_phases(timeline: Any, limit: int = 5) -> list[dict[str, Any]]:
+    if not isinstance(timeline, list):
+        return []
+    phases = [item for item in timeline if isinstance(item, dict)]
+    phases.sort(key=lambda item: int(item.get("delta_ms") or 0), reverse=True)
+    return phases[:limit]
+
+
+def _mark_request_log_phase(
+    log_entry: Optional[dict],
+    phase: str,
+    *,
+    now_iso: str = "",
+    detail: Optional[dict[str, Any]] = None,
+) -> None:
+    if log_entry is None:
+        return
+    now_value = _time.monotonic()
+    if "_started_monotonic" not in log_entry:
+        log_entry["_started_monotonic"] = now_value
+    if "_last_phase_monotonic" not in log_entry:
+        log_entry["_last_phase_monotonic"] = log_entry.get("_started_monotonic", now_value)
+    _append_timeline_event(
+        log_entry,
+        phase,
+        now_iso=now_iso,
+        now_monotonic=now_value,
+        detail=detail,
+    )
+    log_entry["timeline_tail"] = log_entry.get("timeline", [])[-8:]
+    log_entry["slow_phases"] = _timeline_slow_phases(log_entry.get("timeline"))
 
 
 def _retain_request_log_payloads() -> bool:
@@ -51,6 +127,7 @@ def _start_http_request_event(
     client_name: str = "",
     now_iso: str = "",
 ) -> None:
+    now_value = _time.monotonic()
     event = {
         "request_id": request_id,
         "method": method,
@@ -64,9 +141,26 @@ def _start_http_request_event(
         "duration_ms": 0,
         "http_status": None,
         "error": None,
+        "timeline": [],
+        "_started_monotonic": now_value,
+        "_last_phase_monotonic": now_value,
     }
+    _append_timeline_event(event, "http.entry", now_iso=now_iso, now_monotonic=now_value)
     _active_http_requests[request_id] = event
     _http_request_events.appendleft(event)
+
+
+def _mark_http_request_event(
+    request_id: str,
+    phase: str,
+    *,
+    now_iso: str = "",
+    detail: Optional[dict[str, Any]] = None,
+) -> None:
+    event = _active_http_requests.get(request_id)
+    if event is None:
+        return
+    _append_timeline_event(event, phase, now_iso=now_iso, detail=detail)
 
 
 def _finish_http_request_event(
@@ -80,6 +174,12 @@ def _finish_http_request_event(
     event = _active_http_requests.pop(request_id, None)
     if event is None:
         return
+    _append_timeline_event(
+        event,
+        "http.response_returned",
+        now_iso=now_iso,
+        detail={"http_status": http_status, **({"error": error[:500]} if error else {})},
+    )
     event["last_activity_at"] = now_iso
     event["duration_ms"] = duration_ms
     event["http_status"] = http_status
@@ -92,8 +192,8 @@ def _finish_http_request_event(
 
 def _http_request_diagnostics(limit: int = 20) -> dict[str, Any]:
     return {
-        "active": list(_active_http_requests.values()),
-        "recent": list(_http_request_events)[:limit],
+        "active": [_public_http_event(item) for item in _active_http_requests.values()],
+        "recent": [_public_http_event(item) for item in list(_http_request_events)[:limit]],
         "capacity": getattr(_http_request_events, "maxlen", None),
     }
 
@@ -132,6 +232,8 @@ def _finalize_stale_tool_stream_logs() -> None:
 
 
 def _message_log_preview(msg: dict) -> dict[str, Any]:
+    from shenyu_gateway.tool_loop import _tool_call_arguments, _tool_call_name
+
     content = normalize_text(msg.get("content"))
     item: dict[str, Any] = {
         "role": msg.get("role", ""),
@@ -195,6 +297,8 @@ def _record_upstream_payload(log_entry: Optional[dict], payload: dict) -> None:
 
 
 def _payload_without_image_blocks(payload: dict) -> dict:
+    from shenyu_gateway.context_layers import trim_client_image_blocks
+
     clean = dict(payload)
     messages = clean.get("messages")
     if isinstance(messages, list):
@@ -224,4 +328,5 @@ def _finalize_tool_stream_log(log_entry: dict, duration_ms: int) -> None:
         )
     log_entry.pop("_tool_stream_started_monotonic", None)
     log_entry.pop("_tool_stream_last_activity_monotonic", None)
+    _mark_request_log_phase(log_entry, "stream.finalized")
     log_entry["duration_ms"] = duration_ms

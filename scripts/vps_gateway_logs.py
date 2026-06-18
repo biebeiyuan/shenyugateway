@@ -389,6 +389,39 @@ def _cache_control_hint(log: dict[str, Any]) -> str:
     return ""
 
 
+def _phase_summary(item: Any) -> str:
+    if not isinstance(item, dict):
+        return ""
+    bits = [
+        str(item.get("phase") or "?"),
+        f"elapsed={item.get('elapsed_ms')}ms",
+        f"delta={item.get('delta_ms')}ms",
+    ]
+    detail = item.get("detail")
+    if isinstance(detail, dict) and detail:
+        detail_bits = [f"{key}={_shorten(value, 80)}" for key, value in detail.items()]
+        bits.append("detail: " + ", ".join(detail_bits))
+    return " | ".join(bits)
+
+
+def _last_phase_name(item: dict[str, Any]) -> str:
+    timeline = item.get("timeline") or item.get("timeline_tail")
+    if isinstance(timeline, list) and timeline:
+        last = timeline[-1]
+        if isinstance(last, dict):
+            return str(last.get("phase") or "")
+    return ""
+
+
+def _print_timeline(timeline: Any, *, indent: str = "    ") -> None:
+    if not isinstance(timeline, list):
+        return
+    for item in timeline:
+        summary = _phase_summary(item)
+        if summary:
+            print(indent + summary)
+
+
 def _error_hint(log: dict[str, Any]) -> list[str]:
     hints: list[str] = []
     error = str(log.get("error") or "")
@@ -469,6 +502,11 @@ def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
     if names:
         print(f"  tool_names: {names}")
 
+    slow_phases = log.get("slow_phases")
+    if isinstance(slow_phases, list) and slow_phases:
+        print("  slow_phases:")
+        _print_timeline(slow_phases[:5])
+
     error = log.get("error")
     if error:
         print(f"  error: {_shorten(error, 700)}")
@@ -482,6 +520,10 @@ def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
         print(f"  hint: {hint}")
 
     if detail:
+        timeline = log.get("timeline")
+        if isinstance(timeline, list):
+            print("  timeline:")
+            _print_timeline(timeline)
         _print_detail_sections(log)
     print()
 
@@ -535,6 +577,7 @@ def _print_debug_summary(data: dict[str, Any]) -> None:
     for item in active[:10]:
         if not isinstance(item, dict):
             continue
+        phase = _last_phase_name(item)
         print(
             "  active: "
             + " | ".join(
@@ -545,12 +588,14 @@ def _print_debug_summary(data: dict[str, Any]) -> None:
                     f"started_at={item.get('started_at')}",
                     f"last_activity_at={item.get('last_activity_at')}",
                     f"duration_ms={item.get('duration_ms')}",
+                    f"phase={phase}",
                 ]
             )
         )
     for item in recent[:5]:
         if not isinstance(item, dict):
             continue
+        phase = _last_phase_name(item)
         print(
             "  recent: "
             + " | ".join(
@@ -560,6 +605,7 @@ def _print_debug_summary(data: dict[str, Any]) -> None:
                     f"http_status={item.get('http_status')}",
                     f"session={item.get('session_tag')}",
                     f"duration_ms={item.get('duration_ms')}",
+                    f"phase={phase}",
                 ]
             )
         )

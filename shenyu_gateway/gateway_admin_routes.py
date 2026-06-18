@@ -41,6 +41,10 @@ class GatewayAdminRouteDeps:
     request_logs: Any
 
 
+def _public_log_detail(item: dict[str, Any]) -> dict[str, Any]:
+    return {key: value for key, value in item.items() if not str(key).startswith("_")}
+
+
 def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
     router = APIRouter()
     cfg = deps.cfg
@@ -538,6 +542,8 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 "usage": item.get("usage"),
                 "cache_usage": item.get("cache_usage"),
                 "internal_tool_rounds": len(item.get("internal_tool_rounds") or []),
+                "timeline_tail": item.get("timeline_tail") or (item.get("timeline") or [])[-8:],
+                "slow_phases": item.get("slow_phases") or [],
                 "empty_visible_response_fallback": item.get("empty_visible_response_fallback", False),
                 "empty_visible_response_fallback_detail": item.get("empty_visible_response_fallback_detail"),
                 "status": item["status"],
@@ -553,7 +559,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         _finalize_stale_tool_stream_logs()
         for item in deps.request_logs:
             if item["id"] == log_id or item.get("request_id") == log_id:
-                return item
+                return _public_log_detail(item)
         raise HTTPException(status_code=404, detail="Log not found")
 
     return router

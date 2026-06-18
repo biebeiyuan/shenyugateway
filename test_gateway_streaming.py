@@ -22,6 +22,8 @@ from shenyu_gateway.request_logs import (
     _finish_http_request_event,
     _http_request_diagnostics,
     _http_request_events,
+    _mark_http_request_event,
+    _mark_request_log_phase,
     _record_response_text,
     _start_http_request_event,
 )
@@ -153,6 +155,9 @@ def test_chat_pipeline_logs_request_before_prepare_messages_fails(monkeypatch):
     assert entry["session_tag"] == "new-test-thread"
     assert entry["original_messages_count"] == 1
     assert entry["error"] == "context store stalled"
+    phases = [item["phase"] for item in entry["timeline"]]
+    assert "pipeline.received" in phases
+    assert "stage.prepare_messages" in phases
 
 
 def test_chat_pipeline_updates_single_early_log_on_success(monkeypatch):
@@ -215,6 +220,10 @@ def test_chat_pipeline_updates_single_early_log_on_success(monkeypatch):
     assert entry["session_tag"] == "new-test-thread"
     assert entry["upstream_url"] == "https://example.test/v1/chat/completions"
     assert entry["response_preview"] == "ok"
+    phases = [item["phase"] for item in entry["timeline"]]
+    assert "pipeline.received" in phases
+    assert "stage.plain_upstream_path" in phases
+    assert entry["slow_phases"]
 
 
 def test_http_request_diagnostics_track_active_and_recent_events():
@@ -235,6 +244,14 @@ def test_http_request_diagnostics_track_active_and_recent_events():
     assert diagnostics["active"][0]["request_id"] == "req-1"
     assert diagnostics["active"][0]["session_tag"] == "session-a"
     assert "Authorization" not in json.dumps(diagnostics)
+    assert diagnostics["active"][0]["timeline"][0]["phase"] == "http.entry"
+
+    _mark_http_request_event(
+        "req-1",
+        "handler.entered",
+        now_iso="2026-06-17T00:00:00.500000+00:00",
+        detail={"messages": 3036},
+    )
 
     _finish_http_request_event(
         request_id="req-1",
@@ -248,6 +265,20 @@ def test_http_request_diagnostics_track_active_and_recent_events():
     assert diagnostics["recent"][0]["status"] == "complete"
     assert diagnostics["recent"][0]["http_status"] == 200
     assert diagnostics["recent"][0]["duration_ms"] == 1000
+    phases = [item["phase"] for item in diagnostics["recent"][0]["timeline"]]
+    assert phases == ["http.entry", "handler.entered", "http.response_returned"]
+    assert all(not key.startswith("_") for key in diagnostics["recent"][0])
+
+
+def test_request_log_phase_tracks_tail_and_slow_phases():
+    entry = {"id": "log-1"}
+
+    _mark_request_log_phase(entry, "one", now_iso="2026-06-17T00:00:00+00:00")
+    _mark_request_log_phase(entry, "two", now_iso="2026-06-17T00:00:01+00:00", detail={"rows": 3})
+
+    assert [item["phase"] for item in entry["timeline"]] == ["one", "two"]
+    assert entry["timeline_tail"][-1]["detail"] == {"rows": 3}
+    assert entry["slow_phases"][0]["phase"] in {"one", "two"}
 
 
 def test_runtime_config_does_not_cap_internal_tool_rounds_at_eight(monkeypatch):

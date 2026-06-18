@@ -8,6 +8,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from fastapi import HTTPException
 
+from .request_logs import _mark_request_log_phase
 from .response_capture import AssistantTagFilter, split_private_assistant_tags
 from .runtime import json_dumps as _json_dumps
 from .runtime import logger, now_ts as _now_ts
@@ -258,18 +259,26 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
     latest_user_text = _latest_user_text(ctx.prepared_messages)
 
     for round_index in range(max(1, ctx.cfg.max_internal_tool_rounds)):
+        _mark_request_log_phase(ctx.log_entry, "tool_loop.round_build_start", detail={"round": round_index + 1})
         payload, headers, _, cache_meta, upstream = await ctx.build_upstream_request(
             ctx.request,
             ctx.body,
             messages_override=working_messages,
             meta=ctx.meta,
         )
+        _mark_request_log_phase(
+            ctx.log_entry,
+            "tool_loop.round_build_done",
+            detail={"round": round_index + 1, "messages": len(working_messages)},
+        )
         ctx.record_upstream_payload(ctx.log_entry, payload)
         round_log = _start_round_log(ctx, round_index, working_messages)
         if ctx.log_entry is not None and round_index == 0:
             ctx.log_entry["prompt_cache"] = cache_meta
 
+        _mark_request_log_phase(ctx.log_entry, "upstream.nonstream_start", detail={"round": round_index + 1})
         raw = await ctx.call_upstream_json(ctx.request, upstream["chat_url"], payload, headers)
+        _mark_request_log_phase(ctx.log_entry, "upstream.nonstream_done", detail={"round": round_index + 1})
         upstream_usages.append(raw.get("usage", {}))
         _record_round_usage(ctx, round_log, raw.get("usage", {}), upstream_usages)
 
@@ -324,14 +333,22 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
     stream_chunk_id = _new_stream_chunk_id()
     stream_created = _now_ts()
 
+    _mark_request_log_phase(ctx.log_entry, "stream.role_start")
     yield _stream_role_event(ctx.body.model, chunk_id=stream_chunk_id, created=stream_created)
+    _mark_request_log_phase(ctx.log_entry, "stream.role_sent")
 
     for round_index in range(max(1, ctx.cfg.max_internal_tool_rounds)):
+        _mark_request_log_phase(ctx.log_entry, "tool_loop.round_build_start", detail={"round": round_index + 1})
         payload, headers, _, cache_meta, upstream = await ctx.build_upstream_request(
             ctx.request,
             ctx.body,
             messages_override=working_messages,
             meta=ctx.meta,
+        )
+        _mark_request_log_phase(
+            ctx.log_entry,
+            "tool_loop.round_build_done",
+            detail={"round": round_index + 1, "messages": len(working_messages)},
         )
         payload["stream"] = True
         ctx.record_upstream_payload(ctx.log_entry, payload)
@@ -342,7 +359,9 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
         completion = _new_stream_completion(ctx.body.model)
         tag_filter = AssistantTagFilter()
         stream_replay = StreamReplayAccumulator()
+        first_upstream_chunk_seen = False
 
+        _mark_request_log_phase(ctx.log_entry, "upstream.stream_start", detail={"round": round_index + 1})
         upstream_chunks = ctx.stream_upstream_openai_chunks(ctx.request, payload, headers, ctx.body.model, upstream)
         next_chunk = asyncio.create_task(anext(upstream_chunks))
         try:
@@ -361,9 +380,13 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                         ctx.log_entry["error"] = "Client disconnected during native internal gateway tool stream."
                     return
                 if read_result.kind == "exhausted":
+                    _mark_request_log_phase(ctx.log_entry, "upstream.stream_exhausted", detail={"round": round_index + 1})
                     break
 
                 data = read_result.data or {}
+                if not first_upstream_chunk_seen:
+                    first_upstream_chunk_seen = True
+                    _mark_request_log_phase(ctx.log_entry, "upstream.stream_first_chunk", detail={"round": round_index + 1})
                 next_chunk = asyncio.create_task(anext(upstream_chunks))
                 _apply_openai_stream_chunk(completion, data)
                 choice = (data.get("choices") or [{}])[0]
@@ -397,6 +420,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
         usage = completion.get("usage") or {}
         upstream_usages.append(usage)
         _record_round_usage(ctx, round_log, usage, upstream_usages)
+        _mark_request_log_phase(ctx.log_entry, "upstream.stream_round_done", detail={"round": round_index + 1})
 
         tool_calls = _extract_tool_calls(completion)
         if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
@@ -448,6 +472,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                     created=stream_created,
                 )
                 yield "data: [DONE]\n\n"
+                _mark_request_log_phase(ctx.log_entry, "stream.done_sent")
             return
 
         _append_assistant_tool_call_message(working_messages, completion, tool_calls, round_log)

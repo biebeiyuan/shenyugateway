@@ -65,6 +65,8 @@ from shenyu_gateway.response_capture import (
 from shenyu_gateway.request_logs import (
     _finish_http_request_event,
     _http_request_diagnostics,
+    _mark_http_request_event,
+    _mark_request_log_phase,
     _record_response_text,
     _record_upstream_payload,
     _request_logs,
@@ -538,6 +540,13 @@ async def _build_upstream_request(request, body, messages_override=None, meta=No
 
 
 async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[dict], dict]:
+    log_entry = getattr(request.state, "shenyu_log_entry", None)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.start",
+        now_iso=_iso_now(),
+        detail={"messages": len(body.messages), "tools": len(body.tools or [])},
+    )
     store = _require_session_store()
     sessions = SessionManager(store, cfg)
     tools = GatewayToolService()
@@ -546,6 +555,12 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     client_name = _client_name_from_request(request)
     session_tag = _session_tag_from_request(request, client_name=client_name)
     session = sessions.open_session(session_tag=session_tag, client_name=client_name)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.session_opened",
+        now_iso=_iso_now(),
+        detail={"session_tag": session_tag, "client_name": client_name},
+    )
     # 根据请求体判断是否为新对话：非 system 消息只有 1 条 -> 新线程桥接。
     # 这样不依赖 session 持久化状态，Operit 每次新建对话都能补足上一个窗口。
     non_system_count = sum(1 for m in body.messages if m.role != "system")
@@ -561,6 +576,12 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         messages=raw_messages_for_storage,
         latest_user_text=raw_user_text,
     )
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.raw_window_stored",
+        now_iso=_iso_now(),
+        detail={"raw_messages": len(raw_messages_for_storage)},
+    )
     messages, trim_meta = _trim_client_messages(raw_messages, cfg.max_client_messages)
     messages, attachment_trim_meta = _trim_client_extra_bundle_attachments(messages, keep_recent_messages=3)
     trim_meta.update(attachment_trim_meta)
@@ -568,6 +589,16 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     trim_meta.update(package_trim_meta)
     messages, image_trim_meta = _trim_client_image_blocks(messages, keep_recent_messages=2)
     trim_meta.update(image_trim_meta)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.client_messages_trimmed",
+        now_iso=_iso_now(),
+        detail={
+            "original": len(raw_messages),
+            "retained": len(messages),
+            "max_client_messages": cfg.max_client_messages,
+        },
+    )
     user_text = _latest_user_text(messages)
     current_message_count = _non_system_message_count(messages)
     is_hisense = _is_hisense_client(client_name)
@@ -586,6 +617,12 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     cold_start_snapshot = None
     if not is_hisense:
         cold_start_snapshot = _maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.cold_start_checked",
+        now_iso=_iso_now(),
+        detail={"injected": bool(cold_start_snapshot), "is_first_turn": is_first_turn},
+    )
     snapshot_messages, _ = _trim_client_image_blocks(messages, keep_recent_messages=0)
     store.write_request_context_snapshot(
         session_id=session["id"],
@@ -594,6 +631,12 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         messages=snapshot_messages,
         latest_user_text=_latest_user_text(snapshot_messages),
     )
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.snapshot_stored",
+        now_iso=_iso_now(),
+        detail={"snapshot_messages": len(snapshot_messages)},
+    )
     messages, pending_gateway_meta = _inject_pending_gateway_tool_turns(
         messages,
         store,
@@ -601,14 +644,37 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     )
     trim_meta.update(pending_gateway_meta)
     _prune_runtime_state(session["id"])
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.pending_tools_pruned",
+        now_iso=_iso_now(),
+        detail={"pending_gateway_tool_turns": len(pending_gateway_meta.get("pending_gateway_tool_turn_ids", []))},
+    )
     package = await builder.build_context_package(
         session,
         current_user_text=user_text,
         is_first_turn=is_first_turn,
         cold_start_snapshot=cold_start_snapshot,
         client_name=client_name,
+        trace_log=log_entry,
+    )
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.context_package_built",
+        now_iso=_iso_now(),
+        detail={
+            "mem_notes": len(package.get("mem_notes") or []),
+            "stars": len(package.get("stars") or []),
+            "calendar_days": len((package.get("calendar_context") or {}).get("day") or []),
+        },
     )
     layers = builder.render_layered_additions(package)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.layers_rendered",
+        now_iso=_iso_now(),
+        detail={key: len(value or "") for key, value in layers.items()},
+    )
 
     messages, layer_meta = assemble_layered_messages(
         messages,
@@ -616,6 +682,12 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         cold_start_snapshot=cold_start_snapshot,
     )
     trim_meta.update(layer_meta)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.done",
+        now_iso=_iso_now(),
+        detail={"prepared_messages": len(messages)},
+    )
 
     return messages, {
         "session": session,
@@ -1166,7 +1238,20 @@ async def list_models(request: Request):
 
 @app.post("/v1/chat/completions")
 async def chat_completions(request: Request, body: ChatRequest):
+    request_id = getattr(request.state, "shenyu_request_id", "")
+    _mark_http_request_event(
+        request_id,
+        "handler.entered",
+        now_iso=_iso_now(),
+        detail={
+            "model": body.model,
+            "messages": len(body.messages),
+            "stream": bool(body.stream),
+            "tools": len(body.tools or []),
+        },
+    )
     await verify_api_key(request)
+    _mark_http_request_event(request_id, "handler.auth_ok", now_iso=_iso_now())
     store = _require_session_store()
     return await _chat_pipeline(store).run(request, body)
 
