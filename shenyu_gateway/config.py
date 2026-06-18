@@ -93,7 +93,7 @@ class RuntimeConfig:
         self.star_inject_limit: int = _env_int("STAR_INJECT_LIMIT", 3, 1, 5)
         self.star_review_new_limit: int = _env_int("STAR_REVIEW_NEW_LIMIT", 5, 1, 10)
         self.star_review_candidates_per_star: int = _env_int("STAR_REVIEW_CANDIDATES_PER_STAR", 3, 1, 5)
-        self.star_review_total_candidate_limit: int = _env_int("STAR_REVIEW_TOTAL_CANDIDATE_LIMIT", 15, 1, 30)
+        self.star_review_total_candidate_limit: int = _env_int("STAR_REVIEW_TOTAL_CANDIDATE_LIMIT", 9, 1, 30)
         self.star_candidate_limit: int = _env_int("STAR_CANDIDATE_LIMIT", 500, 50, 5000)
         self.star_shadow_candidate_limit: int = _env_int("STAR_SHADOW_CANDIDATE_LIMIT", 20, 3, 100)
         self.star_weight_content: float = _env_float("STAR_WEIGHT_CONTENT", 0.30, 0.0, 2.0)

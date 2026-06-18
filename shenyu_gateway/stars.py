@@ -500,8 +500,8 @@ class StarService:
             5,
         )
         total_limit = _safe_int(
-            total_candidate_limit if total_candidate_limit is not None else getattr(self.cfg, "star_review_total_candidate_limit", 15),
-            new_limit * per_star,
+            total_candidate_limit if total_candidate_limit is not None else getattr(self.cfg, "star_review_total_candidate_limit", 9),
+            9,
             1,
             30,
         )

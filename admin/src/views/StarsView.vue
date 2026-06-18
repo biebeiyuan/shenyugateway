@@ -41,7 +41,7 @@ const STAR_DEFAULTS: Partial<GatewayConfig> = {
   star_inject_limit: 3,
   star_review_new_limit: 5,
   star_review_candidates_per_star: 3,
-  star_review_total_candidate_limit: 15,
+  star_review_total_candidate_limit: 9,
   star_candidate_limit: 500,
   star_shadow_candidate_limit: 20,
   star_weight_content: 0.3,
@@ -247,7 +247,7 @@ async function runReview() {
     const result = await reviewStars({
       limit_new: config.value.star_review_new_limit || 5,
       candidates_per_star: config.value.star_review_candidates_per_star || 3,
-      total_candidate_limit: config.value.star_review_total_candidate_limit || 15,
+      total_candidate_limit: config.value.star_review_total_candidate_limit || 9,
       session_tag: reviewSessionTag.value.trim() || undefined,
     })
     reviewItems.value = result.items || []

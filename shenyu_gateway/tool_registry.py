@@ -168,13 +168,13 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_star_review",
-                "description": "轻量 review：取最多几颗新星，并为每颗反上来少量候选关联。默认 5 颗新星、每颗 3 条、总量 15。",
+                "description": "轻量 review：取最多几颗新星，并为每颗反上来少量候选关联。默认 5 颗新星、每颗 3 条、总量 9。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "limit_new": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
                         "candidates_per_star": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3},
-                        "total_candidate_limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 15},
+                        "total_candidate_limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 9},
                         "session_tag": {"type": "string"},
                         "expected_star_id": {"type": "string", "description": "review 时顺手补 missed：该反但没反上来的星。"},
                         "run_id": {"type": "string", "description": "missed 对应的召回 run_id。"},

@@ -315,7 +315,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         return result
 
     @router.post("/api/gateway/stars/review")
-    async def review_stars(limit_new: int = 5, candidates_per_star: int = 3, total_candidate_limit: int = 15, session_tag: Optional[str] = None):
+    async def review_stars(limit_new: int = 5, candidates_per_star: int = 3, total_candidate_limit: int = 9, session_tag: Optional[str] = None):
         result = await StarService(cfg, deps.get_supabase_client()).review(
             limit_new=limit_new,
             candidates_per_star=candidates_per_star,
