@@ -16,15 +16,15 @@ def assert_equal(actual, expected, label):
 
 
 def main():
-    clean, _heartbeat, memories = split_private_assistant_tags("午安\n[mem]…[/mem]\n继续")
+    clean, _heartbeat, memories, _stars = split_private_assistant_tags("午安\n[mem]…[/mem]\n继续")
     assert_equal(clean, "午安\n\n继续", "punctuation-only mem tag body is hidden from visible text")
     assert_equal(memories, [], "punctuation-only mem is not captured")
 
-    clean, _heartbeat, memories = split_private_assistant_tags("a\n[mem]   [/mem]\nb")
+    clean, _heartbeat, memories, _stars = split_private_assistant_tags("a\n[mem]   [/mem]\nb")
     assert_equal(clean, "a\n\nb", "blank mem tag body is hidden from visible text")
     assert_equal(memories, [], "blank mem is not captured")
 
-    clean, _heartbeat, memories = split_private_assistant_tags("a\n[mem]她今天想早睡[/mem]\nb")
+    clean, _heartbeat, memories, _stars = split_private_assistant_tags("a\n[mem]她今天想早睡[/mem]\nb")
     assert_equal(clean, "a\n\nb", "valid mem tag body is hidden from visible text")
     assert_equal(memories, [{"content": "她今天想早睡", "attrs": {}}], "valid mem is captured")
 

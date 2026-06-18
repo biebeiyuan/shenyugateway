@@ -1,0 +1,1140 @@
+from __future__ import annotations
+
+import json
+import math
+import re
+from dataclasses import dataclass
+from datetime import datetime, timezone
+from typing import Any, Optional
+
+from .embeddings import EmbeddingClient
+from .recall import recall_terms
+from .runtime import iso_now, logger, now as _now, parse_ts as _parse_ts
+from .utils import normalize_text as _normalize_text
+from .utils import shorten as _shorten
+
+
+STAR_TABLE = "shenyu_stars"
+STAR_LINK_TABLE = "shenyu_star_links"
+STAR_RUN_TABLE = "shenyu_star_recall_runs"
+STAR_CANDIDATE_TABLE = "shenyu_star_recall_candidates"
+STAR_FEEDBACK_TABLE = "shenyu_star_feedback"
+STAR_ACTIVATION_TABLE = "shenyu_star_activations"
+
+STAR_RANKER_VERSION = "star-ranker-v0"
+STAR_FEATURE_SCHEMA_VERSION = "star-features-v0"
+STAR_WEIGHTS_VERSION = "manual-v0"
+
+STAR_SELECT = (
+    "id,session_tag,content,chord,chord_root,chord_quality,chord_tension,status,is_constant,"
+    "reviewed_at,activation_count,last_activated_at,source_model,source_session_id,source_excerpt,"
+    "search_tokens,embedding_model,embedding_status,metadata,created_at,updated_at"
+)
+
+POSITIVE_FEEDBACK = {"positive", "connected", "should_surface", "missed"}
+NEGATIVE_FEEDBACK = {"negative", "skipped"}
+FEEDBACK_VALUES = POSITIVE_FEEDBACK | NEGATIVE_FEEDBACK
+
+
+def _clamp(value: float, min_value: float = 0.0, max_value: float = 1.0) -> float:
+    return max(min_value, min(float(value or 0.0), max_value))
+
+
+def _safe_int(value: Any, default: int, min_value: int, max_value: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(min_value, min(parsed, max_value))
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _vector_literal(vector: list[float]) -> str:
+    return "[" + ",".join(f"{float(value):.9g}" for value in vector) + "]"
+
+
+def _json_dict(value: Any) -> dict[str, Any]:
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {"value": text}
+        return parsed if isinstance(parsed, dict) else {"value": parsed}
+    return {"value": value}
+
+
+def _node_id(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _id_list(value: Any) -> list[str]:
+    if isinstance(value, str):
+        raw = re.split(r"[,，\s]+", value.strip())
+    elif isinstance(value, (list, tuple, set)):
+        raw = list(value)
+    else:
+        raw = []
+    seen: set[str] = set()
+    result: list[str] = []
+    for item in raw:
+        star_id = _node_id(item)
+        if star_id and star_id not in seen:
+            seen.add(star_id)
+            result.append(star_id)
+    return result
+
+
+def _star_search_text(row: dict[str, Any]) -> str:
+    metadata = _json_dict(row.get("metadata"))
+    return "\n".join(
+        part
+        for part in [
+            str(row.get("content") or ""),
+            str(row.get("chord") or ""),
+            str(row.get("chord_root") or ""),
+            str(row.get("chord_quality") or ""),
+            " ".join(str(item) for item in row.get("search_tokens") or []),
+            " ".join(str(value) for value in metadata.values()),
+        ]
+        if part
+    )
+
+
+def _token_overlap(query: str, text: str, row_tokens: Optional[list[Any]] = None) -> tuple[float, list[str]]:
+    query_terms = recall_terms(query)
+    if not query_terms:
+        return 0.0, []
+    hay = (text or "").lower()
+    tokens = {str(item).strip().lower() for item in row_tokens or [] if str(item).strip()}
+    hits = []
+    for term in query_terms:
+        if term in tokens or term in hay:
+            hits.append(term)
+    return _clamp(len(set(hits)) / max(len(set(query_terms)), 1)), hits
+
+
+def _chord_parts(chord: str) -> tuple[str, str]:
+    clean = (chord or "").strip()
+    if not clean:
+        return "", ""
+    clean = clean.replace("♭", "b").replace("♯", "#").replace("Δ", "maj")
+    match = re.match(r"^\s*([A-Ga-g](?:#|b)?)(.*)$", clean)
+    if not match:
+        return "", ""
+    root = match.group(1).upper()
+    quality_raw = (match.group(2) or "").strip()
+    quality_lower = quality_raw.lower()
+    quality = ""
+    if "dim" in quality_lower or "°" in quality_raw:
+        quality = "dim"
+    elif "aug" in quality_lower or "+" in quality_raw:
+        quality = "aug"
+    elif "sus" in quality_lower:
+        quality = "sus"
+    elif "maj" in quality_lower or quality_raw.startswith("M"):
+        quality = "major"
+    elif quality_lower.startswith("min") or quality_raw.startswith("m") or "-" in quality_raw:
+        quality = "minor"
+    elif "7" in quality_raw:
+        quality = "dominant"
+    return root, quality
+
+
+def _chord_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
+    left_chord = str(left.get("chord") or "").strip().casefold()
+    right_chord = str(right.get("chord") or "").strip().casefold()
+    if left_chord and right_chord and left_chord == right_chord:
+        return 1.0
+    score = 0.0
+    if left.get("chord_root") and left.get("chord_root") == right.get("chord_root"):
+        score += 0.55
+    if left.get("chord_quality") and left.get("chord_quality") == right.get("chord_quality"):
+        score += 0.25
+    return _clamp(score, 0.0, 0.85)
+
+
+def _extract_chord_from_query(query: str) -> dict[str, str]:
+    text = query or ""
+    for match in re.finditer(r"\b([A-Ga-g](?:#|b)?(?:maj|min|m|dim|aug|sus|add)?[0-9#b+\-/]*)\b", text):
+        chord = match.group(1).strip()
+        root, quality = _chord_parts(chord)
+        if root:
+            return {"chord": chord, "chord_root": root, "chord_quality": quality}
+    return {"chord": "", "chord_root": "", "chord_quality": ""}
+
+
+def parse_star_payload(star: Any) -> dict[str, Any]:
+    attrs: dict[str, Any] = {}
+    if isinstance(star, dict):
+        attrs.update(_json_dict(star.get("attrs")))
+        content = _normalize_text(star.get("content")).strip()
+        if star.get("chord") and not attrs.get("chord"):
+            attrs["chord"] = star.get("chord")
+    else:
+        content = _normalize_text(star).strip()
+
+    chord = _normalize_text(attrs.get("chord") or "").strip()
+    if not chord and content:
+        for delimiter in ("·", "•", "|", "｜"):
+            if delimiter not in content:
+                continue
+            head, body = content.split(delimiter, 1)
+            if 1 <= len(head.strip()) <= 32:
+                chord = head.strip()
+                content = body.strip()
+                break
+    root, quality = _chord_parts(chord)
+    return {
+        "content": content,
+        "chord": chord,
+        "chord_root": root,
+        "chord_quality": quality,
+        "attrs": attrs,
+    }
+
+
+@dataclass(frozen=True)
+class StarWeights:
+    content: float = 0.30
+    keyword: float = 0.20
+    harmony: float = 0.35
+    chord: float = 0.18
+    actr: float = 0.08
+    constant_bonus: float = 0.08
+    novelty_bonus: float = 0.04
+    ignored_penalty: float = 0.18
+
+
+class StarService:
+    def __init__(self, cfg: Any, supabase_client: Any):
+        self.cfg = cfg
+        self.supabase = supabase_client
+
+    def _weights(self) -> StarWeights:
+        return StarWeights(
+            content=_safe_float(getattr(self.cfg, "star_weight_content", 0.30), 0.30),
+            keyword=_safe_float(getattr(self.cfg, "star_weight_keyword", 0.20), 0.20),
+            harmony=_safe_float(getattr(self.cfg, "star_weight_harmony", 0.35), 0.35),
+            chord=_safe_float(getattr(self.cfg, "star_weight_chord", 0.18), 0.18),
+            actr=_safe_float(getattr(self.cfg, "star_weight_actr", 0.08), 0.08),
+            constant_bonus=_safe_float(getattr(self.cfg, "star_constant_bonus", 0.08), 0.08),
+            novelty_bonus=_safe_float(getattr(self.cfg, "star_novelty_bonus", 0.04), 0.04),
+            ignored_penalty=_safe_float(getattr(self.cfg, "star_ignored_penalty", 0.18), 0.18),
+        )
+
+    def _embedding_client(self) -> Optional[EmbeddingClient]:
+        star_enabled = bool(getattr(self.cfg, "enable_star_embeddings", getattr(self.cfg, "enable_recall_embeddings", False)))
+        if not star_enabled:
+            return None
+        client = EmbeddingClient(
+            base_url=getattr(self.cfg, "embedding_base_url", ""),
+            api_key=getattr(self.cfg, "embedding_api_key", ""),
+            model=getattr(self.cfg, "embedding_model", ""),
+            expected_dim=int(getattr(self.cfg, "embedding_dim", 1024) or 1024),
+        )
+        return client if client.enabled else None
+
+    def _candidate_limit(self) -> int:
+        return _safe_int(getattr(self.cfg, "star_candidate_limit", 500), 500, 50, 5000)
+
+    def _inject_limit(self, limit: Optional[int] = None) -> int:
+        configured = getattr(self.cfg, "star_inject_limit", 3)
+        return _safe_int(limit if limit is not None else configured, 3, 1, 5)
+
+    async def process_inline_stars(
+        self,
+        session: dict,
+        inline_stars: list[Any],
+        assistant_text: str,
+        source_model: str,
+    ) -> dict[str, Any]:
+        if not getattr(self.cfg, "enable_inline_star_capture", True):
+            return {"ok": False, "reason": "inline star capture disabled."}
+        if not self.supabase:
+            return {"ok": False, "reason": "Supabase is not configured."}
+        stars = [item for item in inline_stars if self._inline_star_content(item)]
+        if not stars:
+            return {"ok": False, "reason": "no inline stars."}
+
+        inserted: list[str | None] = []
+        discarded = 0
+        for item in stars[:4]:
+            result = await self.create_star(
+                content=item,
+                session_tag=session.get("session_tag") or "default",
+                source_model=f"inline-star:{source_model}",
+                source_session_id=session.get("id"),
+                source_excerpt=_shorten(assistant_text, 600),
+            )
+            if result.get("ok"):
+                inserted.append(result.get("star_id"))
+            else:
+                discarded += 1
+        return {
+            "ok": True,
+            "inline_count": len(stars),
+            "inserted_count": len([item for item in inserted if item]),
+            "discarded_count": discarded,
+        }
+
+    async def create_star(
+        self,
+        content: Any,
+        *,
+        chord: str = "",
+        session_tag: Optional[str] = None,
+        status: str = "active",
+        is_constant: bool = False,
+        source_model: str = "tool:shenyu_create_star",
+        source_session_id: Optional[str] = None,
+        source_excerpt: str = "",
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+        parsed = parse_star_payload(content)
+        star_content = (parsed.get("content") or "").strip()
+        star_chord = (chord or parsed.get("chord") or "").strip()
+        if not star_content:
+            return {"ok": False, "error": "content is required."}
+        root, quality = _chord_parts(star_chord)
+        resolved_status = status if status in {"active", "paused", "archived"} else "active"
+        meta = _json_dict(metadata)
+        attrs = _json_dict(parsed.get("attrs"))
+        if attrs:
+            meta.setdefault("attrs", attrs)
+        search_tokens = recall_terms("\n".join(part for part in [star_chord, star_content] if part))
+        payload: dict[str, Any] = {
+            "session_tag": (session_tag or "default").strip() or "default",
+            "content": star_content,
+            "chord": star_chord,
+            "chord_root": root,
+            "chord_quality": quality,
+            "status": resolved_status,
+            "is_constant": bool(is_constant),
+            "source_model": source_model,
+            "source_session_id": source_session_id,
+            "source_excerpt": source_excerpt or "",
+            "search_tokens": search_tokens,
+            "metadata": meta,
+        }
+        await self._attach_embedding(payload, star_chord, star_content)
+        row = await self.supabase.insert(STAR_TABLE, payload)
+        return {"ok": True, "star_id": row.get("id") if isinstance(row, dict) else None, "star": row}
+
+    async def list_stars(
+        self,
+        *,
+        status: str = "active",
+        limit: int = 50,
+        session_tag: Optional[str] = None,
+        q: str = "",
+        reviewed: str = "all",
+    ) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "items": [], "error": "Supabase is not configured."}
+        status_key = (status or "active").strip().lower()
+        params: dict[str, str] = {
+            "select": STAR_SELECT,
+            "order": "updated_at.desc",
+            "limit": str(max(1, min(int(limit or 50), 200))),
+        }
+        if status_key != "all":
+            params["status"] = f"eq.{status_key if status_key in {'active', 'paused', 'archived'} else 'active'}"
+        if session_tag:
+            params["session_tag"] = f"eq.{session_tag}"
+        reviewed_key = (reviewed or "all").strip().lower()
+        if reviewed_key in {"reviewed", "true", "yes"}:
+            params["reviewed_at"] = "not.is.null"
+        elif reviewed_key in {"unreviewed", "false", "no"}:
+            params["reviewed_at"] = "is.null"
+        rows = await self.supabase.query(STAR_TABLE, params)
+        terms = recall_terms(q)
+        if terms:
+            rows = [
+                row
+                for row in rows
+                if any(term in _star_search_text(row).lower() for term in terms)
+            ]
+        return {"ok": True, "count": len(rows), "items": [self._public_star(row) for row in rows]}
+
+    async def search_stars(
+        self,
+        query: str,
+        *,
+        session_tag: Optional[str] = None,
+        limit: int = 10,
+        log_run: bool = False,
+    ) -> dict[str, Any]:
+        result = await self._rank_for_query(
+            query=query,
+            surface="manual_search",
+            session_tag=session_tag,
+            session_id=None,
+            limit=max(1, min(int(limit or 10), 30)),
+            shown=log_run,
+            injected=False,
+            mark_activation=False,
+        )
+        return {
+            "ok": result.get("ok", False),
+            "query": query,
+            "count": len(result.get("items") or []),
+            "items": result.get("items") or [],
+            "run_id": result.get("run_id"),
+            **({"error": result.get("error")} if result.get("error") else {}),
+        }
+
+    async def search_context(
+        self,
+        query: str,
+        *,
+        session_tag: Optional[str] = None,
+        session_id: Optional[str] = None,
+        limit: Optional[int] = None,
+    ) -> dict[str, Any]:
+        if not getattr(self.cfg, "inject_stars", True):
+            return {"ok": True, "query": query, "count": 0, "items": []}
+        return await self._rank_for_query(
+            query=query,
+            surface="chat_inject",
+            session_tag=session_tag,
+            session_id=session_id,
+            limit=self._inject_limit(limit),
+            shown=True,
+            injected=True,
+            mark_activation=True,
+        )
+
+    async def review(
+        self,
+        *,
+        limit_new: Optional[int] = None,
+        candidates_per_star: Optional[int] = None,
+        total_candidate_limit: Optional[int] = None,
+        session_tag: Optional[str] = None,
+    ) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "items": [], "error": "Supabase is not configured."}
+        new_limit = _safe_int(limit_new if limit_new is not None else getattr(self.cfg, "star_review_new_limit", 5), 5, 1, 10)
+        per_star = _safe_int(
+            candidates_per_star if candidates_per_star is not None else getattr(self.cfg, "star_review_candidates_per_star", 3),
+            3,
+            1,
+            5,
+        )
+        total_limit = _safe_int(
+            total_candidate_limit if total_candidate_limit is not None else getattr(self.cfg, "star_review_total_candidate_limit", 15),
+            new_limit * per_star,
+            1,
+            30,
+        )
+        params: dict[str, str] = {
+            "select": STAR_SELECT,
+            "status": "eq.active",
+            "reviewed_at": "is.null",
+            "order": "created_at.asc",
+            "limit": str(new_limit),
+        }
+        if session_tag:
+            params["session_tag"] = f"eq.{session_tag}"
+        seeds = await self.supabase.query(STAR_TABLE, params)
+        items: list[dict[str, Any]] = []
+        remaining = total_limit
+        reviewed_ids: list[str] = []
+        for seed in seeds:
+            seed_id = _node_id(seed.get("id"))
+            if remaining > 0:
+                per_seed_limit = min(per_star, remaining)
+                ranked = await self._rank_for_seed(
+                    seed,
+                    surface="review",
+                    session_tag=session_tag or seed.get("session_tag"),
+                    limit=per_seed_limit,
+                    shown=True,
+                )
+            else:
+                ranked = {"run_id": None, "items": []}
+            items.append(
+                {
+                    "star": self._public_star(seed),
+                    "run_id": ranked.get("run_id"),
+                    "candidates": ranked.get("items") or [],
+                }
+            )
+            remaining -= len(ranked.get("items") or [])
+            if seed_id:
+                reviewed_ids.append(seed_id)
+        if reviewed_ids:
+            now_text = iso_now()
+            for star_id in reviewed_ids:
+                try:
+                    await self.supabase.update(STAR_TABLE, {"id": star_id}, {"reviewed_at": now_text})
+                except Exception as exc:
+                    logger.warning("[Star] Failed to mark reviewed: id=%s error=%s", star_id, exc)
+        return {
+            "ok": True,
+            "count": len(items),
+            "new_star_limit": new_limit,
+            "candidates_per_star": per_star,
+            "total_candidate_limit": total_limit,
+            "items": items,
+        }
+
+    async def feedback(
+        self,
+        *,
+        feedback: str,
+        run_id: Optional[str] = None,
+        candidate_id: Optional[str] = None,
+        candidate_star_id: Optional[str] = None,
+        expected_star_id: Optional[str] = None,
+        scored_by: str = "沈予",
+        note: str = "",
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+        feedback_key = (feedback or "").strip().lower()
+        if feedback_key not in FEEDBACK_VALUES:
+            return {"ok": False, "error": f"feedback must be one of {sorted(FEEDBACK_VALUES)}."}
+
+        candidate_row = await self._get_candidate(candidate_id) if candidate_id else None
+        candidate_node_id = candidate_star_id or (candidate_row or {}).get("candidate_node_id")
+        candidate_node_type = (candidate_row or {}).get("candidate_node_type") or ("star" if candidate_node_id else None)
+        run_id = run_id or (candidate_row or {}).get("run_id")
+        payload = {
+            "run_id": run_id,
+            "candidate_id": candidate_id or None,
+            "candidate_node_type": candidate_node_type,
+            "candidate_node_id": candidate_node_id or None,
+            "expected_node_type": "star" if expected_star_id else None,
+            "expected_node_id": expected_star_id or None,
+            "feedback": feedback_key,
+            "scored_by": (scored_by or "沈予").strip() or "沈予",
+            "note": (note or "").strip(),
+            "metadata": _json_dict(metadata),
+        }
+        row = await self.supabase.insert(STAR_FEEDBACK_TABLE, payload)
+        if candidate_id:
+            try:
+                await self.supabase.update(STAR_CANDIDATE_TABLE, {"id": candidate_id}, {"action_status": feedback_key})
+            except Exception as exc:
+                logger.warning("[Star] Failed to update candidate feedback: id=%s error=%s", candidate_id, exc)
+        return {"ok": True, "feedback": row}
+
+    async def connect_constellation(
+        self,
+        star_ids: Any,
+        *,
+        name: str = "",
+        relation_type: str = "constellation",
+        scored_by: str = "沈予",
+        note: str = "",
+    ) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+        ids = _id_list(star_ids)
+        if len(ids) < 2:
+            return {"ok": False, "error": "at least two star ids are required."}
+        relation = relation_type if relation_type in {"constellation", "harmony", "keyword", "manual", "heartbeat"} else "constellation"
+        metadata = {
+            "constellation_name": (name or "").strip(),
+            "scored_by": (scored_by or "沈予").strip() or "沈予",
+            "note": (note or "").strip(),
+        }
+        rows = []
+        for idx in range(len(ids) - 1):
+            left = ids[idx]
+            right = ids[idx + 1]
+            if left == right:
+                continue
+            rows.append(
+                {
+                    "from_node_type": "star",
+                    "from_node_id": left,
+                    "to_node_type": "star",
+                    "to_node_id": right,
+                    "relation_type": relation,
+                    "source": "shenyu",
+                    "confidence": 1.0,
+                    "weight": 1.0,
+                    "position": idx,
+                    "bidirectional": True,
+                    "times_confirmed": 1,
+                    "last_confirmed_at": iso_now(),
+                    "metadata": metadata,
+                }
+            )
+        if not rows:
+            return {"ok": False, "error": "no valid edges to connect."}
+        if hasattr(self.supabase, "upsert"):
+            result = await self.supabase.upsert(STAR_LINK_TABLE, rows, on_conflict="from_node_type,from_node_id,to_node_type,to_node_id,relation_type")
+        else:
+            result = []
+            for row in rows:
+                result.append(await self.supabase.insert(STAR_LINK_TABLE, row))
+        return {"ok": True, "edge_count": len(rows), "links": result, "star_ids": ids}
+
+    async def mark_constant(self, star_id: str, is_constant: bool = True) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+        star_id = _node_id(star_id)
+        if not star_id:
+            return {"ok": False, "error": "star_id is required."}
+        rows = await self.supabase.update(STAR_TABLE, {"id": star_id}, {"is_constant": bool(is_constant)})
+        return {"ok": True, "star_id": star_id, "updated": rows}
+
+    async def _rank_for_query(
+        self,
+        *,
+        query: str,
+        surface: str,
+        session_tag: Optional[str],
+        session_id: Optional[str],
+        limit: int,
+        shown: bool,
+        injected: bool,
+        mark_activation: bool,
+    ) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "query": query, "count": 0, "items": [], "error": "Supabase is not configured."}
+        clean_query = (query or "").strip()
+        if not clean_query:
+            return {"ok": True, "query": clean_query, "count": 0, "items": []}
+        rows, query_embedding_status = await self._candidate_rows(clean_query)
+        if not rows:
+            return {"ok": True, "query": clean_query, "count": 0, "items": []}
+        scored = await self._score_rows(query=clean_query, rows=rows, seed=None)
+        selected = scored[: max(1, min(int(limit or 3), 30))]
+        run_id = await self._log_run_and_candidates(
+            surface=surface,
+            trigger_text=clean_query,
+            seed=None,
+            session_tag=session_tag,
+            session_id=session_id,
+            limit_requested=limit,
+            query_embedding_status=query_embedding_status,
+            scored=scored,
+            selected_ids={item["row"].get("id") for item in selected},
+            shown=shown,
+            injected=injected,
+        )
+        if mark_activation and selected:
+            await self._mark_activated(
+                selected,
+                run_id=run_id,
+                surface=surface,
+                trigger_text=clean_query,
+                session_tag=session_tag,
+                session_id=session_id,
+                injected=injected,
+            )
+        items = [self._public_candidate(item, run_id=run_id) for item in selected]
+        return {"ok": True, "query": clean_query, "count": len(items), "items": items, "run_id": run_id}
+
+    async def _rank_for_seed(
+        self,
+        seed: dict[str, Any],
+        *,
+        surface: str,
+        session_tag: Optional[str],
+        limit: int,
+        shown: bool,
+    ) -> dict[str, Any]:
+        rows, query_embedding_status = await self._candidate_rows(seed.get("content") or "")
+        seed_id = _node_id(seed.get("id"))
+        rows = [row for row in rows if _node_id(row.get("id")) != seed_id]
+        scored = await self._score_rows(query=seed.get("content") or "", rows=rows, seed=seed)
+        selected = scored[: max(1, min(int(limit or 3), 10))]
+        run_id = await self._log_run_and_candidates(
+            surface=surface,
+            trigger_text=seed.get("content") or "",
+            seed=seed,
+            session_tag=session_tag,
+            session_id=None,
+            limit_requested=limit,
+            query_embedding_status=query_embedding_status,
+            scored=scored,
+            selected_ids={item["row"].get("id") for item in selected},
+            shown=shown,
+            injected=False,
+        )
+        return {
+            "ok": True,
+            "count": len(selected),
+            "items": [self._public_candidate(item, run_id=run_id) for item in selected],
+            "run_id": run_id,
+        }
+
+    async def _candidate_rows(self, query: str) -> tuple[list[dict[str, Any]], str]:
+        params = {
+            "select": STAR_SELECT,
+            "status": "eq.active",
+            "order": "is_constant.desc,last_activated_at.desc,updated_at.desc",
+            "limit": str(self._candidate_limit()),
+        }
+        rows = await self.supabase.query(STAR_TABLE, params)
+        rows_by_id = {_node_id(row.get("id")): dict(row) for row in rows if row.get("id")}
+        embedding_status = "skipped"
+        vector_rows = await self._vector_rows(query)
+        if vector_rows:
+            embedding_status = "used"
+        for row in vector_rows:
+            star_id = _node_id(row.get("id"))
+            if not star_id:
+                continue
+            existing = rows_by_id.get(star_id, {})
+            existing.update(row)
+            existing["_vector_score"] = _safe_float(row.get("vector_score"), 0.0)
+            rows_by_id[star_id] = existing
+        return list(rows_by_id.values()), embedding_status
+
+    async def _vector_rows(self, query: str) -> list[dict[str, Any]]:
+        client = self._embedding_client()
+        if not client or not query.strip() or not hasattr(self.supabase, "rpc"):
+            return []
+        vector, error = await client.embed(query[:1600])
+        if error or vector is None:
+            return []
+        try:
+            rows = await self.supabase.rpc(
+                "match_shenyu_stars",
+                {
+                    "query_embedding": _vector_literal(vector),
+                    "match_count": min(self._candidate_limit(), 120),
+                    "include_status": "active",
+                },
+            )
+        except Exception as exc:
+            logger.warning("[Star] vector search failed: %s", exc)
+            return []
+        return rows if isinstance(rows, list) else []
+
+    async def _score_rows(
+        self,
+        *,
+        query: str,
+        rows: list[dict[str, Any]],
+        seed: Optional[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        star_ids = [_node_id(row.get("id")) for row in rows if row.get("id")]
+        actr_scores, ignored_penalties = await self._activity_features(star_ids)
+        seed_chord = seed or _extract_chord_from_query(query)
+        base_items: list[dict[str, Any]] = []
+        for row in rows:
+            keyword_score, hits = _token_overlap(query, _star_search_text(row), row.get("search_tokens"))
+            content_overlap, _ = _token_overlap(query, row.get("content") or "", row.get("search_tokens"))
+            vector_score = _safe_float(row.get("_vector_score"), 0.0)
+            content_score = max(content_overlap, vector_score)
+            chord_score = _chord_similarity(seed_chord, row) if seed_chord else 0.0
+            content_gravity = max(content_score, keyword_score)
+            star_id = _node_id(row.get("id"))
+            base_score = content_score * 0.55 + keyword_score * 0.25 + chord_score * 0.20
+            base_items.append(
+                {
+                    "row": row,
+                    "keyword_hits": hits,
+                    "base_score": base_score,
+                    "features": {
+                        "content_score": _clamp(content_score),
+                        "keyword_score": _clamp(keyword_score),
+                        "chord_score": _clamp(chord_score),
+                        "harmony_score": 0.0,
+                        "content_gravity_score": _clamp(content_gravity),
+                        "actr_score": actr_scores.get(star_id, 0.0),
+                        "constant_bonus": 1.0 if row.get("is_constant") else 0.0,
+                        "novelty_bonus": 0.0 if row.get("activation_count") else 1.0,
+                        "ignored_penalty": ignored_penalties.get(star_id, 0.0),
+                    },
+                }
+            )
+        anchors = self._anchor_ids(base_items, seed)
+        harmony_scores = await self._harmony_scores(anchors)
+        weights = self._weights()
+        scored: list[dict[str, Any]] = []
+        for item in base_items:
+            star_id = _node_id(item["row"].get("id"))
+            features = dict(item["features"])
+            features["harmony_score"] = max(features["harmony_score"], harmony_scores.get(star_id, 0.0))
+            related_signal = max(
+                features["content_score"],
+                features["keyword_score"],
+                features["chord_score"],
+                features["harmony_score"],
+            )
+            if related_signal <= 0:
+                continue
+            final = (
+                features["content_score"] * weights.content
+                + features["keyword_score"] * weights.keyword
+                + features["harmony_score"] * weights.harmony
+                + features["chord_score"] * weights.chord
+                + features["actr_score"] * weights.actr
+                + features["constant_bonus"] * weights.constant_bonus
+                + features["novelty_bonus"] * weights.novelty_bonus
+                - features["ignored_penalty"] * weights.ignored_penalty
+            )
+            if final <= 0 and not seed:
+                continue
+            item["final_score"] = max(0.0, final)
+            item["features"] = features
+            scored.append(item)
+        scored.sort(key=lambda item: item["final_score"], reverse=True)
+        return scored
+
+    def _anchor_ids(self, scored: list[dict[str, Any]], seed: Optional[dict[str, Any]]) -> list[str]:
+        if seed and seed.get("id"):
+            return [_node_id(seed.get("id"))]
+        anchors = [
+            item
+            for item in scored
+            if item["features"]["content_gravity_score"] >= 0.28 or item["features"]["chord_score"] >= 0.5
+        ]
+        anchors.sort(key=lambda item: item["base_score"], reverse=True)
+        return [_node_id(item["row"].get("id")) for item in anchors[:5] if item["row"].get("id")]
+
+    async def _harmony_scores(self, anchor_ids: list[str]) -> dict[str, float]:
+        anchor_ids = [item for item in anchor_ids if item]
+        if not anchor_ids:
+            return {}
+        id_filter = "in.(" + ",".join(anchor_ids) + ")"
+        rows: list[dict[str, Any]] = []
+        try:
+            from_rows = await self.supabase.query(
+                STAR_LINK_TABLE,
+                {
+                    "select": "from_node_id,to_node_id,relation_type,confidence,weight,bidirectional,status",
+                    "from_node_type": "eq.star",
+                    "to_node_type": "eq.star",
+                    "from_node_id": id_filter,
+                    "status": "eq.active",
+                    "limit": "500",
+                },
+            )
+            rows.extend(from_rows)
+        except Exception:
+            pass
+        try:
+            to_rows = await self.supabase.query(
+                STAR_LINK_TABLE,
+                {
+                    "select": "from_node_id,to_node_id,relation_type,confidence,weight,bidirectional,status",
+                    "from_node_type": "eq.star",
+                    "to_node_type": "eq.star",
+                    "to_node_id": id_filter,
+                    "status": "eq.active",
+                    "limit": "500",
+                },
+            )
+            rows.extend([row for row in to_rows if row.get("bidirectional")])
+        except Exception:
+            pass
+        anchors = set(anchor_ids)
+        scores: dict[str, float] = {}
+        for row in rows:
+            left = _node_id(row.get("from_node_id"))
+            right = _node_id(row.get("to_node_id"))
+            target = right if left in anchors else left if right in anchors and row.get("bidirectional") else ""
+            if not target or target in anchors:
+                continue
+            relation_bonus = 1.0 if row.get("relation_type") == "constellation" else 0.75
+            score = _clamp(_safe_float(row.get("confidence"), 0.5) * _safe_float(row.get("weight"), 1.0) * relation_bonus)
+            scores[target] = max(scores.get(target, 0.0), score)
+        return scores
+
+    async def _activity_features(self, star_ids: list[str]) -> tuple[dict[str, float], dict[str, float]]:
+        if not star_ids:
+            return {}, {}
+        return await self._actr_scores(star_ids), await self._ignored_penalties(star_ids)
+
+    async def _actr_scores(self, star_ids: list[str]) -> dict[str, float]:
+        try:
+            rows = await self.supabase.query(
+                STAR_ACTIVATION_TABLE,
+                {
+                    "select": "star_id,activated_at",
+                    "star_id": "in.(" + ",".join(star_ids) + ")",
+                    "order": "activated_at.desc",
+                    "limit": str(min(max(len(star_ids) * 30, 100), 5000)),
+                },
+            )
+        except Exception:
+            return {}
+        now_dt = _now()
+        sums: dict[str, float] = {}
+        for row in rows:
+            star_id = _node_id(row.get("star_id"))
+            dt = _parse_ts(row.get("activated_at"))
+            if not star_id or not dt:
+                continue
+            age_days = max((now_dt - dt).total_seconds() / 86400.0, 0.05)
+            sums[star_id] = sums.get(star_id, 0.0) + math.pow(age_days, -0.5)
+        scores = {}
+        for star_id, total in sums.items():
+            if total <= 0:
+                continue
+            base = math.log(total)
+            scores[star_id] = _clamp((base + 2.5) / 4.5)
+        return scores
+
+    async def _ignored_penalties(self, star_ids: list[str]) -> dict[str, float]:
+        try:
+            rows = await self.supabase.query(
+                STAR_CANDIDATE_TABLE,
+                {
+                    "select": "candidate_node_id,shown,action_status,created_at",
+                    "candidate_node_type": "eq.star",
+                    "candidate_node_id": "in.(" + ",".join(star_ids) + ")",
+                    "shown": "eq.true",
+                    "order": "created_at.desc",
+                    "limit": str(min(max(len(star_ids) * 6, 100), 3000)),
+                },
+            )
+        except Exception:
+            return {}
+        by_star: dict[str, list[dict[str, Any]]] = {}
+        for row in rows:
+            by_star.setdefault(_node_id(row.get("candidate_node_id")), []).append(row)
+        penalties: dict[str, float] = {}
+        for star_id, history in by_star.items():
+            latest = history[:3]
+            if len(latest) < 3:
+                continue
+            actions = [(row.get("action_status") or "").strip().lower() for row in latest]
+            if any(action in POSITIVE_FEEDBACK for action in actions):
+                continue
+            if all(action in {"", "skipped", "negative"} for action in actions):
+                penalties[star_id] = 1.0
+        return penalties
+
+    async def _log_run_and_candidates(
+        self,
+        *,
+        surface: str,
+        trigger_text: str,
+        seed: Optional[dict[str, Any]],
+        session_tag: Optional[str],
+        session_id: Optional[str],
+        limit_requested: int,
+        query_embedding_status: str,
+        scored: list[dict[str, Any]],
+        selected_ids: set[Any],
+        shown: bool,
+        injected: bool,
+    ) -> Optional[str]:
+        shadow_limit = _safe_int(getattr(self.cfg, "star_shadow_candidate_limit", 20), 20, 3, 100)
+        try:
+            run = await self.supabase.insert(
+                STAR_RUN_TABLE,
+                {
+                    "surface": surface,
+                    "trigger_text": trigger_text or "",
+                    "seed_node_type": "star" if seed and seed.get("id") else None,
+                    "seed_node_id": _node_id(seed.get("id")) if seed and seed.get("id") else None,
+                    "session_tag": session_tag,
+                    "session_id": session_id,
+                    "limit_requested": limit_requested,
+                    "ranker_version": STAR_RANKER_VERSION,
+                    "feature_schema_version": STAR_FEATURE_SCHEMA_VERSION,
+                    "weights_version": STAR_WEIGHTS_VERSION,
+                    "query_embedding_status": query_embedding_status,
+                    "metadata": {"weights": self._weights().__dict__},
+                },
+            )
+            run_id = run.get("id") if isinstance(run, dict) else None
+        except Exception as exc:
+            logger.warning("[Star] failed to create recall run: %s", exc)
+            return None
+        if not run_id:
+            return None
+        rows = []
+        for rank, item in enumerate(scored[:shadow_limit], start=1):
+            star_id = _node_id(item["row"].get("id"))
+            selected = item["row"].get("id") in selected_ids or star_id in selected_ids
+            features = item.get("features") or {}
+            rows.append(
+                {
+                    "run_id": run_id,
+                    "candidate_node_type": "star",
+                    "candidate_node_id": star_id,
+                    "rank": rank,
+                    "shown": bool(shown and selected),
+                    "injected": bool(injected and selected),
+                    "final_score": item.get("final_score") or 0.0,
+                    "content_score": features.get("content_score") or 0.0,
+                    "keyword_score": features.get("keyword_score") or 0.0,
+                    "chord_score": features.get("chord_score") or 0.0,
+                    "harmony_score": features.get("harmony_score") or 0.0,
+                    "content_gravity_score": features.get("content_gravity_score") or 0.0,
+                    "actr_score": features.get("actr_score") or 0.0,
+                    "constant_bonus": features.get("constant_bonus") or 0.0,
+                    "novelty_bonus": features.get("novelty_bonus") or 0.0,
+                    "ignored_penalty": features.get("ignored_penalty") or 0.0,
+                    "feature_json": {
+                        "ranker_version": STAR_RANKER_VERSION,
+                        "keyword_hits": item.get("keyword_hits") or [],
+                    },
+                }
+            )
+        if rows:
+            try:
+                inserted = await self.supabase.insert_many(STAR_CANDIDATE_TABLE, rows)
+                inserted_by_star = {
+                    _node_id(row.get("candidate_node_id")): row.get("id")
+                    for row in inserted or []
+                    if isinstance(row, dict)
+                }
+                for item in scored[:shadow_limit]:
+                    star_id = _node_id(item["row"].get("id"))
+                    if star_id in inserted_by_star:
+                        item["candidate_id"] = inserted_by_star[star_id]
+            except Exception as exc:
+                logger.warning("[Star] failed to log candidates: %s", exc)
+        return run_id
+
+    async def _mark_activated(
+        self,
+        selected: list[dict[str, Any]],
+        *,
+        run_id: Optional[str],
+        surface: str,
+        trigger_text: str,
+        session_tag: Optional[str],
+        session_id: Optional[str],
+        injected: bool,
+    ) -> None:
+        now_text = iso_now()
+        rows = []
+        for item in selected:
+            star_id = _node_id(item["row"].get("id"))
+            if not star_id:
+                continue
+            rows.append(
+                {
+                    "star_id": star_id,
+                    "run_id": run_id,
+                    "surface": surface,
+                    "trigger_text": trigger_text or "",
+                    "score": item.get("final_score") or 0.0,
+                    "injected": injected,
+                    "session_tag": session_tag,
+                    "session_id": session_id,
+                }
+            )
+        if rows:
+            try:
+                await self.supabase.insert_many(STAR_ACTIVATION_TABLE, rows)
+            except Exception as exc:
+                logger.warning("[Star] failed to insert activations: %s", exc)
+        for item in selected:
+            row = item["row"]
+            star_id = _node_id(row.get("id"))
+            if not star_id:
+                continue
+            try:
+                await self.supabase.update(
+                    STAR_TABLE,
+                    {"id": star_id},
+                    {
+                        "activation_count": int(row.get("activation_count") or 0) + 1,
+                        "last_activated_at": now_text,
+                    },
+                )
+            except Exception as exc:
+                logger.warning("[Star] failed to mark activation: id=%s error=%s", star_id, exc)
+
+    async def _attach_embedding(self, payload: dict[str, Any], chord: str, content: str) -> None:
+        client = self._embedding_client()
+        if not client:
+            payload["embedding_status"] = "skipped"
+            return
+        text = "\n".join(part for part in [chord, content] if part).strip()[:1600]
+        if not text:
+            payload["embedding_status"] = "skipped"
+            return
+        vector, error = await client.embed(text)
+        if error or vector is None:
+            payload["embedding_status"] = "failed"
+            payload["embedding_error"] = error or "embedding failed"
+            return
+        payload["embedding"] = _vector_literal(vector)
+        payload["embedding_model"] = client.model
+        payload["embedding_status"] = "ready"
+        payload["embedding_error"] = None
+        payload["embedded_at"] = iso_now()
+
+    async def _get_candidate(self, candidate_id: Optional[str]) -> Optional[dict[str, Any]]:
+        if not candidate_id:
+            return None
+        rows = await self.supabase.query(
+            STAR_CANDIDATE_TABLE,
+            {"select": "*", "id": f"eq.{candidate_id}", "limit": "1"},
+        )
+        return rows[0] if rows else None
+
+    def _inline_star_content(self, star: Any) -> str:
+        parsed = parse_star_payload(star)
+        content = (parsed.get("content") or "").strip()
+        if not content:
+            return ""
+        if not re.sub(r"[\W_]+", "", content, flags=re.UNICODE):
+            return ""
+        return content
+
+    def _public_star(self, row: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "id": row.get("id"),
+            "session_tag": row.get("session_tag"),
+            "content": row.get("content") or "",
+            "chord": row.get("chord") or "",
+            "chord_root": row.get("chord_root") or "",
+            "chord_quality": row.get("chord_quality") or "",
+            "status": row.get("status") or "active",
+            "is_constant": bool(row.get("is_constant")),
+            "reviewed_at": row.get("reviewed_at"),
+            "activation_count": row.get("activation_count") or 0,
+            "last_activated_at": row.get("last_activated_at"),
+            "created_at": row.get("created_at"),
+            "updated_at": row.get("updated_at"),
+        }
+
+    def _public_candidate(self, item: dict[str, Any], *, run_id: Optional[str]) -> dict[str, Any]:
+        row = item.get("row") or {}
+        features = item.get("features") or {}
+        star = self._public_star(row)
+        return {
+            **star,
+            "run_id": run_id,
+            "candidate_id": item.get("candidate_id"),
+            "score": round(float(item.get("final_score") or 0.0), 4),
+            "scores": {key: round(float(value or 0.0), 4) for key, value in features.items()},
+            "keyword_hits": item.get("keyword_hits") or [],
+        }
+
+
+def render_star_context(items: list[dict[str, Any]]) -> str:
+    if not items:
+        return ""
+    lines = []
+    for item in items:
+        content = (item.get("content") or "").strip()
+        if not content:
+            continue
+        chord = (item.get("chord") or "").strip()
+        prefix = f"{chord} · " if chord else ""
+        lines.append(f"- {prefix}{_shorten(content, 220)}")
+    return "\n".join(lines)

@@ -18,6 +18,7 @@ from shenyu_gateway.runtime import (
     now as _now,
     parse_ts as _parse_ts,
 )
+from shenyu_gateway.stars import StarService
 from shenyu_gateway.utils import shorten as _shorten
 
 _UNSET = object()
@@ -172,6 +173,7 @@ insert / update / delete 会尽量返回写入或影响到的行。
 翻自己的便签用 `shenyu_list_mem_notes`，改单条用 `shenyu_update_mem_note`，写新的用 `shenyu_write_mem_note`（默认直接 active）。
 几条旧的揉成一条新的，写的时候传 replaces=[旧id]，旧的自动归档。
 整理 captured 便签时先列出来，只改明确选中的 id；不要按状态一口气全量改。
+星星记忆用 `shenyu_create_star` / `shenyu_star_review` / `shenyu_star_feedback` / `shenyu_connect_constellation`。missed 反馈也走 `shenyu_star_feedback`。
 notebook 是共享手边事项；海信那边或跨窗口要留事用 `shenyu_notebook_write` / `shenyu_notebook_list`。
 翻某天心跳用 `shenyu_read_heartbeat`，一般只填 date，比如 2026-05-11。
 
@@ -251,6 +253,9 @@ class GatewayToolService:
 
     def _mem_notes(self) -> MemNoteService:
         return MemNoteService(self.cfg, self.supabase)
+
+    def _stars(self) -> StarService:
+        return StarService(self.cfg, self.supabase)
 
     def _recall_index(self) -> RecallIndexService:
         return RecallIndexService(self.supabase, cfg=self.cfg)
@@ -378,6 +383,109 @@ class GatewayToolService:
 
     async def delete_mem_note(self, note_id: str) -> dict:
         return await self._mem_notes().delete_note(note_id)
+
+    async def create_star(
+        self,
+        content: Any,
+        chord: str = "",
+        session_tag: Optional[str] = None,
+        status: str = "active",
+        is_constant: bool = False,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict:
+        return await self._stars().create_star(
+            content=content,
+            chord=chord,
+            session_tag=session_tag,
+            status=status,
+            is_constant=is_constant,
+            metadata=metadata,
+        )
+
+    async def list_stars(
+        self,
+        status: str = "active",
+        limit: int = 50,
+        session_tag: Optional[str] = None,
+        q: str = "",
+        reviewed: str = "all",
+    ) -> dict:
+        return await self._stars().list_stars(
+            status=status,
+            limit=limit,
+            session_tag=session_tag,
+            q=q,
+            reviewed=reviewed,
+        )
+
+    async def search_stars(
+        self,
+        query: str = "",
+        session_tag: Optional[str] = None,
+        limit: int = 10,
+        log_run: bool = False,
+    ) -> dict:
+        return await self._stars().search_stars(
+            query=query,
+            session_tag=session_tag,
+            limit=limit,
+            log_run=log_run,
+        )
+
+    async def star_review(
+        self,
+        limit_new: Optional[int] = None,
+        candidates_per_star: Optional[int] = None,
+        total_candidate_limit: Optional[int] = None,
+        session_tag: Optional[str] = None,
+    ) -> dict:
+        return await self._stars().review(
+            limit_new=limit_new,
+            candidates_per_star=candidates_per_star,
+            total_candidate_limit=total_candidate_limit,
+            session_tag=session_tag,
+        )
+
+    async def star_feedback(
+        self,
+        feedback: str,
+        run_id: Optional[str] = None,
+        candidate_id: Optional[str] = None,
+        candidate_star_id: Optional[str] = None,
+        expected_star_id: Optional[str] = None,
+        scored_by: str = "沈予",
+        note: str = "",
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict:
+        return await self._stars().feedback(
+            feedback=feedback,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            candidate_star_id=candidate_star_id,
+            expected_star_id=expected_star_id,
+            scored_by=scored_by,
+            note=note,
+            metadata=metadata,
+        )
+
+    async def connect_constellation(
+        self,
+        star_ids: Any,
+        name: str = "",
+        relation_type: str = "constellation",
+        scored_by: str = "沈予",
+        note: str = "",
+    ) -> dict:
+        return await self._stars().connect_constellation(
+            star_ids=star_ids,
+            name=name,
+            relation_type=relation_type,
+            scored_by=scored_by,
+            note=note,
+        )
+
+    async def mark_constant_star(self, star_id: str, is_constant: bool = True) -> dict:
+        return await self._stars().mark_constant(star_id, is_constant=is_constant)
 
     async def supabase_insert(self, table: str, data: dict) -> dict:
         if not self.supabase:

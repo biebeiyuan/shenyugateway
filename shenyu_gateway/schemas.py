@@ -51,6 +51,24 @@ class ConfigUpdate(BaseModel):
     calendar_inject_week: Optional[bool] = None
     calendar_inject_month: Optional[bool] = None
     inject_mem_notes: Optional[bool] = None
+    inject_stars: Optional[bool] = None
+    inject_star_prompt: Optional[bool] = None
+    enable_inline_star_capture: Optional[bool] = None
+    enable_star_embeddings: Optional[bool] = None
+    star_inject_limit: Optional[int] = None
+    star_review_new_limit: Optional[int] = None
+    star_review_candidates_per_star: Optional[int] = None
+    star_review_total_candidate_limit: Optional[int] = None
+    star_candidate_limit: Optional[int] = None
+    star_shadow_candidate_limit: Optional[int] = None
+    star_weight_content: Optional[float] = None
+    star_weight_keyword: Optional[float] = None
+    star_weight_harmony: Optional[float] = None
+    star_weight_chord: Optional[float] = None
+    star_weight_actr: Optional[float] = None
+    star_constant_bonus: Optional[float] = None
+    star_novelty_bonus: Optional[float] = None
+    star_ignored_penalty: Optional[float] = None
     enable_cold_start: Optional[bool] = None
     enable_upstream_tools: Optional[bool] = None
     enable_gateway_tools: Optional[bool] = None
@@ -130,3 +148,35 @@ class MemNoteBulkPatch(BaseModel):
     patch: dict[str, Any] = Field(default_factory=dict)
     updates: list[dict[str, Any]] = Field(default_factory=list)
     use_suggestions: bool = False
+
+
+class StarCreateRequest(BaseModel):
+    content: str
+    chord: Optional[str] = None
+    session_tag: Optional[str] = None
+    status: str = "active"
+    is_constant: bool = False
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StarFeedbackRequest(BaseModel):
+    feedback: str
+    run_id: Optional[str] = None
+    candidate_id: Optional[str] = None
+    candidate_star_id: Optional[str] = None
+    expected_star_id: Optional[str] = None
+    scored_by: str = "圆圆"
+    note: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StarConnectRequest(BaseModel):
+    star_ids: list[str]
+    name: Optional[str] = None
+    relation_type: str = "constellation"
+    scored_by: str = "圆圆"
+    note: str = ""
+
+
+class StarConstantRequest(BaseModel):
+    is_constant: bool = True

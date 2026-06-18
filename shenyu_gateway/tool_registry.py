@@ -27,6 +27,10 @@ HIDDEN_COMPAT_TOOL_NAMES = {
 
 _BROKER_TOOL_HINTS = {
     "shenyu_recall": "翻旧上下文，可 source_types 限定范围",
+    "shenyu_search_stars": "搜星星记忆",
+    "shenyu_star_review": "看新星和网关建议的关联",
+    "shenyu_star_feedback": "给星星召回打分，也能补 missed",
+    "shenyu_connect_constellation": "把几颗星连成星座",
     "shenyu_list_mem_notes": "列 mem 便签（status: captured / active）",
     "shenyu_update_mem_note": "改某条 mem",
     "shenyu_notebook_list": "读 notebook（跨窗口/海信那边）",
@@ -104,6 +108,137 @@ def _gateway_core_tools() -> list[dict]:
                         "limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 8},
                     },
                     "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_create_star",
+                "description": "写一颗星。星星是很小的体感/和弦记忆；content 写正文，chord 可单独传，也可以写成「Am · 正文」。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string"},
+                        "chord": {"type": "string"},
+                        "session_tag": {"type": "string"},
+                        "status": {"type": "string", "enum": ["active", "paused", "archived"], "default": "active"},
+                        "is_constant": {"type": "boolean", "default": False},
+                        "metadata": {"type": "object", "additionalProperties": True},
+                    },
+                    "required": ["content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_search_stars",
+                "description": "按当前念头搜星星。这个是主动查询，不等于日常注入。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string"},
+                        "q": {"type": "string", "description": "query 的别名"},
+                        "session_tag": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 10},
+                        "log_run": {"type": "boolean", "default": False},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_list_stars",
+                "description": "列星星。可筛未 review 的星，或按正文/和弦搜索。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string", "enum": ["active", "paused", "archived", "all"], "default": "active"},
+                        "reviewed": {"type": "string", "enum": ["all", "reviewed", "unreviewed"], "default": "all"},
+                        "q": {"type": "string"},
+                        "session_tag": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 200, "default": 50},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_star_review",
+                "description": "轻量 review：取最多几颗新星，并为每颗反上来少量候选关联。默认 5 颗新星、每颗 3 条、总量 15。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit_new": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
+                        "candidates_per_star": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3},
+                        "total_candidate_limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 15},
+                        "session_tag": {"type": "string"},
+                        "expected_star_id": {"type": "string", "description": "review 时顺手补 missed：该反但没反上来的星。"},
+                        "run_id": {"type": "string", "description": "missed 对应的召回 run_id。"},
+                        "scored_by": {"type": "string", "default": "沈予"},
+                        "note": {"type": "string"},
+                        "metadata": {"type": "object", "additionalProperties": True},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_star_feedback",
+                "description": "给星星召回反馈。missed 时填 expected_star_id；候选反错了可填 candidate_id 或 candidate_star_id + feedback=negative。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "feedback": {
+                            "type": "string",
+                            "enum": ["positive", "negative", "missed", "connected", "skipped", "should_surface"],
+                        },
+                        "run_id": {"type": "string"},
+                        "candidate_id": {"type": "string"},
+                        "candidate_star_id": {"type": "string"},
+                        "expected_star_id": {"type": "string", "description": "该反但没反上来的那颗星。"},
+                        "scored_by": {"type": "string", "default": "沈予"},
+                        "note": {"type": "string"},
+                        "metadata": {"type": "object", "additionalProperties": True},
+                    },
+                    "required": ["feedback"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_connect_constellation",
+                "description": "把几颗星按顺序连成星座。用于沈予确认“这些是连着的”。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "star_ids": {"type": "array", "items": {"type": "string"}},
+                        "name": {"type": "string"},
+                        "relation_type": {"type": "string", "enum": ["constellation", "harmony", "keyword", "manual"], "default": "constellation"},
+                        "scored_by": {"type": "string", "default": "沈予"},
+                        "note": {"type": "string"},
+                    },
+                    "required": ["star_ids"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_mark_constant",
+                "description": "把一颗星标成恒星，或取消恒星。恒星在召回里有一点稳定加成。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "star_id": {"type": "string"},
+                        "id": {"type": "string", "description": "star_id 的别名"},
+                        "is_constant": {"type": "boolean", "default": True},
+                    },
                 },
             },
         },
@@ -679,6 +814,14 @@ def _mem_note_bulk_patch_arg(arguments: dict) -> dict:
     return patch
 
 
+def _star_id_arg(arguments: dict) -> str:
+    for key in ("star_id", "id", "starId"):
+        value = arguments.get(key)
+        if value:
+            return str(value)
+    return ""
+
+
 @dataclass(frozen=True)
 class ToolContext:
     arguments: dict
@@ -710,6 +853,95 @@ async def _handle_recall(ctx: ToolContext) -> dict:
         include_undated=_bool_arg(ctx.arguments, "include_undated", True),
         limit=_int_arg(ctx.arguments, "limit", 8),
         auto_sync=bool(getattr(ctx.cfg, "enable_recall_auto_sync", False)),
+    )
+
+
+@_tool_handler("shenyu_create_star")
+async def _handle_create_star(ctx: ToolContext) -> dict:
+    return await ctx.service.create_star(
+        content=ctx.arguments.get("content", ""),
+        chord=ctx.arguments.get("chord", ""),
+        session_tag=ctx.arguments.get("session_tag") or ctx.session_tag,
+        status=ctx.arguments.get("status", "active"),
+        is_constant=_bool_arg(ctx.arguments, "is_constant", False),
+        metadata=ctx.arguments.get("metadata") if isinstance(ctx.arguments.get("metadata"), dict) else None,
+    )
+
+
+@_tool_handler("shenyu_list_stars")
+async def _handle_list_stars(ctx: ToolContext) -> dict:
+    return await ctx.service.list_stars(
+        status=ctx.arguments.get("status", "active"),
+        limit=_int_arg(ctx.arguments, "limit", 50),
+        session_tag=ctx.arguments.get("session_tag") or ctx.session_tag,
+        q=ctx.arguments.get("q") or ctx.arguments.get("query", ""),
+        reviewed=ctx.arguments.get("reviewed", "all"),
+    )
+
+
+@_tool_handler("shenyu_search_stars")
+async def _handle_search_stars(ctx: ToolContext) -> dict:
+    return await ctx.service.search_stars(
+        query=_query_arg(ctx.arguments),
+        session_tag=ctx.arguments.get("session_tag") or ctx.session_tag,
+        limit=_int_arg(ctx.arguments, "limit", 10),
+        log_run=_bool_arg(ctx.arguments, "log_run", False),
+    )
+
+
+@_tool_handler("shenyu_star_review")
+async def _handle_star_review(ctx: ToolContext) -> dict:
+    feedback_result = None
+    if ctx.arguments.get("expected_star_id"):
+        feedback_result = await ctx.service.star_feedback(
+            feedback="missed",
+            run_id=ctx.arguments.get("run_id"),
+            expected_star_id=ctx.arguments.get("expected_star_id"),
+            scored_by=ctx.arguments.get("scored_by", "沈予"),
+            note=ctx.arguments.get("note", ""),
+            metadata=ctx.arguments.get("metadata") if isinstance(ctx.arguments.get("metadata"), dict) else None,
+        )
+    review_result = await ctx.service.star_review(
+        limit_new=ctx.arguments.get("limit_new"),
+        candidates_per_star=ctx.arguments.get("candidates_per_star"),
+        total_candidate_limit=ctx.arguments.get("total_candidate_limit"),
+        session_tag=ctx.arguments.get("session_tag") or ctx.session_tag,
+    )
+    if feedback_result is not None:
+        review_result["feedback"] = feedback_result
+    return review_result
+
+
+@_tool_handler("shenyu_star_feedback")
+async def _handle_star_feedback(ctx: ToolContext) -> dict:
+    return await ctx.service.star_feedback(
+        feedback=ctx.arguments.get("feedback", ""),
+        run_id=ctx.arguments.get("run_id"),
+        candidate_id=ctx.arguments.get("candidate_id"),
+        candidate_star_id=ctx.arguments.get("candidate_star_id"),
+        expected_star_id=ctx.arguments.get("expected_star_id"),
+        scored_by=ctx.arguments.get("scored_by", "沈予"),
+        note=ctx.arguments.get("note", ""),
+        metadata=ctx.arguments.get("metadata") if isinstance(ctx.arguments.get("metadata"), dict) else None,
+    )
+
+
+@_tool_handler("shenyu_connect_constellation")
+async def _handle_connect_constellation(ctx: ToolContext) -> dict:
+    return await ctx.service.connect_constellation(
+        star_ids=ctx.arguments.get("star_ids") or ctx.arguments.get("ids"),
+        name=ctx.arguments.get("name", ""),
+        relation_type=ctx.arguments.get("relation_type", "constellation"),
+        scored_by=ctx.arguments.get("scored_by", "沈予"),
+        note=ctx.arguments.get("note", ""),
+    )
+
+
+@_tool_handler("shenyu_mark_constant")
+async def _handle_mark_constant(ctx: ToolContext) -> dict:
+    return await ctx.service.mark_constant_star(
+        _star_id_arg(ctx.arguments),
+        is_constant=_bool_arg(ctx.arguments, "is_constant", True),
     )
 
 

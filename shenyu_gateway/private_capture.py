@@ -56,6 +56,7 @@ def private_capture_kinds(
     *,
     heartbeat_content: str = "",
     inline_memories: Optional[list[dict[str, Any]]] = None,
+    inline_stars: Optional[list[dict[str, Any]]] = None,
     mem_note_written: bool = False,
 ) -> list[str]:
     kinds: list[str] = []
@@ -63,6 +64,8 @@ def private_capture_kinds(
         kinds.append("heartbeat")
     if mem_note_written or bool(inline_memories):
         kinds.append("mem")
+    if bool(inline_stars):
+        kinds.append("star")
     return kinds
 
 
@@ -93,15 +96,16 @@ def finalize_assistant_private_content(
     *,
     latest_user_text: str = "",
     mem_note_written: bool = False,
-) -> tuple[str, str, list[dict[str, Any]], dict[str, Any]]:
-    clean_content, heartbeat_content, inline_memories = split_private_assistant_tags(
+) -> tuple[str, str, list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
+    clean_content, heartbeat_content, inline_memories, inline_stars = split_private_assistant_tags(
         _normalize_text(assistant_message.get("content"))
     )
-    if heartbeat_content or inline_memories:
+    if heartbeat_content or inline_memories or inline_stars:
         assistant_message["content"] = clean_content
     stored_kinds = private_capture_kinds(
         heartbeat_content=heartbeat_content,
         inline_memories=inline_memories,
+        inline_stars=inline_stars,
         mem_note_written=mem_note_written,
     )
     fallback_text, fallback_context = private_capture_fallback_text(latest_user_text, stored_kinds)
@@ -112,4 +116,4 @@ def finalize_assistant_private_content(
         "kinds": stored_kinds if fallback_applied else [],
         "context": fallback_context if fallback_applied else "",
     }
-    return _normalize_text(assistant_message.get("content")), heartbeat_content, inline_memories, fallback_meta
+    return _normalize_text(assistant_message.get("content")), heartbeat_content, inline_memories, inline_stars, fallback_meta

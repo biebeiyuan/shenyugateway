@@ -51,6 +51,24 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
         "inject_mem_notes": cfg.inject_mem_notes,
+        "inject_stars": cfg.inject_stars,
+        "inject_star_prompt": cfg.inject_star_prompt,
+        "enable_inline_star_capture": cfg.enable_inline_star_capture,
+        "enable_star_embeddings": cfg.enable_star_embeddings,
+        "star_inject_limit": cfg.star_inject_limit,
+        "star_review_new_limit": cfg.star_review_new_limit,
+        "star_review_candidates_per_star": cfg.star_review_candidates_per_star,
+        "star_review_total_candidate_limit": cfg.star_review_total_candidate_limit,
+        "star_candidate_limit": cfg.star_candidate_limit,
+        "star_shadow_candidate_limit": cfg.star_shadow_candidate_limit,
+        "star_weight_content": cfg.star_weight_content,
+        "star_weight_keyword": cfg.star_weight_keyword,
+        "star_weight_harmony": cfg.star_weight_harmony,
+        "star_weight_chord": cfg.star_weight_chord,
+        "star_weight_actr": cfg.star_weight_actr,
+        "star_constant_bonus": cfg.star_constant_bonus,
+        "star_novelty_bonus": cfg.star_novelty_bonus,
+        "star_ignored_penalty": cfg.star_ignored_penalty,
         "enable_cold_start": cfg.enable_cold_start,
         "enable_upstream_tools": cfg.enable_upstream_tools,
         "enable_gateway_tools": cfg.enable_gateway_tools,
@@ -127,6 +145,24 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "calendar_inject_week": "CALENDAR_INJECT_WEEK",
             "calendar_inject_month": "CALENDAR_INJECT_MONTH",
             "inject_mem_notes": "INJECT_MEM_NOTES",
+            "inject_stars": "INJECT_STARS",
+            "inject_star_prompt": "INJECT_STAR_PROMPT",
+            "enable_inline_star_capture": "ENABLE_INLINE_STAR_CAPTURE",
+            "enable_star_embeddings": "ENABLE_STAR_EMBEDDINGS",
+            "star_inject_limit": "STAR_INJECT_LIMIT",
+            "star_review_new_limit": "STAR_REVIEW_NEW_LIMIT",
+            "star_review_candidates_per_star": "STAR_REVIEW_CANDIDATES_PER_STAR",
+            "star_review_total_candidate_limit": "STAR_REVIEW_TOTAL_CANDIDATE_LIMIT",
+            "star_candidate_limit": "STAR_CANDIDATE_LIMIT",
+            "star_shadow_candidate_limit": "STAR_SHADOW_CANDIDATE_LIMIT",
+            "star_weight_content": "STAR_WEIGHT_CONTENT",
+            "star_weight_keyword": "STAR_WEIGHT_KEYWORD",
+            "star_weight_harmony": "STAR_WEIGHT_HARMONY",
+            "star_weight_chord": "STAR_WEIGHT_CHORD",
+            "star_weight_actr": "STAR_WEIGHT_ACTR",
+            "star_constant_bonus": "STAR_CONSTANT_BONUS",
+            "star_novelty_bonus": "STAR_NOVELTY_BONUS",
+            "star_ignored_penalty": "STAR_IGNORED_PENALTY",
             "enable_cold_start": "ENABLE_COLD_START",
             "enable_upstream_tools": "ENABLE_UPSTREAM_TOOLS",
             "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
@@ -187,6 +223,10 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "calendar_inject_week",
             "calendar_inject_month",
             "inject_mem_notes",
+            "inject_stars",
+            "inject_star_prompt",
+            "enable_inline_star_capture",
+            "enable_star_embeddings",
             "enable_cold_start",
             "enable_upstream_tools",
             "enable_gateway_tools",
@@ -355,6 +395,48 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.mem_note_default_cooldown_hours = max(0, min(body.mem_note_default_cooldown_hours, 8760))
             changed.append("mem_note_default_cooldown_hours")
             env_updates[env_names["mem_note_default_cooldown_hours"]] = cfg.mem_note_default_cooldown_hours
+        if body.star_inject_limit is not None:
+            cfg.star_inject_limit = max(1, min(body.star_inject_limit, 5))
+            changed.append("star_inject_limit")
+            env_updates[env_names["star_inject_limit"]] = cfg.star_inject_limit
+        if body.star_review_new_limit is not None:
+            cfg.star_review_new_limit = max(1, min(body.star_review_new_limit, 10))
+            changed.append("star_review_new_limit")
+            env_updates[env_names["star_review_new_limit"]] = cfg.star_review_new_limit
+        if body.star_review_candidates_per_star is not None:
+            cfg.star_review_candidates_per_star = max(1, min(body.star_review_candidates_per_star, 5))
+            changed.append("star_review_candidates_per_star")
+            env_updates[env_names["star_review_candidates_per_star"]] = cfg.star_review_candidates_per_star
+        if body.star_review_total_candidate_limit is not None:
+            cfg.star_review_total_candidate_limit = max(1, min(body.star_review_total_candidate_limit, 30))
+            changed.append("star_review_total_candidate_limit")
+            env_updates[env_names["star_review_total_candidate_limit"]] = cfg.star_review_total_candidate_limit
+        if body.star_candidate_limit is not None:
+            cfg.star_candidate_limit = max(50, min(body.star_candidate_limit, 5000))
+            changed.append("star_candidate_limit")
+            env_updates[env_names["star_candidate_limit"]] = cfg.star_candidate_limit
+        if body.star_shadow_candidate_limit is not None:
+            cfg.star_shadow_candidate_limit = max(3, min(body.star_shadow_candidate_limit, 100))
+            changed.append("star_shadow_candidate_limit")
+            env_updates[env_names["star_shadow_candidate_limit"]] = cfg.star_shadow_candidate_limit
+        for field in (
+            "star_weight_content",
+            "star_weight_keyword",
+            "star_weight_harmony",
+            "star_weight_chord",
+            "star_weight_actr",
+        ):
+            value = getattr(body, field)
+            if value is not None:
+                setattr(cfg, field, deps.clamp(float(value), 0.0, 2.0))
+                changed.append(field)
+                env_updates[env_names[field]] = getattr(cfg, field)
+        for field in ("star_constant_bonus", "star_novelty_bonus", "star_ignored_penalty"):
+            value = getattr(body, field)
+            if value is not None:
+                setattr(cfg, field, deps.clamp(float(value), 0.0, 1.0))
+                changed.append(field)
+                env_updates[env_names[field]] = getattr(cfg, field)
         if body.hisense_heartbeat_limit is not None:
             cfg.hisense_heartbeat_limit = max(1, min(body.hisense_heartbeat_limit, 30))
             changed.append("hisense_heartbeat_limit")

@@ -74,6 +74,7 @@ from shenyu_gateway.schemas import (
     ChatRequest,
 )
 from shenyu_gateway.sessions import SessionManager
+from shenyu_gateway.stars import StarService
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.streaming import (
     _new_stream_chunk_id,
@@ -651,6 +652,7 @@ def _schedule_inline_memory_capture(
     request: Request,
     session: dict,
     inline_memories: list[Any],
+    inline_stars: list[Any],
     assistant_text: str,
     source_model: str,
 ):
@@ -661,6 +663,18 @@ def _schedule_inline_memory_capture(
             MemNoteService(cfg, supabase_client).process_inline_memories(
                 session,
                 inline_memories,
+                assistant_text,
+                source_model,
+            )
+        ),
+    )
+    schedule_inline_memory_capture(
+        enabled=getattr(cfg, "enable_inline_star_capture", True),
+        inline_memories=inline_stars,
+        capture=lambda: (
+            StarService(cfg, supabase_client).process_inline_stars(
+                session,
+                inline_stars,
                 assistant_text,
                 source_model,
             )
@@ -806,6 +820,7 @@ async def _stream_chat(
                                 _private_capture_kinds(
                                     heartbeat_content=tag_filter.get_heartbeat(),
                                     inline_memories=tag_filter.get_memories(),
+                                    inline_stars=tag_filter.get_stars(),
                                 ),
                             )
                             yield _stream_content_event(
@@ -849,6 +864,7 @@ async def _stream_chat(
                                     _private_capture_kinds(
                                         heartbeat_content=tag_filter.get_heartbeat(),
                                         inline_memories=tag_filter.get_memories(),
+                                        inline_stars=tag_filter.get_stars(),
                                     ),
                                 )
                                 yield _stream_content_event(
@@ -875,12 +891,14 @@ async def _stream_chat(
                                 _private_capture_kinds(
                                     heartbeat_content=tag_filter.get_heartbeat(),
                                     inline_memories=tag_filter.get_memories(),
+                                    inline_stars=tag_filter.get_stars(),
                                 ),
                             )
                         on_complete(
                             clean_text,
                             tag_filter.get_heartbeat(),
                             tag_filter.get_memories(),
+                            tag_filter.get_stars(),
                             fallback_applied,
                             stream_usage or None,
                         )
@@ -948,6 +966,7 @@ async def _stream_chat(
                         _private_capture_kinds(
                             heartbeat_content=tag_filter.get_heartbeat(),
                             inline_memories=tag_filter.get_memories(),
+                            inline_stars=tag_filter.get_stars(),
                         ),
                     )
                     yield _stream_content_event(
@@ -996,6 +1015,7 @@ async def _stream_chat(
                     _private_capture_kinds(
                         heartbeat_content=tag_filter.get_heartbeat(),
                         inline_memories=tag_filter.get_memories(),
+                        inline_stars=tag_filter.get_stars(),
                     ),
                 )
                 yield _stream_content_event(
@@ -1018,12 +1038,14 @@ async def _stream_chat(
                             _private_capture_kinds(
                                 heartbeat_content=tag_filter.get_heartbeat(),
                                 inline_memories=tag_filter.get_memories(),
+                                inline_stars=tag_filter.get_stars(),
                             ),
                         )
                     on_complete(
                         clean_text,
                         tag_filter.get_heartbeat(),
                         tag_filter.get_memories(),
+                        tag_filter.get_stars(),
                         fallback_applied,
                         _anthropic_usage_to_openai(anthropic_usage) or None,
                     )

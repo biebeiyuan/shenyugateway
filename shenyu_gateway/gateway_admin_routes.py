@@ -15,9 +15,14 @@ from .schemas import (
     HeartbeatDeleteRequest,
     MemNoteBulkPatch,
     MemNotePatch,
+    StarConnectRequest,
+    StarConstantRequest,
+    StarCreateRequest,
+    StarFeedbackRequest,
     SessionDeleteRequest,
 )
 from .sessions import SessionManager
+from .stars import StarService
 from .tool_registry import gateway_native_tools
 
 
@@ -250,6 +255,100 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         result = await MemNoteService(cfg, deps.get_supabase_client()).delete_note(note_id)
         if not result.get("ok"):
             raise HTTPException(status_code=400, detail=result.get("error") or "mem note delete failed")
+        return result
+
+    @router.get("/api/gateway/stars")
+    async def list_stars(
+        status: str = "active",
+        limit: int = 50,
+        session_tag: Optional[str] = None,
+        q: str = "",
+        reviewed: str = "all",
+    ):
+        result = await StarService(cfg, deps.get_supabase_client()).list_stars(
+            status=status,
+            limit=limit,
+            session_tag=session_tag,
+            q=q,
+            reviewed=reviewed,
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error") or "star query failed")
+        return result
+
+    @router.get("/api/gateway/stars/search")
+    async def search_stars(q: str, session_tag: Optional[str] = None, limit: int = 10, log_run: bool = False):
+        result = await StarService(cfg, deps.get_supabase_client()).search_stars(
+            q,
+            session_tag=session_tag,
+            limit=limit,
+            log_run=log_run,
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error") or "star search failed")
+        return result
+
+    @router.post("/api/gateway/stars")
+    async def create_star(body: StarCreateRequest):
+        result = await StarService(cfg, deps.get_supabase_client()).create_star(
+            body.content,
+            chord=body.chord or "",
+            session_tag=body.session_tag,
+            status=body.status,
+            is_constant=body.is_constant,
+            source_model="admin:star-create",
+            metadata=body.metadata,
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error") or "star create failed")
+        return result
+
+    @router.post("/api/gateway/stars/review")
+    async def review_stars(limit_new: int = 5, candidates_per_star: int = 3, total_candidate_limit: int = 15, session_tag: Optional[str] = None):
+        result = await StarService(cfg, deps.get_supabase_client()).review(
+            limit_new=limit_new,
+            candidates_per_star=candidates_per_star,
+            total_candidate_limit=total_candidate_limit,
+            session_tag=session_tag,
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error") or "star review failed")
+        return result
+
+    @router.post("/api/gateway/stars/feedback")
+    async def star_feedback(body: StarFeedbackRequest):
+        result = await StarService(cfg, deps.get_supabase_client()).feedback(
+            feedback=body.feedback,
+            run_id=body.run_id,
+            candidate_id=body.candidate_id,
+            candidate_star_id=body.candidate_star_id,
+            expected_star_id=body.expected_star_id,
+            scored_by=body.scored_by,
+            note=body.note,
+            metadata=body.metadata,
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error") or "star feedback failed")
+        return result
+
+    @router.post("/api/gateway/stars/connect")
+    async def connect_stars(body: StarConnectRequest):
+        result = await StarService(cfg, deps.get_supabase_client()).connect_constellation(
+            body.star_ids,
+            name=body.name or "",
+            relation_type=body.relation_type,
+            scored_by=body.scored_by,
+            note=body.note,
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error") or "star connect failed")
+        return result
+
+    @router.patch("/api/gateway/stars/{star_id}/constant")
+    async def mark_constant_star(star_id: str, body: StarConstantRequest):
+        result = await StarService(cfg, deps.get_supabase_client()).mark_constant(star_id, body.is_constant)
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error") or "star constant update failed")
         return result
 
     @router.get("/api/gateway/legacy-atomic-memories")

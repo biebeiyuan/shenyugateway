@@ -86,6 +86,24 @@ class RuntimeConfig:
         self.calendar_inject_week: bool = _env_bool("CALENDAR_INJECT_WEEK", True)
         self.calendar_inject_month: bool = _env_bool("CALENDAR_INJECT_MONTH", True)
         self.inject_mem_notes: bool = _env_bool("INJECT_MEM_NOTES", True)
+        self.inject_stars: bool = _env_bool("INJECT_STARS", True)
+        self.inject_star_prompt: bool = _env_bool("INJECT_STAR_PROMPT", True)
+        self.enable_inline_star_capture: bool = _env_bool("ENABLE_INLINE_STAR_CAPTURE", True)
+        self.enable_star_embeddings: bool = _env_bool("ENABLE_STAR_EMBEDDINGS", _env_bool("ENABLE_RECALL_EMBEDDINGS", False))
+        self.star_inject_limit: int = _env_int("STAR_INJECT_LIMIT", 3, 1, 5)
+        self.star_review_new_limit: int = _env_int("STAR_REVIEW_NEW_LIMIT", 5, 1, 10)
+        self.star_review_candidates_per_star: int = _env_int("STAR_REVIEW_CANDIDATES_PER_STAR", 3, 1, 5)
+        self.star_review_total_candidate_limit: int = _env_int("STAR_REVIEW_TOTAL_CANDIDATE_LIMIT", 15, 1, 30)
+        self.star_candidate_limit: int = _env_int("STAR_CANDIDATE_LIMIT", 500, 50, 5000)
+        self.star_shadow_candidate_limit: int = _env_int("STAR_SHADOW_CANDIDATE_LIMIT", 20, 3, 100)
+        self.star_weight_content: float = _env_float("STAR_WEIGHT_CONTENT", 0.30, 0.0, 2.0)
+        self.star_weight_keyword: float = _env_float("STAR_WEIGHT_KEYWORD", 0.20, 0.0, 2.0)
+        self.star_weight_harmony: float = _env_float("STAR_WEIGHT_HARMONY", 0.35, 0.0, 2.0)
+        self.star_weight_chord: float = _env_float("STAR_WEIGHT_CHORD", 0.18, 0.0, 2.0)
+        self.star_weight_actr: float = _env_float("STAR_WEIGHT_ACTR", 0.08, 0.0, 2.0)
+        self.star_constant_bonus: float = _env_float("STAR_CONSTANT_BONUS", 0.08, 0.0, 1.0)
+        self.star_novelty_bonus: float = _env_float("STAR_NOVELTY_BONUS", 0.04, 0.0, 1.0)
+        self.star_ignored_penalty: float = _env_float("STAR_IGNORED_PENALTY", 0.18, 0.0, 1.0)
         self.inject_conflict_shelf: bool = _env_bool("INJECT_CONFLICT_SHELF", True)
         self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
         self.enable_upstream_tools: bool = _env_bool("ENABLE_UPSTREAM_TOOLS", True)
@@ -167,6 +185,24 @@ class RuntimeConfig:
             "calendar_inject_week": self.calendar_inject_week,
             "calendar_inject_month": self.calendar_inject_month,
             "inject_mem_notes": self.inject_mem_notes,
+            "inject_stars": self.inject_stars,
+            "inject_star_prompt": self.inject_star_prompt,
+            "enable_inline_star_capture": self.enable_inline_star_capture,
+            "enable_star_embeddings": self.enable_star_embeddings,
+            "star_inject_limit": self.star_inject_limit,
+            "star_review_new_limit": self.star_review_new_limit,
+            "star_review_candidates_per_star": self.star_review_candidates_per_star,
+            "star_review_total_candidate_limit": self.star_review_total_candidate_limit,
+            "star_candidate_limit": self.star_candidate_limit,
+            "star_shadow_candidate_limit": self.star_shadow_candidate_limit,
+            "star_weight_content": self.star_weight_content,
+            "star_weight_keyword": self.star_weight_keyword,
+            "star_weight_harmony": self.star_weight_harmony,
+            "star_weight_chord": self.star_weight_chord,
+            "star_weight_actr": self.star_weight_actr,
+            "star_constant_bonus": self.star_constant_bonus,
+            "star_novelty_bonus": self.star_novelty_bonus,
+            "star_ignored_penalty": self.star_ignored_penalty,
             "inject_conflict_shelf": self.inject_conflict_shelf,
             "enable_cold_start": self.enable_cold_start,
             "enable_upstream_tools": self.enable_upstream_tools,

@@ -10,7 +10,7 @@ from .runtime import logger
 class AssistantTagFilter:
     """Filter private assistant tags from streamed/non-streamed replies."""
 
-    TAGS = ("heartbeat", "mem")
+    TAGS = ("heartbeat", "mem", "star")
     HEARTBEAT_OPEN_RE = re.compile(r"<\s*heartbeat(?:\s[^>]*)?>", flags=re.I)
     HEARTBEAT_CLOSE_RE = re.compile(r"<\s*/\s*heartbeat\s*>", flags=re.I)
 
@@ -33,6 +33,13 @@ class AssistantTagFilter:
             tag_start = open_text.lower().find("[mem")
             attr_text = open_text[tag_start + 4:-1] if tag_start >= 0 else ""
             candidates.append((mem_open.start(), "mem", mem_open.end(), "[/mem]", self._parse_attrs(attr_text)))
+
+        star_open = re.search(r"\[star(?:\s[^\]]*)?\]", self._buffer, flags=re.I)
+        if star_open:
+            open_text = star_open.group(0)
+            tag_start = open_text.lower().find("[star")
+            attr_text = open_text[tag_start + 5:-1] if tag_start >= 0 else ""
+            candidates.append((star_open.start(), "star", star_open.end(), "[/star]", self._parse_attrs(attr_text)))
 
         heartbeat_open = self.HEARTBEAT_OPEN_RE.search(self._buffer)
         if heartbeat_open:
@@ -64,8 +71,8 @@ class AssistantTagFilter:
 
     def _finish_active_capture(self):
         content = "".join(self._active_parts)
-        if self._active_tag == "mem":
-            self._captured["mem"].append({"content": content, "attrs": dict(self._active_attrs)})
+        if self._active_tag in {"mem", "star"}:
+            self._captured[self._active_tag].append({"content": content, "attrs": dict(self._active_attrs)})
         else:
             self._captured[self._active_tag].append(content)
         self._active_parts = []
@@ -131,7 +138,7 @@ class AssistantTagFilter:
                 self._buffer = self._buffer[open_end:]
                 self._active_tag = tag
                 self._active_close = close_tag
-                self._active_open = open_text if tag == "mem" else ""
+                self._active_open = open_text if tag in {"mem", "star"} else ""
                 self._active_attrs = attrs
                 self._active_parts = []
                 continue
@@ -150,7 +157,7 @@ class AssistantTagFilter:
 
     def flush(self) -> str:
         if self._active_tag:
-            if self._active_tag == "mem":
+            if self._active_tag in {"mem", "star"}:
                 visible = self._active_open + "".join(self._active_parts) + self._buffer
                 self._reset_active()
                 self._buffer = ""
@@ -181,11 +188,25 @@ class AssistantTagFilter:
                     memories.append({"content": content, "attrs": {}})
         return memories
 
+    def get_stars(self) -> list[dict[str, Any]]:
+        parts = self._captured.get("star") or []
+        stars: list[dict[str, Any]] = []
+        for item in parts:
+            if isinstance(item, dict):
+                content = self._meaningful_mem_content(item.get("content"))
+                if content:
+                    stars.append({"content": content, "attrs": item.get("attrs") or {}})
+            else:
+                content = self._meaningful_mem_content(item)
+                if content:
+                    stars.append({"content": content, "attrs": {}})
+        return stars
 
-def split_private_assistant_tags(content: str) -> tuple[str, str, list[dict[str, Any]]]:
+
+def split_private_assistant_tags(content: str) -> tuple[str, str, list[dict[str, Any]], list[dict[str, Any]]]:
     tag_filter = AssistantTagFilter()
     clean_content = tag_filter.feed(content or "") + tag_filter.flush()
-    return clean_content, tag_filter.get_heartbeat(), tag_filter.get_memories()
+    return clean_content, tag_filter.get_heartbeat(), tag_filter.get_memories(), tag_filter.get_stars()
 
 
 def clean_text_from_filter_source(content: str) -> str:

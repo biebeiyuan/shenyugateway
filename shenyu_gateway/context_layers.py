@@ -6,6 +6,7 @@ import re
 from typing import Any, Optional
 
 from .conflict_books import render_conflict_shelf
+from .stars import render_star_context
 from .utils import shorten
 
 
@@ -15,6 +16,8 @@ class ContextLayerSettings:
     inject_inline_memory_prompt: bool
     heartbeat_prompt: str
     inline_mem_prompt: str
+    inject_star_prompt: bool = False
+    star_prompt: str = ""
 
 
 _GATEWAY_TOOL_POLICY = (
@@ -87,6 +90,11 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
     slow = "\n\n".join(slow_blocks)
 
     mem = ""
+    mem_blocks = []
+    star_context = render_star_context(package.get("stars") or [])
+    if star_context:
+        mem_blocks.append(star_context)
+
     mem_notes = package.get("mem_notes") or []
     if mem_notes:
         lines = ["## 我之前写下的便签，可能用的到。"]
@@ -97,13 +105,16 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
             mem_type = (item.get("mem_type") or "").strip()
             prefix = f"{mem_type}：" if mem_type else ""
             lines.append(f"- {prefix}{shorten(content, 220)}")
-        mem = "\n".join(lines)
+        mem_blocks.append("\n".join(lines))
+    mem = "\n\n".join(mem_blocks)
 
     heartbeat = "\n\n".join(heartbeat_blocks)
     tool_policy = _GATEWAY_TOOL_POLICY if settings.enable_gateway_tools else ""
     format_blocks = [settings.heartbeat_prompt]
     if settings.inject_inline_memory_prompt:
         format_blocks.append(settings.inline_mem_prompt)
+    if settings.inject_star_prompt:
+        format_blocks.append(settings.star_prompt)
     format_layer = "\n\n".join(block for block in format_blocks if block)
 
     return {

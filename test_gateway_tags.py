@@ -4,7 +4,7 @@ from shenyu_gateway.response_capture import AssistantTagFilter, split_private_as
 
 
 def test_split_private_tags_with_both_blocks():
-    clean, heartbeat, memories = split_private_assistant_tags(
+    clean, heartbeat, memories, stars = split_private_assistant_tags(
         'hello <heartbeat>secret</heartbeat> and [mem source="x"]remember this[/mem] world'
     )
 
@@ -13,10 +13,11 @@ def test_split_private_tags_with_both_blocks():
     assert len(memories) == 1
     assert memories[0]["content"] == "remember this"
     assert memories[0]["attrs"]["source"] == "x"
+    assert stars == []
 
 
 def test_split_private_tags_reverse_order():
-    clean, heartbeat, memories = split_private_assistant_tags(
+    clean, heartbeat, memories, stars = split_private_assistant_tags(
         '[mem source="x"]remember this[/mem] then <heartbeat>secret</heartbeat> end'
     )
 
@@ -24,6 +25,7 @@ def test_split_private_tags_reverse_order():
     assert heartbeat == "secret"
     assert len(memories) == 1
     assert memories[0]["content"] == "remember this"
+    assert stars == []
 
 
 def test_streaming_split_private_tags():
@@ -39,3 +41,4 @@ def test_streaming_split_private_tags():
     assert visible == "hello  and  world"
     assert tag_filter.get_heartbeat() == "secret"
     assert [item["content"] for item in tag_filter.get_memories()] == ["remember this"]
+    assert tag_filter.get_stars() == []

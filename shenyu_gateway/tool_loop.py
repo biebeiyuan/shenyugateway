@@ -51,9 +51,9 @@ class InternalToolLoopContext:
     execute_gateway_tool: Callable[..., Awaitable[dict]]
     record_upstream_payload: Callable[[Optional[dict], dict], None]
     aggregate_cache_usage: Callable[[list[dict]], dict]
-    finalize_assistant_private_content: Callable[..., tuple[str, str, list[dict[str, Any]], dict[str, Any]]]
+    finalize_assistant_private_content: Callable[..., tuple[str, str, list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]]
     store_heartbeat: Callable[[str, dict, str], None]
-    schedule_inline_memory_capture: Callable[[Any, dict, list[Any], str, str], None]
+    schedule_inline_memory_capture: Callable[[Any, dict, list[Any], list[Any], str, str], None]
     mark_context_consumed: Callable[[dict], None]
     record_response_text: Callable[[dict, str], None]
     last_fallback_meta: dict[str, Any] = field(default_factory=lambda: {"applied": False})
@@ -85,6 +85,16 @@ def _content_text_only(content: Any) -> str:
                     parts.append(text)
         return "\n".join(parts)
     return _normalize_text(content)
+
+
+def _unpack_private_capture_result(result: tuple) -> tuple[str, str, list[Any], list[Any], dict[str, Any]]:
+    if len(result) == 5:
+        clean_content, heartbeat_content, inline_memories, inline_stars, fallback_meta = result
+        return clean_content, heartbeat_content, inline_memories, inline_stars, fallback_meta
+    if len(result) == 4:
+        clean_content, heartbeat_content, inline_memories, fallback_meta = result
+        return clean_content, heartbeat_content, inline_memories, [], fallback_meta
+    raise ValueError("finalize_assistant_private_content returned an unsupported tuple shape")
 
 
 def _latest_user_text(messages: list[dict]) -> str:
@@ -224,7 +234,7 @@ async def _execute_mixed_gateway_tool_calls(
 
 def _pending_assistant_tool_call_message(assistant_message: dict, tool_calls: list[dict]) -> dict:
     pending_copy = dict(assistant_message or {})
-    clean_content, _, _ = split_private_assistant_tags(_normalize_text(pending_copy.get("content")))
+    clean_content, _, _, _ = split_private_assistant_tags(_normalize_text(pending_copy.get("content")))
     pending_copy["content"] = clean_content
     return _assistant_tool_call_message(pending_copy, tool_calls)
 
@@ -519,10 +529,12 @@ async def _finalize_non_gateway_tool_reply(
             round_log["returned_tool_calls"] = _tool_call_log_preview(client_tool_calls)
 
     assistant_message = completion.get("choices", [{}])[0].get("message", {})
-    clean_content, heartbeat_content, inline_memories, fallback_meta = ctx.finalize_assistant_private_content(
-        assistant_message,
-        latest_user_text=latest_user_text,
-        mem_note_written=mem_note_written,
+    clean_content, heartbeat_content, inline_memories, inline_stars, fallback_meta = _unpack_private_capture_result(
+        ctx.finalize_assistant_private_content(
+            assistant_message,
+            latest_user_text=latest_user_text,
+            mem_note_written=mem_note_written,
+        )
     )
     ctx.last_fallback_meta = fallback_meta
     if heartbeat_content:
@@ -531,7 +543,7 @@ async def _finalize_non_gateway_tool_reply(
         ctx.log_entry["empty_visible_response_fallback"] = True
         ctx.log_entry["empty_visible_response_fallback_detail"] = fallback_meta
     ctx.sessions.log_assistant_output(ctx.session_id, assistant_message)
-    ctx.schedule_inline_memory_capture(ctx.request, ctx.session, inline_memories, clean_content, ctx.body.model)
+    ctx.schedule_inline_memory_capture(ctx.request, ctx.session, inline_memories, inline_stars, clean_content, ctx.body.model)
 
 
 def _append_assistant_tool_call_message(

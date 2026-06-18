@@ -215,6 +215,121 @@ class FakeToolService:
         )
         return {"ok": True, "note_id": note_id}
 
+    async def create_star(
+        self,
+        content,
+        chord="",
+        session_tag=None,
+        status="active",
+        is_constant=False,
+        metadata=None,
+    ):
+        self.calls.append(
+            {
+                "tool": "shenyu_create_star",
+                "content": content,
+                "chord": chord,
+                "session_tag": session_tag,
+                "status": status,
+                "is_constant": is_constant,
+                "metadata": metadata,
+            }
+        )
+        return {"ok": True, "content": content}
+
+    async def list_stars(self, status="active", limit=50, session_tag=None, q="", reviewed="all"):
+        self.calls.append(
+            {
+                "tool": "shenyu_list_stars",
+                "status": status,
+                "limit": limit,
+                "session_tag": session_tag,
+                "q": q,
+                "reviewed": reviewed,
+            }
+        )
+        return {"ok": True, "limit": limit}
+
+    async def search_stars(self, query="", session_tag=None, limit=10, log_run=False):
+        self.calls.append(
+            {
+                "tool": "shenyu_search_stars",
+                "query": query,
+                "session_tag": session_tag,
+                "limit": limit,
+                "log_run": log_run,
+            }
+        )
+        return {"ok": True, "query": query, "limit": limit}
+
+    async def star_review(self, limit_new=None, candidates_per_star=None, total_candidate_limit=None, session_tag=None):
+        self.calls.append(
+            {
+                "tool": "shenyu_star_review",
+                "limit_new": limit_new,
+                "candidates_per_star": candidates_per_star,
+                "total_candidate_limit": total_candidate_limit,
+                "session_tag": session_tag,
+            }
+        )
+        return {"ok": True, "count": limit_new}
+
+    async def star_feedback(
+        self,
+        feedback,
+        run_id=None,
+        candidate_id=None,
+        candidate_star_id=None,
+        expected_star_id=None,
+        scored_by="沈予",
+        note="",
+        metadata=None,
+    ):
+        self.calls.append(
+            {
+                "tool": "shenyu_star_feedback",
+                "feedback": feedback,
+                "run_id": run_id,
+                "candidate_id": candidate_id,
+                "candidate_star_id": candidate_star_id,
+                "expected_star_id": expected_star_id,
+                "scored_by": scored_by,
+                "note": note,
+                "metadata": metadata,
+            }
+        )
+        return {"ok": True, "feedback": feedback}
+
+    async def connect_constellation(
+        self,
+        star_ids,
+        name="",
+        relation_type="constellation",
+        scored_by="沈予",
+        note="",
+    ):
+        self.calls.append(
+            {
+                "tool": "shenyu_connect_constellation",
+                "star_ids": star_ids,
+                "name": name,
+                "relation_type": relation_type,
+                "scored_by": scored_by,
+                "note": note,
+            }
+        )
+        return {"ok": True, "star_ids": star_ids}
+
+    async def mark_constant_star(self, star_id, is_constant=True):
+        self.calls.append(
+            {
+                "tool": "shenyu_mark_constant",
+                "star_id": star_id,
+                "is_constant": is_constant,
+            }
+        )
+        return {"ok": True, "star_id": star_id}
+
     async def read_heartbeat(
         self,
         session_tag=None,
@@ -421,6 +536,55 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "mem_type": "memory",
             "limit": 9,
         },
+        "shenyu_create_star": {
+            "content": "Am · 一颗星",
+            "chord": "",
+            "session_tag": "arg-tag",
+            "is_constant": True,
+            "metadata": {"source": "test"},
+        },
+        "shenyu_list_stars": {
+            "q": "星",
+            "status": "all",
+            "reviewed": "unreviewed",
+            "session_tag": "arg-tag",
+            "limit": 12,
+        },
+        "shenyu_search_stars": {
+            "q": "和弦",
+            "session_tag": "arg-tag",
+            "limit": 6,
+            "log_run": True,
+        },
+        "shenyu_star_review": {
+            "limit_new": 5,
+            "candidates_per_star": 3,
+            "total_candidate_limit": 9,
+            "session_tag": "arg-tag",
+            "expected_star_id": "star-missed",
+            "run_id": "run-review",
+            "scored_by": "沈予",
+            "note": "review 里补 missed",
+            "metadata": {"source": "review"},
+        },
+        "shenyu_star_feedback": {
+            "feedback": "missed",
+            "run_id": "run-1",
+            "candidate_id": "cand-1",
+            "candidate_star_id": "star-1",
+            "expected_star_id": "star-2",
+            "scored_by": "沈予",
+            "note": "该反这个",
+            "metadata": {"surface": "review"},
+        },
+        "shenyu_connect_constellation": {
+            "star_ids": ["star-1", "star-2"],
+            "name": "亮的一角",
+            "relation_type": "constellation",
+            "scored_by": "沈予",
+            "note": "连起来",
+        },
+        "shenyu_mark_constant": {"id": "star-1", "is_constant": False},
         "shenyu_add_calendar": {
             "content": "手写日历",
             "period_key": "2026-W23",
@@ -537,6 +701,74 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "limit": 9,
             "status": "paused",
             "mem_type": "memory",
+        },
+        "shenyu_create_star": {
+            "tool": "shenyu_create_star",
+            "content": "Am · 一颗星",
+            "chord": "",
+            "session_tag": "arg-tag",
+            "status": "active",
+            "is_constant": True,
+            "metadata": {"source": "test"},
+        },
+        "shenyu_list_stars": {
+            "tool": "shenyu_list_stars",
+            "status": "all",
+            "limit": 12,
+            "session_tag": "arg-tag",
+            "q": "星",
+            "reviewed": "unreviewed",
+        },
+        "shenyu_search_stars": {
+            "tool": "shenyu_search_stars",
+            "query": "和弦",
+            "session_tag": "arg-tag",
+            "limit": 6,
+            "log_run": True,
+        },
+        "shenyu_star_review": [
+            {
+                "tool": "shenyu_star_feedback",
+                "feedback": "missed",
+                "run_id": "run-review",
+                "candidate_id": None,
+                "candidate_star_id": None,
+                "expected_star_id": "star-missed",
+                "scored_by": "沈予",
+                "note": "review 里补 missed",
+                "metadata": {"source": "review"},
+            },
+            {
+                "tool": "shenyu_star_review",
+                "limit_new": 5,
+                "candidates_per_star": 3,
+                "total_candidate_limit": 9,
+                "session_tag": "arg-tag",
+            },
+        ],
+        "shenyu_star_feedback": {
+            "tool": "shenyu_star_feedback",
+            "feedback": "missed",
+            "run_id": "run-1",
+            "candidate_id": "cand-1",
+            "candidate_star_id": "star-1",
+            "expected_star_id": "star-2",
+            "scored_by": "沈予",
+            "note": "该反这个",
+            "metadata": {"surface": "review"},
+        },
+        "shenyu_connect_constellation": {
+            "tool": "shenyu_connect_constellation",
+            "star_ids": ["star-1", "star-2"],
+            "name": "亮的一角",
+            "relation_type": "constellation",
+            "scored_by": "沈予",
+            "note": "连起来",
+        },
+        "shenyu_mark_constant": {
+            "tool": "shenyu_mark_constant",
+            "star_id": "star-1",
+            "is_constant": False,
         },
         "shenyu_add_calendar": {
             "tool": "shenyu_add_calendar",
@@ -685,7 +917,11 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
         )
 
         assert result is not None
-        assert service.calls == [expected_calls[tool_name]]
+        expected = expected_calls[tool_name]
+        if isinstance(expected, list):
+            assert service.calls == expected
+        else:
+            assert service.calls == [expected]
 
 
 def test_execute_gateway_tool_reports_invalid_broker_arguments():

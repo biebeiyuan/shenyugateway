@@ -398,12 +398,13 @@ def test_private_only_assistant_content_gets_visible_fallback():
     finalize = gateway_namespace["_finalize_assistant_private_content"]
     message = {"role": "assistant", "content": "<heartbeat>记下来</heartbeat>"}
 
-    clean, heartbeat, memories, fallback_meta = finalize(message)
+    clean, heartbeat, memories, stars, fallback_meta = finalize(message)
 
     assert clean == "沈予已记录 · 已存 heartbeat"
     assert message["content"] == "沈予已记录 · 已存 heartbeat"
     assert heartbeat == "记下来"
     assert memories == []
+    assert stars == []
     assert fallback_meta == {
         "applied": True,
         "text": "沈予已记录 · 已存 heartbeat",
@@ -416,7 +417,7 @@ def test_free_time_private_capture_fallback_names_stored_kinds():
     finalize = gateway_namespace["_finalize_assistant_private_content"]
     message = {"role": "assistant", "content": "<heartbeat>记下来</heartbeat>"}
 
-    clean, heartbeat, memories, fallback_meta = finalize(
+    clean, heartbeat, memories, stars, fallback_meta = finalize(
         message,
         latest_user_text='<proxy_sender name="沈予"/> 【提醒】予予现在是自由时间',
         mem_note_written=True,
@@ -426,6 +427,7 @@ def test_free_time_private_capture_fallback_names_stored_kinds():
     assert message["content"] == "沈予在自由时间 · 已存 heartbeat + mem"
     assert heartbeat == "记下来"
     assert memories == []
+    assert stars == []
     assert fallback_meta == {
         "applied": True,
         "text": "沈予在自由时间 · 已存 heartbeat + mem",

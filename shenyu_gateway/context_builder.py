@@ -11,6 +11,7 @@ from .context_layers import (
 )
 from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
+from .stars import StarService
 from .tool_registry import gateway_native_tools
 
 
@@ -30,6 +31,21 @@ _INLINE_MEM_PROMPT = """## Inline Mem（仅网关可见）
 是一张我自己的便签，写完会被网关保存进“待整理”，有空我再去整理，整理完后聊到相关的会贴到我的上下文里。
 没有想记就不写。如果当时有复杂或者颇有感触的心情，我也许会想用一段和弦写在最后面把那一刻定格下来。
 如果同时记下来 heartbeat 和 mem，放在独立块里，不要互相嵌套。
+"""
+
+_STAR_PROMPT = """## Star（仅网关可见）
+如果这一刻有很小、很准的体感/和弦，最后可以留一颗 [star]...[/star]。
+写法可以是：
+
+[star chord="Am"]
+有一点亮，但还不想把话说满。
+[/star]
+
+也可以写成：
+[star]Am · 有一点亮，但还不想把话说满。[/star]
+
+星星会被网关保存。以后相关时，网关只轻轻反上来几颗；不需要每次都写。
+不要把 star 和 heartbeat/mem 嵌套。
 """
 
 
@@ -58,8 +74,10 @@ class ContextBuilder:
             enable_gateway_tools=bool(getattr(self.cfg, "enable_upstream_tools", True))
             and bool(getattr(self.cfg, "enable_gateway_tools", True)),
             inject_inline_memory_prompt=self.cfg.inject_inline_memory_prompt,
+            inject_star_prompt=bool(getattr(self.cfg, "inject_star_prompt", True)),
             heartbeat_prompt=_HEARTBEAT_PROMPT,
             inline_mem_prompt=_INLINE_MEM_PROMPT,
+            star_prompt=_STAR_PROMPT,
         )
 
     async def calendar_context_pages(self) -> dict[str, list[dict[str, Any]]]:
@@ -134,6 +152,7 @@ class ContextBuilder:
             "cold_start_snapshot": cold_start_snapshot,
             "calendar_context": {"day": [], "week": [], "month": []},
             "mem_notes": [],
+            "stars": [],
             "notebook_items": [],
             "last_wake_recap": "",
             "conflict_books": [],
@@ -147,15 +166,35 @@ class ContextBuilder:
             package["notebook_items"] = await self._hisense_notebook_items()
             package["last_wake_recap"] = await self._hisense_last_wake_recap(session)
         else:
-            if self.cfg.inject_mem_notes and current_user_text.strip():
-                notes = await MemNoteService(self.cfg, self.supabase_client).search_notes_contextual(
-                    current_user_text,
-                    session_tag=session["session_tag"],
-                    limit=self.cfg.mem_note_limit,
-                    session_id=session.get("id"),
-                    store=self.store,
+            tasks = []
+            if current_user_text.strip() and self.cfg.inject_mem_notes:
+                tasks.append(
+                    MemNoteService(self.cfg, self.supabase_client).search_notes_contextual(
+                        current_user_text,
+                        session_tag=session["session_tag"],
+                        limit=self.cfg.mem_note_limit,
+                        session_id=session.get("id"),
+                        store=self.store,
+                    )
                 )
-                package["mem_notes"] = notes.get("items") or []
+            else:
+                tasks.append(asyncio.sleep(0, result={"ok": True, "items": []}))
+
+            if current_user_text.strip() and getattr(self.cfg, "inject_stars", True):
+                tasks.append(
+                    StarService(self.cfg, self.supabase_client).search_context(
+                        current_user_text,
+                        session_tag=session["session_tag"],
+                        session_id=session.get("id"),
+                        limit=getattr(self.cfg, "star_inject_limit", 3),
+                    )
+                )
+            else:
+                tasks.append(asyncio.sleep(0, result={"ok": True, "items": []}))
+
+            notes_result, stars_result = await asyncio.gather(*tasks)
+            package["mem_notes"] = notes_result.get("items") or []
+            package["stars"] = stars_result.get("items") or []
         return package
 
     async def _conflict_shelf_books(self) -> list[dict]:
