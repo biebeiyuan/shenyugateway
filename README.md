@@ -16,6 +16,7 @@ Operit
        -> GatewayToolService (Supabase tools, surface, memory)
        -> CalendarService (day/week/month pages)
        -> MemNoteService (small personal notes)
+       -> StarService (small chord/association memories)
        -> Upstream adapter (Anthropic / OpenAI-compatible)
   -> Upstream model
   -> gateway tool loop when needed
@@ -33,8 +34,9 @@ The codebase is partly layered already:
 - `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, and cold-start bridge insertion.
 - `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations, including Supabase table tools, recall compatibility helpers, heartbeats, notebook, and memory helpers.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
-- `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>` and `[mem]...[/mem]`, heartbeat persistence helper, and inline memory scheduling helper.
+- `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, `[mem]...[/mem]`, and `[star]...[/star]`, heartbeat persistence helper, and inline memory scheduling helper.
 - `shenyu_gateway/mem_notes.py`: inline `[mem]` capture, clean note search, review/update/delete helpers, and old atomic read-only lookup.
+- `shenyu_gateway/stars.py`: Star memory service: inline `[star]` capture, ACT-R activation, chord/content/harmony scoring, review candidates, feedback logging, and constellation links.
 - `shenyu_gateway/sessions.py`: session/message logging facade.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
 - `shenyu_gateway/auth.py`: admin auth middleware, API key verification, login page HTML, and `ADMIN_PROTECTED_PREFIXES`.
@@ -50,10 +52,11 @@ When cleaning or refactoring, preserve behavior first and move code by boundary:
 2. SQLite reads/writes belong in `GatewayStore`; do not query SQLite directly from route handlers.
 3. Supabase HTTP mechanics belong in `SupabaseClient`; table-specific behavior can live in service classes.
 4. Context data fetching belongs around `ContextBuilder`; layer rendering and message-window assembly belong in `shenyu_gateway/context_layers.py`.
-5. Private response tag filtering and capture helpers belong in `shenyu_gateway/response_capture.py`.
+5. Private response tag filtering and capture helpers belong in `shenyu_gateway/response_capture.py` and `shenyu_gateway/private_capture.py`. When adding a new private block type, update both parser paths and the empty-reply fallback wording.
 6. Gateway-native tool behavior belongs in `shenyu_gateway/gateway_tools.py`; tool schemas, merge logic, and name dispatch belong in `shenyu_gateway/tool_registry.py`. Keep tool descriptions short: one-line purpose plus backing table/pool.
-7. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing, HTTP calls, and streaming iteration belong in `shenyu_gateway/upstream_client.py`.
-8. External frontend contracts below are not dead code just because admin UI does not import them.
+7. Star memory ranking and learning behavior belongs in `shenyu_gateway/stars.py`; tool exposure belongs in `tool_registry.py`; admin-only API routes belong in `gateway_admin_routes.py`; frontend controls belong in `admin/src/views/StarsView.vue`.
+8. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing, HTTP calls, and streaming iteration belong in `shenyu_gateway/upstream_client.py`.
+9. External frontend contracts below are not dead code just because admin UI does not import them.
 
 ## Context Layers
 
@@ -64,10 +67,10 @@ Context is assembled in the order Shenyu should wake into it:
 | request tools | request tools | client tools + `shenyu_*` / `supabase_*` tools | breakpoint at `tools[-1]` |
 | `stable` | first system message | stable charter and optional wake welcome message | breakpoint |
 | `slow` | second system message when present | calendar memory, Hisense notebook/recap | breakpoint |
-| `mem` | after `slow`, before heartbeat | active mem notes headed by `## 我之前写下的便签，可能用的到。` | no breakpoint |
+| `mem` | after `slow`, before heartbeat | selected stars, then active mem notes headed by `## 我之前写下的便签，可能用的到。` | no breakpoint |
 | `heartbeat` | after `mem`, before tool/format reminders | `## 我之前的心跳` and optional Hisense heartbeat block | no breakpoint |
 | `tool_policy` | after heartbeat | compact gateway/client tool reminder rendered as `## 工具怎么用` | no breakpoint |
-| `format` | after tool policy | heartbeat and inline mem format instructions | no breakpoint |
+| `format` | after tool policy | heartbeat, inline mem, and star format instructions | no breakpoint |
 | client history | original messages | trimmed client messages when `MAX_CLIENT_MESSAGES` is set | fallback breakpoint only if one is free |
 | current user | latest user message | current request | no breakpoint |
 
@@ -86,7 +89,7 @@ messages[1].slow
 messages[n].format
 ```
 
-The `format` breakpoint follows the current reading order, so it also covers any preceding mem, heartbeat, and tool-policy blocks. If a mem note appears and changes the prefix, that breakpoint may miss, while the earlier tools/stable/slow breakpoints remain usable. If tools, `slow`, or `format` are empty and a breakpoint slot is still free, the gateway may use the remaining slot on the previous stable conversation message.
+The `format` breakpoint follows the current reading order, so it also covers any preceding star, mem, heartbeat, and tool-policy blocks. If a star or mem note appears and changes the prefix, that breakpoint may miss, while the earlier tools/stable/slow breakpoints remain usable. If tools, `slow`, or `format` are empty and a breakpoint slot is still free, the gateway may use the remaining slot on the previous stable conversation message.
 
 Real cache hits still depend on the upstream or OpenAI-compatible relay honoring Anthropic `cache_control`. Check:
 
@@ -104,7 +107,7 @@ cache_usage.cache_read_input_tokens > 0
 
 The gateway has two streaming paths:
 
-- Plain pass-through streaming: when no gateway-managed tools are exposed for a request, `_stream_chat()` forwards upstream chunks while filtering private `<heartbeat>` and `[mem]...[/mem]` blocks from visible output.
+- Plain pass-through streaming: when no gateway-managed tools are exposed for a request, `_stream_chat()` forwards upstream chunks while filtering private `<heartbeat>`, `[mem]...[/mem]`, and `[star]...[/star]` blocks from visible output.
 - Gateway-managed tool streaming: when `shenyu_*` / `supabase_*` tools are available, `_run_internal_tool_loop_stream()` consumes upstream stream chunks directly. It intercepts gateway-native tool calls, executes them server-side, appends tool results to the working message list, and starts the next upstream round. Final natural-language replies stream to the client token by token.
 
 Request count is still driven by model tool rounds, not by streaming itself:
@@ -202,11 +205,17 @@ Supabase remains the durable fact and content source:
 - `calendar_pages`
 - `calendar_generation_runs`
 - `shenyu_mem_notes`
+- `shenyu_stars`
+- `shenyu_star_links`
+- `shenyu_star_recall_runs`
+- `shenyu_star_recall_candidates`
+- `shenyu_star_feedback`
+- `shenyu_star_activations`
 - `atomic_memories` (legacy read-only migration source)
 
 The short-lived notes table is no longer used by gateway code.
 
-The mem review UI reads and updates Supabase `shenyu_mem_notes`. The old `atomic_memories` table is only exposed through a read-only lookup for manual migration. SQLite only provides local request/session context.
+The mem review UI reads and updates Supabase `shenyu_mem_notes`. The star review UI reads and updates the `shenyu_stars` family of tables. The old `atomic_memories` table is only exposed through a read-only lookup for manual migration. SQLite only provides local request/session context.
 
 ## Recall Index
 
@@ -427,20 +436,129 @@ Current implementation details:
 - `[mem]` notes are stored verbatim as `captured` rows.
 - Prompt-preset and manual-extract endpoints have been removed.
 
+## Star Memory Layer
+
+Stars are small chord/association memories. They are deliberately lighter than mem notes: a star is not meant to carry a full factual record, but to give the gateway a small anchor that can help Shenyu associate one moment with another.
+
+The design goal is not "store everything and always inject more." It is:
+
+1. Keep all raw star, candidate, activation, and feedback data.
+2. Inject only a few relevant stars during normal chat, default 3.
+3. Let Shenyu or the admin review a small batch of suggested associations.
+4. Treat explicit feedback as training data for later weight/threshold changes.
+5. Avoid learning from noisy silence: one skipped candidate is not a negative sample; repeated ignored candidates create only a weak penalty.
+
+Core tables:
+
+- `shenyu_stars`: the star itself: content, chord, parsed root/quality, status, constant flag, review timestamp, activation counters, optional embedding, and search tokens.
+- `shenyu_star_links`: generic node-to-node relationship table. V0 writes star-to-star constellation/harmony links, but the schema already allows future node types such as `heartbeat`.
+- `shenyu_star_recall_runs`: one recall/review/search attempt, including surface, trigger text, seed star, query embedding status, and limit.
+- `shenyu_star_recall_candidates`: ranked candidates for a run. It stores shown/injected flags, raw score parts, final score, action status, and rank.
+- `shenyu_star_feedback`: explicit feedback such as `positive`, `negative`, `missed`, `connected`, `skipped`, and `should_surface`.
+- `shenyu_star_activations`: activation log used to calculate ACT-R brightness.
+
+Chat injection flow:
+
+1. `ContextBuilder.build_context_package()` calls `StarService.search_context()` when `INJECT_STARS=true`.
+2. `StarService` ranks active stars using related signals first: content similarity, keyword hits, chord distance, and existing harmony/constellation links.
+3. ACT-R brightness, constant bonus, novelty bonus, and repeated-ignore penalty adjust the score, but they do not make an unrelated star appear by themselves.
+4. The top `STAR_INJECT_LIMIT` stars are rendered into the `mem` layer before mem notes.
+5. Candidate rows and activation rows are logged so later tuning can use actual shown/accepted/missed data.
+
+Review flow:
+
+1. `shenyu_star_review` and `/api/gateway/stars/review` take up to `STAR_REVIEW_NEW_LIMIT` unreviewed active stars.
+2. For each new star, the gateway suggests up to `STAR_REVIEW_CANDIDATES_PER_STAR` related stars, bounded by `STAR_REVIEW_TOTAL_CANDIDATE_LIMIT`.
+3. The UI/tool can record `positive`, `negative`, `skipped`, `connected`, or `missed`.
+4. `missed` is a high-value positive signal: it means "this star should have surfaced but did not." It can be recorded from the admin UI or directly through `shenyu_star_review` when Shenyu knows the missing star id.
+5. A single no-action/skip is not treated as negative. The weak ignored penalty only appears after the same candidate has been shown repeatedly without positive feedback.
+
+Scoring signals:
+
+- `content_score`: text/query similarity and content gravity.
+- `keyword_score`: exact token overlap from star content/chord.
+- `harmony_score`: existing links from `shenyu_star_links`; Shenyu-confirmed `constellation` links are strongest.
+- `chord_score`: V0 chord distance by exact/root/quality match. `chord_tension` is intentionally not implemented yet.
+- `actr_score`: brightness from ACT-R base activation, calculated from activation timestamps as `ln(sum(age^-0.5))` and normalized.
+- `constant_bonus`: small stable boost for manually marked constant stars.
+- `novelty_bonus`: small boost for new stars in review-like surfaces.
+- `ignored_penalty`: weak penalty after repeated ignored displays.
+
+Config:
+
+```text
+INJECT_STARS=true
+INJECT_STAR_PROMPT=true
+ENABLE_INLINE_STAR_CAPTURE=true
+ENABLE_STAR_EMBEDDINGS=false
+
+STAR_INJECT_LIMIT=3
+STAR_REVIEW_NEW_LIMIT=5
+STAR_REVIEW_CANDIDATES_PER_STAR=3
+STAR_REVIEW_TOTAL_CANDIDATE_LIMIT=15
+STAR_CANDIDATE_LIMIT=500
+STAR_SHADOW_CANDIDATE_LIMIT=20
+
+STAR_WEIGHT_CONTENT=0.30
+STAR_WEIGHT_KEYWORD=0.20
+STAR_WEIGHT_HARMONY=0.35
+STAR_WEIGHT_CHORD=0.18
+STAR_WEIGHT_ACTR=0.08
+STAR_CONSTANT_BONUS=0.08
+STAR_NOVELTY_BONUS=0.04
+STAR_IGNORED_PENALTY=0.18
+```
+
+Tools:
+
+- `shenyu_create_star`: write one star.
+- `shenyu_search_stars`: manual search, optionally logging a run.
+- `shenyu_list_stars`: list/filter stars.
+- `shenyu_star_review`: small review batch, and optional `expected_star_id` to record a missed star.
+- `shenyu_star_feedback`: record direct feedback.
+- `shenyu_connect_constellation`: connect two or more stars as a constellation.
+- `shenyu_mark_constant`: set or unset the constant flag.
+
+Admin API:
+
+- `GET /api/gateway/stars`
+- `GET /api/gateway/stars/search`
+- `POST /api/gateway/stars`
+- `POST /api/gateway/stars/review`
+- `POST /api/gateway/stars/feedback`
+- `POST /api/gateway/stars/connect`
+- `PATCH /api/gateway/stars/{star_id}/constant`
+
+Admin UI:
+
+- `/admin/#/stars` is the Star workbench.
+- `admin/src/api/stars.ts` holds the frontend contract.
+- `admin/src/views/StarsView.vue` contains settings, manual star creation, search, review feedback, missed recording, constant marking, and manual constellation linking.
+- The "quiet Star" button disables prompt/capture/injection while keeping gateway tools on, so Shenyu can still choose to search/write/review manually.
+
+Maintenance notes:
+
+- Keep relationship logic in `shenyu_gateway/stars.py`; do not duplicate ranking math in route handlers or frontend code.
+- Keep `shenyu_star_links` generic. Future heartbeat integration should add `heartbeat` as another node type and teach `_harmony_scores()` or a new relationship scorer how to read those links.
+- If adding new score signals, store both raw features and final contribution in `shenyu_star_recall_candidates.scores`; otherwise later tuning loses observability.
+- If adding a new feedback value, update the SQL check constraint, `FEEDBACK_VALUES`, frontend type `StarFeedbackValue`, tool schema, and admin labels together.
+- If changing default limits, keep daily chat injection small. Normal chat should feel like "three small lights," not a memory dump.
+
 ## Private Capture Empty Reply Fallback
 
 Closed private assistant blocks are removed from visible replies:
 
 - `<heartbeat>...</heartbeat>` is stored in SQLite heartbeat tables.
 - `[mem]...[/mem]` is captured into Supabase `shenyu_mem_notes` when inline capture is enabled.
+- `[star]...[/star]` is captured into Supabase `shenyu_stars` when inline star capture is enabled.
 - `shenyu_write_mem_note`, including through `shenyu_gateway_tool`, writes a Supabase mem note during the internal tool loop.
 
 If all visible text is removed and there are no client-executable tool calls, the gateway sends a short visible fallback instead of returning an empty successful assistant message. This prevents clients and automated workflows from treating a successful private capture as a malformed empty response.
 
 Fallback text is generated in `shenyu_gateway/private_capture.py` by `finalize_assistant_private_content()`, `private_capture_fallback_text()`, and `is_free_time_fallback_context()`:
 
-- free-time workflow context: `沈予在自由时间 · 已存 heartbeat`, `沈予在自由时间 · 已存 mem`, or `沈予在自由时间 · 已存 heartbeat + mem`
-- generic context: `沈予已记录 · 已存 heartbeat`, `沈予已记录 · 已存 mem`, or `沈予已记录 · 已存 heartbeat + mem`
+- free-time workflow context: `沈予在自由时间 · 已存 heartbeat`, `沈予在自由时间 · 已存 mem`, `沈予在自由时间 · 已存 star`, or combined variants such as `沈予在自由时间 · 已存 heartbeat + mem + star`
+- generic context: `沈予已记录 · 已存 heartbeat`, `沈予已记录 · 已存 mem`, `沈予已记录 · 已存 star`, or combined variants such as `沈予已记录 · 已存 heartbeat + mem + star`
 - if no private capture type is detected: `沈予已记录。`
 
 Free-time detection is intentionally broad. It matches current Operit proxy reminders such as `<proxy_sender name="沈予"/> 【提醒】予予现在是自由时间`, any text containing `自由时间`, and explicit `free_time` / `free-time` markers. Prefer adding a stable workflow marker or header in future clients if this workflow expands.
@@ -481,6 +599,15 @@ MAX_CLIENT_MESSAGES=75
 INJECT_INLINE_MEMORY_PROMPT=true
 INJECT_MEM_NOTES=true
 ENABLE_INLINE_MEMORY_CAPTURE=true
+
+INJECT_STARS=true
+INJECT_STAR_PROMPT=true
+ENABLE_INLINE_STAR_CAPTURE=true
+ENABLE_STAR_EMBEDDINGS=false
+STAR_INJECT_LIMIT=3
+STAR_REVIEW_NEW_LIMIT=5
+STAR_REVIEW_CANDIDATES_PER_STAR=3
+STAR_REVIEW_TOTAL_CANDIDATE_LIMIT=15
 
 DEFAULT_SURFACE_LIMIT=3
 
@@ -543,12 +670,14 @@ http://localhost:8010/admin
 
 - `admin/src/api/config.ts`: gateway and upstream configuration.
 - `admin/src/api/mem0.ts`: Mem config, mem-note review APIs, and old atomic read-only lookup.
+- `admin/src/api/stars.ts`: Star list/search/create/review/feedback/connect APIs.
 - `admin/src/api/sessions.ts`: local SQLite session browser.
 - `admin/src/api/logs.ts`: request log list and detail APIs.
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
 - `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
 - `admin/src/views/ConfigView.vue`: configuration page.
-- `admin/src/views/Mem0View.vue`: Mem capture/injection controls, mem-note attribute workflow, and old atomic read-only lookup.
+- `admin/src/views/Mem0View.vue`: Mem prompt/capture/injection/tool controls, mem-note attribute workflow, and old atomic read-only lookup. The "静音但保留工具" preset turns off mem prompt/capture/injection while leaving gateway tools available.
+- `admin/src/views/StarsView.vue`: Star settings, star creation, search, review feedback, missed recording, constant marking, and constellation linking.
 - `admin/src/views/SessionsView.vue`: session inspection page.
 - `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
@@ -577,9 +706,11 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 
 - Search the active code paths for retired summary/window env vars and the removed short-lived notes table; they should not appear.
 - `GET /api/gateway/context/preview` should show `stable`, optional `slow`, optional `mem`, `heartbeat`, `tool_policy`, and `format`.
+- When `INJECT_STARS=true`, relevant stars should appear in the `mem` layer before mem notes, and `STAR_INJECT_LIMIT` should bound normal chat injection.
 - `GET /api/calendar/send-preview?...` should show `Current Client Context Snapshots`, not rolling/frozen blocks.
 - `GET /api/gateway/logs` should show prompt cache breakpoints and cold-start metadata.
 - `GET /api/gateway/logs/{id}` should show `response_full` for retained payloads; the list view should keep using short previews.
+- After star-memory edits, run `pytest -q test_star_memory.py test_gateway_tool_registry.py test_response_capture.py test_gateway_tags.py`.
 - Run `python -c "import test_gateway_streaming as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after streaming/tool-loop edits when `pytest` is unavailable.
 - Run `python -c "import test_upstream_adapter_stream as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after upstream stream adapter edits when `pytest` is unavailable.
 - Run `cd admin && npm run build` after admin UI edits.
@@ -602,7 +733,7 @@ Recommended order:
 | 1 | B3 `execute_gateway_tool` dispatch refactor | Highest maintenance risk in the remaining report. It also gives the next refactors a cleaner tool boundary. | Add handler snapshot tests first, then replace the giant handler dict/lambdas with `ToolContext` plus registered async handler functions. Keep broker behavior identical. | All existing tool-registry tests pass; new parameter snapshot tests cover aliases, session_tag fallback, cfg defaults, broker nested arguments, and unsupported tools. |
 | 2 | B7 return format normalization | Small, easy win after B3 tests make tool behavior visible. | Add `ok: true` to successful tool results that currently omit it, especially memory/search style results. Keep error shape as `{ok: false, error: ...}`. | Tests assert both success and error shapes for direct and broker calls. |
 | 3 | B1 `gateway.py` split | **Partially done.** Auth, upstream HTTP, prepare-messages, and private-capture logic have been extracted into `auth.py`, `upstream_client.py`, `prepare_messages.py`, and `private_capture.py`. Remaining candidates: calendar service, admin routes, streaming helpers. | Extract remaining concerns by dependency order. Move code without behavior changes. | `gateway.py` remains the app entrypoint and chat route coordinator; moved modules have focused imports; streaming/tool-loop tests still pass. |
-| 4 | B2 `GatewayToolService` composition split | Useful only after B3/B1 reduce the surrounding noise. | Keep `GatewayToolService` as a compatibility facade and delegate to Supabase, memory, calendar, heartbeat, and notebook operation classes. | Tool registry does not change; service tests prove old method signatures still work. |
+| 4 | B2 `GatewayToolService` composition split | Useful only after B3/B1 reduce the surrounding noise. | Keep `GatewayToolService` as a compatibility facade and delegate to Supabase, memory, star memory, calendar, heartbeat, and notebook operation classes. | Tool registry does not change; service tests prove old method signatures still work. |
 
 Phase 1 executable checklist:
 
