@@ -2,6 +2,10 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+from fastapi import FastAPI
+from fastapi.testclient import TestClient
+
+from shenyu_gateway.gateway_admin_routes import GatewayAdminRouteDeps, build_gateway_admin_router
 from shenyu_gateway.prepare_messages import maybe_prepare_cold_start_snapshot
 from shenyu_gateway.store import GatewayStore
 
@@ -230,6 +234,88 @@ def test_cold_start_uses_active_preview_snapshot_before_auto_source(tmp_path):
         "main a1",
         "main latest",
     ]
+
+
+def test_cold_start_preview_auto_source_uses_latest_old_thread_and_gap(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    target = store.get_or_create_session("default", "operit")
+    older = store.get_or_create_session("5.15", "operit")
+
+    store.write_request_context_snapshot(
+        session_id=target["id"],
+        session_tag=target["session_tag"],
+        client_name=target["client_name"],
+        latest_user_text="target latest",
+        messages=[
+            {"role": "user", "content": "target u1"},
+            {"role": "assistant", "content": "target a1"},
+        ],
+    )
+    source_messages = [
+        {"role": "user" if index % 2 == 0 else "assistant", "content": f"source {index}"}
+        for index in range(70)
+    ]
+    store.write_request_context_snapshot(
+        session_id=older["id"],
+        session_tag=older["session_tag"],
+        client_name=older["client_name"],
+        latest_user_text="source 69",
+        messages=source_messages,
+    )
+
+    app = FastAPI()
+    cfg = SimpleNamespace(
+        enable_cold_start=True,
+        cold_start_message_limit=108,
+        max_client_messages=108,
+        cold_start_idle_minutes=120,
+        gateway_message_retention=2000,
+        gateway_context_snapshot_retention=3,
+        gateway_cold_start_retention=20,
+    )
+    app.include_router(
+        build_gateway_admin_router(
+            GatewayAdminRouteDeps(
+                cfg=cfg,
+                get_supabase_client=lambda: None,
+                get_session_store=lambda: store,
+                require_session_store=lambda: store,
+                context_builder=lambda *_args, **_kwargs: None,
+                upstream_for_hisense=lambda _is_hisense: {
+                    "scope": "default",
+                    "chat_url": "",
+                    "protocol": "openai",
+                    "api_key": "",
+                },
+                prune_runtime_state=lambda **_kwargs: {},
+                cold_start_idle_minutes=lambda _session: 0,
+                is_hisense_session=lambda _session: False,
+                now=lambda: None,
+                request_logs=[],
+            )
+        )
+    )
+
+    with TestClient(app) as client:
+        response = client.post(
+            "/api/gateway/cold-start/preview",
+            json={
+                "target_session_tag": "default",
+                "current_message_count": 50,
+                "persist": True,
+            },
+        )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source_mode"] == "auto_latest"
+    assert payload["target_session_tag"] == "default"
+    assert payload["source_session_tag"] == "5.15"
+    assert payload["config"]["preview_fill_count"] == 58
+    assert payload["config"]["current_message_count"] == 50
+    assert payload["snapshot"]["source_message_count"] == 58
+    assert [source["session_tag"] for source in payload["sources"]] == ["5.15"]
+    assert [msg["content"] for msg in payload["sources"][0]["messages"]][:2] == ["source 12", "source 13"]
 
 
 def test_config_overrides_round_trip(tmp_path):

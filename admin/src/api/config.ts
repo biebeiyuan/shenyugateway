@@ -212,8 +212,10 @@ export interface ColdStartPreview {
   would_inject: boolean
   reason: string | null
   persisted?: boolean
+  skip_reason?: string | null
   target_session_tag?: string | null
   source_session_tag?: string | null
+  source_mode?: 'auto_latest' | 'same' | 'explicit' | string
   snapshot?: {
     id: string
     created_at: string
@@ -229,6 +231,7 @@ export interface ColdStartPreview {
   config?: {
     message_limit?: number | null
     effective_message_limit?: number
+    current_message_count?: number
     preview_fill_count?: number
     idle_minutes?: number
     target_idle_minutes?: number | null

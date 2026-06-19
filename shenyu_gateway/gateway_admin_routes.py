@@ -187,7 +187,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         return await _build_cold_start_preview(
             target_session_tag=body.target_session_tag,
             source_session_tag=body.source_session_tag,
-            current_message_count=body.current_message_count or 1,
+            current_message_count=1 if body.current_message_count is None else body.current_message_count,
             persist=body.persist,
         )
 
@@ -202,30 +202,35 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         current_message_count = max(0, int(current_message_count or 0))
         target_tag = (target_session_tag or "default").strip() or "default"
         explicit_source_tag = (source_session_tag or "").strip()
-        auto_source = explicit_source_tag == "__auto__"
-        source_tag = "" if auto_source else (explicit_source_tag or target_tag)
+        same_source = explicit_source_tag == "__same__"
+        auto_source = not explicit_source_tag or explicit_source_tag == "__auto__"
+        source_tag = target_tag if same_source else ("" if auto_source else explicit_source_tag)
         target_session = store.get_session_by_tag(target_tag)
         exclude_session_id = None
         since = None
         reason = "new_window"
         idle_minutes = None
+        skip_reason = None
         if target_session:
+            exclude_session_id = target_session["id"]
             idle_minutes = deps.cold_start_idle_minutes(target_session)
             if idle_minutes >= max(cfg.cold_start_idle_minutes, 1):
-                exclude_session_id = target_session["id"]
                 since = target_session.get("last_active_at")
                 reason = "stale_window_cross_activity"
         sources = []
         target_messages = cfg.cold_start_message_limit or cfg.max_client_messages or 8
         fill_count = max(int(target_messages) - current_message_count, 0)
         resolved_source = None
-        if cfg.enable_cold_start and fill_count > 0:
+        if not cfg.enable_cold_start:
+            skip_reason = "冷启动注入未启用"
+        elif fill_count <= 0:
+            skip_reason = f"目标窗口已有 {current_message_count} 条，补足上限是 {target_messages} 条，缺口为 0"
+        else:
             if source_tag:
-                source_since = None if source_tag == target_tag else since
                 sources = store.latest_session_context(
                     source_tag,
                     limit_messages=fill_count,
-                    since=source_since,
+                    since=None,
                 )
                 if sources:
                     resolved_source = {
@@ -246,6 +251,9 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                         limit_messages=fill_count,
                         since=since,
                     )
+            if not sources:
+                source_label = "最新老线程" if auto_source else source_tag
+                skip_reason = f"没有找到可用于补足的来源快照：{source_label or '-'}"
         snapshot = None
         if persist and cfg.enable_cold_start and sources:
             if not target_session:
@@ -256,21 +264,24 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 reason=f"manual_preview:{reason}",
                 sources=sources,
                 trigger_last_active_at=(target_session or {}).get("last_active_at"),
-                max_injections=max(cfg.max_client_messages or cfg.cold_start_message_limit or 8, 1),
+                max_injections=max(int(target_messages or 8), 1),
             )
         return {
             "enabled": cfg.enable_cold_start,
             "reason": reason,
             "would_inject": bool(sources),
             "persisted": bool(snapshot),
+            "skip_reason": None if sources else skip_reason,
             "snapshot": snapshot,
             "target_session_tag": target_tag,
             "source_session_tag": (sources[0].get("session_tag") if sources else source_tag) or None,
+            "source_mode": "same" if same_source else ("auto_latest" if auto_source else "explicit"),
             "resolved_source": resolved_source,
             "sources": sources,
             "config": {
                 "message_limit": cfg.cold_start_message_limit,
                 "effective_message_limit": target_messages,
+                "current_message_count": current_message_count,
                 "preview_fill_count": fill_count,
                 "idle_minutes": cfg.cold_start_idle_minutes,
                 "target_idle_minutes": idle_minutes,
