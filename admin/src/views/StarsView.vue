@@ -1,32 +1,24 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import {
-  NButton,
-  NCheckbox,
-  NFormItem,
-  NInput,
-  NInputNumber,
-  NSwitch,
-  NTag,
-  useMessage,
-} from 'naive-ui'
-import * as THREE from 'three'
-import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js'
+import { NButton, useMessage } from 'naive-ui'
 import { fetchConfig, saveConfig, type GatewayConfig } from '@/api/config'
 import {
   connectStars,
   createStar,
-  fetchStarGraph,
-  markConstantStar,
   reviewStars,
   searchStars,
   sendStarFeedback,
   type StarCandidate,
-  type StarGraphLink,
   type StarItem,
   type StarReviewItem,
 } from '@/api/stars'
+import StarsReviewPanel from '@/views/stars/StarsReviewPanel.vue'
+import StarsSettingsPanel from '@/views/stars/StarsSettingsPanel.vue'
+import StarsWritePanel from '@/views/stars/StarsWritePanel.vue'
+import { feedbackLabel } from '@/views/stars/starUi'
+
+const StarMapView = defineAsyncComponent(() => import('@/views/stars/StarMapView.vue'))
 
 const message = useMessage()
 const route = useRoute()
@@ -59,26 +51,20 @@ const STAR_DEFAULTS: Partial<GatewayConfig> = {
 }
 
 type WorkMode = 'score' | 'settings' | 'write'
+type FeedbackCandidatePayload = {
+  seed: StarItem
+  candidate: StarCandidate
+  feedback: 'positive' | 'negative' | 'skipped'
+}
 
 const config = ref<Partial<GatewayConfig>>({ ...STAR_DEFAULTS })
 const savingConfig = ref(false)
 const mode = ref<WorkMode>('score')
 
-const graphStars = ref<StarItem[]>([])
-const graphLinks = ref<StarGraphLink[]>([])
-const mapLoading = ref(false)
-const mapError = ref('')
-const graphLimit = ref(320)
-const graphSessionTag = ref('')
-const selectedMapStarId = ref('')
-
 const reviewItems = ref<StarReviewItem[]>([])
 const reviewSessionTag = ref('')
 const reviewing = ref(false)
 const feedbackingKey = ref('')
-const feedbackMarks = ref<Record<string, string>>({})
-const expandedSeeds = ref<string[]>([])
-const missedStarId = ref<Record<string, string>>({})
 const connectName = ref('')
 const connectNote = ref('')
 
@@ -91,116 +77,12 @@ const createChord = ref('')
 const createSessionTag = ref('')
 const createConstant = ref(false)
 const creating = ref(false)
-const playingConstellation = ref(false)
+const mapInitialStarId = ref('')
 
-const canvasRef = ref<HTMLCanvasElement | null>(null)
-let renderer: THREE.WebGLRenderer | null = null
-let scene: THREE.Scene | null = null
-let camera: THREE.PerspectiveCamera | null = null
-let controls: OrbitControls | null = null
-let starGroup: THREE.Group | null = null
-let lineGroup: THREE.Group | null = null
-let ambientPoints: THREE.Points | null = null
-let frameId = 0
-let glowTexture: THREE.CanvasTexture | null = null
-let starGeometry: THREE.SphereGeometry | null = null
-
-const raycaster = new THREE.Raycaster()
-const pointer = new THREE.Vector2()
-const starObjects = new Map<
-  string,
-  {
-    mesh: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial>
-    glow: THREE.Sprite
-    baseScale: number
-    star: StarItem
-  }
->()
-const linkObjects: Array<{
-  line: THREE.Line<THREE.BufferGeometry, THREE.LineBasicMaterial>
-  source: string
-  target: string
-}> = []
-
-type MapConstellation = {
-  key: string
-  name: string
-  links: StarGraphLink[]
-  starIds: string[]
-  stars: StarItem[]
-}
-
-const starCount = computed(() => graphStars.value.length)
-const linkCount = computed(() => graphLinks.value.length)
-const mapConstellations = computed<MapConstellation[]>(() => {
-  const starById = new Map(graphStars.value.map((star) => [star.id, star]))
-  const groups = new Map<string, StarGraphLink[]>()
-  for (const link of graphLinks.value) {
-    const key = link.name || link.id || [link.source, link.target].sort().join(':')
-    if (!groups.has(key)) groups.set(key, [])
-    groups.get(key)?.push(link)
-  }
-  return Array.from(groups.entries())
-    .map(([key, links]) => {
-      const sortedLinks = sortLinks(links)
-      const starIds = orderedStarIdsFromLinks(sortedLinks)
-      return {
-        key,
-        name: sortedLinks[0]?.name || '未命名星座',
-        links: sortedLinks,
-        starIds,
-        stars: starIds.map((id) => starById.get(id)).filter((star): star is StarItem => Boolean(star)),
-      }
-    })
-    .filter((item) => item.stars.length >= 2)
-    .sort((left, right) => left.name.localeCompare(right.name) || left.key.localeCompare(right.key))
-})
-const unscoredCount = computed(() =>
-  reviewItems.value.reduce((total, item) => total + item.candidates.filter((candidate) => !feedbackFor(item.star, candidate)).length, 0),
-)
-const selectedMapStar = computed(() => graphStars.value.find((item) => item.id === selectedMapStarId.value) || null)
 const isMapRoute = computed(() => route.path === '/stars/map')
-const connectedMapStarRows = computed(() => {
-  const selected = selectedMapStarId.value
-  if (!selected) return []
-  const rows: Array<{ star: StarItem; link: StarGraphLink; order: number }> = []
-  const starById = new Map(graphStars.value.map((star) => [star.id, star]))
-  for (const link of sortLinks(graphLinks.value)) {
-    const otherId = link.source === selected ? link.target : link.target === selected ? link.source : ''
-    const star = otherId ? starById.get(otherId) : null
-    if (star) {
-      rows.push({
-        star,
-        link,
-        order: typeof link.position === 'number' ? link.position + 1 : rows.length + 1,
-      })
-    }
-  }
-  return rows
-})
+const unscoredCount = computed(() => reviewItems.value.reduce((total, item) => total + item.candidates.length, 0))
 
-onMounted(async () => {
-  await Promise.all([loadConfig(), loadGraph()])
-  if (isMapRoute.value) {
-    await nextTick()
-    initStarfield()
-  }
-})
-
-onBeforeUnmount(() => {
-  teardownStarfield()
-})
-
-watch(isMapRoute, async (enabled) => {
-  if (!enabled) {
-    teardownStarfield()
-    return
-  }
-  await nextTick()
-  initStarfield()
-  resizeStarfield()
-  rebuildStarfield()
-})
+onMounted(loadConfig)
 
 async function loadConfig() {
   try {
@@ -261,34 +143,6 @@ function resetStarDefaults() {
   message.info('已恢复 Star 默认值，保存后生效')
 }
 
-async function loadGraph() {
-  mapLoading.value = true
-  mapError.value = ''
-  try {
-    const result = await fetchStarGraph({
-      status: 'active',
-      limit: Number(graphLimit.value || 320),
-      session_tag: graphSessionTag.value.trim() || undefined,
-    })
-    graphStars.value = result.stars || []
-    graphLinks.value = result.links || []
-    if (selectedMapStarId.value && !graphStars.value.some((item) => item.id === selectedMapStarId.value)) {
-      selectedMapStarId.value = ''
-    }
-    if (!selectedMapStarId.value && graphStars.value.length) {
-      selectedMapStarId.value = graphStars.value[0].id
-    }
-    rebuildStarfield()
-  } catch {
-    graphStars.value = []
-    graphLinks.value = []
-    mapError.value = '星图暂时没有连上网关'
-    rebuildStarfield()
-  } finally {
-    mapLoading.value = false
-  }
-}
-
 async function runReview() {
   reviewing.value = true
   try {
@@ -299,11 +153,7 @@ async function runReview() {
       session_tag: reviewSessionTag.value.trim() || undefined,
     })
     reviewItems.value = result.items || []
-    feedbackMarks.value = {}
-    missedStarId.value = {}
-    expandedSeeds.value = reviewItems.value[0]?.star?.id ? [reviewItems.value[0].star.id] : []
     message.success(`拿到 ${reviewItems.value.length} 颗新星`)
-    await loadGraph()
   } catch {
     message.error('Review 失败')
   } finally {
@@ -327,9 +177,8 @@ async function addStar() {
     createContent.value = ''
     createChord.value = ''
     createConstant.value = false
-    if (result.star_id) selectedMapStarId.value = result.star_id
+    if (result.star_id) mapInitialStarId.value = result.star_id
     message.success('星星已写入')
-    await loadGraph()
   } catch {
     message.error('写入星星失败')
   } finally {
@@ -347,7 +196,6 @@ async function runSearch() {
   try {
     const result = await searchStars({
       q,
-      session_tag: graphSessionTag.value.trim() || undefined,
       limit: 8,
       log_run: true,
     })
@@ -359,7 +207,8 @@ async function runSearch() {
   }
 }
 
-async function feedbackCandidate(seed: StarItem, candidate: StarCandidate, feedback: 'positive' | 'negative' | 'skipped') {
+async function feedbackCandidate(payload: FeedbackCandidatePayload) {
+  const { seed, candidate, feedback } = payload
   const key = candidateKey(seed, candidate)
   feedbackingKey.value = `${key}:${feedback}`
   try {
@@ -371,7 +220,6 @@ async function feedbackCandidate(seed: StarItem, candidate: StarCandidate, feedb
       scored_by: '圆圆',
       metadata: { surface: 'admin:stars' },
     })
-    feedbackMarks.value = { ...feedbackMarks.value, [key]: feedback }
     removeCandidateFromReview(seed.id, candidate.id, candidate.candidate_id)
     message.success(feedbackLabel(feedback))
   } catch {
@@ -381,21 +229,19 @@ async function feedbackCandidate(seed: StarItem, candidate: StarCandidate, feedb
   }
 }
 
-async function feedbackMissed(seed: StarItem, runId?: string | null) {
-  const expected = (missedStarId.value[seed.id] || '').trim()
-  if (!expected) return
+async function feedbackMissed(payload: { seed: StarItem; runId?: string | null; expectedStarId: string }) {
+  const { seed, runId, expectedStarId } = payload
   const key = `${seed.id}:missed`
   feedbackingKey.value = key
   try {
     await sendStarFeedback({
       feedback: 'missed',
       run_id: runId,
-      expected_star_id: expected,
+      expected_star_id: expectedStarId,
       scored_by: '圆圆',
       note: `Review ${seed.id} 时漏反`,
       metadata: { surface: 'admin:stars' },
     })
-    missedStarId.value[seed.id] = ''
     clearSeedIfEmpty(seed.id)
     message.success('已记下漏反')
   } catch {
@@ -405,7 +251,8 @@ async function feedbackMissed(seed: StarItem, runId?: string | null) {
   }
 }
 
-async function connectCandidate(seed: StarItem, candidate: StarCandidate) {
+async function connectCandidate(payload: { seed: StarItem; candidate: StarCandidate }) {
+  const { seed, candidate } = payload
   const key = candidateKey(seed, candidate)
   feedbackingKey.value = `${key}:connected`
   try {
@@ -425,11 +272,9 @@ async function connectCandidate(seed: StarItem, candidate: StarCandidate) {
       note: connectNote.value.trim(),
       metadata: { surface: 'admin:stars' },
     })
-    feedbackMarks.value = { ...feedbackMarks.value, [key]: 'connected' }
     removeCandidateFromReview(seed.id, candidate.id, candidate.candidate_id)
-    selectedMapStarId.value = seed.id
+    mapInitialStarId.value = seed.id
     message.success('星座连上了')
-    await loadGraph()
   } catch {
     message.error('连线失败')
   } finally {
@@ -437,75 +282,13 @@ async function connectCandidate(seed: StarItem, candidate: StarCandidate) {
   }
 }
 
-async function toggleConstant(star: StarItem) {
-  try {
-    await markConstantStar(star.id, !star.is_constant)
-    star.is_constant = !star.is_constant
-    message.success(star.is_constant ? '已设为恒星' : '已取消恒星')
-    rebuildStarfield()
-  } catch {
-    message.error('更新恒星失败')
-  }
+function selectStar(starId: string) {
+  mapInitialStarId.value = starId
+  router.push('/stars/map')
 }
 
 function candidateKey(seed: StarItem, candidate: StarCandidate): string {
   return candidate.candidate_id || `${seed.id}:${candidate.id}`
-}
-
-function feedbackFor(seed: StarItem, candidate: StarCandidate): string {
-  return feedbackMarks.value[candidateKey(seed, candidate)] || ''
-}
-
-function toggleSeed(seedId: string) {
-  if (expandedSeeds.value.includes(seedId)) {
-    expandedSeeds.value = expandedSeeds.value.filter((item) => item !== seedId)
-    return
-  }
-  expandedSeeds.value = [...expandedSeeds.value, seedId]
-  selectedMapStarId.value = seedId
-  updateHighlights()
-}
-
-function sortLinks(links: StarGraphLink[]): StarGraphLink[] {
-  return [...links].sort((left, right) => {
-    const leftPosition = typeof left.position === 'number' ? left.position : Number.MAX_SAFE_INTEGER
-    const rightPosition = typeof right.position === 'number' ? right.position : Number.MAX_SAFE_INTEGER
-    if (leftPosition !== rightPosition) return leftPosition - rightPosition
-    return String(left.last_confirmed_at || '').localeCompare(String(right.last_confirmed_at || ''))
-      || `${left.source}:${left.target}`.localeCompare(`${right.source}:${right.target}`)
-  })
-}
-
-function orderedStarIdsFromLinks(links: StarGraphLink[]): string[] {
-  const result: string[] = []
-  for (const link of sortLinks(links)) {
-    if (!result.includes(link.source)) result.push(link.source)
-    if (!result.includes(link.target)) result.push(link.target)
-  }
-  return result
-}
-
-function jumpToNextConstellation() {
-  if (!mapConstellations.value.length) return
-  const currentIndex = mapConstellations.value.findIndex((item) => item.starIds.includes(selectedMapStarId.value))
-  const next = mapConstellations.value[(currentIndex + 1 + mapConstellations.value.length) % mapConstellations.value.length]
-  if (next?.starIds[0]) selectMapStar(next.starIds[0])
-}
-
-function closeMapLens() {
-  selectedMapStarId.value = ''
-  updateHighlights()
-}
-
-function selectMapStar(starId: string) {
-  selectedMapStarId.value = starId
-  updateHighlights()
-}
-
-function seedProgress(item: StarReviewItem): { done: number; total: number } {
-  const total = item.candidates.length
-  const done = item.candidates.filter((candidate) => feedbackFor(item.star, candidate)).length
-  return { done, total }
 }
 
 function removeCandidateFromReview(seedId: string, candidateId: string, candidateRowId?: string | null) {
@@ -526,529 +309,11 @@ function removeCandidateFromReview(seedId: string, candidateId: string, candidat
 function clearSeedIfEmpty(seedId: string) {
   reviewItems.value = reviewItems.value.filter((item) => item.star.id !== seedId || item.candidates.length > 0)
 }
-
-function feedbackLabel(value: string): string {
-  if (value === 'positive') return '这颗会更亮'
-  if (value === 'negative') return '已记为不该反'
-  if (value === 'skipped') return '先轻轻放过'
-  if (value === 'connected') return '已连成星座'
-  return '已记录'
-}
-
-function scoreParts(candidate: StarCandidate): string {
-  const scores = candidate.scores || {}
-  const labels: Array<[string, string]> = [
-    ['content_score', '内容'],
-    ['harmony_score', '和声'],
-    ['chord_score', '和弦'],
-    ['keyword_score', '词'],
-    ['actr_score', '亮度'],
-  ]
-  return labels
-    .filter(([key]) => scores[key] !== undefined)
-    .map(([key, label]) => `${label} ${scores[key]}`)
-    .join(' · ')
-}
-
-function sourceMeta(star: StarItem): string {
-  return [
-    star.session_tag ? `session ${star.session_tag}` : '',
-    star.source_model || '',
-    star.source_session_id ? `source ${String(star.source_session_id).slice(0, 8)}` : '',
-    star.created_at ? `created ${formatTime(star.created_at)}` : '',
-  ].filter(Boolean).join(' · ')
-}
-
-function selectedConstellation(): MapConstellation | null {
-  const selected = selectedMapStarId.value
-  return mapConstellations.value.find((item) => item.starIds.includes(selected)) || null
-}
-
-function midiForRoot(root: string): number {
-  const normalized = normalizeRoot(root)
-  const semitone: Record<string, number> = {
-    C: 0,
-    'C#': 1,
-    D: 2,
-    'D#': 3,
-    E: 4,
-    F: 5,
-    'F#': 6,
-    G: 7,
-    'G#': 8,
-    A: 9,
-    'A#': 10,
-    B: 11,
-  }
-  return 60 + (semitone[normalized] ?? 0)
-}
-
-function noteFrequency(midi: number): number {
-  return 440 * Math.pow(2, (midi - 69) / 12)
-}
-
-function chordIntervals(star: StarItem): number[] {
-  const quality = (star.chord_quality || star.chord || '').toLowerCase()
-  if (quality.includes('dim')) return [0, 3, 6]
-  if (quality.includes('aug')) return [0, 4, 8]
-  if (quality.includes('sus')) return [0, 5, 7]
-  if (quality.includes('minor') || quality.includes('min') || /\bm(?!aj)/i.test(star.chord)) return [0, 3, 7]
-  return [0, 4, 7]
-}
-
-function playTone(audio: AudioContext, destination: GainNode, frequency: number, start: number, duration: number, gain = 0.08) {
-  const oscillator = audio.createOscillator()
-  const envelope = audio.createGain()
-  oscillator.type = 'sine'
-  oscillator.frequency.setValueAtTime(frequency, start)
-  envelope.gain.setValueAtTime(0.0001, start)
-  envelope.gain.exponentialRampToValueAtTime(gain, start + 0.035)
-  envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration)
-  oscillator.connect(envelope)
-  envelope.connect(destination)
-  oscillator.start(start)
-  oscillator.stop(start + duration + 0.05)
-}
-
-async function playSelectedConstellation() {
-  const constellation = selectedConstellation() || mapConstellations.value[0]
-  if (!constellation || constellation.stars.length < 2 || playingConstellation.value) return
-  type AudioContextConstructor = new () => AudioContext
-  const audioWindow = window as unknown as { AudioContext?: AudioContextConstructor; webkitAudioContext?: AudioContextConstructor }
-  const AudioCtor = audioWindow.AudioContext || audioWindow.webkitAudioContext
-  if (!AudioCtor) {
-    message.error('这个浏览器暂时不能播放旋律')
-    return
-  }
-  playingConstellation.value = true
-  try {
-    const audio = new AudioCtor()
-    const master = audio.createGain()
-    master.gain.value = 0.72
-    master.connect(audio.destination)
-    const start = audio.currentTime + 0.08
-    const step = 0.48
-    constellation.stars.forEach((star, index) => {
-      const root = star.chord_root || star.chord.match(/[A-G](?:#|b)?/i)?.[0] || 'C'
-      const midi = midiForRoot(root)
-      const at = start + index * step
-      playTone(audio, master, noteFrequency(midi), at, 0.42, 0.09)
-      for (const interval of chordIntervals(star)) {
-        playTone(audio, master, noteFrequency(midi + interval + 12), at + 0.08, 0.52, 0.035)
-      }
-    })
-    const totalMs = (constellation.stars.length * step + 0.8) * 1000
-    window.setTimeout(() => {
-      audio.close().catch(() => undefined)
-      playingConstellation.value = false
-    }, totalMs)
-  } catch {
-    playingConstellation.value = false
-    message.error('旋律播放失败')
-  }
-}
-
-function rootLabel(star: StarItem): string {
-  return star.chord || star.chord_root || '无和弦'
-}
-
-function formatTime(value?: string | null) {
-  if (!value) return '-'
-  return value.replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '')
-}
-
-function hashString(value: string): number {
-  let hash = 2166136261
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i)
-    hash = Math.imul(hash, 16777619)
-  }
-  return hash >>> 0
-}
-
-function hash01(value: string, salt = ''): number {
-  return (hashString(`${salt}:${value}`) % 100000) / 100000
-}
-
-function normalizeRoot(root?: string | null): string {
-  const value = (root || '').trim().toUpperCase()
-  const flatMap: Record<string, string> = {
-    DB: 'C#',
-    EB: 'D#',
-    GB: 'F#',
-    AB: 'G#',
-    BB: 'A#',
-  }
-  return flatMap[value] || value
-}
-
-function positionForStar(star: StarItem, index: number, total: number): THREE.Vector3 {
-  const fifths = ['C', 'G', 'D', 'A', 'E', 'B', 'F#', 'C#', 'G#', 'D#', 'A#', 'F']
-  const root = normalizeRoot(star.chord_root || star.chord.match(/[A-G](?:#|b)?/i)?.[0])
-  const rootIndex = Math.max(0, fifths.indexOf(root))
-  const rootSlot = rootIndex >= 0 ? rootIndex : index % 12
-  const identity = `${star.id}:${star.content}:${star.chord}`
-  const angle = (rootSlot / 12) * Math.PI * 2 + (hash01(identity, 'angle') - 0.5) * 0.42
-  const activation = Math.log1p(Number(star.activation_count || 0))
-  const radius = 12 + hash01(identity, 'radius') * 24 + activation * 1.6 + Math.sqrt(Math.max(total, 1)) * 0.25
-  const y = (hash01(identity, 'height') - 0.5) * 28 + (star.is_constant ? 3 : 0)
-  const drift = (hash01(identity, 'drift') - 0.5) * 9
-  return new THREE.Vector3(Math.cos(angle) * radius, y, Math.sin(angle) * radius + drift)
-}
-
-function brightnessForStar(star: StarItem): number {
-  const activation = Math.log1p(Number(star.activation_count || 0))
-  let recency = 0
-  if (star.last_activated_at) {
-    const ageDays = Math.max((Date.now() - Date.parse(star.last_activated_at)) / 86400000, 0)
-    recency = Math.max(0, 0.26 - ageDays * 0.018)
-  }
-  return Math.min(1, 0.38 + activation * 0.14 + recency + (star.is_constant ? 0.22 : 0))
-}
-
-function colorForStar(star: StarItem): THREE.Color {
-  const root = normalizeRoot(star.chord_root || star.chord.match(/[A-G](?:#|b)?/i)?.[0])
-  const palette: Record<string, string> = {
-    C: '#ffd7a8',
-    G: '#b8e6c8',
-    D: '#a9d8ff',
-    A: '#f8b9c8',
-    E: '#ffe38c',
-    B: '#b8c7ff',
-    'F#': '#c4f0e8',
-    'C#': '#e8c4ff',
-    'G#': '#ffc6e7',
-    'D#': '#bde2ff',
-    'A#': '#f4d1a1',
-    F: '#cfe7ad',
-  }
-  return new THREE.Color(palette[root] || '#f3d8c7')
-}
-
-function initStarfield() {
-  const canvas = canvasRef.value
-  if (!canvas || renderer) return
-  const rect = canvas.parentElement?.getBoundingClientRect()
-  const width = Math.max(320, rect?.width || 900)
-  const height = Math.max(360, rect?.height || 560)
-  scene = new THREE.Scene()
-  camera = new THREE.PerspectiveCamera(54, width / height, 0.1, 1000)
-  camera.position.set(0, 18, 76)
-  renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true })
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-  renderer.setSize(width, height, false)
-  controls = new OrbitControls(camera, canvas)
-  controls.enableDamping = true
-  controls.dampingFactor = 0.055
-  controls.autoRotate = true
-  controls.autoRotateSpeed = 0.18
-  controls.minDistance = 20
-  controls.maxDistance = 160
-  starGroup = new THREE.Group()
-  lineGroup = new THREE.Group()
-  scene.add(lineGroup)
-  scene.add(starGroup)
-  ambientPoints = createAmbientStars()
-  scene.add(ambientPoints)
-  glowTexture = createGlowTexture()
-  starGeometry = new THREE.SphereGeometry(1, 24, 16)
-  canvas.addEventListener('pointerdown', onMapPointer)
-  window.addEventListener('resize', resizeStarfield)
-  animateStarfield()
-  rebuildStarfield()
-}
-
-function teardownStarfield() {
-  if (frameId) cancelAnimationFrame(frameId)
-  frameId = 0
-  canvasRef.value?.removeEventListener('pointerdown', onMapPointer)
-  window.removeEventListener('resize', resizeStarfield)
-  clearGroup(starGroup)
-  clearGroup(lineGroup)
-  ambientPoints?.geometry.dispose()
-  const ambientMaterial = ambientPoints?.material
-  if (Array.isArray(ambientMaterial)) ambientMaterial.forEach((item) => item.dispose())
-  else ambientMaterial?.dispose()
-  glowTexture?.dispose()
-  starGeometry?.dispose()
-  controls?.dispose()
-  renderer?.dispose()
-  renderer = null
-  scene = null
-  camera = null
-  controls = null
-  starGroup = null
-  lineGroup = null
-  ambientPoints = null
-  starObjects.clear()
-  linkObjects.length = 0
-}
-
-function createGlowTexture(): THREE.CanvasTexture {
-  const size = 128
-  const canvas = document.createElement('canvas')
-  canvas.width = size
-  canvas.height = size
-  const ctx = canvas.getContext('2d')
-  if (ctx) {
-    const gradient = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
-    gradient.addColorStop(0, 'rgba(255,255,255,0.95)')
-    gradient.addColorStop(0.22, 'rgba(255,215,168,0.62)')
-    gradient.addColorStop(0.48, 'rgba(150,206,255,0.22)')
-    gradient.addColorStop(1, 'rgba(255,255,255,0)')
-    ctx.fillStyle = gradient
-    ctx.fillRect(0, 0, size, size)
-  }
-  return new THREE.CanvasTexture(canvas)
-}
-
-function createAmbientStars(): THREE.Points {
-  const count = 900
-  const positions = new Float32Array(count * 3)
-  const colors = new Float32Array(count * 3)
-  for (let i = 0; i < count; i += 1) {
-    const seed = `ambient-${i}`
-    const theta = hash01(seed, 'theta') * Math.PI * 2
-    const phi = Math.acos(hash01(seed, 'phi') * 2 - 1)
-    const radius = 90 + hash01(seed, 'radius') * 90
-    positions[i * 3] = Math.sin(phi) * Math.cos(theta) * radius
-    positions[i * 3 + 1] = Math.cos(phi) * radius
-    positions[i * 3 + 2] = Math.sin(phi) * Math.sin(theta) * radius
-    const warmth = hash01(seed, 'warmth')
-    colors[i * 3] = 0.62 + warmth * 0.28
-    colors[i * 3 + 1] = 0.66 + (1 - warmth) * 0.22
-    colors[i * 3 + 2] = 0.78 + hash01(seed, 'blue') * 0.2
-  }
-  const geometry = new THREE.BufferGeometry()
-  geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3))
-  geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-  const material = new THREE.PointsMaterial({
-    size: 0.42,
-    vertexColors: true,
-    transparent: true,
-    opacity: 0.62,
-    depthWrite: false,
-  })
-  return new THREE.Points(geometry, material)
-}
-
-function rebuildStarfield() {
-  if (!scene || !starGroup || !lineGroup || !starGeometry || !glowTexture) return
-  clearGroup(starGroup, false)
-  clearGroup(lineGroup)
-  starObjects.clear()
-  linkObjects.length = 0
-  const positions = new Map<string, THREE.Vector3>()
-  graphStars.value.forEach((star, index) => {
-    const position = positionForStar(star, index, graphStars.value.length)
-    positions.set(star.id, position)
-    const brightness = brightnessForStar(star)
-    const color = colorForStar(star)
-    const baseScale = 0.62 + brightness * 1.15 + (star.is_constant ? 0.34 : 0)
-    const material = new THREE.MeshBasicMaterial({
-      color,
-      transparent: true,
-      opacity: 0.78 + brightness * 0.22,
-      depthWrite: false,
-    })
-    const mesh = new THREE.Mesh(starGeometry as THREE.SphereGeometry, material)
-    mesh.position.copy(position)
-    mesh.scale.setScalar(baseScale)
-    mesh.userData.starId = star.id
-    const glowMaterial = new THREE.SpriteMaterial({
-      map: glowTexture as THREE.CanvasTexture,
-      color,
-      transparent: true,
-      opacity: 0.3 + brightness * 0.58,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
-    const glow = new THREE.Sprite(glowMaterial)
-    glow.position.copy(position)
-    glow.scale.setScalar(baseScale * (5.4 + brightness * 2.4))
-    glow.userData.starId = star.id
-    starGroup?.add(glow)
-    starGroup?.add(mesh)
-    starObjects.set(star.id, { mesh, glow, baseScale, star })
-  })
-
-  for (const link of graphLinks.value) {
-    const source = positions.get(link.source)
-    const target = positions.get(link.target)
-    if (!source || !target) continue
-    const geometry = new THREE.BufferGeometry().setFromPoints([source, target])
-    const material = new THREE.LineBasicMaterial({
-      color: link.relation_type === 'constellation' ? '#f5c27d' : '#9ed8d0',
-      transparent: true,
-      opacity: 0.26,
-      blending: THREE.AdditiveBlending,
-      depthWrite: false,
-    })
-    const line = new THREE.Line(geometry, material)
-    line.userData = { source: link.source, target: link.target }
-    lineGroup.add(line)
-    linkObjects.push({ line, source: link.source, target: link.target })
-  }
-  updateHighlights()
-}
-
-function clearGroup(group: THREE.Group | null, disposeGeometry = true) {
-  if (!group) return
-  while (group.children.length) {
-    const child = group.children.pop()
-    if (!child) continue
-    child.traverse((object) => {
-      const mesh = object as THREE.Mesh
-      if (disposeGeometry) mesh.geometry?.dispose?.()
-      const material = mesh.material as THREE.Material | THREE.Material[] | undefined
-      if (Array.isArray(material)) material.forEach((item) => item.dispose())
-      else material?.dispose?.()
-    })
-  }
-}
-
-function animateStarfield() {
-  frameId = requestAnimationFrame(animateStarfield)
-  controls?.update()
-  if (renderer && scene && camera) {
-    renderer.render(scene, camera)
-  }
-}
-
-function resizeStarfield() {
-  const canvas = canvasRef.value
-  if (!canvas || !renderer || !camera) return
-  const rect = canvas.parentElement?.getBoundingClientRect()
-  const width = Math.max(320, rect?.width || 900)
-  const height = Math.max(360, rect?.height || 560)
-  renderer.setSize(width, height, false)
-  camera.aspect = width / height
-  camera.updateProjectionMatrix()
-}
-
-function onMapPointer(event: PointerEvent) {
-  const canvas = canvasRef.value
-  if (!canvas || !camera) return
-  const rect = canvas.getBoundingClientRect()
-  pointer.x = ((event.clientX - rect.left) / rect.width) * 2 - 1
-  pointer.y = -((event.clientY - rect.top) / rect.height) * 2 + 1
-  raycaster.setFromCamera(pointer, camera)
-  const intersects = raycaster.intersectObjects(Array.from(starObjects.values()).map((item) => item.mesh), false)
-  if (!intersects.length) return
-  const starId = String(intersects[0].object.userData.starId || '')
-  if (!starId) return
-  selectedMapStarId.value = starId
-  updateHighlights()
-}
-
-function updateHighlights() {
-  const selected = selectedMapStarId.value
-  const connectedIds = new Set<string>()
-  if (selected) {
-    for (const link of graphLinks.value) {
-      if (link.source === selected) connectedIds.add(link.target)
-      if (link.target === selected) connectedIds.add(link.source)
-    }
-  }
-  for (const [id, object] of starObjects.entries()) {
-    const selectedSelf = id === selected
-    const linked = connectedIds.has(id)
-    const focus = !selected || selectedSelf || linked
-    const scale = object.baseScale * (selectedSelf ? 1.8 : linked ? 1.34 : 1)
-    object.mesh.scale.setScalar(scale)
-    object.glow.scale.setScalar(scale * (selectedSelf ? 8.5 : linked ? 7 : 5.8))
-    object.mesh.material.opacity = focus ? 1 : 0.28
-    const glowMaterial = object.glow.material as THREE.SpriteMaterial
-    glowMaterial.opacity = selectedSelf ? 0.96 : linked ? 0.74 : focus ? 0.38 : 0.12
-  }
-  for (const link of linkObjects) {
-    const touches = selected && (link.source === selected || link.target === selected)
-    link.line.material.opacity = touches ? 0.86 : selected ? 0.09 : 0.24
-    link.line.material.color.set(touches ? '#ffe6a9' : '#9ed8d0')
-  }
-}
 </script>
 
 <template>
   <div class="stars-page" :class="{ 'map-page': isMapRoute }">
-    <section v-if="isMapRoute" class="sky-section">
-      <div class="sky-shell">
-        <canvas ref="canvasRef" class="star-canvas" />
-        <div class="sky-vignette"></div>
-        <div class="sky-head">
-          <div>
-            <div class="eyebrow">Star Memory</div>
-            <h2>记忆星图</h2>
-          </div>
-          <div class="sky-nav">
-            <div class="sky-stats">
-              <span>{{ starCount }} stars</span>
-              <button type="button" :disabled="!mapConstellations.length" @click="jumpToNextConstellation">
-                {{ mapConstellations.length }} 星座 / {{ linkCount }} 连接
-              </button>
-              <span v-if="mapLoading">syncing</span>
-            </div>
-            <NButton size="small" ghost @click="router.push('/stars')">回到星星</NButton>
-          </div>
-        </div>
-        <div class="sky-controls">
-          <label class="ghost-field">
-            <span>session_tag</span>
-            <input v-model="graphSessionTag" class="ghost-input compact" placeholder="留空=全部">
-          </label>
-          <label class="ghost-field">
-            <span>加载上限</span>
-            <input v-model="graphLimit" class="ghost-input tiny" type="number" min="20" max="1000">
-          </label>
-          <NButton size="small" :loading="mapLoading" @click="loadGraph">刷新星图</NButton>
-        </div>
-        <div v-if="mapError" class="map-error">{{ mapError }}</div>
-        <aside class="memory-lens" :class="{ empty: !selectedMapStar }">
-          <template v-if="selectedMapStar">
-            <div class="lens-top">
-              <div class="lens-tags">
-                <NTag size="small">{{ rootLabel(selectedMapStar) }}</NTag>
-                <NTag v-if="selectedMapStar.is_constant" size="small" type="warning">恒星</NTag>
-                <NTag size="small">亮 {{ selectedMapStar.activation_count || 0 }}</NTag>
-              </div>
-              <button class="lens-close" type="button" aria-label="收起详情" @click="closeMapLens">×</button>
-            </div>
-            <p>{{ selectedMapStar.content }}</p>
-            <div v-if="selectedMapStar.source_excerpt" class="source-box">
-              <div class="source-meta">{{ sourceMeta(selectedMapStar) }}</div>
-              <div class="source-text">{{ selectedMapStar.source_excerpt }}</div>
-            </div>
-            <div class="lens-time">updated {{ formatTime(selectedMapStar.updated_at) }}</div>
-            <div v-if="connectedMapStarRows.length" class="linked-strip">
-              <button
-                v-for="row in connectedMapStarRows"
-                :key="`${row.link.id || row.star.id}:${row.star.id}`"
-                type="button"
-                @click="selectMapStar(row.star.id)"
-              >
-                <span class="link-order">#{{ row.order }}</span>
-                <span>{{ rootLabel(row.star) }}</span>
-                {{ row.star.content.slice(0, 32) }}
-              </button>
-            </div>
-            <div class="lens-actions">
-              <NButton
-                v-if="selectedConstellation()"
-                size="tiny"
-                :loading="playingConstellation"
-                @click="playSelectedConstellation"
-              >
-                听旋律
-              </NButton>
-              <NButton size="tiny" @click="toggleConstant(selectedMapStar)">{{ selectedMapStar.is_constant ? '取消恒星' : '设为恒星' }}</NButton>
-            </div>
-          </template>
-          <template v-else>
-            <span>还没有星星</span>
-          </template>
-        </aside>
-      </div>
-    </section>
+    <StarMapView v-if="isMapRoute" :initial-star-id="mapInitialStarId" />
 
     <section v-else class="workbench">
       <div class="stars-head">
@@ -1072,143 +337,40 @@ function updateHighlights() {
         <button type="button" :class="{ active: mode === 'write' }" @click="mode = 'write'">写星</button>
       </div>
 
-      <div v-if="mode === 'score'" class="score-space">
-        <div class="soft-toolbar">
-          <input v-model="reviewSessionTag" class="soft-input" placeholder="session_tag">
-          <input v-model="connectName" class="soft-input" placeholder="星座名">
-          <input v-model="connectNote" class="soft-input wide" placeholder="连线备注">
-        </div>
-
-        <div v-if="!reviewItems.length" class="empty-score">
-          <span>没有待评分批次</span>
-          <span>右上角拿一小批</span>
-        </div>
-
-        <div v-for="item in reviewItems" :key="item.star.id" class="seed-tile" :class="{ open: expandedSeeds.includes(item.star.id), done: seedProgress(item).done === seedProgress(item).total && item.candidates.length }">
-          <button class="seed-head" type="button" @click="toggleSeed(item.star.id)">
-            <span class="seed-dot" :class="{ warm: seedProgress(item).done, done: seedProgress(item).done === seedProgress(item).total && item.candidates.length }"></span>
-            <span class="seed-chord">{{ rootLabel(item.star) }}</span>
-            <span class="seed-text">{{ item.star.content }}</span>
-            <span class="seed-count">{{ seedProgress(item).done }}/{{ item.candidates.length }}</span>
-          </button>
-
-          <div v-if="expandedSeeds.includes(item.star.id)" class="seed-body">
-            <div class="source-box light">
-              <div class="source-meta">{{ sourceMeta(item.star) || '来源暂缺' }}</div>
-              <div class="source-text">{{ item.star.source_excerpt || '这颗星没有保存来源原文。' }}</div>
-            </div>
-            <div class="missed-line">
-              <input v-model="missedStarId[item.star.id]" class="soft-input wide" placeholder="漏反的 star id">
-              <NButton size="small" :loading="feedbackingKey === `${item.star.id}:missed`" @click="feedbackMissed(item.star, item.run_id)">记漏反</NButton>
-            </div>
-
-            <div v-if="!item.candidates.length" class="empty-candidates">没有候选</div>
-            <div v-for="candidate in item.candidates" :key="candidate.id" class="candidate-line" :class="feedbackFor(item.star, candidate) || 'fresh'">
-              <button class="candidate-main" type="button" @click="selectMapStar(candidate.id)">
-                <span class="candidate-status">{{ feedbackFor(item.star, candidate) ? feedbackLabel(feedbackFor(item.star, candidate)) : '未评分' }}</span>
-                <span class="candidate-chord">{{ rootLabel(candidate) }}</span>
-                <span class="candidate-text">{{ candidate.content }}</span>
-                <span class="candidate-score">{{ candidate.score ?? 0 }}</span>
-              </button>
-              <details v-if="candidate.source_excerpt" class="candidate-source">
-                <summary>{{ sourceMeta(candidate) || '来源原文' }}</summary>
-                <div>{{ candidate.source_excerpt }}</div>
-              </details>
-              <div class="candidate-detail">
-                <span>{{ scoreParts(candidate) || 'no scores' }}</span>
-                <div class="score-actions">
-                  <NButton size="tiny" type="primary" :loading="feedbackingKey === `${candidateKey(item.star, candidate)}:connected`" @click="connectCandidate(item.star, candidate)">连起来</NButton>
-                  <NButton size="tiny" :loading="feedbackingKey === `${candidateKey(item.star, candidate)}:positive`" @click="feedbackCandidate(item.star, candidate, 'positive')">该反</NButton>
-                  <NButton size="tiny" :loading="feedbackingKey === `${candidateKey(item.star, candidate)}:negative`" @click="feedbackCandidate(item.star, candidate, 'negative')">不该反</NButton>
-                  <NButton size="tiny" :loading="feedbackingKey === `${candidateKey(item.star, candidate)}:skipped`" @click="feedbackCandidate(item.star, candidate, 'skipped')">先放过</NButton>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div v-else-if="mode === 'settings'" class="settings-space">
-        <div class="toggle-grid">
-          <label><NSwitch v-model:value="config.inject_star_prompt" /> <span>Star 提示</span></label>
-          <label><NSwitch v-model:value="config.enable_inline_star_capture" /> <span>自动捕获</span></label>
-          <label><NSwitch v-model:value="config.inject_stars" /> <span>聊天注入</span></label>
-          <label><NSwitch v-model:value="config.enable_gateway_tools" /> <span>网关工具</span></label>
-          <label><NSwitch v-model:value="config.enable_star_embeddings" /> <span>embedding</span></label>
-        </div>
-
-        <div class="number-grid">
-          <NFormItem label="日常注入">
-            <NInputNumber v-model:value="config.star_inject_limit" :min="1" :max="5" />
-          </NFormItem>
-          <NFormItem label="Review 新星">
-            <NInputNumber v-model:value="config.star_review_new_limit" :min="1" :max="10" />
-          </NFormItem>
-          <NFormItem label="每星候选">
-            <NInputNumber v-model:value="config.star_review_candidates_per_star" :min="1" :max="5" />
-          </NFormItem>
-          <NFormItem label="总候选">
-            <NInputNumber v-model:value="config.star_review_total_candidate_limit" :min="1" :max="30" />
-          </NFormItem>
-          <NFormItem label="最低分">
-            <NInputNumber v-model:value="config.star_min_score" :min="0" :max="1" :step="0.01" />
-          </NFormItem>
-          <NFormItem label="相关门槛">
-            <NInputNumber v-model:value="config.star_related_min_score" :min="0" :max="1" :step="0.01" />
-          </NFormItem>
-          <NFormItem label="疲劳小时">
-            <NInputNumber v-model:value="config.star_recent_fatigue_hours" :min="0" :max="168" />
-          </NFormItem>
-          <NFormItem label="疲劳惩罚">
-            <NInputNumber v-model:value="config.star_recent_fatigue_penalty" :min="0" :max="1" :step="0.01" />
-          </NFormItem>
-        </div>
-
-        <details class="advanced-settings">
-          <summary>权重</summary>
-          <div class="weight-grid">
-            <NFormItem label="内容"><NInputNumber v-model:value="config.star_weight_content" :min="0" :max="2" :step="0.01" /></NFormItem>
-            <NFormItem label="关键词"><NInputNumber v-model:value="config.star_weight_keyword" :min="0" :max="2" :step="0.01" /></NFormItem>
-            <NFormItem label="和声"><NInputNumber v-model:value="config.star_weight_harmony" :min="0" :max="2" :step="0.01" /></NFormItem>
-            <NFormItem label="和弦"><NInputNumber v-model:value="config.star_weight_chord" :min="0" :max="2" :step="0.01" /></NFormItem>
-            <NFormItem label="亮度"><NInputNumber v-model:value="config.star_weight_actr" :min="0" :max="2" :step="0.01" /></NFormItem>
-            <NFormItem label="恒星"><NInputNumber v-model:value="config.star_constant_bonus" :min="0" :max="1" :step="0.01" /></NFormItem>
-            <NFormItem label="新鲜"><NInputNumber v-model:value="config.star_novelty_bonus" :min="0" :max="1" :step="0.01" /></NFormItem>
-            <NFormItem label="忽略"><NInputNumber v-model:value="config.star_ignored_penalty" :min="0" :max="1" :step="0.01" /></NFormItem>
-            <NFormItem label="候选池"><NInputNumber v-model:value="config.star_candidate_limit" :min="50" :max="5000" /></NFormItem>
-            <NFormItem label="shadow"><NInputNumber v-model:value="config.star_shadow_candidate_limit" :min="3" :max="100" /></NFormItem>
-          </div>
-        </details>
-
-        <div class="setting-actions">
-          <NButton type="primary" :loading="savingConfig" @click="saveSettings">保存</NButton>
-          <NButton :disabled="savingConfig" @click="setStarQuietTools">静音但留工具</NButton>
-          <NButton :disabled="savingConfig" @click="resetStarDefaults">默认</NButton>
-        </div>
-      </div>
-
-      <div v-else class="write-space">
-        <div class="write-grid">
-          <input v-model="createChord" class="soft-input" placeholder="Am / Cmaj7">
-          <input v-model="createSessionTag" class="soft-input" placeholder="session_tag">
-          <label class="constant-check"><NCheckbox v-model:checked="createConstant" /> 恒星</label>
-        </div>
-        <NInput v-model:value="createContent" type="textarea" :autosize="{ minRows: 4, maxRows: 9 }" placeholder="写下这一颗星" />
-        <div class="write-actions">
-          <NButton type="primary" :loading="creating" :disabled="!createContent.trim()" @click="addStar">写入星图</NButton>
-        </div>
-
-        <div class="search-strip">
-          <input v-model="searchQuery" class="soft-input wide" placeholder="搜一颗星">
-          <NButton size="small" :loading="searching" @click="runSearch">搜索</NButton>
-        </div>
-        <div v-if="searchResults.length" class="search-results">
-          <button v-for="star in searchResults" :key="star.id" type="button" @click="selectMapStar(star.id)">
-            <span>{{ rootLabel(star) }}</span>
-            {{ star.content }}
-          </button>
-        </div>
-      </div>
+      <StarsReviewPanel
+        v-if="mode === 'score'"
+        v-model:session-tag="reviewSessionTag"
+        v-model:connect-name="connectName"
+        v-model:connect-note="connectNote"
+        :items="reviewItems"
+        :feedbacking-key="feedbackingKey"
+        @feedback-candidate="feedbackCandidate"
+        @feedback-missed="feedbackMissed"
+        @connect-candidate="connectCandidate"
+        @select-star="selectStar"
+      />
+      <StarsSettingsPanel
+        v-else-if="mode === 'settings'"
+        :config="config"
+        :saving="savingConfig"
+        @save="saveSettings"
+        @quiet-tools="setStarQuietTools"
+        @reset="resetStarDefaults"
+      />
+      <StarsWritePanel
+        v-else
+        v-model:content="createContent"
+        v-model:chord="createChord"
+        v-model:session-tag="createSessionTag"
+        v-model:constant="createConstant"
+        v-model:query="searchQuery"
+        :results="searchResults"
+        :creating="creating"
+        :searching="searching"
+        @create="addStar"
+        @search="runSearch"
+        @select-star="selectStar"
+      />
     </section>
   </div>
 </template>
@@ -1221,260 +383,6 @@ function updateHighlights() {
 
 .stars-page.map-page {
   max-width: min(1440px, calc(100vw - 24px));
-}
-
-.sky-section {
-  min-height: calc(100vh - 92px);
-}
-
-.sky-shell {
-  position: relative;
-  min-height: calc(100vh - 92px);
-  overflow: hidden;
-  border: 1px solid rgba(244, 210, 186, 0.24);
-  border-radius: 8px;
-  background:
-    radial-gradient(circle at 30% 24%, rgba(176, 218, 205, 0.16), transparent 26%),
-    radial-gradient(circle at 72% 68%, rgba(246, 193, 126, 0.12), transparent 30%),
-    linear-gradient(135deg, #101522 0%, #171426 42%, #231826 100%);
-  box-shadow: 0 18px 70px rgba(38, 31, 48, 0.18);
-}
-
-.star-canvas {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  cursor: grab;
-}
-
-.star-canvas:active {
-  cursor: grabbing;
-}
-
-.sky-vignette {
-  position: absolute;
-  inset: 0;
-  pointer-events: none;
-  background:
-    linear-gradient(180deg, rgba(255, 246, 238, 0.05), transparent 42%),
-    radial-gradient(circle at center, transparent 54%, rgba(12, 13, 22, 0.58));
-}
-
-.sky-head,
-.sky-controls,
-.memory-lens {
-  position: absolute;
-  z-index: 2;
-}
-
-.sky-head {
-  top: 22px;
-  left: 24px;
-  right: 24px;
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: flex-start;
-  pointer-events: none;
-}
-
-.sky-nav {
-  display: grid;
-  gap: 10px;
-  justify-items: end;
-  pointer-events: auto;
-}
-
-.eyebrow {
-  color: #f3cba4;
-  font-size: 11px;
-  letter-spacing: 0.16em;
-  text-transform: uppercase;
-}
-
-.sky-head h2 {
-  margin: 3px 0 0;
-  color: #fff8ed;
-  font-family: 'Cormorant Garamond', 'Georgia', serif;
-  font-size: 42px;
-  font-weight: 400;
-  letter-spacing: 0;
-}
-
-.sky-stats {
-  display: flex;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.sky-stats span,
-.sky-stats button,
-.lens-top :deep(.n-tag) {
-  background: rgba(255, 250, 244, 0.12) !important;
-  color: #ffe8c7 !important;
-  border: 1px solid rgba(255, 232, 199, 0.18) !important;
-}
-
-.sky-stats span,
-.sky-stats button {
-  padding: 5px 9px;
-  border-radius: 999px;
-  color: #f3d3bf;
-  font-size: 11px;
-  backdrop-filter: blur(12px);
-}
-
-.sky-stats button {
-  cursor: pointer;
-}
-
-.sky-stats button:disabled {
-  cursor: default;
-  opacity: 0.62;
-}
-
-.sky-controls {
-  left: 24px;
-  bottom: 22px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.ghost-field {
-  display: grid;
-  gap: 4px;
-  color: rgba(255, 232, 199, 0.68);
-  font-size: 11px;
-}
-
-.ghost-input,
-.soft-input {
-  min-height: 34px;
-  padding: 6px 10px;
-  border-radius: 6px;
-  outline: none;
-  transition: border-color 0.16s, background 0.16s;
-}
-
-.ghost-input {
-  border: 1px solid rgba(255, 232, 199, 0.28);
-  background: rgba(255, 250, 244, 0.1);
-  color: #fff8ed;
-}
-
-.ghost-input::placeholder {
-  color: rgba(255, 232, 199, 0.55);
-}
-
-.ghost-input.compact {
-  width: 132px;
-}
-
-.ghost-input.tiny {
-  width: 76px;
-}
-
-.map-error {
-  position: absolute;
-  left: 24px;
-  bottom: 70px;
-  z-index: 2;
-  color: #ffd4c7;
-  font-size: 12px;
-}
-
-.memory-lens {
-  right: 22px;
-  bottom: 22px;
-  width: min(380px, calc(100% - 44px));
-  padding: 16px;
-  border: 1px solid rgba(255, 232, 199, 0.2);
-  border-radius: 8px;
-  background: rgba(22, 19, 31, 0.68);
-  color: #fff7ee;
-  backdrop-filter: blur(18px);
-}
-
-.memory-lens.empty {
-  color: rgba(255, 247, 238, 0.7);
-}
-
-.lens-top {
-  display: flex;
-  justify-content: space-between;
-  gap: 10px;
-  margin-bottom: 10px;
-}
-
-.lens-tags {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.lens-close {
-  width: 26px;
-  height: 26px;
-  flex: 0 0 auto;
-  border: 1px solid rgba(255, 232, 199, 0.2);
-  border-radius: 50%;
-  background: rgba(255, 250, 244, 0.08);
-  color: #ffe8c7;
-  cursor: pointer;
-  line-height: 1;
-}
-
-.memory-lens p {
-  margin: 0;
-  max-height: 132px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.65;
-}
-
-.lens-time {
-  margin-top: 8px;
-  color: rgba(255, 232, 199, 0.62);
-  font-size: 11px;
-}
-
-.linked-strip {
-  display: grid;
-  gap: 6px;
-  margin-top: 12px;
-}
-
-.linked-strip button {
-  padding: 8px 10px;
-  border: 1px solid rgba(255, 232, 199, 0.16);
-  border-radius: 6px;
-  background: rgba(255, 250, 244, 0.08);
-  color: #fff7ee;
-  text-align: left;
-  cursor: pointer;
-}
-
-.linked-strip span {
-  margin-right: 8px;
-  color: #f1c37a;
-  font-weight: 600;
-}
-
-.linked-strip .link-order {
-  display: inline-flex;
-  min-width: 28px;
-  color: #9ed8d0;
-}
-
-.lens-actions {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 12px;
 }
 
 .workbench {
@@ -1565,359 +473,7 @@ function updateHighlights() {
   font-size: 11px;
 }
 
-.soft-toolbar,
-.missed-line,
-.search-strip,
-.setting-actions,
-.write-actions {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.soft-input {
-  min-width: 150px;
-  border: 1px solid #ead4cf;
-  background: #fff;
-  color: #4a3535;
-}
-
-.soft-input.wide {
-  flex: 1;
-  min-width: 240px;
-}
-
-.seed-tile {
-  margin-top: 10px;
-  border: 1px solid #ead4cf;
-  border-radius: 8px;
-  background: #fff;
-  overflow: hidden;
-  transition: border-color 0.16s, box-shadow 0.16s;
-}
-
-.seed-tile.open {
-  border-color: #d4a7a2;
-  box-shadow: 0 10px 26px rgba(98, 70, 82, 0.08);
-}
-
-.seed-tile.done {
-  border-color: #b8d6c0;
-}
-
-.seed-head {
-  width: 100%;
-  display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
-  gap: 10px;
-  align-items: center;
-  padding: 12px;
-  border: 0;
-  background: transparent;
-  color: #4a3535;
-  cursor: pointer;
-  text-align: left;
-}
-
-.seed-dot {
-  width: 10px;
-  height: 10px;
-  border-radius: 50%;
-  background: #d9c8c4;
-  box-shadow: 0 0 0 rgba(217, 200, 196, 0);
-}
-
-.seed-dot.warm {
-  background: #e5b275;
-  box-shadow: 0 0 14px rgba(229, 178, 117, 0.55);
-}
-
-.seed-dot.done {
-  background: #92ba9c;
-  box-shadow: 0 0 16px rgba(146, 186, 156, 0.5);
-}
-
-.seed-chord,
-.candidate-chord {
-  color: #967180;
-  font-weight: 700;
-  white-space: nowrap;
-}
-
-.seed-text,
-.candidate-text {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.seed-count,
-.candidate-score,
-.candidate-status {
-  color: #b8a8a3;
-  font-size: 12px;
-  white-space: nowrap;
-}
-
-.seed-body {
-  padding: 0 12px 12px;
-}
-
-.source-box {
-  margin-top: 10px;
-  padding: 10px;
-  border: 1px solid rgba(255, 232, 199, 0.18);
-  border-radius: 7px;
-  background: rgba(255, 250, 244, 0.08);
-}
-
-.source-box.light {
-  margin: 0 0 10px;
-  border-color: #f0e0dc;
-  background: #fffaf8;
-}
-
-.source-meta {
-  margin-bottom: 6px;
-  color: #a88780;
-  font-size: 11px;
-}
-
-.source-text {
-  max-height: 180px;
-  overflow: auto;
-  color: inherit;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.6;
-  font-size: 12px;
-}
-
-.candidate-line {
-  margin-top: 8px;
-  border: 1px solid #f0e0dc;
-  border-radius: 7px;
-  background: #fffdfc;
-}
-
-.candidate-line.positive,
-.candidate-line.connected {
-  border-color: #b8d6c0;
-  background: #fbfffc;
-}
-
-.candidate-line.negative {
-  border-color: #e3b1ad;
-  background: #fffafa;
-}
-
-.candidate-line.skipped {
-  opacity: 0.72;
-}
-
-.candidate-main {
-  width: 100%;
-  display: grid;
-  grid-template-columns: 74px 70px minmax(0, 1fr) 54px;
-  gap: 8px;
-  align-items: center;
-  padding: 10px;
-  border: 0;
-  background: transparent;
-  color: #4a3535;
-  cursor: pointer;
-  text-align: left;
-}
-
-.candidate-detail {
-  display: flex;
-  justify-content: space-between;
-  gap: 8px;
-  align-items: center;
-  padding: 0 10px 10px;
-  color: #7a6a6a;
-  font-size: 12px;
-  flex-wrap: wrap;
-}
-
-.candidate-source {
-  margin: 0 10px 8px;
-  padding: 8px 9px;
-  border: 1px solid #f0e0dc;
-  border-radius: 6px;
-  background: #fffaf8;
-  color: #6f5d5d;
-  font-size: 12px;
-}
-
-.candidate-source summary {
-  cursor: pointer;
-  color: #a88780;
-}
-
-.candidate-source div {
-  margin-top: 6px;
-  max-height: 160px;
-  overflow: auto;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.55;
-}
-
-.score-actions {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-
-.empty-score,
-.empty-candidates {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  min-height: 86px;
-  color: #9b8a88;
-  font-size: 13px;
-}
-
-.toggle-grid,
-.number-grid,
-.weight-grid,
-.write-grid {
-  display: grid;
-  gap: 10px;
-}
-
-.toggle-grid {
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-.toggle-grid label,
-.constant-check {
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  min-height: 38px;
-  padding: 0 10px;
-  border: 1px solid #ead4cf;
-  border-radius: 7px;
-  background: #fff;
-  color: #6b555b;
-}
-
-.number-grid {
-  margin-top: 12px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-}
-
-.advanced-settings {
-  margin-top: 12px;
-  border: 1px solid #ead4cf;
-  border-radius: 8px;
-  background: #fffdfc;
-}
-
-.advanced-settings summary {
-  padding: 11px 12px;
-  cursor: pointer;
-  color: #846d77;
-}
-
-.weight-grid {
-  padding: 0 12px 12px;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
-}
-
-.setting-actions {
-  margin-top: 12px;
-}
-
-.write-grid {
-  grid-template-columns: 1fr 1fr auto;
-  margin-bottom: 10px;
-}
-
-.write-actions {
-  margin-top: 10px;
-  justify-content: flex-end;
-}
-
-.search-strip {
-  margin-top: 16px;
-}
-
-.search-results {
-  display: grid;
-  gap: 8px;
-  margin-top: 10px;
-}
-
-.search-results button {
-  padding: 10px;
-  border: 1px solid #ead4cf;
-  border-radius: 7px;
-  background: #fff;
-  color: #4a3535;
-  text-align: left;
-  cursor: pointer;
-}
-
-.search-results span {
-  margin-right: 8px;
-  color: #967180;
-  font-weight: 700;
-}
-
 @media (max-width: 980px) {
-  .sky-shell {
-    min-height: 640px;
-  }
-
-  .sky-head {
-    flex-direction: column;
-  }
-
-  .sky-nav {
-    justify-items: start;
-  }
-
-  .memory-lens {
-    left: 16px;
-    right: 16px;
-    width: auto;
-  }
-
-  .sky-controls {
-    left: 16px;
-    right: 16px;
-    bottom: 204px;
-  }
-
-  .toggle-grid,
-  .number-grid,
-  .weight-grid,
-  .write-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .candidate-main,
-  .seed-head {
-    grid-template-columns: auto minmax(0, 1fr) auto;
-  }
-
-  .candidate-status,
-  .candidate-score {
-    display: none;
-  }
-
-  .soft-input,
-  .soft-input.wide {
-    width: 100%;
-  }
-
   .stars-head {
     flex-direction: column;
   }

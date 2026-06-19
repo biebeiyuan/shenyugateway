@@ -54,7 +54,7 @@ When cleaning or refactoring, preserve behavior first and move code by boundary:
 4. Context data fetching belongs around `ContextBuilder`; layer rendering and message-window assembly belong in `shenyu_gateway/context_layers.py`.
 5. Private response tag filtering and capture helpers belong in `shenyu_gateway/response_capture.py` and `shenyu_gateway/private_capture.py`. When adding a new private block type, update both parser paths and the empty-reply fallback wording.
 6. Gateway-native tool behavior belongs in `shenyu_gateway/gateway_tools.py`; tool schemas, merge logic, and name dispatch belong in `shenyu_gateway/tool_registry.py`. Keep tool descriptions short: one-line purpose plus backing table/pool.
-7. Star memory ranking and learning behavior belongs in `shenyu_gateway/stars.py`; tool exposure belongs in `tool_registry.py`; admin-only API routes belong in `gateway_admin_routes.py`; frontend controls belong in `admin/src/views/StarsView.vue`.
+7. Star memory ranking and learning behavior belongs in `shenyu_gateway/stars.py`; tool exposure belongs in `tool_registry.py`; admin-only API routes belong in `gateway_admin_routes.py`; frontend controls belong in `admin/src/views/StarsView.vue` and `admin/src/views/stars/`.
 8. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing, HTTP calls, and streaming iteration belong in `shenyu_gateway/upstream_client.py`.
 9. External frontend contracts below are not dead code just because admin UI does not import them.
 
@@ -554,10 +554,16 @@ Admin UI:
 - `/admin/#/stars` is the standalone Star entry: review scoring, settings, manual creation, search, missed recording, and constellation feedback.
 - `/admin/#/stars/map` is the separate memory star map: a Three.js graph view over live stars and links.
 - `admin/src/api/stars.ts` holds the frontend contract.
-- `admin/src/views/StarsView.vue` renders both Star routes, split by path. Keep the scoring workbench and star map as separate surfaces even if they share data-loading code.
+- `admin/src/views/StarsView.vue` is the thin Star route/workbench shell. It keeps shared review/write state and lazy-loads the star map.
+- `admin/src/views/stars/StarsReviewPanel.vue` renders admin review scoring, missed recording, and candidate constellation feedback.
+- `admin/src/views/stars/StarsSettingsPanel.vue` renders Star memory configuration controls.
+- `admin/src/views/stars/StarsWritePanel.vue` renders manual star creation and search.
+- `admin/src/views/stars/StarMapView.vue` owns the Three.js graph, star detail lens, constellation navigation, and constant-star toggle.
+- `admin/src/views/stars/starMelody.ts` turns a constellation's ordered stars into a short Web Audio melody.
+- `admin/src/views/stars/starUi.ts` holds shared Star UI formatting and link-order helpers.
 - The "quiet Star" button disables prompt/capture/injection while keeping gateway tools on, so Shenyu can still choose to search/write/review manually.
 - The map uses live `shenyu_stars` and `shenyu_star_links`: star brightness/size follows activation count, recency, and constant status; constellation links are drawn from confirmed edges.
-- Current frontend positioning is deterministic and replaceable: chord root gives the main circular slot, stable content/id hash gives local drift, and activation/constant state affects radius/brightness. If backend embedding/UMAP coordinates are added later, replace `positionForStar()` in `StarsView.vue` rather than rewriting the UI.
+- Current frontend positioning is deterministic and replaceable: chord root gives the main circular slot, stable content/id hash gives local drift, and activation/constant state affects radius/brightness. If backend embedding/UMAP coordinates are added later, replace `positionForStar()` in `StarMapView.vue` rather than rewriting the UI.
 
 Maintenance notes:
 
@@ -566,7 +572,7 @@ Maintenance notes:
 - If adding new score signals, store both raw features and final contribution in `shenyu_star_recall_candidates.scores`; otherwise later tuning loses observability.
 - If adding a new feedback value, update the SQL check constraint, `FEEDBACK_VALUES`, frontend type `StarFeedbackValue`, tool schema, and admin labels together.
 - If changing default limits, keep daily chat injection small. Normal chat should feel like "three small lights," not a memory dump.
-- If changing star-map rendering, keep graph data and visual layout separate: `StarService.graph()` returns durable data; `StarsView.vue` decides layout and interaction. `/stars` must remain a light scoring surface; `/stars/map` carries the immersive visualization.
+- If changing star-map rendering, keep graph data and visual layout separate: `StarService.graph()` returns durable data; `StarMapView.vue` decides layout and interaction. `/stars` must remain a light scoring surface; `/stars/map` carries the immersive visualization.
 
 ## Private Capture Empty Reply Fallback
 
@@ -705,7 +711,7 @@ http://localhost:8010/admin
 - `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
 - `admin/src/views/ConfigView.vue`: configuration page.
 - `admin/src/views/Mem0View.vue`: Mem prompt/capture/injection/tool controls, mem-note attribute workflow, and old atomic read-only lookup. The "静音但保留工具" preset turns off mem prompt/capture/injection while leaving gateway tools available.
-- `admin/src/views/StarsView.vue`: standalone Star entry at `/stars` plus the separate memory star map at `/stars/map`.
+- `admin/src/views/StarsView.vue`: standalone Star entry shell at `/stars`, with split Star panels under `admin/src/views/stars/` and a lazy-loaded memory star map at `/stars/map`.
 - `admin/src/views/SessionsView.vue`: session inspection page.
 - `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
