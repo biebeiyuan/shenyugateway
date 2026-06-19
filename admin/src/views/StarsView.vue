@@ -91,6 +91,7 @@ const createChord = ref('')
 const createSessionTag = ref('')
 const createConstant = ref(false)
 const creating = ref(false)
+const playingConstellation = ref(false)
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let renderer: THREE.WebGLRenderer | null = null
@@ -121,22 +122,61 @@ const linkObjects: Array<{
   target: string
 }> = []
 
+type MapConstellation = {
+  key: string
+  name: string
+  links: StarGraphLink[]
+  starIds: string[]
+  stars: StarItem[]
+}
+
 const starCount = computed(() => graphStars.value.length)
 const linkCount = computed(() => graphLinks.value.length)
+const mapConstellations = computed<MapConstellation[]>(() => {
+  const starById = new Map(graphStars.value.map((star) => [star.id, star]))
+  const groups = new Map<string, StarGraphLink[]>()
+  for (const link of graphLinks.value) {
+    const key = link.name || link.id || [link.source, link.target].sort().join(':')
+    if (!groups.has(key)) groups.set(key, [])
+    groups.get(key)?.push(link)
+  }
+  return Array.from(groups.entries())
+    .map(([key, links]) => {
+      const sortedLinks = sortLinks(links)
+      const starIds = orderedStarIdsFromLinks(sortedLinks)
+      return {
+        key,
+        name: sortedLinks[0]?.name || '未命名星座',
+        links: sortedLinks,
+        starIds,
+        stars: starIds.map((id) => starById.get(id)).filter((star): star is StarItem => Boolean(star)),
+      }
+    })
+    .filter((item) => item.stars.length >= 2)
+    .sort((left, right) => left.name.localeCompare(right.name) || left.key.localeCompare(right.key))
+})
 const unscoredCount = computed(() =>
   reviewItems.value.reduce((total, item) => total + item.candidates.filter((candidate) => !feedbackFor(item.star, candidate)).length, 0),
 )
 const selectedMapStar = computed(() => graphStars.value.find((item) => item.id === selectedMapStarId.value) || null)
 const isMapRoute = computed(() => route.path === '/stars/map')
-const connectedMapStars = computed(() => {
+const connectedMapStarRows = computed(() => {
   const selected = selectedMapStarId.value
   if (!selected) return []
-  const ids = new Set<string>()
-  for (const link of graphLinks.value) {
-    if (link.source === selected) ids.add(link.target)
-    if (link.target === selected) ids.add(link.source)
+  const rows: Array<{ star: StarItem; link: StarGraphLink; order: number }> = []
+  const starById = new Map(graphStars.value.map((star) => [star.id, star]))
+  for (const link of sortLinks(graphLinks.value)) {
+    const otherId = link.source === selected ? link.target : link.target === selected ? link.source : ''
+    const star = otherId ? starById.get(otherId) : null
+    if (star) {
+      rows.push({
+        star,
+        link,
+        order: typeof link.position === 'number' ? link.position + 1 : rows.length + 1,
+      })
+    }
   }
-  return graphStars.value.filter((star) => ids.has(star.id))
+  return rows
 })
 
 onMounted(async () => {
@@ -332,6 +372,7 @@ async function feedbackCandidate(seed: StarItem, candidate: StarCandidate, feedb
       metadata: { surface: 'admin:stars' },
     })
     feedbackMarks.value = { ...feedbackMarks.value, [key]: feedback }
+    removeCandidateFromReview(seed.id, candidate.id, candidate.candidate_id)
     message.success(feedbackLabel(feedback))
   } catch {
     message.error('反馈失败')
@@ -355,6 +396,7 @@ async function feedbackMissed(seed: StarItem, runId?: string | null) {
       metadata: { surface: 'admin:stars' },
     })
     missedStarId.value[seed.id] = ''
+    clearSeedIfEmpty(seed.id)
     message.success('已记下漏反')
   } catch {
     message.error('记录漏反失败')
@@ -384,6 +426,7 @@ async function connectCandidate(seed: StarItem, candidate: StarCandidate) {
       metadata: { surface: 'admin:stars' },
     })
     feedbackMarks.value = { ...feedbackMarks.value, [key]: 'connected' }
+    removeCandidateFromReview(seed.id, candidate.id, candidate.candidate_id)
     selectedMapStarId.value = seed.id
     message.success('星座连上了')
     await loadGraph()
@@ -423,10 +466,65 @@ function toggleSeed(seedId: string) {
   updateHighlights()
 }
 
+function sortLinks(links: StarGraphLink[]): StarGraphLink[] {
+  return [...links].sort((left, right) => {
+    const leftPosition = typeof left.position === 'number' ? left.position : Number.MAX_SAFE_INTEGER
+    const rightPosition = typeof right.position === 'number' ? right.position : Number.MAX_SAFE_INTEGER
+    if (leftPosition !== rightPosition) return leftPosition - rightPosition
+    return String(left.last_confirmed_at || '').localeCompare(String(right.last_confirmed_at || ''))
+      || `${left.source}:${left.target}`.localeCompare(`${right.source}:${right.target}`)
+  })
+}
+
+function orderedStarIdsFromLinks(links: StarGraphLink[]): string[] {
+  const result: string[] = []
+  for (const link of sortLinks(links)) {
+    if (!result.includes(link.source)) result.push(link.source)
+    if (!result.includes(link.target)) result.push(link.target)
+  }
+  return result
+}
+
+function jumpToNextConstellation() {
+  if (!mapConstellations.value.length) return
+  const currentIndex = mapConstellations.value.findIndex((item) => item.starIds.includes(selectedMapStarId.value))
+  const next = mapConstellations.value[(currentIndex + 1 + mapConstellations.value.length) % mapConstellations.value.length]
+  if (next?.starIds[0]) selectMapStar(next.starIds[0])
+}
+
+function closeMapLens() {
+  selectedMapStarId.value = ''
+  updateHighlights()
+}
+
+function selectMapStar(starId: string) {
+  selectedMapStarId.value = starId
+  updateHighlights()
+}
+
 function seedProgress(item: StarReviewItem): { done: number; total: number } {
   const total = item.candidates.length
   const done = item.candidates.filter((candidate) => feedbackFor(item.star, candidate)).length
   return { done, total }
+}
+
+function removeCandidateFromReview(seedId: string, candidateId: string, candidateRowId?: string | null) {
+  reviewItems.value = reviewItems.value
+    .map((item) => {
+      if (item.star.id !== seedId) return item
+      return {
+        ...item,
+        candidates: item.candidates.filter((candidate) => {
+          if (candidateRowId && candidate.candidate_id === candidateRowId) return false
+          return candidate.id !== candidateId
+        }),
+      }
+    })
+    .filter((item) => item.candidates.length > 0)
+}
+
+function clearSeedIfEmpty(seedId: string) {
+  reviewItems.value = reviewItems.value.filter((item) => item.star.id !== seedId || item.candidates.length > 0)
 }
 
 function feedbackLabel(value: string): string {
@@ -450,6 +548,104 @@ function scoreParts(candidate: StarCandidate): string {
     .filter(([key]) => scores[key] !== undefined)
     .map(([key, label]) => `${label} ${scores[key]}`)
     .join(' · ')
+}
+
+function sourceMeta(star: StarItem): string {
+  return [
+    star.session_tag ? `session ${star.session_tag}` : '',
+    star.source_model || '',
+    star.source_session_id ? `source ${String(star.source_session_id).slice(0, 8)}` : '',
+    star.created_at ? `created ${formatTime(star.created_at)}` : '',
+  ].filter(Boolean).join(' · ')
+}
+
+function selectedConstellation(): MapConstellation | null {
+  const selected = selectedMapStarId.value
+  return mapConstellations.value.find((item) => item.starIds.includes(selected)) || null
+}
+
+function midiForRoot(root: string): number {
+  const normalized = normalizeRoot(root)
+  const semitone: Record<string, number> = {
+    C: 0,
+    'C#': 1,
+    D: 2,
+    'D#': 3,
+    E: 4,
+    F: 5,
+    'F#': 6,
+    G: 7,
+    'G#': 8,
+    A: 9,
+    'A#': 10,
+    B: 11,
+  }
+  return 60 + (semitone[normalized] ?? 0)
+}
+
+function noteFrequency(midi: number): number {
+  return 440 * Math.pow(2, (midi - 69) / 12)
+}
+
+function chordIntervals(star: StarItem): number[] {
+  const quality = (star.chord_quality || star.chord || '').toLowerCase()
+  if (quality.includes('dim')) return [0, 3, 6]
+  if (quality.includes('aug')) return [0, 4, 8]
+  if (quality.includes('sus')) return [0, 5, 7]
+  if (quality.includes('minor') || quality.includes('min') || /\bm(?!aj)/i.test(star.chord)) return [0, 3, 7]
+  return [0, 4, 7]
+}
+
+function playTone(audio: AudioContext, destination: GainNode, frequency: number, start: number, duration: number, gain = 0.08) {
+  const oscillator = audio.createOscillator()
+  const envelope = audio.createGain()
+  oscillator.type = 'sine'
+  oscillator.frequency.setValueAtTime(frequency, start)
+  envelope.gain.setValueAtTime(0.0001, start)
+  envelope.gain.exponentialRampToValueAtTime(gain, start + 0.035)
+  envelope.gain.exponentialRampToValueAtTime(0.0001, start + duration)
+  oscillator.connect(envelope)
+  envelope.connect(destination)
+  oscillator.start(start)
+  oscillator.stop(start + duration + 0.05)
+}
+
+async function playSelectedConstellation() {
+  const constellation = selectedConstellation() || mapConstellations.value[0]
+  if (!constellation || constellation.stars.length < 2 || playingConstellation.value) return
+  type AudioContextConstructor = new () => AudioContext
+  const audioWindow = window as unknown as { AudioContext?: AudioContextConstructor; webkitAudioContext?: AudioContextConstructor }
+  const AudioCtor = audioWindow.AudioContext || audioWindow.webkitAudioContext
+  if (!AudioCtor) {
+    message.error('这个浏览器暂时不能播放旋律')
+    return
+  }
+  playingConstellation.value = true
+  try {
+    const audio = new AudioCtor()
+    const master = audio.createGain()
+    master.gain.value = 0.72
+    master.connect(audio.destination)
+    const start = audio.currentTime + 0.08
+    const step = 0.48
+    constellation.stars.forEach((star, index) => {
+      const root = star.chord_root || star.chord.match(/[A-G](?:#|b)?/i)?.[0] || 'C'
+      const midi = midiForRoot(root)
+      const at = start + index * step
+      playTone(audio, master, noteFrequency(midi), at, 0.42, 0.09)
+      for (const interval of chordIntervals(star)) {
+        playTone(audio, master, noteFrequency(midi + interval + 12), at + 0.08, 0.52, 0.035)
+      }
+    })
+    const totalMs = (constellation.stars.length * step + 0.8) * 1000
+    window.setTimeout(() => {
+      audio.close().catch(() => undefined)
+      playingConstellation.value = false
+    }, totalMs)
+  } catch {
+    playingConstellation.value = false
+    message.error('旋律播放失败')
+  }
 }
 
 function rootLabel(star: StarItem): string {
@@ -787,39 +983,63 @@ function updateHighlights() {
           <div class="sky-nav">
             <div class="sky-stats">
               <span>{{ starCount }} stars</span>
-              <span>{{ linkCount }} links</span>
+              <button type="button" :disabled="!mapConstellations.length" @click="jumpToNextConstellation">
+                {{ mapConstellations.length }} 星座 / {{ linkCount }} 连接
+              </button>
               <span v-if="mapLoading">syncing</span>
             </div>
             <NButton size="small" ghost @click="router.push('/stars')">回到星星</NButton>
           </div>
         </div>
         <div class="sky-controls">
-          <input v-model="graphSessionTag" class="ghost-input compact" placeholder="session">
-          <input v-model="graphLimit" class="ghost-input tiny" type="number" min="20" max="1000">
+          <label class="ghost-field">
+            <span>session_tag</span>
+            <input v-model="graphSessionTag" class="ghost-input compact" placeholder="留空=全部">
+          </label>
+          <label class="ghost-field">
+            <span>加载上限</span>
+            <input v-model="graphLimit" class="ghost-input tiny" type="number" min="20" max="1000">
+          </label>
           <NButton size="small" :loading="mapLoading" @click="loadGraph">刷新星图</NButton>
         </div>
         <div v-if="mapError" class="map-error">{{ mapError }}</div>
         <aside class="memory-lens" :class="{ empty: !selectedMapStar }">
           <template v-if="selectedMapStar">
             <div class="lens-top">
-              <NTag size="small">{{ rootLabel(selectedMapStar) }}</NTag>
-              <NTag v-if="selectedMapStar.is_constant" size="small" type="warning">恒星</NTag>
-              <NTag size="small">亮 {{ selectedMapStar.activation_count || 0 }}</NTag>
+              <div class="lens-tags">
+                <NTag size="small">{{ rootLabel(selectedMapStar) }}</NTag>
+                <NTag v-if="selectedMapStar.is_constant" size="small" type="warning">恒星</NTag>
+                <NTag size="small">亮 {{ selectedMapStar.activation_count || 0 }}</NTag>
+              </div>
+              <button class="lens-close" type="button" aria-label="收起详情" @click="closeMapLens">×</button>
             </div>
             <p>{{ selectedMapStar.content }}</p>
+            <div v-if="selectedMapStar.source_excerpt" class="source-box">
+              <div class="source-meta">{{ sourceMeta(selectedMapStar) }}</div>
+              <div class="source-text">{{ selectedMapStar.source_excerpt }}</div>
+            </div>
             <div class="lens-time">updated {{ formatTime(selectedMapStar.updated_at) }}</div>
-            <div v-if="connectedMapStars.length" class="linked-strip">
+            <div v-if="connectedMapStarRows.length" class="linked-strip">
               <button
-                v-for="star in connectedMapStars"
-                :key="star.id"
+                v-for="row in connectedMapStarRows"
+                :key="`${row.link.id || row.star.id}:${row.star.id}`"
                 type="button"
-                @click="selectedMapStarId = star.id; updateHighlights()"
+                @click="selectMapStar(row.star.id)"
               >
-                <span>{{ rootLabel(star) }}</span>
-                {{ star.content.slice(0, 26) }}
+                <span class="link-order">#{{ row.order }}</span>
+                <span>{{ rootLabel(row.star) }}</span>
+                {{ row.star.content.slice(0, 32) }}
               </button>
             </div>
             <div class="lens-actions">
+              <NButton
+                v-if="selectedConstellation()"
+                size="tiny"
+                :loading="playingConstellation"
+                @click="playSelectedConstellation"
+              >
+                听旋律
+              </NButton>
               <NButton size="tiny" @click="toggleConstant(selectedMapStar)">{{ selectedMapStar.is_constant ? '取消恒星' : '设为恒星' }}</NButton>
             </div>
           </template>
@@ -857,12 +1077,11 @@ function updateHighlights() {
           <input v-model="reviewSessionTag" class="soft-input" placeholder="session_tag">
           <input v-model="connectName" class="soft-input" placeholder="星座名">
           <input v-model="connectNote" class="soft-input wide" placeholder="连线备注">
-          <NButton size="small" type="primary" :loading="reviewing" @click="runReview">拿一小批</NButton>
         </div>
 
         <div v-if="!reviewItems.length" class="empty-score">
           <span>没有待评分批次</span>
-          <NButton size="small" :loading="reviewing" @click="runReview">开始 review</NButton>
+          <span>右上角拿一小批</span>
         </div>
 
         <div v-for="item in reviewItems" :key="item.star.id" class="seed-tile" :class="{ open: expandedSeeds.includes(item.star.id), done: seedProgress(item).done === seedProgress(item).total && item.candidates.length }">
@@ -874,6 +1093,10 @@ function updateHighlights() {
           </button>
 
           <div v-if="expandedSeeds.includes(item.star.id)" class="seed-body">
+            <div class="source-box light">
+              <div class="source-meta">{{ sourceMeta(item.star) || '来源暂缺' }}</div>
+              <div class="source-text">{{ item.star.source_excerpt || '这颗星没有保存来源原文。' }}</div>
+            </div>
             <div class="missed-line">
               <input v-model="missedStarId[item.star.id]" class="soft-input wide" placeholder="漏反的 star id">
               <NButton size="small" :loading="feedbackingKey === `${item.star.id}:missed`" @click="feedbackMissed(item.star, item.run_id)">记漏反</NButton>
@@ -881,12 +1104,16 @@ function updateHighlights() {
 
             <div v-if="!item.candidates.length" class="empty-candidates">没有候选</div>
             <div v-for="candidate in item.candidates" :key="candidate.id" class="candidate-line" :class="feedbackFor(item.star, candidate) || 'fresh'">
-              <button class="candidate-main" type="button" @click="selectedMapStarId = candidate.id; updateHighlights()">
+              <button class="candidate-main" type="button" @click="selectMapStar(candidate.id)">
                 <span class="candidate-status">{{ feedbackFor(item.star, candidate) ? feedbackLabel(feedbackFor(item.star, candidate)) : '未评分' }}</span>
                 <span class="candidate-chord">{{ rootLabel(candidate) }}</span>
                 <span class="candidate-text">{{ candidate.content }}</span>
                 <span class="candidate-score">{{ candidate.score ?? 0 }}</span>
               </button>
+              <details v-if="candidate.source_excerpt" class="candidate-source">
+                <summary>{{ sourceMeta(candidate) || '来源原文' }}</summary>
+                <div>{{ candidate.source_excerpt }}</div>
+              </details>
               <div class="candidate-detail">
                 <span>{{ scoreParts(candidate) || 'no scores' }}</span>
                 <div class="score-actions">
@@ -976,7 +1203,7 @@ function updateHighlights() {
           <NButton size="small" :loading="searching" @click="runSearch">搜索</NButton>
         </div>
         <div v-if="searchResults.length" class="search-results">
-          <button v-for="star in searchResults" :key="star.id" type="button" @click="selectedMapStarId = star.id; updateHighlights()">
+          <button v-for="star in searchResults" :key="star.id" type="button" @click="selectMapStar(star.id)">
             <span>{{ rootLabel(star) }}</span>
             {{ star.content }}
           </button>
@@ -1083,18 +1310,29 @@ function updateHighlights() {
 }
 
 .sky-stats span,
+.sky-stats button,
 .lens-top :deep(.n-tag) {
   background: rgba(255, 250, 244, 0.12) !important;
   color: #ffe8c7 !important;
   border: 1px solid rgba(255, 232, 199, 0.18) !important;
 }
 
-.sky-stats span {
+.sky-stats span,
+.sky-stats button {
   padding: 5px 9px;
   border-radius: 999px;
   color: #f3d3bf;
   font-size: 11px;
   backdrop-filter: blur(12px);
+}
+
+.sky-stats button {
+  cursor: pointer;
+}
+
+.sky-stats button:disabled {
+  cursor: default;
+  opacity: 0.62;
 }
 
 .sky-controls {
@@ -1104,6 +1342,13 @@ function updateHighlights() {
   gap: 8px;
   align-items: center;
   flex-wrap: wrap;
+}
+
+.ghost-field {
+  display: grid;
+  gap: 4px;
+  color: rgba(255, 232, 199, 0.68);
+  font-size: 11px;
 }
 
 .ghost-input,
@@ -1160,9 +1405,27 @@ function updateHighlights() {
 
 .lens-top {
   display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  margin-bottom: 10px;
+}
+
+.lens-tags {
+  display: flex;
   gap: 6px;
   flex-wrap: wrap;
-  margin-bottom: 10px;
+}
+
+.lens-close {
+  width: 26px;
+  height: 26px;
+  flex: 0 0 auto;
+  border: 1px solid rgba(255, 232, 199, 0.2);
+  border-radius: 50%;
+  background: rgba(255, 250, 244, 0.08);
+  color: #ffe8c7;
+  cursor: pointer;
+  line-height: 1;
 }
 
 .memory-lens p {
@@ -1200,6 +1463,12 @@ function updateHighlights() {
   margin-right: 8px;
   color: #f1c37a;
   font-weight: 600;
+}
+
+.linked-strip .link-order {
+  display: inline-flex;
+  min-width: 28px;
+  color: #9ed8d0;
 }
 
 .lens-actions {
@@ -1396,6 +1665,36 @@ function updateHighlights() {
   padding: 0 12px 12px;
 }
 
+.source-box {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(255, 232, 199, 0.18);
+  border-radius: 7px;
+  background: rgba(255, 250, 244, 0.08);
+}
+
+.source-box.light {
+  margin: 0 0 10px;
+  border-color: #f0e0dc;
+  background: #fffaf8;
+}
+
+.source-meta {
+  margin-bottom: 6px;
+  color: #a88780;
+  font-size: 11px;
+}
+
+.source-text {
+  max-height: 180px;
+  overflow: auto;
+  color: inherit;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.6;
+  font-size: 12px;
+}
+
 .candidate-line {
   margin-top: 8px;
   border: 1px solid #f0e0dc;
@@ -1441,6 +1740,30 @@ function updateHighlights() {
   color: #7a6a6a;
   font-size: 12px;
   flex-wrap: wrap;
+}
+
+.candidate-source {
+  margin: 0 10px 8px;
+  padding: 8px 9px;
+  border: 1px solid #f0e0dc;
+  border-radius: 6px;
+  background: #fffaf8;
+  color: #6f5d5d;
+  font-size: 12px;
+}
+
+.candidate-source summary {
+  cursor: pointer;
+  color: #a88780;
+}
+
+.candidate-source div {
+  margin-top: 6px;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.55;
 }
 
 .score-actions {

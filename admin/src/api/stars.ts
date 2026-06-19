@@ -16,6 +16,9 @@ export interface StarItem {
   reviewed_at?: string | null
   activation_count?: number
   last_activated_at?: string | null
+  source_model?: string | null
+  source_session_id?: string | null
+  source_excerpt?: string | null
   created_at?: string | null
   updated_at?: string | null
 }
@@ -78,6 +81,7 @@ export interface StarGraphLink {
   relation_type: string
   confidence?: number
   weight?: number
+  position?: number | null
   bidirectional?: boolean
   times_confirmed?: number
   last_confirmed_at?: string | null

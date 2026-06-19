@@ -50,6 +50,7 @@ class FakeSupabase:
     async def insert(self, table, data):
         row = dict(data)
         row.setdefault("id", self._new_id(table))
+        row.setdefault("metadata", {})
         row.setdefault("created_at", "2026-06-18T00:00:00+00:00")
         row.setdefault("updated_at", row["created_at"])
         self.tables.setdefault(table, []).append(row)
@@ -137,6 +138,54 @@ def test_review_limits_candidates_and_missed_feedback():
     assert feedback["ok"] is True
     assert feedback["feedback"]["feedback"] == "missed"
     assert feedback["feedback"]["expected_node_id"] == "shenyu_stars-3"
+
+
+def test_admin_review_does_not_mark_shenyu_reviewed_until_feedback_complete():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        await service.create_star("Am · 第一颗星")
+        await service.create_star("Am · 第二颗星")
+        result = await service.review(limit_new=1, candidates_per_star=1, total_candidate_limit=1, review_scope="admin")
+        seed_id = result["items"][0]["star"]["id"]
+        candidate = result["items"][0]["candidates"][0]
+        after_admin_pick = [row for row in supabase.tables["shenyu_stars"] if row["id"] == seed_id][0]
+        await service.feedback(
+            feedback="positive",
+            run_id=candidate["run_id"],
+            candidate_id=candidate["candidate_id"],
+            candidate_star_id=candidate["id"],
+            scored_by="圆圆",
+            metadata={"surface": "admin:stars"},
+        )
+        after_feedback = [row for row in supabase.tables["shenyu_stars"] if row["id"] == seed_id][0]
+        return result, after_admin_pick, after_feedback
+
+    result, after_admin_pick, after_feedback = asyncio.run(run())
+
+    assert result["review_scope"] == "admin"
+    assert after_admin_pick.get("reviewed_at") is None
+    assert after_feedback.get("reviewed_at") is None
+    assert after_feedback["metadata"]["admin_reviewed_at"]
+
+
+def test_shenyu_review_still_marks_reviewed_at():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        await service.create_star("Am · 第一颗星")
+        await service.create_star("Am · 第二颗星")
+        result = await service.review(limit_new=1, candidates_per_star=1, total_candidate_limit=1)
+        seed_id = result["items"][0]["star"]["id"]
+        seed = [row for row in supabase.tables["shenyu_stars"] if row["id"] == seed_id][0]
+        return result, seed
+
+    result, seed = asyncio.run(run())
+
+    assert result["review_scope"] == "shenyu"
+    assert seed.get("reviewed_at")
 
 
 def test_star_graph_returns_links():

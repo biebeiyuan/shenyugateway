@@ -57,13 +57,13 @@ async function checkHealth() {
 </template>
 
 <style>
+@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400;1,500&display=swap');
+
 * {
   margin: 0;
   padding: 0;
   box-sizing: border-box;
 }
-
-@import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;1,400;1,500&display=swap');
 
 body {
   font-family: 'Georgia', 'Noto Serif SC', -apple-system, 'Segoe UI', serif;

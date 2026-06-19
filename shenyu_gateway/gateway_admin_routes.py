@@ -407,6 +407,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             candidates_per_star=candidates_per_star,
             total_candidate_limit=total_candidate_limit,
             session_tag=session_tag,
+            review_scope="admin",
         )
         if not result.get("ok"):
             raise HTTPException(status_code=400, detail=result.get("error") or "star review failed")
