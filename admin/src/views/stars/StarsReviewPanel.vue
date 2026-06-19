@@ -191,7 +191,7 @@ function connectCandidate(seed: StarItem, candidate: StarCandidate) {
 .seed-head {
   width: 100%;
   display: grid;
-  grid-template-columns: auto auto minmax(0, 1fr) auto;
+  grid-template-columns: auto minmax(64px, auto) minmax(0, 1fr) auto;
   gap: 10px;
   align-items: center;
   padding: 12px;
@@ -222,9 +222,22 @@ function connectCandidate(seed: StarItem, candidate: StarCandidate) {
 
 .seed-chord,
 .candidate-chord {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  max-width: 92px;
+  min-height: 26px;
+  padding: 2px 8px;
+  border: 1px solid #ead4cf;
+  border-radius: 999px;
+  background: #fffaf8;
   color: #967180;
   font-weight: 700;
   white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  line-height: 1.2;
 }
 
 .seed-text,
@@ -233,6 +246,7 @@ function connectCandidate(seed: StarItem, candidate: StarCandidate) {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  line-height: 1.45;
 }
 
 .seed-count,
@@ -287,7 +301,7 @@ function connectCandidate(seed: StarItem, candidate: StarCandidate) {
 .candidate-main {
   width: 100%;
   display: grid;
-  grid-template-columns: 74px 70px minmax(0, 1fr) 54px;
+  grid-template-columns: 74px minmax(64px, auto) minmax(0, 1fr) 54px;
   gap: 8px;
   align-items: center;
   padding: 10px;
@@ -351,9 +365,48 @@ function connectCandidate(seed: StarItem, candidate: StarCandidate) {
 }
 
 @media (max-width: 980px) {
-  .candidate-main,
   .seed-head {
     grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 8px;
+  }
+
+  .seed-chord {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .seed-text {
+    grid-column: 2 / 4;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+
+  .seed-count {
+    grid-column: 2;
+  }
+
+  .candidate-main {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    gap: 7px 8px;
+  }
+
+  .candidate-chord {
+    grid-column: 1;
+    grid-row: 1;
+    justify-self: start;
+  }
+
+  .candidate-text {
+    grid-column: 1 / 3;
+    grid-row: 2;
+    white-space: normal;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
   }
 
   .candidate-status,

@@ -320,7 +320,6 @@ function clearSeedIfEmpty(seedId: string) {
         <div>
           <div class="page-eyebrow">Star Memory</div>
           <h2>星星</h2>
-          <p>一次一小口，连线、漏反、该反不该反都从这里记。</p>
         </div>
         <div class="head-actions">
           <NButton size="small" @click="router.push('/stars/map')">记忆星图</NButton>
@@ -422,12 +421,6 @@ function clearSeedIfEmpty(seedId: string) {
   font-size: 34px;
   font-weight: 500;
   letter-spacing: 0;
-}
-
-.stars-head p {
-  margin: 0;
-  color: #8b7b79;
-  font-size: 13px;
 }
 
 .head-actions {

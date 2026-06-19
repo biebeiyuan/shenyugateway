@@ -35,7 +35,6 @@ import {
   rootFromStar,
   rootLabel,
   sortLinks,
-  sourceMeta,
 } from './starUi'
 import { playConstellationMelody } from './starMelody'
 
@@ -50,10 +49,9 @@ const graphStars = ref<StarItem[]>([])
 const graphLinks = ref<StarGraphLink[]>([])
 const mapLoading = ref(false)
 const mapError = ref('')
-const graphLimit = ref(320)
-const graphSessionTag = ref('')
 const selectedMapStarId = ref('')
 const playingConstellation = ref(false)
+const refreshFlash = ref(false)
 
 const canvasRef = ref<HTMLCanvasElement | null>(null)
 let renderer: WebGLRenderer | null = null
@@ -132,8 +130,7 @@ async function loadGraph() {
   try {
     const result = await fetchStarGraph({
       status: 'active',
-      limit: Number(graphLimit.value || 320),
-      session_tag: graphSessionTag.value.trim() || undefined,
+      limit: 320,
     })
     graphStars.value = result.stars || []
     graphLinks.value = result.links || []
@@ -141,9 +138,6 @@ async function loadGraph() {
       selectedMapStarId.value = props.initialStarId
     } else if (selectedMapStarId.value && !graphStars.value.some((item) => item.id === selectedMapStarId.value)) {
       selectedMapStarId.value = ''
-    }
-    if (!selectedMapStarId.value && graphStars.value.length) {
-      selectedMapStarId.value = graphStars.value[0].id
     }
     rebuildStarfield()
   } catch {
@@ -153,6 +147,17 @@ async function loadGraph() {
     rebuildStarfield()
   } finally {
     mapLoading.value = false
+  }
+}
+
+async function refreshGraph() {
+  refreshFlash.value = true
+  try {
+    await loadGraph()
+  } finally {
+    window.setTimeout(() => {
+      refreshFlash.value = false
+    }, 380)
   }
 }
 
@@ -510,33 +515,33 @@ function updateHighlights() {
       <div class="sky-head">
         <div>
           <div class="eyebrow">Star Memory</div>
-          <h2>记忆星图</h2>
+          <div class="sky-title-row">
+            <h2>记忆星图</h2>
+            <button
+              class="star-refresh"
+              type="button"
+              :class="{ loading: mapLoading, flash: refreshFlash }"
+              :disabled="mapLoading"
+              aria-label="刷新星图"
+              title="刷新星图"
+              @click="refreshGraph"
+            >
+              ✦
+            </button>
+          </div>
         </div>
         <div class="sky-nav">
           <div class="sky-stats">
-            <span>{{ starCount }} stars</span>
+            <span>{{ starCount }} 星</span>
             <button type="button" :disabled="!mapConstellations.length" @click="jumpToNextConstellation">
               {{ mapConstellations.length }} 星座 / {{ linkCount }} 连接
             </button>
-            <span v-if="mapLoading">syncing</span>
           </div>
           <NButton size="small" ghost @click="router.push('/stars')">回到星星</NButton>
         </div>
       </div>
-      <div class="sky-controls">
-        <label class="ghost-field">
-          <span>session_tag</span>
-          <input v-model="graphSessionTag" class="ghost-input compact" placeholder="留空=全部">
-        </label>
-        <label class="ghost-field">
-          <span>加载上限</span>
-          <input v-model="graphLimit" class="ghost-input tiny" type="number" min="20" max="1000">
-        </label>
-        <NButton size="small" :loading="mapLoading" @click="loadGraph">刷新星图</NButton>
-      </div>
       <div v-if="mapError" class="map-error">{{ mapError }}</div>
-      <aside class="memory-lens" :class="{ empty: !selectedMapStar }">
-        <template v-if="selectedMapStar">
+      <aside v-if="selectedMapStar" class="memory-lens">
           <div class="lens-top">
             <div class="lens-tags">
               <NTag size="small">{{ rootLabel(selectedMapStar) }}</NTag>
@@ -546,10 +551,6 @@ function updateHighlights() {
             <button class="lens-close" type="button" aria-label="收起详情" @click="closeMapLens">×</button>
           </div>
           <p>{{ selectedMapStar.content }}</p>
-          <div v-if="selectedMapStar.source_excerpt" class="source-box">
-            <div class="source-meta">{{ sourceMeta(selectedMapStar) }}</div>
-            <div class="source-text">{{ selectedMapStar.source_excerpt }}</div>
-          </div>
           <div class="lens-time">updated {{ formatTime(selectedMapStar.updated_at) }}</div>
           <div v-if="connectedMapStarRows.length" class="linked-strip">
             <button
@@ -574,10 +575,6 @@ function updateHighlights() {
             </NButton>
             <NButton size="tiny" @click="toggleConstant(selectedMapStar)">{{ selectedMapStar.is_constant ? '取消恒星' : '设为恒星' }}</NButton>
           </div>
-        </template>
-        <template v-else>
-          <span>还没有星星</span>
-        </template>
       </aside>
     </div>
   </section>
@@ -623,7 +620,6 @@ function updateHighlights() {
 }
 
 .sky-head,
-.sky-controls,
 .memory-lens {
   position: absolute;
   z-index: 2;
@@ -654,6 +650,12 @@ function updateHighlights() {
   text-transform: uppercase;
 }
 
+.sky-title-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+}
+
 .sky-head h2 {
   margin: 3px 0 0;
   color: #fff8ed;
@@ -661,6 +663,50 @@ function updateHighlights() {
   font-size: 42px;
   font-weight: 400;
   letter-spacing: 0;
+}
+
+.star-refresh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  margin-top: 6px;
+  border: 1px solid rgba(255, 232, 199, 0.24);
+  border-radius: 50%;
+  background: rgba(255, 250, 244, 0.1);
+  color: #ffe8c7;
+  cursor: pointer;
+  font-size: 18px;
+  line-height: 1;
+  text-shadow: 0 0 12px rgba(255, 226, 163, 0.65);
+  transition: transform 0.18s, background 0.18s, box-shadow 0.18s;
+  pointer-events: auto;
+}
+
+.star-refresh:hover,
+.star-refresh.loading,
+.star-refresh.flash {
+  background: rgba(255, 232, 199, 0.2);
+  box-shadow: 0 0 22px rgba(255, 226, 163, 0.42);
+  transform: rotate(18deg) scale(1.08);
+}
+
+.star-refresh.loading {
+  animation: pulse-star 0.9s ease-in-out infinite alternate;
+}
+
+.star-refresh:disabled {
+  cursor: default;
+}
+
+@keyframes pulse-star {
+  from {
+    opacity: 0.62;
+  }
+  to {
+    opacity: 1;
+  }
 }
 
 .sky-stats {
@@ -696,49 +742,10 @@ function updateHighlights() {
   opacity: 0.62;
 }
 
-.sky-controls {
-  left: 24px;
-  bottom: 22px;
-  display: flex;
-  gap: 8px;
-  align-items: center;
-  flex-wrap: wrap;
-}
-
-.ghost-field {
-  display: grid;
-  gap: 4px;
-  color: rgba(255, 232, 199, 0.68);
-  font-size: 11px;
-}
-
-.ghost-input {
-  min-height: 34px;
-  padding: 6px 10px;
-  border: 1px solid rgba(255, 232, 199, 0.28);
-  border-radius: 6px;
-  background: rgba(255, 250, 244, 0.1);
-  color: #fff8ed;
-  outline: none;
-  transition: border-color 0.16s, background 0.16s;
-}
-
-.ghost-input::placeholder {
-  color: rgba(255, 232, 199, 0.55);
-}
-
-.ghost-input.compact {
-  width: 132px;
-}
-
-.ghost-input.tiny {
-  width: 76px;
-}
-
 .map-error {
   position: absolute;
   left: 24px;
-  bottom: 70px;
+  bottom: 24px;
   z-index: 2;
   color: #ffd4c7;
   font-size: 12px;
@@ -754,10 +761,6 @@ function updateHighlights() {
   background: rgba(22, 19, 31, 0.68);
   color: #fff7ee;
   backdrop-filter: blur(18px);
-}
-
-.memory-lens.empty {
-  color: rgba(255, 247, 238, 0.7);
 }
 
 .lens-top {
@@ -792,30 +795,6 @@ function updateHighlights() {
   white-space: pre-wrap;
   word-break: break-word;
   line-height: 1.65;
-}
-
-.source-box {
-  margin-top: 10px;
-  padding: 10px;
-  border: 1px solid rgba(255, 232, 199, 0.18);
-  border-radius: 7px;
-  background: rgba(255, 250, 244, 0.08);
-}
-
-.source-meta {
-  margin-bottom: 6px;
-  color: #f2ceb8;
-  font-size: 11px;
-}
-
-.source-text {
-  max-height: 180px;
-  overflow: auto;
-  color: inherit;
-  white-space: pre-wrap;
-  word-break: break-word;
-  line-height: 1.6;
-  font-size: 12px;
 }
 
 .lens-time {
@@ -875,12 +854,6 @@ function updateHighlights() {
     left: 16px;
     right: 16px;
     width: auto;
-  }
-
-  .sky-controls {
-    left: 16px;
-    right: 16px;
-    bottom: 204px;
   }
 }
 </style>

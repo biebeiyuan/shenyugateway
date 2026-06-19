@@ -563,6 +563,7 @@ Admin UI:
 - `admin/src/views/stars/starUi.ts` holds shared Star UI formatting and link-order helpers.
 - The "quiet Star" button disables prompt/capture/injection while keeping gateway tools on, so Shenyu can still choose to search/write/review manually.
 - The map uses live `shenyu_stars` and `shenyu_star_links`: star brightness/size follows activation count, recency, and constant status; constellation links are drawn from confirmed edges.
+- The star map intentionally keeps daily controls quiet: it loads active stars with a frontend default limit of 320 and does not expose session_tag or limit filters in the normal UI.
 - Current frontend positioning is deterministic and replaceable: chord root gives the main circular slot, stable content/id hash gives local drift, and activation/constant state affects radius/brightness. If backend embedding/UMAP coordinates are added later, replace `positionForStar()` in `StarMapView.vue` rather than rewriting the UI.
 
 Maintenance notes:
