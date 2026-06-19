@@ -115,11 +115,13 @@ def _test_pipeline(*, prepare_messages, nonstream_chat=None) -> ChatPipeline:
             message.get("content") or "",
             "",
             [],
+            [],
             {"applied": False},
         ),
         schedule_inline_memory_capture=lambda *args, **kwargs: None,
         store_heartbeat=lambda *args, **kwargs: None,
         mark_context_consumed=lambda *args, **kwargs: None,
+        write_completion_context_snapshot=lambda *args, **kwargs: None,
     )
 
 
@@ -224,6 +226,67 @@ def test_chat_pipeline_updates_single_early_log_on_success(monkeypatch):
     assert "pipeline.received" in phases
     assert "stage.plain_upstream_path" in phases
     assert entry["slow_phases"]
+
+
+def test_chat_pipeline_writes_completion_context_snapshot_after_assistant_reply(monkeypatch):
+    from shenyu_gateway import chat_pipeline
+
+    request_logs = deque(maxlen=30)
+    monkeypatch.setattr(chat_pipeline, "_request_logs", request_logs)
+    snapshots: list[tuple[dict, str]] = []
+    session = {"id": "session-1", "session_tag": "5.15", "message_count": 12}
+
+    async def prepare_messages(_request, _body):
+        return (
+            [{"role": "user", "content": "最新一问"}],
+            {
+                "session": session,
+                "is_first_turn": False,
+                "snapshot_messages": [{"role": "user", "content": "最新一问"}],
+                "snapshot_latest_user_text": "最新一问",
+                "client_message_window": {},
+                "cache_layers": {},
+                "is_hisense": False,
+                "upstream": {
+                    "chat_url": "https://example.test/v1/chat/completions",
+                    "scope": "default",
+                    "protocol": "openai",
+                    "api_key": "test",
+                },
+            },
+        )
+
+    async def build_upstream_request(*_args, **_kwargs):
+        return (
+            {"model": "test-model", "messages": [{"role": "user", "content": "最新一问"}]},
+            {},
+            "test-model",
+            {"enabled": False, "protocol": "openai", "breakpoints": []},
+            {
+                "chat_url": "https://example.test/v1/chat/completions",
+                "scope": "default",
+                "protocol": "openai",
+                "api_key": "test",
+            },
+        )
+
+    async def nonstream_chat(*_args, **_kwargs):
+        return {
+            "choices": [{"message": {"role": "assistant", "content": "最新一答"}}],
+            "usage": {},
+        }
+
+    pipeline = _test_pipeline(prepare_messages=prepare_messages, nonstream_chat=nonstream_chat)
+    pipeline.build_upstream_request = build_upstream_request
+    pipeline.write_completion_context_snapshot = lambda meta, content: snapshots.append((meta, content))
+    body = ChatRequest(model="test-model", messages=[{"role": "user", "content": "最新一问"}])
+
+    asyncio.run(pipeline.run(_fake_request({"X-Shenyu-Session-Tag": "5.15"}), body))
+
+    assert len(snapshots) == 1
+    meta, content = snapshots[0]
+    assert meta["snapshot_messages"] == [{"role": "user", "content": "最新一问"}]
+    assert content == "最新一答"
 
 
 def test_http_request_diagnostics_track_active_and_recent_events():
@@ -1148,11 +1211,13 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
                 assistant_message.get("content", ""),
                 "",
                 [],
+                [],
                 {"applied": False},
             ),
             store_heartbeat=lambda *args, **kwargs: None,
             schedule_inline_memory_capture=lambda *args, **kwargs: None,
             mark_context_consumed=lambda meta: None,
+            write_completion_context_snapshot=lambda *args, **kwargs: None,
             record_response_text=lambda log_entry, text: log_entry.__setitem__("response_text", text),
         )
 

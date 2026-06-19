@@ -34,6 +34,7 @@ from shenyu_gateway.chat_pipeline import ChatPipeline
 from shenyu_gateway.config import RuntimeConfig
 from shenyu_gateway.config_routes import ConfigRouteDeps, build_config_router
 from shenyu_gateway.context_builder import ContextBuilder
+from shenyu_gateway.context_snapshots import write_completion_context_snapshot as _write_completion_context_snapshot
 from shenyu_gateway.context_layers import (
     assemble_layered_messages,
     non_system_message_count as _non_system_message_count,
@@ -239,6 +240,7 @@ def _chat_pipeline(store: GatewayStore) -> ChatPipeline:
         schedule_inline_memory_capture=_schedule_inline_memory_capture,
         store_heartbeat=_store_heartbeat,
         mark_context_consumed=_mark_context_consumed,
+        write_completion_context_snapshot=_write_completion_snapshot,
     )
 
 
@@ -693,6 +695,8 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         "session": session,
         "package": package,
         "is_first_turn": is_first_turn,
+        "snapshot_messages": snapshot_messages,
+        "snapshot_latest_user_text": _latest_user_text(snapshot_messages),
         "cache_layers": layers,
         "client_message_window": trim_meta,
         "pending_gateway_tool_turn_ids": pending_gateway_meta.get("pending_gateway_tool_turn_ids", []),
@@ -708,6 +712,10 @@ def _inject_pending_gateway_tool_turns(messages, store, session_id):
 
 def _mark_context_consumed(meta: dict):
     _mark_context_consumed_impl(meta, store=session_store)
+
+
+def _write_completion_snapshot(meta: dict, assistant_content: str):
+    return _write_completion_context_snapshot(session_store, meta, assistant_content)
 
 
 def _store_heartbeat(session_id: str, session: dict, content: str):
@@ -788,6 +796,7 @@ def _make_internal_tool_loop_context(
         store_heartbeat=_store_heartbeat,
         schedule_inline_memory_capture=_schedule_inline_memory_capture,
         mark_context_consumed=_mark_context_consumed,
+        write_completion_context_snapshot=_write_completion_snapshot,
         record_response_text=_record_response_text,
     )
 

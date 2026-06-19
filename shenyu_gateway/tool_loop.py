@@ -56,6 +56,7 @@ class InternalToolLoopContext:
     store_heartbeat: Callable[[str, dict, str], None]
     schedule_inline_memory_capture: Callable[[Any, dict, list[Any], list[Any], str, str], None]
     mark_context_consumed: Callable[[dict], None]
+    write_completion_context_snapshot: Callable[[dict, str], Any]
     record_response_text: Callable[[dict, str], None]
     last_fallback_meta: dict[str, Any] = field(default_factory=lambda: {"applied": False})
 
@@ -568,6 +569,7 @@ async def _finalize_non_gateway_tool_reply(
         ctx.log_entry["empty_visible_response_fallback"] = True
         ctx.log_entry["empty_visible_response_fallback_detail"] = fallback_meta
     ctx.sessions.log_assistant_output(ctx.session_id, assistant_message)
+    ctx.write_completion_context_snapshot(ctx.meta, clean_content)
     ctx.schedule_inline_memory_capture(ctx.request, ctx.session, inline_memories, inline_stars, clean_content, ctx.body.model)
 
 

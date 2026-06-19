@@ -61,6 +61,7 @@ class ChatPipeline:
     schedule_inline_memory_capture: Callable[[Request, dict, list[Any], list[Any], str, str], None]
     store_heartbeat: Callable[[str, dict, str], None]
     mark_context_consumed: Callable[[dict], None]
+    write_completion_context_snapshot: Callable[[dict, str], Any]
 
     async def run(self, request: Request, body: Any):
         t0 = _time.monotonic()
@@ -423,6 +424,7 @@ class ChatPipeline:
                 if collected_text:
                     assistant_msg = {"role": "assistant", "content": collected_text}
                     sessions.log_assistant_output(session_id, assistant_msg)
+                    self.write_completion_context_snapshot(meta, collected_text)
                     self.schedule_inline_memory_capture(
                         request,
                         session,
@@ -465,6 +467,7 @@ class ChatPipeline:
             log_entry["empty_visible_response_fallback_detail"] = fallback_meta
 
         sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content})
+        self.write_completion_context_snapshot(meta, clean_content)
         self.schedule_inline_memory_capture(request, session, inline_memories, inline_stars, clean_content, body.model)
         self.mark_context_consumed(meta)
         log_entry["status"] = "ok"

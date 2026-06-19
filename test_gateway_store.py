@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from shenyu_gateway.context_snapshots import write_completion_context_snapshot
 from shenyu_gateway.gateway_admin_routes import GatewayAdminRouteDeps, build_gateway_admin_router
 from shenyu_gateway.prepare_messages import maybe_prepare_cold_start_snapshot
 from shenyu_gateway.store import GatewayStore
@@ -174,6 +175,24 @@ def test_latest_session_context_uses_latest_snapshot_tail_without_splicing_old_w
         "new a2",
         "new tail",
     ]
+
+
+def test_completion_context_snapshot_appends_latest_assistant_reply(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("5.15", "operit")
+    meta = {
+        "session": session,
+        "snapshot_messages": [
+            {"role": "user", "content": "最新一问"},
+        ],
+        "snapshot_latest_user_text": "最新一问",
+    }
+
+    write_completion_context_snapshot(store, meta, "最新一答")
+    sources = store.latest_session_context("5.15", limit_messages=10)
+
+    assert [msg["content"] for msg in sources[0]["messages"]] == ["最新一问", "最新一答"]
+    assert sources[0]["latest_user_text"] == "最新一问"
 
 
 def test_cold_start_uses_active_preview_snapshot_before_auto_source(tmp_path):
