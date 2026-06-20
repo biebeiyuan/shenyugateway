@@ -13,6 +13,7 @@ import {
   type StarItem,
   type StarReviewItem,
 } from '@/api/stars'
+import StarsListPanel from '@/views/stars/StarsListPanel.vue'
 import StarsReviewPanel from '@/views/stars/StarsReviewPanel.vue'
 import StarsSettingsPanel from '@/views/stars/StarsSettingsPanel.vue'
 import StarsWritePanel from '@/views/stars/StarsWritePanel.vue'
@@ -50,7 +51,7 @@ const STAR_DEFAULTS: Partial<GatewayConfig> = {
   star_ignored_penalty: 0.18,
 }
 
-type WorkMode = 'score' | 'settings' | 'write'
+type WorkMode = 'score' | 'settings' | 'write' | 'list'
 type FeedbackCandidatePayload = {
   seed: StarItem
   candidate: StarCandidate
@@ -334,6 +335,7 @@ function clearSeedIfEmpty(seedId: string) {
         </button>
         <button type="button" :class="{ active: mode === 'settings' }" @click="mode = 'settings'">配置</button>
         <button type="button" :class="{ active: mode === 'write' }" @click="mode = 'write'">写星</button>
+        <button type="button" :class="{ active: mode === 'list' }" @click="mode = 'list'">星列</button>
       </div>
 
       <StarsReviewPanel
@@ -355,6 +357,10 @@ function clearSeedIfEmpty(seedId: string) {
         @save="saveSettings"
         @quiet-tools="setStarQuietTools"
         @reset="resetStarDefaults"
+      />
+      <StarsListPanel
+        v-else-if="mode === 'list'"
+        @select-star="selectStar"
       />
       <StarsWritePanel
         v-else

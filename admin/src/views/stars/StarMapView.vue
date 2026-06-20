@@ -476,10 +476,31 @@ function onMapPointer(event: PointerEvent) {
   const starId = String(intersects[0].object.userData.starId || '')
   if (!starId) return
   selectedMapStarId.value = starId
-  updateHighlights()
+  updateHighlights(true)
 }
 
-function updateHighlights() {
+function focusCamera(starId: string) {
+  const obj = starObjects.get(starId)
+  if (!obj || !camera || !controls) return
+  const target = obj.mesh.position.clone()
+  const startTarget = controls.target.clone()
+  const startPos = camera.position.clone()
+  const dir = target.clone().sub(startPos).normalize()
+  const endPos = target.clone().sub(dir.multiplyScalar(28))
+  let frame = 0
+  const totalFrames = 30
+  function step() {
+    frame++
+    const t = 1 - Math.pow(1 - frame / totalFrames, 3)
+    controls!.target.lerpVectors(startTarget, target, t)
+    camera!.position.lerpVectors(startPos, endPos, t)
+    controls!.update()
+    if (frame < totalFrames) requestAnimationFrame(step)
+  }
+  step()
+}
+
+function updateHighlights(autoFocus = false) {
   const selected = selectedMapStarId.value
   const connectedIds = new Set<string>()
   if (selected) {
@@ -495,15 +516,20 @@ function updateHighlights() {
     const scale = object.baseScale * (selectedSelf ? 1.8 : linked ? 1.34 : 1)
     object.mesh.scale.setScalar(scale)
     object.glow.scale.setScalar(scale * (selectedSelf ? 8.5 : linked ? 7 : 5.8))
-    object.mesh.material.opacity = focus ? 1 : 0.28
+    object.mesh.material.opacity = focus ? 1 : 0.18
     const glowMaterial = object.glow.material as SpriteMaterial
-    glowMaterial.opacity = selectedSelf ? 0.96 : linked ? 0.74 : focus ? 0.38 : 0.12
+    glowMaterial.opacity = selectedSelf ? 0.96 : linked ? 0.74 : focus ? 0.38 : 0.08
   }
   for (const link of linkObjects) {
     const touches = selected && (link.source === selected || link.target === selected)
     link.line.material.opacity = touches ? 0.86 : selected ? 0.09 : 0.24
     link.line.material.color.set(touches ? '#ffe6a9' : '#9ed8d0')
   }
+  if (ambientPoints) {
+    const mat = ambientPoints.material as PointsMaterial
+    mat.opacity = selected ? 0.25 : 0.62
+  }
+  if (autoFocus && selected) focusCamera(selected)
 }
 </script>
 

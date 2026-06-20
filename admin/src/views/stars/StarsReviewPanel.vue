@@ -2,7 +2,7 @@
 import { ref, watch } from 'vue'
 import { NButton } from 'naive-ui'
 import type { StarCandidate, StarItem, StarReviewItem } from '@/api/stars'
-import { rootLabel, scoreParts, sourceMeta } from './starUi'
+import { formatTime, rootLabel, scoreParts, sourceMeta } from './starUi'
 
 const props = defineProps<{
   items: StarReviewItem[]
@@ -64,6 +64,11 @@ function feedbackMissed(seed: StarItem, runId?: string | null) {
 function connectCandidate(seed: StarItem, candidate: StarCandidate) {
   emit('connectCandidate', { seed, candidate })
 }
+
+function isRecent(star: StarItem | StarCandidate): boolean {
+  if (!star.created_at) return false
+  return Date.now() - Date.parse(star.created_at) < 48 * 3600 * 1000
+}
 </script>
 
 <template>
@@ -100,14 +105,18 @@ function connectCandidate(seed: StarItem, candidate: StarCandidate) {
       class="seed-tile"
       :class="{ open: expandedSeeds.includes(item.star.id) }"
     >
-      <button class="seed-head" type="button" @click="toggleSeed(item.star.id)">
-        <span class="seed-dot"></span>
-        <span class="seed-chord">{{ rootLabel(item.star) }}</span>
-        <span class="seed-text">{{ item.star.content }}</span>
-        <span class="seed-count">{{ item.candidates.length }} 待评</span>
-      </button>
+      <div class="seed-head-row">
+        <button class="seed-head" type="button" @click="toggleSeed(item.star.id)">
+          <span class="seed-dot" :class="{ recent: isRecent(item.star) }"></span>
+          <span class="seed-chord">{{ rootLabel(item.star) }}</span>
+          <span class="seed-text">{{ item.star.content }}</span>
+          <span class="seed-count">{{ item.candidates.length }} 待评</span>
+        </button>
+        <button class="star-jump" type="button" title="跳转星图" @click.stop="emit('selectStar', item.star.id)">✦</button>
+      </div>
 
       <div v-if="expandedSeeds.includes(item.star.id)" class="seed-body">
+        <div class="seed-full-content">{{ item.star.content }}</div>
         <div class="source-box light">
           <div class="source-meta">{{ sourceMeta(item.star) || '来源暂缺' }}</div>
           <div class="source-text">{{ item.star.source_excerpt || '这颗星没有保存来源原文。' }}</div>
@@ -118,13 +127,13 @@ function connectCandidate(seed: StarItem, candidate: StarCandidate) {
         </div>
 
         <div v-if="!item.candidates.length" class="empty-candidates">没有候选</div>
-        <div v-for="candidate in item.candidates" :key="candidate.id" class="candidate-line fresh">
-          <button class="candidate-main" type="button" @click="emit('selectStar', candidate.id)">
-            <span class="candidate-status">未评分</span>
+        <div v-for="candidate in item.candidates" :key="candidate.id" class="candidate-line fresh" :class="{ recent: isRecent(candidate) }">
+          <div class="candidate-main">
+            <span v-if="isRecent(candidate)" class="new-glow"></span>
             <span class="candidate-chord">{{ rootLabel(candidate) }}</span>
             <span class="candidate-text">{{ candidate.content }}</span>
-            <span class="candidate-score">{{ candidate.score ?? 0 }}</span>
-          </button>
+            <button class="star-jump small" type="button" title="跳转星图" @click="emit('selectStar', candidate.id)">✦</button>
+          </div>
           <details v-if="candidate.source_excerpt" class="candidate-source">
             <summary>{{ sourceMeta(candidate) || '来源原文' }}</summary>
             <div>{{ candidate.source_excerpt }}</div>
@@ -145,6 +154,94 @@ function connectCandidate(seed: StarItem, candidate: StarCandidate) {
 </template>
 
 <style scoped>
+.seed-head-row {
+  display: flex;
+  align-items: center;
+  gap: 0;
+}
+
+.seed-head-row .seed-head {
+  flex: 1;
+  min-width: 0;
+}
+
+.star-jump {
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: none;
+  background: linear-gradient(135deg, #f5d0a0, #e8a860);
+  color: #fff;
+  font-size: 13px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  margin-right: 10px;
+  transition: transform 0.16s, box-shadow 0.16s;
+}
+
+.star-jump:hover {
+  transform: scale(1.15);
+  box-shadow: 0 0 10px rgba(232, 168, 96, 0.5);
+}
+
+.star-jump.small {
+  width: 24px;
+  height: 24px;
+  font-size: 11px;
+  margin-right: 0;
+}
+
+.new-glow {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #e8a860;
+  box-shadow: 0 0 6px rgba(232, 168, 96, 0.7);
+  animation: pulse-glow 2s ease-in-out infinite;
+  flex-shrink: 0;
+}
+
+@keyframes pulse-glow {
+  0%, 100% { opacity: 1; box-shadow: 0 0 6px rgba(232, 168, 96, 0.7); }
+  50% { opacity: 0.5; box-shadow: 0 0 12px rgba(232, 168, 96, 0.4); }
+}
+
+.seed-full-content {
+  margin-bottom: 10px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #fefcfa;
+  color: #4a3535;
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.seed-dot.recent {
+  background: #e8a860;
+  box-shadow: 0 0 10px rgba(232, 168, 96, 0.6);
+  animation: pulse-glow 2s ease-in-out infinite;
+}
+
+.candidate-line.recent {
+  border-color: #f0d4a8;
+  background: linear-gradient(135deg, #fffdf8, #fff8f0);
+}
+
+@keyframes done-glow {
+  0% { box-shadow: 0 0 0 rgba(146, 186, 156, 0); }
+  50% { box-shadow: 0 0 20px rgba(146, 186, 156, 0.6); border-color: #b8d6c0; }
+  100% { box-shadow: 0 0 0 rgba(146, 186, 156, 0); }
+}
+
+.seed-tile.done {
+  animation: done-glow 1.2s ease-out;
+}
+
 .soft-toolbar,
 .missed-line {
   display: flex;
@@ -240,13 +337,19 @@ function connectCandidate(seed: StarItem, candidate: StarCandidate) {
   line-height: 1.2;
 }
 
-.seed-text,
-.candidate-text {
+.seed-text {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   line-height: 1.45;
+}
+
+.candidate-text {
+  min-width: 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+  line-height: 1.5;
 }
 
 .seed-count,
@@ -300,16 +403,11 @@ function connectCandidate(seed: StarItem, candidate: StarCandidate) {
 
 .candidate-main {
   width: 100%;
-  display: grid;
-  grid-template-columns: 74px minmax(64px, auto) minmax(0, 1fr) 54px;
+  display: flex;
   gap: 8px;
   align-items: center;
   padding: 10px;
-  border: 0;
-  background: transparent;
   color: #4a3535;
-  cursor: pointer;
-  text-align: left;
 }
 
 .candidate-detail {
@@ -389,29 +487,7 @@ function connectCandidate(seed: StarItem, candidate: StarCandidate) {
   }
 
   .candidate-main {
-    grid-template-columns: minmax(0, 1fr) auto;
-    align-items: start;
-    gap: 7px 8px;
-  }
-
-  .candidate-chord {
-    grid-column: 1;
-    grid-row: 1;
-    justify-self: start;
-  }
-
-  .candidate-text {
-    grid-column: 1 / 3;
-    grid-row: 2;
-    white-space: normal;
-    display: -webkit-box;
-    -webkit-line-clamp: 2;
-    -webkit-box-orient: vertical;
-  }
-
-  .candidate-status,
-  .candidate-score {
-    display: none;
+    flex-wrap: wrap;
   }
 
   .soft-input,
