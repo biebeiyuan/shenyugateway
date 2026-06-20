@@ -13,6 +13,7 @@ from .runtime import dt_to_iso, iso_now, json_dumps, now, parse_ts
 
 HEARTBEAT_ENTRIES_TABLE = "heartbeat_entries"
 HISENSE_HEARTBEAT_TABLE = "hisense_heartbeat"
+NEXT_REQUEST_COLD_START_TAG = "__next_request__"
 
 
 def _canonical_tool_call_ids_json(values: Any) -> tuple[list[str], str]:
@@ -205,6 +206,20 @@ class GatewayStore:
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")
             self._ensure_column(conn, HISENSE_HEARTBEAT_TABLE, "synced_at", "TEXT")
+            cold_start_active_added = self._ensure_column(
+                conn,
+                "cold_start_snapshots",
+                "active",
+                "INTEGER NOT NULL DEFAULT 1",
+            )
+            if cold_start_active_added:
+                conn.execute(
+                    """
+                    UPDATE cold_start_snapshots
+                    SET active = 0
+                    WHERE injected_count >= max_injections
+                    """
+                )
             rows = conn.execute(
                 "SELECT id, client_tool_call_ids_json FROM pending_gateway_tool_turns"
             ).fetchall()
@@ -224,6 +239,8 @@ class GatewayStore:
         existing = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in existing:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {decl}")
+            return True
+        return False
 
     def get_or_create_session(self, session_tag: str, client_name: str) -> dict:
         with self._connect() as conn:
@@ -1149,6 +1166,13 @@ class GatewayStore:
         sources = list(reversed(selected_reversed))
         return sources
 
+    def _cold_start_snapshot_from_row(self, row: sqlite3.Row | dict) -> dict:
+        item = dict(row)
+        item["sources"] = json.loads(item.get("sources_json") or "[]")
+        item["source_session_tags"] = json.loads(item.get("source_session_tags_json") or "[]")
+        item["active"] = bool(item.get("active", 1))
+        return item
+
     def write_cold_start_snapshot(
         self,
         session_id: str,
@@ -1173,6 +1197,7 @@ class GatewayStore:
             "trigger_last_active_at": trigger_last_active_at,
             "injected_count": 0,
             "max_injections": max(1, int(max_injections or 1)),
+            "active": True,
             "created_at": created_at,
         }
         with self._connect() as conn:
@@ -1204,7 +1229,7 @@ class GatewayStore:
             row = conn.execute(
                 """
                 SELECT * FROM cold_start_snapshots
-                WHERE session_id = ? AND injected_count < max_injections
+                WHERE session_id = ? AND active = 1
                 ORDER BY created_at DESC
                 LIMIT 1
                 """,
@@ -1212,10 +1237,22 @@ class GatewayStore:
             ).fetchone()
         if not row:
             return None
-        item = dict(row)
-        item["sources"] = json.loads(item.get("sources_json") or "[]")
-        item["source_session_tags"] = json.loads(item.get("source_session_tags_json") or "[]")
-        return item
+        return self._cold_start_snapshot_from_row(row)
+
+    def latest_next_request_cold_start_snapshot(self) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT * FROM cold_start_snapshots
+                WHERE session_tag = ? AND active = 1
+                ORDER BY created_at DESC
+                LIMIT 1
+                """,
+                (NEXT_REQUEST_COLD_START_TAG,),
+            ).fetchone()
+        if not row:
+            return None
+        return self._cold_start_snapshot_from_row(row)
 
     def mark_cold_start_injected(self, snapshot_id: str):
         with self._connect() as conn:
@@ -1223,7 +1260,7 @@ class GatewayStore:
                 """
                 UPDATE cold_start_snapshots
                 SET injected_count = injected_count + 1
-                WHERE id = ? AND injected_count < max_injections
+                WHERE id = ? AND active = 1
                 """,
                 (snapshot_id,),
             )
@@ -1233,7 +1270,8 @@ class GatewayStore:
             conn.execute(
                 """
                 UPDATE cold_start_snapshots
-                SET injected_count = max_injections
+                SET active = 0,
+                    injected_count = max(injected_count, max_injections)
                 WHERE id = ?
                 """,
                 (snapshot_id,),
@@ -1252,10 +1290,7 @@ class GatewayStore:
             ).fetchone()
         if not row:
             return None
-        item = dict(row)
-        item["sources"] = json.loads(item.get("sources_json") or "[]")
-        item["source_session_tags"] = json.loads(item.get("source_session_tags_json") or "[]")
-        return item
+        return self._cold_start_snapshot_from_row(row)
 
     def recent_cold_start_snapshots(self, session_id: str, limit: int = 5) -> list[dict]:
         limit = max(1, min(int(limit or 5), 50))
@@ -1271,10 +1306,7 @@ class GatewayStore:
             ).fetchall()
         snapshots = []
         for row in rows:
-            item = dict(row)
-            item["sources"] = json.loads(item.get("sources_json") or "[]")
-            item["source_session_tags"] = json.loads(item.get("source_session_tags_json") or "[]")
-            snapshots.append(item)
+            snapshots.append(self._cold_start_snapshot_from_row(row))
         return snapshots
 
     def all_cold_start_snapshots(self, session_id: str, limit: int = 1000) -> list[dict]:
@@ -1291,10 +1323,7 @@ class GatewayStore:
             ).fetchall()
         snapshots = []
         for row in rows:
-            item = dict(row)
-            item["sources"] = json.loads(item.get("sources_json") or "[]")
-            item["source_session_tags"] = json.loads(item.get("source_session_tags_json") or "[]")
-            snapshots.append(item)
+            snapshots.append(self._cold_start_snapshot_from_row(row))
         return snapshots
 
     def gateway_overview(self) -> dict:
@@ -1421,7 +1450,7 @@ class GatewayStore:
                     """
                     DELETE FROM cold_start_snapshots
                     WHERE session_id = ?
-                    AND injected_count >= max_injections
+                    AND active = 0
                     AND id NOT IN (
                         SELECT id FROM cold_start_snapshots
                         WHERE session_id = ?

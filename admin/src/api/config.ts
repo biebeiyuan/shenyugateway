@@ -231,8 +231,9 @@ export interface ColdStartPreview {
   config?: {
     message_limit?: number | null
     effective_message_limit?: number
-    current_message_count?: number
+    current_message_count?: number | null
     preview_fill_count?: number
+    source_snapshot_limit?: number
     idle_minutes?: number
     target_idle_minutes?: number | null
   }

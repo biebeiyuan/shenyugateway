@@ -91,6 +91,7 @@ export interface GatewayColdStartSnapshot {
   trigger_last_active_at: string | null
   injected_count: number
   max_injections: number
+  active?: boolean
   created_at: string
   sources: Array<{
     session_tag?: string

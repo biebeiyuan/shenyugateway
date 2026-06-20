@@ -81,8 +81,7 @@ const overview = ref<GatewayOverview | null>(null)
 const coldPreview = ref<ColdStartPreview | null>(null)
 const sessions = ref<GatewaySession[]>([])
 const selectedColdSource = ref('__auto__')
-const selectedColdTarget = ref('default')
-const coldCurrentMessageCount = ref(1)
+const selectedColdTarget = ref('__next_request__')
 const coldPreviewLoading = ref(false)
 
 const protocolOptions = [
@@ -111,7 +110,8 @@ const sourceSessionOptions = computed(() => [
   ...sessionOptions.value,
 ])
 const targetSessionOptions = computed(() => [
-  { label: '新请求头默认线程 default', value: 'default' },
+  { label: '下一条请求的实际线程头', value: '__next_request__' },
+  { label: '无请求头时的 default 会话', value: 'default' },
   ...sessionOptions.value.filter((item) => item.value !== 'default'),
 ])
 
@@ -337,17 +337,16 @@ async function loadColdPreview() {
   coldPreviewLoading.value = true
   try {
     await Promise.all([loadOverview(), loadSessions()])
-    const target = (selectedColdTarget.value || 'default').trim() || 'default'
+    const target = (selectedColdTarget.value || '__next_request__').trim() || '__next_request__'
     const source = selectedColdSource.value || '__auto__'
     selectedColdTarget.value = target
     coldPreview.value = await fetchColdStartPreview({
       target_session_tag: target,
       source_session_tag: source === '__auto__' ? undefined : source,
-      current_message_count: coldCurrentMessageCount.value ?? 1,
       persist: true,
     })
     if (coldPreview.value.persisted) {
-      message.success('已生成下一次冷启动快照')
+      message.success('已启用下一次冷启动接续')
     }
   } catch {
     coldPreview.value = null
@@ -569,22 +568,13 @@ function removeModel(index: number) {
                 tag
                 :options="targetSessionOptions"
                 size="small"
-                placeholder="default"
-              />
-            </NFormItem>
-            <NFormItem label="当前窗口已有消息">
-              <NInputNumber
-                v-model:value="coldCurrentMessageCount"
-                :min="0"
-                :max="500"
-                size="small"
-                style="width:100%"
+                placeholder="下一条请求的实际线程头"
               />
             </NFormItem>
           </div>
         </NForm>
         <div class="rev-toolbar">
-          <NButton size="tiny" :loading="coldPreviewLoading" @click="loadColdPreview">给下一次接续生成快照</NButton>
+          <NButton size="tiny" :loading="coldPreviewLoading" @click="loadColdPreview">启用冷启动接续</NButton>
           <NButton size="tiny" @click="loadOverview">刷新统计</NButton>
         </div>
         <div v-if="overview" class="overview-text">
@@ -599,8 +589,8 @@ function removeModel(index: number) {
             <div class="rev-meta">
               <span class="rev-pill">目标 {{ coldPreview.target_session_tag || '-' }}</span>
               <span class="rev-pill">来源 {{ coldPreview.source_session_tag || '-' }}</span>
-              <span class="rev-pill">已有 {{ coldPreview.config?.current_message_count || 0 }} 条</span>
-              <span class="rev-pill">缺口 {{ coldPreview.config?.preview_fill_count || 0 }} 条</span>
+              <span class="rev-pill">运行时自动识别已有窗口</span>
+              <span class="rev-pill">最多补 {{ coldPreview.config?.source_snapshot_limit || coldPreview.config?.effective_message_limit || 0 }} 条</span>
               <span class="rev-pill">来源 {{ coldPreview.snapshot?.source_message_count || 0 }} 条</span>
               <span class="rev-pill">{{ coldPreview.persisted ? '快照已冻结' : '仅预览' }}</span>
             </div>

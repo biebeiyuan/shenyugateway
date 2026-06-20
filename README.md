@@ -275,12 +275,11 @@ the normal client window at the start of a new thread: a bounded snapshot from o
 as ordinary user/assistant history before the new thread's messages, then it shrinks as the new thread grows.
 
 Admin preview is a freezing step, not just a dry render. `POST /api/gateway/cold-start/preview` selects a source
-thread and a target thread; when it finds source messages it writes a `cold_start_snapshot` for that target. The
-source defaults to the latest older thread with a request context snapshot, excluding the target thread itself. The
-target defaults to `default`, matching the thread name used by a new request without an explicit session header, but
-the admin UI can choose or type either thread explicitly. The next chat request for that target reuses the active
-snapshot and trims it to the live client-window gap, so the previewed bridge does not drift into another thread
-between preview and use.
+thread and a target mode; when it finds source messages it writes a `cold_start_snapshot`. The source defaults to the
+latest thread with a request context snapshot. The target defaults to `__next_request__`, an armed handoff mode: the
+next chat request that needs a bridge binds the frozen source snapshot to that request's real session header, such as
+`6.20`. The admin UI can still choose or type an explicit target thread. `default` only means the fixed gateway session
+used when a chat request has no session header; it is not the same thing as the next new request header.
 If no preview snapshot exists, automatic cold start also chooses the latest source thread that has a request context
 snapshot, excluding the target when appropriate, then reads only that thread.
 
@@ -288,11 +287,12 @@ Flow:
 
 1. `_prepare_messages()` opens the session and stores a `request_context_snapshot`.
 2. `_maybe_prepare_cold_start_snapshot()` checks whether the request is a new window or a stale window.
-3. It calculates the gap between the target window and the current client message count.
-4. It first reuses an active preview snapshot if one exists for this target session.
-5. Otherwise it chooses one latest source thread and reads the tail of its newest snapshot via `latest_session_context()`.
-6. It inserts only the number needed to fill that gap.
-7. Once the new thread reaches the target window size, the bridge automatically stops.
+3. It calculates the gap between the target window and the real current client message count.
+4. It first reuses an active snapshot for this target session, trimming the frozen source tail to the live gap.
+5. If no target snapshot exists, it binds an armed `__next_request__` snapshot to this real request session when present.
+6. Otherwise it chooses one latest source thread and freezes up to the target window size from its newest snapshot.
+7. It inserts only the number needed to fill the current live gap. A single full client window merely skips injection
+   for that request; it does not complete the active bridge.
 
 Config:
 

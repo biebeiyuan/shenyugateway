@@ -5,6 +5,7 @@ from typing import Any, Optional
 
 from .runtime import json_dumps as _json_dumps, logger, now as _now, parse_ts as _parse_ts
 from .context_layers import trim_cold_start_sources as _trim_cold_start_sources
+from .store import NEXT_REQUEST_COLD_START_TAG
 from .tool_registry import is_gateway_native_tool
 from .tool_loop import _tool_call_name
 
@@ -14,6 +15,19 @@ def cold_start_idle_minutes(session: dict) -> float:
     if not last_active:
         return 0.0
     return max((_now() - last_active).total_seconds() / 60.0, 0.0)
+
+
+def _trim_cold_start_snapshot(snapshot: dict, fill_count: int) -> Optional[dict]:
+    fill_count = max(int(fill_count or 0), 0)
+    if fill_count <= 0:
+        return None
+    trimmed = dict(snapshot)
+    trimmed["sources"] = _trim_cold_start_sources(trimmed.get("sources") or [], fill_count)
+    trimmed["source_message_count"] = sum(len(source.get("messages") or []) for source in trimmed.get("sources") or [])
+    trimmed["source_session_tags"] = sorted(
+        {source.get("session_tag") for source in trimmed.get("sources") or [] if source.get("session_tag")}
+    )
+    return trimmed if trimmed["source_message_count"] > 0 else None
 
 
 def maybe_prepare_cold_start_snapshot(
@@ -32,18 +46,23 @@ def maybe_prepare_cold_start_snapshot(
 
     active = store.latest_active_cold_start_snapshot(session["id"])
     if active:
-        if fill_count <= 0:
-            store.complete_cold_start_snapshot(active["id"])
-            return None
-        active["sources"] = _trim_cold_start_sources(active.get("sources") or [], fill_count)
-        active["source_message_count"] = sum(len(source.get("messages") or []) for source in active.get("sources") or [])
-        active["source_session_tags"] = sorted(
-            {source.get("session_tag") for source in active.get("sources") or [] if source.get("session_tag")}
-        )
-        return active
+        return _trim_cold_start_snapshot(active, fill_count)
 
     if fill_count <= 0:
         return None
+
+    pending_next_request = store.latest_next_request_cold_start_snapshot()
+    if pending_next_request:
+        bound = store.write_cold_start_snapshot(
+            session_id=session["id"],
+            session_tag=session["session_tag"],
+            reason=pending_next_request.get("reason") or f"manual_preview:{NEXT_REQUEST_COLD_START_TAG}",
+            sources=pending_next_request.get("sources") or [],
+            trigger_last_active_at=session.get("last_active_at"),
+            max_injections=max(int(target_messages or 8), 1),
+        )
+        store.complete_cold_start_snapshot(pending_next_request["id"])
+        return _trim_cold_start_snapshot(bound, fill_count)
 
     reason = ""
     since = None
@@ -62,13 +81,13 @@ def maybe_prepare_cold_start_snapshot(
     )
     sources = store.latest_session_context(
         source_session["session_tag"],
-        limit_messages=fill_count,
+        limit_messages=target_messages,
         since=since,
     ) if source_session else []
     if not sources:
         return None
 
-    return store.write_cold_start_snapshot(
+    snapshot = store.write_cold_start_snapshot(
         session_id=session["id"],
         session_tag=session["session_tag"],
         reason=reason,
@@ -76,6 +95,7 @@ def maybe_prepare_cold_start_snapshot(
         trigger_last_active_at=session.get("last_active_at"),
         max_injections=max(cfg.max_client_messages or cfg.cold_start_message_limit or 8, 1),
     )
+    return _trim_cold_start_snapshot(snapshot, fill_count)
 
 
 def prune_runtime_state(*, cfg: Any, store: Any, session_id: Optional[str] = None) -> dict[str, int]:

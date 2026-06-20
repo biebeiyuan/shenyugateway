@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 from shenyu_gateway.context_snapshots import write_completion_context_snapshot
 from shenyu_gateway.gateway_admin_routes import GatewayAdminRouteDeps, build_gateway_admin_router
 from shenyu_gateway.prepare_messages import maybe_prepare_cold_start_snapshot
-from shenyu_gateway.store import GatewayStore
+from shenyu_gateway.store import GatewayStore, NEXT_REQUEST_COLD_START_TAG
 
 
 def test_hisense_heartbeats_are_stored_separately(tmp_path):
@@ -255,7 +255,138 @@ def test_cold_start_uses_active_preview_snapshot_before_auto_source(tmp_path):
     ]
 
 
-def test_cold_start_preview_auto_source_uses_latest_old_thread_and_gap(tmp_path):
+def test_active_cold_start_snapshot_survives_one_full_window(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    target = store.get_or_create_session("6.20", "operit")
+    cfg = SimpleNamespace(
+        enable_cold_start=True,
+        cold_start_message_limit=5,
+        max_client_messages=5,
+        cold_start_idle_minutes=120,
+    )
+    store.write_cold_start_snapshot(
+        session_id=target["id"],
+        session_tag=target["session_tag"],
+        reason="manual_preview:new_window",
+        sources=[
+            {
+                "session_id": "source",
+                "session_tag": "5.15",
+                "client_name": "operit",
+                "snapshot_at": "now",
+                "latest_user_text": "source 4",
+                "messages": [
+                    {"role": "user", "content": f"source {index}"}
+                    for index in range(5)
+                ],
+            }
+        ],
+        trigger_last_active_at=target.get("last_active_at"),
+        max_injections=5,
+    )
+
+    assert maybe_prepare_cold_start_snapshot(
+        target,
+        is_first_turn=False,
+        current_message_count=5,
+        cfg=cfg,
+        store=store,
+    ) is None
+    assert store.latest_active_cold_start_snapshot(target["id"]) is not None
+
+    snapshot = maybe_prepare_cold_start_snapshot(
+        target,
+        is_first_turn=False,
+        current_message_count=2,
+        cfg=cfg,
+        store=store,
+    )
+
+    assert [msg["content"] for source in snapshot["sources"] for msg in source["messages"]] == [
+        "source 2",
+        "source 3",
+        "source 4",
+    ]
+
+
+def test_active_cold_start_snapshot_survives_store_restart_after_old_max_count(tmp_path):
+    db_path = tmp_path / "gateway.db"
+    store = GatewayStore(str(db_path))
+    target = store.get_or_create_session("6.20", "operit")
+    snapshot = store.write_cold_start_snapshot(
+        session_id=target["id"],
+        session_tag=target["session_tag"],
+        reason="manual_preview:new_window",
+        sources=[
+            {
+                "session_id": "source",
+                "session_tag": "5.15",
+                "client_name": "operit",
+                "snapshot_at": "now",
+                "latest_user_text": "source",
+                "messages": [{"role": "user", "content": "source"}],
+            }
+        ],
+        trigger_last_active_at=target.get("last_active_at"),
+        max_injections=1,
+    )
+    store.mark_cold_start_injected(snapshot["id"])
+
+    reopened = GatewayStore(str(db_path))
+
+    assert reopened.latest_active_cold_start_snapshot(target["id"]) is not None
+
+
+def test_next_request_cold_start_binds_to_actual_session_header(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    pending = store.get_or_create_session(NEXT_REQUEST_COLD_START_TAG, "cold-start-next-request")
+    source = store.get_or_create_session("5.15", "operit")
+    target = store.get_or_create_session("6.20", "operit")
+    cfg = SimpleNamespace(
+        enable_cold_start=True,
+        cold_start_message_limit=5,
+        max_client_messages=5,
+        cold_start_idle_minutes=120,
+    )
+    store.write_request_context_snapshot(
+        session_id=source["id"],
+        session_tag=source["session_tag"],
+        client_name=source["client_name"],
+        latest_user_text="source 5",
+        messages=[
+            {"role": "user" if index % 2 == 0 else "assistant", "content": f"source {index}"}
+            for index in range(6)
+        ],
+    )
+    store.write_cold_start_snapshot(
+        session_id=pending["id"],
+        session_tag=pending["session_tag"],
+        reason="manual_preview:next_request",
+        sources=store.latest_session_context("5.15", limit_messages=5),
+        trigger_last_active_at=pending.get("last_active_at"),
+        max_injections=5,
+    )
+
+    snapshot = maybe_prepare_cold_start_snapshot(
+        target,
+        is_first_turn=True,
+        current_message_count=2,
+        cfg=cfg,
+        store=store,
+    )
+
+    assert snapshot["session_tag"] == "6.20"
+    assert snapshot["reason"] == "manual_preview:next_request"
+    assert [msg["content"] for source in snapshot["sources"] for msg in source["messages"]] == [
+        "source 3",
+        "source 4",
+        "source 5",
+    ]
+    assert store.latest_next_request_cold_start_snapshot() is None
+    assert store.latest_active_cold_start_snapshot(target["id"]) is not None
+
+
+def test_cold_start_preview_auto_source_uses_latest_old_thread_and_full_source_tail(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     target = store.get_or_create_session("default", "operit")
     older = store.get_or_create_session("5.15", "operit")
@@ -332,9 +463,10 @@ def test_cold_start_preview_auto_source_uses_latest_old_thread_and_gap(tmp_path)
     assert payload["source_session_tag"] == "5.15"
     assert payload["config"]["preview_fill_count"] == 58
     assert payload["config"]["current_message_count"] == 50
-    assert payload["snapshot"]["source_message_count"] == 58
+    assert payload["config"]["source_snapshot_limit"] == 108
+    assert payload["snapshot"]["source_message_count"] == 70
     assert [source["session_tag"] for source in payload["sources"]] == ["5.15"]
-    assert [msg["content"] for msg in payload["sources"][0]["messages"]][:2] == ["source 12", "source 13"]
+    assert [msg["content"] for msg in payload["sources"][0]["messages"]][:2] == ["source 0", "source 1"]
 
 
 def test_config_overrides_round_trip(tmp_path):

@@ -235,7 +235,7 @@ function rawWindowTitle(item: GatewayRawRequestWindow) {
 }
 
 function coldTitle(item: GatewayColdStartSnapshot) {
-  return `${formatTime(item.created_at)} / ${item.reason} / ${item.injected_count}/${item.max_injections}`
+  return `${formatTime(item.created_at)} / ${item.reason} / 已注入 ${item.injected_count} 次 / ${item.active === false ? '已停用' : '补窗中'}`
 }
 
 function showMoreHeartbeats() {
