@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { NButton, useMessage } from 'naive-ui'
-import { searchStars, type StarCandidate } from '@/api/stars'
+import { fetchStars, searchStars, type StarCandidate, type StarItem } from '@/api/stars'
 import { formatTime, rootLabel } from './starUi'
 
 const emit = defineEmits<{
@@ -9,7 +9,7 @@ const emit = defineEmits<{
 }>()
 
 const message = useMessage()
-const allStars = ref<StarCandidate[]>([])
+const allStars = ref<StarItem[]>([])
 const loading = ref(false)
 const query = ref('')
 const sortBy = ref<'time' | 'activation'>('time')
@@ -33,7 +33,7 @@ const filteredList = computed(() => {
   return list
 })
 
-function isRecent(star: StarCandidate): boolean {
+function isRecent(star: StarItem): boolean {
   if (!star.created_at) return false
   return Date.now() - Date.parse(star.created_at) < 48 * 3600 * 1000
 }
@@ -43,7 +43,7 @@ onMounted(loadAll)
 async function loadAll() {
   loading.value = true
   try {
-    const result = await searchStars({ q: '', limit: 500, log_run: false })
+    const result = await fetchStars({ status: 'all', limit: 500 })
     allStars.value = result.items || []
   } catch {
     message.error('加载星列失败')
