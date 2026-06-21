@@ -86,6 +86,16 @@ const unscoredCount = computed(() => reviewItems.value.reduce((total, item) => t
 
 onMounted(loadConfig)
 
+function splitChordSequence(value: string): string[] {
+  const text = value.trim()
+  if (!text) return []
+  const normalized = text
+    .replace(/→|⇒|->|=>|｜|•|·|；|;|，|,/g, '|')
+    .replace(/\s+\/\s+/g, '|')
+  const parts = normalized.split('|').map((part) => part.trim()).filter(Boolean)
+  return parts.length > 1 ? parts : []
+}
+
 async function loadConfig() {
   try {
     const data = await fetchConfig()
@@ -169,9 +179,12 @@ async function addStar() {
   if (!content) return
   creating.value = true
   try {
+    const chord = createChord.value.trim()
+    const chords = splitChordSequence(chord)
     const result = await createStar({
       content,
-      chord: createChord.value.trim(),
+      chord,
+      chords: chords.length ? chords : undefined,
       session_tag: createSessionTag.value.trim() || undefined,
       status: 'active',
       is_constant: createConstant.value,

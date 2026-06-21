@@ -388,6 +388,7 @@ class GatewayToolService:
         self,
         content: Any,
         chord: str = "",
+        chords: Optional[list[str]] = None,
         session_tag: Optional[str] = None,
         status: str = "active",
         is_constant: bool = False,
@@ -396,6 +397,7 @@ class GatewayToolService:
         return await self._stars().create_star(
             content=content,
             chord=chord,
+            chords=chords,
             session_tag=session_tag,
             status=status,
             is_constant=is_constant,

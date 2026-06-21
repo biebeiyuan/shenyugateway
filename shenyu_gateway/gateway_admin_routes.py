@@ -402,6 +402,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         result = await StarService(cfg, deps.get_supabase_client()).create_star(
             body.content,
             chord=body.chord or "",
+            chords=body.chords or None,
             session_tag=body.session_tag,
             status=body.status,
             is_constant=body.is_constant,

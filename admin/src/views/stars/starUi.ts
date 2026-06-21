@@ -13,7 +13,10 @@ export function formatTime(value?: string | null): string {
   return value.replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '')
 }
 
-export function rootLabel(star: Pick<StarItem, 'chord' | 'chord_root'>): string {
+export function rootLabel(star: Pick<StarItem, 'chord' | 'chord_root' | 'chord_sequence'>): string {
+  if (Array.isArray(star.chord_sequence) && star.chord_sequence.length) {
+    return star.chord_sequence.join(' → ')
+  }
   return star.chord || star.chord_root || '无和弦'
 }
 
@@ -29,8 +32,9 @@ export function normalizeRoot(root?: string | null): string {
   return flatMap[value] || value
 }
 
-export function rootFromStar(star: Pick<StarItem, 'chord' | 'chord_root'>): string {
-  return normalizeRoot(star.chord_root || star.chord.match(/[A-G](?:#|b)?/i)?.[0])
+export function rootFromStar(star: Pick<StarItem, 'chord' | 'chord_root' | 'chord_sequence'>): string {
+  const head = Array.isArray(star.chord_sequence) && star.chord_sequence.length ? star.chord_sequence[0] : star.chord
+  return normalizeRoot(star.chord_root || head?.match(/[A-G](?:#|b)?/i)?.[0])
 }
 
 export function sourceMeta(star: StarItem | StarCandidate): string {

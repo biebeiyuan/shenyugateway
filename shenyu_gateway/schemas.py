@@ -165,6 +165,7 @@ class MemNoteBulkPatch(BaseModel):
 class StarCreateRequest(BaseModel):
     content: str
     chord: Optional[str] = None
+    chords: list[str] = Field(default_factory=list)
     session_tag: Optional[str] = None
     status: str = "active"
     is_constant: bool = False

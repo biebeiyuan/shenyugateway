@@ -22,6 +22,7 @@ const filteredList = computed(() => {
       (s) =>
         s.content.toLowerCase().includes(q) ||
         (s.chord || '').toLowerCase().includes(q) ||
+        (s.chord_sequence || []).join(' ').toLowerCase().includes(q) ||
         (s.chord_root || '').toLowerCase().includes(q),
     )
   }

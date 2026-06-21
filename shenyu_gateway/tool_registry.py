@@ -115,12 +115,13 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_create_star",
-                "description": "写一颗星。星星是很小的体感/和弦记忆；content 写正文，chord 可单独传，也可以写成「Am · 正文」。",
+                "description": "写一颗星。星星是很小的体感/和弦记忆；content 写正文，chord 可传单个和弦或写成「Am · 正文」；一颗星带一段和弦时用 chords 按顺序传。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "content": {"type": "string"},
                         "chord": {"type": "string"},
+                        "chords": {"type": "array", "items": {"type": "string"}, "description": "可选和弦序列；比如 [\"Am(maj7)\", \"Am\", \"F#m7\"]，我会按这个顺序保存。"},
                         "session_tag": {"type": "string"},
                         "status": {"type": "string", "enum": ["active", "paused", "archived"], "default": "active"},
                         "is_constant": {"type": "boolean", "default": False},
@@ -883,6 +884,7 @@ async def _handle_create_star(ctx: ToolContext) -> dict:
     return await ctx.service.create_star(
         content=ctx.arguments.get("content", ""),
         chord=ctx.arguments.get("chord", ""),
+        chords=ctx.arguments.get("chords") if isinstance(ctx.arguments.get("chords"), list) else None,
         session_tag=ctx.arguments.get("session_tag") or ctx.session_tag,
         status=ctx.arguments.get("status", "active"),
         is_constant=_bool_arg(ctx.arguments, "is_constant", False),

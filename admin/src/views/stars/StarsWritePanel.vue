@@ -32,7 +32,7 @@ const emit = defineEmits<{
       <input
         :value="chord"
         class="soft-input"
-        placeholder="Am / Cmaj7"
+        placeholder="Am → Cmaj7 → F#m7"
         @input="emit('update:chord', ($event.target as HTMLInputElement).value)"
       >
       <input

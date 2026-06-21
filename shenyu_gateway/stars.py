@@ -223,6 +223,32 @@ def _extract_chord_from_query(query: str) -> dict[str, str]:
     return {"chord": "", "chord_root": "", "chord_quality": ""}
 
 
+def _split_chord_sequence(value: Any) -> list[str]:
+    if isinstance(value, (list, tuple)):
+        parts = [_node_id(item) for item in value]
+        return [part for part in parts if part]
+    text = _normalize_text(value).strip()
+    if not text:
+        return []
+    normalized = (
+        text.replace("→", "|")
+        .replace("⇒", "|")
+        .replace("->", "|")
+        .replace("=>", "|")
+        .replace("｜", "|")
+        .replace("•", "|")
+        .replace("·", "|")
+        .replace("；", "|")
+        .replace(";", "|")
+        .replace("，", "|")
+        .replace(",", "|")
+        .replace("\n", "|")
+    )
+    normalized = re.sub(r"\s+/\s+", "|", normalized)
+    parts = [part.strip() for part in normalized.split("|") if part.strip()]
+    return parts if len(parts) > 1 else [text]
+
+
 def parse_star_payload(star: Any) -> dict[str, Any]:
     attrs: dict[str, Any] = {}
     if isinstance(star, dict):
@@ -230,6 +256,10 @@ def parse_star_payload(star: Any) -> dict[str, Any]:
         content = _normalize_text(star.get("content")).strip()
         if star.get("chord") and not attrs.get("chord"):
             attrs["chord"] = star.get("chord")
+        if star.get("chords") is not None and not attrs.get("chords"):
+            attrs["chords"] = star.get("chords")
+        if star.get("chord_sequence") is not None and not attrs.get("chord_sequence"):
+            attrs["chord_sequence"] = star.get("chord_sequence")
     else:
         content = _normalize_text(star).strip()
 
@@ -355,6 +385,7 @@ class StarService:
         content: Any,
         *,
         chord: str = "",
+        chords: Optional[list[str]] = None,
         session_tag: Optional[str] = None,
         status: str = "active",
         is_constant: bool = False,
@@ -367,16 +398,25 @@ class StarService:
             return {"ok": False, "error": "Supabase is not configured."}
         parsed = parse_star_payload(content)
         star_content = (parsed.get("content") or "").strip()
+        parsed_attrs = _json_dict(parsed.get("attrs"))
+        chord_source = chords or parsed_attrs.get("chords") or parsed_attrs.get("chord_sequence") or chord or parsed.get("chord") or ""
+        chord_sequence = _split_chord_sequence(chord_source)
         star_chord = (chord or parsed.get("chord") or "").strip()
+        if len(chord_sequence) > 1:
+            star_chord = " → ".join(chord_sequence)
+        elif not star_chord and chord_sequence:
+            star_chord = chord_sequence[0]
         if not star_content:
             return {"ok": False, "error": "content is required."}
-        root, quality = _chord_parts(star_chord)
+        root, quality = _chord_parts(chord_sequence[0] if chord_sequence else star_chord)
         resolved_status = status if status in {"active", "paused", "archived"} else "active"
         meta = _json_dict(metadata)
         attrs = _json_dict(parsed.get("attrs"))
         if attrs:
             meta.setdefault("attrs", attrs)
-        search_tokens = recall_terms("\n".join(part for part in [star_chord, star_content] if part))
+        if len(chord_sequence) > 1:
+            meta.setdefault("chord_sequence", chord_sequence)
+        search_tokens = recall_terms("\n".join(part for part in [star_chord, " ".join(chord_sequence), star_content] if part))
         payload: dict[str, Any] = {
             "session_tag": (session_tag or "default").strip() or "default",
             "content": star_content,
@@ -393,6 +433,9 @@ class StarService:
         }
         await self._attach_embedding(payload, star_chord, star_content)
         row = await self.supabase.insert(STAR_TABLE, payload)
+        if isinstance(row, dict):
+            row = dict(row)
+            row.setdefault("chord_sequence", chord_sequence if len(chord_sequence) > 1 else [])
         return {"ok": True, "star_id": row.get("id") if isinstance(row, dict) else None, "star": row}
 
     async def list_stars(
@@ -1712,11 +1755,21 @@ class StarService:
         return content
 
     def _public_star(self, row: dict[str, Any]) -> dict[str, Any]:
+        metadata = _json_dict(row.get("metadata"))
+        chord_sequence = metadata.get("chord_sequence")
+        if not isinstance(chord_sequence, list):
+            chord_sequence = []
+        chord_sequence = [part for part in (_node_id(item) for item in chord_sequence) if part]
+        if not chord_sequence:
+            parsed_sequence = _split_chord_sequence(row.get("chord"))
+            if len(parsed_sequence) > 1:
+                chord_sequence = parsed_sequence
         return {
             "id": row.get("id"),
             "session_tag": row.get("session_tag"),
             "content": row.get("content") or "",
             "chord": row.get("chord") or "",
+            "chord_sequence": chord_sequence,
             "chord_root": row.get("chord_root") or "",
             "chord_quality": row.get("chord_quality") or "",
             "status": row.get("status") or "active",

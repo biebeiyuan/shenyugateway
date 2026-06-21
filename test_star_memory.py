@@ -113,6 +113,31 @@ def test_streaming_star_capture_keeps_unclosed_star_visible():
     assert tag_filter.get_stars() == []
 
 
+def test_create_star_accepts_ordered_chord_sequence():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        created = await service.create_star(
+            "这一周的时间线",
+            chord="Am(maj7) → Am → F#m7",
+            chords=["Am(maj7)", "Am", "F#m7"],
+        )
+        listed = await service.list_stars(status="all")
+        filtered = await service.list_stars(status="all", q="F#m7")
+        return created, supabase.tables["shenyu_stars"][0], listed, filtered
+
+    created, row, listed, filtered = asyncio.run(run())
+
+    assert created["ok"] is True
+    assert row["chord"] == "Am(maj7) → Am → F#m7"
+    assert row["chord_root"] == "A"
+    assert row["metadata"]["chord_sequence"] == ["Am(maj7)", "Am", "F#m7"]
+    assert created["star"]["chord_sequence"] == ["Am(maj7)", "Am", "F#m7"]
+    assert listed["items"][0]["chord_sequence"] == ["Am(maj7)", "Am", "F#m7"]
+    assert filtered["count"] == 1
+
+
 def test_review_limits_candidates_and_missed_feedback():
     supabase = FakeSupabase()
     service = StarService(_cfg(), supabase)

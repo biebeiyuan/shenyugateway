@@ -9,6 +9,7 @@ export interface StarItem {
   session_tag: string | null
   content: string
   chord: string
+  chord_sequence?: string[]
   chord_root?: string | null
   chord_quality?: string | null
   status: StarStatus | string
@@ -72,6 +73,7 @@ export interface StarFeedbackItem {
 export interface StarCreateRequest {
   content: string
   chord?: string
+  chords?: string[]
   session_tag?: string
   status?: StarStatus
   is_constant?: boolean
