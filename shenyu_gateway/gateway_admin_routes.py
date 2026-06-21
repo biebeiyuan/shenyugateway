@@ -413,7 +413,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         return result
 
     @router.post("/api/gateway/stars/review")
-    async def review_stars(limit_new: int = 5, candidates_per_star: int = 3, total_candidate_limit: int = 9, session_tag: Optional[str] = None):
+    async def review_stars(limit_new: int = 4, candidates_per_star: int = 2, total_candidate_limit: int = 8, session_tag: Optional[str] = None):
         result = await StarService(cfg, deps.get_supabase_client()).review(
             limit_new=limit_new,
             candidates_per_star=candidates_per_star,
@@ -436,6 +436,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             scored_by=body.scored_by,
             note=body.note,
             metadata=body.metadata,
+            items=[item.model_dump() for item in body.items] if body.items else None,
         )
         if not result.get("ok"):
             raise HTTPException(status_code=400, detail=result.get("error") or "star feedback failed")

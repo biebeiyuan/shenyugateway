@@ -91,9 +91,10 @@ class RuntimeConfig:
         self.enable_inline_star_capture: bool = _env_bool("ENABLE_INLINE_STAR_CAPTURE", True)
         self.enable_star_embeddings: bool = _env_bool("ENABLE_STAR_EMBEDDINGS", _env_bool("ENABLE_RECALL_EMBEDDINGS", False))
         self.star_inject_limit: int = _env_int("STAR_INJECT_LIMIT", 3, 1, 5)
-        self.star_review_new_limit: int = _env_int("STAR_REVIEW_NEW_LIMIT", 5, 1, 10)
-        self.star_review_candidates_per_star: int = _env_int("STAR_REVIEW_CANDIDATES_PER_STAR", 3, 1, 5)
-        self.star_review_total_candidate_limit: int = _env_int("STAR_REVIEW_TOTAL_CANDIDATE_LIMIT", 9, 1, 30)
+        self.star_review_new_limit: int = _env_int("STAR_REVIEW_NEW_LIMIT", 4, 1, 10)
+        self.star_review_candidates_per_star: int = _env_int("STAR_REVIEW_CANDIDATES_PER_STAR", 2, 1, 5)
+        self.star_review_total_candidate_limit: int = _env_int("STAR_REVIEW_TOTAL_CANDIDATE_LIMIT", 8, 1, 30)
+        self.star_chat_explicit_fallback_limit: int = _env_int("STAR_CHAT_EXPLICIT_FALLBACK_LIMIT", 1, 0, 3)
         self.star_candidate_limit: int = _env_int("STAR_CANDIDATE_LIMIT", 500, 50, 5000)
         self.star_shadow_candidate_limit: int = _env_int("STAR_SHADOW_CANDIDATE_LIMIT", 20, 3, 100)
         self.star_min_score: float = _env_float("STAR_MIN_SCORE", 0.18, 0.0, 1.0)
@@ -197,6 +198,7 @@ class RuntimeConfig:
             "star_review_new_limit": self.star_review_new_limit,
             "star_review_candidates_per_star": self.star_review_candidates_per_star,
             "star_review_total_candidate_limit": self.star_review_total_candidate_limit,
+            "star_chat_explicit_fallback_limit": self.star_chat_explicit_fallback_limit,
             "star_candidate_limit": self.star_candidate_limit,
             "star_shadow_candidate_limit": self.star_shadow_candidate_limit,
             "star_min_score": self.star_min_score,

@@ -28,9 +28,9 @@ HIDDEN_COMPAT_TOOL_NAMES = {
 _BROKER_TOOL_HINTS = {
     "shenyu_recall": "翻旧上下文，可 source_types 限定范围",
     "shenyu_search_stars": "搜星星记忆",
-    "shenyu_star_review": "看新星和网关建议的关联",
-    "shenyu_star_feedback": "给星星召回打分，也能补 missed",
-    "shenyu_connect_constellation": "把几颗星连成星座",
+    "shenyu_star_review": "我看网关推来的最近新星和可能相关的旧星",
+    "shenyu_star_feedback": "我给星星候选评分，也能补 missed",
+    "shenyu_connect_constellation": "我按心里的顺序把几颗星连成星座",
     "shenyu_list_mem_notes": "列 mem 便签（status: captured / active）",
     "shenyu_update_mem_note": "改某条 mem",
     "shenyu_notebook_list": "读 notebook（跨窗口/海信那边）",
@@ -168,13 +168,13 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_star_review",
-                "description": "轻量 review：取最多几颗新星，并为每颗反上来少量候选关联。默认 5 颗新星、每颗 3 条、总量 9。",
+                "description": "网关推上来几颗最近新星+可能相关的旧星。可以——读、评（connected/positive/negative/should_surface）、连成星座。也可以——只看，不评。也可以——直接跳过。不处理是合法的。",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "limit_new": {"type": "integer", "minimum": 1, "maximum": 10, "default": 5},
-                        "candidates_per_star": {"type": "integer", "minimum": 1, "maximum": 5, "default": 3},
-                        "total_candidate_limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 9},
+                        "limit_new": {"type": "integer", "minimum": 1, "maximum": 10, "default": 4},
+                        "candidates_per_star": {"type": "integer", "minimum": 1, "maximum": 5, "default": 2},
+                        "total_candidate_limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 8},
                         "session_tag": {"type": "string"},
                         "expected_star_id": {"type": "string", "description": "review 时顺手补 missed：该反但没反上来的星。"},
                         "run_id": {"type": "string", "description": "missed 对应的召回 run_id。"},
@@ -189,13 +189,14 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_star_feedback",
-                "description": "给星星召回反馈。missed 时填 expected_star_id；候选反错了可填 candidate_id 或 candidate_star_id + feedback=negative。",
+                "description": "我给星星候选做评分。feedback 枚举：connected=我觉得强相关，想连星座；positive=我觉得有点关，但不强；negative=我觉得不相关；should_surface=我觉得这颗应该被推上来（missed）；skipped=我看了但先不评；missed=我发现漏反。单条用 feedback；一次打完用 items 数组。missed 时填 expected_star_id；候选反错了可填 candidate_id 或 candidate_star_id。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "feedback": {
                             "type": "string",
                             "enum": ["positive", "negative", "missed", "connected", "skipped", "should_surface"],
+                            "description": "单条反馈时使用；一次提交多条时可放在 items 里。",
                         },
                         "run_id": {"type": "string"},
                         "candidate_id": {"type": "string"},
@@ -204,8 +205,29 @@ def _gateway_core_tools() -> list[dict]:
                         "scored_by": {"type": "string", "default": "沈予"},
                         "note": {"type": "string"},
                         "metadata": {"type": "object", "additionalProperties": True},
+                        "items": {
+                            "type": "array",
+                            "description": "批量反馈数组。每个 item 都是一个独立反馈对象，字段和单条反馈一样。",
+                            "minItems": 1,
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "feedback": {
+                                        "type": "string",
+                                        "enum": ["positive", "negative", "missed", "connected", "skipped", "should_surface"],
+                                    },
+                                    "run_id": {"type": "string"},
+                                    "candidate_id": {"type": "string"},
+                                    "candidate_star_id": {"type": "string"},
+                                    "expected_star_id": {"type": "string"},
+                                    "scored_by": {"type": "string", "default": "沈予"},
+                                    "note": {"type": "string"},
+                                    "metadata": {"type": "object", "additionalProperties": True},
+                                },
+                                "required": ["feedback"],
+                            },
+                        },
                     },
-                    "required": ["feedback"],
                 },
             },
         },
@@ -213,7 +235,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_connect_constellation",
-                "description": "把几颗星按顺序连成星座。用于沈予确认“这些是连着的”。",
+                "description": "把几颗星按你心里认的顺序连成星座。这个顺序默认就是你的时间线、情感线或联想线，不需要担心“对不对”，你怎么连就是怎么连。顺序会保留成星座的默认位置。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -923,6 +945,7 @@ async def _handle_star_feedback(ctx: ToolContext) -> dict:
         scored_by=ctx.arguments.get("scored_by", "沈予"),
         note=ctx.arguments.get("note", ""),
         metadata=ctx.arguments.get("metadata") if isinstance(ctx.arguments.get("metadata"), dict) else None,
+        items=ctx.arguments.get("items") if isinstance(ctx.arguments.get("items"), list) else None,
     )
 
 

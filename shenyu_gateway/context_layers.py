@@ -93,7 +93,7 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
     mem_blocks = []
     star_context = render_star_context(package.get("stars") or [])
     if star_context:
-        mem_blocks.append(star_context)
+        mem_blocks.append("# 我之前落下的星星\n" + star_context)
 
     mem_notes = package.get("mem_notes") or []
     if mem_notes:

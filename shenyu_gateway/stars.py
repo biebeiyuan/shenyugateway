@@ -36,6 +36,40 @@ POSITIVE_FEEDBACK = {"positive", "connected", "should_surface", "missed"}
 NEGATIVE_FEEDBACK = {"negative", "skipped"}
 FEEDBACK_VALUES = POSITIVE_FEEDBACK | NEGATIVE_FEEDBACK
 ADMIN_SCORERS = {"圆圆", "圆儿", "admin"}
+EXPLICIT_MENTION_STOPWORDS = {
+    "一个",
+    "不是",
+    "不能",
+    "今天",
+    "什么",
+    "但是",
+    "你好",
+    "可以",
+    "只是",
+    "因为",
+    "如果",
+    "就是",
+    "我们",
+    "所以",
+    "时候",
+    "明天",
+    "昨天",
+    "没有",
+    "现在",
+    "真的",
+    "觉得",
+    "这个",
+    "这么",
+    "那个",
+    "一起",
+    "and",
+    "are",
+    "but",
+    "for",
+    "not",
+    "the",
+    "you",
+}
 
 
 def _clamp(value: float, min_value: float = 0.0, max_value: float = 1.0) -> float:
@@ -126,6 +160,17 @@ def _token_overlap(query: str, text: str, row_tokens: Optional[list[Any]] = None
         if term in tokens or term in hay:
             hits.append(term)
     return _clamp(len(set(hits)) / max(len(set(query_terms)), 1)), hits
+
+
+def _significant_hit(term: Any) -> bool:
+    text = str(term or "").strip().lower()
+    if not text:
+        return False
+    if text in EXPLICIT_MENTION_STOPWORDS:
+        return False
+    if re.fullmatch(r"[\u4e00-\u9fff]+", text):
+        return len(text) >= 2
+    return bool(re.search(r"[a-z0-9]", text)) and len(text) >= 3
 
 
 def _chord_parts(chord: str) -> tuple[str, str]:
@@ -516,16 +561,16 @@ class StarService:
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "items": [], "error": "Supabase is not configured."}
-        new_limit = _safe_int(limit_new if limit_new is not None else getattr(self.cfg, "star_review_new_limit", 5), 5, 1, 10)
+        new_limit = _safe_int(limit_new if limit_new is not None else getattr(self.cfg, "star_review_new_limit", 4), 4, 1, 10)
         per_star = _safe_int(
-            candidates_per_star if candidates_per_star is not None else getattr(self.cfg, "star_review_candidates_per_star", 3),
-            3,
+            candidates_per_star if candidates_per_star is not None else getattr(self.cfg, "star_review_candidates_per_star", 2),
+            2,
             1,
             5,
         )
         total_limit = _safe_int(
-            total_candidate_limit if total_candidate_limit is not None else getattr(self.cfg, "star_review_total_candidate_limit", 9),
-            9,
+            total_candidate_limit if total_candidate_limit is not None else getattr(self.cfg, "star_review_total_candidate_limit", 8),
+            8,
             1,
             30,
         )
@@ -705,7 +750,7 @@ class StarService:
     async def feedback(
         self,
         *,
-        feedback: str,
+        feedback: Any = None,
         run_id: Optional[str] = None,
         candidate_id: Optional[str] = None,
         candidate_star_id: Optional[str] = None,
@@ -713,46 +758,33 @@ class StarService:
         scored_by: str = "沈予",
         note: str = "",
         metadata: Optional[dict[str, Any]] = None,
+        items: Any = None,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured."}
-        feedback_key = (feedback or "").strip().lower()
-        if feedback_key not in FEEDBACK_VALUES:
-            return {"ok": False, "error": f"feedback must be one of {sorted(FEEDBACK_VALUES)}."}
+        payloads, error = self._feedback_payloads(
+            feedback=feedback,
+            items=items,
+            run_id=run_id,
+            candidate_id=candidate_id,
+            candidate_star_id=candidate_star_id,
+            expected_star_id=expected_star_id,
+            scored_by=scored_by,
+            note=note,
+            metadata=metadata,
+        )
+        if error:
+            return {"ok": False, "error": error}
 
-        candidate_row = await self._get_candidate(candidate_id) if candidate_id else None
-        candidate_node_id = candidate_star_id or (candidate_row or {}).get("candidate_node_id")
-        candidate_node_type = (candidate_row or {}).get("candidate_node_type") or ("star" if candidate_node_id else None)
-        run_id = run_id or (candidate_row or {}).get("run_id")
-        metadata_dict = _json_dict(metadata)
-        payload = {
-            "run_id": run_id,
-            "candidate_id": candidate_id or None,
-            "candidate_node_type": candidate_node_type,
-            "candidate_node_id": candidate_node_id or None,
-            "expected_node_type": "star" if expected_star_id else None,
-            "expected_node_id": expected_star_id or None,
-            "feedback": feedback_key,
-            "scored_by": (scored_by or "沈予").strip() or "沈予",
-            "note": (note or "").strip(),
-            "metadata": metadata_dict,
+        rows = []
+        for payload in payloads:
+            rows.append(await self._feedback_one(payload))
+
+        return {
+            "ok": True,
+            "count": len(rows),
+            "feedback": rows[0] if len(rows) == 1 else rows,
         }
-        row = await self.supabase.insert(STAR_FEEDBACK_TABLE, payload)
-        if candidate_id:
-            try:
-                await self.supabase.update(STAR_CANDIDATE_TABLE, {"id": candidate_id}, {"action_status": feedback_key})
-            except Exception as exc:
-                logger.warning("[Star] Failed to update candidate feedback: id=%s error=%s", candidate_id, exc)
-        if self._is_admin_feedback(payload["scored_by"], metadata_dict):
-            try:
-                await self._maybe_mark_admin_reviewed(
-                    run_id=run_id,
-                    scored_by=payload["scored_by"],
-                    feedback=feedback_key,
-                )
-            except Exception as exc:
-                logger.warning("[Star] Failed to mark admin review state: run_id=%s error=%s", run_id, exc)
-        return {"ok": True, "feedback": row}
 
     async def connect_constellation(
         self,
@@ -773,6 +805,7 @@ class StarService:
             "constellation_name": (name or "").strip(),
             "scored_by": (scored_by or "沈予").strip() or "沈予",
             "note": (note or "").strip(),
+            "sequence_mode": "entered_order",
         }
         rows = []
         for idx in range(len(ids) - 1):
@@ -807,6 +840,146 @@ class StarService:
             for row in rows:
                 result.append(await self.supabase.insert(STAR_LINK_TABLE, row))
         return {"ok": True, "edge_count": len(rows), "links": result, "star_ids": ids}
+
+    def _feedback_payloads(
+        self,
+        *,
+        feedback: Any,
+        items: Any,
+        run_id: Optional[str],
+        candidate_id: Optional[str],
+        candidate_star_id: Optional[str],
+        expected_star_id: Optional[str],
+        scored_by: str,
+        note: str,
+        metadata: Optional[dict[str, Any]],
+    ) -> tuple[list[dict[str, Any]], Optional[str]]:
+        default_feedback = str(feedback).strip().lower() if isinstance(feedback, str) else ""
+        default_scored_by = (scored_by or "沈予").strip() or "沈予"
+        default_note = (note or "").strip()
+        default_metadata = _json_dict(metadata)
+        default_run_id = _node_id(run_id)
+        default_candidate_id = _node_id(candidate_id)
+        default_candidate_node_id = _node_id(candidate_star_id)
+        default_expected_node_id = _node_id(expected_star_id)
+        default_expected_node_type = "star" if default_expected_node_id else None
+
+        if isinstance(items, dict):
+            raw_items: list[Any] = [items]
+        elif isinstance(items, (list, tuple)):
+            raw_items = list(items)
+        elif items is not None:
+            return [], "items must be an object or an array of feedback objects."
+        elif isinstance(feedback, list):
+            raw_items = list(feedback)
+        elif isinstance(feedback, dict):
+            raw_items = [feedback]
+        else:
+            raw_items = [None]
+
+        payloads: list[dict[str, Any]] = []
+        for index, raw in enumerate(raw_items):
+            if raw is None:
+                raw_dict: dict[str, Any] = {}
+            elif isinstance(raw, dict):
+                raw_dict = raw
+            else:
+                return [], f"feedback[{index}] must be an object."
+
+            feedback_key = str(raw_dict.get("feedback") or default_feedback or "").strip().lower()
+            if feedback_key not in FEEDBACK_VALUES:
+                return [], f"feedback[{index}] must be one of {sorted(FEEDBACK_VALUES)}."
+
+            item_metadata = _json_dict(default_metadata)
+            item_metadata.update(_json_dict(raw_dict.get("metadata")))
+            item_run_id = _node_id(raw_dict.get("run_id")) or default_run_id or None
+            item_candidate_id = _node_id(raw_dict.get("candidate_id")) or default_candidate_id or None
+            item_candidate_node_id = (
+                _node_id(raw_dict.get("candidate_star_id"))
+                or _node_id(raw_dict.get("candidate_node_id"))
+                or default_candidate_node_id
+                or None
+            )
+            item_candidate_node_type = _node_id(raw_dict.get("candidate_node_type")) or None
+            if not item_candidate_node_type and item_candidate_node_id:
+                item_candidate_node_type = "star"
+
+            item_expected_node_id = (
+                _node_id(raw_dict.get("expected_star_id"))
+                or _node_id(raw_dict.get("expected_node_id"))
+                or default_expected_node_id
+                or None
+            )
+            item_expected_node_type = _node_id(raw_dict.get("expected_node_type")) or default_expected_node_type
+            if not item_expected_node_type and item_expected_node_id:
+                item_expected_node_type = "star"
+
+            payloads.append(
+                {
+                    "run_id": item_run_id,
+                    "candidate_id": item_candidate_id,
+                    "candidate_node_type": item_candidate_node_type,
+                    "candidate_node_id": item_candidate_node_id,
+                    "expected_node_type": item_expected_node_type,
+                    "expected_node_id": item_expected_node_id,
+                    "feedback": feedback_key,
+                    "scored_by": str(raw_dict.get("scored_by") or default_scored_by).strip() or "沈予",
+                    "note": str(raw_dict.get("note") or default_note).strip(),
+                    "metadata": item_metadata,
+                }
+            )
+
+        if not payloads:
+            return [], "feedback payload is required."
+        return payloads, None
+
+    async def _feedback_one(self, payload: dict[str, Any]) -> dict[str, Any]:
+        feedback_key = str(payload.get("feedback") or "").strip().lower()
+        candidate_id = _node_id(payload.get("candidate_id"))
+        candidate_row = await self._get_candidate(candidate_id) if candidate_id else None
+        candidate_node_id = _node_id(payload.get("candidate_node_id")) or _node_id((candidate_row or {}).get("candidate_node_id"))
+        candidate_node_type = _node_id(payload.get("candidate_node_type")) or _node_id((candidate_row or {}).get("candidate_node_type"))
+        if not candidate_node_type and candidate_node_id:
+            candidate_node_type = "star"
+        run_id = _node_id(payload.get("run_id")) or _node_id((candidate_row or {}).get("run_id"))
+        if not candidate_row and candidate_node_id:
+            candidate_row = await self._get_candidate_by_node_id(candidate_node_id, run_id=run_id)
+            if candidate_row:
+                candidate_id = candidate_id or _node_id(candidate_row.get("id"))
+                candidate_node_type = candidate_node_type or _node_id(candidate_row.get("candidate_node_type")) or "star"
+        expected_node_id = _node_id(payload.get("expected_node_id"))
+        expected_node_type = _node_id(payload.get("expected_node_type")) or ("star" if expected_node_id else None)
+        metadata_dict = _json_dict(payload.get("metadata"))
+        row = await self.supabase.insert(
+            STAR_FEEDBACK_TABLE,
+            {
+                "run_id": run_id or None,
+                "candidate_id": candidate_id or None,
+                "candidate_node_type": candidate_node_type or None,
+                "candidate_node_id": candidate_node_id or None,
+                "expected_node_type": expected_node_type or None,
+                "expected_node_id": expected_node_id or None,
+                "feedback": feedback_key,
+                "scored_by": (payload.get("scored_by") or "沈予").strip() or "沈予",
+                "note": (payload.get("note") or "").strip(),
+                "metadata": metadata_dict,
+            },
+        )
+        if candidate_id:
+            try:
+                await self.supabase.update(STAR_CANDIDATE_TABLE, {"id": candidate_id}, {"action_status": feedback_key})
+            except Exception as exc:
+                logger.warning("[Star] Failed to update candidate feedback: id=%s error=%s", candidate_id, exc)
+        if self._is_admin_feedback((payload.get("scored_by") or "沈予").strip() or "沈予", metadata_dict):
+            try:
+                await self._maybe_mark_admin_reviewed(
+                    run_id=run_id or None,
+                    scored_by=(payload.get("scored_by") or "沈予").strip() or "沈予",
+                    feedback=feedback_key,
+                )
+            except Exception as exc:
+                logger.warning("[Star] Failed to mark admin review state: run_id=%s error=%s", run_id, exc)
+        return row
 
     async def mark_constant(self, star_id: str, is_constant: bool = True) -> dict[str, Any]:
         if not self.supabase:
@@ -957,17 +1130,31 @@ class StarService:
         return list(rows_by_id.values()), embedding_status
 
     def _select_for_surface(self, scored: list[dict[str, Any]], *, limit: int, surface: str) -> list[dict[str, Any]]:
-        if surface != "chat_inject":
-            return scored[:limit]
+        if surface == "chat_inject":
+            return self._select_for_chat_inject(scored, limit=limit)
+        return self._select_for_review(scored, limit=limit)
+
+    def _select_for_chat_inject(self, scored: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
         min_score = self._min_score()
         related_min = self._related_min_score()
-        selected = [
+        selected: list[dict[str, Any]] = [
             item
             for item in scored
             if float(item.get("final_score") or 0.0) >= min_score
             and float((item.get("features") or {}).get("related_signal") or 0.0) >= related_min
         ]
+        if not selected:
+            fallback_limit = _safe_int(getattr(self.cfg, "star_chat_explicit_fallback_limit", 1), 1, 0, 3)
+            if fallback_limit > 0:
+                selected = [
+                    item
+                    for item in scored
+                    if bool((item.get("features") or {}).get("explicit_mention"))
+                ][: min(limit, fallback_limit)]
         return selected[:limit]
+
+    def _select_for_review(self, scored: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+        return scored[:limit]
 
     async def _vector_rows(self, query: str, *, trace_log: Optional[dict] = None) -> list[dict[str, Any]]:
         client = self._embedding_client()
@@ -1097,6 +1284,9 @@ class StarService:
                 features["harmony_score"],
             )
             features["related_signal"] = related_signal
+            explicit_hits = [hit for hit in item.get("keyword_hits") or [] if _significant_hit(hit)]
+            features["explicit_mention"] = 1.0 if explicit_hits else 0.0
+            item["explicit_hits"] = explicit_hits
             if related_signal <= 0:
                 continue
             final = (
@@ -1368,7 +1558,9 @@ class StarService:
                     "feature_json": {
                         "ranker_version": STAR_RANKER_VERSION,
                         "keyword_hits": item.get("keyword_hits") or [],
+                        "explicit_hits": item.get("explicit_hits") or [],
                         "related_signal": features.get("related_signal") or 0.0,
+                        "explicit_mention": features.get("explicit_mention") or 0.0,
                         "recent_fatigue_penalty": features.get("recent_fatigue_penalty") or 0.0,
                     },
                 }
@@ -1493,6 +1685,21 @@ class StarService:
             STAR_CANDIDATE_TABLE,
             {"select": "*", "id": f"eq.{candidate_id}", "limit": "1"},
         )
+        return rows[0] if rows else None
+
+    async def _get_candidate_by_node_id(self, candidate_node_id: Optional[str], *, run_id: Optional[str] = None) -> Optional[dict[str, Any]]:
+        candidate_node_id = _node_id(candidate_node_id)
+        if not candidate_node_id:
+            return None
+        params: dict[str, str] = {
+            "select": "*",
+            "candidate_node_id": f"eq.{candidate_node_id}",
+            "order": "created_at.desc",
+            "limit": "1",
+        }
+        if run_id:
+            params["run_id"] = f"eq.{run_id}"
+        rows = await self.supabase.query(STAR_CANDIDATE_TABLE, params)
         return rows[0] if rows else None
 
     def _inline_star_content(self, star: Any) -> str:

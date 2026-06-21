@@ -448,7 +448,7 @@ class GatewayToolService:
 
     async def star_feedback(
         self,
-        feedback: str,
+        feedback: Any = None,
         run_id: Optional[str] = None,
         candidate_id: Optional[str] = None,
         candidate_star_id: Optional[str] = None,
@@ -456,6 +456,7 @@ class GatewayToolService:
         scored_by: str = "沈予",
         note: str = "",
         metadata: Optional[dict[str, Any]] = None,
+        items: Optional[list[dict[str, Any]]] = None,
     ) -> dict:
         return await self._stars().feedback(
             feedback=feedback,
@@ -466,6 +467,7 @@ class GatewayToolService:
             scored_by=scored_by,
             note=note,
             metadata=metadata,
+            items=items,
         )
 
     async def connect_constellation(

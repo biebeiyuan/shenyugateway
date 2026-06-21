@@ -32,9 +32,10 @@ const STAR_DEFAULTS: Partial<GatewayConfig> = {
   enable_gateway_tools: true,
   enable_star_embeddings: false,
   star_inject_limit: 3,
-  star_review_new_limit: 5,
-  star_review_candidates_per_star: 3,
-  star_review_total_candidate_limit: 9,
+  star_review_new_limit: 4,
+  star_review_candidates_per_star: 2,
+  star_review_total_candidate_limit: 8,
+  star_chat_explicit_fallback_limit: 1,
   star_candidate_limit: 500,
   star_shadow_candidate_limit: 20,
   star_min_score: 0.18,
@@ -107,6 +108,7 @@ async function saveSettings() {
       star_review_new_limit: config.value.star_review_new_limit,
       star_review_candidates_per_star: config.value.star_review_candidates_per_star,
       star_review_total_candidate_limit: config.value.star_review_total_candidate_limit,
+      star_chat_explicit_fallback_limit: config.value.star_chat_explicit_fallback_limit,
       star_candidate_limit: config.value.star_candidate_limit,
       star_shadow_candidate_limit: config.value.star_shadow_candidate_limit,
       star_min_score: config.value.star_min_score,
@@ -148,9 +150,9 @@ async function runReview() {
   reviewing.value = true
   try {
     const result = await reviewStars({
-      limit_new: config.value.star_review_new_limit || 5,
-      candidates_per_star: config.value.star_review_candidates_per_star || 3,
-      total_candidate_limit: config.value.star_review_total_candidate_limit || 9,
+      limit_new: config.value.star_review_new_limit || 4,
+      candidates_per_star: config.value.star_review_candidates_per_star || 2,
+      total_candidate_limit: config.value.star_review_total_candidate_limit || 8,
       session_tag: reviewSessionTag.value.trim() || undefined,
     })
     reviewItems.value = result.items || []

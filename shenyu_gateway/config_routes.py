@@ -59,6 +59,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "star_review_new_limit": cfg.star_review_new_limit,
         "star_review_candidates_per_star": cfg.star_review_candidates_per_star,
         "star_review_total_candidate_limit": cfg.star_review_total_candidate_limit,
+        "star_chat_explicit_fallback_limit": cfg.star_chat_explicit_fallback_limit,
         "star_candidate_limit": cfg.star_candidate_limit,
         "star_shadow_candidate_limit": cfg.star_shadow_candidate_limit,
         "star_min_score": cfg.star_min_score,
@@ -157,6 +158,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "star_review_new_limit": "STAR_REVIEW_NEW_LIMIT",
             "star_review_candidates_per_star": "STAR_REVIEW_CANDIDATES_PER_STAR",
             "star_review_total_candidate_limit": "STAR_REVIEW_TOTAL_CANDIDATE_LIMIT",
+            "star_chat_explicit_fallback_limit": "STAR_CHAT_EXPLICIT_FALLBACK_LIMIT",
             "star_candidate_limit": "STAR_CANDIDATE_LIMIT",
             "star_shadow_candidate_limit": "STAR_SHADOW_CANDIDATE_LIMIT",
             "star_min_score": "STAR_MIN_SCORE",
@@ -419,6 +421,10 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.star_review_total_candidate_limit = max(1, min(body.star_review_total_candidate_limit, 30))
             changed.append("star_review_total_candidate_limit")
             env_updates[env_names["star_review_total_candidate_limit"]] = cfg.star_review_total_candidate_limit
+        if body.star_chat_explicit_fallback_limit is not None:
+            cfg.star_chat_explicit_fallback_limit = max(0, min(body.star_chat_explicit_fallback_limit, 3))
+            changed.append("star_chat_explicit_fallback_limit")
+            env_updates[env_names["star_chat_explicit_fallback_limit"]] = cfg.star_chat_explicit_fallback_limit
         if body.star_candidate_limit is not None:
             cfg.star_candidate_limit = max(50, min(body.star_candidate_limit, 5000))
             changed.append("star_candidate_limit")

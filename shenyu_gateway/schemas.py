@@ -59,6 +59,7 @@ class ConfigUpdate(BaseModel):
     star_review_new_limit: Optional[int] = None
     star_review_candidates_per_star: Optional[int] = None
     star_review_total_candidate_limit: Optional[int] = None
+    star_chat_explicit_fallback_limit: Optional[int] = None
     star_candidate_limit: Optional[int] = None
     star_shadow_candidate_limit: Optional[int] = None
     star_min_score: Optional[float] = None
@@ -170,7 +171,7 @@ class StarCreateRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
-class StarFeedbackRequest(BaseModel):
+class StarFeedbackItem(BaseModel):
     feedback: str
     run_id: Optional[str] = None
     candidate_id: Optional[str] = None
@@ -179,6 +180,18 @@ class StarFeedbackRequest(BaseModel):
     scored_by: str = "圆圆"
     note: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class StarFeedbackRequest(BaseModel):
+    feedback: Optional[str] = None
+    run_id: Optional[str] = None
+    candidate_id: Optional[str] = None
+    candidate_star_id: Optional[str] = None
+    expected_star_id: Optional[str] = None
+    scored_by: str = "圆圆"
+    note: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    items: list[StarFeedbackItem] = Field(default_factory=list)
 
 
 class StarConnectRequest(BaseModel):

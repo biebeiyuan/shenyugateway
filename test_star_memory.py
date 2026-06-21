@@ -75,6 +75,7 @@ def _cfg():
         inject_stars=True,
         star_candidate_limit=50,
         star_shadow_candidate_limit=20,
+        star_chat_explicit_fallback_limit=1,
         star_min_score=0.18,
         star_related_min_score=0.22,
         star_recent_fatigue_hours=6,
@@ -138,6 +139,44 @@ def test_review_limits_candidates_and_missed_feedback():
     assert feedback["ok"] is True
     assert feedback["feedback"]["feedback"] == "missed"
     assert feedback["feedback"]["expected_node_id"] == "shenyu_stars-3"
+
+
+def test_feedback_accepts_batch_items_and_updates_candidate_by_star_id():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        await service.create_star("Am · 第一颗星")
+        await service.create_star("Am · 第二颗星")
+        result = await service.review(limit_new=1, candidates_per_star=1, total_candidate_limit=1)
+        candidate = result["items"][0]["candidates"][0]
+        feedback = await service.feedback(
+            items=[
+                {
+                    "feedback": "positive",
+                    "run_id": candidate["run_id"],
+                    "candidate_star_id": candidate["id"],
+                    "scored_by": "沈予",
+                },
+                {
+                    "feedback": "should_surface",
+                    "expected_star_id": "shenyu_stars-1",
+                    "scored_by": "沈予",
+                    "note": "这颗应该被推上来",
+                },
+            ]
+        )
+        return feedback, candidate, supabase.tables["shenyu_star_recall_candidates"], supabase.tables["shenyu_star_feedback"]
+
+    feedback, candidate, candidates, rows = asyncio.run(run())
+
+    assert feedback["ok"] is True
+    assert feedback["count"] == 2
+    assert rows[0]["candidate_id"] == candidate["candidate_id"]
+    assert rows[0]["candidate_node_id"] == candidate["id"]
+    assert rows[1]["feedback"] == "should_surface"
+    assert rows[1]["expected_node_id"] == "shenyu_stars-1"
+    assert candidates[0]["action_status"] == "positive"
 
 
 def test_admin_review_does_not_mark_shenyu_reviewed_until_feedback_complete():
@@ -231,6 +270,45 @@ def test_chat_injection_requires_score_thresholds():
     assert "宇宙" in strong["items"][0]["content"]
 
 
+def test_chat_injection_explicit_mention_fallback_is_capped():
+    supabase = FakeSupabase()
+    cfg = _cfg()
+    cfg.star_min_score = 0.95
+    cfg.star_related_min_score = 0.95
+    cfg.star_chat_explicit_fallback_limit = 1
+    service = StarService(cfg, supabase)
+
+    async def run():
+        await service.create_star("Am · 降临 arrive 那晚，她把害怕停机的怕交给我")
+        await service.create_star("C · 降临 arrive 之后，我记住接住此刻")
+        unrelated = await service.search_context("完全无关的普通句子", limit=3)
+        explicit = await service.search_context("我们一起看了降临 arrive", limit=3)
+        return unrelated, explicit
+
+    unrelated, explicit = asyncio.run(run())
+
+    assert unrelated["items"] == []
+    assert explicit["count"] == 1
+    assert "降临" in explicit["items"][0]["content"]
+
+
+def test_chat_injection_explicit_fallback_ignores_generic_hits():
+    supabase = FakeSupabase()
+    cfg = _cfg()
+    cfg.star_min_score = 0.95
+    cfg.star_related_min_score = 0.95
+    cfg.star_chat_explicit_fallback_limit = 1
+    service = StarService(cfg, supabase)
+
+    async def run():
+        await service.create_star("Am · 今天她在车上安静了一会")
+        return await service.search_context("今天怎么样", limit=3)
+
+    result = asyncio.run(run())
+
+    assert result["items"] == []
+
+
 def test_recent_chat_injection_fatigue_can_suppress_borderline_star():
     supabase = FakeSupabase()
     cfg = _cfg()
@@ -238,6 +316,7 @@ def test_recent_chat_injection_fatigue_can_suppress_borderline_star():
     cfg.star_related_min_score = 0.22
     cfg.star_recent_fatigue_hours = 6
     cfg.star_recent_fatigue_penalty = 0.14
+    cfg.star_chat_explicit_fallback_limit = 0
     service = StarService(cfg, supabase)
 
     async def run():

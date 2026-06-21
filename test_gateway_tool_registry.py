@@ -284,6 +284,7 @@ class FakeToolService:
         scored_by="沈予",
         note="",
         metadata=None,
+        items=None,
     ):
         self.calls.append(
             {
@@ -296,6 +297,7 @@ class FakeToolService:
                 "scored_by": scored_by,
                 "note": note,
                 "metadata": metadata,
+                "items": items,
             }
         )
         return {"ok": True, "feedback": feedback}
@@ -576,6 +578,7 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "scored_by": "沈予",
             "note": "该反这个",
             "metadata": {"surface": "review"},
+            "items": None,
         },
         "shenyu_connect_constellation": {
             "star_ids": ["star-1", "star-2"],
@@ -737,6 +740,7 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
                 "scored_by": "沈予",
                 "note": "review 里补 missed",
                 "metadata": {"source": "review"},
+                "items": None,
             },
             {
                 "tool": "shenyu_star_review",
@@ -756,6 +760,7 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "scored_by": "沈予",
             "note": "该反这个",
             "metadata": {"surface": "review"},
+            "items": None,
         },
         "shenyu_connect_constellation": {
             "tool": "shenyu_connect_constellation",

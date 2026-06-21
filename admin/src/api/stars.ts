@@ -47,6 +47,18 @@ export interface StarReviewResult {
 }
 
 export interface StarFeedbackRequest {
+  feedback?: StarFeedbackValue
+  run_id?: string | null
+  candidate_id?: string | null
+  candidate_star_id?: string | null
+  expected_star_id?: string | null
+  scored_by?: string
+  note?: string
+  metadata?: Record<string, unknown>
+  items?: StarFeedbackItem[]
+}
+
+export interface StarFeedbackItem {
   feedback: StarFeedbackValue
   run_id?: string | null
   candidate_id?: string | null

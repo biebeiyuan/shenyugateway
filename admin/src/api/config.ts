@@ -49,6 +49,7 @@ export interface GatewayConfig {
   star_review_new_limit?: number
   star_review_candidates_per_star?: number
   star_review_total_candidate_limit?: number
+  star_chat_explicit_fallback_limit?: number
   star_candidate_limit?: number
   star_shadow_candidate_limit?: number
   star_min_score?: number

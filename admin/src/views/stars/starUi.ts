@@ -47,6 +47,7 @@ export function feedbackLabel(value: string): string {
   if (value === 'negative') return '已记为不该反'
   if (value === 'skipped') return '先轻轻放过'
   if (value === 'connected') return '已连成星座'
+  if (value === 'should_surface') return '记为该推上来'
   return '已记录'
 }
 
