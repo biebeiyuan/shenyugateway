@@ -7,6 +7,7 @@ const loading = ref(false)
 const expandedIds = ref(new Set<string>())
 const autoRefresh = ref(true)
 let timer: ReturnType<typeof setInterval> | null = null
+const optimizationNote = '从这里开始看：已补兜底，星星反馈兼容 label/reason/good-bad-neutral；日历同日重复写入会先关旧 latest，再写新版本。'
 
 onMounted(async () => {
   await loadErrors()
@@ -87,34 +88,38 @@ function tryParseJson(s: string | null) {
     </div>
 
     <div v-else class="error-list">
-      <div
-        v-for="e in errors"
-        :key="e.id"
-        class="error-row"
-        :class="{ expanded: expandedIds.has(e.id) }"
-        @click="toggle(e.id)"
-      >
-        <div class="error-summary">
-          <span class="err-time">{{ shortTime(e.created_at) }}</span>
-          <span class="err-source" :class="e.error_source">{{ e.error_source }}</span>
-          <span class="err-tool">{{ toolLabel(e) }}</span>
-          <span class="err-text">{{ truncate(e.error_text, 80) }}</span>
+      <template v-for="(e, idx) in errors" :key="e.id">
+        <div
+          class="error-row"
+          :class="{ expanded: expandedIds.has(e.id) }"
+          @click="toggle(e.id)"
+        >
+          <div class="error-summary">
+            <span class="err-time">{{ shortTime(e.created_at) }}</span>
+            <span class="err-source" :class="e.error_source">{{ e.error_source }}</span>
+            <span class="err-tool">{{ toolLabel(e) }}</span>
+            <span class="err-text">{{ truncate(e.error_text, 80) }}</span>
+          </div>
+          <div v-if="expandedIds.has(e.id)" class="error-detail" @click.stop>
+            <div class="detail-section">
+              <span class="detail-label">Session</span>
+              <span class="detail-value">{{ e.session_tag || e.session_id }}</span>
+            </div>
+            <div class="detail-section">
+              <span class="detail-label">Error</span>
+              <pre class="detail-pre">{{ e.error_text }}</pre>
+            </div>
+            <div class="detail-section" v-if="e.args_json">
+              <span class="detail-label">Args</span>
+              <pre class="detail-pre">{{ tryParseJson(e.args_json) }}</pre>
+            </div>
+          </div>
         </div>
-        <div v-if="expandedIds.has(e.id)" class="error-detail" @click.stop>
-          <div class="detail-section">
-            <span class="detail-label">Session</span>
-            <span class="detail-value">{{ e.session_tag || e.session_id }}</span>
-          </div>
-          <div class="detail-section">
-            <span class="detail-label">Error</span>
-            <pre class="detail-pre">{{ e.error_text }}</pre>
-          </div>
-          <div class="detail-section" v-if="e.args_json">
-            <span class="detail-label">Args</span>
-            <pre class="detail-pre">{{ tryParseJson(e.args_json) }}</pre>
-          </div>
-        </div>
-      </div>
+        <section v-if="idx === 0" class="fix-note fix-note-inline">
+          <span class="fix-label">调试起点</span>
+          <span class="fix-text">{{ optimizationNote }}</span>
+        </section>
+      </template>
     </div>
   </div>
 </template>
@@ -156,6 +161,40 @@ function tryParseJson(s: string | null) {
   font-size: 12px;
   color: #c87a5a;
   font-weight: 500;
+}
+
+.fix-note {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 16px 4px;
+  padding: 10px 12px;
+  border: 1px solid #e7ded6;
+  border-radius: 8px;
+  background: #fff9f4;
+  color: #6a5a54;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.fix-label {
+  flex-shrink: 0;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: #f0d8c6;
+  color: #8b5e46;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.5px;
+}
+
+.fix-text {
+  min-width: 0;
+}
+
+.fix-note-inline {
+  margin-top: 8px;
+  margin-bottom: 8px;
 }
 .auto-toggle {
   display: flex;

@@ -233,6 +233,34 @@ def test_feedback_accepts_batch_items_and_updates_candidate_by_star_id():
     assert candidates[0]["action_status"] == "positive"
 
 
+def test_feedback_accepts_legacy_label_reason_batch():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        await service.create_star("Am · 第一颗星")
+        await service.create_star("Am · 第二颗星")
+        result = await service.review(limit_new=1, candidates_per_star=1, total_candidate_limit=1)
+        candidate = result["items"][0]["candidates"][0]
+        feedback = await service.feedback(
+            run_id=candidate["run_id"],
+            feedback=[
+                {"candidate_id": candidate["candidate_id"], "label": "good", "reason": "该反"},
+                {"candidate_id": candidate["candidate_id"], "label": "bad", "reason": "不该反"},
+                {"candidate_id": candidate["candidate_id"], "label": "neutral", "reason": "先放过"},
+            ],
+        )
+        return feedback, supabase.tables["shenyu_star_recall_candidates"], supabase.tables["shenyu_star_feedback"]
+
+    feedback, candidates, rows = asyncio.run(run())
+
+    assert feedback["ok"] is True
+    assert feedback["count"] == 3
+    assert [row["feedback"] for row in rows] == ["positive", "negative", "skipped"]
+    assert [row["note"] for row in rows] == ["该反", "不该反", "先放过"]
+    assert candidates[0]["action_status"] == "skipped"
+
+
 def test_admin_review_does_not_mark_shenyu_reviewed_until_feedback_complete():
     supabase = FakeSupabase()
     service = StarService(_cfg(), supabase)

@@ -938,14 +938,16 @@ async def _handle_star_review(ctx: ToolContext) -> dict:
 
 @_tool_handler("shenyu_star_feedback")
 async def _handle_star_feedback(ctx: ToolContext) -> dict:
+    feedback = ctx.arguments.get("feedback", ctx.arguments.get("label", ""))
+    note = ctx.arguments.get("note", ctx.arguments.get("reason", ""))
     return await ctx.service.star_feedback(
-        feedback=ctx.arguments.get("feedback", ""),
+        feedback=feedback,
         run_id=ctx.arguments.get("run_id"),
         candidate_id=ctx.arguments.get("candidate_id"),
         candidate_star_id=ctx.arguments.get("candidate_star_id"),
         expected_star_id=ctx.arguments.get("expected_star_id"),
         scored_by=ctx.arguments.get("scored_by", "沈予"),
-        note=ctx.arguments.get("note", ""),
+        note=note,
         metadata=ctx.arguments.get("metadata") if isinstance(ctx.arguments.get("metadata"), dict) else None,
         items=ctx.arguments.get("items") if isinstance(ctx.arguments.get("items"), list) else None,
     )
@@ -991,7 +993,7 @@ async def _handle_search_primary_texts(ctx: ToolContext) -> dict:
 
 @_tool_handler("shenyu_add_calendar")
 async def _handle_add_calendar(ctx: ToolContext) -> dict:
-    period_key = ctx.arguments.get("period_key") or ctx.arguments.get("date")
+    period_key = ctx.arguments.get("period_key") or ctx.arguments.get("date") or ctx.arguments.get("anchor_date")
     return await ctx.service.add_calendar(
         content=ctx.arguments.get("content", ""),
         period_key=period_key,

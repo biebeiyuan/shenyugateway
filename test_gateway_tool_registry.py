@@ -1440,6 +1440,80 @@ def test_execute_gateway_tool_routes_shenyu_recall():
     ]
 
 
+def test_execute_gateway_tool_accepts_star_feedback_label_reason_aliases():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_star_feedback",
+                "params": {
+                    "run_id": "run-1",
+                    "candidate_id": "cand-1",
+                    "label": "connected",
+                    "reason": "同一条线索。",
+                },
+            },
+            session_tag="default",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "feedback": "connected"}
+    assert service.calls == [
+        {
+            "tool": "shenyu_star_feedback",
+            "feedback": "connected",
+            "run_id": "run-1",
+            "candidate_id": "cand-1",
+            "candidate_star_id": None,
+            "expected_star_id": None,
+            "scored_by": "沈予",
+            "note": "同一条线索。",
+            "metadata": None,
+            "items": None,
+        }
+    ]
+
+
+def test_execute_gateway_tool_accepts_calendar_anchor_date_alias():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_add_calendar",
+                "params": {
+                    "anchor_date": "2026-06-19",
+                    "period_type": "day",
+                    "content": "写到这一天。",
+                },
+            },
+            session_tag="default",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "content": "写到这一天。", "period_type": "day"}
+    assert service.calls == [
+        {
+            "tool": "shenyu_add_calendar",
+            "content": "写到这一天。",
+            "period_key": "2026-06-19",
+            "period_type": "day",
+            "title": "",
+            "summary": "",
+            "digest": "",
+            "author": "沈予",
+            "mode": "append",
+        }
+    ]
+
+
 def test_execute_gateway_tool_unwraps_nested_broker_arguments_object():
     service = FakeToolService()
 

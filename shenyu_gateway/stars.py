@@ -35,6 +35,11 @@ STAR_SELECT = (
 POSITIVE_FEEDBACK = {"positive", "connected", "should_surface", "missed"}
 NEGATIVE_FEEDBACK = {"negative", "skipped"}
 FEEDBACK_VALUES = POSITIVE_FEEDBACK | NEGATIVE_FEEDBACK
+FEEDBACK_ALIASES = {
+    "bad": "negative",
+    "good": "positive",
+    "neutral": "skipped",
+}
 ADMIN_SCORERS = {"圆圆", "圆儿", "admin"}
 EXPLICIT_MENTION_STOPWORDS = {
     "一个",
@@ -247,6 +252,11 @@ def _split_chord_sequence(value: Any) -> list[str]:
     normalized = re.sub(r"\s+/\s+", "|", normalized)
     parts = [part.strip() for part in normalized.split("|") if part.strip()]
     return parts if len(parts) > 1 else [text]
+
+
+def _feedback_value(value: Any) -> str:
+    key = _node_id(value).lower()
+    return FEEDBACK_ALIASES.get(key, key)
 
 
 def parse_star_payload(star: Any) -> dict[str, Any]:
@@ -897,7 +907,7 @@ class StarService:
         note: str,
         metadata: Optional[dict[str, Any]],
     ) -> tuple[list[dict[str, Any]], Optional[str]]:
-        default_feedback = str(feedback).strip().lower() if isinstance(feedback, str) else ""
+        default_feedback = _feedback_value(feedback) if isinstance(feedback, str) else ""
         default_scored_by = (scored_by or "沈予").strip() or "沈予"
         default_note = (note or "").strip()
         default_metadata = _json_dict(metadata)
@@ -929,7 +939,7 @@ class StarService:
             else:
                 return [], f"feedback[{index}] must be an object."
 
-            feedback_key = str(raw_dict.get("feedback") or default_feedback or "").strip().lower()
+            feedback_key = _feedback_value(raw_dict.get("feedback") or raw_dict.get("label") or default_feedback)
             if feedback_key not in FEEDBACK_VALUES:
                 return [], f"feedback[{index}] must be one of {sorted(FEEDBACK_VALUES)}."
 
@@ -967,7 +977,7 @@ class StarService:
                     "expected_node_id": item_expected_node_id,
                     "feedback": feedback_key,
                     "scored_by": str(raw_dict.get("scored_by") or default_scored_by).strip() or "沈予",
-                    "note": str(raw_dict.get("note") or default_note).strip(),
+                    "note": str(raw_dict.get("note") or raw_dict.get("reason") or default_note).strip(),
                     "metadata": item_metadata,
                 }
             )

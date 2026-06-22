@@ -833,6 +833,9 @@ class GatewayToolService:
                 "generated_by": "manual",
             }
 
+        if current and current.get("id"):
+            await self.supabase.update("calendar_pages", {"id": current.get("id")}, {"is_latest": False})
+
         page = await self.supabase.insert("calendar_pages", page_payload)
         return {
             "ok": True,
