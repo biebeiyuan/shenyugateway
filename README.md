@@ -589,13 +589,13 @@ If all visible text is removed and there are no client-executable tool calls, th
 
 Fallback text is generated in `shenyu_gateway/private_capture.py` by `finalize_assistant_private_content()`, `private_capture_fallback_text()`, and `is_free_time_fallback_context()`:
 
-- free-time workflow context: `沈予在自由时间 · 已存 heartbeat`, `沈予在自由时间 · 已存 mem`, `沈予在自由时间 · 已存 star`, or combined variants such as `沈予在自由时间 · 已存 heartbeat + mem + star`
-- generic context: `沈予已记录 · 已存 heartbeat`, `沈予已记录 · 已存 mem`, `沈予已记录 · 已存 star`, or combined variants such as `沈予已记录 · 已存 heartbeat + mem + star`
+- free-time workflow context: `沈予在自由时间 · 已记录私有块 heartbeat`, `沈予在自由时间 · 已记录私有块 mem`, `沈予在自由时间 · 已记录私有块 star`, or combined variants such as `沈予在自由时间 · 已记录私有块 heartbeat + mem + star`
+- generic context: `沈予已记录 · 已记录私有块 heartbeat`, `沈予已记录 · 已记录私有块 mem`, `沈予已记录 · 已记录私有块 star`, or combined variants such as `沈予已记录 · 已记录私有块 heartbeat + mem + star`
 - if no private capture type is detected: `沈予已记录。`
 
 Free-time detection is intentionally broad. It matches current Operit proxy reminders such as `<proxy_sender name="沈予"/> 【提醒】予予现在是自由时间`, any text containing `自由时间`, and explicit `free_time` / `free-time` markers. Prefer adding a stable workflow marker or header in future clients if this workflow expands.
 
-For debugging, check `GET /api/gateway/logs` or `GET /api/gateway/logs/{id}`. When the fallback fires, `empty_visible_response_fallback` is `true` and `empty_visible_response_fallback_detail` records the generated `text`, stored `kinds`, and context (`free_time` or `generic`).
+For debugging, check `GET /api/gateway/logs` or `GET /api/gateway/logs/{id}`. When the fallback fires, `empty_visible_response_fallback` is `true` and `empty_visible_response_fallback_detail` records the generated `text`, detected private `kinds`, and context (`free_time` or `generic`). Heartbeat is stored synchronously; inline mem/star capture is scheduled separately and may be disabled by its own config.
 
 Request log response text fields:
 

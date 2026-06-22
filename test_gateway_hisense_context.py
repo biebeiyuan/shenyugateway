@@ -400,14 +400,14 @@ def test_private_only_assistant_content_gets_visible_fallback():
 
     clean, heartbeat, memories, stars, fallback_meta = finalize(message)
 
-    assert clean == "沈予已记录 · 已存 heartbeat"
-    assert message["content"] == "沈予已记录 · 已存 heartbeat"
+    assert clean == "沈予已记录 · 已记录私有块 heartbeat"
+    assert message["content"] == "沈予已记录 · 已记录私有块 heartbeat"
     assert heartbeat == "记下来"
     assert memories == []
     assert stars == []
     assert fallback_meta == {
         "applied": True,
-        "text": "沈予已记录 · 已存 heartbeat",
+        "text": "沈予已记录 · 已记录私有块 heartbeat",
         "kinds": ["heartbeat"],
         "context": "generic",
     }
@@ -423,14 +423,14 @@ def test_free_time_private_capture_fallback_names_stored_kinds():
         mem_note_written=True,
     )
 
-    assert clean == "沈予在自由时间 · 已存 heartbeat + mem"
-    assert message["content"] == "沈予在自由时间 · 已存 heartbeat + mem"
+    assert clean == "沈予在自由时间 · 已记录私有块 heartbeat + mem"
+    assert message["content"] == "沈予在自由时间 · 已记录私有块 heartbeat + mem"
     assert heartbeat == "记下来"
     assert memories == []
     assert stars == []
     assert fallback_meta == {
         "applied": True,
-        "text": "沈予在自由时间 · 已存 heartbeat + mem",
+        "text": "沈予在自由时间 · 已记录私有块 heartbeat + mem",
         "kinds": ["heartbeat", "mem"],
         "context": "free_time",
     }

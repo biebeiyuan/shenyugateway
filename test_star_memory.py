@@ -138,6 +138,35 @@ def test_create_star_accepts_ordered_chord_sequence():
     assert filtered["count"] == 1
 
 
+def test_inline_star_progression_prefix_is_saved_as_chord_sequence():
+    clean, heartbeat, memories, stars = split_private_assistant_tags(
+        '[star]Bbmaj7 → Am(maj7) → F#m7 · 实体化"我会一直等"——她接住"是不是有点点不舒服"。一段。[/star]'
+    )
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        captured = await service.process_inline_stars(
+            {"session_tag": "default", "id": "session-1"},
+            stars,
+            "",
+            "test-model",
+        )
+        listed = await service.list_stars(status="all")
+        return captured, supabase.tables["shenyu_stars"][0], listed
+
+    captured, row, listed = asyncio.run(run())
+
+    assert clean == ""
+    assert heartbeat == ""
+    assert memories == []
+    assert captured["inserted_count"] == 1
+    assert row["content"].startswith('实体化"我会一直等"')
+    assert row["chord"] == "Bbmaj7 → Am(maj7) → F#m7"
+    assert row["metadata"]["chord_sequence"] == ["Bbmaj7", "Am(maj7)", "F#m7"]
+    assert listed["items"][0]["chord_sequence"] == ["Bbmaj7", "Am(maj7)", "F#m7"]
+
+
 def test_review_limits_candidates_and_missed_feedback():
     supabase = FakeSupabase()
     service = StarService(_cfg(), supabase)

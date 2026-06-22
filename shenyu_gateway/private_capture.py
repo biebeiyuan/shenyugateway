@@ -73,7 +73,7 @@ def private_capture_fallback_text(latest_user_text: str, stored_kinds: list[str]
     context = "free_time" if is_free_time_fallback_context(latest_user_text) else "generic"
     prefix = "沈予在自由时间" if context == "free_time" else "沈予已记录"
     if stored_kinds:
-        return f"{prefix} · 已存 {' + '.join(stored_kinds)}", context
+        return f"{prefix} · 已记录私有块 {' + '.join(stored_kinds)}", context
     if context == "free_time":
         return f"{prefix} · 已记录", context
     return EMPTY_VISIBLE_ASSISTANT_REPLY, context
