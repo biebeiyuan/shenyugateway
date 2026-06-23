@@ -44,6 +44,21 @@ _BROKER_TOOL_HINTS = {
     "shenyu_supabase_guide": "忘了 Supabase 表结构看这个",
 }
 
+_BROKER_CATEGORIZED_DESCRIPTION = """\
+记忆库总入口。tool=工具全名，params=参数对象。
+
+星星　　create_star / search_stars / star_review / star_feedback / connect_constellation
+回忆　　recall / read_heartbeat / last_seen
+便签　　write_mem_note / list_mem_notes
+日记　　add_calendar
+手边　　notebook_write / notebook_list
+矛盾书　conflict_list / conflict_read / conflict_annotate
+
+还有便签整理（update_mem_note / bulk_update_mem_notes / delete_mem_note / search_mem_notes）、\
+星星管理（list_stars / mark_constant）、notebook_update、recall_main_thread 等，按需用。\
+Supabase 直接操作看 supabase_guide。\
+所有工具名省略 shenyu_ 前缀也行。"""
+
 
 def _upstream_tools_enabled(cfg: Any) -> bool:
     return bool(getattr(cfg, "enable_upstream_tools", True))
@@ -691,18 +706,11 @@ def _broker_tool_summary(tool: dict) -> str:
 def _gateway_broker_tool(cfg: Any) -> dict:
     expanded_tools = _expanded_gateway_native_tools(cfg)
     names = [tool["function"]["name"] for tool in expanded_tools]
-    tool_lines = "\n".join(
-        f"{tool['function']['name']:<24} {_broker_tool_summary(tool)}" for tool in expanded_tools
-    )
-    description = (
-        "记忆库总入口。tool=工具全名，params=参数对象。\n\n"
-        + tool_lines
-    )
     return {
         "type": "function",
         "function": {
             "name": "shenyu_gateway_tool",
-            "description": description,
+            "description": _BROKER_CATEGORIZED_DESCRIPTION,
             "parameters": {
                 "type": "object",
                 "properties": {
