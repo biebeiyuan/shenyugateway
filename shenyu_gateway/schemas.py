@@ -20,6 +20,9 @@ class ChatRequest(BaseModel):
     max_tokens: Optional[int] = Field(default=4096, ge=1, le=8192)
     temperature: Optional[float] = Field(default=None, ge=0, le=2)
     tools: Optional[list[dict]] = None
+    thinking: Optional[Any] = None
+    output_config: Optional[dict[str, Any]] = None
+    reasoning_effort: Optional[str] = None
 
 
 class ConfigUpdate(BaseModel):

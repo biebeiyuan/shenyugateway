@@ -640,6 +640,66 @@ def test_build_upstream_request_omits_provider_order_for_anthropic(monkeypatch):
     assert "provider" not in payload
 
 
+def test_build_upstream_request_forwards_anthropic_thinking_and_output_config(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "anthropic")
+    monkeypatch.setenv("UPSTREAM_URL", "https://api.anthropic.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+            temperature=0.5,
+            thinking={"type": "enabled", "budgetTokens": 2048},
+            reasoning_effort="high",
+        )
+
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert payload["thinking"] == {
+        "type": "enabled",
+        "budget_tokens": 2048,
+        "display": "summarized",
+    }
+    assert payload["output_config"] == {"effort": "high"}
+    assert "temperature" not in payload
+
+
+def test_build_upstream_request_defaults_boolean_thinking_to_adaptive_summarized(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "anthropic")
+    monkeypatch.setenv("UPSTREAM_URL", "https://api.anthropic.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+            thinking=True,
+        )
+
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert payload["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+
 def test_sse_response_disables_proxy_buffering():
     async def generate():
         yield "data: [DONE]\n\n"

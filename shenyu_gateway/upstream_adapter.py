@@ -374,6 +374,57 @@ def _convert_openai_tools_to_anthropic(
     return converted
 
 
+def _normalize_anthropic_thinking(value: Any) -> Optional[dict]:
+    if value is None or value is False:
+        return None
+
+    if value is True:
+        value = {"type": "adaptive"}
+    elif isinstance(value, str):
+        value = {"type": value}
+    elif not isinstance(value, dict):
+        return None
+
+    thinking = dict(value)
+    if "budgetTokens" in thinking and "budget_tokens" not in thinking:
+        thinking["budget_tokens"] = thinking.pop("budgetTokens")
+    if "budget" in thinking and "budget_tokens" not in thinking:
+        thinking["budget_tokens"] = thinking.pop("budget")
+    if "max_tokens" in thinking and "budget_tokens" not in thinking:
+        thinking["budget_tokens"] = thinking.pop("max_tokens")
+
+    thinking_type = str(thinking.get("type") or "").strip().lower()
+    if not thinking_type:
+        if "budget_tokens" in thinking:
+            thinking_type = "enabled"
+        else:
+            thinking_type = "adaptive"
+    if thinking_type in {"on", "enabled", "true", "1"}:
+        thinking_type = "enabled"
+    elif thinking_type in {"adaptive", "auto"}:
+        thinking_type = "adaptive"
+    elif thinking_type in {"off", "disabled", "false", "0"}:
+        return None
+
+    thinking["type"] = thinking_type
+
+    if thinking_type != "disabled" and "display" not in thinking:
+        thinking["display"] = "summarized"
+
+    budget_tokens = thinking.get("budget_tokens")
+    if budget_tokens is not None:
+        try:
+            thinking["budget_tokens"] = max(1, int(budget_tokens))
+        except (TypeError, ValueError):
+            thinking.pop("budget_tokens", None)
+
+    if thinking_type != "enabled":
+        thinking.pop("budget_tokens", None)
+
+    allowed_keys = {"type", "budget_tokens", "display"}
+    return {key: value for key, value in thinking.items() if key in allowed_keys and value is not None}
+
+
 def _openai_to_anthropic(
     messages: list[dict],
     cache_layers: Optional[dict[str, str]] = None,

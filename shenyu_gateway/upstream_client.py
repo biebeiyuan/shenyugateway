@@ -17,6 +17,7 @@ from .upstream_adapter import (
     _apply_openai_compatible_cache_control,
     _convert_openai_tools_to_anthropic,
     _models_url_for,
+    _normalize_anthropic_thinking,
     _openai_to_anthropic,
     _sanitize_openai_compatible_messages,
     _sanitize_openai_compatible_tools,
@@ -272,6 +273,13 @@ async def build_upstream_request(
             if merged_tools
             else []
         )
+        anthropic_thinking = _normalize_anthropic_thinking(getattr(body, "thinking", None))
+        output_config = getattr(body, "output_config", None)
+        if not isinstance(output_config, dict):
+            output_config = {}
+        reasoning_effort = str(getattr(body, "reasoning_effort", "") or "").strip().lower()
+        if reasoning_effort and "effort" not in output_config:
+            output_config["effort"] = reasoning_effort
         system, messages = _openai_to_anthropic(
             raw_messages,
             cache_layers=(meta or {}).get("cache_layers"),
@@ -284,10 +292,14 @@ async def build_upstream_request(
         }
         if system:
             payload["system"] = system
-        if body.temperature is not None:
+        if body.temperature is not None and not anthropic_thinking:
             payload["temperature"] = body.temperature
         if anthropic_tools:
             payload["tools"] = anthropic_tools
+        if anthropic_thinking:
+            payload["thinking"] = anthropic_thinking
+        if output_config:
+            payload["output_config"] = output_config
         headers = {
             "x-api-key": upstream["api_key"],
             "anthropic-version": cfg.upstream_version,
