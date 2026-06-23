@@ -291,8 +291,9 @@ async def build_upstream_request(
         payload: dict[str, Any] = {
             "model": model_name,
             "messages": messages,
-            "max_tokens": body.max_tokens or 4096,
         }
+        if body.max_tokens is not None:
+            payload["max_tokens"] = body.max_tokens
         if system:
             payload["system"] = system
         if body.temperature is not None and not anthropic_thinking:
@@ -328,7 +329,9 @@ async def build_upstream_request(
         cache_meta["breakpoints"] = []
         cache_meta["note"] = "OpenAI-compatible cache_control is disabled by ENABLE_OPENAI_CACHE_CONTROL."
 
-    payload = {"model": model_name, "messages": cache_messages, "max_tokens": body.max_tokens or 4096}
+    payload = {"model": model_name, "messages": cache_messages}
+    if body.max_tokens is not None:
+        payload["max_tokens"] = body.max_tokens
     if body.temperature is not None:
         payload["temperature"] = body.temperature
     provider_value = upstream_provider_value(cfg, proto)

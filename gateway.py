@@ -873,6 +873,7 @@ async def _stream_chat(
             tool_call_seen = False
             fallback_applied = False
             stream_usage: dict[str, Any] = {}
+            stream_finish_reason: str = ""
             stream_chunk_id = _new_stream_chunk_id()
             stream_created = _now_ts()
             try:
@@ -922,6 +923,8 @@ async def _stream_chat(
                                 stream_usage.update(data["usage"])
                             choice = (data.get("choices") or [{}])[0]
                             delta = choice.get("delta", {})
+                            if choice.get("finish_reason") is not None:
+                                stream_finish_reason = str(choice.get("finish_reason") or "")
                             if delta.get("tool_calls"):
                                 tool_call_seen = True
                             text = delta.get("content")
@@ -982,6 +985,7 @@ async def _stream_chat(
                             tag_filter.get_stars(),
                             fallback_applied,
                             stream_usage or None,
+                            stream_finish_reason or None,
                         )
                     except Exception:
                         logger.exception("流式回调执行失败")
@@ -1129,6 +1133,7 @@ async def _stream_chat(
                         tag_filter.get_stars(),
                         fallback_applied,
                         _anthropic_usage_to_openai(anthropic_usage) or None,
+                        _anthropic_stop_reason_to_openai(anthropic_stop_reason),
                     )
                 except Exception:
                     logger.exception("流式回调执行失败")

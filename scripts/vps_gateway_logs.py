@@ -453,6 +453,7 @@ def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
     tools_count = log.get("tools_count")
     rounds = _round_count(log)
     executed = _tool_execution_count(log)
+    finish_reason = log.get("finish_reason")
 
     head = f"{timestamp}  [{status}]  id={log_id}"
     if request_id:
@@ -473,6 +474,7 @@ def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
                 f"session={session}",
                 f"stream={stream}",
                 f"duration_ms={duration}",
+                f"finish_reason={finish_reason}",
             ]
         )
     )
@@ -578,6 +580,7 @@ def _print_debug_summary(data: dict[str, Any]) -> None:
                     f"request_id={latest.get('request_id')}",
                     f"status={latest.get('status')}",
                     f"stage={latest.get('stage')}",
+                    f"finish_reason={latest.get('finish_reason')}",
                     f"last_activity_at={latest.get('last_activity_at')}",
                     f"duration_ms={latest.get('duration_ms')}",
                 ]
@@ -633,7 +636,8 @@ def _print_detail_sections(log: dict[str, Any]) -> None:
             print(
                 "    "
                 + f"round={item.get('round')} messages={item.get('messages_count')} "
-                + f"stream={item.get('stream')} final={item.get('final')}"
+                + f"stream={item.get('stream')} final={item.get('final')} "
+                + f"finish_reason={item.get('finish_reason')}"
             )
             for call in item.get("tools") or []:
                 if isinstance(call, dict):

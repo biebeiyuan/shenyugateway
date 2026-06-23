@@ -8,7 +8,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from fastapi import HTTPException
 
-from .request_logs import _mark_request_log_phase
+from .request_logs import _mark_request_log_phase, _record_completion_finish_reason
 from .response_capture import AssistantTagFilter, split_private_assistant_tags
 from .runtime import json_dumps as _json_dumps
 from .runtime import logger, now_ts as _now_ts
@@ -296,8 +296,8 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
                 "usage": raw.get("usage", {}),
             }
         )
-
         tool_calls = _extract_tool_calls(completion)
+        _record_completion_finish_reason(ctx.log_entry, completion, round_log=round_log)
         if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
             await _finalize_non_gateway_tool_reply(
                 ctx,
@@ -424,6 +424,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
         _mark_request_log_phase(ctx.log_entry, "upstream.stream_round_done", detail={"round": round_index + 1})
 
         tool_calls = _extract_tool_calls(completion)
+        _record_completion_finish_reason(ctx.log_entry, completion, round_log=round_log)
         if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
             if not tool_calls:
                 remaining = tag_filter.flush()

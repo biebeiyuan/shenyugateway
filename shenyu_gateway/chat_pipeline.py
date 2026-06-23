@@ -14,6 +14,8 @@ from .request_logs import (
     _mark_tool_stream_activity,
     _mark_request_log_phase,
     _message_log_preview,
+    _record_completion_finish_reason,
+    _record_finish_reason,
     _record_response_text,
     _record_upstream_payload,
     _request_logs,
@@ -188,6 +190,7 @@ class ChatPipeline:
             },
             "usage": None,
             "cache_usage": _cache_usage_summary({}),
+            "finish_reason": None,
             "status": "preparing",
             "duration_ms": 0,
             "error": None,
@@ -272,6 +275,7 @@ class ChatPipeline:
             },
             "usage": None,
             "cache_usage": _cache_usage_summary({}),
+            "finish_reason": None,
             "status": "pending",
             "duration_ms": 0,
             "error": None,
@@ -357,6 +361,7 @@ class ChatPipeline:
         self.mark_context_consumed(meta)
         log_entry["usage"] = completion.get("usage", log_entry.get("usage"))
         log_entry["cache_usage"] = log_entry.get("cache_usage") or _cache_usage_summary(completion.get("usage", {}))
+        _record_completion_finish_reason(log_entry, completion)
         log_entry["status"] = "ok"
         _record_response_text(
             log_entry,
@@ -396,8 +401,10 @@ class ChatPipeline:
                 inline_stars: Optional[list[str]] = None,
                 fallback_applied: bool = False,
                 usage: Optional[dict] = None,
+                finish_reason: Optional[str] = None,
             ):
                 log_entry["status"] = "ok"
+                _record_finish_reason(log_entry, finish_reason)
                 if usage:
                     log_entry["usage"] = usage
                     log_entry["cache_usage"] = _cache_usage_summary(usage)
@@ -453,6 +460,7 @@ class ChatPipeline:
         completion = await self.nonstream_chat(request, payload, headers, body.model, upstream)
         log_entry["usage"] = completion.get("usage", {})
         log_entry["cache_usage"] = _cache_usage_summary(completion.get("usage", {}))
+        _record_completion_finish_reason(log_entry, completion)
         assistant_message = completion.get("choices", [{}])[0].get("message", {})
         clean_content, heartbeat_content, inline_memories, inline_stars, fallback_meta = _unpack_private_capture_result(
             self.finalize_assistant_private_content(

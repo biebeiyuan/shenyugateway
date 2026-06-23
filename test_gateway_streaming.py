@@ -24,6 +24,7 @@ from shenyu_gateway.request_logs import (
     _http_request_events,
     _mark_http_request_event,
     _mark_request_log_phase,
+    _record_completion_finish_reason,
     _record_response_text,
     _start_http_request_event,
     _upstream_payload_summary,
@@ -482,6 +483,83 @@ def _contains_cache_control(value):
     return False
 
 
+def test_chat_request_does_not_default_or_cap_max_tokens():
+    body = ChatRequest(model="test-model", messages=[{"role": "user", "content": "hello"}])
+    large_body = ChatRequest(
+        model="test-model",
+        messages=[{"role": "user", "content": "hello"}],
+        max_tokens=200000,
+    )
+
+    assert body.max_tokens is None
+    assert large_body.max_tokens == 200000
+
+
+@pytest.mark.parametrize(
+    ("protocol", "url"),
+    [
+        ("openai", "https://example.com"),
+        ("anthropic", "https://api.anthropic.com"),
+    ],
+)
+def test_build_upstream_request_omits_max_tokens_when_not_requested(monkeypatch, protocol, url):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", protocol)
+    monkeypatch.setenv("UPSTREAM_URL", url)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert "max_tokens" not in payload
+
+
+@pytest.mark.parametrize(
+    ("protocol", "url"),
+    [
+        ("openai", "https://example.com"),
+        ("anthropic", "https://api.anthropic.com"),
+    ],
+)
+def test_build_upstream_request_forwards_requested_max_tokens(monkeypatch, protocol, url):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", protocol)
+    monkeypatch.setenv("UPSTREAM_URL", url)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+            max_tokens=200000,
+        )
+
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert payload["max_tokens"] == 200000
+
+
 def test_build_upstream_request_omits_openai_cache_control_when_disabled(monkeypatch):
     monkeypatch.setenv("UPSTREAM_PROTOCOL", "openai")
     monkeypatch.setenv("UPSTREAM_URL", "https://example.com")
@@ -784,6 +862,17 @@ def test_record_response_text_keeps_full_detail_when_payloads_retained():
     assert entry["response_preview"].endswith("...")
     assert len(entry["response_preview"]) == 200
     assert entry["response_full"] == "x" * 250
+
+
+def test_record_completion_finish_reason_updates_log_and_round():
+    entry = {}
+    round_log = {}
+    completion = {"choices": [{"finish_reason": "length"}]}
+
+    _record_completion_finish_reason(entry, completion, round_log=round_log)
+
+    assert entry["finish_reason"] == "length"
+    assert round_log["finish_reason"] == "length"
 
 
 def test_finalize_tool_stream_log_closes_unfinished_streaming_status():

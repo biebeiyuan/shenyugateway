@@ -326,6 +326,50 @@ def _record_response_text(log_entry: dict, text: str, preview_limit: int = 200) 
         log_entry["response_full"] = text
 
 
+def _completion_finish_reason(completion: Optional[dict]) -> Optional[str]:
+    if not isinstance(completion, dict):
+        return None
+    choices = completion.get("choices") or []
+    if not choices or not isinstance(choices[0], dict):
+        return None
+    reason = choices[0].get("finish_reason")
+    if reason is None:
+        return None
+    text = str(reason).strip()
+    return text or None
+
+
+def _record_finish_reason(
+    log_entry: Optional[dict],
+    finish_reason: Any,
+    *,
+    round_log: Optional[dict] = None,
+) -> Optional[str]:
+    if finish_reason is None:
+        return None
+    reason = str(finish_reason).strip()
+    if not reason:
+        return None
+    if log_entry is not None:
+        log_entry["finish_reason"] = reason
+    if round_log is not None:
+        round_log["finish_reason"] = reason
+    return reason
+
+
+def _record_completion_finish_reason(
+    log_entry: Optional[dict],
+    completion: Optional[dict],
+    *,
+    round_log: Optional[dict] = None,
+) -> Optional[str]:
+    return _record_finish_reason(
+        log_entry,
+        _completion_finish_reason(completion),
+        round_log=round_log,
+    )
+
+
 def _finalize_tool_stream_log(log_entry: dict, duration_ms: int) -> None:
     if log_entry.get("status") == "streaming_tools":
         log_entry["status"] = "client_disconnected"
