@@ -46,10 +46,7 @@ def mark_context_consumed(meta: dict, *, store: Any):
 
 def is_free_time_fallback_context(latest_user_text: str) -> bool:
     text = latest_user_text or ""
-    lower = text.lower()
-    if "自由时间" in text or "free_time" in lower or "free-time" in lower:
-        return True
-    return "proxy_sender" in lower and "沈予" in text and ("提醒" in text or "自动" in text)
+    return "proxy_sender" in text and "沈予" in text and "回家了" in text
 
 
 def is_room_mode(latest_user_text: str) -> bool:
@@ -76,7 +73,7 @@ def private_capture_kinds(
 
 def private_capture_fallback_text(latest_user_text: str, stored_kinds: list[str]) -> tuple[str, str]:
     context = "free_time" if is_free_time_fallback_context(latest_user_text) else "generic"
-    prefix = "沈予在自由时间" if context == "free_time" else "沈予已记录"
+    prefix = "沈予回家了" if context == "free_time" else "沈予已记录"
     if stored_kinds:
         return f"{prefix} · 已记录私有块 {' + '.join(stored_kinds)}", context
     if context == "free_time":

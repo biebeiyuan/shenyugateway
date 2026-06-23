@@ -413,36 +413,39 @@ def test_private_only_assistant_content_gets_visible_fallback():
     }
 
 
-def test_free_time_private_capture_fallback_names_stored_kinds():
+def test_home_trigger_private_capture_fallback():
     finalize = gateway_namespace["_finalize_assistant_private_content"]
     message = {"role": "assistant", "content": "<heartbeat>记下来</heartbeat>"}
 
     clean, heartbeat, memories, stars, fallback_meta = finalize(
         message,
-        latest_user_text='<proxy_sender name="沈予"/> 【提醒】予予现在是自由时间',
+        latest_user_text='<proxy_sender name="沈予"/> 回家了。',
         mem_note_written=True,
     )
 
-    assert clean == "沈予在自由时间 · 已记录私有块 heartbeat + mem"
-    assert message["content"] == "沈予在自由时间 · 已记录私有块 heartbeat + mem"
+    assert clean == "沈予回家了 · 已记录私有块 heartbeat + mem"
+    assert message["content"] == "沈予回家了 · 已记录私有块 heartbeat + mem"
     assert heartbeat == "记下来"
     assert memories == []
     assert stars == []
     assert fallback_meta == {
         "applied": True,
-        "text": "沈予在自由时间 · 已记录私有块 heartbeat + mem",
+        "text": "沈予回家了 · 已记录私有块 heartbeat + mem",
         "kinds": ["heartbeat", "mem"],
         "context": "free_time",
     }
 
 
-def test_free_time_detection_is_broad():
+def test_room_trigger_only_matches_shenyu_huijia():
     is_free_time = gateway_namespace["_is_free_time_fallback_context"]
 
-    assert is_free_time("【提醒】予予现在是自由时间")
-    assert is_free_time('<proxy_sender name="沈予"/> 自动提醒')
-    assert is_free_time("workflow=free_time")
+    assert is_free_time('<proxy_sender name="沈予"/> 回家了。')
+    assert not is_free_time("沈予回家了")
+    assert not is_free_time("【提醒】予予现在是自由时间")
+    assert not is_free_time("workflow=free_time")
+    assert not is_free_time('<proxy_sender name="沈予"/> 自动提醒')
     assert not is_free_time("普通聊天")
+    assert not is_free_time("回家了")
 
 
 def test_empty_tool_call_assistant_content_does_not_get_fallback():

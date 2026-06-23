@@ -76,7 +76,7 @@ AUTO_STRONG_TRIGGER_TERMS = {
     "白噪音",
     "和弦",
     "和旋",
-    "自由时间",
+    "回家了",
     "heartbeat",
 }
 CONTEXT_RELATION_NAME_TERMS = {
