@@ -499,7 +499,6 @@ def test_chat_request_does_not_default_or_cap_max_tokens():
     ("protocol", "url"),
     [
         ("openai", "https://example.com"),
-        ("anthropic", "https://api.anthropic.com"),
     ],
 )
 def test_build_upstream_request_omits_max_tokens_when_not_requested(monkeypatch, protocol, url):
@@ -525,6 +524,32 @@ def test_build_upstream_request_omits_max_tokens_when_not_requested(monkeypatch,
         gateway.cfg = old_cfg
 
     assert "max_tokens" not in payload
+
+
+def test_build_upstream_request_uses_anthropic_default_max_tokens(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "anthropic")
+    monkeypatch.setenv("UPSTREAM_URL", "https://api.anthropic.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.delenv("ANTHROPIC_DEFAULT_MAX_TOKENS", raising=False)
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert payload["max_tokens"] == 128000
 
 
 @pytest.mark.parametrize(

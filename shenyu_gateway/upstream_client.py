@@ -292,8 +292,9 @@ async def build_upstream_request(
             "model": model_name,
             "messages": messages,
         }
-        if body.max_tokens is not None:
-            payload["max_tokens"] = body.max_tokens
+        max_tokens = body.max_tokens if body.max_tokens is not None else cfg.anthropic_default_max_tokens
+        if max_tokens is not None:
+            payload["max_tokens"] = max_tokens
         if system:
             payload["system"] = system
         if body.temperature is not None and not anthropic_thinking:
