@@ -1328,7 +1328,7 @@ class GatewayToolService:
     def _supabase_table_hint(self, table: str) -> str:
         normalized = (table or "").strip().lower()
         if normalized in {"heartbeat", "heartbeats", "heartbeat_entries", "gateway_heartbeats"}:
-            return "heartbeat_entries lives in the gateway SQLite store, not Supabase. Use shenyu_read_heartbeat with date/date_from/date_to instead."
+            return "heartbeat_entries lives in the gateway SQLite store, not Supabase. Use shenyu_read_heartbeat（日常）or room_wooden_box（room 模式）instead."
         if normalized in {"gateway_messages", "request_context_snapshots", "raw_request_windows"}:
             return f"{normalized} lives in the gateway SQLite store, not Supabase."
         return ""
