@@ -1284,6 +1284,7 @@ async def health():
         "upstream_proxy_configured": bool(cfg.upstream_proxy),
         "upstream_trust_env": cfg.upstream_trust_env,
         "enable_openai_cache_control": cfg.enable_openai_cache_control,
+        "enable_anthropic_auto_thinking": cfg.enable_anthropic_auto_thinking,
         "upstream_provider_order_enabled": cfg.upstream_provider_order_enabled,
         "upstream_provider_format": cfg.upstream_provider_format,
         "upstream_provider_order": cfg.upstream_provider_order,

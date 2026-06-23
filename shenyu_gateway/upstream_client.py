@@ -273,7 +273,10 @@ async def build_upstream_request(
             if merged_tools
             else []
         )
+        explicit_thinking = "thinking" in getattr(body, "model_fields_set", set())
         anthropic_thinking = _normalize_anthropic_thinking(getattr(body, "thinking", None))
+        if not explicit_thinking and not anthropic_thinking and getattr(cfg, "enable_anthropic_auto_thinking", False):
+            anthropic_thinking = _normalize_anthropic_thinking({"type": "adaptive"})
         output_config = getattr(body, "output_config", None)
         if not isinstance(output_config, dict):
             output_config = {}

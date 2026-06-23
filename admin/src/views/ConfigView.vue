@@ -50,6 +50,7 @@ const config = ref<GatewayConfig>({
   upstream_proxy: '',
   upstream_trust_env: false,
   enable_openai_cache_control: true,
+  enable_anthropic_auto_thinking: false,
   upstream_provider_order_enabled: false,
   upstream_provider_format: 'string',
   upstream_provider_order: [],
@@ -192,6 +193,7 @@ async function doSave() {
       upstream_proxy: config.value.upstream_proxy,
       upstream_trust_env: config.value.upstream_trust_env,
       enable_openai_cache_control: config.value.enable_openai_cache_control,
+      enable_anthropic_auto_thinking: config.value.enable_anthropic_auto_thinking,
       upstream_provider_order_enabled: config.value.upstream_provider_order_enabled,
       upstream_provider_format: config.value.upstream_provider_format,
       upstream_provider_order: config.value.upstream_provider_order || [],
@@ -423,6 +425,15 @@ function removeModel(index: number) {
             </NFormItem>
             <NFormItem label="OpenAI cache_control">
               <NSwitch v-model:value="config.enable_openai_cache_control" />
+            </NFormItem>
+            <NFormItem label="Anthropic adaptive thinking">
+              <div class="switch-row">
+                <NSwitch
+                  v-model:value="config.enable_anthropic_auto_thinking"
+                  :disabled="config.upstream_protocol !== 'anthropic'"
+                />
+                <span class="switch-hint">Anthropic 协议且请求未显式传 thinking 时，自动补 type=adaptive。</span>
+              </div>
             </NFormItem>
             <div class="provider-order-box">
               <div class="provider-order-head">
@@ -754,6 +765,19 @@ function removeModel(index: number) {
 
 .provider-order-hint {
   margin-top: 6px;
+}
+
+.switch-row {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.switch-hint {
+  color: #7d8590;
+  font-size: 11px;
+  line-height: 1.5;
 }
 
 .cal-input {

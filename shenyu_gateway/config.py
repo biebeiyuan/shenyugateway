@@ -64,6 +64,7 @@ class RuntimeConfig:
         self.upstream_proxy: str = os.getenv("UPSTREAM_PROXY", "").strip()
         self.upstream_trust_env: bool = _env_bool("UPSTREAM_TRUST_ENV", False)
         self.enable_openai_cache_control: bool = _env_bool("ENABLE_OPENAI_CACHE_CONTROL", True)
+        self.enable_anthropic_auto_thinking: bool = _env_bool("ENABLE_ANTHROPIC_AUTO_THINKING", False)
         self.upstream_provider_order_enabled: bool = _env_bool("UPSTREAM_PROVIDER_ORDER_ENABLED", False)
         self.upstream_provider_format: str = self._normalize_provider_format(os.getenv("UPSTREAM_PROVIDER_FORMAT", "string"))
         self.upstream_provider_order: list[str] = self._load_provider_order()
@@ -172,6 +173,7 @@ class RuntimeConfig:
             "upstream_proxy": self.upstream_proxy,
             "upstream_trust_env": self.upstream_trust_env,
             "enable_openai_cache_control": self.enable_openai_cache_control,
+            "enable_anthropic_auto_thinking": self.enable_anthropic_auto_thinking,
             "upstream_provider_order_enabled": self.upstream_provider_order_enabled,
             "upstream_provider_format": self.upstream_provider_format,
             "upstream_provider_order": self.upstream_provider_order,

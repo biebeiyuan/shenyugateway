@@ -8,6 +8,7 @@ export interface GatewayConfig {
   upstream_proxy?: string
   upstream_trust_env?: boolean
   enable_openai_cache_control?: boolean
+  enable_anthropic_auto_thinking?: boolean
   upstream_provider_order_enabled?: boolean
   upstream_provider_format?: string
   upstream_provider_order?: string[]
@@ -99,6 +100,7 @@ export interface HealthStatus {
   upstream_proxy_configured?: boolean
   upstream_trust_env?: boolean
   enable_openai_cache_control?: boolean
+  enable_anthropic_auto_thinking?: boolean
   upstream_provider_order_enabled?: boolean
   upstream_provider_format?: string
   upstream_provider_order?: string[]

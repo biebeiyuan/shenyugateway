@@ -26,6 +26,7 @@ from shenyu_gateway.request_logs import (
     _mark_request_log_phase,
     _record_response_text,
     _start_http_request_event,
+    _upstream_payload_summary,
 )
 from shenyu_gateway.schemas import ChatRequest
 from shenyu_gateway.sessions import SessionManager
@@ -698,6 +699,71 @@ def test_build_upstream_request_defaults_boolean_thinking_to_adaptive_summarized
         gateway.cfg = old_cfg
 
     assert payload["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+
+def test_build_upstream_request_auto_adds_anthropic_adaptive_thinking(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "anthropic")
+    monkeypatch.setenv("UPSTREAM_URL", "https://api.anthropic.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_ANTHROPIC_AUTO_THINKING", "true")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert payload["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+
+def test_build_upstream_request_explicit_false_disables_auto_thinking(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "anthropic")
+    monkeypatch.setenv("UPSTREAM_URL", "https://api.anthropic.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_ANTHROPIC_AUTO_THINKING", "true")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+            thinking=False,
+        )
+
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert "thinking" not in payload
+
+
+def test_upstream_payload_summary_reports_thinking_shape():
+    summary = _upstream_payload_summary(
+        {
+            "model": "test-model",
+            "messages": [],
+            "thinking": {"type": "adaptive", "display": "summarized", "signature": "hidden"},
+        }
+    )
+
+    assert summary["thinking"] == {"type": "adaptive", "display": "summarized"}
 
 
 def test_sse_response_disables_proxy_buffering():

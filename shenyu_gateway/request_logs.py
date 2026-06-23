@@ -278,6 +278,13 @@ def _upstream_payload_summary(payload: Optional[dict]) -> Optional[dict[str, Any
     elif isinstance(provider, str):
         summary["provider_format"] = "string"
         summary["provider"] = provider
+    thinking = payload.get("thinking")
+    if isinstance(thinking, dict):
+        summary["thinking"] = {
+            key: thinking.get(key)
+            for key in ("type", "display", "budget_tokens")
+            if thinking.get(key) is not None
+        }
     system = payload.get("system")
     if isinstance(system, list):
         summary["system_blocks_count"] = len(system)

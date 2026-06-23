@@ -487,6 +487,16 @@ def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
             f"max_tokens={payload_summary.get('max_tokens')}",
             f"stream={payload_summary.get('stream')}",
         ]
+        thinking = payload_summary.get("thinking")
+        if isinstance(thinking, dict):
+            summary_bits.append(
+                "thinking="
+                + ",".join(
+                    f"{key}:{value}"
+                    for key, value in thinking.items()
+                    if value is not None
+                )
+            )
         print("  upstream_payload: " + " | ".join(summary_bits))
 
     prompt_cache = log.get("prompt_cache")

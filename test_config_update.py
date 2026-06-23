@@ -10,6 +10,7 @@ from shenyu_gateway.store import GatewayStore
 
 DEFAULTED_ENV_KEYS = [
     "ENABLE_OPENAI_CACHE_CONTROL",
+    "ENABLE_ANTHROPIC_AUTO_THINKING",
     "UPSTREAM_PROVIDER_ORDER_ENABLED",
     "UPSTREAM_PROVIDER_FORMAT",
     "UPSTREAM_PROVIDER_ORDER",
@@ -36,6 +37,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     cfg = RuntimeConfig()
 
     assert cfg.enable_openai_cache_control is True
+    assert cfg.enable_anthropic_auto_thinking is False
     assert cfg.upstream_provider_order_enabled is False
     assert cfg.upstream_provider_format == "string"
     assert cfg.upstream_provider_order == []
@@ -145,6 +147,26 @@ def test_config_update_saves_provider_order(monkeypatch):
     assert persisted[-1]["UPSTREAM_PROVIDER_ORDER_ENABLED"] == "true"
     assert persisted[-1]["UPSTREAM_PROVIDER_FORMAT"] == "order_object"
     assert persisted[-1]["UPSTREAM_PROVIDER_ORDER"] == '["Amazon Bedrock", "OpenAI"]'
+
+
+def test_config_update_saves_anthropic_auto_thinking(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "enable_anthropic_auto_thinking", False)
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"enable_anthropic_auto_thinking": True},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["enable_anthropic_auto_thinking"] is True
+    assert "enable_anthropic_auto_thinking" in payload["changed"]
+    assert gateway.cfg.enable_anthropic_auto_thinking is True
+    assert persisted[-1]["ENABLE_ANTHROPIC_AUTO_THINKING"] == "true"
 
 
 def test_persist_env_saves_config_overrides_to_sqlite(tmp_path, monkeypatch):
