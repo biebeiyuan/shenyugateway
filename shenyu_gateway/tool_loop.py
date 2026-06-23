@@ -52,9 +52,8 @@ class InternalToolLoopContext:
     execute_gateway_tool: Callable[..., Awaitable[dict]]
     record_upstream_payload: Callable[[Optional[dict], dict], None]
     aggregate_cache_usage: Callable[[list[dict]], dict]
-    finalize_assistant_private_content: Callable[..., tuple[str, str, list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]]
+    finalize_assistant_private_content: Callable[..., tuple[str, str, dict[str, Any]]]
     store_heartbeat: Callable[[str, dict, str], None]
-    schedule_inline_memory_capture: Callable[[Any, dict, list[Any], list[Any], str, str], None]
     mark_context_consumed: Callable[[dict], None]
     write_completion_context_snapshot: Callable[[dict, str], Any]
     record_response_text: Callable[[dict, str], None]
@@ -89,13 +88,10 @@ def _content_text_only(content: Any) -> str:
     return _normalize_text(content)
 
 
-def _unpack_private_capture_result(result: tuple) -> tuple[str, str, list[Any], list[Any], dict[str, Any]]:
-    if len(result) == 5:
-        clean_content, heartbeat_content, inline_memories, inline_stars, fallback_meta = result
-        return clean_content, heartbeat_content, inline_memories, inline_stars, fallback_meta
-    if len(result) == 4:
-        clean_content, heartbeat_content, inline_memories, fallback_meta = result
-        return clean_content, heartbeat_content, inline_memories, [], fallback_meta
+def _unpack_private_capture_result(result: tuple) -> tuple[str, str, dict[str, Any]]:
+    if len(result) == 3:
+        clean_content, heartbeat_content, fallback_meta = result
+        return clean_content, heartbeat_content, fallback_meta
     raise ValueError("finalize_assistant_private_content returned an unsupported tuple shape")
 
 
@@ -236,7 +232,7 @@ async def _execute_mixed_gateway_tool_calls(
 
 def _pending_assistant_tool_call_message(assistant_message: dict, tool_calls: list[dict]) -> dict:
     pending_copy = dict(assistant_message or {})
-    clean_content, _, _, _ = split_private_assistant_tags(_normalize_text(pending_copy.get("content")))
+    clean_content, _ = split_private_assistant_tags(_normalize_text(pending_copy.get("content")))
     pending_copy["content"] = clean_content
     return _assistant_tool_call_message(pending_copy, tool_calls)
 
@@ -256,7 +252,6 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
     working_messages = list(ctx.prepared_messages)
     upstream_usages: list[dict] = []
     tool_result_cache: dict[str, dict] = {}
-    mem_note_written = False
     latest_user_text = _latest_user_text(ctx.prepared_messages)
 
     for round_index in range(max(1, ctx.cfg.max_internal_tool_rounds)):
@@ -305,7 +300,6 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
                 tool_calls,
                 round_log,
                 latest_user_text=latest_user_text,
-                mem_note_written=mem_note_written,
             )
             return completion
 
@@ -318,8 +312,6 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
                 log_label="Internal tool call failed",
             )
             _append_tool_round_log(round_log, name, args, cached)
-            if _target_tool_name(name, args) == "shenyu_write_mem_note":
-                mem_note_written = True
             working_messages.append(_tool_result_message(tool_call, name, result))
 
     raise HTTPException(status_code=500, detail="Exceeded internal gateway tool rounds.")
@@ -329,7 +321,6 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
     working_messages = list(ctx.prepared_messages)
     upstream_usages: list[dict] = []
     tool_result_cache: dict[str, dict] = {}
-    mem_note_written = False
     latest_user_text = _latest_user_text(ctx.prepared_messages)
     stream_chunk_id = _new_stream_chunk_id()
     stream_created = _now_ts()
@@ -442,7 +433,6 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                 tool_calls,
                 round_log,
                 latest_user_text=latest_user_text,
-                mem_note_written=mem_note_written,
             )
             ctx.mark_context_consumed(ctx.meta)
             if ctx.log_entry is not None:
@@ -486,8 +476,6 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                 log_label="Internal stream tool call failed",
             )
             _append_tool_round_log(round_log, name, args, cached)
-            if _target_tool_name(name, args) == "shenyu_write_mem_note":
-                mem_note_written = True
             working_messages.append(_tool_result_message(tool_call, name, result))
             if await ctx.request.is_disconnected():
                 if ctx.log_entry is not None:
@@ -539,7 +527,6 @@ async def _finalize_non_gateway_tool_reply(
     round_log: Optional[dict],
     *,
     latest_user_text: str,
-    mem_note_written: bool,
 ) -> None:
     if round_log is not None:
         round_log["final"] = True
@@ -556,11 +543,10 @@ async def _finalize_non_gateway_tool_reply(
             round_log["returned_tool_calls"] = _tool_call_log_preview(client_tool_calls)
 
     assistant_message = completion.get("choices", [{}])[0].get("message", {})
-    clean_content, heartbeat_content, inline_memories, inline_stars, fallback_meta = _unpack_private_capture_result(
+    clean_content, heartbeat_content, fallback_meta = _unpack_private_capture_result(
         ctx.finalize_assistant_private_content(
             assistant_message,
             latest_user_text=latest_user_text,
-            mem_note_written=mem_note_written,
         )
     )
     ctx.last_fallback_meta = fallback_meta
@@ -571,7 +557,6 @@ async def _finalize_non_gateway_tool_reply(
         ctx.log_entry["empty_visible_response_fallback_detail"] = fallback_meta
     ctx.sessions.log_assistant_output(ctx.session_id, assistant_message)
     ctx.write_completion_context_snapshot(ctx.meta, clean_content)
-    ctx.schedule_inline_memory_capture(ctx.request, ctx.session, inline_memories, inline_stars, clean_content, ctx.body.model)
 
 
 def _append_assistant_tool_call_message(

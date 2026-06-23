@@ -13,11 +13,7 @@ from .utils import shorten
 @dataclass(frozen=True)
 class ContextLayerSettings:
     enable_gateway_tools: bool
-    inject_inline_memory_prompt: bool
     heartbeat_prompt: str
-    inline_mem_prompt: str
-    inject_star_prompt: bool = False
-    star_prompt: str = ""
 
 
 _GATEWAY_TOOL_POLICY = (
@@ -110,12 +106,7 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
 
     heartbeat = "\n\n".join(heartbeat_blocks)
     tool_policy = _GATEWAY_TOOL_POLICY if settings.enable_gateway_tools else ""
-    format_blocks = [settings.heartbeat_prompt]
-    if settings.inject_inline_memory_prompt:
-        format_blocks.append(settings.inline_mem_prompt)
-    if settings.inject_star_prompt:
-        format_blocks.append(settings.star_prompt)
-    format_layer = "\n\n".join(block for block in format_blocks if block)
+    format_layer = settings.heartbeat_prompt
 
     return {
         "stable": stable,

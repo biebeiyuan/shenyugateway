@@ -451,38 +451,6 @@ class MemNoteService:
         self.cfg = cfg
         self.supabase = supabase_client
 
-    async def process_inline_memories(
-        self,
-        session: dict,
-        inline_memories: list[Any],
-        assistant_text: str,
-        source_model: str,
-    ) -> dict[str, Any]:
-        if not getattr(self.cfg, "enable_inline_memory_capture", False):
-            return {"ok": False, "reason": "inline memory capture disabled."}
-        if not self.supabase:
-            return {"ok": False, "reason": "Supabase is not configured."}
-
-        notes = [item for item in inline_memories if self._inline_note_content(item)]
-        if not notes:
-            return {"ok": False, "reason": "no inline memories."}
-
-        inserted: list[str | None] = []
-        discarded = 0
-        for note in notes[:4]:
-            payload = self._inline_note_to_row(note, session, assistant_text, source_model)
-            if not payload:
-                discarded += 1
-                continue
-            row = await self.supabase.insert("shenyu_mem_notes", payload)
-            inserted.append(row.get("id") if isinstance(row, dict) else None)
-
-        return {
-            "ok": True,
-            "inline_count": len(notes),
-            "inserted_count": len([item for item in inserted if item]),
-            "discarded_count": discarded,
-        }
 
     async def search_notes(
         self,
@@ -881,30 +849,6 @@ class MemNoteService:
                 lines.append(f"- {content}")
         return "\n".join(lines)
 
-    def _inline_note_content(self, note: Any) -> str:
-        if isinstance(note, dict):
-            content = _normalize_text(note.get("content")).strip()
-        else:
-            content = _normalize_text(note).strip()
-        if not content:
-            return ""
-        if not re.sub(r"[\W_]+", "", content, flags=re.UNICODE):
-            return ""
-        return content
-
-    def _inline_note_to_row(self, note: Any, session: dict, assistant_text: str, source_model: str) -> Optional[dict]:
-        content = self._inline_note_content(note)
-        if not content:
-            return None
-        return {
-            "session_tag": session.get("session_tag") or "default",
-            "content": content,
-            "status": "captured",
-            "cooldown_hours": self._default_cooldown_hours(),
-            "source_model": f"inline-mem:{source_model}",
-            "source_session_id": session.get("id"),
-            "source_excerpt": _shorten(assistant_text, 600),
-        }
 
     def _score(self, query: str, row: dict) -> tuple[float, list[str]]:
         keywords = row.get("trigger_keywords") or []

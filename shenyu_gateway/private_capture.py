@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any
 
 from .runtime import logger
 from .response_capture import split_private_assistant_tags
@@ -54,20 +54,10 @@ def is_room_mode(latest_user_text: str) -> bool:
     return is_free_time_fallback_context(latest_user_text)
 
 
-def private_capture_kinds(
-    *,
-    heartbeat_content: str = "",
-    inline_memories: Optional[list[dict[str, Any]]] = None,
-    inline_stars: Optional[list[dict[str, Any]]] = None,
-    mem_note_written: bool = False,
-) -> list[str]:
+def private_capture_kinds(*, heartbeat_content: str = "") -> list[str]:
     kinds: list[str] = []
     if (heartbeat_content or "").strip():
         kinds.append("heartbeat")
-    if mem_note_written or bool(inline_memories):
-        kinds.append("mem")
-    if bool(inline_stars):
-        kinds.append("star")
     return kinds
 
 
@@ -97,19 +87,14 @@ def finalize_assistant_private_content(
     assistant_message: dict,
     *,
     latest_user_text: str = "",
-    mem_note_written: bool = False,
-) -> tuple[str, str, list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
-    clean_content, heartbeat_content, inline_memories, inline_stars = split_private_assistant_tags(
+) -> tuple[str, str, dict[str, Any]]:
+    """Strip heartbeat from assistant content. Returns (clean_content, heartbeat, fallback_meta)."""
+    clean_content, heartbeat_content = split_private_assistant_tags(
         _normalize_text(assistant_message.get("content"))
     )
-    if heartbeat_content or inline_memories or inline_stars:
+    if heartbeat_content:
         assistant_message["content"] = clean_content
-    stored_kinds = private_capture_kinds(
-        heartbeat_content=heartbeat_content,
-        inline_memories=inline_memories,
-        inline_stars=inline_stars,
-        mem_note_written=mem_note_written,
-    )
+    stored_kinds = private_capture_kinds(heartbeat_content=heartbeat_content)
     fallback_text, fallback_context = private_capture_fallback_text(latest_user_text, stored_kinds)
     fallback_applied = ensure_visible_assistant_content(assistant_message, fallback_text)
     fallback_meta = {
@@ -118,4 +103,4 @@ def finalize_assistant_private_content(
         "kinds": stored_kinds if fallback_applied else [],
         "context": fallback_context if fallback_applied else "",
     }
-    return _normalize_text(assistant_message.get("content")), heartbeat_content, inline_memories, inline_stars, fallback_meta
+    return _normalize_text(assistant_message.get("content")), heartbeat_content, fallback_meta

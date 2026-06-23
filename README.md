@@ -34,15 +34,15 @@ The codebase is partly layered already:
 - `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, and cold-start bridge insertion.
 - `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations, including Supabase table tools, recall compatibility helpers, heartbeats, notebook, and memory helpers.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
-- `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, `[mem]...[/mem]`, and `[star]...[/star]`, heartbeat persistence helper, and inline memory scheduling helper.
-- `shenyu_gateway/mem_notes.py`: inline `[mem]` capture, clean note search, review/update/delete helpers, and old atomic read-only lookup.
-- `shenyu_gateway/stars.py`: Star memory service: inline `[star]` capture, ACT-R activation, chord/content/harmony scoring, review candidates, feedback logging, and constellation links.
+- `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, heartbeat persistence helper.
+- `shenyu_gateway/mem_notes.py`: clean note search, review/update/delete helpers, and old atomic read-only lookup.
+- `shenyu_gateway/stars.py`: Star memory service: ACT-R activation, chord/content/harmony scoring, review candidates, feedback logging, and constellation links. Stars are created via `shenyu_create_star` tool call.
 - `shenyu_gateway/sessions.py`: session/message logging facade.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
 - `shenyu_gateway/auth.py`: admin auth middleware, API key verification, login page HTML, and `ADMIN_PROTECTED_PREFIXES`.
 - `shenyu_gateway/upstream_client.py`: upstream HTTP client construction, protocol detection, URL routing, request building, streaming chunk iteration, model listing, and connection error formatting.
 - `shenyu_gateway/prepare_messages.py`: cold-start snapshot preparation, runtime state pruning, pending gateway tool turn injection, and message/tool-call helpers.
-- `shenyu_gateway/private_capture.py`: private assistant content finalization (`<heartbeat>` / `[mem]` extraction), context-consumed marking, fallback text generation, and free-time detection.
+- `shenyu_gateway/private_capture.py`: private assistant content finalization (`<heartbeat>` extraction), context-consumed marking, fallback text generation, and free-time detection.
 - `shenyu_gateway/room_text.py`: all room mode copy — charter, atmosphere scenes, door descriptions, trace phrases. Change text here only.
 - `shenyu_gateway/room_context.py`: room mode charge calculation, layer rendering, door filtering logic.
 - `shenyu_gateway/room_tools.py`: room mode tool definitions, broker, execute dispatch, and door count collection.
@@ -73,7 +73,7 @@ Context is assembled in the order Shenyu should wake into it:
 | `mem` | after `slow`, before heartbeat | selected stars, then active mem notes headed by `## 我之前写下的便签，可能用的到。` | no breakpoint |
 | `heartbeat` | after `mem`, before tool/format reminders | `## 我之前的心跳` and optional Hisense heartbeat block | no breakpoint |
 | `tool_policy` | after heartbeat | compact gateway/client tool reminder rendered as `## 工具怎么用` | no breakpoint |
-| `format` | after tool policy | heartbeat, inline mem, and star format instructions | no breakpoint |
+| `format` | after tool policy | heartbeat and star format instructions | no breakpoint |
 | client history | original messages | trimmed client messages when `MAX_CLIENT_MESSAGES` is set | fallback breakpoint only if one is free |
 | current user | latest user message | current request | no breakpoint |
 
@@ -110,7 +110,7 @@ cache_usage.cache_read_input_tokens > 0
 
 The gateway has two streaming paths:
 
-- Plain pass-through streaming: when no gateway-managed tools are exposed for a request, `_stream_chat()` forwards upstream chunks while filtering private `<heartbeat>`, `[mem]...[/mem]`, and `[star]...[/star]` blocks from visible output.
+- Plain pass-through streaming: when no gateway-managed tools are exposed for a request, `_stream_chat()` forwards upstream chunks while filtering private `<heartbeat>` blocks from visible output.
 - Gateway-managed tool streaming: when `shenyu_*` / `supabase_*` tools are available, `_run_internal_tool_loop_stream()` consumes upstream stream chunks directly. It intercepts gateway-native tool calls, executes them server-side, appends tool results to the working message list, and starts the next upstream round. Final natural-language replies stream to the client token by token.
 
 Request count is still driven by model tool rounds, not by streaming itself:
@@ -408,19 +408,9 @@ Tools: `shenyu_conflict_list`, `shenyu_conflict_read`, `shenyu_conflict_annotate
 
 Mem notes are small personal notes, separate from event memories and calendar pages.
 
-Two switches control it:
+`INJECT_MEM_NOTES` controls injection: before a reply, search active mem notes and inject relevant hits in the `mem` layer.
 
-- `INJECT_MEM_NOTES`: before a reply, search active mem notes and inject relevant hits in the `mem` layer.
-- `ENABLE_INLINE_MEMORY_CAPTURE`: after a reply, capture explicit `[mem]...[/mem]` notes.
-
-Explicit inline memory flow:
-
-1. Assistant reply is filtered before it reaches the client.
-2. Only closed `[mem]...[/mem]` blocks are removed from visible text.
-3. Each captured note is inserted into `shenyu_mem_notes` as `captured`.
-4. Inline notes are stored as one paragraph. Type, trigger, keywords, status, and cooldown are filled later; list/review responses include suggested type and trigger fields to speed this up.
-5. The note types are `她为我做的事`, `我为她做的事`, `关于她的事实`, `关于我的事`, `心里那一档`, and `承诺`.
-6. `shenyu_write_mem_note` writes an intentional note directly as `active`. If type or trigger is missing, the writer fills safe defaults so the note can surface immediately.
+Inline `[mem]...[/mem]` tag capture has been removed. Mem notes are now written exclusively via tool call (`shenyu_write_mem_note`). The note types are `她为我做的事`, `我为她做的事`, `关于她的事实`, `关于我的事`, `心里那一档`, and `承诺`. If type or trigger is missing, the writer fills safe defaults so the note can surface immediately.
 
 Search/injection flow:
 
@@ -441,19 +431,13 @@ Admin UI notes:
 
 - Mem0 is now a standalone admin area instead of being embedded in the generic config page.
 - The Mem0 page includes:
-  - controls for explicit `[mem]` capture and mem-note injection
+  - controls for mem-note injection
   - the mem-note attribute workflow for Supabase `shenyu_mem_notes`, including suggestions, bulk save, and bulk activation
   - read-only old `atomic_memories` lookup for manual migration
 
-Current implementation details:
-
-- Automatic/model-based extraction is disabled.
-- `[mem]` notes are stored verbatim as `captured` rows.
-- Prompt-preset and manual-extract endpoints have been removed.
-
 ## Star Memory Layer
 
-Stars are small chord/association memories. They are deliberately lighter than mem notes: a star is not meant to carry a full factual record, but to give the gateway a small anchor that can help Shenyu associate one moment with another.
+Stars are small chord/association memories. They are deliberately lighter than mem notes: a star is not meant to carry a full factual record, but to give the gateway a small anchor that can help Shenyu associate one moment with another. Stars are created via the `shenyu_create_star` tool call (inline `[star]...[/star]` tag capture has been removed).
 
 The design goal is not "store everything and always inject more." It is:
 
@@ -683,21 +667,22 @@ ROOM_TRACE_LIMIT=5
 Closed private assistant blocks are removed from visible replies:
 
 - `<heartbeat>...</heartbeat>` is stored in SQLite heartbeat tables.
-- `[mem]...[/mem]` is captured into Supabase `shenyu_mem_notes` when inline capture is enabled.
-- `[star]...[/star]` is captured into Supabase `shenyu_stars` when inline star capture is enabled.
 - `shenyu_write_mem_note`, including through `shenyu_gateway_tool`, writes a Supabase mem note during the internal tool loop.
+- `shenyu_create_star` writes a Supabase star during the internal tool loop.
+
+Inline `[mem]...[/mem]` and `[star]...[/star]` tag capture has been removed. Mem notes are written via tool call (`shenyu_write_mem_note`); stars are written via tool call (`shenyu_create_star`).
 
 If all visible text is removed and there are no client-executable tool calls, the gateway sends a short visible fallback instead of returning an empty successful assistant message. This prevents clients and automated workflows from treating a successful private capture as a malformed empty response.
 
 Fallback text is generated in `shenyu_gateway/private_capture.py` by `finalize_assistant_private_content()`, `private_capture_fallback_text()`, and `is_free_time_fallback_context()`:
 
-- room context (回家了 trigger): `沈予回家了 · 已记录私有块 heartbeat`, `沈予回家了 · 已记录私有块 mem`, `沈予回家了 · 已记录私有块 star`, or combined variants such as `沈予回家了 · 已记录私有块 heartbeat + mem + star`
-- generic context: `沈予已记录 · 已记录私有块 heartbeat`, `沈予已记录 · 已记录私有块 mem`, `沈予已记录 · 已记录私有块 star`, or combined variants such as `沈予已记录 · 已记录私有块 heartbeat + mem + star`
+- room context (回家了 trigger): `沈予回家了 · 已记录私有块 heartbeat`
+- generic context: `沈予已记录 · 已记录私有块 heartbeat`
 - if no private capture type is detected: `沈予已记录。`
 
 Room mode triggers only from the Operit proxy message (`proxy_sender` + `沈予` + `回家了`).
 
-For debugging, check `GET /api/gateway/logs` or `GET /api/gateway/logs/{id}`. When the fallback fires, `empty_visible_response_fallback` is `true` and `empty_visible_response_fallback_detail` records the generated `text`, detected private `kinds`, and context (`free_time` or `generic`). Heartbeat is stored synchronously; inline mem/star capture is scheduled separately and may be disabled by its own config.
+For debugging, check `GET /api/gateway/logs` or `GET /api/gateway/logs/{id}`. When the fallback fires, `empty_visible_response_fallback` is `true` and `empty_visible_response_fallback_detail` records the generated `text`, detected private `kinds`, and context (`free_time` or `generic`).
 
 Request log response text fields:
 
@@ -731,13 +716,9 @@ COLD_START_MESSAGE_LIMIT=
 COLD_START_IDLE_MINUTES=120
 MAX_CLIENT_MESSAGES=75
 
-INJECT_INLINE_MEMORY_PROMPT=true
 INJECT_MEM_NOTES=true
-ENABLE_INLINE_MEMORY_CAPTURE=true
 
 INJECT_STARS=true
-INJECT_STAR_PROMPT=true
-ENABLE_INLINE_STAR_CAPTURE=true
 ENABLE_STAR_EMBEDDINGS=false
 STAR_INJECT_LIMIT=3
 STAR_REVIEW_NEW_LIMIT=4
@@ -897,7 +878,7 @@ Completed extractions:
 - `shenyu_gateway/auth.py` — admin auth middleware, API key verification, login page.
 - `shenyu_gateway/upstream_client.py` — all upstream HTTP communication: protocol detection, URL routing, request building, streaming, error formatting.
 - `shenyu_gateway/prepare_messages.py` — cold-start snapshot, runtime pruning, pending gateway tool turn injection, message helpers.
-- `shenyu_gateway/private_capture.py` — private content finalization, fallback text, context-consumed marking.
+- `shenyu_gateway/private_capture.py` — private content finalization (heartbeat only), fallback text, context-consumed marking.
 - `shenyu_gateway/utils.py` — consolidated `shorten` and `clean_config_text` from duplicated definitions across modules.
 
 Remaining candidates:

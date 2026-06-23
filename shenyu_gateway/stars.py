@@ -354,41 +354,6 @@ class StarService:
     def _recent_fatigue_penalty(self) -> float:
         return _cfg_float(self.cfg, "star_recent_fatigue_penalty", 0.14)
 
-    async def process_inline_stars(
-        self,
-        session: dict,
-        inline_stars: list[Any],
-        assistant_text: str,
-        source_model: str,
-    ) -> dict[str, Any]:
-        if not getattr(self.cfg, "enable_inline_star_capture", True):
-            return {"ok": False, "reason": "inline star capture disabled."}
-        if not self.supabase:
-            return {"ok": False, "reason": "Supabase is not configured."}
-        stars = [item for item in inline_stars if self._inline_star_content(item)]
-        if not stars:
-            return {"ok": False, "reason": "no inline stars."}
-
-        inserted: list[str | None] = []
-        discarded = 0
-        for item in stars[:4]:
-            result = await self.create_star(
-                content=item,
-                session_tag=session.get("session_tag") or "default",
-                source_model=f"inline-star:{source_model}",
-                source_session_id=session.get("id"),
-                source_excerpt=_shorten(assistant_text, 1200),
-            )
-            if result.get("ok"):
-                inserted.append(result.get("star_id"))
-            else:
-                discarded += 1
-        return {
-            "ok": True,
-            "inline_count": len(stars),
-            "inserted_count": len([item for item in inserted if item]),
-            "discarded_count": discarded,
-        }
 
     async def create_star(
         self,
@@ -1755,14 +1720,6 @@ class StarService:
         rows = await self.supabase.query(STAR_CANDIDATE_TABLE, params)
         return rows[0] if rows else None
 
-    def _inline_star_content(self, star: Any) -> str:
-        parsed = parse_star_payload(star)
-        content = (parsed.get("content") or "").strip()
-        if not content:
-            return ""
-        if not re.sub(r"[\W_]+", "", content, flags=re.UNICODE):
-            return ""
-        return content
 
     def _public_star(self, row: dict[str, Any]) -> dict[str, Any]:
         metadata = _json_dict(row.get("metadata"))

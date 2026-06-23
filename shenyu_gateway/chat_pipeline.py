@@ -35,13 +35,10 @@ from .tool_registry import is_gateway_native_tool, merge_tools
 from .upstream_adapter import _cache_usage_summary
 
 
-def _unpack_private_capture_result(result: tuple) -> tuple[str, str, list[Any], list[Any], dict[str, Any]]:
-    if len(result) == 5:
-        clean_content, heartbeat_content, inline_memories, inline_stars, fallback_meta = result
-        return clean_content, heartbeat_content, inline_memories, inline_stars, fallback_meta
-    if len(result) == 4:
-        clean_content, heartbeat_content, inline_memories, fallback_meta = result
-        return clean_content, heartbeat_content, inline_memories, [], fallback_meta
+def _unpack_private_capture_result(result: tuple) -> tuple[str, str, dict[str, Any]]:
+    if len(result) == 3:
+        clean_content, heartbeat_content, fallback_meta = result
+        return clean_content, heartbeat_content, fallback_meta
     raise ValueError("finalize_assistant_private_content returned an unsupported tuple shape")
 
 
@@ -59,8 +56,7 @@ class ChatPipeline:
     mapped_model_name: Callable[[str], str]
     private_capture_fallback_text: Callable[[str, list[str]], tuple[str, str]]
     private_capture_kinds: Callable[..., list[str]]
-    finalize_assistant_private_content: Callable[..., tuple[str, str, list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]]
-    schedule_inline_memory_capture: Callable[[Request, dict, list[Any], list[Any], str, str], None]
+    finalize_assistant_private_content: Callable[..., tuple[str, str, dict[str, Any]]]
     store_heartbeat: Callable[[str, dict, str], None]
     mark_context_consumed: Callable[[dict], None]
     write_completion_context_snapshot: Callable[[dict, str], Any]
@@ -399,8 +395,6 @@ class ChatPipeline:
             def _on_stream_complete(
                 collected_text: str,
                 heartbeat_content: str = "",
-                inline_memories: Optional[list[str]] = None,
-                inline_stars: Optional[list[str]] = None,
                 fallback_applied: bool = False,
                 usage: Optional[dict] = None,
                 finish_reason: Optional[str] = None,
@@ -416,8 +410,6 @@ class ChatPipeline:
                         _latest_user_text(prepared_messages),
                         self.private_capture_kinds(
                             heartbeat_content=heartbeat_content,
-                            inline_memories=inline_memories,
-                            inline_stars=inline_stars,
                         ),
                     )
                     log_entry["empty_visible_response_fallback_detail"] = {
@@ -425,8 +417,6 @@ class ChatPipeline:
                         "text": fallback_text,
                         "kinds": self.private_capture_kinds(
                             heartbeat_content=heartbeat_content,
-                            inline_memories=inline_memories,
-                            inline_stars=inline_stars,
                         ),
                         "context": fallback_context,
                     }
@@ -434,14 +424,6 @@ class ChatPipeline:
                     assistant_msg = {"role": "assistant", "content": collected_text}
                     sessions.log_assistant_output(session_id, assistant_msg)
                     self.write_completion_context_snapshot(meta, collected_text)
-                    self.schedule_inline_memory_capture(
-                        request,
-                        session,
-                        inline_memories or [],
-                        inline_stars or [],
-                        collected_text,
-                        body.model,
-                    )
                     _record_response_text(log_entry, collected_text)
                 else:
                     _record_response_text(log_entry, "")
@@ -464,7 +446,7 @@ class ChatPipeline:
         log_entry["cache_usage"] = _cache_usage_summary(completion.get("usage", {}))
         _record_completion_finish_reason(log_entry, completion)
         assistant_message = completion.get("choices", [{}])[0].get("message", {})
-        clean_content, heartbeat_content, inline_memories, inline_stars, fallback_meta = _unpack_private_capture_result(
+        clean_content, heartbeat_content, fallback_meta = _unpack_private_capture_result(
             self.finalize_assistant_private_content(
                 assistant_message,
                 latest_user_text=_latest_user_text(prepared_messages),
@@ -478,7 +460,6 @@ class ChatPipeline:
 
         sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content})
         self.write_completion_context_snapshot(meta, clean_content)
-        self.schedule_inline_memory_capture(request, session, inline_memories, inline_stars, clean_content, body.model)
         self.mark_context_consumed(meta)
         log_entry["status"] = "ok"
         _record_response_text(log_entry, clean_content)
