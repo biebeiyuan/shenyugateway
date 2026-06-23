@@ -163,6 +163,10 @@ class RuntimeConfig:
         self.hisense_heartbeat_limit: int = _env_int("HISENSE_HEARTBEAT_LIMIT", 3, 1, 30)
         self.hisense_notebook_limit: int = _env_int("HISENSE_NOTEBOOK_LIMIT", 5, 1, 20)
 
+        self.enable_room_mode: bool = _env_bool("ENABLE_ROOM_MODE", True)
+        self.room_charge_refractory_hours: int = _env_int("ROOM_CHARGE_REFRACTORY_HOURS", 4, 1, 48)
+        self.room_trace_limit: int = _env_int("ROOM_TRACE_LIMIT", 5, 1, 20)
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "supabase_url": mask(self.supabase_url, 30),
@@ -266,6 +270,9 @@ class RuntimeConfig:
             "hisense_client_name": self.hisense_client_name,
             "hisense_heartbeat_limit": self.hisense_heartbeat_limit,
             "hisense_notebook_limit": self.hisense_notebook_limit,
+            "enable_room_mode": self.enable_room_mode,
+            "room_charge_refractory_hours": self.room_charge_refractory_hours,
+            "room_trace_limit": self.room_trace_limit,
         }
 
     def _load_model_mapping(self) -> dict[str, str]:

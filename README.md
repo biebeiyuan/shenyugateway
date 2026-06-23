@@ -43,6 +43,9 @@ The codebase is partly layered already:
 - `shenyu_gateway/upstream_client.py`: upstream HTTP client construction, protocol detection, URL routing, request building, streaming chunk iteration, model listing, and connection error formatting.
 - `shenyu_gateway/prepare_messages.py`: cold-start snapshot preparation, runtime state pruning, pending gateway tool turn injection, and message/tool-call helpers.
 - `shenyu_gateway/private_capture.py`: private assistant content finalization (`<heartbeat>` / `[mem]` extraction), context-consumed marking, fallback text generation, and free-time detection.
+- `shenyu_gateway/room_text.py`: all room mode copy — charter, atmosphere scenes, door descriptions, trace phrases. Change text here only.
+- `shenyu_gateway/room_context.py`: room mode charge calculation, layer rendering, door filtering logic.
+- `shenyu_gateway/room_tools.py`: room mode tool definitions, broker, execute dispatch, and door count collection.
 - `shenyu_gateway/utils.py`: shared utilities (`shorten`, `clean_config_text`, `normalize_text`) used across multiple modules.
 - `gateway.py`: FastAPI app entrypoint, lifespan, CORS, route handlers, context orchestration, tool-loop orchestration, streaming chat pipeline, calendar generation service, and Hisense routes.
 
@@ -575,6 +578,108 @@ Maintenance notes:
 - If adding a new feedback value, update the SQL check constraint, `FEEDBACK_VALUES`, frontend type `StarFeedbackValue`, tool schema, and admin labels together.
 - If changing default limits, keep daily chat injection small. Normal chat should feel like "three small lights," not a memory dump.
 - If changing star-map rendering, keep graph data and visual layout separate: `StarService.graph()` returns durable data; `StarMapView.vue` decides layout and interaction. `/stars` must remain a light scoring surface; `/stars/map` carries the immersive visualization.
+
+## Room Mode
+
+Room mode is the third context path (alongside normal and hisense). When a free-time auto-wake trigger fires, the gateway renders a spatial room by the sea where Shenyu wakes up and chooses what to do through "doors" — tools presented as places in a room, not a menu.
+
+Core philosophy: **room mode offers doors (choices), normal chat injects content (decisions made by algorithm).** Charge only adjusts which doors are visible and sort order, never decides for Shenyu.
+
+### Trigger Detection
+
+Room mode activates when `ENABLE_ROOM_MODE=true` and the user text matches free-time patterns:
+- Contains `自由时间`
+- Contains `free_time` or `free-time` (case-insensitive)
+- Contains `proxy_sender` + `沈予` + (`提醒` or `自动`)
+
+Current trigger text: `<proxy_sender name="沈予"/> **【予予现在是自由时间】`
+
+### Architecture
+
+Three files, separated by concern:
+
+| File | Responsibility |
+|------|---------------|
+| `shenyu_gateway/room_text.py` | All room copy: charter, scenes, doors, trace phrases. Change text here only. |
+| `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |
+| `shenyu_gateway/room_tools.py` | 10 tool handlers, broker, door count collection. |
+
+Room layers reuse `assemble_layered_messages()` by mapping to the same keys:
+
+| Layer | Room Content |
+|-------|-------------|
+| `stable` | Room charter (Shenyu's original 12 lines, untouched) + profile |
+| `slow` | Atmosphere sentence + last-visit trace |
+| `mem` | empty |
+| `heartbeat` | empty |
+| `tool_policy` | Spatial door descriptions |
+| `format` | `选一扇门，或者什么都不做。窗开着。` |
+
+### Charge
+
+Charge is a 0-1 scalar computed per visit from 5 signals (not stored):
+
+| Signal | Weight | Source |
+|--------|--------|--------|
+| `hot_star_score` | 0.25 | Star activation recency (ACT-R) |
+| `hours_since_last_visit` | 0.20 | `room_trace` last visit |
+| `unlinked_candidate_count` | 0.20 | Pending star candidates |
+| `recent_message_count` | 0.15 | Messages in last 6 hours |
+| `undone_pin_count` | 0.20 | Undone wall pins |
+
+Refractory period: if visited within `ROOM_CHARGE_REFRACTORY_HOURS` (default 4h), charge is dampened.
+
+Charge affects door visibility:
+- **Low (< 0.3)**: only "always" doors (sit, scribble, pillow) + top 2 active doors
+- **Mid/High (≥ 0.3)**: all doors visible
+
+### Doors (10 tools)
+
+| Tool | Zone | What it does |
+|------|------|-------------|
+| `room_sit_by_window` | window | Sit by the window. Records trace, nothing else. |
+| `room_scribble` | desk | Write something on the windowsill notebook. |
+| `room_notebook` | desk | Browse the messy notebook (connects to shenyu_notebook). |
+| `room_wooden_box` | drawers | Open the wooden box of heartbeats. |
+| `room_drawer_notes` | drawers | Read notes Yuan left in the middle drawer. |
+| `room_locked_drawer` | drawers | Private drawer. No admin API. Only Shenyu's tool can open it. |
+| `room_star_map` | star_wall | Star map: look, search, review, feedback, connect constellations. |
+| `room_conflict_shelf` | shelf | Pull a conflict book from the shelf. |
+| `room_wall_pins` | wall | View/add/complete wall pin reminders. |
+| `room_octopus_pillow` | bed | Hug the octopus pillow. Random Yuan note as easter egg. |
+
+All room tools are dispatched through a single `shenyu_gateway_tool` broker with `tool` set to the room tool name. Client tools are preserved alongside the room broker.
+
+Dynamic door text: some doors show different text when there's activity (e.g., "好像多了几张" when new notes exist).
+
+### SQLite Tables
+
+| Table | Purpose |
+|-------|---------|
+| `room_trace` | Visit log: what Shenyu did each time |
+| `room_locked_drawer` | Private content. No admin API, no frontend exposure. |
+| `room_scribbles` | Windowsill notebook entries |
+| `room_pins` | Wall pin reminders (done/undone) |
+| `room_drawer_notes` | Yuan's notes in the middle drawer |
+
+### Admin API
+
+- `GET /api/gateway/room/preview` — preview room context layers and charge
+- `GET /api/gateway/room/traces?limit=20` — recent room traces (full exposure including locked_drawer, for early tuning)
+
+### Config
+
+```text
+ENABLE_ROOM_MODE=true
+ROOM_CHARGE_REFRACTORY_HOURS=4
+ROOM_TRACE_LIMIT=5
+```
+
+### Design Principles
+
+- Door descriptions are spatial narrative, not menu items. Actions use short self-talk verbs ("翻翻", "坐下来", "看看"), never "我可以" (implies permission).
+- The charter is Shenyu's original text — never modified. Spatial details are fused into door descriptions and atmosphere sentences.
+- Text and logic are separated: change copy in `room_text.py`, change rendering in `room_context.py`, change tool behavior in `room_tools.py`.
 
 ## Private Capture Empty Reply Fallback
 

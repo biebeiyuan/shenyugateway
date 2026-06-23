@@ -66,6 +66,35 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         builder = deps.context_builder(store, SessionManager(store, cfg), GatewayToolService())
         return await builder.preview(session_tag=session_tag)
 
+    @router.get("/api/gateway/context/preview/room")
+    async def context_preview_room(session_tag: Optional[str] = None):
+        store = deps.require_session_store()
+        builder = deps.context_builder(store, SessionManager(store, cfg), GatewayToolService())
+        return await builder.preview_room(session_tag=session_tag)
+
+    @router.get("/api/gateway/room/traces")
+    async def room_traces(limit: int = 20):
+        store = deps.require_session_store()
+        traces = store.recent_room_traces(limit=min(limit, 100))
+        import json as _json
+        items = []
+        for t in traces:
+            detail = t.get("detail_json")
+            if isinstance(detail, str):
+                try:
+                    detail = _json.loads(detail)
+                except Exception:
+                    pass
+            items.append({
+                "id": t.get("id"),
+                "session_id": t.get("session_id"),
+                "action": t.get("action"),
+                "detail": detail,
+                "scribble": t.get("scribble"),
+                "created_at": t.get("created_at"),
+            })
+        return {"traces": items, "count": len(items)}
+
     @router.get("/api/gateway/overview")
     async def gateway_overview():
         store = deps.require_session_store()
@@ -623,6 +652,8 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 "stream": item["stream"],
                 "session_tag": item["session_tag"],
                 "is_first_turn": item["is_first_turn"],
+                "is_room": item.get("is_room", False),
+                "room_charge": item.get("room_charge"),
                 "original_messages_count": item["original_messages_count"],
                 "prepared_messages_count": item["prepared_messages_count"],
                 "client_message_window": item.get("client_message_window"),

@@ -373,3 +373,77 @@ class ContextBuilder:
             "cache_layers": self.render_layered_additions(package),
             "tools": gateway_native_tools(self.cfg),
         }
+
+    async def build_room_context_package(
+        self,
+        session: dict,
+        trace_log: Optional[dict] = None,
+    ) -> dict:
+        """Build context for room mode — completely replaces normal context."""
+        from .room_context import collect_charge_signals, compute_charge, render_room_layers
+        from .room_tools import collect_door_counts, room_broker_tool
+        from .stars import StarService
+
+        _mark_request_log_phase(trace_log, "room.start")
+
+        star_service = StarService(self.cfg, self.supabase_client) if self.supabase_client else None
+
+        signals = await collect_charge_signals(
+            store=self.store,
+            star_service=star_service,
+            cfg=self.cfg,
+        )
+        charge = compute_charge(
+            **signals,
+            refractory_hours=getattr(self.cfg, "room_charge_refractory_hours", 4),
+        )
+        _mark_request_log_phase(trace_log, "room.charge", detail={"charge": round(charge, 3), **signals})
+
+        trace_limit = getattr(self.cfg, "room_trace_limit", 5)
+        last_traces = self.store.recent_room_traces(limit=trace_limit)
+
+        door_specs = await collect_door_counts(
+            store=self.store,
+            cfg=self.cfg,
+            supabase_client=self.supabase_client,
+        )
+
+        layers = render_room_layers(charge, last_traces, door_specs)
+
+        # Append profile (stable_charter_block) after room charter
+        profile = self.stable_charter_block()
+        if profile:
+            layers["stable"] = layers["stable"].rstrip() + "\n\n" + profile.strip()
+
+        _mark_request_log_phase(trace_log, "room.done", detail={"doors": len(door_specs)})
+
+        return {
+            "is_room": True,
+            "is_hisense": False,
+            "charge": charge,
+            "layers": layers,
+            "room_tools": [room_broker_tool()],
+            "heartbeat_pending_ids": [],
+            "hisense_heartbeat_pending_ids": [],
+            "cold_start_snapshot": None,
+        }
+
+    async def preview_room(self, session_tag: Optional[str] = None) -> dict:
+        """Admin preview for room mode context."""
+        from .room_tools import room_broker_tool
+
+        session = self.store.get_session_by_tag(session_tag or "default") if session_tag else None
+        fake_session = session or {
+            "id": "preview",
+            "session_tag": session_tag or "default",
+            "client_name": "preview",
+            "message_count": 0,
+        }
+        package = await self.build_room_context_package(fake_session)
+        return {
+            "session_tag": fake_session["session_tag"],
+            "mode": "room",
+            "charge": package.get("charge"),
+            "layers": package.get("layers"),
+            "room_tools": [room_broker_tool()],
+        }

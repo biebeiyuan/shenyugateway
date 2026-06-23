@@ -256,7 +256,7 @@ async def build_upstream_request(
     )
     proto = upstream["protocol"]
     raw_messages = messages_override or [message.model_dump(exclude_none=True) for message in body.messages]
-    merged_tools = merge_tools(body.tools, cfg)
+    merged_tools = merge_tools(body.tools, cfg, meta=meta)
     cache_meta: dict[str, Any] = {
         "enabled": proto == "anthropic",
         "protocol": proto,

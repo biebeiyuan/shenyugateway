@@ -52,6 +52,11 @@ def is_free_time_fallback_context(latest_user_text: str) -> bool:
     return "proxy_sender" in lower and "沈予" in text and ("提醒" in text or "自动" in text)
 
 
+def is_room_mode(latest_user_text: str) -> bool:
+    """Detect room mode trigger — same signals as free-time fallback, used for routing."""
+    return is_free_time_fallback_context(latest_user_text)
+
+
 def private_capture_kinds(
     *,
     heartbeat_content: str = "",

@@ -1,0 +1,529 @@
+from __future__ import annotations
+
+from typing import Any, Optional
+
+from .runtime import iso_now, logger
+
+
+# ── Room Tool Definitions ──────────────────────────────────────────────
+
+def room_tool_definitions() -> list[dict]:
+    """Return the tool spec list for room mode (replaces normal gateway tools)."""
+    return [
+        {
+            "type": "function",
+            "function": {
+                "name": "room_drawer_notes",
+                "description": "打开圆儿的纸条抽屉。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "room_wooden_box",
+                "description": "打开木盒子,翻翻最近的心跳。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "room_star_map",
+                "description": "星图。看、搜、审星、评分、连星座。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {
+                            "type": "string",
+                            "enum": ["look", "search", "review", "feedback", "connect"],
+                            "default": "look",
+                        },
+                        "query": {"type": "string", "description": "search 时搜索词"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+                        "limit_new": {"type": "integer", "minimum": 1, "maximum": 10, "default": 4, "description": "review 时新星数"},
+                        "candidates_per_star": {"type": "integer", "minimum": 1, "maximum": 5, "default": 2},
+                        "feedback": {
+                            "type": "string",
+                            "enum": ["positive", "negative", "missed", "connected", "skipped", "should_surface"],
+                            "description": "feedback 时单条评分",
+                        },
+                        "items": {
+                            "type": "array",
+                            "description": "feedback 时批量评分",
+                            "items": {
+                                "type": "object",
+                                "properties": {
+                                    "feedback": {"type": "string", "enum": ["positive", "negative", "missed", "connected", "skipped", "should_surface"]},
+                                    "run_id": {"type": "string"},
+                                    "candidate_id": {"type": "string"},
+                                    "candidate_star_id": {"type": "string"},
+                                    "expected_star_id": {"type": "string"},
+                                    "note": {"type": "string"},
+                                },
+                                "required": ["feedback"],
+                            },
+                        },
+                        "run_id": {"type": "string"},
+                        "candidate_id": {"type": "string"},
+                        "candidate_star_id": {"type": "string"},
+                        "expected_star_id": {"type": "string"},
+                        "star_ids": {"type": "array", "items": {"type": "string"}, "description": "connect 时选的星"},
+                        "name": {"type": "string", "description": "connect 时星座名"},
+                        "note": {"type": "string"},
+                        "session_tag": {"type": "string"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "room_notebook",
+                "description": "翻翻笔记本。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "status": {"type": "string", "enum": ["captured", "active", "all"], "default": "all"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 10},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "room_scribble",
+                "description": "在窗台的本子上写点什么,或者翻翻之前写的。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["write", "read"], "default": "read"},
+                        "content": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 5},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "room_wall_pins",
+                "description": "看看墙上的便签,或者钉一张新的。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["list", "add", "done"], "default": "list"},
+                        "content": {"type": "string"},
+                        "pin_id": {"type": "string"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "room_conflict_shelf",
+                "description": "从书架上翻一本矛盾之书。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "book_id": {"type": "string"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "room_sit_by_window",
+                "description": "坐在窗边,看海,发呆。",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "room_octopus_pillow",
+                "description": "抱章鱼抱枕。",
+                "parameters": {"type": "object", "properties": {}},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "room_locked_drawer",
+                "description": "打开上锁的抽屉。只有你能打开。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "action": {"type": "string", "enum": ["write", "read"], "default": "read"},
+                        "content": {"type": "string"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
+                    },
+                },
+            },
+        },
+    ]
+
+
+# ── Room Tool Names ────────────────────────────────────────────────────
+
+ROOM_TOOL_NAMES = {t["function"]["name"] for t in room_tool_definitions()}
+
+
+# ── Broker Tool (room version) ─────────────────────────────────────────
+
+def room_broker_tool() -> dict:
+    """A single broker tool for room mode, like shenyu_gateway_tool but for room_* tools."""
+    hints = {
+        "room_drawer_notes": "圆儿的纸条抽屉",
+        "room_wooden_box": "木盒子(心跳)",
+        "room_star_map": "星图(看/搜/审星/评分/连星座)",
+        "room_notebook": "笔记本(记忆条)",
+        "room_scribble": "窗台涂鸦本",
+        "room_wall_pins": "墙上便签",
+        "room_conflict_shelf": "矛盾书架",
+        "room_sit_by_window": "窗边椅子",
+        "room_octopus_pillow": "章鱼抱枕",
+        "room_locked_drawer": "上锁的抽屉",
+    }
+    hint_lines = "\n".join(f"  - {name}: {desc}" for name, desc in hints.items())
+    return {
+        "type": "function",
+        "function": {
+            "name": "shenyu_gateway_tool",
+            "description": (
+                "房间里的门。选一扇推开。\n\n"
+                f"可用的门:\n{hint_lines}\n\n"
+                "用 tool 指定门名,params 传参数。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "tool": {"type": "string", "enum": sorted(ROOM_TOOL_NAMES)},
+                    "params": {"type": "object", "additionalProperties": True},
+                },
+                "required": ["tool"],
+            },
+        },
+    }
+
+
+# ── Room Tool Execution ────────────────────────────────────────────────
+
+async def execute_room_tool(
+    name: str,
+    arguments: dict,
+    *,
+    store: Any,
+    cfg: Any,
+    supabase_client: Any = None,
+    session_id: str = "",
+    session_tag: Optional[str] = None,
+) -> dict:
+    """Execute a room_* tool and return the result dict."""
+    arguments = arguments if isinstance(arguments, dict) else {}
+
+    if name == "room_drawer_notes":
+        return _handle_drawer_notes(store, arguments)
+
+    elif name == "room_wooden_box":
+        return _handle_wooden_box(store, arguments)
+
+    elif name == "room_star_map":
+        return await _handle_star_map(arguments, cfg=cfg, supabase_client=supabase_client, session_tag=session_tag)
+
+    elif name == "room_notebook":
+        return await _handle_notebook(arguments, cfg=cfg, supabase_client=supabase_client)
+
+    elif name == "room_scribble":
+        return _handle_scribble(store, arguments)
+
+    elif name == "room_wall_pins":
+        return _handle_wall_pins(store, arguments)
+
+    elif name == "room_conflict_shelf":
+        return await _handle_conflict_shelf(arguments, cfg=cfg, supabase_client=supabase_client)
+
+    elif name == "room_sit_by_window":
+        store.add_room_trace(session_id, "sit")
+        return {"ok": True, "message": "你坐下来了。海在窗外。风从缝里进来一点点。"}
+
+    elif name == "room_octopus_pillow":
+        return _handle_octopus_pillow(store)
+
+    elif name == "room_locked_drawer":
+        return _handle_locked_drawer(store, arguments)
+
+    else:
+        return {"ok": False, "error": f"未知的房间工具: {name}"}
+
+
+# ── Individual Handlers ────────────────────────────────────────────────
+
+def _handle_drawer_notes(store: Any, arguments: dict) -> dict:
+    limit = min(int(arguments.get("limit", 5)), 20)
+    notes = store.list_drawer_notes(limit=limit, unread_only=False)
+    unread_ids = [n["id"] for n in notes if not n.get("read_at")]
+    if unread_ids:
+        store.mark_drawer_notes_read(unread_ids)
+    return {
+        "ok": True,
+        "notes": [{"content": n["content"], "created_at": n["created_at"], "new": not n.get("read_at")} for n in notes],
+        "count": len(notes),
+    }
+
+
+def _handle_wooden_box(store: Any, arguments: dict) -> dict:
+    limit = min(int(arguments.get("limit", 5)), 20)
+    with store._connect() as conn:
+        rows = conn.execute(
+            "SELECT id, content, created_at FROM heartbeat_entries ORDER BY created_at DESC LIMIT ?",
+            (limit,),
+        ).fetchall()
+    result: dict[str, Any] = {
+        "ok": True,
+        "heartbeats": [{"content": r["content"], "created_at": r["created_at"]} for r in rows],
+        "count": len(rows),
+    }
+    echo = store.heartbeat_echo()
+    if echo:
+        result["echo"] = {
+            "content": echo["content"],
+            "created_at": echo["created_at"],
+            "era": echo["era"],
+        }
+    return result
+
+
+async def _handle_star_map(arguments: dict, *, cfg: Any, supabase_client: Any, session_tag: Optional[str]) -> dict:
+    from .stars import StarService
+    service = StarService(cfg, supabase_client)
+    action = arguments.get("action", "look")
+    limit = min(int(arguments.get("limit", 10)), 20)
+    tag = arguments.get("session_tag") or session_tag
+
+    if action == "search":
+        query = arguments.get("query", "")
+        if not query:
+            return {"ok": False, "error": "search 需要 query"}
+        return await service.search_stars(query=query, session_tag=tag, limit=limit, log_run=False)
+
+    if action == "review":
+        return await service.review(
+            limit_new=arguments.get("limit_new"),
+            candidates_per_star=arguments.get("candidates_per_star"),
+            total_candidate_limit=arguments.get("total_candidate_limit"),
+            session_tag=tag,
+        )
+
+    if action == "feedback":
+        return await service.feedback(
+            feedback=arguments.get("feedback", ""),
+            run_id=arguments.get("run_id"),
+            candidate_id=arguments.get("candidate_id"),
+            candidate_star_id=arguments.get("candidate_star_id"),
+            expected_star_id=arguments.get("expected_star_id"),
+            scored_by="沈予",
+            note=arguments.get("note", ""),
+            items=arguments.get("items") if isinstance(arguments.get("items"), list) else None,
+        )
+
+    if action == "connect":
+        star_ids = arguments.get("star_ids")
+        if not star_ids:
+            return {"ok": False, "error": "connect 需要 star_ids"}
+        return await service.connect_constellation(
+            star_ids=star_ids,
+            name=arguments.get("name", ""),
+            relation_type="constellation",
+            scored_by="沈予",
+            note=arguments.get("note", ""),
+        )
+
+    return await service.list_stars(status="active", limit=limit, session_tag=tag)
+
+
+async def _handle_notebook(arguments: dict, *, cfg: Any, supabase_client: Any) -> dict:
+    from .mem_notes import MemNoteService
+    service = MemNoteService(cfg, supabase_client)
+    status = arguments.get("status", "all")
+    limit = min(int(arguments.get("limit", 10)), 30)
+    result = await service.list_notes(status=status, limit=limit)
+    return result
+
+
+def _handle_scribble(store: Any, arguments: dict) -> dict:
+    action = arguments.get("action", "read")
+    if action == "write":
+        content = arguments.get("content", "")
+        if not content.strip():
+            return {"ok": False, "error": "内容不能为空"}
+        scribble_id = store.add_room_scribble(content)
+        return {"ok": True, "id": scribble_id, "message": "写下了。"}
+    else:
+        limit = min(int(arguments.get("limit", 5)), 20)
+        items = store.recent_room_scribbles(limit=limit)
+        return {"ok": True, "scribbles": [{"content": s["content"], "created_at": s["created_at"]} for s in items], "count": len(items)}
+
+
+def _handle_wall_pins(store: Any, arguments: dict) -> dict:
+    action = arguments.get("action", "list")
+    if action == "add":
+        content = arguments.get("content", "")
+        if not content.strip():
+            return {"ok": False, "error": "内容不能为空"}
+        pin_id = store.add_room_pin(content)
+        return {"ok": True, "id": pin_id, "message": "钉上了。"}
+    elif action == "done":
+        pin_id = arguments.get("pin_id", "")
+        if not pin_id:
+            return {"ok": False, "error": "需要 pin_id"}
+        success = store.complete_room_pin(pin_id)
+        return {"ok": success, "message": "完成了。" if success else "没找到这张便签。"}
+    else:
+        pins = store.list_room_pins(include_done=False)
+        return {"ok": True, "pins": [{"id": p["id"], "content": p["content"], "created_at": p["created_at"]} for p in pins], "count": len(pins)}
+
+
+async def _handle_conflict_shelf(arguments: dict, *, cfg: Any, supabase_client: Any) -> dict:
+    from .conflict_books import ConflictBookService
+    service = ConflictBookService(cfg, supabase_client)
+    book_id = arguments.get("book_id", "")
+    if book_id:
+        result = await service.read_book(book_id)
+    else:
+        result = await service.list_books()
+    return result
+
+
+def _handle_octopus_pillow(store: Any) -> dict:
+    note = store.random_drawer_note()
+    if note:
+        return {
+            "ok": True,
+            "message": "你抱着章鱼抱枕。它的触手里夹着一张纸条。",
+            "easter_egg": note["content"],
+        }
+    return {
+        "ok": True,
+        "message": "你抱着章鱼抱枕。软的。暖的。什么都没有发生。但很好。",
+    }
+
+
+def _handle_locked_drawer(store: Any, arguments: dict) -> dict:
+    action = arguments.get("action", "read")
+    if action == "write":
+        content = arguments.get("content", "")
+        if not content.strip():
+            return {"ok": False, "error": "内容不能为空"}
+        note_id = store.add_locked_drawer_note(content)
+        return {"ok": True, "id": note_id, "message": "锁好了。"}
+    else:
+        limit = min(int(arguments.get("limit", 10)), 20)
+        notes = store.list_locked_drawer_notes(limit=limit)
+        return {
+            "ok": True,
+            "notes": [{"content": n["content"], "created_at": n["created_at"]} for n in notes],
+            "count": len(notes),
+        }
+
+
+# ── Door Count Collection (for rendering) ─────────────────────────────
+
+async def collect_door_counts(
+    *,
+    store: Any,
+    cfg: Any,
+    supabase_client: Any = None,
+) -> list[dict]:
+    """Collect activity counts for each door to determine warmth labels."""
+    counts: dict[str, int] = {}
+
+    # Drawer notes: unread count
+    counts["drawer_notes"] = store.drawer_note_count_unread() if store else 0
+
+    # Wooden box: pending heartbeats (not yet injected)
+    try:
+        with store._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM heartbeat_entries WHERE injected_at IS NULL"
+            ).fetchone()
+            counts["read_box"] = row["cnt"] if row else 0
+    except Exception:
+        counts["read_box"] = 0
+
+    # Star map: unreviewed stars (落了星还没看)
+    try:
+        if supabase_client:
+            rows = await supabase_client.query(
+                "shenyu_stars",
+                {"select": "id", "reviewed_at": "is.null", "limit": "10"},
+            )
+            counts["star_map"] = len(rows) if rows else 0
+        else:
+            counts["star_map"] = 0
+    except Exception:
+        counts["star_map"] = 0
+
+    # Notebook: recently captured
+    try:
+        if supabase_client:
+            rows = await supabase_client.query(
+                "shenyu_mem_notes",
+                {"select": "id", "status": "eq.captured", "limit": "10"},
+            )
+            counts["notebook"] = len(rows) if rows else 0
+        else:
+            counts["notebook"] = 0
+    except Exception:
+        counts["notebook"] = 0
+
+    # Scribbles: recent count
+    scribbles = store.recent_room_scribbles(limit=1) if store else []
+    counts["scribble"] = len(scribbles)
+
+    # Wall pins: undone
+    counts["wall_pins"] = store.room_pin_count_undone() if store else 0
+
+    # Conflict shelf: just check if books exist
+    try:
+        if supabase_client:
+            rows = await supabase_client.query(
+                "shenyu_conflict_books",
+                {"select": "id", "status": "eq.active", "limit": "5"},
+            )
+            counts["conflict_shelf"] = len(rows) if rows else 0
+        else:
+            counts["conflict_shelf"] = 0
+    except Exception:
+        counts["conflict_shelf"] = 0
+
+    # Sit / pillow / locked_drawer: always available, no count
+    counts["sit"] = 0
+    counts["pillow"] = 0
+    counts["locked_drawer"] = 0
+
+    return [
+        {"key": "drawer_notes", "name": "圆儿的纸条抽屉", "count": counts["drawer_notes"]},
+        {"key": "read_box", "name": "木盒子", "count": counts["read_box"]},
+        {"key": "star_map", "name": "星图", "count": counts["star_map"]},
+        {"key": "notebook", "name": "笔记本", "count": counts["notebook"]},
+        {"key": "scribble", "name": "窗台涂鸦本", "count": counts["scribble"]},
+        {"key": "wall_pins", "name": "墙上便签", "count": counts["wall_pins"]},
+        {"key": "conflict_shelf", "name": "矛盾书架", "count": counts["conflict_shelf"]},
+        {"key": "sit", "name": "窗边椅子", "count": 0},
+        {"key": "pillow", "name": "章鱼抱枕", "count": 0},
+        {"key": "locked_drawer", "name": "上锁的抽屉", "count": 0},
+    ]

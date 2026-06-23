@@ -202,6 +202,45 @@ class GatewayStore:
 
                 CREATE INDEX IF NOT EXISTS idx_tool_error_log_created
                     ON tool_error_log(created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS room_trace (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    action TEXT NOT NULL,
+                    detail_json TEXT,
+                    scribble TEXT,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_room_trace_created
+                    ON room_trace(created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS room_locked_drawer (
+                    id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS room_scribbles (
+                    id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS room_pins (
+                    id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    done INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    done_at TEXT
+                );
+
+                CREATE TABLE IF NOT EXISTS room_drawer_notes (
+                    id TEXT PRIMARY KEY,
+                    content TEXT NOT NULL,
+                    read_at TEXT,
+                    created_at TEXT NOT NULL
+                );
                 """
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")
@@ -1836,3 +1875,199 @@ class GatewayStore:
                 (limit,),
             ).fetchall()
             return [dict(r) for r in rows]
+
+    # ── Room Mode ──────────────────────────────────────────────────────
+
+    def add_room_trace(
+        self,
+        session_id: str,
+        action: str,
+        detail: Optional[dict] = None,
+        scribble: Optional[str] = None,
+    ) -> str:
+        trace_id = f"rmtrc_{uuid.uuid4().hex[:12]}"
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO room_trace (id, session_id, action, detail_json, scribble, created_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                """,
+                (trace_id, session_id, action, json_dumps(detail) if detail else None, scribble, iso_now()),
+            )
+        return trace_id
+
+    def recent_room_traces(self, limit: int = 5) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM room_trace ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def last_room_visit_at(self) -> Optional[str]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT created_at FROM room_trace ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+            return row["created_at"] if row else None
+
+    def add_room_scribble(self, content: str) -> str:
+        scribble_id = f"rmscr_{uuid.uuid4().hex[:12]}"
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO room_scribbles (id, content, created_at) VALUES (?, ?, ?)",
+                (scribble_id, content, iso_now()),
+            )
+        return scribble_id
+
+    def recent_room_scribbles(self, limit: int = 10) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM room_scribbles ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def add_room_pin(self, content: str) -> str:
+        pin_id = f"rmpin_{uuid.uuid4().hex[:12]}"
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO room_pins (id, content, done, created_at) VALUES (?, ?, 0, ?)",
+                (pin_id, content, iso_now()),
+            )
+        return pin_id
+
+    def list_room_pins(self, include_done: bool = False) -> list[dict]:
+        with self._connect() as conn:
+            if include_done:
+                rows = conn.execute("SELECT * FROM room_pins ORDER BY created_at DESC").fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM room_pins WHERE done = 0 ORDER BY created_at DESC"
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    def complete_room_pin(self, pin_id: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE room_pins SET done = 1, done_at = ? WHERE id = ? AND done = 0",
+                (iso_now(), pin_id),
+            )
+            return cursor.rowcount > 0
+
+    def add_locked_drawer_note(self, content: str) -> str:
+        note_id = f"rmlck_{uuid.uuid4().hex[:12]}"
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO room_locked_drawer (id, content, created_at) VALUES (?, ?, ?)",
+                (note_id, content, iso_now()),
+            )
+        return note_id
+
+    def list_locked_drawer_notes(self, limit: int = 20) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM room_locked_drawer ORDER BY created_at DESC LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [dict(r) for r in rows]
+
+    def room_pin_count_undone(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute("SELECT COUNT(*) as cnt FROM room_pins WHERE done = 0").fetchone()
+            return row["cnt"] if row else 0
+
+    def room_message_count_since(self, since_iso: str) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM gateway_messages WHERE created_at > ?",
+                (since_iso,),
+            ).fetchone()
+            return row["cnt"] if row else 0
+
+    def add_drawer_note(self, content: str) -> str:
+        note_id = f"rmdnr_{uuid.uuid4().hex[:12]}"
+        with self._connect() as conn:
+            conn.execute(
+                "INSERT INTO room_drawer_notes (id, content, created_at) VALUES (?, ?, ?)",
+                (note_id, content, iso_now()),
+            )
+        return note_id
+
+    def list_drawer_notes(self, limit: int = 10, unread_only: bool = False) -> list[dict]:
+        with self._connect() as conn:
+            if unread_only:
+                rows = conn.execute(
+                    "SELECT * FROM room_drawer_notes WHERE read_at IS NULL ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    "SELECT * FROM room_drawer_notes ORDER BY created_at DESC LIMIT ?",
+                    (limit,),
+                ).fetchall()
+            return [dict(r) for r in rows]
+
+    def drawer_note_count_unread(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM room_drawer_notes WHERE read_at IS NULL"
+            ).fetchone()
+            return row["cnt"] if row else 0
+
+    def mark_drawer_notes_read(self, note_ids: list[str]) -> int:
+        if not note_ids:
+            return 0
+        with self._connect() as conn:
+            ts = iso_now()
+            placeholders = ",".join("?" for _ in note_ids)
+            cursor = conn.execute(
+                f"UPDATE room_drawer_notes SET read_at = ? WHERE id IN ({placeholders}) AND read_at IS NULL",
+                [ts] + note_ids,
+            )
+            return cursor.rowcount
+
+    def random_drawer_note(self) -> Optional[dict]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT * FROM room_drawer_notes").fetchall()
+            if not rows:
+                return None
+            import random
+            return dict(random.choice(rows))
+
+    def heartbeat_echo(self) -> Optional[dict]:
+        """Pick one random heartbeat from the furthest available time bucket.
+
+        Buckets (checked from furthest first):
+          very_old: 60+ days ago
+          last_month: 28-60 days ago
+          two_weeks: 14-28 days ago
+          last_week: 7-14 days ago
+
+        Returns dict with content, created_at, era label, or None.
+        """
+        import random
+        buckets = [
+            ("很早以前的", 60, None),
+            ("上个月的", 28, 60),
+            ("上上周的", 14, 28),
+            ("上周的", 7, 14),
+        ]
+        _now = now()
+        with self._connect() as conn:
+            for era, min_days, max_days in buckets:
+                from_ts = dt_to_iso(_now - timedelta(days=max_days)) if max_days else None
+                to_ts = dt_to_iso(_now - timedelta(days=min_days))
+                where = "created_at <= ?"
+                params: list[Any] = [to_ts]
+                if from_ts:
+                    where += " AND created_at > ?"
+                    params.append(from_ts)
+                rows = conn.execute(
+                    f"SELECT id, content, created_at FROM heartbeat_entries WHERE {where}",
+                    params,
+                ).fetchall()
+                if rows:
+                    row = random.choice(rows)
+                    return {"content": row["content"], "created_at": row["created_at"], "era": era}
+        return None

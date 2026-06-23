@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
 from shenyu_gateway.gateway_tools import GatewayToolService
 from shenyu_gateway.mem_notes import MEM_NOTE_TYPES
 from shenyu_gateway.utils import coerce_json_object as _coerce_json_object
+
+_logger = logging.getLogger(__name__)
 
 
 MEM_NOTE_TYPE_ENUM = list(MEM_NOTE_TYPES)
@@ -736,9 +739,23 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
     return _expanded_gateway_native_tools(cfg)
 
 
-def merge_tools(client_tools: Optional[list[dict]], cfg: Any) -> list[dict]:
+def merge_tools(client_tools: Optional[list[dict]], cfg: Any, *, meta: Optional[dict] = None) -> list[dict]:
     if not _upstream_tools_enabled(cfg):
         return []
+
+    # Room mode: keep client tools + room broker, drop normal gateway tools
+    if meta and meta.get("is_room"):
+        package = meta.get("package") or {}
+        room_tools = package.get("room_tools") or []
+        if room_tools:
+            merged = list(client_tools or [])
+            existing = {tool.get("function", {}).get("name") for tool in merged if isinstance(tool, dict)}
+            for rt in room_tools:
+                name = rt.get("function", {}).get("name", "")
+                if name not in existing:
+                    merged.append(rt)
+            return merged
+
     merged = list(client_tools or [])
     if not (
         _core_gateway_tools_enabled(cfg)
@@ -755,7 +772,7 @@ def merge_tools(client_tools: Optional[list[dict]], cfg: Any) -> list[dict]:
 
 
 def is_gateway_native_tool(name: str) -> bool:
-    return name.startswith("shenyu_") or name.startswith("supabase_")
+    return name.startswith("shenyu_") or name.startswith("supabase_") or name.startswith("room_")
 
 
 def _int_arg(arguments: dict, key: str, default: int) -> int:
@@ -1243,7 +1260,8 @@ async def execute_gateway_tool(
                 if key not in {"tool", "name", "action", "params", "arguments"}
             }
         exposed = set(_gateway_tool_names(cfg))
-        allowed = exposed | HIDDEN_COMPAT_TOOL_NAMES
+        from .room_tools import ROOM_TOOL_NAMES as _ROOM_TOOL_NAMES
+        allowed = exposed | HIDDEN_COMPAT_TOOL_NAMES | _ROOM_TOOL_NAMES
         if target_name not in allowed:
             return {
                 "ok": False,
@@ -1266,6 +1284,31 @@ async def execute_gateway_tool(
             cfg=cfg,
             service=service,
         )
+
+    if name.startswith("room_"):
+        from .room_tools import execute_room_tool
+        from .gateway_tools import _runtime
+        store = _runtime.session_store
+        _session = store.get_session_by_tag(session_tag) if session_tag else None
+        _session_id = _session["id"] if _session else ""
+        _logger.info("[Room] tool=%s session_tag=%s", name, session_tag or "")
+        result = await execute_room_tool(
+            name,
+            arguments,
+            store=store,
+            cfg=cfg,
+            supabase_client=_runtime.supabase_client,
+            session_id=_session_id,
+            session_tag=session_tag,
+        )
+        # Auto-trace: record which door was opened (skip sit — it records internally)
+        if result.get("ok") and name != "room_sit_by_window" and _session_id:
+            action = name.removeprefix("room_")
+            try:
+                store.add_room_trace(_session_id, action)
+            except Exception:
+                pass
+        return result
 
     ctx = ToolContext(
         arguments=arguments,

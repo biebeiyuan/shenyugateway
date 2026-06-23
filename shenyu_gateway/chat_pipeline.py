@@ -81,7 +81,7 @@ class ChatPipeline:
             prepared_messages_for_log, _ = _trim_client_image_blocks(prepared_messages, keep_recent_messages=0)
             sessions.log_input_messages(session_id, prepared_messages_for_log)
 
-            merged_tools = merge_tools(body.tools, self.cfg)
+            merged_tools = merge_tools(body.tools, self.cfg, meta=meta)
             has_gateway_managed_tools = any(
                 is_gateway_native_tool(tool.get("function", {}).get("name", ""))
                 for tool in merged_tools
@@ -255,6 +255,8 @@ class ChatPipeline:
             "tool_names": [t.get("function", {}).get("name", "") for t in merged_tools[:20]],
             "tool_names_all": [t.get("function", {}).get("name", "") for t in merged_tools],
             "has_internal_tools": has_gateway_managed_tools,
+            "is_room": bool(meta.get("is_room")),
+            "room_charge": (meta.get("package") or {}).get("charge") if meta.get("is_room") else None,
             "upstream_url": request_upstream["chat_url"],
             "upstream_scope": request_upstream["scope"],
             "request_payloads_retained": retain_payloads,

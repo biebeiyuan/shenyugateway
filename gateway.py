@@ -154,6 +154,7 @@ from shenyu_gateway.prepare_messages import (
 from shenyu_gateway.private_capture import (
     mark_context_consumed as _mark_context_consumed_impl,
     is_free_time_fallback_context as _is_free_time_fallback_context,
+    is_room_mode as _is_room_mode,
     private_capture_kinds as _private_capture_kinds,
     private_capture_fallback_text as _private_capture_fallback_text,
     ensure_visible_assistant_content as _ensure_visible_assistant_content,
@@ -652,6 +653,42 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
         now_iso=_iso_now(),
         detail={"pending_gateway_tool_turns": len(pending_gateway_meta.get("pending_gateway_tool_turn_ids", []))},
     )
+
+    # ── Room Mode Branch ───────────────────────────────────────────
+    is_room = bool(
+        getattr(cfg, "enable_room_mode", True)
+        and not is_hisense
+        and _is_room_mode(user_text)
+    )
+
+    if is_room:
+        package = await builder.build_room_context_package(session, trace_log=log_entry)
+        layers = package["layers"]
+        _mark_request_log_phase(
+            log_entry,
+            "prepare.room_layers_rendered",
+            now_iso=_iso_now(),
+            detail={"charge": package.get("charge")},
+        )
+        messages, layer_meta = assemble_layered_messages(messages, layers, cold_start_snapshot=None)
+        trim_meta.update(layer_meta)
+        _mark_request_log_phase(log_entry, "prepare.done", now_iso=_iso_now(), detail={"prepared_messages": len(messages), "mode": "room"})
+        return messages, {
+            "session": session,
+            "package": package,
+            "is_first_turn": is_first_turn,
+            "snapshot_messages": snapshot_messages,
+            "snapshot_latest_user_text": _latest_user_text(snapshot_messages),
+            "cache_layers": layers,
+            "client_message_window": trim_meta,
+            "pending_gateway_tool_turn_ids": pending_gateway_meta.get("pending_gateway_tool_turn_ids", []),
+            "cold_start_snapshot": None,
+            "is_hisense": False,
+            "is_room": True,
+            "upstream": upstream,
+        }
+
+    # ── Normal / Hisense Path ──────────────────────────────────────
     package = await builder.build_context_package(
         session,
         current_user_text=user_text,
