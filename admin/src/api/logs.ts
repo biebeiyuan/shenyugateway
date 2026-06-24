@@ -42,7 +42,15 @@ export interface ToolRoundEntry {
   messages_count: number
   stream?: boolean
   usage?: Record<string, any>
-  tools: Array<{ name: string; cached_duplicate: boolean; args_preview: string }>
+  tools: Array<{
+    name: string
+    cached_duplicate: boolean
+    args_preview: string
+    result_preview?: string
+    ok?: boolean | null
+    target_tool?: string | null
+    duration_ms?: number
+  }>
 }
 
 export interface LogDetail extends LogEntry {

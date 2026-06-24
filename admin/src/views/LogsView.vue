@@ -229,21 +229,36 @@ function renderContent(detail: LogDetail, tab: string): string {
 
     // 下半部分一：这条请求里，沈予实际调用了哪些网关工具、做了什么
     const rounds = detail.internal_tool_rounds || []
-    const calls: Array<{ name: string; cached: boolean }> = []
+    let totalCalls = 0
+    const roundsHtml: string[] = []
     if (Array.isArray(rounds)) {
       for (const r of rounds) {
-        for (const t of r.tools || []) {
-          calls.push({ name: t.name, cached: !!t.cached_duplicate })
-        }
+        const tools = r.tools || []
+        if (!tools.length) continue
+        totalCalls += tools.length
+        const toolItems = tools.map((t) => {
+          const hint = toolHint(t.name)
+          const targetLabel = t.target_tool ? `<span class="tool-target">→ ${esc(t.target_tool)}</span>` : ''
+          const timingBadge = typeof t.duration_ms === 'number' ? `<span class="tool-timing">${t.duration_ms}ms</span>` : ''
+          const cachedMark = t.cached_duplicate ? '<span class="tc-cached">（命中缓存）</span>' : ''
+          const okClass = t.cached_duplicate ? '' : (t.ok === true ? ' tool-ok' : t.ok === false ? ' tool-fail' : '')
+
+          let detail = ''
+          if (t.args_preview && t.args_preview !== '{}') {
+            detail += `<div class="tool-detail-block">${esc(t.args_preview)}</div>`
+          }
+          if (t.result_preview) {
+            detail += `<div class="tool-detail-block${okClass}">${esc(t.result_preview)}</div>`
+          }
+
+          return `<div class="tool-call-item"><div class="tool-call-row"><span class="tc-call-name">🔧 ${esc(t.name)}</span>${targetLabel}${hint ? `<span class="tc-call-hint">${esc(hint)}</span>` : ''}${timingBadge}${cachedMark}</div>${detail}</div>`
+        }).join('')
+        const roundLabel = rounds.length > 1 ? `<div class="tool-round-header">第 ${r.round} 轮 · ${tools.length} 次调用</div>` : ''
+        roundsHtml.push(`<div class="tool-round-group">${roundLabel}${toolItems}</div>`)
       }
     }
-    if (calls.length) {
-      const items = calls.map((c) => {
-        const hint = toolHint(c.name)
-        const cachedMark = c.cached ? '<span class="tc-cached">（命中缓存，未重复执行）</span>' : ''
-        return `<div class="tool-call-row"><span class="tc-call-name">🔧 ${esc(c.name)}</span>${hint ? `<span class="tc-call-hint">${esc(hint)}</span>` : ''}${cachedMark}</div>`
-      }).join('')
-      out += `<div class="tool-section"><div class="tool-section-title">本次调用的网关工具 · ${calls.length} 次</div>${items}</div>`
+    if (totalCalls) {
+      out += `<div class="tool-section"><div class="tool-section-title">本次调用的网关工具 · ${totalCalls} 次${rounds.length > 1 ? ` · ${rounds.length} 轮` : ''}</div>${roundsHtml.join('')}</div>`
     } else if (detail.has_internal_tools) {
       out += `<div class="tool-section"><div class="tool-section-title">本次调用的网关工具</div><div class="tool-empty">这条请求挂了网关工具，但沈予没有实际调用。</div></div>`
     }
@@ -647,5 +662,67 @@ function renderContent(detail: LogDetail, tab: string): string {
 .tool-empty {
   font-size: 11px;
   color: #9ca3af;
+}
+
+.tool-round-group {
+  margin-bottom: 4px;
+}
+
+.tool-round-group + .tool-round-group {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dotted #e0e0e0;
+}
+
+.tool-round-header {
+  font-size: 10px;
+  font-weight: 600;
+  color: #9ca3af;
+  margin-bottom: 4px;
+}
+
+.tool-call-item {
+  padding: 4px 0;
+}
+
+.tool-call-item + .tool-call-item {
+  border-top: 1px solid #f3f4f6;
+}
+
+.tool-detail-block {
+  margin: 3px 0 3px 20px;
+  padding: 4px 8px;
+  font-size: 10px;
+  font-family: 'SF Mono', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  line-height: 1.4;
+  color: #374151;
+  background: #f9fafb;
+  border-left: 2px solid #e5e7eb;
+  border-radius: 0 4px 4px 0;
+  max-height: 120px;
+  overflow-y: auto;
+}
+
+.tool-detail-block.tool-ok {
+  border-left-color: #22c55e;
+}
+
+.tool-detail-block.tool-fail {
+  border-left-color: #ef4444;
+  background: #fef2f2;
+}
+
+.tool-target {
+  font-size: 10px;
+  color: #7c3aed;
+  font-weight: 500;
+}
+
+.tool-timing {
+  font-size: 10px;
+  color: #9ca3af;
+  font-family: 'SF Mono', monospace;
 }
 </style>

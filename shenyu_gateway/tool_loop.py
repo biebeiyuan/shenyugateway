@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
@@ -305,13 +306,13 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
 
         _append_assistant_tool_call_message(working_messages, completion, tool_calls, round_log)
         for tool_call in tool_calls:
-            result, args, name, cached = await _execute_internal_tool_call(
+            result, args, name, cached, duration_ms = await _execute_internal_tool_call(
                 ctx,
                 tool_call,
                 tool_result_cache,
                 log_label="Internal tool call failed",
             )
-            _append_tool_round_log(round_log, name, args, cached)
+            _append_tool_round_log(round_log, name, args, cached, result, duration_ms=duration_ms)
             working_messages.append(_tool_result_message(tool_call, name, result))
 
     raise HTTPException(status_code=500, detail="Exceeded internal gateway tool rounds.")
@@ -469,13 +470,13 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
 
         _append_assistant_tool_call_message(working_messages, completion, tool_calls, round_log)
         for tool_call in tool_calls:
-            result, args, name, cached = await _execute_internal_tool_call(
+            result, args, name, cached, duration_ms = await _execute_internal_tool_call(
                 ctx,
                 tool_call,
                 tool_result_cache,
                 log_label="Internal stream tool call failed",
             )
-            _append_tool_round_log(round_log, name, args, cached)
+            _append_tool_round_log(round_log, name, args, cached, result, duration_ms=duration_ms)
             working_messages.append(_tool_result_message(tool_call, name, result))
             if await ctx.request.is_disconnected():
                 if ctx.log_entry is not None:
@@ -578,7 +579,7 @@ async def _execute_internal_tool_call(
     tool_result_cache: dict[str, dict],
     *,
     log_label: str,
-) -> tuple[dict, dict, str, bool]:
+) -> tuple[dict, dict, str, bool, int]:
     args = _tool_call_arguments(tool_call)
     name = _tool_call_name(tool_call)
     cache_key = _tool_call_cache_key(name, args)
@@ -589,17 +590,20 @@ async def _execute_internal_tool_call(
             "cached_duplicate": True,
             "result": tool_result_cache[cache_key],
         }
+        duration_ms = 0
     else:
+        t0 = time.monotonic()
         try:
             result = await ctx.execute_gateway_tool(name, args, session_tag=ctx.session_tag, cfg=ctx.cfg)
         except Exception as exc:
             logger.exception("[GatewayTool] %s: %s", log_label, name)
             result = {"ok": False, "error": str(exc)}
+        duration_ms = int((time.monotonic() - t0) * 1000)
         tool_result_cache[cache_key] = result
         ctx.sessions.log_tool_result(ctx.session_id, name, args, result)
         if isinstance(result, dict) and result.get("ok") is False:
             _record_tool_error(ctx, name, args, result)
-    return result, args, name, cached
+    return result, args, name, cached, duration_ms
 
 
 def _append_tool_round_log(
@@ -607,16 +611,23 @@ def _append_tool_round_log(
     name: str,
     args: dict,
     cached: bool,
+    result: dict,
+    *,
+    duration_ms: int = 0,
 ) -> None:
     if round_log is None:
         return
-    round_log["tools"].append(
-        {
-            "name": name,
-            "cached_duplicate": cached,
-            "args_preview": _json_dumps(args)[:300],
-        }
-    )
+    entry: dict[str, Any] = {
+        "name": name,
+        "cached_duplicate": cached,
+        "args_preview": _json_dumps(args)[:300],
+        "result_preview": _shorten(_json_dumps(result), 300),
+        "ok": result.get("ok") if isinstance(result, dict) else None,
+        "duration_ms": duration_ms,
+    }
+    if name == "shenyu_gateway_tool":
+        entry["target_tool"] = _target_tool_name(name, args)
+    round_log["tools"].append(entry)
 
 
 def _target_tool_name(name: str, args: dict) -> str:
