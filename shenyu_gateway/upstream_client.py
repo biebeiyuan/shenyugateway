@@ -192,7 +192,7 @@ async def fetch_upstream_models(
     proto = upstream["protocol"]
     client = request.app.state.http
     try:
-        if proto == "anthropic":
+        if proto == "anthropic" and "anthropic.com" in (upstream.get("base_url") or "").lower():
             return []
         url = _models_url_for(upstream)
         if not url or not upstream["api_key"]:
