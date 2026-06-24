@@ -116,11 +116,8 @@ def _test_pipeline(*, prepare_messages, nonstream_chat=None) -> ChatPipeline:
         finalize_assistant_private_content=lambda message, **kwargs: (
             message.get("content") or "",
             "",
-            [],
-            [],
             {"applied": False},
         ),
-        schedule_inline_memory_capture=lambda *args, **kwargs: None,
         store_heartbeat=lambda *args, **kwargs: None,
         mark_context_consumed=lambda *args, **kwargs: None,
         write_completion_context_snapshot=lambda *args, **kwargs: None,
@@ -1450,12 +1447,9 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
             finalize_assistant_private_content=lambda assistant_message, **kwargs: (
                 assistant_message.get("content", ""),
                 "",
-                [],
-                [],
                 {"applied": False},
             ),
             store_heartbeat=lambda *args, **kwargs: None,
-            schedule_inline_memory_capture=lambda *args, **kwargs: None,
             mark_context_consumed=lambda meta: None,
             write_completion_context_snapshot=lambda *args, **kwargs: None,
             record_response_text=lambda log_entry, text: log_entry.__setitem__("response_text", text),
@@ -1878,8 +1872,7 @@ def test_execute_mixed_gateway_tool_calls_stores_clean_pending_assistant_copy():
             pending = store.find_pending_gateway_tool_turn(session["id"], ["call_client"])
 
             assert pending is not None
-            assert pending["original_assistant_message"].get("content", "").strip() == "Visible"
-            assert "[mem]" not in pending["original_assistant_message"].get("content", "")
+            assert pending["original_assistant_message"].get("content", "").strip() == "Visible [mem]private note[/mem]"
             assert result["choices"][0]["message"]["content"] == "Visible [mem]private note[/mem]"
 
     asyncio.run(run_case())

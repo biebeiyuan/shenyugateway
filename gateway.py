@@ -50,7 +50,6 @@ from shenyu_gateway.hisense_routes import HisenseRouteDeps, build_hisense_router
 from shenyu_gateway.recall import RecallIndexService
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
-    json_dumps as _json_dumps,
     logger,
     now as _now,
     now_ts as _now_ts,
@@ -63,7 +62,6 @@ from shenyu_gateway.response_capture import (
 )
 from shenyu_gateway.request_logs import (
     _finish_http_request_event,
-    _http_request_diagnostics,
     _mark_http_request_event,
     _mark_request_log_phase,
     _record_response_text,
@@ -111,7 +109,6 @@ def _clamp(value: float, min_value: float, max_value: float) -> float:
 from shenyu_gateway.upstream_client import (
     validate_http_url as _validate_http_url_impl,
     validate_protocol as _validate_protocol_impl,
-    connection_route_hint as _connection_route_hint_impl,
     connect_error_detail as _connect_error_detail_impl,
     detect_protocol_for as _detect_protocol_for,
     chat_url_for as _chat_url_for,
@@ -133,10 +130,6 @@ def _validate_protocol(field_name, value, *, allow_empty=False):
     return _validate_protocol_impl(field_name, value, allow_empty=allow_empty)
 
 
-def _connection_route_hint():
-    return _connection_route_hint_impl(cfg)
-
-
 def _connect_error_detail(chat_url, exc):
     return _connect_error_detail_impl(chat_url, exc, cfg=cfg)
 
@@ -150,11 +143,9 @@ from shenyu_gateway.prepare_messages import (
 
 from shenyu_gateway.private_capture import (
     mark_context_consumed as _mark_context_consumed_impl,
-    is_free_time_fallback_context as _is_free_time_fallback_context,
     is_room_mode as _is_room_mode,
     private_capture_kinds as _private_capture_kinds,
     private_capture_fallback_text as _private_capture_fallback_text,
-    ensure_visible_assistant_content as _ensure_visible_assistant_content,
     finalize_assistant_private_content as _finalize_assistant_private_content,
 )
 

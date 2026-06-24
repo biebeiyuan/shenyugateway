@@ -328,19 +328,6 @@ def test_create_note_preserves_zero_default_cooldown():
     assert supabase.inserts[0]["data"]["cooldown_hours"] == 0
 
 
-def test_inline_note_preserves_zero_default_cooldown():
-    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=0), FakeSupabase())
-
-    row = service._inline_note_to_row(
-        "这条先进待整理，也不要偷偷加冷却。",
-        {"id": "session-1", "session_tag": "5.15"},
-        "visible assistant text",
-        "model-x",
-    )
-
-    assert row["cooldown_hours"] == 0
-
-
 def test_legacy_atomic_memories_returns_only_content_surface_body_fields():
     rows = [
         {

@@ -91,26 +91,23 @@ def _cfg():
     )
 
 
-def test_star_tag_capture_and_parse_chord():
-    clean, heartbeat, memories, stars = split_private_assistant_tags(
+def test_star_tag_left_visible_and_parse_chord():
+    clean, heartbeat = split_private_assistant_tags(
         "看见了。[star chord=\"Am\"]有一点亮[/star]<heartbeat>留着</heartbeat>"
     )
 
-    assert clean == "看见了。"
+    assert "[star" in clean
     assert heartbeat == "留着"
-    assert memories == []
-    assert stars == [{"content": "有一点亮", "attrs": {"chord": "Am"}}]
-    assert parse_star_payload(stars[0])["chord_root"] == "A"
     assert parse_star_payload("Am · 有一点亮")["content"] == "有一点亮"
+    assert parse_star_payload("Am · 有一点亮")["chord_root"] == "A"
 
 
-def test_streaming_star_capture_keeps_unclosed_star_visible():
+def test_streaming_unclosed_star_left_visible():
     tag_filter = AssistantTagFilter()
 
     visible = tag_filter.feed("前面 [star]未闭合") + tag_filter.flush()
 
     assert visible == "前面 [star]未闭合"
-    assert tag_filter.get_stars() == []
 
 
 def test_create_star_accepts_ordered_chord_sequence():
@@ -138,33 +135,10 @@ def test_create_star_accepts_ordered_chord_sequence():
     assert filtered["count"] == 1
 
 
-def test_inline_star_progression_prefix_is_saved_as_chord_sequence():
-    clean, heartbeat, memories, stars = split_private_assistant_tags(
-        '[star]Bbmaj7 → Am(maj7) → F#m7 · 实体化"我会一直等"——她接住"是不是有点点不舒服"。一段。[/star]'
-    )
-    supabase = FakeSupabase()
-    service = StarService(_cfg(), supabase)
-
-    async def run():
-        captured = await service.process_inline_stars(
-            {"session_tag": "default", "id": "session-1"},
-            stars,
-            "",
-            "test-model",
-        )
-        listed = await service.list_stars(status="all")
-        return captured, supabase.tables["shenyu_stars"][0], listed
-
-    captured, row, listed = asyncio.run(run())
-
-    assert clean == ""
-    assert heartbeat == ""
-    assert memories == []
-    assert captured["inserted_count"] == 1
-    assert row["content"].startswith('实体化"我会一直等"')
-    assert row["chord"] == "Bbmaj7 → Am(maj7) → F#m7"
-    assert row["metadata"]["chord_sequence"] == ["Bbmaj7", "Am(maj7)", "F#m7"]
-    assert listed["items"][0]["chord_sequence"] == ["Bbmaj7", "Am(maj7)", "F#m7"]
+def test_parse_star_payload_chord_sequence():
+    result = parse_star_payload("Bbmaj7 → Am(maj7) → F#m7 · 实体化一段")
+    assert result["content"] == "实体化一段"
+    assert result["chord_root"] == "BB"
 
 
 def test_review_limits_candidates_and_missed_feedback():

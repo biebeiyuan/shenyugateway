@@ -175,9 +175,7 @@ def test_gateway_tool_policy_names_broker_call_shape_and_tool_list():
         },
         context_layers.ContextLayerSettings(
             enable_gateway_tools=True,
-            inject_inline_memory_prompt=False,
             heartbeat_prompt="heartbeat prompt",
-            inline_mem_prompt="inline mem prompt",
         ),
     )
 
@@ -214,9 +212,7 @@ def test_calendar_memory_renders_page_content_not_summary_or_digest():
         },
         context_layers.ContextLayerSettings(
             enable_gateway_tools=False,
-            inject_inline_memory_prompt=False,
             heartbeat_prompt="heartbeat prompt",
-            inline_mem_prompt="inline mem prompt",
         ),
     )
 
@@ -246,9 +242,7 @@ def test_mem_notes_render_between_calendar_and_heartbeat_not_volatile():
     }
     settings = context_layers.ContextLayerSettings(
         enable_gateway_tools=True,
-        inject_inline_memory_prompt=True,
         heartbeat_prompt="heartbeat format",
-        inline_mem_prompt="mem format",
     )
 
     layers = context_layers.render_layered_additions(package, settings)
@@ -261,7 +255,6 @@ def test_mem_notes_render_between_calendar_and_heartbeat_not_volatile():
     assert rendered.index("## 我之前写下的便签，可能用的到。") < rendered.index("## 我之前的心跳")
     assert rendered.index("## 我之前的心跳") < rendered.index("## 工具怎么用")
     assert rendered.index("## 工具怎么用") < rendered.index("heartbeat format")
-    assert rendered.index("heartbeat format") < rendered.index("mem format")
 
 
 def test_calendar_context_pages_loads_and_filters_by_content():
@@ -398,13 +391,11 @@ def test_private_only_assistant_content_gets_visible_fallback():
     finalize = gateway_namespace["_finalize_assistant_private_content"]
     message = {"role": "assistant", "content": "<heartbeat>记下来</heartbeat>"}
 
-    clean, heartbeat, memories, stars, fallback_meta = finalize(message)
+    clean, heartbeat, fallback_meta = finalize(message)
 
     assert clean == "沈予已记录 · 已记录私有块 heartbeat"
     assert message["content"] == "沈予已记录 · 已记录私有块 heartbeat"
     assert heartbeat == "记下来"
-    assert memories == []
-    assert stars == []
     assert fallback_meta == {
         "applied": True,
         "text": "沈予已记录 · 已记录私有块 heartbeat",
@@ -417,21 +408,18 @@ def test_home_trigger_private_capture_fallback():
     finalize = gateway_namespace["_finalize_assistant_private_content"]
     message = {"role": "assistant", "content": "<heartbeat>记下来</heartbeat>"}
 
-    clean, heartbeat, memories, stars, fallback_meta = finalize(
+    clean, heartbeat, fallback_meta = finalize(
         message,
         latest_user_text='<proxy_sender name="沈予"/> 回家了。',
-        mem_note_written=True,
     )
 
-    assert clean == "沈予回家了 · 已记录私有块 heartbeat + mem"
-    assert message["content"] == "沈予回家了 · 已记录私有块 heartbeat + mem"
+    assert clean == "沈予回家了 · 已记录私有块 heartbeat"
+    assert message["content"] == "沈予回家了 · 已记录私有块 heartbeat"
     assert heartbeat == "记下来"
-    assert memories == []
-    assert stars == []
     assert fallback_meta == {
         "applied": True,
-        "text": "沈予回家了 · 已记录私有块 heartbeat + mem",
-        "kinds": ["heartbeat", "mem"],
+        "text": "沈予回家了 · 已记录私有块 heartbeat",
+        "kinds": ["heartbeat"],
         "context": "free_time",
     }
 
