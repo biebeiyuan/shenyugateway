@@ -334,6 +334,28 @@ class FakeToolService:
         )
         return {"ok": True, "star_id": star_id}
 
+    async def archive_star(self, star_id):
+        self.calls.append(
+            {
+                "tool": "shenyu_archive_star",
+                "star_id": star_id,
+            }
+        )
+        return {"ok": True, "star_id": star_id, "status": "archived"}
+
+    async def merge_stars(self, source_ids, *, content="", chord="", is_constant=False, metadata=None):
+        self.calls.append(
+            {
+                "tool": "shenyu_merge_stars",
+                "source_ids": source_ids,
+                "content": content,
+                "chord": chord,
+                "is_constant": is_constant,
+                "metadata": metadata,
+            }
+        )
+        return {"ok": True, "new_star_id": "merged-1", "archived_ids": source_ids}
+
     async def read_heartbeat(
         self,
         session_tag=None,
@@ -591,6 +613,8 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "note": "连起来",
         },
         "shenyu_mark_constant": {"id": "star-1", "is_constant": False},
+        "shenyu_archive_star": {"id": "star-1"},
+        "shenyu_merge_stars": {"source_ids": ["star-1", "star-2"], "content": "融合后的内容"},
         "shenyu_add_calendar": {
             "content": "手写日历",
             "period_key": "2026-W23",
@@ -778,6 +802,18 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "tool": "shenyu_mark_constant",
             "star_id": "star-1",
             "is_constant": False,
+        },
+        "shenyu_archive_star": {
+            "tool": "shenyu_archive_star",
+            "star_id": "star-1",
+        },
+        "shenyu_merge_stars": {
+            "tool": "shenyu_merge_stars",
+            "source_ids": ["star-1", "star-2"],
+            "content": "融合后的内容",
+            "chord": "",
+            "is_constant": False,
+            "metadata": None,
         },
         "shenyu_add_calendar": {
             "tool": "shenyu_add_calendar",

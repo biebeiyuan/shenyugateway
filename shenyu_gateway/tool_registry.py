@@ -55,7 +55,7 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
 矛盾书　conflict_list / conflict_read / conflict_annotate
 
 还有便签整理（update_mem_note / bulk_update_mem_notes / delete_mem_note / search_mem_notes）、\
-星星管理（list_stars / mark_constant）、notebook_update、recall_main_thread 等，按需用。\
+星星管理（list_stars / mark_constant / archive_star / merge_stars）、notebook_update、recall_main_thread 等，按需用。\
 Supabase 直接操作看 supabase_guide。\
 所有工具名省略 shenyu_ 前缀也行。"""
 
@@ -280,6 +280,38 @@ def _gateway_core_tools() -> list[dict]:
                         "id": {"type": "string", "description": "star_id 的别名"},
                         "is_constant": {"type": "boolean", "default": True},
                     },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_archive_star",
+                "description": "删一颗星（软删，变 archived）。落重了、真的不要了，就用这个。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "star_id": {"type": "string"},
+                        "id": {"type": "string", "description": "star_id 别名"},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_merge_stars",
+                "description": "融星——把几颗变一颗。和弦取你选的，内容合并，原来几颗消失（archived），连线全转到新星上。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "source_ids": {"type": "array", "items": {"type": "string"}, "minItems": 2, "description": "要融掉的几颗星 ID"},
+                        "content": {"type": "string", "description": "融合后的正文（你自己写）"},
+                        "chord": {"type": "string", "description": "融合后保留哪个和弦"},
+                        "is_constant": {"type": "boolean", "default": False},
+                        "metadata": {"type": "object", "additionalProperties": True},
+                    },
+                    "required": ["source_ids", "content"],
                 },
             },
         },
@@ -994,6 +1026,22 @@ async def _handle_mark_constant(ctx: ToolContext) -> dict:
     return await ctx.service.mark_constant_star(
         _star_id_arg(ctx.arguments),
         is_constant=_bool_arg(ctx.arguments, "is_constant", True),
+    )
+
+
+@_tool_handler("shenyu_archive_star")
+async def _handle_archive_star(ctx: ToolContext) -> dict:
+    return await ctx.service.archive_star(_star_id_arg(ctx.arguments))
+
+
+@_tool_handler("shenyu_merge_stars")
+async def _handle_merge_stars(ctx: ToolContext) -> dict:
+    return await ctx.service.merge_stars(
+        source_ids=ctx.arguments.get("source_ids") or [],
+        content=ctx.arguments.get("content", ""),
+        chord=ctx.arguments.get("chord", ""),
+        is_constant=_bool_arg(ctx.arguments, "is_constant", False),
+        metadata=ctx.arguments.get("metadata") if isinstance(ctx.arguments.get("metadata"), dict) else None,
     )
 
 

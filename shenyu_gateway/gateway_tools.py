@@ -491,6 +491,12 @@ class GatewayToolService:
     async def mark_constant_star(self, star_id: str, is_constant: bool = True) -> dict:
         return await self._stars().mark_constant(star_id, is_constant=is_constant)
 
+    async def archive_star(self, star_id: str) -> dict:
+        return await self._stars().archive_star(star_id)
+
+    async def merge_stars(self, source_ids: list, *, content: str = "", chord: str = "", is_constant: bool = False, metadata: dict | None = None) -> dict:
+        return await self._stars().merge_stars(source_ids, content=content, chord=chord, is_constant=is_constant, metadata=metadata)
+
     async def supabase_insert(self, table: str, data: dict) -> dict:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured."}

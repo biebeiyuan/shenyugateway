@@ -828,6 +828,18 @@ class StarService:
                     await self.supabase.update(STAR_TABLE, {"id": star_id}, {"reviewed_at": now_text})
                 except Exception as exc:
                     logger.warning("[Star] Failed to mark reviewed: id=%s error=%s", star_id, exc)
+        remaining_unreviewed = 0
+        if not is_admin_review:
+            try:
+                unreviewed_rows = await self.supabase.query(STAR_TABLE, {
+                    "select": "id",
+                    "status": "eq.active",
+                    "reviewed_at": "is.null",
+                    "limit": "200",
+                })
+                remaining_unreviewed = len(unreviewed_rows)
+            except Exception:
+                pass
         return {
             "ok": True,
             "count": len(items),
@@ -835,6 +847,7 @@ class StarService:
             "candidates_per_star": per_star,
             "total_candidate_limit": total_limit,
             "review_scope": "admin" if is_admin_review else "shenyu",
+            "remaining_unreviewed": remaining_unreviewed,
             "items": items,
         }
 
@@ -1185,6 +1198,122 @@ class StarService:
             return {"ok": False, "error": "star_id is required."}
         rows = await self.supabase.update(STAR_TABLE, {"id": star_id}, {"is_constant": bool(is_constant)})
         return {"ok": True, "star_id": star_id, "updated": rows}
+
+    async def archive_star(self, star_id: str) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+        star_id = _node_id(star_id)
+        if not star_id:
+            return {"ok": False, "error": "star_id is required."}
+        rows = await self.supabase.update(STAR_TABLE, {"id": star_id}, {"status": "archived"})
+        if not rows:
+            return {"ok": False, "error": f"Star not found: {star_id}"}
+        return {"ok": True, "star_id": star_id, "status": "archived"}
+
+    async def merge_stars(
+        self,
+        source_ids: list[str],
+        *,
+        content: str = "",
+        chord: str = "",
+        is_constant: bool = False,
+        metadata: Optional[dict[str, Any]] = None,
+    ) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+        ids = [_node_id(sid) for sid in (source_ids or [])]
+        ids = [sid for sid in ids if sid]
+        if len(ids) < 2:
+            return {"ok": False, "error": "At least 2 source star IDs required."}
+        content = (content or "").strip()
+        if not content:
+            return {"ok": False, "error": "content is required for the merged star."}
+
+        source_rows = await self.supabase.query(STAR_TABLE, {
+            "select": STAR_SELECT,
+            "id": f"in.({','.join(ids)})",
+            "status": "eq.active",
+        })
+        found_ids = {str(r.get("id")) for r in source_rows}
+        missing = [sid for sid in ids if sid not in found_ids]
+        if missing:
+            return {"ok": False, "error": f"Stars not found or not active: {missing}"}
+
+        merge_meta = _json_dict(metadata)
+        merge_meta["merged_from"] = ids
+
+        created = await self.create_star(
+            content,
+            chord=chord,
+            is_constant=is_constant,
+            metadata=merge_meta,
+            source_model="tool:shenyu_merge_stars",
+        )
+        if not created.get("ok"):
+            return created
+        new_star_id = created["star_id"]
+
+        links_transferred = 0
+        id_filter = f"in.({','.join(ids)})"
+        outgoing = await self.supabase.query(STAR_LINK_TABLE, {
+            "select": "*",
+            "from_node_id": id_filter,
+            "status": "eq.active",
+        })
+        incoming = await self.supabase.query(STAR_LINK_TABLE, {
+            "select": "*",
+            "to_node_id": id_filter,
+            "status": "eq.active",
+        })
+        all_links = outgoing + incoming
+        new_id_str = str(new_star_id)
+        seen_edges: set[tuple[str, str, str]] = set()
+        for link in all_links:
+            from_id = str(link.get("from_node_id") or "")
+            to_id = str(link.get("to_node_id") or "")
+            rel = link.get("relation_type") or "harmony"
+            new_from = new_id_str if from_id in found_ids else from_id
+            new_to = new_id_str if to_id in found_ids else to_id
+            if new_from == new_to:
+                continue
+            edge_key = (new_from, new_to, rel)
+            if edge_key in seen_edges:
+                continue
+            seen_edges.add(edge_key)
+            try:
+                await self.supabase.insert(STAR_LINK_TABLE, {
+                    "from_node_type": "star",
+                    "from_node_id": new_from,
+                    "to_node_type": "star",
+                    "to_node_id": new_to,
+                    "relation_type": rel,
+                    "source": "merge",
+                    "bidirectional": link.get("bidirectional", True),
+                    "weight": link.get("weight", 1.0),
+                    "confidence": link.get("confidence", 0.5),
+                    "status": "active",
+                    "metadata": {"merged_from_link": str(link.get("id") or "")},
+                })
+                links_transferred += 1
+            except Exception:
+                pass
+
+        for sid in ids:
+            row = next((r for r in source_rows if str(r.get("id")) == sid), None)
+            old_meta = _json_dict(row.get("metadata") if row else None)
+            old_meta["merged_into"] = new_id_str
+            await self.supabase.update(STAR_TABLE, {"id": sid}, {"status": "archived", "metadata": old_meta})
+
+        await self.supabase.update(STAR_LINK_TABLE, {"from_node_id": id_filter, "status": "eq.active"}, {"status": "archived"})
+        await self.supabase.update(STAR_LINK_TABLE, {"to_node_id": id_filter, "status": "eq.active"}, {"status": "archived"})
+
+        return {
+            "ok": True,
+            "new_star": created.get("star"),
+            "new_star_id": new_id_str,
+            "archived_ids": ids,
+            "links_transferred": links_transferred,
+        }
 
     async def _rank_for_query(
         self,

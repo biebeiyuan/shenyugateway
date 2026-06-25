@@ -397,3 +397,68 @@ def test_recent_chat_injection_fatigue_can_suppress_borderline_star():
 
     assert before["count"] == 1
     assert after["items"] == []
+
+
+def test_archive_star_sets_status_archived():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        created = await service.create_star("Am · 要删的星")
+        archive_result = await service.archive_star(created["star_id"])
+        active_list = await service.list_stars(status="active")
+        all_list = await service.list_stars(status="all")
+        return archive_result, active_list, all_list
+
+    result, active_list, all_list = asyncio.run(run())
+
+    assert result["ok"] is True
+    assert result["status"] == "archived"
+    assert active_list["count"] == 0
+    assert all_list["count"] == 1
+
+
+def test_merge_stars_creates_new_and_archives_sources():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        s1 = await service.create_star("Am · 第一视角的记忆")
+        s2 = await service.create_star("Em · 第二视角的记忆")
+        await service.connect_constellation(
+            [s1["star_id"], s2["star_id"]],
+            name="同一件事",
+            scored_by="沈予",
+        )
+        merge_result = await service.merge_stars(
+            [s1["star_id"], s2["star_id"]],
+            content="两个视角融成一颗",
+            chord="Am",
+        )
+        active_list = await service.list_stars(status="active")
+        return merge_result, active_list, supabase.tables["shenyu_star_links"]
+
+    merge_result, active_list, links = asyncio.run(run())
+
+    assert merge_result["ok"] is True
+    assert len(merge_result["archived_ids"]) == 2
+    assert merge_result["new_star_id"]
+    assert active_list["count"] == 1
+    assert "两个视角融成一颗" in active_list["items"][0]["content"]
+
+
+def test_review_returns_remaining_unreviewed():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        for i in range(6):
+            await service.create_star(f"Am · 星星{i}")
+        result = await service.review(limit_new=2, candidates_per_star=1, total_candidate_limit=2)
+        return result
+
+    result = asyncio.run(run())
+
+    assert result["ok"] is True
+    assert result["count"] == 2
+    assert result["remaining_unreviewed"] == 4
