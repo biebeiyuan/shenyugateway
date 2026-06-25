@@ -649,7 +649,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     )
 
     if is_room:
-        package = await builder.build_room_context_package(session, trace_log=log_entry)
+        package = await builder.build_room_context_package(session, trace_log=log_entry, messages=messages)
         layers = package["layers"]
         _mark_request_log_phase(
             log_entry,

@@ -4,14 +4,12 @@ import math
 from datetime import timedelta
 from typing import Any, Optional
 
+from .room_scenes import select_scene
 from .room_text import (
     DOORS,
     DRAWERS_INTRO,
     ROOM_CHARTER,
     ROOM_FORMAT_HINT,
-    SCENES_ACTIVE,
-    SCENES_NORMAL,
-    SCENES_QUIET,
     TRACE_PHRASES,
     ZONE_ORDER,
     door_priority,
@@ -65,15 +63,17 @@ def compute_charge(
 
 # ── Atmosphere ─────────────────────────────────────────────────────────
 
-def render_scene(charge: float) -> str:
-    if charge < 0.3:
-        scenes = SCENES_QUIET
-    elif charge < 0.7:
-        scenes = SCENES_NORMAL
-    else:
-        scenes = SCENES_ACTIVE
-    idx = int((charge * 100) % len(scenes))
-    return scenes[idx]
+def render_scene(
+    charge: float,
+    *,
+    weather_data: Optional[dict] = None,
+    hours_since_last_visit: Optional[float] = None,
+) -> str:
+    return select_scene(
+        charge,
+        weather_data=weather_data,
+        hours_since_last_visit=hours_since_last_visit,
+    )
 
 
 # ── Trace ──────────────────────────────────────────────────────────────
@@ -163,9 +163,16 @@ def render_room_layers(
     charge: float,
     last_traces: list[dict],
     door_specs: list[dict],
+    *,
+    weather_data: Optional[dict] = None,
+    hours_since_last_visit: Optional[float] = None,
 ) -> dict[str, str]:
     """Return {layer_name: text} matching assemble_layered_messages() keys."""
-    scene = render_scene(charge)
+    scene = render_scene(
+        charge,
+        weather_data=weather_data,
+        hours_since_last_visit=hours_since_last_visit,
+    )
     trace_line = render_last_trace(last_traces)
     doors = render_doors(door_specs, charge)
 

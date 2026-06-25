@@ -347,9 +347,11 @@ class ContextBuilder:
         self,
         session: dict,
         trace_log: Optional[dict] = None,
+        messages: Optional[list[dict]] = None,
     ) -> dict:
         """Build context for room mode — completely replaces normal context."""
         from .room_context import collect_charge_signals, compute_charge, render_room_layers
+        from .room_scenes import extract_weather_from_messages
         from .room_tools import collect_door_counts, room_broker_tool
         from .stars import StarService
 
@@ -368,6 +370,13 @@ class ContextBuilder:
         )
         _mark_request_log_phase(trace_log, "room.charge", detail={"charge": round(charge, 3), **signals})
 
+        weather_data = None
+        if messages:
+            try:
+                weather_data = extract_weather_from_messages(messages)
+            except Exception:
+                pass
+
         trace_limit = getattr(self.cfg, "room_trace_limit", 5)
         last_traces = self.store.recent_room_traces(limit=trace_limit)
 
@@ -377,7 +386,15 @@ class ContextBuilder:
             supabase_client=self.supabase_client,
         )
 
-        layers = render_room_layers(charge, last_traces, door_specs)
+        hours_since_last_visit = signals.get("hours_since_last_visit")
+
+        layers = render_room_layers(
+            charge,
+            last_traces,
+            door_specs,
+            weather_data=weather_data,
+            hours_since_last_visit=hours_since_last_visit,
+        )
 
         # Append profile (stable_charter_block) after room charter
         profile = self.stable_charter_block()
