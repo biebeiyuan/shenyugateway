@@ -368,7 +368,7 @@ def test_chat_injection_explicit_fallback_ignores_generic_hits():
 def test_recent_chat_injection_fatigue_can_suppress_borderline_star():
     supabase = FakeSupabase()
     cfg = _cfg()
-    cfg.star_min_score = 0.48
+    cfg.star_min_score = 0.55
     cfg.star_related_min_score = 0.22
     cfg.star_recent_fatigue_hours = 6
     cfg.star_recent_fatigue_penalty = 0.14

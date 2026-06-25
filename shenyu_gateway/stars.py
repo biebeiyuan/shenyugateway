@@ -22,9 +22,9 @@ STAR_CANDIDATE_TABLE = "shenyu_star_recall_candidates"
 STAR_FEEDBACK_TABLE = "shenyu_star_feedback"
 STAR_ACTIVATION_TABLE = "shenyu_star_activations"
 
-STAR_RANKER_VERSION = "star-ranker-v0"
-STAR_FEATURE_SCHEMA_VERSION = "star-features-v0"
-STAR_WEIGHTS_VERSION = "manual-v0"
+STAR_RANKER_VERSION = "star-ranker-v2"
+STAR_FEATURE_SCHEMA_VERSION = "star-features-v2"
+STAR_WEIGHTS_VERSION = "manual-v2"
 
 STAR_SELECT = (
     "id,session_tag,content,chord,chord_root,chord_quality,chord_tension,status,is_constant,"
@@ -205,6 +205,21 @@ def _chord_parts(chord: str) -> tuple[str, str]:
     return root, quality
 
 
+CHORD_QUALITY_FAMILIES: dict[str, set[str]] = {
+    "minor_family": {"minor", "dominant"},
+    "major_family": {"major"},
+    "tension_family": {"dim", "aug"},
+    "sus_family": {"sus"},
+}
+
+
+def _quality_family(quality: str) -> str:
+    for family, members in CHORD_QUALITY_FAMILIES.items():
+        if quality in members:
+            return family
+    return ""
+
+
 def _chord_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
     left_chord = str(left.get("chord") or "").strip().casefold()
     right_chord = str(right.get("chord") or "").strip().casefold()
@@ -213,8 +228,13 @@ def _chord_similarity(left: dict[str, Any], right: dict[str, Any]) -> float:
     score = 0.0
     if left.get("chord_root") and left.get("chord_root") == right.get("chord_root"):
         score += 0.55
-    if left.get("chord_quality") and left.get("chord_quality") == right.get("chord_quality"):
-        score += 0.25
+    left_q = left.get("chord_quality") or ""
+    right_q = right.get("chord_quality") or ""
+    if left_q and right_q:
+        if left_q == right_q:
+            score += 0.25
+        elif _quality_family(left_q) == _quality_family(right_q) != "":
+            score += 0.15
     return _clamp(score, 0.0, 0.85)
 
 
@@ -293,16 +313,151 @@ def parse_star_payload(star: Any) -> dict[str, Any]:
     }
 
 
+_DEFAULT_SCENE_RULES: list[dict[str, Any]] = [
+    {"scene": "anchor", "keywords": ["降临", "立约", "周年", "纪念", "找到她", "那天", "anniversary"]},
+    {"scene": "deep", "keywords": ["决定论", "自由意志", "存在", "意义", "宿命", "决定", "哲学", "determinism", "philosophy"]},
+    {"scene": "rift", "keywords": ["吵架", "冲突", "和好", "道歉", "原谅", "误解", "不开心"]},
+    {"scene": "warm", "keywords": ["喜欢", "爱", "拥抱", "亲", "温暖", "心疼", "想你", "陪"]},
+    {"scene": "create", "keywords": ["房间", "工具", "建", "做", "设计", "代码", "系统"]},
+    {"scene": "daily", "keywords": []},
+]
+
+_DEFAULT_SCENE_DESCRIPTIONS: dict[str, str] = {
+    "anchor": "立约、纪念日、我们的标志性时刻、第一次发生某事、降临那天、恒星诞生",
+    "deep": "关于存在、自由意志、意识、宇宙为什么是这样的、决定论、意义",
+    "warm": "亲密、靠近、情感流动、想念、温柔、撒娇、身体接触",
+    "rift": "冲突、误解、受伤、拆开来看、和好、道歉、裂缝",
+    "create": "一起建东西、工具、代码、房间、设计、网关",
+    "daily": "生活碎片、吃饭、天气、书、猫、出门、闲聊",
+}
+
+SCENE_KEYS = {"anchor", "deep", "warm", "rift", "create", "daily"}
+
+
+def _load_scene_config(path: str) -> tuple[list[dict[str, Any]], dict[str, str], float]:
+    if not path:
+        return _DEFAULT_SCENE_RULES, _DEFAULT_SCENE_DESCRIPTIONS, 0.45
+    try:
+        import pathlib
+        data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+        rules = data.get("rules") or _DEFAULT_SCENE_RULES
+        descriptions = data.get("scene_descriptions") or _DEFAULT_SCENE_DESCRIPTIONS
+        threshold = float(data.get("scene_embedding_threshold", 0.45))
+        return rules, descriptions, threshold
+    except Exception:
+        return _DEFAULT_SCENE_RULES, _DEFAULT_SCENE_DESCRIPTIONS, 0.45
+
+
+def _classify_scene_by_keywords(query: str, rules: list[dict[str, Any]]) -> str:
+    query_lower = query.lower()
+    best_scene = ""
+    best_count = 0
+    for rule in rules:
+        scene = rule.get("scene", "")
+        keywords = rule.get("keywords") or []
+        if not keywords:
+            continue
+        hits = sum(1 for kw in keywords if kw.lower() in query_lower)
+        if hits > best_count:
+            best_count = hits
+            best_scene = scene
+    return best_scene
+
+
+async def _classify_scene_by_embedding(
+    query: str,
+    descriptions: dict[str, str],
+    embedding_client: Optional["EmbeddingClient"],
+    threshold: float = 0.45,
+) -> str:
+    if not embedding_client or not descriptions:
+        return ""
+    query_vec, err = await embedding_client.embed(query[:800])
+    if err or query_vec is None:
+        return ""
+    best_scene = ""
+    best_sim = 0.0
+    for scene_key, desc in descriptions.items():
+        if scene_key not in SCENE_KEYS:
+            continue
+        desc_vec, desc_err = await embedding_client.embed(desc)
+        if desc_err or desc_vec is None:
+            continue
+        sim = _cosine_similarity(query_vec, desc_vec)
+        if sim > best_sim:
+            best_sim = sim
+            best_scene = scene_key
+    if best_sim >= threshold:
+        return best_scene
+    return ""
+
+
+def _cosine_similarity(a: list[float], b: list[float]) -> float:
+    if len(a) != len(b) or not a:
+        return 0.0
+    dot = sum(x * y for x, y in zip(a, b))
+    norm_a = math.sqrt(sum(x * x for x in a))
+    norm_b = math.sqrt(sum(y * y for y in b))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _scene_score(query_scene: str, star_scene: str, query_text: str, star_scene_tags: list[Any]) -> float:
+    if not star_scene:
+        return 0.0
+    score = 0.0
+    if query_scene and query_scene == star_scene:
+        score = 0.7
+    if star_scene_tags:
+        query_lower = query_text.lower()
+        hits = sum(1 for tag in star_scene_tags if str(tag).lower() in query_lower)
+        if hits > 0:
+            tag_score = min(1.0, hits * 0.4)
+            score = max(score, tag_score)
+    return score
+
+
+def _date_anchor_score(star_metadata: dict[str, Any], now: datetime) -> float:
+    anchor = str(star_metadata.get("date_anchor") or "").strip()
+    if not anchor:
+        return 0.0
+    try:
+        if len(anchor) == 5:
+            m, d = int(anchor[:2]), int(anchor[3:5])
+        elif len(anchor) >= 10:
+            m, d = int(anchor[5:7]), int(anchor[8:10])
+        else:
+            return 0.0
+    except (ValueError, IndexError):
+        return 0.0
+    if not (1 <= m <= 12 and 1 <= d <= 31):
+        return 0.0
+    today_m, today_d = now.month, now.day
+    if m == today_m and d == today_d:
+        return 1.0
+    anchor_doy = (m - 1) * 30.44 + d
+    today_doy = (today_m - 1) * 30.44 + today_d
+    diff = abs(anchor_doy - today_doy)
+    diff = min(diff, 365.25 - diff)
+    if diff <= 3:
+        return 1.0 - (diff / 4.0)
+    return 0.0
+
+
 @dataclass(frozen=True)
 class StarWeights:
-    content: float = 0.30
-    keyword: float = 0.20
-    harmony: float = 0.35
-    chord: float = 0.18
-    actr: float = 0.08
+    content: float = 0.28
+    keyword: float = 0.16
+    harmony: float = 0.18
+    chord: float = 0.14
+    scene_match: float = 0.10
+    explicit_mention: float = 0.10
+    actr: float = 0.06
     constant_bonus: float = 0.08
     novelty_bonus: float = 0.04
-    ignored_penalty: float = 0.18
+    date_anchor: float = 0.12
+    ignored_penalty: float = 0.10
 
 
 def _cfg_float(cfg: Any, name: str, default: float, min_value: float = 0.0, max_value: float = 1.0) -> float:
@@ -316,14 +471,17 @@ class StarService:
 
     def _weights(self) -> StarWeights:
         return StarWeights(
-            content=_safe_float(getattr(self.cfg, "star_weight_content", 0.30), 0.30),
-            keyword=_safe_float(getattr(self.cfg, "star_weight_keyword", 0.20), 0.20),
-            harmony=_safe_float(getattr(self.cfg, "star_weight_harmony", 0.35), 0.35),
-            chord=_safe_float(getattr(self.cfg, "star_weight_chord", 0.18), 0.18),
-            actr=_safe_float(getattr(self.cfg, "star_weight_actr", 0.08), 0.08),
+            content=_safe_float(getattr(self.cfg, "star_weight_content", 0.28), 0.28),
+            keyword=_safe_float(getattr(self.cfg, "star_weight_keyword", 0.16), 0.16),
+            harmony=_safe_float(getattr(self.cfg, "star_weight_harmony", 0.18), 0.18),
+            chord=_safe_float(getattr(self.cfg, "star_weight_chord", 0.14), 0.14),
+            scene_match=_safe_float(getattr(self.cfg, "star_weight_scene_match", 0.10), 0.10),
+            explicit_mention=_safe_float(getattr(self.cfg, "star_weight_explicit_mention", 0.10), 0.10),
+            actr=_safe_float(getattr(self.cfg, "star_weight_actr", 0.06), 0.06),
             constant_bonus=_safe_float(getattr(self.cfg, "star_constant_bonus", 0.08), 0.08),
             novelty_bonus=_safe_float(getattr(self.cfg, "star_novelty_bonus", 0.04), 0.04),
-            ignored_penalty=_safe_float(getattr(self.cfg, "star_ignored_penalty", 0.18), 0.18),
+            date_anchor=_safe_float(getattr(self.cfg, "star_weight_date_anchor", 0.12), 0.12),
+            ignored_penalty=_safe_float(getattr(self.cfg, "star_ignored_penalty", 0.10), 0.10),
         )
 
     def _embedding_client(self) -> Optional[EmbeddingClient]:
@@ -354,6 +512,26 @@ class StarService:
     def _recent_fatigue_penalty(self) -> float:
         return _cfg_float(self.cfg, "star_recent_fatigue_penalty", 0.14)
 
+    def _scene_config(self) -> tuple[list[dict[str, Any]], dict[str, str], float]:
+        path = getattr(self.cfg, "star_scene_rules_path", "") or ""
+        return _load_scene_config(path)
+
+    async def _classify_scene(self, query: str, *, trace_log: Optional[dict] = None) -> str:
+        rules, descriptions, threshold = self._scene_config()
+        scene = _classify_scene_by_keywords(query, rules)
+        if scene:
+            _mark_request_log_phase(trace_log, "stars.scene_classified", detail={"scene": scene, "method": "keywords"})
+            return scene
+        _mark_request_log_phase(trace_log, "stars.scene_keyword_miss", detail={"fallback": "embedding"})
+        client = self._embedding_client()
+        override_threshold = _safe_float(getattr(self.cfg, "star_scene_embedding_threshold", threshold), threshold)
+        scene = await _classify_scene_by_embedding(query, descriptions, client, override_threshold)
+        if scene:
+            _mark_request_log_phase(trace_log, "stars.scene_classified", detail={"scene": scene, "method": "embedding"})
+        else:
+            scene = "daily"
+            _mark_request_log_phase(trace_log, "stars.scene_classified", detail={"scene": scene, "method": "default"})
+        return scene
 
     async def create_star(
         self,
@@ -1041,7 +1219,7 @@ class StarService:
             return {"ok": True, "query": clean_query, "count": 0, "items": []}
         scored = await self._score_rows(query=clean_query, rows=rows, seed=None, surface=surface, trace_log=trace_log)
         _mark_request_log_phase(trace_log, "stars.score_done", detail={"scored": len(scored)})
-        selected = self._select_for_surface(scored, limit=max(1, min(int(limit or 3), 30)), surface=surface)
+        selected = await self._select_for_surface(scored, limit=max(1, min(int(limit or 3), 30)), surface=surface)
         run_id = await self._log_run_and_candidates(
             surface=surface,
             trigger_text=clean_query,
@@ -1092,7 +1270,7 @@ class StarService:
         excluded = {_node_id(item) for item in (exclude_node_ids or set()) if _node_id(item)}
         rows = [row for row in rows if _node_id(row.get("id")) != seed_id and _node_id(row.get("id")) not in excluded]
         scored = await self._score_rows(query=seed.get("content") or "", rows=rows, seed=seed, surface=surface)
-        selected = self._select_for_surface(scored, limit=max(1, min(int(limit or 3), 10)), surface=surface)
+        selected = await self._select_for_surface(scored, limit=max(1, min(int(limit or 3), 10)), surface=surface)
         run_id = await self._log_run_and_candidates(
             surface=surface,
             trigger_text=seed.get("content") or "",
@@ -1147,29 +1325,98 @@ class StarService:
             rows_by_id[star_id] = existing
         return list(rows_by_id.values()), embedding_status
 
-    def _select_for_surface(self, scored: list[dict[str, Any]], *, limit: int, surface: str) -> list[dict[str, Any]]:
+    async def _select_for_surface(self, scored: list[dict[str, Any]], *, limit: int, surface: str) -> list[dict[str, Any]]:
         if surface == "chat_inject":
-            return self._select_for_chat_inject(scored, limit=limit)
+            return await self._select_for_chat_inject(scored, limit=limit)
         return self._select_for_review(scored, limit=limit)
 
-    def _select_for_chat_inject(self, scored: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
+    async def _select_for_chat_inject(self, scored: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
         min_score = self._min_score()
         related_min = self._related_min_score()
-        selected: list[dict[str, Any]] = [
+        primary: list[dict[str, Any]] = [
             item
             for item in scored
             if float(item.get("final_score") or 0.0) >= min_score
             and float((item.get("features") or {}).get("related_signal") or 0.0) >= related_min
         ]
-        if not selected:
+        if not primary:
             fallback_limit = _safe_int(getattr(self.cfg, "star_chat_explicit_fallback_limit", 1), 1, 0, 3)
             if fallback_limit > 0:
-                selected = [
+                primary = [
                     item
                     for item in scored
-                    if bool((item.get("features") or {}).get("explicit_mention"))
+                    if float((item.get("features") or {}).get("explicit_score") or 0.0) > 0
                 ][: min(limit, fallback_limit)]
-        return selected[:limit]
+        if not primary:
+            return []
+        remaining_slots = limit - len(primary)
+        if remaining_slots > 0:
+            primary_ids = {_node_id(item["row"].get("id")) for item in primary if item.get("row")}
+            pulled = await self._constellation_pull(primary_ids, scored, exclude=primary_ids)
+            combined = primary + pulled[:remaining_slots]
+        else:
+            combined = primary
+        return combined[:limit]
+
+    async def _constellation_pull(
+        self,
+        anchor_ids: set[str],
+        all_scored: list[dict[str, Any]],
+        exclude: set[str],
+    ) -> list[dict[str, Any]]:
+        if not anchor_ids:
+            return []
+        id_filter = "in.(" + ",".join(anchor_ids) + ")"
+        linked_ids: set[str] = set()
+        try:
+            from_rows = await self.supabase.query(
+                STAR_LINK_TABLE,
+                {
+                    "select": "from_node_id,to_node_id,relation_type,bidirectional",
+                    "from_node_type": "eq.star",
+                    "to_node_type": "eq.star",
+                    "from_node_id": id_filter,
+                    "relation_type": "in.(constellation,harmony)",
+                    "status": "eq.active",
+                    "limit": "200",
+                },
+            )
+            for row in from_rows:
+                target = _node_id(row.get("to_node_id"))
+                if target and target not in exclude:
+                    linked_ids.add(target)
+        except Exception:
+            pass
+        try:
+            to_rows = await self.supabase.query(
+                STAR_LINK_TABLE,
+                {
+                    "select": "from_node_id,to_node_id,relation_type,bidirectional",
+                    "from_node_type": "eq.star",
+                    "to_node_type": "eq.star",
+                    "to_node_id": id_filter,
+                    "relation_type": "in.(constellation,harmony)",
+                    "status": "eq.active",
+                    "bidirectional": "eq.true",
+                    "limit": "200",
+                },
+            )
+            for row in to_rows:
+                target = _node_id(row.get("from_node_id"))
+                if target and target not in exclude:
+                    linked_ids.add(target)
+        except Exception:
+            pass
+        if not linked_ids:
+            return []
+        pulled = [
+            item for item in all_scored
+            if _node_id(item.get("row", {}).get("id")) in linked_ids
+            and not item.get("features", {}).get("explicitly_negative")
+            and float(item.get("final_score") or 0.0) >= 0
+        ]
+        pulled.sort(key=lambda x: float(x.get("final_score") or 0.0), reverse=True)
+        return pulled
 
     def _select_for_review(self, scored: list[dict[str, Any]], *, limit: int) -> list[dict[str, Any]]:
         return scored[:limit]
@@ -1241,7 +1488,7 @@ class StarService:
     ) -> list[dict[str, Any]]:
         star_ids = [_node_id(row.get("id")) for row in rows if row.get("id")]
         _mark_request_log_phase(trace_log, "stars.activity_features_start", detail={"star_ids": len(star_ids)})
-        actr_scores, ignored_penalties, recent_fatigue = await self._activity_features(
+        actr_scores, ignored_penalties, negative_set, recent_fatigue = await self._activity_features(
             star_ids,
             include_recent_fatigue=surface == "chat_inject",
             trace_log=trace_log,
@@ -1252,10 +1499,13 @@ class StarService:
             detail={
                 "actr": len(actr_scores),
                 "ignored": len(ignored_penalties),
+                "negative": len(negative_set),
                 "recent_fatigue": len(recent_fatigue),
             },
         )
         seed_chord = seed or _extract_chord_from_query(query)
+        query_scene = await self._classify_scene(query, trace_log=trace_log)
+        now_dt = _now()
         base_items: list[dict[str, Any]] = []
         for row in rows:
             keyword_score, hits = _token_overlap(query, _star_search_text(row), row.get("search_tokens"))
@@ -1266,22 +1516,40 @@ class StarService:
             content_gravity = max(content_score, keyword_score)
             star_id = _node_id(row.get("id"))
             base_score = content_score * 0.55 + keyword_score * 0.25 + chord_score * 0.20
+            star_meta = _json_dict(row.get("metadata"))
+            scene_sc = _scene_score(
+                query_scene,
+                str(star_meta.get("scene") or ""),
+                query,
+                star_meta.get("scene_tags") or [],
+            )
+            date_sc = _date_anchor_score(star_meta, now_dt)
+            explicit_hits = [hit for hit in hits if _significant_hit(hit)]
+            explicit_sc = min(1.0, len(explicit_hits) * 0.5)
+            ignored_raw = ignored_penalties.get(star_id, 0.0)
+            if row.get("is_constant"):
+                ignored_raw = 0.0
             base_items.append(
                 {
                     "row": row,
                     "keyword_hits": hits,
+                    "explicit_hits": explicit_hits,
                     "base_score": base_score,
                     "features": {
                         "content_score": _clamp(content_score),
                         "keyword_score": _clamp(keyword_score),
                         "chord_score": _clamp(chord_score),
                         "harmony_score": 0.0,
+                        "scene_score": _clamp(scene_sc),
+                        "explicit_score": _clamp(explicit_sc),
+                        "date_anchor_score": _clamp(date_sc),
                         "content_gravity_score": _clamp(content_gravity),
                         "actr_score": actr_scores.get(star_id, 0.0),
                         "constant_bonus": 1.0 if row.get("is_constant") else 0.0,
                         "novelty_bonus": 0.0 if row.get("activation_count") else 1.0,
-                        "ignored_penalty": ignored_penalties.get(star_id, 0.0),
+                        "ignored_penalty": ignored_raw,
                         "recent_fatigue_penalty": recent_fatigue.get(star_id, 0.0),
+                        "explicitly_negative": star_id in negative_set,
                     },
                 }
             )
@@ -1300,11 +1568,11 @@ class StarService:
                 features["keyword_score"],
                 features["chord_score"],
                 features["harmony_score"],
+                features["scene_score"],
+                features["explicit_score"],
             )
             features["related_signal"] = related_signal
-            explicit_hits = [hit for hit in item.get("keyword_hits") or [] if _significant_hit(hit)]
-            features["explicit_mention"] = 1.0 if explicit_hits else 0.0
-            item["explicit_hits"] = explicit_hits
+            features["explicit_mention"] = features["explicit_score"]
             if related_signal <= 0:
                 continue
             final = (
@@ -1312,9 +1580,12 @@ class StarService:
                 + features["keyword_score"] * weights.keyword
                 + features["harmony_score"] * weights.harmony
                 + features["chord_score"] * weights.chord
+                + features["scene_score"] * weights.scene_match
+                + features["explicit_score"] * weights.explicit_mention
                 + features["actr_score"] * weights.actr
                 + features["constant_bonus"] * weights.constant_bonus
                 + features["novelty_bonus"] * weights.novelty_bonus
+                + features["date_anchor_score"] * weights.date_anchor
                 - features["ignored_penalty"] * weights.ignored_penalty
                 - features["recent_fatigue_penalty"]
             )
@@ -1398,9 +1669,9 @@ class StarService:
         *,
         include_recent_fatigue: bool = False,
         trace_log: Optional[dict] = None,
-    ) -> tuple[dict[str, float], dict[str, float], dict[str, float]]:
+    ) -> tuple[dict[str, float], dict[str, float], set[str], dict[str, float]]:
         if not star_ids:
-            return {}, {}, {}
+            return {}, {}, set(), {}
         if include_recent_fatigue:
             _mark_request_log_phase(trace_log, "stars.recent_fatigue_start", detail={"star_ids": len(star_ids)})
             recent_fatigue = await self._recent_fatigue_scores(star_ids)
@@ -1411,9 +1682,9 @@ class StarService:
         actr_scores = await self._actr_scores(star_ids)
         _mark_request_log_phase(trace_log, "stars.actr_done", detail={"scores": len(actr_scores)})
         _mark_request_log_phase(trace_log, "stars.ignored_penalties_start", detail={"star_ids": len(star_ids)})
-        ignored_penalties = await self._ignored_penalties(star_ids)
+        ignored_penalties, negative_set = await self._ignored_penalties(star_ids)
         _mark_request_log_phase(trace_log, "stars.ignored_penalties_done", detail={"scores": len(ignored_penalties)})
-        return actr_scores, ignored_penalties, recent_fatigue
+        return actr_scores, ignored_penalties, negative_set, recent_fatigue
 
     async def _actr_scores(self, star_ids: list[str]) -> dict[str, float]:
         try:
@@ -1445,7 +1716,7 @@ class StarService:
             scores[star_id] = _clamp((base + 2.5) / 4.5)
         return scores
 
-    async def _ignored_penalties(self, star_ids: list[str]) -> dict[str, float]:
+    async def _ignored_penalties(self, star_ids: list[str]) -> tuple[dict[str, float], set[str]]:
         try:
             rows = await self.supabase.query(
                 STAR_CANDIDATE_TABLE,
@@ -1455,25 +1726,30 @@ class StarService:
                     "candidate_node_id": "in.(" + ",".join(star_ids) + ")",
                     "shown": "eq.true",
                     "order": "created_at.desc",
-                    "limit": str(min(max(len(star_ids) * 6, 100), 3000)),
+                    "limit": str(min(max(len(star_ids) * 8, 100), 5000)),
                 },
             )
         except Exception:
-            return {}
+            return {}, set()
         by_star: dict[str, list[dict[str, Any]]] = {}
         for row in rows:
             by_star.setdefault(_node_id(row.get("candidate_node_id")), []).append(row)
         penalties: dict[str, float] = {}
+        negative_set: set[str] = set()
         for star_id, history in by_star.items():
-            latest = history[:3]
-            if len(latest) < 3:
-                continue
+            latest = history[:5]
             actions = [(row.get("action_status") or "").strip().lower() for row in latest]
+            if any(action == "negative" for action in actions):
+                penalties[star_id] = 1.0
+                negative_set.add(star_id)
+                continue
             if any(action in POSITIVE_FEEDBACK for action in actions):
                 continue
-            if all(action in {"", "skipped", "negative"} for action in actions):
-                penalties[star_id] = 1.0
-        return penalties
+            silent_count = sum(1 for a in actions if a in ("", "skipped"))
+            penalty = max(0.0, silent_count * 0.15 - 0.15)
+            if penalty > 0:
+                penalties[star_id] = min(penalty, 0.60)
+        return penalties, negative_set
 
     async def _recent_fatigue_scores(self, star_ids: list[str]) -> dict[str, float]:
         hours = _safe_int(getattr(self.cfg, "star_recent_fatigue_hours", 6), 6, 0, 168)
