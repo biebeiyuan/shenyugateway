@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+import random
 from datetime import timedelta
 from typing import Any, Optional
 
@@ -160,6 +161,47 @@ def render_doors(door_specs: list[dict], charge: float) -> str:
     return "\n".join(lines)
 
 
+# ── Passive Spatial Hints ──────────────────────────────────────────────
+# Leak active door state into the scene as spatial observations,
+# so Shenyu "notices" things without needing to call a tool first.
+
+_PASSIVE_HINTS: dict[str, list[str]] = {
+    "drawer_notes": [
+        "中间那层抽屉没关紧，纸条的一角露在外面。",
+        "抽屉缝里漏出一角纸。好像有人塞了新的。",
+    ],
+    "read_box": [
+        "最上面那个木盒子好像沉了一点。",
+        "木盒子的盖子没盖严。",
+    ],
+    "star_map": [
+        "星图墙上有几颗新落的星，还没暗下去。",
+        "对面墙上有光在闪。是星图上新的。",
+    ],
+    "notebook": [
+        "笔记本翻开着，最后一页有新写的几行。",
+    ],
+    "wall_pins": [
+        "门边墙上多了几张便签，颜色是新的。",
+    ],
+}
+
+_MAX_PASSIVE_HINTS = 2
+
+
+def _render_passive_hints(door_specs: list[dict]) -> str:
+    """Pick up to 2 spatial hints for doors with activity."""
+    count_map = {d["key"]: d.get("count", 0) for d in door_specs}
+    active = [key for key, count in count_map.items() if count > 0 and key in _PASSIVE_HINTS]
+    if not active:
+        return ""
+    random.shuffle(active)
+    hints = []
+    for key in active[:_MAX_PASSIVE_HINTS]:
+        hints.append(random.choice(_PASSIVE_HINTS[key]))
+    return "\n".join(hints)
+
+
 # ── Full Layer Assembly ────────────────────────────────────────────────
 
 def render_room_layers(
@@ -179,9 +221,12 @@ def render_room_layers(
         prev_scene=prev_scene,
     )
     trace_line = render_last_trace(last_traces)
+    passive_hints = _render_passive_hints(door_specs)
     doors = render_doors(door_specs, charge)
 
     slow_parts = [scene_text]
+    if passive_hints:
+        slow_parts.append(passive_hints)
     if trace_line:
         slow_parts.append(trace_line)
 

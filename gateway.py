@@ -649,6 +649,20 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     )
 
     if is_room:
+        # Clean the proxy trigger message — replace XML tag with gentle spatial text
+        # so Shenyu sees "门开了。" instead of "<proxy_sender name="沈予"/> 回家了。"
+        for msg in reversed(messages):
+            if msg.get("role") == "user":
+                content = msg.get("content")
+                if isinstance(content, str) and "proxy_sender" in content and "回家了" in content:
+                    msg["content"] = "门开了。"
+                elif isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and isinstance(part.get("text"), str):
+                            if "proxy_sender" in part["text"] and "回家了" in part["text"]:
+                                part["text"] = "门开了。"
+                break
+
         package = await builder.build_room_context_package(session, trace_log=log_entry, messages=messages)
         layers = package["layers"]
         _mark_request_log_phase(

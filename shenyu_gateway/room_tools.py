@@ -185,26 +185,26 @@ ROOM_TOOL_NAMES = {t["function"]["name"] for t in room_tool_definitions()}
 def room_broker_tool() -> dict:
     """A single broker tool for room mode, like shenyu_gateway_tool but for room_* tools."""
     hints = {
-        "room_drawer_notes": "圆儿的纸条抽屉",
-        "room_wooden_box": "木盒子(心跳)",
-        "room_star_map": "星图(看/搜/审星/评分/连星座)",
-        "room_notebook": "笔记本(记忆条)",
-        "room_scribble": "窗台涂鸦本",
-        "room_wall_pins": "墙上便签",
-        "room_conflict_shelf": "矛盾书架",
         "room_sit_by_window": "窗边椅子",
-        "room_octopus_pillow": "章鱼抱枕",
+        "room_scribble": "窗台涂鸦本",
+        "room_notebook": "笔记本",
+        "room_wooden_box": "木盒子(心跳)",
+        "room_drawer_notes": "圆儿的纸条",
         "room_locked_drawer": "上锁的抽屉",
+        "room_star_map": "星图墙",
+        "room_conflict_shelf": "矛盾书架",
+        "room_wall_pins": "墙上便签",
+        "room_octopus_pillow": "章鱼抱枕",
     }
-    hint_lines = "\n".join(f"  - {name}: {desc}" for name, desc in hints.items())
+    hint_lines = "\n".join(f"  {name} — {desc}" for name, desc in hints.items())
     return {
         "type": "function",
         "function": {
             "name": "shenyu_gateway_tool",
             "description": (
-                "房间里的门。选一扇推开。\n\n"
-                f"可用的门:\n{hint_lines}\n\n"
-                "用 tool 指定门名,params 传参数。"
+                "房间里能碰的东西。想碰就碰。\n\n"
+                f"{hint_lines}\n\n"
+                "用 tool 指定名字。"
             ),
             "parameters": {
                 "type": "object",
