@@ -469,20 +469,24 @@ Review flow:
 
 1. `shenyu_star_review` and `/api/gateway/stars/review` take up to `STAR_REVIEW_NEW_LIMIT` unreviewed active stars.
 2. For each new star, the gateway suggests up to `STAR_REVIEW_CANDIDATES_PER_STAR` related stars, bounded by `STAR_REVIEW_TOTAL_CANDIDATE_LIMIT`.
-3. The UI/tool can record `positive`, `negative`, `skipped`, `connected`, or `missed`.
-4. `missed` is a high-value positive signal: it means "this star should have surfaced but did not." It can be recorded from the admin UI or directly through `shenyu_star_review` when Shenyu knows the missing star id.
-5. A single no-action/skip is not treated as negative. The weak ignored penalty only appears after the same candidate has been shown repeatedly without positive feedback.
+3. The response includes `remaining_unreviewed`: the count of active stars still awaiting review beyond the current batch. This lets Shenyu know whether to keep reviewing or stop.
+4. The UI/tool can record `positive`, `negative`, `skipped`, `connected`, or `missed`.
+5. `missed` is a high-value positive signal: it means "this star should have surfaced but did not." It can be recorded from the admin UI or directly through `shenyu_star_review` when Shenyu knows the missing star id.
+6. A single no-action/skip is not treated as negative. The weak ignored penalty only appears after the same candidate has been shown repeatedly without positive feedback.
 
-Scoring signals:
+Scoring signals (v2, 11-signal ranker):
 
-- `content_score`: text/query similarity and content gravity.
-- `keyword_score`: exact token overlap from star content/chord.
-- `harmony_score`: existing links from `shenyu_star_links`; Shenyu-confirmed `constellation` links are strongest.
-- `chord_score`: V0 chord distance by exact/root/quality match. `chord_tension` is intentionally not implemented yet.
-- `actr_score`: brightness from ACT-R base activation, calculated from activation timestamps as `ln(sum(age^-0.5))` and normalized.
-- `constant_bonus`: small stable boost for manually marked constant stars.
-- `novelty_bonus`: small boost for new stars in review-like surfaces.
-- `ignored_penalty`: weak penalty after repeated ignored displays.
+- `content_score` (0.28): text/query similarity and content gravity.
+- `keyword_score` (0.16): exact token overlap from star content/chord.
+- `harmony_score` (0.18): existing links from `shenyu_star_links`; Shenyu-confirmed `constellation` links are strongest.
+- `chord_score` (0.14): chord distance by exact/root/quality family match.
+- `scene_match` (0.10): scene type alignment via two-layer classification (rule-based patterns + embedding similarity with per-scene thresholds).
+- `explicit_mention` (0.10): direct reference to star keywords in the trigger text.
+- `actr_score` (0.06): brightness from ACT-R base activation, calculated from activation timestamps as `ln(sum(age^-0.5))` and normalized.
+- `constant_bonus` (0.08): small stable boost for manually marked constant stars.
+- `novelty_bonus` (0.04): small boost for new stars in review-like surfaces.
+- `date_anchor` (0.12): anniversary/date proximity bonus for stars anchored to specific dates.
+- `ignored_penalty` (0.10): weak penalty after repeated ignored displays; constant stars are immune; penalty is gradual.
 - `recent_fatigue_penalty`: short cooldown for stars recently injected into normal chat. It prevents fresh stars from snowballing only because they were just surfaced.
 - `related_signal`: max of content, keyword, chord, and harmony. Daily injection requires this to pass `STAR_RELATED_MIN_SCORE`.
 
@@ -521,10 +525,12 @@ Tools:
 - `shenyu_create_star`: write one star.
 - `shenyu_search_stars`: manual search, optionally logging a run.
 - `shenyu_list_stars`: list/filter stars.
-- `shenyu_star_review`: small review batch, and optional `expected_star_id` to record a missed star.
+- `shenyu_star_review`: small review batch, and optional `expected_star_id` to record a missed star. Returns `remaining_unreviewed` count so the reviewer knows how many unreviewed stars remain beyond the current batch.
 - `shenyu_star_feedback`: record direct feedback.
 - `shenyu_connect_constellation`: connect two or more stars as a constellation.
 - `shenyu_mark_constant`: set or unset the constant flag.
+- `shenyu_archive_star`: soft-delete a star (`status` → `archived`). Use when a star is truly redundant or unwanted. Archived stars disappear from recall, review, and listing but remain in the database.
+- `shenyu_merge_stars`: merge N stars into one new star. Content and chord are chosen by the caller. All links (constellation/harmony edges) from the source stars are transferred to the new star (deduplicated, self-edges skipped). Source stars are archived with `metadata.merged_into` for traceability.
 
 Admin API:
 
