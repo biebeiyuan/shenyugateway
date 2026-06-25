@@ -12,6 +12,8 @@ from .request_logs import _finalize_stale_tool_stream_logs, _http_request_diagno
 from .runtime import iso_now as _iso_now
 from .schemas import (
     ColdStartPreviewRequest,
+    DrawerNoteCreateRequest,
+    DrawerNoteMarkReadRequest,
     HeartbeatCreateRequest,
     HeartbeatDeleteRequest,
     MemNoteBulkPatch,
@@ -94,6 +96,43 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 "created_at": t.get("created_at"),
             })
         return {"traces": items, "count": len(items)}
+
+    @router.get("/api/gateway/room/drawer-notes")
+    async def list_drawer_notes(limit: int = 20, unread_only: bool = False):
+        store = deps.require_session_store()
+        notes = store.list_drawer_notes(limit=min(limit, 100), unread_only=unread_only)
+        return {"notes": notes, "count": len(notes), "unread": store.drawer_note_count_unread()}
+
+    @router.post("/api/gateway/room/drawer-notes")
+    async def create_drawer_note(body: DrawerNoteCreateRequest):
+        store = deps.require_session_store()
+        content = (body.content or "").strip()
+        if not content:
+            raise HTTPException(status_code=400, detail="Content is required.")
+        if len(content) > 2000:
+            raise HTTPException(status_code=400, detail="Content is too long.")
+        note_id = store.add_drawer_note(content)
+        return {"ok": True, "id": note_id}
+
+    @router.post("/api/gateway/room/drawer-notes/read")
+    async def mark_drawer_notes_read(body: DrawerNoteMarkReadRequest):
+        store = deps.require_session_store()
+        if not body.ids:
+            raise HTTPException(status_code=400, detail="No ids provided.")
+        count = store.mark_drawer_notes_read(body.ids)
+        return {"ok": True, "marked": count}
+
+    @router.get("/api/gateway/room/scribbles")
+    async def list_room_scribbles(limit: int = 20):
+        store = deps.require_session_store()
+        scribbles = store.recent_room_scribbles(limit=min(limit, 100))
+        return {"scribbles": scribbles, "count": len(scribbles)}
+
+    @router.get("/api/gateway/room/pins")
+    async def list_room_pins(include_done: bool = False):
+        store = deps.require_session_store()
+        pins = store.list_room_pins(include_done=include_done)
+        return {"pins": pins, "count": len(pins)}
 
     @router.get("/api/gateway/overview")
     async def gateway_overview():

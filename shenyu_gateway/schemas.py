@@ -128,6 +128,14 @@ class HeartbeatDeleteRequest(BaseModel):
     confirm: Optional[str] = None
 
 
+class DrawerNoteCreateRequest(BaseModel):
+    content: str
+
+
+class DrawerNoteMarkReadRequest(BaseModel):
+    ids: list[str] = Field(default_factory=list)
+
+
 class ColdStartPreviewRequest(BaseModel):
     target_session_tag: Optional[str] = None
     source_session_tag: Optional[str] = None
