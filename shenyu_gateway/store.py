@@ -1911,6 +1911,24 @@ class GatewayStore:
             ).fetchone()
             return row["created_at"] if row else None
 
+    def save_window_scene(self, session_id: str, scene_tag: str) -> str:
+        return self.add_room_trace(session_id, "window", detail={"tag": scene_tag})
+
+    def last_window_scene(self) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT detail_json, created_at FROM room_trace "
+                "WHERE action = 'window' ORDER BY created_at DESC LIMIT 1"
+            ).fetchone()
+            if not row or not row["detail_json"]:
+                return None
+            import json as _json
+            try:
+                detail = _json.loads(row["detail_json"])
+                return {"tag": detail.get("tag", ""), "created_at": row["created_at"]}
+            except Exception:
+                return None
+
     def add_room_scribble(self, content: str) -> str:
         scribble_id = f"rmscr_{uuid.uuid4().hex[:12]}"
         with self._connect() as conn:

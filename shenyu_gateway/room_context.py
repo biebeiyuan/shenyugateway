@@ -68,11 +68,14 @@ def render_scene(
     *,
     weather_data: Optional[dict] = None,
     hours_since_last_visit: Optional[float] = None,
-) -> str:
+    prev_scene: Optional[dict] = None,
+) -> tuple[str, str]:
+    """Return (scene_text, scene_tag)."""
     return select_scene(
         charge,
         weather_data=weather_data,
         hours_since_last_visit=hours_since_last_visit,
+        prev_scene=prev_scene,
     )
 
 
@@ -166,21 +169,23 @@ def render_room_layers(
     *,
     weather_data: Optional[dict] = None,
     hours_since_last_visit: Optional[float] = None,
-) -> dict[str, str]:
-    """Return {layer_name: text} matching assemble_layered_messages() keys."""
-    scene = render_scene(
+    prev_scene: Optional[dict] = None,
+) -> tuple[dict[str, str], str]:
+    """Return ({layer_name: text}, scene_tag)."""
+    scene_text, scene_tag = render_scene(
         charge,
         weather_data=weather_data,
         hours_since_last_visit=hours_since_last_visit,
+        prev_scene=prev_scene,
     )
     trace_line = render_last_trace(last_traces)
     doors = render_doors(door_specs, charge)
 
-    slow_parts = [scene]
+    slow_parts = [scene_text]
     if trace_line:
         slow_parts.append(trace_line)
 
-    return {
+    layers = {
         "stable": ROOM_CHARTER,
         "slow": "\n".join(slow_parts),
         "mem": "",
@@ -188,6 +193,7 @@ def render_room_layers(
         "tool_policy": doors,
         "format": ROOM_FORMAT_HINT,
     }
+    return layers, scene_tag
 
 
 # ── Charge Signal Collection ──────────────────────────────────────────

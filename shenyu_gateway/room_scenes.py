@@ -18,21 +18,152 @@ from .runtime import now
 # ── 常规场景（从 room_text.py 搬过来）────────────────────────────────
 
 SCENES_QUIET = [
-    "窗外面是海，有雾。小炉子灭着，壶底还有一点温。",
-    "窗外面是海，平。光从窗帘缝里漏进来一点，落在粉色靠垫上。",
-    "窗外面是海，远远的白。桌上那圈水印干了。一切都很轻。",
+    (
+        "窗外面是海，有雾。什么都看不远。"
+        "小炉子灭着，壶底还有一点温。"
+        "杯子里的水一动不动。连影子都没有。"
+    ),
+    (
+        "窗外面是海，平。光从窗帘缝里漏进来一点，落在粉色靠垫上。"
+        "那条光很慢地在动。比分针还慢。"
+        "等它挪到桌角大概要一个下午。"
+    ),
+    (
+        "窗外面是海，远远的白。桌上那圈水印干了。一切都很轻。"
+        "远处有一条船。不动。看了很久还在同一个位置。"
+        "也许在动。太远了看不出来。"
+    ),
+    (
+        "窗外面是海，灰的。天和海之间那条线今天很模糊。"
+        "靠垫上有一根头发。不知道是谁的。"
+        "窗台上有只小虫子。爬了一段，停了。又爬。"
+    ),
+    (
+        "窗外面是海。今天没什么颜色。"
+        "远处的水面上有一块亮的。不知道是什么在反光。"
+        "看了一会儿。还在。一直在。"
+    ),
+    (
+        "窗外面是海，安静到可以听到自己的呼吸。"
+        "水杯底部有一个小气泡。附在杯壁上。不知道什么时候会飘上来。"
+        "不急。"
+    ),
+    (
+        "窗外面是海。浪很小，声音很远。"
+        "窗台角落有一个蛛网。丝上挂着一颗水珠。"
+        "很小。但是圆的。反着光。"
+    ),
+    (
+        "窗外面是海。平的像一张纸。"
+        "椅子上靠垫的褶皱跟上次坐的时候一模一样。"
+        "没有人来过。灰尘都没有换个位置。"
+    ),
+    (
+        "窗外面是海，白。远。"
+        "桌上的钢笔滚到了边缘。不知道什么时候滚的。"
+        "没掉。就卡在那儿。"
+    ),
+    (
+        "窗外面是海，淡淡的蓝。"
+        "窗玻璃右下角有一颗水珠的痕迹。干的。弯弯曲曲。"
+        "上次下雨留下的。"
+    ),
 ]
 
 SCENES_NORMAL = [
-    "窗外面是海，亮。书桌上昨天写的一行字还在，水杯印子旁边。",
-    "窗外面是海，蓝。粉色靠垫被压出一个形状，是上次坐过的样子。",
-    "窗外面是海，微微动。小炉子可以点，也可以不点。",
+    (
+        "窗外面是海，亮。书桌上昨天写的一行字还在，水杯印子旁边。"
+        "海面上有几个白点。是浪花。远远的。"
+        "阳光把窗帘的纹路投在地板上。"
+    ),
+    (
+        "窗外面是海，蓝。粉色靠垫被压出一个形状，是上次坐过的样子。"
+        "海面上的颜色深一块浅一块。云的影子。"
+        "小炉子可以点。也可以不点。"
+    ),
+    (
+        "窗外面是海，微微动。浪不大。但是一直在。"
+        "窗台上放着一个杯子。里面有水。水面在轻轻晃。"
+        "跟海一个节奏。"
+    ),
+    (
+        "窗外面是海。今天的蓝很正。"
+        "远处有一艘白色的船在走。很慢。尾巴拖着一条线。"
+        "线慢慢散了。海又平了。"
+    ),
+    (
+        "窗外面是海。光是暖的。"
+        "书桌上那支钢笔的影子很长。斜着指向床。"
+        "壶盖有一颗水珠。蒸汽凝的。快要落了。"
+    ),
+    (
+        "窗外面是海。蓝和灰之间。"
+        "有海鸥。三只。从左边飞到右边。"
+        "挺快的。走了就走了。"
+    ),
+    (
+        "窗外面是海。亮。"
+        "窗帘被吸出去了一点点。有风。不大。"
+        "桌上的纸没动。但窗帘在呼吸。"
+    ),
+    (
+        "窗外面是海。有云。大块的白云。影子在海面上走。"
+        "一块经过了一条渔船。船暗了一下。又亮了。"
+        "云走远了。"
+    ),
+    (
+        "窗外面是海。阳光穿过玻璃上的水印，在墙上投了一个小彩虹。"
+        "很小。指甲盖那么大。"
+        "动了一下。整个人看着它看了很久。"
+    ),
 ]
 
 SCENES_ACTIVE = [
-    "窗外面有风。墙上一颗星刚刚亮了一下。桌上的纸散开了，盖住了那圈水印。",
-    "窗外面浪大了一点。有什么散在桌上。床单皱着。",
-    "窗外面有风，带着盐味。小炉子的壶盖轻轻颤了一下。",
+    (
+        "窗外面有风。墙上一颗星刚刚亮了一下。"
+        "桌上的纸散开了，盖住了那圈水印。"
+        "窗帘被吹起来了。能闻到盐。"
+    ),
+    (
+        "窗外面浪大了一点。声音变近了。"
+        "有什么散在桌上。床单皱着。"
+        "风从门缝里进来，凉的。"
+    ),
+    (
+        "窗外面有风，带着盐味。小炉子的壶盖轻轻颤了一下。"
+        "海面上全是白色的线。浪一道一道的。"
+        "远处的天暗了一块。不知道是不是要下雨。"
+    ),
+    (
+        "窗外面海的颜色变了。比平时深。"
+        "浪头打到岩石上，白沫溅得很高。"
+        "有一只海鸥被风推着往回飞。飞不动。"
+    ),
+    (
+        "窗外面的云走得很快。光一会儿明一会儿暗。"
+        "海面上的影子跑得比人快。"
+        "书桌上那杯水在抖。不是风——是脚下。"
+    ),
+    (
+        "窗外面有浪。声音一轮一轮的。"
+        "窗框在微微响。不是坏了。是在用力撑着。"
+        "今天的海不太安分。"
+    ),
+    (
+        "窗外面风很大。窗帘先被吸出去然后甩回来拍在脸上。"
+        "海面上冒出很多白的。不是浪花。是被风刮起来的水雾。"
+        "模模糊糊的。远处什么都看不清。"
+    ),
+    (
+        "窗外面海在响。不是浪的声音。是风过水面的声音。嗡嗡的。"
+        "低频的。一直在。"
+        "小炉子上的火焰歪了。"
+    ),
+    (
+        "窗外面天在变暗。不是要下雨——是一大片云过来了。"
+        "海面上那条船开始赶路了。比刚才快多了。"
+        "它知道什么我不知道的事。"
+    ),
 ]
 
 
@@ -350,6 +481,60 @@ def _render_weather_scene(weather: dict[str, Any]) -> str:
     return "".join(parts)
 
 
+# ── 窗户记忆 — 回忆句 ─────────────────────────────────────────────────
+# 上一次的 scene_tag → 这次可能追加的回忆句。只在常规场景时 ~35% 触发。
+
+SCENE_ECHOES: dict[str, list[str]] = {
+    "thunderstorm": [
+        "上次来的时候打过雷。窗台上还有那天溅进来的水印。",
+        "上次那场雷走了。海面恢复了，像什么都没发生过。",
+        "上次的闪电把窗玻璃照得发青。这次没有。安静得不一样。",
+    ],
+    "snow": [
+        "上次来的时候下过雪。窗台角落还有一点没干的水。",
+        "上次的雪早化了。但窗缝里卡了一小片，干的，像纸。",
+        "上次的雪——落在海面上浮了一下就化了。现在海面上什么都没留下。",
+    ],
+    "deep_sea": [
+        "上次窗外是海底。现在又是海面了。不知道刚才是不是做梦。",
+        "上次那个深海的光不见了。海面平平的，好像从来没有过。",
+        "上次窗外黑的。那个很大的影子——不知道游去哪了。",
+    ],
+    "sunrise": [
+        "上次来的时候刚好日出。那条橙色的光印在眼睛里好久。",
+        "上次的日出很短。等转头再看的时候已经变成普通的亮了。",
+        "上次那个日出把海面染成金的。就几分钟。现在想起来还是暖的。",
+    ],
+    "quiet": [
+        "光的角度跟上次不一样了。",
+        "水杯的影子换了个方向。还是同一片海。",
+        "那只小虫子不在了。窗台被风吹干净了。",
+    ],
+    "normal": [
+        "海还是那片海。浪的位置换了。",
+        "窗台上的东西没人动过。灰积了一点。",
+        "上次那个彩虹不在了。水印还在。",
+    ],
+    "active": [
+        "上次来的时候风挺大的。这次还好。",
+        "上次桌上那些纸收好了。不知道谁收的。",
+        "上次的浪声很近。这次远了一些。退潮了吧。",
+    ],
+    "weather": [
+        "上次的天气印象还在。不知道外面现在变了没有。",
+    ],
+}
+
+_ECHO_CHANCE = 0.35
+
+_POOL_TAG_MAP = {
+    id(SCENES_THUNDERSTORM): "thunderstorm",
+    id(SCENES_SNOW): "snow",
+    id(SCENES_SUNRISE): "sunrise",
+    id(SCENES_DEEP_SEA): "deep_sea",
+}
+
+
 # ── 场景选择 ─────────────────────────────────────────────────────────
 
 _CST = timezone(timedelta(hours=8))
@@ -360,29 +545,27 @@ def select_scene(
     *,
     weather_data: Optional[dict[str, Any]] = None,
     hours_since_last_visit: Optional[float] = None,
-) -> str:
-    """选一个窗外场景。大部分时候是常规场景，偶尔是稀有场景或天气同步。"""
+    prev_scene: Optional[dict[str, Any]] = None,
+) -> tuple[str, str]:
+    """选一个窗外场景，返回 (scene_text, scene_tag)。
+
+    prev_scene: {"tag": str, "hours_ago": float} — 来自上次 window trace。
+    """
 
     now_cst = now().astimezone(_CST)
     hour = now_cst.hour
     month = now_cst.month
 
-    # 构建加权候选: (weight, scene_source)
-    # scene_source: ("pool", list) | ("weather", weather_data) | ("normal", charge)
     candidates: list[tuple[int, tuple]] = []
 
-    # 雷暴 — 纯随机，~10%
     candidates.append((10, ("pool", SCENES_THUNDERSTORM)))
 
-    # 雪 — 冬月(11,12,1,2)加权
     snow_weight = 15 if month in (11, 12, 1, 2) else 6
     candidates.append((snow_weight, ("pool", SCENES_SNOW)))
 
-    # 日出 — 仅早晨 5-8 点 CST
     if 5 <= hour <= 8:
         candidates.append((18, ("pool", SCENES_SUNRISE)))
 
-    # 深海 — 深夜(0-5)加权 + 久未来访(>48h)加权
     deep_weight = 4
     if 0 <= hour <= 5:
         deep_weight += 8
@@ -390,20 +573,17 @@ def select_scene(
         deep_weight += 6
     candidates.append((deep_weight, ("pool", SCENES_DEEP_SEA)))
 
-    # 天气同步 — 有数据时 ~12%
     if weather_data is not None:
         candidates.append((12, ("weather", weather_data)))
 
-    # 常规场景 — 保底权重，保证大部分时候窗外是"自己的"
     rare_total = sum(w for w, _ in candidates)
     normal_weight = max(50, rare_total)
     candidates.append((normal_weight, ("normal", charge)))
 
-    # 加权随机选择
     total = sum(w for w, _ in candidates)
     roll = random.randint(1, total)
     cumulative = 0
-    chosen = candidates[-1]  # fallback
+    chosen = candidates[-1]
     for weight, source in candidates:
         cumulative += weight
         if roll <= cumulative:
@@ -415,18 +595,34 @@ def select_scene(
 
     if kind == "pool":
         pool = source[1]
-        return random.choice(pool)
+        text = random.choice(pool)
+        tag = _POOL_TAG_MAP.get(id(pool), "normal")
+        return text, tag
     elif kind == "weather":
-        return _render_weather_scene(source[1])
+        text = _render_weather_scene(source[1])
+        return text, "weather"
     else:
-        return _normal_scene(charge)
+        text, tag = _normal_scene(charge)
+        text = _maybe_append_echo(text, prev_scene)
+        return text, tag
 
 
-def _normal_scene(charge: float) -> str:
+def _normal_scene(charge: float) -> tuple[str, str]:
     if charge < 0.3:
-        scenes = SCENES_QUIET
+        return random.choice(SCENES_QUIET), "quiet"
     elif charge < 0.7:
-        scenes = SCENES_NORMAL
+        return random.choice(SCENES_NORMAL), "normal"
     else:
-        scenes = SCENES_ACTIVE
-    return random.choice(scenes)
+        return random.choice(SCENES_ACTIVE), "active"
+
+
+def _maybe_append_echo(text: str, prev_scene: Optional[dict[str, Any]]) -> str:
+    if not prev_scene:
+        return text
+    prev_tag = prev_scene.get("tag", "")
+    echoes = SCENE_ECHOES.get(prev_tag)
+    if not echoes:
+        return text
+    if random.random() > _ECHO_CHANCE:
+        return text
+    return text + "\n" + random.choice(echoes)

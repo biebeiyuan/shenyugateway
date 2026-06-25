@@ -388,20 +388,40 @@ class ContextBuilder:
 
         hours_since_last_visit = signals.get("hours_since_last_visit")
 
-        layers = render_room_layers(
+        prev_scene = None
+        try:
+            ws = self.store.last_window_scene()
+            if ws and ws.get("tag"):
+                from .runtime import parse_ts
+                prev_hours = None
+                dt = parse_ts(ws.get("created_at"))
+                if dt:
+                    from .runtime import now as _now
+                    prev_hours = max((_now() - dt).total_seconds() / 3600.0, 0.0)
+                prev_scene = {"tag": ws["tag"], "hours_ago": prev_hours}
+        except Exception:
+            pass
+
+        layers, scene_tag = render_room_layers(
             charge,
             last_traces,
             door_specs,
             weather_data=weather_data,
             hours_since_last_visit=hours_since_last_visit,
+            prev_scene=prev_scene,
         )
+
+        try:
+            self.store.save_window_scene(session.get("id", "room"), scene_tag)
+        except Exception:
+            pass
 
         # Append profile (stable_charter_block) after room charter
         profile = self.stable_charter_block()
         if profile:
             layers["stable"] = layers["stable"].rstrip() + "\n\n" + profile.strip()
 
-        _mark_request_log_phase(trace_log, "room.done", detail={"doors": len(door_specs)})
+        _mark_request_log_phase(trace_log, "room.done", detail={"doors": len(door_specs), "scene_tag": scene_tag})
 
         return {
             "is_room": True,
