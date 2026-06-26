@@ -45,19 +45,50 @@ _BROKER_TOOL_HINTS = {
 }
 
 _BROKER_CATEGORIZED_DESCRIPTION = """\
-记忆库总入口。tool=工具全名，params=参数对象。
+记忆库总入口。tool=工具全名，params=参数对象（直接传对象，不要传 JSON 字符串）。
+*=必填。查心跳/日历/便签等都有专用工具，不要用 supabase 系列代替。
 
-星星　　create_star / search_stars / star_review / star_feedback / connect_constellation
-回忆　　recall / read_heartbeat / last_seen
-便签　　write_mem_note / list_mem_notes
-日记　　add_calendar
-手边　　notebook_write / notebook_list
-矛盾书　conflict_list / conflict_read / conflict_annotate
+星星
+  create_star(content*, chord?, chords?[])
+  search_stars(query*)
+  star_review()  — 无参数
+  star_feedback
+    单条: feedback*(connected|positive|negative|should_surface|skipped|missed), candidate_id?, note?
+    批量: items*=[{feedback, candidate_id?, ...}]  ← 不要把数组放进 feedback 字段
+  connect_constellation(star_ids*[], name?)
+  list_stars(status?: active|paused|archived|all, reviewed?: all|reviewed|unreviewed, limit?)
+  mark_constant(star_id*, is_constant?: bool)
+  archive_star(star_id*)
+  merge_stars(source_ids*[], content*, chord?)
 
-还有便签整理（update_mem_note / bulk_update_mem_notes / delete_mem_note / search_mem_notes）、\
-星星管理（list_stars / mark_constant / archive_star / merge_stars）、notebook_update、recall_main_thread 等，按需用。\
-Supabase 直接操作看 supabase_guide。\
-所有工具名省略 shenyu_ 前缀也行。"""
+回忆
+  recall(query*, source_types?[]: memory|journal|room|board|calendar|notebook)
+  read_heartbeat(date?, limit?)
+  last_seen()  — 无参数
+  recall_main_thread(query?, since?, until?, limit?)
+
+便签
+  write_mem_note(content*, mem_type?, trigger_text?)
+  list_mem_notes(status?: captured|active|paused|archived|all, mem_type?, limit?)
+  update_mem_note(note_id*, content?, mem_type?, status?: captured|active|paused|archived)
+  bulk_update_mem_notes(ids*[], status?, use_suggestions?: bool)
+  delete_mem_note(note_id*)
+  search_mem_notes(query?, status?: captured|active|paused|archived|all, limit?)
+
+日记
+  add_calendar(content*, date?: YYYY-MM-DD, period_type?: day|week|month, mode?: append|replace)
+
+手边
+  notebook_write(content*, scope?: shared|hisense|handoff)
+  notebook_list(scope?: shared|hisense|handoff, limit?)
+  notebook_update(id*, content?, status?)
+
+矛盾书
+  conflict_list()
+  conflict_read(book_id*)
+  conflict_annotate(book_id*, content*)
+
+Supabase 直接操作看 supabase_guide。所有工具名省略 shenyu_ 前缀也行。"""
 
 
 def _upstream_tools_enabled(cfg: Any) -> bool:

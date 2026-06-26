@@ -185,16 +185,16 @@ ROOM_TOOL_NAMES = {t["function"]["name"] for t in room_tool_definitions()}
 def room_broker_tool() -> dict:
     """A single broker tool for room mode, like shenyu_gateway_tool but for room_* tools."""
     hints = {
-        "room_sit_by_window": "窗边椅子",
-        "room_scribble": "窗台涂鸦本",
-        "room_notebook": "笔记本",
-        "room_wooden_box": "木盒子(心跳)",
-        "room_drawer_notes": "圆儿的纸条",
-        "room_locked_drawer": "上锁的抽屉",
-        "room_star_map": "星图墙",
-        "room_conflict_shelf": "矛盾书架",
-        "room_wall_pins": "墙上便签",
-        "room_octopus_pillow": "章鱼抱枕",
+        "room_sit_by_window": "窗边椅子（无参数）",
+        "room_scribble": "窗台涂鸦本（action: write|read, content?）",
+        "room_notebook": "笔记本（status?: captured|active|all, limit?）",
+        "room_wooden_box": "木盒子/心跳（limit?）",
+        "room_drawer_notes": "圆儿的纸条（limit?）",
+        "room_locked_drawer": "上锁的抽屉（action: write|read, content?）",
+        "room_star_map": "星图墙（action: look|search|review|feedback|connect, query?, feedback?: connected|positive|negative|should_surface|skipped|missed, items?=批量, star_ids?=连星座）",
+        "room_conflict_shelf": "矛盾书架（book_id?）",
+        "room_wall_pins": "墙上便签（action: list|add|done, content?, pin_id?）",
+        "room_octopus_pillow": "章鱼抱枕（无参数）",
     }
     hint_lines = "\n".join(f"  {name} — {desc}" for name, desc in hints.items())
     return {

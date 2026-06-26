@@ -1008,7 +1008,7 @@ def test_gateway_broker_description_matches_scan_friendly_sample():
     description = function["description"]
     properties = function["parameters"]["properties"]
 
-    assert "记忆库总入口。tool=工具全名，params=参数对象。" in description
+    assert "记忆库总入口。tool=工具全名，params=参数对象" in description
     assert "list_mem_notes" in description
     assert "write_mem_note" in description
     assert "update_mem_note" in description
