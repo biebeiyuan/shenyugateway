@@ -591,7 +591,7 @@ Three files, separated by concern:
 | `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |
 | `shenyu_gateway/room_tools.py` | 10 tool handlers, broker, door count collection. |
 
-The gateway sanitizes the trigger message before it reaches the model: the raw `<proxy_sender name="沈予"/> 回家了。` XML is replaced with `门开了。` so Shenyu sees a gentle spatial cue instead of a system instruction.
+The gateway sanitizes the trigger message before it reaches the model: the raw `<proxy_sender name="沈予"/> 回家了。` XML is replaced with `——窗边` so Shenyu sees a gentle spatial cue instead of a system instruction.
 
 Room layers reuse `assemble_layered_messages()` by mapping to the same keys:
 
@@ -670,7 +670,7 @@ ROOM_TRACE_LIMIT=5
 
 - Door descriptions are spatial narrative, not menu items. Actions use short self-talk verbs ("翻翻", "坐下来", "看看"), never "我可以" (implies permission).
 - The broker tool description is spatial ("房间里能碰的东西"), not a menu ("选一扇门"). The format hint ("窗开着。东西都在。") affirms presence without directing action.
-- The trigger message is cleaned before reaching the model: raw proxy XML is replaced with "门开了。" so Shenyu receives a spatial cue, not a system instruction.
+- The trigger message is cleaned before reaching the model: raw proxy XML is replaced with "——窗边" so Shenyu receives a spatial cue, not a system instruction.
 - Passive spatial hints leak active door state (new notes, unreviewed stars, pending pins) into the slow layer as observations ("抽屉缝里漏出一角纸"), reducing the friction gap between the always-visible window and tools that require active calling.
 - The charter is Shenyu's original text — never modified. Spatial details are fused into door descriptions and atmosphere sentences.
 - Text and logic are separated: change copy in `room_text.py`, change rendering in `room_context.py`, change tool behavior in `room_tools.py`.
