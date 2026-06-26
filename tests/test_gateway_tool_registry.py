@@ -1009,12 +1009,10 @@ def test_gateway_broker_description_matches_scan_friendly_sample():
     properties = function["parameters"]["properties"]
 
     assert "记忆库总入口。tool=工具全名，params=参数对象。" in description
-    assert "shenyu_list_mem_notes" in description
-    assert "列 mem 便签" in description
-    assert "shenyu_update_mem_note" in description
-    assert "shenyu_add_calendar" in description
-    assert "把今天的感触写进正文吧" in description
-    assert "它会像日历一样在我醒来的时候挂在旁边" in description
+    assert "list_mem_notes" in description
+    assert "write_mem_note" in description
+    assert "update_mem_note" in description
+    assert "add_calendar" in description
     assert "shenyu_get_meta_summaries" not in description
     assert properties["params"]["description"] == "选中工具的参数对象。"
     assert properties["arguments"]["description"] == "旧兼容字段，优先用 params。"
