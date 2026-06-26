@@ -474,21 +474,32 @@ Review flow:
 5. `missed` is a high-value positive signal: it means "this star should have surfaced but did not." It can be recorded from the admin UI or directly through `shenyu_star_review` when Shenyu knows the missing star id.
 6. A single no-action/skip is not treated as negative. The weak ignored penalty only appears after the same candidate has been shown repeatedly without positive feedback.
 
-Scoring signals (v2, 11-signal ranker):
+Scoring (v3, RRF fusion + multiplicative modifiers):
 
-- `content_score` (0.28): text/query similarity and content gravity.
-- `keyword_score` (0.16): exact token overlap from star content/chord.
-- `harmony_score` (0.18): existing links from `shenyu_star_links`; Shenyu-confirmed `constellation` links are strongest.
-- `chord_score` (0.14): chord distance by exact/root/quality family match.
-- `scene_match` (0.10): scene type alignment via two-layer classification (rule-based patterns + embedding similarity with per-scene thresholds).
-- `explicit_mention` (0.10): direct reference to star keywords in the trigger text.
-- `actr_score` (0.06): brightness from ACT-R base activation, calculated from activation timestamps as `ln(sum(age^-0.5))` and normalized.
-- `constant_bonus` (0.08): small stable boost for manually marked constant stars.
-- `novelty_bonus` (0.04): small boost for new stars in review-like surfaces.
-- `date_anchor` (0.12): anniversary/date proximity bonus for stars anchored to specific dates.
-- `ignored_penalty` (0.10): weak penalty after repeated ignored displays; constant stars are immune; penalty is gradual.
-- `recent_fatigue_penalty`: short cooldown for stars recently injected into normal chat. It prevents fresh stars from snowballing only because they were just surfaced.
-- `related_signal`: max of content, keyword, chord, and harmony. Daily injection requires this to pass `STAR_RELATED_MIN_SCORE`.
+The ranker uses Reciprocal Rank Fusion across 6 independent channels, then applies multiplicative modifiers. A channel that produces 0 for a star simply contributes nothing — it does not penalize.
+
+RRF channels (each sorted independently; stars with score=0 are excluded from that channel's ranking):
+
+- `content_score` (weight 1.0): text/query similarity and content gravity.
+- `keyword_score` (weight 0.8): exact token overlap from star content/chord.
+- `chord_score` (weight 0.6): chord distance by exact/root/quality family match.
+- `harmony_score` (weight 0.7): existing links from `shenyu_star_links`; constellation links are strongest.
+- `scene_score` (weight 0.4): scene type alignment via rule-based patterns + embedding similarity.
+- `explicit_score` (weight 0.5): direct reference to star keywords in the trigger text.
+
+RRF formula per star: `score = Σ channel_weight / (k + rank + 1)` where k=60.
+
+Multiplicative modifiers (applied after RRF fusion):
+
+- `actr_modifier`: brightness from ACT-R base activation. Formula: `actr_floor + (1 - actr_floor) × actr_score`. Range 0.5–1.0.
+- `novelty_modifier`: `1 / (1 + log10(activation_count + 1))`. Replaces the old ignored_penalty — stars that have been activated many times naturally score lower, but new/rare stars are boosted.
+- `constant_modifier`: 1.3× for constant stars, 1.0× otherwise. Constant stars always pass through.
+- `fatigue_modifier`: `1.0 - recent_fatigue_penalty`. Short cooldown after recent injection.
+- `date_modifier`: `1.0 + date_boost_max × date_anchor_score`. Anniversary/date proximity bonus.
+
+Final score: `rrf × actr × novelty × constant × fatigue × date`.
+
+- `related_signal`: max of content, keyword, chord, harmony, scene, and explicit. Daily injection requires this to pass `STAR_RELATED_MIN_SCORE`.
 
 Config:
 
@@ -505,19 +516,21 @@ STAR_REVIEW_TOTAL_CANDIDATE_LIMIT=8
 STAR_CHAT_EXPLICIT_FALLBACK_LIMIT=1
 STAR_CANDIDATE_LIMIT=500
 STAR_SHADOW_CANDIDATE_LIMIT=20
-STAR_MIN_SCORE=0.18
+STAR_MIN_SCORE=0.008
 STAR_RELATED_MIN_SCORE=0.22
 STAR_RECENT_FATIGUE_HOURS=6
 STAR_RECENT_FATIGUE_PENALTY=0.14
 
-STAR_WEIGHT_CONTENT=0.30
-STAR_WEIGHT_KEYWORD=0.20
-STAR_WEIGHT_HARMONY=0.35
-STAR_WEIGHT_CHORD=0.18
-STAR_WEIGHT_ACTR=0.08
-STAR_CONSTANT_BONUS=0.08
-STAR_NOVELTY_BONUS=0.04
-STAR_IGNORED_PENALTY=0.18
+STAR_RRF_CH_CONTENT=1.0
+STAR_RRF_CH_KEYWORD=0.8
+STAR_RRF_CH_CHORD=0.6
+STAR_RRF_CH_HARMONY=0.7
+STAR_RRF_CH_SCENE=0.4
+STAR_RRF_CH_EXPLICIT=0.5
+STAR_RRF_K=60
+STAR_RRF_ACTR_FLOOR=0.5
+STAR_RRF_CONSTANT_BOOST=1.3
+STAR_RRF_DATE_BOOST_MAX=0.3
 ```
 
 Tools:
@@ -738,7 +751,7 @@ STAR_REVIEW_NEW_LIMIT=4
 STAR_REVIEW_CANDIDATES_PER_STAR=2
 STAR_REVIEW_TOTAL_CANDIDATE_LIMIT=8
 STAR_CHAT_EXPLICIT_FALLBACK_LIMIT=1
-STAR_MIN_SCORE=0.18
+STAR_MIN_SCORE=0.008
 STAR_RELATED_MIN_SCORE=0.22
 STAR_RECENT_FATIGUE_HOURS=6
 STAR_RECENT_FATIGUE_PENALTY=0.14

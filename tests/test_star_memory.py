@@ -76,18 +76,20 @@ def _cfg():
         star_candidate_limit=50,
         star_shadow_candidate_limit=20,
         star_chat_explicit_fallback_limit=1,
-        star_min_score=0.18,
+        star_min_score=0.008,
         star_related_min_score=0.22,
         star_recent_fatigue_hours=6,
         star_recent_fatigue_penalty=0.14,
-        star_weight_content=0.30,
-        star_weight_keyword=0.20,
-        star_weight_harmony=0.35,
-        star_weight_chord=0.18,
-        star_weight_actr=0.08,
-        star_constant_bonus=0.08,
-        star_novelty_bonus=0.04,
-        star_ignored_penalty=0.18,
+        star_rrf_ch_content=1.0,
+        star_rrf_ch_keyword=0.8,
+        star_rrf_ch_chord=0.6,
+        star_rrf_ch_harmony=0.7,
+        star_rrf_ch_scene=0.4,
+        star_rrf_ch_explicit=0.5,
+        star_rrf_k=60,
+        star_rrf_actr_floor=0.5,
+        star_rrf_constant_boost=1.3,
+        star_rrf_date_boost_max=0.3,
     )
 
 
@@ -368,10 +370,10 @@ def test_chat_injection_explicit_fallback_ignores_generic_hits():
 def test_recent_chat_injection_fatigue_can_suppress_borderline_star():
     supabase = FakeSupabase()
     cfg = _cfg()
-    cfg.star_min_score = 0.55
+    cfg.star_min_score = 0.012
     cfg.star_related_min_score = 0.22
     cfg.star_recent_fatigue_hours = 6
-    cfg.star_recent_fatigue_penalty = 0.14
+    cfg.star_recent_fatigue_penalty = 0.95
     cfg.star_chat_explicit_fallback_limit = 0
     service = StarService(cfg, supabase)
 

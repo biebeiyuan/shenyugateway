@@ -22,9 +22,9 @@ STAR_CANDIDATE_TABLE = "shenyu_star_recall_candidates"
 STAR_FEEDBACK_TABLE = "shenyu_star_feedback"
 STAR_ACTIVATION_TABLE = "shenyu_star_activations"
 
-STAR_RANKER_VERSION = "star-ranker-v2"
-STAR_FEATURE_SCHEMA_VERSION = "star-features-v2"
-STAR_WEIGHTS_VERSION = "manual-v2"
+STAR_RANKER_VERSION = "star-ranker-v3"
+STAR_FEATURE_SCHEMA_VERSION = "star-features-v3"
+STAR_WEIGHTS_VERSION = "rrf-v1"
 
 STAR_SELECT = (
     "id,session_tag,content,chord,chord_root,chord_quality,chord_tension,status,is_constant,"
@@ -447,17 +447,16 @@ def _date_anchor_score(star_metadata: dict[str, Any], now: datetime) -> float:
 
 @dataclass(frozen=True)
 class StarWeights:
-    content: float = 0.28
-    keyword: float = 0.16
-    harmony: float = 0.18
-    chord: float = 0.14
-    scene_match: float = 0.10
-    explicit_mention: float = 0.10
-    actr: float = 0.06
-    constant_bonus: float = 0.08
-    novelty_bonus: float = 0.04
-    date_anchor: float = 0.12
-    ignored_penalty: float = 0.10
+    ch_content: float = 1.0
+    ch_keyword: float = 0.8
+    ch_chord: float = 0.6
+    ch_harmony: float = 0.7
+    ch_scene: float = 0.4
+    ch_explicit: float = 0.5
+    rrf_k: int = 60
+    actr_floor: float = 0.5
+    constant_boost: float = 1.3
+    date_boost_max: float = 0.3
 
 
 def _cfg_float(cfg: Any, name: str, default: float, min_value: float = 0.0, max_value: float = 1.0) -> float:
@@ -471,17 +470,16 @@ class StarService:
 
     def _weights(self) -> StarWeights:
         return StarWeights(
-            content=_safe_float(getattr(self.cfg, "star_weight_content", 0.28), 0.28),
-            keyword=_safe_float(getattr(self.cfg, "star_weight_keyword", 0.16), 0.16),
-            harmony=_safe_float(getattr(self.cfg, "star_weight_harmony", 0.18), 0.18),
-            chord=_safe_float(getattr(self.cfg, "star_weight_chord", 0.14), 0.14),
-            scene_match=_safe_float(getattr(self.cfg, "star_weight_scene_match", 0.10), 0.10),
-            explicit_mention=_safe_float(getattr(self.cfg, "star_weight_explicit_mention", 0.10), 0.10),
-            actr=_safe_float(getattr(self.cfg, "star_weight_actr", 0.06), 0.06),
-            constant_bonus=_safe_float(getattr(self.cfg, "star_constant_bonus", 0.08), 0.08),
-            novelty_bonus=_safe_float(getattr(self.cfg, "star_novelty_bonus", 0.04), 0.04),
-            date_anchor=_safe_float(getattr(self.cfg, "star_weight_date_anchor", 0.12), 0.12),
-            ignored_penalty=_safe_float(getattr(self.cfg, "star_ignored_penalty", 0.10), 0.10),
+            ch_content=_safe_float(getattr(self.cfg, "star_rrf_ch_content", 1.0), 1.0),
+            ch_keyword=_safe_float(getattr(self.cfg, "star_rrf_ch_keyword", 0.8), 0.8),
+            ch_chord=_safe_float(getattr(self.cfg, "star_rrf_ch_chord", 0.6), 0.6),
+            ch_harmony=_safe_float(getattr(self.cfg, "star_rrf_ch_harmony", 0.7), 0.7),
+            ch_scene=_safe_float(getattr(self.cfg, "star_rrf_ch_scene", 0.4), 0.4),
+            ch_explicit=_safe_float(getattr(self.cfg, "star_rrf_ch_explicit", 0.5), 0.5),
+            rrf_k=_safe_int(getattr(self.cfg, "star_rrf_k", 60), 60, 1, 1000),
+            actr_floor=_safe_float(getattr(self.cfg, "star_rrf_actr_floor", 0.5), 0.5),
+            constant_boost=_safe_float(getattr(self.cfg, "star_rrf_constant_boost", 1.3), 1.3),
+            date_boost_max=_safe_float(getattr(self.cfg, "star_rrf_date_boost_max", 0.3), 0.3),
         )
 
     def _embedding_client(self) -> Optional[EmbeddingClient]:
@@ -1687,7 +1685,8 @@ class StarService:
         harmony_scores = await self._harmony_scores(anchors, trace_log=trace_log)
         _mark_request_log_phase(trace_log, "stars.harmony_done", detail={"scores": len(harmony_scores)})
         weights = self._weights()
-        scored: list[dict[str, Any]] = []
+
+        eligible: list[dict[str, Any]] = []
         for item in base_items:
             star_id = _node_id(item["row"].get("id"))
             features = dict(item["features"])
@@ -1702,26 +1701,64 @@ class StarService:
             )
             features["related_signal"] = related_signal
             features["explicit_mention"] = features["explicit_score"]
-            if related_signal <= 0:
+            item["features"] = features
+            if related_signal <= 0 or features.get("explicitly_negative"):
                 continue
-            final = (
-                features["content_score"] * weights.content
-                + features["keyword_score"] * weights.keyword
-                + features["harmony_score"] * weights.harmony
-                + features["chord_score"] * weights.chord
-                + features["scene_score"] * weights.scene_match
-                + features["explicit_score"] * weights.explicit_mention
-                + features["actr_score"] * weights.actr
-                + features["constant_bonus"] * weights.constant_bonus
-                + features["novelty_bonus"] * weights.novelty_bonus
-                + features["date_anchor_score"] * weights.date_anchor
-                - features["ignored_penalty"] * weights.ignored_penalty
-                - features["recent_fatigue_penalty"]
-            )
+            eligible.append(item)
+
+        channels = [
+            ("content_score", weights.ch_content),
+            ("keyword_score", weights.ch_keyword),
+            ("chord_score", weights.ch_chord),
+            ("harmony_score", weights.ch_harmony),
+            ("scene_score", weights.ch_scene),
+            ("explicit_score", weights.ch_explicit),
+        ]
+        k = weights.rrf_k
+        rrf_by_star: dict[str, dict[str, float]] = {}
+        for ch_key, ch_weight in channels:
+            if ch_weight <= 0:
+                continue
+            active = [it for it in eligible if (it["features"].get(ch_key) or 0.0) > 0]
+            active.sort(key=lambda x: x["features"][ch_key], reverse=True)
+            for rank_0, it in enumerate(active):
+                sid = _node_id(it["row"].get("id"))
+                rrf_by_star.setdefault(sid, {})[ch_key] = ch_weight / (k + rank_0 + 1)
+
+        scored: list[dict[str, Any]] = []
+        for item in eligible:
+            features = item["features"]
+            star_id = _node_id(item["row"].get("id"))
+            contribs = rrf_by_star.get(star_id, {})
+            rrf_score = sum(contribs.values())
+
+            actr_raw = features.get("actr_score", 0.0)
+            actr_mod = weights.actr_floor + (1.0 - weights.actr_floor) * actr_raw
+
+            act_count = item["row"].get("activation_count") or 0
+            novelty_mod = 1.0 / (1.0 + math.log10(act_count + 1))
+
+            constant_mod = weights.constant_boost if item["row"].get("is_constant") else 1.0
+
+            fatigue_pen = features.get("recent_fatigue_penalty", 0.0)
+            fatigue_mod = max(0.0, 1.0 - fatigue_pen)
+
+            date_sc = features.get("date_anchor_score", 0.0)
+            date_mod = 1.0 + weights.date_boost_max * date_sc
+
+            final = rrf_score * actr_mod * novelty_mod * constant_mod * fatigue_mod * date_mod
+
+            features["rrf_score"] = rrf_score
+            features["rrf_contributions"] = contribs
+            features["actr_modifier"] = actr_mod
+            features["novelty_modifier"] = novelty_mod
+            features["constant_modifier"] = constant_mod
+            features["fatigue_modifier"] = fatigue_mod
+            features["date_modifier"] = date_mod
+
             if final <= 0 and not seed:
                 continue
             item["final_score"] = max(0.0, final)
-            item["features"] = features
             scored.append(item)
         scored.sort(key=lambda item: item["final_score"], reverse=True)
         return scored
@@ -1985,6 +2022,13 @@ class StarService:
                         "related_signal": features.get("related_signal") or 0.0,
                         "explicit_mention": features.get("explicit_mention") or 0.0,
                         "recent_fatigue_penalty": features.get("recent_fatigue_penalty") or 0.0,
+                        "rrf_score": features.get("rrf_score") or 0.0,
+                        "rrf_contributions": features.get("rrf_contributions") or {},
+                        "actr_modifier": features.get("actr_modifier") or 0.0,
+                        "novelty_modifier": features.get("novelty_modifier") or 0.0,
+                        "constant_modifier": features.get("constant_modifier") or 0.0,
+                        "fatigue_modifier": features.get("fatigue_modifier") or 0.0,
+                        "date_modifier": features.get("date_modifier") or 0.0,
                     },
                 }
             )
@@ -2165,7 +2209,7 @@ class StarService:
             "run_id": run_id,
             "candidate_id": item.get("candidate_id"),
             "score": round(float(item.get("final_score") or 0.0), 4),
-            "scores": {key: round(float(value or 0.0), 4) for key, value in features.items()},
+            "scores": {key: round(float(value or 0.0), 4) for key, value in features.items() if isinstance(value, (int, float))},
             "keyword_hits": item.get("keyword_hits") or [],
         }
 

@@ -68,14 +68,16 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "star_related_min_score": cfg.star_related_min_score,
         "star_recent_fatigue_hours": cfg.star_recent_fatigue_hours,
         "star_recent_fatigue_penalty": cfg.star_recent_fatigue_penalty,
-        "star_weight_content": cfg.star_weight_content,
-        "star_weight_keyword": cfg.star_weight_keyword,
-        "star_weight_harmony": cfg.star_weight_harmony,
-        "star_weight_chord": cfg.star_weight_chord,
-        "star_weight_actr": cfg.star_weight_actr,
-        "star_constant_bonus": cfg.star_constant_bonus,
-        "star_novelty_bonus": cfg.star_novelty_bonus,
-        "star_ignored_penalty": cfg.star_ignored_penalty,
+        "star_rrf_ch_content": cfg.star_rrf_ch_content,
+        "star_rrf_ch_keyword": cfg.star_rrf_ch_keyword,
+        "star_rrf_ch_chord": cfg.star_rrf_ch_chord,
+        "star_rrf_ch_harmony": cfg.star_rrf_ch_harmony,
+        "star_rrf_ch_scene": cfg.star_rrf_ch_scene,
+        "star_rrf_ch_explicit": cfg.star_rrf_ch_explicit,
+        "star_rrf_k": cfg.star_rrf_k,
+        "star_rrf_actr_floor": cfg.star_rrf_actr_floor,
+        "star_rrf_constant_boost": cfg.star_rrf_constant_boost,
+        "star_rrf_date_boost_max": cfg.star_rrf_date_boost_max,
         "enable_cold_start": cfg.enable_cold_start,
         "enable_upstream_tools": cfg.enable_upstream_tools,
         "enable_gateway_tools": cfg.enable_gateway_tools,
@@ -169,14 +171,16 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "star_related_min_score": "STAR_RELATED_MIN_SCORE",
             "star_recent_fatigue_hours": "STAR_RECENT_FATIGUE_HOURS",
             "star_recent_fatigue_penalty": "STAR_RECENT_FATIGUE_PENALTY",
-            "star_weight_content": "STAR_WEIGHT_CONTENT",
-            "star_weight_keyword": "STAR_WEIGHT_KEYWORD",
-            "star_weight_harmony": "STAR_WEIGHT_HARMONY",
-            "star_weight_chord": "STAR_WEIGHT_CHORD",
-            "star_weight_actr": "STAR_WEIGHT_ACTR",
-            "star_constant_bonus": "STAR_CONSTANT_BONUS",
-            "star_novelty_bonus": "STAR_NOVELTY_BONUS",
-            "star_ignored_penalty": "STAR_IGNORED_PENALTY",
+            "star_rrf_ch_content": "STAR_RRF_CH_CONTENT",
+            "star_rrf_ch_keyword": "STAR_RRF_CH_KEYWORD",
+            "star_rrf_ch_chord": "STAR_RRF_CH_CHORD",
+            "star_rrf_ch_harmony": "STAR_RRF_CH_HARMONY",
+            "star_rrf_ch_scene": "STAR_RRF_CH_SCENE",
+            "star_rrf_ch_explicit": "STAR_RRF_CH_EXPLICIT",
+            "star_rrf_k": "STAR_RRF_K",
+            "star_rrf_actr_floor": "STAR_RRF_ACTR_FLOOR",
+            "star_rrf_constant_boost": "STAR_RRF_CONSTANT_BOOST",
+            "star_rrf_date_boost_max": "STAR_RRF_DATE_BOOST_MAX",
             "enable_cold_start": "ENABLE_COLD_START",
             "enable_upstream_tools": "ENABLE_UPSTREAM_TOOLS",
             "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
@@ -456,23 +460,32 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             changed.append("star_recent_fatigue_penalty")
             env_updates[env_names["star_recent_fatigue_penalty"]] = cfg.star_recent_fatigue_penalty
         for field in (
-            "star_weight_content",
-            "star_weight_keyword",
-            "star_weight_harmony",
-            "star_weight_chord",
-            "star_weight_actr",
+            "star_rrf_ch_content",
+            "star_rrf_ch_keyword",
+            "star_rrf_ch_chord",
+            "star_rrf_ch_harmony",
+            "star_rrf_ch_scene",
+            "star_rrf_ch_explicit",
         ):
+            value = getattr(body, field)
+            if value is not None:
+                setattr(cfg, field, deps.clamp(float(value), 0.0, 5.0))
+                changed.append(field)
+                env_updates[env_names[field]] = getattr(cfg, field)
+        if body.star_rrf_k is not None:
+            cfg.star_rrf_k = max(1, min(body.star_rrf_k, 1000))
+            changed.append("star_rrf_k")
+            env_updates[env_names["star_rrf_k"]] = cfg.star_rrf_k
+        for field in ("star_rrf_actr_floor", "star_rrf_date_boost_max"):
             value = getattr(body, field)
             if value is not None:
                 setattr(cfg, field, deps.clamp(float(value), 0.0, 2.0))
                 changed.append(field)
                 env_updates[env_names[field]] = getattr(cfg, field)
-        for field in ("star_constant_bonus", "star_novelty_bonus", "star_ignored_penalty"):
-            value = getattr(body, field)
-            if value is not None:
-                setattr(cfg, field, deps.clamp(float(value), 0.0, 1.0))
-                changed.append(field)
-                env_updates[env_names[field]] = getattr(cfg, field)
+        if body.star_rrf_constant_boost is not None:
+            cfg.star_rrf_constant_boost = deps.clamp(float(body.star_rrf_constant_boost), 1.0, 3.0)
+            changed.append("star_rrf_constant_boost")
+            env_updates[env_names["star_rrf_constant_boost"]] = cfg.star_rrf_constant_boost
         if body.hisense_heartbeat_limit is not None:
             cfg.hisense_heartbeat_limit = max(1, min(body.hisense_heartbeat_limit, 30))
             changed.append("hisense_heartbeat_limit")

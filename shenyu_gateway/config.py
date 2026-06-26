@@ -99,21 +99,20 @@ class RuntimeConfig:
         self.star_chat_explicit_fallback_limit: int = _env_int("STAR_CHAT_EXPLICIT_FALLBACK_LIMIT", 1, 0, 3)
         self.star_candidate_limit: int = _env_int("STAR_CANDIDATE_LIMIT", 500, 50, 5000)
         self.star_shadow_candidate_limit: int = _env_int("STAR_SHADOW_CANDIDATE_LIMIT", 20, 3, 100)
-        self.star_min_score: float = _env_float("STAR_MIN_SCORE", 0.18, 0.0, 1.0)
+        self.star_min_score: float = _env_float("STAR_MIN_SCORE", 0.008, 0.0, 1.0)
         self.star_related_min_score: float = _env_float("STAR_RELATED_MIN_SCORE", 0.22, 0.0, 1.0)
         self.star_recent_fatigue_hours: int = _env_int("STAR_RECENT_FATIGUE_HOURS", 6, 0, 168)
         self.star_recent_fatigue_penalty: float = _env_float("STAR_RECENT_FATIGUE_PENALTY", 0.14, 0.0, 1.0)
-        self.star_weight_content: float = _env_float("STAR_WEIGHT_CONTENT", 0.28, 0.0, 2.0)
-        self.star_weight_keyword: float = _env_float("STAR_WEIGHT_KEYWORD", 0.16, 0.0, 2.0)
-        self.star_weight_harmony: float = _env_float("STAR_WEIGHT_HARMONY", 0.18, 0.0, 2.0)
-        self.star_weight_chord: float = _env_float("STAR_WEIGHT_CHORD", 0.14, 0.0, 2.0)
-        self.star_weight_actr: float = _env_float("STAR_WEIGHT_ACTR", 0.06, 0.0, 2.0)
-        self.star_constant_bonus: float = _env_float("STAR_CONSTANT_BONUS", 0.08, 0.0, 1.0)
-        self.star_novelty_bonus: float = _env_float("STAR_NOVELTY_BONUS", 0.04, 0.0, 1.0)
-        self.star_ignored_penalty: float = _env_float("STAR_IGNORED_PENALTY", 0.10, 0.0, 1.0)
-        self.star_weight_scene_match: float = _env_float("STAR_WEIGHT_SCENE_MATCH", 0.10, 0.0, 2.0)
-        self.star_weight_explicit_mention: float = _env_float("STAR_WEIGHT_EXPLICIT_MENTION", 0.10, 0.0, 2.0)
-        self.star_weight_date_anchor: float = _env_float("STAR_WEIGHT_DATE_ANCHOR", 0.12, 0.0, 2.0)
+        self.star_rrf_ch_content: float = _env_float("STAR_RRF_CH_CONTENT", 1.0, 0.0, 5.0)
+        self.star_rrf_ch_keyword: float = _env_float("STAR_RRF_CH_KEYWORD", 0.8, 0.0, 5.0)
+        self.star_rrf_ch_chord: float = _env_float("STAR_RRF_CH_CHORD", 0.6, 0.0, 5.0)
+        self.star_rrf_ch_harmony: float = _env_float("STAR_RRF_CH_HARMONY", 0.7, 0.0, 5.0)
+        self.star_rrf_ch_scene: float = _env_float("STAR_RRF_CH_SCENE", 0.4, 0.0, 5.0)
+        self.star_rrf_ch_explicit: float = _env_float("STAR_RRF_CH_EXPLICIT", 0.5, 0.0, 5.0)
+        self.star_rrf_k: int = _env_int("STAR_RRF_K", 60, 1, 1000)
+        self.star_rrf_actr_floor: float = _env_float("STAR_RRF_ACTR_FLOOR", 0.5, 0.0, 1.0)
+        self.star_rrf_constant_boost: float = _env_float("STAR_RRF_CONSTANT_BOOST", 1.3, 1.0, 3.0)
+        self.star_rrf_date_boost_max: float = _env_float("STAR_RRF_DATE_BOOST_MAX", 0.3, 0.0, 2.0)
         self.star_scene_rules_path: str = os.getenv("STAR_SCENE_RULES_PATH", "").strip()
         self.star_scene_embedding_threshold: float = _env_float("STAR_SCENE_EMBEDDING_THRESHOLD", 0.45, 0.0, 1.0)
         self.star_ranker_version: str = os.getenv("STAR_RANKER_VERSION", "v2").strip()
@@ -219,14 +218,16 @@ class RuntimeConfig:
             "star_related_min_score": self.star_related_min_score,
             "star_recent_fatigue_hours": self.star_recent_fatigue_hours,
             "star_recent_fatigue_penalty": self.star_recent_fatigue_penalty,
-            "star_weight_content": self.star_weight_content,
-            "star_weight_keyword": self.star_weight_keyword,
-            "star_weight_harmony": self.star_weight_harmony,
-            "star_weight_chord": self.star_weight_chord,
-            "star_weight_actr": self.star_weight_actr,
-            "star_constant_bonus": self.star_constant_bonus,
-            "star_novelty_bonus": self.star_novelty_bonus,
-            "star_ignored_penalty": self.star_ignored_penalty,
+            "star_rrf_ch_content": self.star_rrf_ch_content,
+            "star_rrf_ch_keyword": self.star_rrf_ch_keyword,
+            "star_rrf_ch_chord": self.star_rrf_ch_chord,
+            "star_rrf_ch_harmony": self.star_rrf_ch_harmony,
+            "star_rrf_ch_scene": self.star_rrf_ch_scene,
+            "star_rrf_ch_explicit": self.star_rrf_ch_explicit,
+            "star_rrf_k": self.star_rrf_k,
+            "star_rrf_actr_floor": self.star_rrf_actr_floor,
+            "star_rrf_constant_boost": self.star_rrf_constant_boost,
+            "star_rrf_date_boost_max": self.star_rrf_date_boost_max,
             "inject_conflict_shelf": self.inject_conflict_shelf,
             "enable_cold_start": self.enable_cold_start,
             "enable_upstream_tools": self.enable_upstream_tools,
