@@ -31,7 +31,7 @@ from shenyu_gateway.response_capture import split_private_assistant_tags
 
 
 def _load_gateway_helpers():
-    source = Path(__file__).with_name("gateway.py").read_text(encoding="utf-8")
+    source = (Path(__file__).resolve().parent.parent / "gateway.py").read_text(encoding="utf-8")
     module = ast.parse(source)
     adapter_functions = {
         "_assistant_tool_call_message",

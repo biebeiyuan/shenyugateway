@@ -12,3 +12,5 @@ admin/dist/
 tmp_gateway_log_*.json
 tmp_gateway_logs*/
 .shenyu-gateway-debug.local.json
+.claude/
+shenyu_gateway.egg-info/
