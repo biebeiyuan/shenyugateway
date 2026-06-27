@@ -350,9 +350,9 @@ class ContextBuilder:
         messages: Optional[list[dict]] = None,
     ) -> dict:
         """Build context for room mode — completely replaces normal context."""
-        from .room_context import collect_charge_signals, compute_charge, render_room_layers
+        from .room_context import collect_charge_signals, compute_charge, render_room_layers, visible_room_tool_names
         from .room_scenes import extract_weather_from_messages
-        from .room_tools import collect_door_counts, room_broker_tool
+        from .room_tools import collect_door_counts, room_tool_definitions
         from .stars import StarService
 
         _mark_request_log_phase(trace_log, "room.start")
@@ -410,6 +410,8 @@ class ContextBuilder:
             hours_since_last_visit=hours_since_last_visit,
             prev_scene=prev_scene,
         )
+        visible_tool_names = visible_room_tool_names(door_specs, charge)
+        room_tools = room_tool_definitions(visible_tool_names)
 
         try:
             self.store.save_window_scene(session.get("id", "room"), scene_tag)
@@ -421,14 +423,18 @@ class ContextBuilder:
         if profile:
             layers["stable"] = layers["stable"].rstrip() + "\n\n" + profile.strip()
 
-        _mark_request_log_phase(trace_log, "room.done", detail={"doors": len(door_specs), "scene_tag": scene_tag})
+        _mark_request_log_phase(
+            trace_log,
+            "room.done",
+            detail={"doors": len(door_specs), "visible_tools": len(room_tools), "scene_tag": scene_tag},
+        )
 
         return {
             "is_room": True,
             "is_hisense": False,
             "charge": charge,
             "layers": layers,
-            "room_tools": [room_broker_tool()],
+            "room_tools": room_tools,
             "heartbeat_pending_ids": [],
             "hisense_heartbeat_pending_ids": [],
             "cold_start_snapshot": None,
@@ -436,8 +442,6 @@ class ContextBuilder:
 
     async def preview_room(self, session_tag: Optional[str] = None) -> dict:
         """Admin preview for room mode context."""
-        from .room_tools import room_broker_tool
-
         session = self.store.get_session_by_tag(session_tag or "default") if session_tag else None
         fake_session = session or {
             "id": "preview",
@@ -451,5 +455,5 @@ class ContextBuilder:
             "mode": "room",
             "charge": package.get("charge"),
             "layers": package.get("layers"),
-            "room_tools": [room_broker_tool()],
+            "room_tools": package.get("room_tools") or [],
         }

@@ -1,21 +1,24 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import {
   NButton,
   NEmpty,
   NInput,
   NSpin,
-  NTabPane,
-  NTabs,
   NTag,
   useMessage,
 } from 'naive-ui'
 import {
   createDrawerNote,
   fetchDrawerNotes,
+  fetchPins,
   fetchRoomPreview,
   fetchRoomTraces,
+  fetchScribbles,
   type DrawerNote,
+  type RoomPin,
+  type RoomScribble,
+  type RoomTool,
   type RoomTrace,
 } from '@/api/room'
 
@@ -35,38 +38,86 @@ const TRACE_LABELS: Record<string, string> = {
   window: '看了窗外',
 }
 
+const TOOL_LABELS: Record<string, string> = {
+  room_drawer_notes: '纸条抽屉',
+  room_wooden_box: '木盒子',
+  room_star_map: '星图墙',
+  room_notebook: '笔记本',
+  room_scribble: '窗台本子',
+  room_wall_pins: '墙上便签',
+  room_conflict_shelf: '矛盾书架',
+  room_sit_by_window: '窗边椅子',
+  room_octopus_pillow: '章鱼抱枕',
+  room_locked_drawer: '上锁抽屉',
+}
+
+interface RoomPreview {
+  charge: number
+  mode: string
+  layers: Record<string, string>
+  room_tools?: RoomTool[]
+}
+
 const message = useMessage()
 
-const tab = ref('traces')
-const traces = ref<RoomTrace[]>([])
-const tracesLoading = ref(false)
-
-const preview = ref<{ charge: number; layers: Record<string, string> } | null>(null)
+const loading = ref(false)
 const previewLoading = ref(false)
-
-const notes = ref<DrawerNote[]>([])
+const tracesLoading = ref(false)
 const notesLoading = ref(false)
-const notesUnread = ref(0)
-const noteDraft = ref('')
 const noteSending = ref(false)
 
-onMounted(() => loadTraces())
+const preview = ref<RoomPreview | null>(null)
+const traces = ref<RoomTrace[]>([])
+const notes = ref<DrawerNote[]>([])
+const scribbles = ref<RoomScribble[]>([])
+const pins = ref<RoomPin[]>([])
+const notesUnread = ref(0)
+const noteDraft = ref('')
 
-async function loadTraces() {
-  tracesLoading.value = true
-  try {
-    const data = await fetchRoomTraces(50)
-    traces.value = data.traces
-  } catch { /* silent */ }
-  finally { tracesLoading.value = false }
+const visibleTools = computed(() => preview.value?.room_tools || [])
+const recentNotes = computed(() => notes.value.slice(0, 5))
+const recentTraces = computed(() => traces.value.slice(0, 10))
+const recentScribbles = computed(() => scribbles.value.slice(0, 5))
+const activePins = computed(() => pins.value.filter((pin) => !pin.done).slice(0, 6))
+const visibleToolNames = computed(() => visibleTools.value.map((tool) => tool.function?.name || '').filter(Boolean))
+
+onMounted(() => {
+  loadRoom()
+})
+
+async function loadRoom() {
+  loading.value = true
+  await Promise.allSettled([
+    loadPreview(),
+    loadTraces(),
+    loadNotes(),
+    loadScribbles(),
+    loadPins(),
+  ])
+  loading.value = false
 }
 
 async function loadPreview() {
   previewLoading.value = true
   try {
     preview.value = await fetchRoomPreview()
-  } catch { /* silent */ }
-  finally { previewLoading.value = false }
+  } catch {
+    preview.value = null
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+async function loadTraces() {
+  tracesLoading.value = true
+  try {
+    const data = await fetchRoomTraces(50)
+    traces.value = data.traces
+  } catch {
+    traces.value = []
+  } finally {
+    tracesLoading.value = false
+  }
 }
 
 async function loadNotes() {
@@ -75,15 +126,30 @@ async function loadNotes() {
     const data = await fetchDrawerNotes(30)
     notes.value = data.notes
     notesUnread.value = data.unread
-  } catch { /* silent */ }
-  finally { notesLoading.value = false }
+  } catch {
+    notes.value = []
+    notesUnread.value = 0
+  } finally {
+    notesLoading.value = false
+  }
 }
 
-function onTabChange(name: string) {
-  tab.value = name
-  if (name === 'traces' && !traces.value.length) loadTraces()
-  if (name === 'preview') loadPreview()
-  if (name === 'notes' && !notes.value.length) loadNotes()
+async function loadScribbles() {
+  try {
+    const data = await fetchScribbles(20)
+    scribbles.value = data.scribbles
+  } catch {
+    // The side panels are auxiliary; keep the room usable if these fail.
+  }
+}
+
+async function loadPins() {
+  try {
+    const data = await fetchPins(false)
+    pins.value = data.pins
+  } catch {
+    // The side panels are auxiliary; keep the room usable if these fail.
+  }
 }
 
 async function sendNote() {
@@ -100,6 +166,10 @@ async function sendNote() {
   } finally {
     noteSending.value = false
   }
+}
+
+async function refreshEverything() {
+  await loadRoom()
 }
 
 function relativeTime(iso: string) {
@@ -131,348 +201,534 @@ function traceLabel(action: string) {
   return TRACE_LABELS[action] || action
 }
 
-function chargePercent(c: number) {
-  return Math.round(c * 100)
+function toolLabel(name: string) {
+  return TOOL_LABELS[name] || name.replace(/^room_/, '')
+}
+
+function chargePercent(c?: number) {
+  return Math.round(Math.max(0, Math.min(1, c || 0)) * 100)
+}
+
+function chargeLabel(c?: number) {
+  const percent = chargePercent(c)
+  if (percent < 30) return '安静'
+  if (percent < 70) return '有光'
+  return '很亮'
 }
 </script>
 
 <template>
   <div class="room-page">
-    <header class="page-header">
-      <div class="header-left">
+    <header class="room-header">
+      <div>
+        <div class="eyebrow">Shenyu Room</div>
         <h1 class="page-title">房间</h1>
-        <span class="subtitle">Room</span>
+      </div>
+      <div class="header-actions">
+        <NTag size="small" :bordered="false" class="state-tag">
+          {{ chargeLabel(preview?.charge) }} · {{ chargePercent(preview?.charge) }}%
+        </NTag>
+        <NButton size="small" quaternary :loading="loading" @click="refreshEverything">刷新</NButton>
       </div>
     </header>
 
-    <NTabs :value="tab" @update:value="onTabChange" type="line" animated>
-      <NTabPane name="traces" tab="足迹">
-        <div class="tab-toolbar">
-          <NButton size="small" @click="loadTraces" :loading="tracesLoading" quaternary>刷新</NButton>
-        </div>
-        <NSpin :show="tracesLoading">
-          <NEmpty v-if="!traces.length && !tracesLoading" description="还没有足迹" />
-          <div v-else class="trace-list">
-            <div v-for="t in traces" :key="t.id" class="trace-item">
-              <div class="trace-dot" />
-              <div class="trace-body">
-                <span class="trace-action">{{ traceLabel(t.action) }}</span>
-                <NTag v-if="t.detail?.tag" size="tiny" :bordered="false" type="default" class="trace-tag">
-                  {{ t.detail.tag }}
-                </NTag>
-                <p v-if="t.scribble" class="trace-scribble">{{ t.scribble }}</p>
-                <span class="trace-time">{{ relativeTime(t.created_at) }}</span>
-              </div>
+    <NSpin :show="loading">
+      <section class="room-hero">
+        <div class="window-panel">
+          <div class="panel-topline">
+            <div>
+              <span class="panel-kicker">窗外</span>
+              <h2>今天房间里看见的东西</h2>
             </div>
+            <NButton size="small" quaternary :loading="previewLoading" @click="loadPreview">换一阵风</NButton>
           </div>
-        </NSpin>
-      </NTabPane>
 
-      <NTabPane name="preview" tab="窗外">
-        <div class="tab-toolbar">
-          <NButton size="small" @click="loadPreview" :loading="previewLoading" quaternary>换一个</NButton>
-        </div>
-        <NSpin :show="previewLoading">
-          <div v-if="preview" class="preview-card">
-            <div class="charge-bar">
-              <div class="charge-label">charge</div>
-              <div class="charge-track">
-                <div class="charge-fill" :style="{ width: chargePercent(preview.charge) + '%' }" />
-              </div>
-              <div class="charge-value">{{ chargePercent(preview.charge) }}%</div>
+          <div class="charge-row">
+            <span>charge</span>
+            <div class="charge-track">
+              <div class="charge-fill" :style="{ width: chargePercent(preview?.charge) + '%' }" />
             </div>
-            <div class="scene-text" v-if="preview.layers?.slow">
-              {{ preview.layers.slow }}
-            </div>
-            <details v-if="preview.layers?.tool_policy" class="layer-details">
-              <summary>空间布局</summary>
-              <pre class="layer-pre">{{ preview.layers.tool_policy }}</pre>
-            </details>
-            <details v-if="preview.layers?.stable" class="layer-details">
-              <summary>房间设定</summary>
-              <pre class="layer-pre">{{ preview.layers.stable }}</pre>
-            </details>
+            <strong>{{ chargePercent(preview?.charge) }}%</strong>
           </div>
-          <NEmpty v-else-if="!previewLoading" description="点击「换一个」加载场景" />
-        </NSpin>
-      </NTabPane>
 
-      <NTabPane name="notes" tab="纸条">
-        <div class="note-compose">
-          <NInput
-            v-model:value="noteDraft"
-            type="textarea"
-            placeholder="写一张纸条塞进抽屉..."
-            :autosize="{ minRows: 2, maxRows: 5 }"
-            :disabled="noteSending"
-          />
-          <NButton
-            size="small"
-            type="primary"
-            @click="sendNote"
-            :loading="noteSending"
-            :disabled="!noteDraft.trim()"
-            class="send-btn"
-          >
-            塞进去
-          </NButton>
+          <p v-if="preview?.layers?.slow" class="scene-text">{{ preview.layers.slow }}</p>
+          <NEmpty v-else description="窗还没打开" class="soft-empty" />
+
+          <div class="visible-tools">
+            <span class="object-label">可见物件</span>
+            <div v-if="visibleToolNames.length" class="object-chips">
+              <NTag
+                v-for="name in visibleToolNames"
+                :key="name"
+                size="small"
+                :bordered="false"
+                class="object-chip"
+              >
+                {{ toolLabel(name) }}
+              </NTag>
+            </div>
+            <span v-else class="muted">还没有物件清单</span>
+          </div>
         </div>
-        <div class="tab-toolbar">
-          <span v-if="notesUnread" class="unread-count">{{ notesUnread }} 未读</span>
-          <NButton size="small" @click="loadNotes" :loading="notesLoading" quaternary>刷新</NButton>
-        </div>
-        <NSpin :show="notesLoading">
-          <NEmpty v-if="!notes.length && !notesLoading" description="还没有纸条" />
-          <div v-else class="note-list">
-            <div v-for="n in notes" :key="n.id" class="note-item" :class="{ unread: !n.read_at }">
-              <div class="note-content">{{ n.content }}</div>
-              <div class="note-meta">
-                <span class="note-time">{{ relativeTime(n.created_at) }}</span>
-                <NTag v-if="n.read_at" size="tiny" :bordered="false" type="success">已读</NTag>
-                <NTag v-else size="tiny" :bordered="false" type="warning">未读</NTag>
+
+        <aside class="drawer-panel">
+          <div class="panel-topline compact">
+            <div>
+              <span class="panel-kicker">中层抽屉</span>
+              <h2>纸条</h2>
+            </div>
+            <NTag v-if="notesUnread" size="small" :bordered="false" type="warning">{{ notesUnread }} 未读</NTag>
+          </div>
+
+          <div class="note-compose">
+            <NInput
+              v-model:value="noteDraft"
+              type="textarea"
+              placeholder="写一张纸条塞进抽屉..."
+              :autosize="{ minRows: 3, maxRows: 6 }"
+              :disabled="noteSending"
+            />
+            <NButton
+              size="small"
+              type="primary"
+              @click="sendNote"
+              :loading="noteSending"
+              :disabled="!noteDraft.trim()"
+            >
+              塞进去
+            </NButton>
+          </div>
+
+          <NSpin :show="notesLoading">
+            <div v-if="recentNotes.length" class="paper-stack">
+              <article v-for="note in recentNotes" :key="note.id" class="paper-note" :class="{ unread: !note.read_at }">
+                <p>{{ note.content }}</p>
+                <span>{{ relativeTime(note.created_at) }}</span>
+              </article>
+            </div>
+            <NEmpty v-else description="抽屉里还没有纸条" class="soft-empty" />
+          </NSpin>
+        </aside>
+      </section>
+
+      <section class="room-grid">
+        <section class="room-section traces-section">
+          <div class="section-head">
+            <div>
+              <span class="panel-kicker">最近</span>
+              <h2>足迹</h2>
+            </div>
+            <NButton size="small" quaternary :loading="tracesLoading" @click="loadTraces">刷新</NButton>
+          </div>
+
+          <NSpin :show="tracesLoading">
+            <div v-if="recentTraces.length" class="trace-list">
+              <div v-for="trace in recentTraces" :key="trace.id" class="trace-item">
+                <div class="trace-dot" />
+                <div class="trace-body">
+                  <div class="trace-line">
+                    <span>{{ traceLabel(trace.action) }}</span>
+                    <NTag v-if="trace.detail?.tag" size="tiny" :bordered="false">{{ trace.detail.tag }}</NTag>
+                  </div>
+                  <p v-if="trace.scribble">{{ trace.scribble }}</p>
+                  <time>{{ relativeTime(trace.created_at) }}</time>
+                </div>
               </div>
             </div>
+            <NEmpty v-else description="还没有足迹" class="soft-empty" />
+          </NSpin>
+        </section>
+
+        <section class="room-section hand-section">
+          <div class="section-head">
+            <div>
+              <span class="panel-kicker">手边</span>
+              <h2>窗台本子和便签</h2>
+            </div>
           </div>
-        </NSpin>
-      </NTabPane>
-    </NTabs>
+
+          <div class="side-columns">
+            <div class="mini-panel">
+              <h3>窗台本子</h3>
+              <div v-if="recentScribbles.length" class="mini-list">
+                <article v-for="item in recentScribbles" :key="item.id">
+                  <p>{{ item.content }}</p>
+                  <span>{{ relativeTime(item.created_at) }}</span>
+                </article>
+              </div>
+              <NEmpty v-else description="还没写过" class="soft-empty small" />
+            </div>
+
+            <div class="mini-panel">
+              <h3>墙上便签</h3>
+              <div v-if="activePins.length" class="mini-list">
+                <article v-for="pin in activePins" :key="pin.id">
+                  <p>{{ pin.content }}</p>
+                  <span>{{ relativeTime(pin.created_at) }}</span>
+                </article>
+              </div>
+              <NEmpty v-else description="没有未完成便签" class="soft-empty small" />
+            </div>
+          </div>
+        </section>
+      </section>
+
+      <details v-if="preview?.layers?.tool_policy || preview?.layers?.stable" class="debug-drawer">
+        <summary>房间原始提示</summary>
+        <pre v-if="preview?.layers?.tool_policy">{{ preview.layers.tool_policy }}</pre>
+        <pre v-if="preview?.layers?.stable">{{ preview.layers.stable }}</pre>
+      </details>
+    </NSpin>
   </div>
 </template>
 
 <style scoped>
 .room-page {
-  max-width: 520px;
+  --room-paper: #fffdf8;
+  --room-ink: #302b28;
+  --room-muted: #8f817a;
+  --room-line: #e7dad1;
+  --room-sea: #466c7a;
+  --room-moss: #5f765b;
+  --room-rose: #b77a8c;
+  max-width: 1080px;
   margin: 0 auto;
-  padding: 24px 16px;
-  font-family: 'Georgia', 'Noto Serif SC', serif;
+  padding: 28px 18px 40px;
+  color: var(--room-ink);
 }
 
-.page-header {
+.room-header {
   display: flex;
+  align-items: flex-end;
   justify-content: space-between;
-  align-items: baseline;
-  margin-bottom: 20px;
-  padding: 0 4px;
+  gap: 16px;
+  margin-bottom: 18px;
 }
 
-.page-title {
-  font-size: 22px;
-  font-weight: 600;
-  color: #4a3535;
-  letter-spacing: -0.5px;
-}
-
-.subtitle {
-  font-size: 12px;
-  color: #b8a8a3;
-  margin-left: 10px;
-  letter-spacing: 1px;
+.eyebrow,
+.panel-kicker,
+.object-label {
+  display: block;
+  font-family: -apple-system, 'Segoe UI', sans-serif;
+  font-size: 11px;
+  color: var(--room-sea);
+  letter-spacing: 0.08em;
   text-transform: uppercase;
 }
 
-.tab-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 10px;
-  margin-bottom: 12px;
+.page-title {
+  margin-top: 4px;
+  font-size: 28px;
+  font-weight: 600;
+  color: var(--room-ink);
+  letter-spacing: 0;
 }
 
-/* ── Traces ── */
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.state-tag {
+  color: var(--room-sea) !important;
+}
+
+.room-hero {
+  display: grid;
+  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.85fr);
+  gap: 16px;
+  align-items: stretch;
+}
+
+.window-panel,
+.drawer-panel,
+.room-section,
+.mini-panel,
+.debug-drawer {
+  border: 1px solid var(--room-line);
+  background: var(--room-paper);
+  border-radius: 8px;
+}
+
+.window-panel,
+.drawer-panel,
+.room-section {
+  padding: 18px;
+}
+
+.drawer-panel {
+  background: #f7fbfb;
+}
+
+.panel-topline,
+.section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.panel-topline.compact {
+  align-items: center;
+}
+
+h2 {
+  margin-top: 3px;
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--room-ink);
+  letter-spacing: 0;
+}
+
+.charge-row {
+  display: grid;
+  grid-template-columns: auto minmax(120px, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin: 10px 0 18px;
+  font-family: -apple-system, 'Segoe UI', sans-serif;
+  font-size: 12px;
+  color: var(--room-muted);
+}
+
+.charge-track {
+  height: 6px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #e7e4dc;
+}
+
+.charge-fill {
+  height: 100%;
+  border-radius: inherit;
+  background: var(--room-sea);
+  transition: width 0.35s ease;
+}
+
+.scene-text {
+  min-height: 132px;
+  max-width: 720px;
+  margin: 0 0 18px;
+  white-space: pre-wrap;
+  font-size: 16px;
+  line-height: 1.9;
+  color: var(--room-ink);
+}
+
+.visible-tools {
+  display: grid;
+  grid-template-columns: 86px minmax(0, 1fr);
+  gap: 10px 12px;
+  align-items: start;
+  padding-top: 14px;
+  border-top: 1px solid var(--room-line);
+}
+
+.object-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.object-chip {
+  background: #eef5f4 !important;
+  color: var(--room-sea) !important;
+}
+
+.muted {
+  font-size: 13px;
+  color: var(--room-muted);
+}
+
+.note-compose {
+  display: grid;
+  gap: 10px;
+  margin-bottom: 14px;
+}
+
+.note-compose :deep(.n-button) {
+  justify-self: start;
+}
+
+.paper-stack,
+.mini-list {
+  display: grid;
+  gap: 9px;
+}
+
+.paper-note,
+.mini-list article {
+  padding: 11px 12px;
+  border: 1px solid #e6ddd6;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.paper-note.unread {
+  border-color: var(--room-rose);
+  background: #fff8f8;
+}
+
+.paper-note p,
+.mini-list p {
+  margin: 0;
+  white-space: pre-wrap;
+  font-size: 13px;
+  line-height: 1.6;
+  color: var(--room-ink);
+}
+
+.paper-note span,
+.mini-list span,
+.trace-body time {
+  display: inline-block;
+  margin-top: 7px;
+  font-family: -apple-system, 'Segoe UI', sans-serif;
+  font-size: 11px;
+  color: var(--room-muted);
+}
+
+.room-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
+  gap: 16px;
+  margin-top: 16px;
+}
+
 .trace-list {
   position: relative;
-  padding-left: 20px;
+  display: grid;
+  gap: 0;
+  padding-left: 16px;
 }
 
 .trace-list::before {
   content: '';
   position: absolute;
-  left: 6px;
-  top: 4px;
-  bottom: 4px;
+  left: 4px;
+  top: 8px;
+  bottom: 8px;
   width: 1px;
-  background: #f0e0dc;
+  background: var(--room-line);
 }
 
 .trace-item {
   position: relative;
-  display: flex;
-  gap: 12px;
-  padding: 8px 0;
+  padding: 7px 0 12px;
 }
 
 .trace-dot {
   position: absolute;
-  left: -17px;
+  left: -15px;
   top: 14px;
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--room-paper);
   border-radius: 50%;
-  background: #c094a8;
-  flex-shrink: 0;
+  background: var(--room-moss);
 }
 
 .trace-body {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: baseline;
-  gap: 6px;
   min-width: 0;
 }
 
-.trace-action {
-  font-size: 14px;
-  color: #4a3535;
-}
-
-.trace-tag {
-  font-size: 10px;
-}
-
-.trace-scribble {
-  width: 100%;
-  margin: 4px 0 0;
-  font-size: 13px;
-  color: #8b7082;
-  font-style: italic;
-  line-height: 1.5;
-}
-
-.trace-time {
-  font-size: 11px;
-  color: #c4b0ab;
-}
-
-/* ── Preview ── */
-.preview-card {
-  padding: 16px;
-  border: 1px solid #f0e0dc;
-  border-radius: 12px;
-  background: #fdf6f4;
-}
-
-.charge-bar {
+.trace-line {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 16px;
-}
-
-.charge-label {
-  font-size: 11px;
-  color: #b8a8a3;
-  letter-spacing: 1px;
-  text-transform: uppercase;
-  flex-shrink: 0;
-}
-
-.charge-track {
-  flex: 1;
-  height: 4px;
-  border-radius: 2px;
-  background: #f0e0dc;
-  overflow: hidden;
-}
-
-.charge-fill {
-  height: 100%;
-  border-radius: 2px;
-  background: #c094a8;
-  transition: width 0.4s ease;
-}
-
-.charge-value {
-  font-size: 12px;
-  color: #8b7082;
-  font-weight: 500;
-  min-width: 32px;
-  text-align: right;
-}
-
-.scene-text {
+  gap: 7px;
+  flex-wrap: wrap;
   font-size: 14px;
-  line-height: 1.8;
-  color: #4a3535;
+  color: var(--room-ink);
+}
+
+.trace-body p {
+  margin: 5px 0 0;
   white-space: pre-wrap;
-  margin-bottom: 12px;
+  color: var(--room-muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
-.layer-details {
-  margin-top: 8px;
-  border-top: 1px solid #f0e0dc;
-  padding-top: 8px;
+.side-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
 }
 
-.layer-details summary {
-  font-size: 12px;
-  color: #b8a8a3;
+.mini-panel {
+  padding: 14px;
+  background: #fff;
+}
+
+.mini-panel h3 {
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--room-sea);
+}
+
+.soft-empty {
+  padding: 18px 0;
+}
+
+.soft-empty.small {
+  padding: 10px 0;
+}
+
+.debug-drawer {
+  margin-top: 16px;
+  padding: 12px 14px;
+  background: #fff;
+}
+
+.debug-drawer summary {
   cursor: pointer;
+  font-size: 12px;
+  color: var(--room-muted);
   user-select: none;
 }
 
-.layer-pre {
-  font-size: 12px;
-  color: #6a5a54;
+.debug-drawer pre {
+  margin-top: 10px;
+  padding: 10px;
+  max-height: 320px;
+  overflow: auto;
   white-space: pre-wrap;
-  word-break: break-all;
-  line-height: 1.6;
-  margin-top: 8px;
-  padding: 8px;
-  background: #fff;
+  word-break: break-word;
+  border: 1px solid var(--room-line);
   border-radius: 6px;
-  border: 1px solid #f0e0dc;
-}
-
-/* ── Notes ── */
-.note-compose {
-  margin-bottom: 16px;
-}
-
-.send-btn {
-  margin-top: 8px;
-}
-
-.unread-count {
+  background: #fbfaf7;
+  color: #665d58;
   font-size: 12px;
-  color: #c094a8;
-  font-weight: 500;
-}
-
-.note-list {
-  display: flex;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.note-item {
-  padding: 12px 14px;
-  border: 1px solid #f0e0dc;
-  border-radius: 10px;
-  background: #fff;
-  transition: border-color 0.2s;
-}
-
-.note-item.unread {
-  border-color: #c094a8;
-  background: #fdf6f4;
-}
-
-.note-content {
-  font-size: 14px;
-  color: #4a3535;
   line-height: 1.6;
-  white-space: pre-wrap;
 }
 
-.note-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-top: 8px;
-}
+@media (max-width: 860px) {
+  .room-page {
+    padding: 22px 12px 32px;
+  }
 
-.note-time {
-  font-size: 11px;
-  color: #c4b0ab;
+  .room-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .header-actions {
+    justify-content: flex-start;
+  }
+
+  .room-hero,
+  .room-grid,
+  .side-columns {
+    grid-template-columns: 1fr;
+  }
+
+  .visible-tools {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

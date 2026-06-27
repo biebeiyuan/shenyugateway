@@ -67,7 +67,11 @@ const config = ref<GatewayConfig>({
   model_mapping: {},
   enable_upstream_tools: true,
   enable_gateway_tools: true,
+  enable_mem0_management_tools: true,
+  expose_supabase_tools: true,
   gateway_tool_mode: 'broker',
+  gateway_tool_surface: 'full',
+  client_tool_surface: 'all',
   max_internal_tool_rounds: 15,
 })
 
@@ -92,8 +96,17 @@ const protocolOptions = [
 ]
 const inheritedProtocolOptions = [{ label: 'Inherit global', value: '' }, ...protocolOptions]
 const toolModeOptions = [
-  { label: 'Full schemas', value: 'full' },
-  { label: 'Compact broker', value: 'broker' },
+  { label: 'Full schemas（不用 broker）', value: 'full' },
+  { label: 'Compact broker（推荐）', value: 'broker' },
+]
+const gatewayToolSurfaceOptions = [
+  { label: 'broker 内：全量清单', value: 'full' },
+  { label: 'broker 内：日常清单', value: 'daily' },
+]
+const clientToolSurfaceOptions = [
+  { label: '全部客户端工具', value: 'all' },
+  { label: '日常客户端工具', value: 'daily' },
+  { label: '不暴露客户端工具', value: 'none' },
 ]
 const providerOrderOptions = [
   { label: 'Amazon Bedrock', value: 'Amazon Bedrock' },
@@ -209,8 +222,11 @@ async function doSave() {
       model_mapping: Object.fromEntries(modelEntries.value.filter(([key, value]) => key && value)),
       enable_upstream_tools: config.value.enable_upstream_tools,
       enable_gateway_tools: config.value.enable_gateway_tools,
+      enable_mem0_management_tools: config.value.enable_mem0_management_tools,
       expose_supabase_tools: config.value.expose_supabase_tools,
       gateway_tool_mode: config.value.gateway_tool_mode,
+      gateway_tool_surface: config.value.gateway_tool_surface,
+      client_tool_surface: config.value.client_tool_surface,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
       default_surface_limit: config.value.default_surface_limit,
     }
@@ -531,6 +547,12 @@ function removeModel(index: number) {
           </NFormItem>
           <NFormItem label="网关工具模式">
             <NSelect v-model:value="config.gateway_tool_mode" :options="toolModeOptions" />
+          </NFormItem>
+          <NFormItem label="普通线程 shenyu_gateway_tool 清单">
+            <NSelect v-model:value="config.gateway_tool_surface" :options="gatewayToolSurfaceOptions" />
+          </NFormItem>
+          <NFormItem label="普通线程客户端工具桌面">
+            <NSelect v-model:value="config.client_tool_surface" :options="clientToolSurfaceOptions" />
           </NFormItem>
         </NForm>
       </NCard>

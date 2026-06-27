@@ -96,6 +96,37 @@ def render_last_trace(traces: list[dict]) -> str:
 _LOW_CHARGE_EXTRA = 2
 
 
+def visible_room_doors(door_specs: list[dict], charge: float) -> list[dict]:
+    """Return the doors visible in the room at the current charge."""
+    if not door_specs:
+        return []
+
+    count_map = {d["key"]: d.get("count", 0) for d in door_specs}
+
+    if charge < 0.3:
+        always = [d for d in DOORS if door_priority(d["key"]) == "always"]
+        rest = [d for d in DOORS if door_priority(d["key"]) != "always" and count_map.get(d["key"], 0) > 0]
+        rest.sort(key=lambda d: count_map.get(d["key"], 0), reverse=True)
+        visible = always + rest[:_LOW_CHARGE_EXTRA]
+    else:
+        visible = list(DOORS)
+
+    zone_idx = {z: i for i, z in enumerate(ZONE_ORDER)}
+
+    def sort_key(d: dict) -> tuple:
+        zi = zone_idx.get(door_zone(d["key"]), 99)
+        c = count_map.get(d["key"], 0)
+        return (zi, -c)
+
+    visible.sort(key=sort_key)
+    return visible
+
+
+def visible_room_tool_names(door_specs: list[dict], charge: float) -> list[str]:
+    """Return room_* tool names for currently visible doors."""
+    return [str(door.get("tool") or "") for door in visible_room_doors(door_specs, charge) if door.get("tool")]
+
+
 def render_doors(door_specs: list[dict], charge: float) -> str:
     """Render spatial door descriptions.
 
@@ -108,28 +139,7 @@ def render_doors(door_specs: list[dict], charge: float) -> str:
         return ""
 
     count_map = {d["key"]: d.get("count", 0) for d in door_specs}
-
-    # Decide which doors are visible
-    if charge < 0.3:
-        always = [d for d in DOORS if door_priority(d["key"]) == "always"]
-        rest = [d for d in DOORS if door_priority(d["key"]) != "always" and count_map.get(d["key"], 0) > 0]
-        rest.sort(key=lambda d: count_map.get(d["key"], 0), reverse=True)
-        visible = always + rest[:_LOW_CHARGE_EXTRA]
-    elif charge < 0.7:
-        visible = list(DOORS)
-    else:
-        visible = list(DOORS)
-
-    # Sort within visibility: active doors first (by count desc), then quiet
-    # But preserve zone grouping — sort by (zone_order, -count)
-    zone_idx = {z: i for i, z in enumerate(ZONE_ORDER)}
-
-    def sort_key(d: dict) -> tuple:
-        zi = zone_idx.get(door_zone(d["key"]), 99)
-        c = count_map.get(d["key"], 0)
-        return (zi, -c)
-
-    visible.sort(key=sort_key)
+    visible = visible_room_doors(door_specs, charge)
 
     # Render by zone
     lines: list[str] = []
@@ -186,7 +196,7 @@ _PASSIVE_HINTS: dict[str, list[str]] = {
     ],
 }
 
-_MAX_PASSIVE_HINTS = 2
+_MAX_PASSIVE_HINTS = 3
 
 
 def _render_passive_hints(door_specs: list[dict]) -> str:

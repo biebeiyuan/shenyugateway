@@ -77,6 +77,37 @@ _BROKER_TOOL_HINTS = {
     "shenyu_supabase_guide": "忘了 Supabase 表结构看这个",
 }
 
+DAILY_GATEWAY_TOOL_NAMES = {
+    "shenyu_recall",
+    "shenyu_create_star",
+    "shenyu_search_stars",
+    "shenyu_star_review",
+    "shenyu_star_feedback",
+    "shenyu_connect_constellation",
+    "shenyu_merge_stars",
+    "shenyu_add_calendar",
+    "shenyu_read_heartbeat",
+    "shenyu_write_mem_note",
+    "shenyu_search_mem_notes",
+    "shenyu_notebook_write",
+    "shenyu_notebook_list",
+    "shenyu_conflict_read",
+}
+
+DAILY_CLIENT_TOOL_EXACT = {
+    "gateway",
+    "read_file",
+    "visit_web",
+    "package_proxy",
+    "use_package",
+    "room",
+    "shenyu_room",
+    "selection",
+    "coread_selection",
+    "coread_annotate",
+}
+DAILY_CLIENT_TOOL_PREFIXES = ("coread_",)
+
 _BROKER_CATEGORIZED_DESCRIPTION = """\
 记忆库总入口。tool=工具全名，params=参数对象（直接传对象，不要传 JSON 字符串）。
 *=必填。查心跳/日历/便签等都有专用工具，不要用 supabase 系列代替。
@@ -123,6 +154,36 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
 
 Supabase 直接操作看 supabase_guide。所有工具名省略 shenyu_ 前缀也行。"""
 
+_BROKER_DAILY_DESCRIPTION = """\
+记忆库日常入口。tool=工具全名，params=参数对象（直接传对象，不要传 JSON 字符串）。
+这里放沈予日常会碰的东西；后台管理和数据库工具收起来了。
+
+星星
+  create_star(content*, chord?, chords?[])
+  search_stars(query*)
+  star_review()
+  star_feedback(feedback* 或 items*[])
+  connect_constellation(star_ids*[], name?)
+  merge_stars(source_ids*[], content*, chord?)
+
+回忆
+  recall(query*, source_types?[])
+  read_heartbeat(date?, limit?)
+
+便签
+  write_mem_note(content*, mem_type?, trigger_text?)
+  search_mem_notes(query?, status?, limit?)
+
+日记
+  add_calendar(content*, date?: YYYY-MM-DD, period_type?: day|week|month, mode?: append|replace)
+
+手边
+  notebook_write(content*, scope?: shared|hisense|handoff)
+  notebook_list(scope?: shared|hisense|handoff, limit?)
+
+矛盾书
+  conflict_read(book_id*)"""
+
 
 def _upstream_tools_enabled(cfg: Any) -> bool:
     return bool(getattr(cfg, "enable_upstream_tools", True))
@@ -138,6 +199,52 @@ def _mem0_management_tools_enabled(cfg: Any) -> bool:
 
 def _supabase_tools_enabled(cfg: Any) -> bool:
     return bool(getattr(cfg, "expose_supabase_tools", False))
+
+
+def _gateway_tool_surface(cfg: Any) -> str:
+    value = str(getattr(cfg, "gateway_tool_surface", "full") or "full").strip().lower()
+    return value if value in {"full", "daily"} else "full"
+
+
+def _client_tool_surface(cfg: Any) -> str:
+    value = str(getattr(cfg, "client_tool_surface", "all") or "all").strip().lower()
+    return value if value in {"all", "daily", "none"} else "all"
+
+
+def _filter_gateway_tools_for_surface(tools: list[dict], cfg: Any) -> list[dict]:
+    if _gateway_tool_surface(cfg) != "daily":
+        return tools
+    return [
+        tool for tool in tools
+        if tool.get("function", {}).get("name") in DAILY_GATEWAY_TOOL_NAMES
+    ]
+
+
+def _client_tool_name(tool: dict) -> str:
+    if not isinstance(tool, dict):
+        return ""
+    function = tool.get("function")
+    if not isinstance(function, dict):
+        return ""
+    return str(function.get("name") or "")
+
+
+def _is_daily_client_tool(name: str) -> bool:
+    clean = (name or "").strip()
+    lowered = clean.lower()
+    if lowered in {item.lower() for item in DAILY_CLIENT_TOOL_EXACT}:
+        return True
+    return any(lowered.startswith(prefix) for prefix in DAILY_CLIENT_TOOL_PREFIXES)
+
+
+def _filter_client_tools_for_surface(client_tools: Optional[list[dict]], cfg: Any) -> list[dict]:
+    tools = list(client_tools or [])
+    surface = _client_tool_surface(cfg)
+    if surface == "all":
+        return tools
+    if surface == "none":
+        return []
+    return [tool for tool in tools if _is_daily_client_tool(_client_tool_name(tool))]
 
 
 def _gateway_list_mem_notes_tool() -> dict:
@@ -808,7 +915,7 @@ def _expanded_gateway_native_tools(cfg: Any) -> list[dict]:
             ]
         )
     tools.extend(_gateway_notebook_and_recall_tools())
-    return tools
+    return _filter_gateway_tools_for_surface(tools, cfg)
 
 
 def _gateway_tool_names(cfg: Any) -> list[str]:
@@ -827,11 +934,16 @@ def _broker_tool_summary(tool: dict) -> str:
 def _gateway_broker_tool(cfg: Any) -> dict:
     expanded_tools = _expanded_gateway_native_tools(cfg)
     names = [tool["function"]["name"] for tool in expanded_tools]
+    description = (
+        _BROKER_DAILY_DESCRIPTION
+        if _gateway_tool_surface(cfg) == "daily"
+        else _BROKER_CATEGORIZED_DESCRIPTION
+    )
     return {
         "type": "function",
         "function": {
             "name": "shenyu_gateway_tool",
-            "description": _BROKER_CATEGORIZED_DESCRIPTION,
+            "description": description,
             "parameters": {
                 "type": "object",
                 "properties": {
@@ -871,21 +983,22 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
 def merge_tools(client_tools: Optional[list[dict]], cfg: Any, *, meta: Optional[dict] = None) -> list[dict]:
     if not _upstream_tools_enabled(cfg):
         return []
+    filtered_client_tools = _filter_client_tools_for_surface(client_tools, cfg)
 
-    # Room mode: keep client tools + room broker, drop normal gateway tools
+    # Room mode: keep client tools + direct room tools, drop normal gateway tools
     if meta and meta.get("is_room"):
         package = meta.get("package") or {}
         room_tools = package.get("room_tools") or []
+        merged = list(filtered_client_tools)
         if room_tools:
-            merged = list(client_tools or [])
             existing = {tool.get("function", {}).get("name") for tool in merged if isinstance(tool, dict)}
             for rt in room_tools:
                 name = rt.get("function", {}).get("name", "")
                 if name not in existing:
                     merged.append(rt)
-            return merged
+        return merged
 
-    merged = list(client_tools or [])
+    merged = list(filtered_client_tools)
     if not (
         _core_gateway_tools_enabled(cfg)
         or _mem0_management_tools_enabled(cfg)

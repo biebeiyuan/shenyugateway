@@ -5,6 +5,8 @@ import json
 import pytest
 from types import SimpleNamespace
 
+from shenyu_gateway.room_context import render_room_layers, visible_room_tool_names
+from shenyu_gateway.room_tools import room_tool_definitions
 from shenyu_gateway.tool_registry import execute_gateway_tool, gateway_native_tools, merge_tools
 from shenyu_gateway.tool_loop import _tool_call_arguments
 
@@ -530,12 +532,16 @@ def _cfg(
     enable_gateway_tools: bool = True,
     enable_mem0_management_tools: bool = False,
     expose_supabase_tools: bool = False,
+    gateway_tool_surface: str = "full",
+    client_tool_surface: str = "all",
 ):
     return SimpleNamespace(
         enable_gateway_tools=enable_gateway_tools,
         enable_mem0_management_tools=enable_mem0_management_tools,
         expose_supabase_tools=expose_supabase_tools,
         gateway_tool_mode="broker",
+        gateway_tool_surface=gateway_tool_surface,
+        client_tool_surface=client_tool_surface,
         default_surface_limit=3,
         mem_note_limit=3,
         enable_recall_auto_sync=False,
@@ -1879,6 +1885,130 @@ def test_lightweight_cfg_defaults_to_core_gateway_tools_enabled():
     assert broker_tool["function"]["name"] == "shenyu_gateway_tool"
     assert "shenyu_recall" in broker_names
     assert "shenyu_list_mem_notes" in broker_names
+
+
+def test_daily_gateway_surface_hides_maintenance_tools():
+    cfg = _cfg(
+        enable_mem0_management_tools=True,
+        expose_supabase_tools=True,
+        gateway_tool_surface="daily",
+    )
+
+    broker_tool = gateway_native_tools(cfg)[0]
+    broker_names = set(broker_tool["function"]["parameters"]["properties"]["tool"]["enum"])
+    description = broker_tool["function"]["description"]
+
+    assert "shenyu_create_star" in broker_names
+    assert "shenyu_recall" in broker_names
+    assert "shenyu_write_mem_note" in broker_names
+    assert "shenyu_notebook_list" in broker_names
+    assert "shenyu_conflict_read" in broker_names
+
+    assert "shenyu_supabase_guide" not in broker_names
+    assert "shenyu_list_mem_notes" not in broker_names
+    assert "shenyu_bulk_update_mem_notes" not in broker_names
+    assert "shenyu_delete_mem_note" not in broker_names
+    assert "shenyu_recall_main_thread" not in broker_names
+    assert "shenyu_list_stars" not in broker_names
+    assert "shenyu_archive_star" not in broker_names
+    assert "shenyu_mark_constant" not in broker_names
+    assert "supabase_query" not in broker_names
+    assert "后台管理和数据库工具收起来了" in description
+    assert "bulk_update_mem_notes" not in description
+
+
+def test_daily_client_surface_keeps_hand_tools_and_hides_dev_tools():
+    cfg = _cfg(client_tool_surface="daily")
+    client_tools = [
+        {"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}},
+        {"type": "function", "function": {"name": "package_proxy", "parameters": {"type": "object"}}},
+        {"type": "function", "function": {"name": "coread_annotate", "parameters": {"type": "object"}}},
+        {"type": "function", "function": {"name": "visit_web", "parameters": {"type": "object"}}},
+        {"type": "function", "function": {"name": "grep_code", "parameters": {"type": "object"}}},
+        {"type": "function", "function": {"name": "code_runner", "parameters": {"type": "object"}}},
+        {"type": "function", "function": {"name": "sleep", "parameters": {"type": "object"}}},
+    ]
+
+    merged = merge_tools(client_tools, cfg)
+    names = [tool["function"]["name"] for tool in merged]
+
+    assert "read_file" in names
+    assert "package_proxy" in names
+    assert "coread_annotate" in names
+    assert "visit_web" in names
+    assert "grep_code" not in names
+    assert "code_runner" not in names
+    assert "sleep" not in names
+    assert "shenyu_gateway_tool" in names
+
+
+def test_none_client_surface_keeps_gateway_tools_only():
+    cfg = _cfg(client_tool_surface="none")
+    client_tools = [
+        {"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}},
+    ]
+
+    merged = merge_tools(client_tools, cfg)
+    assert [tool["function"]["name"] for tool in merged] == ["shenyu_gateway_tool"]
+
+
+def test_room_mode_exposes_room_tools_directly_without_broker():
+    cfg = _cfg()
+    client_tool = {
+        "type": "function",
+        "function": {
+            "name": "client_tool",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    }
+
+    merged = merge_tools(
+        [client_tool],
+        cfg,
+        meta={"is_room": True, "package": {"room_tools": room_tool_definitions()}},
+    )
+    names = [tool["function"]["name"] for tool in merged]
+
+    assert "client_tool" in names
+    assert "room_sit_by_window" in names
+    assert "room_star_map" in names
+    assert "shenyu_gateway_tool" not in names
+
+    fallback = merge_tools([client_tool], cfg, meta={"is_room": True, "package": {}})
+    assert [tool["function"]["name"] for tool in fallback] == ["client_tool"]
+
+
+def test_room_layers_include_room_door_tools():
+    layers, _scene_tag = render_room_layers(
+        0.5,
+        [],
+        [{"key": "sit", "count": 0}, {"key": "pillow", "count": 0}],
+    )
+
+    assert "`room_sit_by_window`" in layers["tool_policy"]
+
+
+def test_visible_room_tools_follow_visible_low_charge_doors():
+    door_specs = [
+        {"key": "drawer_notes", "count": 5},
+        {"key": "notebook", "count": 3},
+        {"key": "wall_pins", "count": 2},
+        {"key": "sit", "count": 0},
+        {"key": "scribble", "count": 0},
+        {"key": "pillow", "count": 0},
+    ]
+
+    tool_names = set(visible_room_tool_names(door_specs, charge=0.1))
+    layers, _scene_tag = render_room_layers(0.1, [], door_specs)
+
+    assert "room_sit_by_window" in tool_names
+    assert "room_scribble" in tool_names
+    assert "room_octopus_pillow" in tool_names
+    assert "room_drawer_notes" in tool_names
+    assert "room_notebook" in tool_names
+    assert "room_wall_pins" not in tool_names
+    assert "`room_drawer_notes`" in layers["tool_policy"]
+    assert "`room_wall_pins`" not in layers["tool_policy"]
 
 
 def test_upstream_tools_toggle_is_total_forwarding_gate():

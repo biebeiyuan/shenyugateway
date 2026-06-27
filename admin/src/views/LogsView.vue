@@ -42,6 +42,16 @@ const GATEWAY_TOOL_HINTS: Record<string, string> = {
   shenyu_notebook_update: '改一条手边的事',
   shenyu_supabase_guide: '查 Supabase 表结构',
   shenyu_gateway_tool: '记忆库总入口（broker）',
+  room_drawer_notes: '翻圆儿的纸条抽屉',
+  room_wooden_box: '翻木盒子里的心跳',
+  room_star_map: '看星图墙',
+  room_notebook: '翻房间笔记本',
+  room_scribble: '读写窗台涂鸦本',
+  room_wall_pins: '看墙上便签',
+  room_conflict_shelf: '翻矛盾书架',
+  room_sit_by_window: '坐在窗边',
+  room_octopus_pillow: '抱章鱼抱枕',
+  room_locked_drawer: '打开上锁抽屉',
   supabase_query: '查 Supabase 表',
   supabase_insert: '往 Supabase 写一行',
   supabase_update: '改 Supabase 的行',
@@ -49,7 +59,7 @@ const GATEWAY_TOOL_HINTS: Record<string, string> = {
 }
 
 function isGatewayTool(name: string): boolean {
-  return name.startsWith('shenyu_') || name.startsWith('supabase_')
+  return name.startsWith('shenyu_') || name.startsWith('supabase_') || name.startsWith('room_')
 }
 
 function toolHint(name: string): string {

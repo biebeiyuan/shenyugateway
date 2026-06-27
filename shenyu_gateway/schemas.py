@@ -87,6 +87,8 @@ class ConfigUpdate(BaseModel):
     enable_mem0_management_tools: Optional[bool] = None
     expose_supabase_tools: Optional[bool] = None
     gateway_tool_mode: Optional[str] = None
+    gateway_tool_surface: Optional[str] = None
+    client_tool_surface: Optional[str] = None
     max_internal_tool_rounds: Optional[int] = None
     gateway_db_path: Optional[str] = None
     calendar_context_day_limit: Optional[int] = None

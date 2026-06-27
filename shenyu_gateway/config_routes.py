@@ -84,6 +84,8 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
         "expose_supabase_tools": cfg.expose_supabase_tools,
         "gateway_tool_mode": cfg.gateway_tool_mode,
+        "gateway_tool_surface": cfg.gateway_tool_surface,
+        "client_tool_surface": cfg.client_tool_surface,
         "max_internal_tool_rounds": cfg.max_internal_tool_rounds,
         "gateway_db_path": cfg.gateway_db_path,
         "calendar_context_day_limit": cfg.calendar_context_day_limit,
@@ -187,6 +189,8 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "enable_mem0_management_tools": "ENABLE_MEM0_MANAGEMENT_TOOLS",
             "expose_supabase_tools": "EXPOSE_SUPABASE_TOOLS",
             "gateway_tool_mode": "GATEWAY_TOOL_MODE",
+            "gateway_tool_surface": "GATEWAY_TOOL_SURFACE",
+            "client_tool_surface": "CLIENT_TOOL_SURFACE",
             "gateway_db_path": "GATEWAY_DB_PATH",
             "max_internal_tool_rounds": "MAX_INTERNAL_TOOL_ROUNDS",
             "calendar_context_day_limit": "CALENDAR_CONTEXT_DAY_LIMIT",
@@ -253,6 +257,8 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "enable_mem0_management_tools",
             "expose_supabase_tools",
             "gateway_tool_mode",
+            "gateway_tool_surface",
+            "client_tool_surface",
             "gateway_db_path",
             "hisense_client_name",
         ]
@@ -280,6 +286,14 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                     value = str(value or "").strip().lower()
                     if value not in {"full", "broker"}:
                         raise HTTPException(status_code=400, detail="GATEWAY_TOOL_MODE must be full or broker.")
+                elif field == "gateway_tool_surface":
+                    value = str(value or "").strip().lower()
+                    if value not in {"full", "daily"}:
+                        raise HTTPException(status_code=400, detail="GATEWAY_TOOL_SURFACE must be full or daily.")
+                elif field == "client_tool_surface":
+                    value = str(value or "").strip().lower()
+                    if value not in {"all", "daily", "none"}:
+                        raise HTTPException(status_code=400, detail="CLIENT_TOOL_SURFACE must be all, daily, or none.")
                 elif field == "upstream_provider_format":
                     value = str(value or "").strip().lower().replace("-", "_")
                     if value not in {"string", "order_object"}:

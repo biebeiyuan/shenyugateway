@@ -45,7 +45,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/private_capture.py`: private assistant content finalization (`<heartbeat>` extraction), context-consumed marking, fallback text generation, and free-time detection.
 - `shenyu_gateway/room_text.py`: all room mode copy — charter, atmosphere scenes, door descriptions, trace phrases. Change text here only.
 - `shenyu_gateway/room_context.py`: room mode charge calculation, layer rendering, door filtering logic.
-- `shenyu_gateway/room_tools.py`: room mode tool definitions, broker, execute dispatch, and door count collection.
+- `shenyu_gateway/room_tools.py`: room mode tool definitions, compatibility broker, execute dispatch, and door count collection.
 - `shenyu_gateway/utils.py`: shared utilities (`shorten`, `clean_config_text`, `normalize_text`) used across multiple modules.
 - `gateway.py`: FastAPI app entrypoint, lifespan, CORS, route handlers, context orchestration, tool-loop orchestration, streaming chat pipeline, calendar generation service, and Hisense routes.
 
@@ -79,7 +79,9 @@ Context is assembled in the order Shenyu should wake into it:
 
 The retired rolling and frozen context layers have been removed from the active flow. Their legacy SQLite tables are only cleaned up during session deletion when they exist in an older database.
 
-`GATEWAY_TOOL_MODE=broker` is the default and exposes one compact `shenyu_gateway_tool` dispatcher that calls the same gateway-native tools with fewer schema tokens. Broker calls should set `tool` to the full gateway tool name, including the `shenyu_` or `supabase_` prefix, and put the selected tool's arguments in the `params` object, not a JSON-encoded string. The old `arguments` field remains compatible. Use `full` when strict per-tool parameter guidance matters more than prompt size.
+`GATEWAY_TOOL_MODE=broker` is the default for normal threads and exposes one compact `shenyu_gateway_tool` dispatcher that calls the same gateway-native tools with fewer schema tokens. Broker calls should set `tool` to the full gateway tool name, including the `shenyu_` or `supabase_` prefix, and put the selected tool's arguments in the `params` object, not a JSON-encoded string. The old `arguments` field remains compatible. Use `full` when strict per-tool parameter guidance matters more than prompt size.
+
+`GATEWAY_TOOL_SURFACE=daily` keeps broker mode but narrows the broker enum/description to daily hand tools: stars, recall, calendar, heartbeat, mem notes write/search, notebook, and conflict books. `CLIENT_TOOL_SURFACE=daily` filters client-provided tools to the normal desktop set (`gateway`, `read_file`, `visit_web`, `package_proxy`, room, and coread tools), while `none` hides client tools entirely. These surface filters do not apply room tools as a broker; room mode exposes direct `room_*` tools for the currently visible doors.
 
 ## Prompt Cache
 
@@ -607,9 +609,9 @@ Three files, separated by concern:
 |------|---------------|
 | `shenyu_gateway/room_text.py` | All room copy: charter, scenes, doors, trace phrases. Change text here only. |
 | `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |
-| `shenyu_gateway/room_tools.py` | 10 tool handlers, broker, door count collection. |
+| `shenyu_gateway/room_tools.py` | 10 tool handlers, direct tool definitions, compatibility broker, door count collection. |
 
-The gateway sanitizes the trigger message before it reaches the model: the raw `<proxy_sender name="沈予"/> 回家了。` XML is replaced with `——窗边` so Shenyu sees a gentle spatial cue instead of a system instruction.
+The trigger message stays in the user text. Room context supplies spatial cues through room layers and tool descriptions instead of rewriting the user's message.
 
 Room layers reuse `assemble_layered_messages()` by mapping to the same keys:
 
@@ -622,7 +624,7 @@ Room layers reuse `assemble_layered_messages()` by mapping to the same keys:
 | `tool_policy` | Spatial door descriptions |
 | `format` | `窗开着。东西都在。` |
 
-Passive spatial hints: when doors have activity (unread notes, new stars, pending heartbeats, new pins), `render_room_layers` leaks up to 2 subtle observations into the `slow` layer — e.g. "抽屉缝里漏出一角纸" or "星图墙上有几颗新落的星". These let Shenyu notice things without calling a tool first.
+Passive spatial hints: when doors have activity (unread notes, new stars, pending heartbeats, new pins), `render_room_layers` leaks up to 3 subtle observations into the `slow` layer — e.g. "抽屉缝里漏出一角纸" or "星图墙上有几颗新落的星". These let Shenyu notice things without calling a tool first.
 
 ### Charge
 
@@ -657,7 +659,7 @@ Charge affects door visibility:
 | `room_wall_pins` | wall | View/add/complete wall pin reminders. |
 | `room_octopus_pillow` | bed | Hug the octopus pillow. Random Yuan note as easter egg. |
 
-All room tools are dispatched through a single `shenyu_gateway_tool` broker with `tool` set to the room tool name. The broker description is spatial ("房间里能碰的东西。想碰就碰。") rather than directive. Client tools are preserved alongside the room broker.
+Room mode exposes visible `room_*` tools directly instead of routing them through `shenyu_gateway_tool`. At low charge, only always-visible doors plus the top active doors get matching tool schemas; when charge is mid/high, all room doors and their tools are visible. Normal gateway tools are omitted in room mode, while filtered client tools can remain alongside the direct room tools.
 
 Dynamic door text: some doors show different text when there's activity (e.g., "好像多了几张" when new notes exist).
 
@@ -673,8 +675,12 @@ Dynamic door text: some doors show different text when there's activity (e.g., "
 
 ### Admin API
 
-- `GET /api/gateway/room/preview` — preview room context layers and charge
+- `GET /api/gateway/context/preview/room` — preview room context layers, charge, and visible room tools
 - `GET /api/gateway/room/traces?limit=20` — recent room traces (full exposure including locked_drawer, for early tuning)
+- `GET/POST /api/gateway/room/drawer-notes` — list or add drawer notes
+- `POST /api/gateway/room/drawer-notes/read` — mark drawer notes read
+- `GET /api/gateway/room/scribbles` — recent windowsill notebook entries
+- `GET /api/gateway/room/pins` — wall pin reminders
 
 ### Config
 
@@ -687,8 +693,8 @@ ROOM_TRACE_LIMIT=5
 ### Design Principles
 
 - Door descriptions are spatial narrative, not menu items. Actions use short self-talk verbs ("翻翻", "坐下来", "看看"), never "我可以" (implies permission).
-- The broker tool description is spatial ("房间里能碰的东西"), not a menu ("选一扇门"). The format hint ("窗开着。东西都在。") affirms presence without directing action.
-- The trigger message is cleaned before reaching the model: raw proxy XML is replaced with "——窗边" so Shenyu receives a spatial cue, not a system instruction.
+- Direct `room_*` tool descriptions are spatial ("想碰就碰"), not menu-like permission text ("选一扇门"). The format hint ("窗开着。东西都在。") affirms presence without directing action.
+- The trigger message is not rewritten; room layers carry the spatial framing.
 - Passive spatial hints leak active door state (new notes, unreviewed stars, pending pins) into the slow layer as observations ("抽屉缝里漏出一角纸"), reducing the friction gap between the always-visible window and tools that require active calling.
 - The charter is Shenyu's original text — never modified. Spatial details are fused into door descriptions and atmosphere sentences.
 - Text and logic are separated: change copy in `room_text.py`, change rendering in `room_context.py`, change tool behavior in `room_tools.py`.
@@ -768,6 +774,8 @@ ENABLE_GATEWAY_TOOLS=true
 ENABLE_MEM0_MANAGEMENT_TOOLS=true
 EXPOSE_SUPABASE_TOOLS=true
 GATEWAY_TOOL_MODE=broker
+GATEWAY_TOOL_SURFACE=full
+CLIENT_TOOL_SURFACE=all
 MAX_INTERNAL_TOOL_ROUNDS=15
 ```
 

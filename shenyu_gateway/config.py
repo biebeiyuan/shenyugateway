@@ -52,6 +52,11 @@ def _env_float(name: str, default: float, min_value: Optional[float] = None, max
     return value
 
 
+def _env_choice(name: str, default: str, choices: set[str]) -> str:
+    value = os.getenv(name, default).strip().lower()
+    return value if value in choices else default
+
+
 class RuntimeConfig:
     def __init__(self):
         self.supabase_url: str = os.getenv("SUPABASE_URL", "").strip()
@@ -123,6 +128,8 @@ class RuntimeConfig:
         self.enable_mem0_management_tools: bool = _env_bool("ENABLE_MEM0_MANAGEMENT_TOOLS", True)
         self.expose_supabase_tools: bool = _env_bool("EXPOSE_SUPABASE_TOOLS", True)
         self.gateway_tool_mode: str = self._normalize_tool_mode(os.getenv("GATEWAY_TOOL_MODE", "broker"))
+        self.gateway_tool_surface: str = _env_choice("GATEWAY_TOOL_SURFACE", "full", {"full", "daily"})
+        self.client_tool_surface: str = _env_choice("CLIENT_TOOL_SURFACE", "all", {"all", "daily", "none"})
         self.max_internal_tool_rounds: int = _env_int("MAX_INTERNAL_TOOL_ROUNDS", 15, 1)
         self.enable_recall_auto_sync: bool = _env_bool("ENABLE_RECALL_AUTO_SYNC", False)
         self.recall_candidate_limit: int = _env_int("RECALL_CANDIDATE_LIMIT", 160, 20, 1000)
@@ -235,6 +242,8 @@ class RuntimeConfig:
             "enable_mem0_management_tools": self.enable_mem0_management_tools,
             "expose_supabase_tools": self.expose_supabase_tools,
             "gateway_tool_mode": self.gateway_tool_mode,
+            "gateway_tool_surface": self.gateway_tool_surface,
+            "client_tool_surface": self.client_tool_surface,
             "max_internal_tool_rounds": self.max_internal_tool_rounds,
             "enable_recall_auto_sync": self.enable_recall_auto_sync,
             "recall_candidate_limit": self.recall_candidate_limit,

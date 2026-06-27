@@ -78,6 +78,8 @@ export interface GatewayConfig {
   enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
   gateway_tool_mode?: string
+  gateway_tool_surface?: string
+  client_tool_surface?: string
   max_internal_tool_rounds?: number
   default_surface_limit?: number
   heartbeat_inject_every?: number
@@ -117,6 +119,8 @@ export interface HealthStatus {
   enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
   gateway_tool_mode?: string
+  gateway_tool_surface?: string
+  client_tool_surface?: string
   inject_mem_notes?: boolean
   enable_cold_start?: boolean
 }

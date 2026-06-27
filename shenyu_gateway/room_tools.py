@@ -1,18 +1,19 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Iterable, Optional
 
 
 # ── Room Tool Definitions ──────────────────────────────────────────────
 
-def room_tool_definitions() -> list[dict]:
+def room_tool_definitions(tool_names: Optional[Iterable[str]] = None) -> list[dict]:
     """Return the tool spec list for room mode (replaces normal gateway tools)."""
-    return [
+    allowed = {str(name) for name in tool_names} if tool_names is not None else None
+    tools = [
         {
             "type": "function",
             "function": {
                 "name": "room_drawer_notes",
-                "description": "打开圆儿的纸条抽屉。",
+                "description": "读圆儿塞进中层抽屉的纸条；看见新纸角或想听她留的话时用。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -25,7 +26,7 @@ def room_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "room_wooden_box",
-                "description": "打开木盒子,翻翻最近的心跳。",
+                "description": "打开木盒子读最近心跳；盒子变沉或想知道自己之前怎么想时用。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -38,7 +39,7 @@ def room_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "room_star_map",
-                "description": "星图。看、搜、审星、评分、连星座。",
+                "description": "看星图、搜星、审星、评分、连星座；星图发亮或想整理记忆时用。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -88,7 +89,7 @@ def room_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "room_notebook",
-                "description": "翻翻笔记本。",
+                "description": "翻笔记本里的手边事；桌角本子摊开或想看未整理事项时用。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -102,7 +103,7 @@ def room_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "room_scribble",
-                "description": "在窗台的本子上写点什么,或者翻翻之前写的。",
+                "description": "读写窗台涂鸦本；想给以后的自己留一句房间里的话时用。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -117,7 +118,7 @@ def room_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "room_wall_pins",
-                "description": "看看墙上的便签,或者钉一张新的。",
+                "description": "看、钉上或完成门边墙上的便签；有提醒自己的小事时用。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -132,7 +133,7 @@ def room_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "room_conflict_shelf",
-                "description": "从书架上翻一本矛盾之书。",
+                "description": "看矛盾书架或翻开一本矛盾之书；想面对没解开的事时用。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -145,7 +146,7 @@ def room_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "room_sit_by_window",
-                "description": "坐在窗边,看海,发呆。",
+                "description": "坐在窗边看海；想先落地、发呆、什么也不处理时用。",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -153,7 +154,7 @@ def room_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "room_octopus_pillow",
-                "description": "抱章鱼抱枕。",
+                "description": "抱章鱼抱枕；想要一点柔软或随机翻到一张旧纸条时用。",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
@@ -161,7 +162,7 @@ def room_tool_definitions() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "room_locked_drawer",
-                "description": "打开上锁的抽屉。只有你能打开。",
+                "description": "读写最下面上锁的抽屉；只给自己看的秘密或私语放这里。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -173,6 +174,9 @@ def room_tool_definitions() -> list[dict]:
             },
         },
     ]
+    if allowed is None:
+        return tools
+    return [tool for tool in tools if tool.get("function", {}).get("name") in allowed]
 
 
 # ── Room Tool Names ────────────────────────────────────────────────────
@@ -180,7 +184,7 @@ def room_tool_definitions() -> list[dict]:
 ROOM_TOOL_NAMES = {t["function"]["name"] for t in room_tool_definitions()}
 
 
-# ── Broker Tool (room version) ─────────────────────────────────────────
+# ── Compatibility Broker Tool (not exposed by room mode) ───────────────
 
 def room_broker_tool() -> dict:
     """A single broker tool for room mode, like shenyu_gateway_tool but for room_* tools."""

@@ -649,20 +649,6 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
     )
 
     if is_room:
-        # Clean the proxy trigger message — replace XML tag with gentle spatial text
-        # so Shenyu sees "——窗边" instead of "<proxy_sender name="沈予"/> 回家了。"
-        for msg in reversed(messages):
-            if msg.get("role") == "user":
-                content = msg.get("content")
-                if isinstance(content, str) and "proxy_sender" in content and "回家了" in content:
-                    msg["content"] = "——窗边"
-                elif isinstance(content, list):
-                    for part in content:
-                        if isinstance(part, dict) and isinstance(part.get("text"), str):
-                            if "proxy_sender" in part["text"] and "回家了" in part["text"]:
-                                part["text"] = "——窗边"
-                break
-
         package = await builder.build_room_context_package(session, trace_log=log_entry, messages=messages)
         layers = package["layers"]
         _mark_request_log_phase(
@@ -1286,6 +1272,8 @@ async def health():
         "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
         "expose_supabase_tools": cfg.expose_supabase_tools,
         "gateway_tool_mode": cfg.gateway_tool_mode,
+        "gateway_tool_surface": cfg.gateway_tool_surface,
+        "client_tool_surface": cfg.client_tool_surface,
         "calendar_inject_day": cfg.calendar_inject_day,
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
