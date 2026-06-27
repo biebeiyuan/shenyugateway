@@ -27,7 +27,7 @@ Operit
 The codebase is partly layered already:
 
 - `shenyu_gateway/config.py`: environment-backed runtime config.
-- `shenyu_gateway/store.py`: SQLite runtime state only.
+- `shenyu_gateway/store/`: SQLite runtime state (package split into mixins: `_base`, `_sessions`, `_messages`, `_pending`, `_snapshots`, `_cold_start`, `_heartbeats`, `_cache`, `_room`, `_admin`).
 - `shenyu_gateway/supabase.py`: low-level Supabase REST client.
 - `shenyu_gateway/calendar.py`: date/key helpers and calendar JSON parsing.
 - `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
@@ -36,7 +36,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, heartbeat persistence helper.
 - `shenyu_gateway/mem_notes.py`: clean note search, review/update/delete helpers, and old atomic read-only lookup.
-- `shenyu_gateway/stars.py`: Star memory service: ACT-R activation, chord/content/harmony scoring, review candidates, feedback logging, and constellation links. Stars are created via `shenyu_create_star` tool call.
+- `shenyu_gateway/stars/`: Star memory service (package split into mixins: `_helpers`, `_chord`, `_scene`, `_weights`, `_crud`, `_recall`, `_activity`, `_review`, `_feedback`, `_logging`, `_render`, `_embedding`). ACT-R activation, chord/content/harmony scoring, review candidates, feedback logging, and constellation links.
 - `shenyu_gateway/sessions.py`: session/message logging facade.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
 - `shenyu_gateway/auth.py`: admin auth middleware, API key verification, login page HTML, and `ADMIN_PROTECTED_PREFIXES`.
@@ -57,7 +57,7 @@ When cleaning or refactoring, preserve behavior first and move code by boundary:
 4. Context data fetching belongs around `ContextBuilder`; layer rendering and message-window assembly belong in `shenyu_gateway/context_layers.py`.
 5. Private response tag filtering and capture helpers belong in `shenyu_gateway/response_capture.py` and `shenyu_gateway/private_capture.py`. When adding a new private block type, update both parser paths and the empty-reply fallback wording.
 6. Gateway-native tool behavior belongs in `shenyu_gateway/gateway_tools.py`; tool schemas, merge logic, and name dispatch belong in `shenyu_gateway/tool_registry.py`. Keep tool descriptions short: one-line purpose plus backing table/pool.
-7. Star memory ranking and learning behavior belongs in `shenyu_gateway/stars.py`; tool exposure belongs in `tool_registry.py`; admin-only API routes belong in `gateway_admin_routes.py`; frontend controls belong in `admin/src/views/StarsView.vue` and `admin/src/views/stars/`.
+7. Star memory ranking and learning behavior belongs in `shenyu_gateway/stars/`; tool exposure belongs in `tool_registry.py`; admin-only API routes belong in `gateway_admin_routes.py`; frontend controls belong in `admin/src/views/StarsView.vue` and `admin/src/views/stars/`.
 8. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing, HTTP calls, and streaming iteration belong in `shenyu_gateway/upstream_client.py`.
 9. External frontend contracts below are not dead code just because admin UI does not import them.
 
@@ -575,7 +575,7 @@ Admin UI:
 
 Maintenance notes:
 
-- Keep relationship logic in `shenyu_gateway/stars.py`; do not duplicate ranking math in route handlers or frontend code.
+- Keep relationship logic in `shenyu_gateway/stars/`; do not duplicate ranking math in route handlers or frontend code.
 - Keep `shenyu_star_links` generic. Future heartbeat integration should add `heartbeat` as another node type and teach `_harmony_scores()` or a new relationship scorer how to read those links.
 - If adding new score signals, store both raw features and final contribution in `shenyu_star_recall_candidates.scores`; otherwise later tuning loses observability.
 - If adding a new feedback value, update the SQL check constraint, `FEEDBACK_VALUES`, frontend type `StarFeedbackValue`, tool schema, and admin labels together.

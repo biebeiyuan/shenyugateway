@@ -67,7 +67,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 
 - `gateway.py`: FastAPI app, middleware, routes, service orchestration, upstream HTTP calls, tool loop, response filtering, and public API contracts.
 - `shenyu_gateway/config.py`: environment-backed runtime config.
-- `shenyu_gateway/store.py`: SQLite runtime state. Routes and services should call `GatewayStore` instead of writing SQL directly.
+- `shenyu_gateway/store/`: SQLite runtime state (mixin package). Routes and services should call `GatewayStore` instead of writing SQL directly.
 - `shenyu_gateway/supabase.py`: low-level Supabase REST mechanics.
 - `shenyu_gateway/sessions.py`: session and message logging facade.
 - `shenyu_gateway/calendar.py`: calendar date/key helpers and JSON parsing.
@@ -207,7 +207,7 @@ Permanent test coverage for these contracts is in `test_external_contracts.py`.
 After Python changes:
 
 ```powershell
-python -m py_compile gateway.py shenyu_gateway\store.py shenyu_gateway\calendar_sources.py shenyu_gateway\context_layers.py shenyu_gateway\response_capture.py shenyu_gateway\upstream_adapter.py test_external_contracts.py test_gateway_hisense_context.py test_gateway_tags.py test_gateway_trim.py
+python -m py_compile gateway.py shenyu_gateway\store\__init__.py shenyu_gateway\stars\__init__.py shenyu_gateway\calendar_sources.py shenyu_gateway\context_layers.py shenyu_gateway\response_capture.py shenyu_gateway\upstream_adapter.py test_external_contracts.py test_gateway_hisense_context.py test_gateway_tags.py test_gateway_trim.py
 git diff --check
 rg -n "<AGENTS.md mojibake pattern>" README.md DEBUGGING_GUIDE.md gateway.py shenyu_gateway test_*.py
 ```
