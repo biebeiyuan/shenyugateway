@@ -256,9 +256,13 @@ _TRIGGER_PHRASE_SPLIT_RE = re.compile(
 _WORD_BOUNDARY_CACHE: dict[str, re.Pattern[str]] = {}
 
 
-def _word_boundary_match(needle_lower: str, haystack_lower: str) -> bool:
+def _anchor_match(needle_lower: str, haystack_lower: str) -> bool:
     if not needle_lower:
         return False
+    if re.fullmatch(r"[\u4e00-\u9fff]+", needle_lower):
+        if len(needle_lower) <= 1:
+            return False
+        return needle_lower in haystack_lower or needle_lower in set(recall_terms(haystack_lower))
     if len(needle_lower) <= 1:
         return needle_lower in haystack_lower.split()
     pat = _WORD_BOUNDARY_CACHE.get(needle_lower)
@@ -267,6 +271,10 @@ def _word_boundary_match(needle_lower: str, haystack_lower: str) -> bool:
         pat = re.compile(r"(?:^|(?<=[\s,;。，、！？/]))" + escaped + r"(?=$|[\s,;。，、！？/])")
         _WORD_BOUNDARY_CACHE[needle_lower] = pat
     return bool(pat.search(haystack_lower))
+
+
+def _skip_auto_surface(row: dict) -> bool:
+    return (row.get("memory_kind") or "") == "promise" and bool(row.get("resolved"))
 
 
 def _overlap(query: str, text: str) -> float:
@@ -622,6 +630,8 @@ class MemNoteService:
         )
         scored: list[tuple[float, dict, list[str]]] = []
         for row in rows:
+            if _skip_auto_surface(row):
+                continue
             if self._should_skip_retrigger(
                 row,
                 session_id=session_id,
@@ -667,7 +677,7 @@ class MemNoteService:
         joke_items = self._running_joke_serendipity_matches(
             clean_query, active_rows, session_id=session_id, store=store
         )
-        items = joke_items[:target_limit]
+        items = joke_items[:1]
         selected_ids = {str(item.get("id") or "") for item in items if item.get("id")}
 
         # --- Layer 1: entity match (precise, no threshold) ---
@@ -1190,7 +1200,7 @@ class MemNoteService:
             return 0.0, []
         hits: list[str] = []
         for anchor in all_anchors:
-            if _word_boundary_match(anchor.lower(), query_lower):
+            if _anchor_match(anchor.lower(), query_lower):
                 hits.append(anchor)
         if not hits:
             return 0.0, []
@@ -1388,6 +1398,8 @@ class MemNoteService:
         query_tokens = set(query_lower.split())
         hits: list[dict[str, Any]] = []
         for row in rows:
+            if _skip_auto_surface(row):
+                continue
             if (row.get("memory_kind") or "") != "running_joke":
                 continue
             scene_tags = row.get("scene_tags") or []
@@ -1395,7 +1407,8 @@ class MemNoteService:
                 continue
             matched_tag = None
             for tag in scene_tags:
-                if tag.lower() in query_tokens or tag.lower() in query_lower:
+                tag_lower = tag.lower()
+                if tag_lower in query_tokens or _anchor_match(tag_lower, query_lower):
                     matched_tag = tag
                     break
             if not matched_tag:
@@ -1429,6 +1442,8 @@ class MemNoteService:
         query_lower = query.lower()
         hits: list[dict[str, Any]] = []
         for row in rows:
+            if _skip_auto_surface(row):
+                continue
             note_id = str(row.get("id") or "")
             if note_id in exclude_ids:
                 continue
@@ -1448,7 +1463,7 @@ class MemNoteService:
             matched_anchor = None
             matched_type = None
             for anchor, atype in all_anchors:
-                if _word_boundary_match(anchor.lower(), query_lower):
+                if _anchor_match(anchor.lower(), query_lower):
                     matched_anchor = anchor
                     matched_type = atype
                     break
@@ -1543,6 +1558,8 @@ class MemNoteService:
                 continue
             note = note_rows.get(note_id)
             if not note or (note.get("status") or "") != "active":
+                continue
+            if _skip_auto_surface(note):
                 continue
             if session_tag and (note.get("session_tag") or "").strip() != session_tag:
                 continue
@@ -1872,10 +1889,18 @@ class MemNoteService:
         trigger_text = _normalize_text(row.get("trigger_text")).strip()
         trigger_keywords = self._keyword_list(row.get("trigger_keywords"))
         entities = self._entity_list(row.get("entities"))
+        structured_anchors = (
+            self._entity_list(row.get("people"))
+            + self._entity_list(row.get("places"))
+            + self._entity_list(row.get("objects"))
+            + self._keyword_list(row.get("keywords"))
+            + self._keyword_list(row.get("scene_tags"))
+            + self._keyword_list(row.get("trigger_scenarios"))
+        )
         if mem_type not in MEM_NOTE_TYPES:
             return "active mem note requires a known mem_type value."
-        if not trigger_text and not trigger_keywords and not entities:
-            return "active mem note requires trigger_text, trigger_keywords, or entities."
+        if not trigger_text and not trigger_keywords and not entities and not structured_anchors:
+            return "active mem note requires trigger_text, trigger_keywords, entities, or structured anchors."
         return ""
 
     def _mem_type(self, value: Any, allow_empty: bool = False) -> Optional[str]:

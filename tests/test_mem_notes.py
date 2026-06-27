@@ -859,3 +859,130 @@ def test_create_note_with_v2_fields():
     assert inserted["keywords"] == ["生日"]
     assert inserted["importance"] == 3
     assert inserted["event_time"] == "2026-06-15"
+
+
+def test_contextual_search_matches_cjk_structured_anchors_without_spaces():
+    note = {
+        "id": "note-cjk-anchor",
+        "session_tag": "6.27",
+        "content": "她做了蛋糕寄给老周。",
+        "summary": "她之前做过蛋糕寄给老周。",
+        "mem_type": "关于她的事实",
+        "memory_kind": "event",
+        "people": ["老周"],
+        "objects": ["蛋糕"],
+        "trigger_text": "",
+        "trigger_keywords": [],
+        "entities": [],
+        "status": "active",
+        "cooldown_hours": 0,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-06-27T00:00:00+00:00",
+        "updated_at": "2026-06-27T00:00:00+00:00",
+    }
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=[note]))
+
+    result = asyncio.run(
+        service.search_notes_contextual("今天提到老周和蛋糕了吗", session_tag="6.27", mark_triggered=False)
+    )
+
+    assert result["count"] == 1
+    assert result["items"][0]["id"] == "note-cjk-anchor"
+    assert result["items"][0]["search_mode"] == "entity"
+
+
+def test_contextual_search_skips_resolved_promises():
+    note = {
+        "id": "note-resolved-promise",
+        "session_tag": "6.27",
+        "content": "说好买绿色地毯。",
+        "mem_type": "承诺",
+        "memory_kind": "promise",
+        "promise_text": "买绿色地毯",
+        "trigger_scenarios": ["买东西"],
+        "trigger_text": "买绿色地毯",
+        "trigger_keywords": ["绿色地毯"],
+        "entities": [],
+        "keywords": ["地毯"],
+        "resolved": True,
+        "status": "active",
+        "cooldown_hours": 0,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-06-27T00:00:00+00:00",
+        "updated_at": "2026-06-27T00:00:00+00:00",
+    }
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=[note]))
+
+    result = asyncio.run(service.search_notes_contextual("今天出去买绿色地毯吗", session_tag="6.27", mark_triggered=False))
+
+    assert result["count"] == 0
+
+
+def test_running_joke_contextual_search_surfaces_at_most_one(monkeypatch):
+    rows = [
+        {
+            "id": "joke-1",
+            "session_tag": "6.27",
+            "content": "圆形食物梗一。",
+            "mem_type": "心里那一档",
+            "memory_kind": "running_joke",
+            "joke_text": "圆形食物梗一",
+            "scene_tags": ["圆形食物"],
+            "trigger_text": "",
+            "trigger_keywords": [],
+            "entities": [],
+            "status": "active",
+            "cooldown_hours": 0,
+            "last_used_at": None,
+            "last_triggered_at": None,
+            "trigger_count": 0,
+            "created_at": "2026-06-27T00:00:00+00:00",
+            "updated_at": "2026-06-27T00:00:00+00:00",
+        },
+        {
+            "id": "joke-2",
+            "session_tag": "6.27",
+            "content": "圆形食物梗二。",
+            "mem_type": "心里那一档",
+            "memory_kind": "running_joke",
+            "joke_text": "圆形食物梗二",
+            "scene_tags": ["圆形食物"],
+            "trigger_text": "",
+            "trigger_keywords": [],
+            "entities": [],
+            "status": "active",
+            "cooldown_hours": 0,
+            "last_used_at": None,
+            "last_triggered_at": None,
+            "trigger_count": 0,
+            "created_at": "2026-06-27T00:00:00+00:00",
+            "updated_at": "2026-06-27T00:00:00+00:00",
+        },
+    ]
+    monkeypatch.setattr("shenyu_gateway.mem_notes.random.random", lambda: 0.0)
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=rows))
+
+    result = asyncio.run(service.search_notes_contextual("今天吃圆形食物", session_tag="6.27", limit=3, mark_triggered=False))
+
+    assert result["count"] == 1
+    assert result["items"][0]["search_mode"] == "running_joke"
+
+
+def test_active_validation_accepts_structured_v2_anchors():
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase())
+
+    error = service._active_validation_error(
+        {
+            "status": "active",
+            "mem_type": "关于她的事实",
+            "trigger_text": "",
+            "trigger_keywords": [],
+            "entities": [],
+            "people": ["老周"],
+            "objects": ["蛋糕"],
+        }
+    )
+
+    assert error == ""

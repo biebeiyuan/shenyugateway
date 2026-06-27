@@ -414,9 +414,14 @@ Inline `[mem]...[/mem]` tag capture has been removed. Mem notes are now written 
 
 Search/injection flow:
 
-1. `ContextBuilder` calls `MemNoteService.search_notes()` when enabled.
-2. Active rows are matched mainly by `trigger_text` and `trigger_keywords` together, with content as a fallback. Contextual injection also has a semantic fallback through the recall index.
-3. Cooldown blocks frequent repeats. Relevant hits are rendered cleanly in the `mem` layer, without tier/importance/heat.
+1. `ContextBuilder` calls `MemNoteService.search_notes_contextual()` when enabled.
+2. Active rows are matched through narrow anchors first: legacy `entities`, then v2 `people`, `places`, `objects`, and `keywords`. Chinese anchors use recall-token matching so names and objects still match inside normal no-space Chinese sentences.
+3. `running_joke` rows use `scene_tags` plus a time-decay serendipity gate instead of a fixed probability: just-used jokes are suppressed, then gradually recover toward 0.3 after a month. At most one running joke is injected per turn, and `last_used_at` is updated only when it actually surfaces.
+4. `promise` rows with `resolved=true` stay available for admin/manual review but are skipped by automatic context injection.
+5. Semantic recall is capped as anchored support and no longer fills empty slots with generic matches.
+6. Cooldown blocks frequent repeats. Relevant hits are rendered as short bracket-style thoughts in the `mem` layer, with optional person/place/object anchors.
+
+The active-ready validation accepts either legacy triggers (`trigger_text`, `trigger_keywords`, `entities`) or v2 structured anchors (`people`, `places`, `objects`, `keywords`, `scene_tags`, `trigger_scenarios`).
 
 Endpoints:
 

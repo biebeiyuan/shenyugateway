@@ -85,6 +85,29 @@ ALTER TABLE shenyu_mem_notes
     )
   );
 
+-- v2 structured anchors are valid active triggers too.
+ALTER TABLE shenyu_mem_notes
+  DROP CONSTRAINT IF EXISTS shenyu_mem_notes_active_ready_check;
+
+ALTER TABLE shenyu_mem_notes
+  ADD CONSTRAINT shenyu_mem_notes_active_ready_check CHECK (
+    status <> 'active'
+    OR (
+      coalesce(mem_type, '') IN ('她为我做的事', '我为她做的事', '关于她的事实', '关于我的事', '心里那一档', '承诺')
+      AND (
+        btrim(trigger_text) <> ''
+        OR coalesce(cardinality(trigger_keywords), 0) > 0
+        OR coalesce(cardinality(entities), 0) > 0
+        OR coalesce(cardinality(people), 0) > 0
+        OR coalesce(cardinality(places), 0) > 0
+        OR coalesce(cardinality(objects), 0) > 0
+        OR coalesce(cardinality(keywords), 0) > 0
+        OR coalesce(cardinality(scene_tags), 0) > 0
+        OR coalesce(cardinality(trigger_scenarios), 0) > 0
+      )
+    )
+  );
+
 -- ============================================================
 -- 7. GIN indexes for array fields
 -- ============================================================
