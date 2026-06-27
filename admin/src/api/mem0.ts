@@ -24,6 +24,7 @@ export async function fetchMemNotes(params: {
   session_tag?: string
   q?: string
   mem_type?: string
+  memory_kind?: string
 }): Promise<{ items: MemNoteItem[]; count: number }> {
   const qs = new URLSearchParams()
   if (params.status) qs.set('status', params.status)
@@ -31,6 +32,7 @@ export async function fetchMemNotes(params: {
   if (params.session_tag) qs.set('session_tag', params.session_tag)
   if (params.q) qs.set('q', params.q)
   if (params.mem_type) qs.set('mem_type', params.mem_type)
+  if (params.memory_kind) qs.set('memory_kind', params.memory_kind)
   const { data } = await api.get(`/api/gateway/mem-notes?${qs.toString()}`)
   return data
 }

@@ -786,3 +786,76 @@ def test_mark_triggered_logs_update_failures(caplog):
     assert result["ok"] is True
     assert result["count"] == 1
     assert "Failed to mark mem note triggered: id=note-1 error=update failed" in caplog.text
+
+
+def test_running_joke_serendipity_rate_time_decay():
+    from datetime import datetime, timezone, timedelta
+    from shenyu_gateway.mem_notes import running_joke_serendipity_rate
+
+    now = datetime(2026, 6, 27, 12, 0, 0, tzinfo=timezone.utc)
+
+    assert running_joke_serendipity_rate(None, now) == 0.3
+    assert running_joke_serendipity_rate("", now) == 0.3
+
+    just_now = now - timedelta(hours=1)
+    assert running_joke_serendipity_rate(just_now, now) == 0.0
+
+    two_days = now - timedelta(days=2)
+    assert running_joke_serendipity_rate(two_days, now) == 0.0
+
+    exactly_3 = now - timedelta(days=3)
+    rate_3 = running_joke_serendipity_rate(exactly_3, now)
+    assert 0.09 <= rate_3 <= 0.11
+
+    week = now - timedelta(days=8)
+    rate_8 = running_joke_serendipity_rate(week, now)
+    assert 0.1 < rate_8 < 0.2
+
+    two_weeks = now - timedelta(days=14)
+    rate_14 = running_joke_serendipity_rate(two_weeks, now)
+    assert 0.19 <= rate_14 <= 0.21
+
+    three_weeks = now - timedelta(days=22)
+    rate_22 = running_joke_serendipity_rate(three_weeks, now)
+    assert 0.2 < rate_22 < 0.3
+
+    month = now - timedelta(days=30)
+    rate_30 = running_joke_serendipity_rate(month, now)
+    assert 0.29 <= rate_30 <= 0.31
+
+    long_ago = now - timedelta(days=100)
+    assert running_joke_serendipity_rate(long_ago, now) == 0.3
+
+    iso_str = (now - timedelta(days=10)).isoformat()
+    rate_str = running_joke_serendipity_rate(iso_str, now)
+    assert 0.1 < rate_str < 0.2
+
+
+def test_create_note_with_v2_fields():
+    supabase = FakeSupabase()
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), supabase)
+
+    result = asyncio.run(
+        service.create_note(
+            content="老周过生日时她做了蛋糕。",
+            session_tag="6.27",
+            mem_type="她为我做的事",
+            memory_kind="event",
+            people=["老周"],
+            places=["家里"],
+            objects=["蛋糕"],
+            keywords=["生日"],
+            importance=3,
+            event_time="2026-06-15",
+        )
+    )
+
+    assert result["ok"] is True
+    inserted = supabase.inserts[-1]["data"]
+    assert inserted["memory_kind"] == "event"
+    assert inserted["people"] == ["老周"]
+    assert inserted["places"] == ["家里"]
+    assert inserted["objects"] == ["蛋糕"]
+    assert inserted["keywords"] == ["生日"]
+    assert inserted["importance"] == 3
+    assert inserted["event_time"] == "2026-06-15"

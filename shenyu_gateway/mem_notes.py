@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import random
 import re
 from datetime import timedelta
 from typing import Any, Optional
@@ -13,6 +14,10 @@ from .runtime import iso_now, now as _now, parse_ts as _parse_ts
 
 MEM_NOTE_TYPES = ("她为我做的事", "我为她做的事", "关于她的事实", "关于我的事", "心里那一档", "承诺")
 MEM_NOTE_STATUSES = ("captured", "active", "paused", "archived")
+MEM_NOTE_MEMORY_KINDS = (
+    "event", "person_fact", "social", "trip", "object", "preference",
+    "routine", "promise", "running_joke", "thread",
+)
 _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
@@ -151,9 +156,46 @@ MEM_NOTE_PATCH_FIELDS = {
     "mem_type",
     "trigger_text",
     "trigger_keywords",
+    "entities",
     "status",
     "cooldown_hours",
     "review_note",
+    # v2 structured fields
+    "summary",
+    "memory_kind",
+    "people",
+    "places",
+    "objects",
+    "keywords",
+    "event_time",
+    "importance",
+    "mention_count",
+    "promotion_score",
+    "decay_after",
+    # promise
+    "promise_text",
+    "trigger_scenarios",
+    "due_hint",
+    "resolved",
+    "resolved_at",
+    "next_action",
+    "privacy_level",
+    # running_joke
+    "joke_text",
+    "scene_tags",
+    "last_used_at",
+    # routine
+    "routine_domain",
+    "pattern",
+    "phase",
+    "constraints",
+    "last_confirmed_at",
+    # thread
+    "topic",
+    "last_position",
+    "open_questions",
+    "next_prompt",
+    "thread_resolved",
 }
 MEM_NOTE_BULK_UPDATE_MAX = 200
 _SUGGESTION_SEED_KEYWORDS = (
@@ -209,6 +251,22 @@ _TRIGGER_PHRASE_SPLIT_RE = re.compile(
     r"记得|关于|感觉|觉得|知道|希望|需要|可以|不能|不要|给我|给她|帮我|帮她|陪我|陪她|"
     r"为我|为她|让我|让她|把|被|是|有|会|要|想|在|跟|对"
 )
+
+
+_WORD_BOUNDARY_CACHE: dict[str, re.Pattern[str]] = {}
+
+
+def _word_boundary_match(needle_lower: str, haystack_lower: str) -> bool:
+    if not needle_lower:
+        return False
+    if len(needle_lower) <= 1:
+        return needle_lower in haystack_lower.split()
+    pat = _WORD_BOUNDARY_CACHE.get(needle_lower)
+    if pat is None:
+        escaped = re.escape(needle_lower)
+        pat = re.compile(r"(?:^|(?<=[\s,;。，、！？/]))" + escaped + r"(?=$|[\s,;。，、！？/])")
+        _WORD_BOUNDARY_CACHE[needle_lower] = pat
+    return bool(pat.search(haystack_lower))
 
 
 def _overlap(query: str, text: str) -> float:
@@ -446,6 +504,83 @@ def _low_information_semantic_query(query: str) -> bool:
     return False
 
 
+_ENTITY_NAME_PATTERN = re.compile(
+    r"(?:老|小|阿)[一-鿿]"
+    r"|[一-鿿]{1,3}(?:哥|姐|叔|婶|阿姨|姑|舅)"
+    r"|[一-鿿]{2,4}(?:省|市|区|县|镇|村|国|山|湖|河|江)"
+)
+_ENTITY_ENGLISH_NAME = re.compile(r"\b[A-Z][a-z]{1,15}(?:\s[A-Z][a-z]{1,15})?\b")
+_ENTITY_STOP_WORDS = {
+    "什么", "那个", "这个", "一下", "可以", "不是", "还是", "为什么",
+    "现在", "以后", "自己", "我们", "你们", "他们", "她们", "怎么",
+    "没有", "不会", "知道", "觉得", "一些", "所以", "因为", "如果",
+    "已经", "这样", "那样", "于是", "然后", "关于", "虽然", "但是",
+}
+
+
+def _auto_extract_entities(content: str) -> list[str]:
+    if not content:
+        return []
+    entities: list[str] = []
+    seen: set[str] = set()
+
+    for match in _ENTITY_NAME_PATTERN.finditer(content):
+        name = match.group().strip()
+        if name and name.lower() not in seen and name not in _ENTITY_STOP_WORDS:
+            seen.add(name.lower())
+            entities.append(name)
+
+    for match in _ENTITY_ENGLISH_NAME.finditer(content):
+        name = match.group().strip()
+        if name and name.lower() not in seen and len(name) >= 2:
+            seen.add(name.lower())
+            entities.append(name)
+
+    return entities[:16]
+
+
+def running_joke_serendipity_rate(last_used_at: Any, now: Any = None) -> float:
+    if now is None:
+        now = _now()
+    if not last_used_at:
+        return 0.3
+    if isinstance(last_used_at, str):
+        last_used_at = _parse_ts(last_used_at)
+    if not last_used_at:
+        return 0.3
+    days = (now - last_used_at).total_seconds() / 86400
+    if days < 3:
+        return 0.0
+    if days < 14:
+        return 0.1 + (days - 3) / 11 * 0.1
+    if days < 30:
+        return 0.2 + (days - 14) / 16 * 0.1
+    return 0.3
+
+
+# Select clause covering all v2 fields for list/get/search queries
+_MEM_NOTE_SELECT_FIELDS = (
+    "id,session_tag,content,mem_type,trigger_text,trigger_keywords,entities,status,"
+    "cooldown_hours,last_triggered_at,trigger_count,source_model,source_session_id,"
+    "source_excerpt,review_note,reviewed_at,created_at,updated_at,"
+    "summary,memory_kind,people,places,objects,keywords,event_time,"
+    "importance,confidence,mention_count,promotion_score,decay_after,"
+    "promise_text,trigger_scenarios,due_hint,resolved,resolved_at,next_action,privacy_level,"
+    "joke_text,scene_tags,last_used_at,"
+    "routine_domain,pattern,phase,constraints,last_confirmed_at,"
+    "topic,last_position,open_questions,next_prompt,thread_resolved"
+)
+
+_MEM_NOTE_SELECT_FIELDS_LIGHT = (
+    "id,session_tag,content,mem_type,trigger_text,trigger_keywords,entities,status,"
+    "cooldown_hours,last_triggered_at,trigger_count,source_model,created_at,updated_at,"
+    "summary,memory_kind,people,places,objects,keywords,event_time,"
+    "importance,mention_count,promotion_score,"
+    "promise_text,resolved,joke_text,scene_tags,last_used_at,"
+    "routine_domain,pattern,topic,thread_resolved"
+)
+
+
 class MemNoteService:
     def __init__(self, cfg: Any, supabase_client: Any):
         self.cfg = cfg
@@ -474,10 +609,7 @@ class MemNoteService:
             "status": "eq.active",
             "order": "updated_at.desc",
             "limit": "160",
-            "select": (
-                "id,session_tag,content,mem_type,trigger_text,trigger_keywords,status,"
-                "cooldown_hours,last_triggered_at,trigger_count,source_model,created_at,updated_at"
-            ),
+            "select": _MEM_NOTE_SELECT_FIELDS_LIGHT,
         }
         if session_tag:
             params["session_tag"] = f"eq.{session_tag}"
@@ -527,37 +659,79 @@ class MemNoteService:
             return {"ok": True, "query": clean_query, "count": 0, "items": []}
 
         target_limit = max(1, min(int(limit or 3), 5))
-        keyword_min_score = self._float_range(
-            getattr(self.cfg, "mem_note_context_keyword_min_score", CONTEXT_KEYWORD_MIN_SCORE),
-            CONTEXT_KEYWORD_MIN_SCORE,
-            0.0,
-            1.0,
+
+        # Load active notes once for entity matching
+        active_rows = await self._load_active_rows(session_tag)
+
+        # --- Layer 0: running_joke serendipity (scene_tag match + random gate) ---
+        joke_items = self._running_joke_serendipity_matches(
+            clean_query, active_rows, session_id=session_id, store=store
         )
-        keyword_result = await self.search_notes(
-            clean_query,
-            session_tag=session_tag,
-            limit=target_limit,
-            mark_triggered=False,
-            min_score=keyword_min_score,
-            session_id=session_id,
-            store=store,
-            cooldown_hours=self._context_cooldown_hours(),
-            dedupe_turns=self._context_dedupe_turns(),
-        )
-        items = list(keyword_result.get("items") or [])
+        items = joke_items[:target_limit]
         selected_ids = {str(item.get("id") or "") for item in items if item.get("id")}
 
-        if not items and not _low_information_semantic_query(clean_query):
-            semantic_items = await self._semantic_search_notes(
+        # --- Layer 1: entity match (precise, no threshold) ---
+        entity_items = self._entity_match_notes(
+            clean_query,
+            active_rows,
+            session_id=session_id,
+            store=store,
+            exclude_ids=selected_ids,
+        )
+        for ent_item in entity_items:
+            ent_id = str(ent_item.get("id") or "")
+            if ent_id and ent_id not in selected_ids:
+                items.append(ent_item)
+                selected_ids.add(ent_id)
+                if len(items) >= target_limit:
+                    break
+
+        # --- Layer 2: keyword search (fill remaining slots) ---
+        if len(items) < target_limit:
+            keyword_min_score = self._float_range(
+                getattr(self.cfg, "mem_note_context_keyword_min_score", CONTEXT_KEYWORD_MIN_SCORE),
+                CONTEXT_KEYWORD_MIN_SCORE,
+                0.0,
+                1.0,
+            )
+            keyword_result = await self.search_notes(
                 clean_query,
                 session_tag=session_tag,
                 limit=target_limit,
+                mark_triggered=False,
+                min_score=keyword_min_score,
+                session_id=session_id,
+                store=store,
+                cooldown_hours=self._context_cooldown_hours(),
+                dedupe_turns=self._context_dedupe_turns(),
+            )
+            for kw_item in keyword_result.get("items") or []:
+                kw_id = str(kw_item.get("id") or "")
+                if kw_id and kw_id not in selected_ids:
+                    items.append(kw_item)
+                    selected_ids.add(kw_id)
+                    if len(items) >= target_limit:
+                        break
+
+        # --- Layer 3: semantic search (anchored rerank only, not slot-filler) ---
+        # Semantic results are only added when they have strong anchor support
+        # (is_strong_semantic or is_anchored_semantic via _semantic_search_notes).
+        # Cap at 1 item to avoid dominating the recall window unanchored.
+        if not _low_information_semantic_query(clean_query):
+            semantic_items = await self._semantic_search_notes(
+                clean_query,
+                session_tag=session_tag,
+                limit=1,
                 exclude_ids=selected_ids,
                 recall_service=recall_service,
                 session_id=session_id,
                 store=store,
             )
-            items.extend(semantic_items)
+            for sem_item in semantic_items:
+                sem_id = str(sem_item.get("id") or "")
+                if sem_id and sem_id not in selected_ids and len(items) < target_limit:
+                    items.append(sem_item)
+                    selected_ids.add(sem_id)
 
         items = items[:target_limit]
         if mark_triggered and items:
@@ -574,6 +748,7 @@ class MemNoteService:
         session_tag: Optional[str] = None,
         q: str = "",
         mem_type: Optional[str] = None,
+        memory_kind: Optional[str] = None,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "items": [], "error": "Supabase is not configured."}
@@ -581,11 +756,7 @@ class MemNoteService:
         params: dict[str, str] = {
             "order": "updated_at.desc",
             "limit": str(max(1, min(int(limit or 50), 200))),
-            "select": (
-                "id,session_tag,content,mem_type,trigger_text,trigger_keywords,status,"
-                "cooldown_hours,last_triggered_at,trigger_count,source_model,source_session_id,"
-                "source_excerpt,review_note,reviewed_at,created_at,updated_at"
-            ),
+            "select": _MEM_NOTE_SELECT_FIELDS,
         }
         if status != "all":
             params["status"] = f"eq.{status}"
@@ -593,6 +764,8 @@ class MemNoteService:
             params["session_tag"] = f"eq.{session_tag}"
         if mem_type and mem_type in MEM_NOTE_TYPES:
             params["mem_type"] = f"eq.{mem_type}"
+        if memory_kind and memory_kind in MEM_NOTE_MEMORY_KINDS:
+            params["memory_kind"] = f"eq.{memory_kind}"
         rows = await self.supabase.query("shenyu_mem_notes", params)
 
         terms = _terms(q)
@@ -612,11 +785,41 @@ class MemNoteService:
         mem_type: Optional[str] = None,
         trigger_text: Any = "",
         trigger_keywords: Any = None,
+        entities: Any = None,
         status: str = "active",
         cooldown_hours: Any = None,
         review_note: Any = "",
         replaces: Optional[list[Any]] = None,
         source_model: str = "tool:shenyu_write_mem_note",
+        # v2 fields
+        summary: Any = None,
+        memory_kind: Optional[str] = None,
+        people: Any = None,
+        places: Any = None,
+        objects: Any = None,
+        keywords: Any = None,
+        event_time: Any = None,
+        importance: Any = None,
+        # promise
+        promise_text: Any = None,
+        trigger_scenarios: Any = None,
+        due_hint: Any = None,
+        resolved: Any = None,
+        next_action: Any = None,
+        privacy_level: Any = None,
+        # running_joke
+        joke_text: Any = None,
+        scene_tags: Any = None,
+        # routine
+        routine_domain: Any = None,
+        pattern: Any = None,
+        phase: Any = None,
+        constraints: Any = None,
+        # thread
+        topic: Any = None,
+        last_position: Any = None,
+        open_questions: Any = None,
+        next_prompt: Any = None,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured."}
@@ -642,19 +845,105 @@ class MemNoteService:
             payload["mem_type"] = resolved_type
 
         normalized_trigger = _normalize_text(trigger_text).strip()
-        keywords = self._keyword_list(trigger_keywords)
-        if resolved_status == "active" and not normalized_trigger and not keywords:
+        resolved_trigger_keywords = self._keyword_list(trigger_keywords)
+        if resolved_status == "active" and not normalized_trigger and not resolved_trigger_keywords:
             normalized_trigger = normalized_content
         if normalized_trigger:
             payload["trigger_text"] = normalized_trigger
 
-        if keywords:
-            payload["trigger_keywords"] = keywords
+        if resolved_trigger_keywords:
+            payload["trigger_keywords"] = resolved_trigger_keywords
+
+        resolved_entities = self._entity_list(entities)
+        if not resolved_entities:
+            resolved_entities = _auto_extract_entities(normalized_content)
+        if resolved_entities:
+            payload["entities"] = resolved_entities
 
         normalized_review_note = _normalize_text(review_note).strip()
         if normalized_review_note:
             payload["review_note"] = normalized_review_note
             payload["reviewed_at"] = iso_now()
+
+        # v2 structured fields
+        normalized_summary = _normalize_text(summary).strip() if summary else ""
+        if normalized_summary:
+            payload["summary"] = normalized_summary
+        resolved_kind = self._memory_kind(memory_kind)
+        if resolved_kind:
+            payload["memory_kind"] = resolved_kind
+        resolved_people = self._entity_list(people)
+        if resolved_people:
+            payload["people"] = resolved_people
+        resolved_places = self._entity_list(places)
+        if resolved_places:
+            payload["places"] = resolved_places
+        resolved_objects = self._entity_list(objects)
+        if resolved_objects:
+            payload["objects"] = resolved_objects
+        resolved_keywords = self._keyword_list(keywords)
+        if resolved_keywords:
+            payload["keywords"] = resolved_keywords
+        normalized_event_time = _normalize_text(event_time).strip() if event_time else ""
+        if normalized_event_time:
+            payload["event_time"] = normalized_event_time
+        if importance is not None:
+            payload["importance"] = self._int_range(importance, 1, 0, 5)
+
+        # promise fields
+        normalized_promise = _normalize_text(promise_text).strip() if promise_text else ""
+        if normalized_promise:
+            payload["promise_text"] = normalized_promise
+        resolved_scenarios = self._keyword_list(trigger_scenarios)
+        if resolved_scenarios:
+            payload["trigger_scenarios"] = resolved_scenarios
+        normalized_due = _normalize_text(due_hint).strip() if due_hint else ""
+        if normalized_due:
+            payload["due_hint"] = normalized_due
+        if resolved is not None:
+            payload["resolved"] = bool(resolved)
+        normalized_next_action = _normalize_text(next_action).strip() if next_action else ""
+        if normalized_next_action:
+            payload["next_action"] = normalized_next_action
+        normalized_privacy = _normalize_text(privacy_level).strip() if privacy_level else ""
+        if normalized_privacy:
+            payload["privacy_level"] = normalized_privacy
+
+        # running_joke fields
+        normalized_joke = _normalize_text(joke_text).strip() if joke_text else ""
+        if normalized_joke:
+            payload["joke_text"] = normalized_joke
+        resolved_scene_tags = self._keyword_list(scene_tags)
+        if resolved_scene_tags:
+            payload["scene_tags"] = resolved_scene_tags
+
+        # routine fields
+        normalized_domain = _normalize_text(routine_domain).strip() if routine_domain else ""
+        if normalized_domain:
+            payload["routine_domain"] = normalized_domain
+        normalized_pattern = _normalize_text(pattern).strip() if pattern else ""
+        if normalized_pattern:
+            payload["pattern"] = normalized_pattern
+        normalized_phase = _normalize_text(phase).strip() if phase else ""
+        if normalized_phase:
+            payload["phase"] = normalized_phase
+        resolved_constraints = self._keyword_list(constraints)
+        if resolved_constraints:
+            payload["constraints"] = resolved_constraints
+
+        # thread fields
+        normalized_topic = _normalize_text(topic).strip() if topic else ""
+        if normalized_topic:
+            payload["topic"] = normalized_topic
+        normalized_position = _normalize_text(last_position).strip() if last_position else ""
+        if normalized_position:
+            payload["last_position"] = normalized_position
+        resolved_questions = self._keyword_list(open_questions)
+        if resolved_questions:
+            payload["open_questions"] = resolved_questions
+        normalized_next_prompt = _normalize_text(next_prompt).strip() if next_prompt else ""
+        if normalized_next_prompt:
+            payload["next_prompt"] = normalized_next_prompt
 
         active_error = self._active_validation_error(payload)
         if active_error:
@@ -837,16 +1126,22 @@ class MemNoteService:
     def render_notes_for_context(self, notes: list[dict[str, Any]]) -> str:
         if not notes:
             return ""
-        lines = ["## 我之前写下的便签，可能用的到。"]
+        lines: list[str] = []
         for note in notes:
-            mem_type = (note.get("mem_type") or "").strip()
-            content = _shorten(note.get("content") or "", 260)
-            if not content:
+            summary = (note.get("summary") or "").strip()
+            content = _shorten(note.get("content") or "", 200)
+            text = summary or content
+            if not text:
                 continue
-            if mem_type:
-                lines.append(f"- {mem_type}：{content}")
-            else:
-                lines.append(f"- {content}")
+            anchors: list[str] = []
+            for person in (note.get("people") or [])[:2]:
+                anchors.append(f"人：{person}")
+            for place in (note.get("places") or [])[:1]:
+                anchors.append(f"地：{place}")
+            for obj in (note.get("objects") or [])[:1]:
+                anchors.append(f"物：{obj}")
+            anchor_suffix = f"（{'；'.join(anchors)}）" if anchors else ""
+            lines.append(f"（{text}{anchor_suffix}）")
         return "\n".join(lines)
 
 
@@ -861,17 +1156,23 @@ class MemNoteService:
         type_score = _overlap(query, mem_type)
         recency_score = self._recency_score(row.get("updated_at") or row.get("created_at"))
         never_seen_bonus = 0.05 if not row.get("last_triggered_at") else 0.0
+
+        anchor_score, anchor_hits = self._anchor_overlap(query, row)
+
         score = min(
             1.0,
-            trigger_score * 0.55
+            trigger_score * 0.50
             + content_score * 0.30
-            + type_score * 0.05
-            + recency_score * 0.05
+            + anchor_score * 0.10
+            + type_score * 0.02
+            + recency_score * 0.03
             + never_seen_bonus,
         )
         reasons = []
         if trigger_score > 0:
             reasons.append("trigger" + (":" + ",".join(trigger_hits[:5]) if trigger_hits else ""))
+        if anchor_score > 0:
+            reasons.append("anchor" + (":" + ",".join(anchor_hits[:3]) if anchor_hits else ""))
         if content_score > 0:
             reasons.append("content")
         if type_score > 0:
@@ -879,6 +1180,21 @@ class MemNoteService:
         if never_seen_bonus:
             reasons.append("not recently surfaced")
         return score, reasons or ["soft match"]
+
+    def _anchor_overlap(self, query: str, row: dict) -> tuple[float, list[str]]:
+        query_lower = query.lower()
+        all_anchors: list[str] = []
+        for field in ("people", "places", "objects", "keywords"):
+            all_anchors.extend(row.get(field) or [])
+        if not all_anchors:
+            return 0.0, []
+        hits: list[str] = []
+        for anchor in all_anchors:
+            if _word_boundary_match(anchor.lower(), query_lower):
+                hits.append(anchor)
+        if not hits:
+            return 0.0, []
+        return min(1.0, len(hits) / max(1, len(all_anchors)) + 0.3), hits
 
     def _public_search_item(self, row: dict, reasons: list[str]) -> dict[str, Any]:
         return {
@@ -888,9 +1204,22 @@ class MemNoteService:
             "mem_type": row.get("mem_type") or "",
             "trigger_text": row.get("trigger_text") or "",
             "trigger_keywords": row.get("trigger_keywords") or [],
+            "entities": row.get("entities") or [],
             "matched_by": reasons,
             "created_at": row.get("created_at"),
             "updated_at": row.get("updated_at"),
+            # v2 structured fields
+            "summary": row.get("summary") or "",
+            "memory_kind": row.get("memory_kind") or "",
+            "people": row.get("people") or [],
+            "places": row.get("places") or [],
+            "objects": row.get("objects") or [],
+            "keywords": row.get("keywords") or [],
+            "event_time": row.get("event_time"),
+            "importance": row.get("importance"),
+            "joke_text": row.get("joke_text") or "",
+            "scene_tags": row.get("scene_tags") or [],
+            "last_used_at": row.get("last_used_at"),
         }
 
     def _public_list_item(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -1008,6 +1337,17 @@ class MemNoteService:
             add(clean)
         return result[:8]
 
+    async def _load_active_rows(self, session_tag: Optional[str] = None) -> list[dict[str, Any]]:
+        params: dict[str, str] = {
+            "status": "eq.active",
+            "order": "updated_at.desc",
+            "limit": "160",
+            "select": _MEM_NOTE_SELECT_FIELDS_LIGHT,
+        }
+        if session_tag:
+            params["session_tag"] = f"eq.{session_tag}"
+        return await self.supabase.query("shenyu_mem_notes", params)
+
     async def _get_notes_by_ids(self, note_ids: list[str]) -> dict[str, dict[str, Any]]:
         if not note_ids or not self.supabase:
             return {}
@@ -1026,11 +1366,7 @@ class MemNoteService:
             {
                 "id": "in.(" + ",".join(unique_ids) + ")",
                 "limit": str(len(unique_ids)),
-                "select": (
-                    "id,session_tag,content,mem_type,trigger_text,trigger_keywords,status,"
-                    "cooldown_hours,last_triggered_at,trigger_count,source_model,source_session_id,"
-                    "source_excerpt,review_note,reviewed_at,created_at,updated_at"
-                ),
+                "select": _MEM_NOTE_SELECT_FIELDS,
             },
         )
         result: dict[str, dict[str, Any]] = {}
@@ -1039,6 +1375,97 @@ class MemNoteService:
             if note_id:
                 result[note_id] = row
         return result
+
+    def _running_joke_serendipity_matches(
+        self,
+        query: str,
+        rows: list[dict],
+        *,
+        session_id: Optional[str] = None,
+        store: Any = None,
+    ) -> list[dict[str, Any]]:
+        query_lower = query.lower()
+        query_tokens = set(query_lower.split())
+        hits: list[dict[str, Any]] = []
+        for row in rows:
+            if (row.get("memory_kind") or "") != "running_joke":
+                continue
+            scene_tags = row.get("scene_tags") or []
+            if not scene_tags:
+                continue
+            matched_tag = None
+            for tag in scene_tags:
+                if tag.lower() in query_tokens or tag.lower() in query_lower:
+                    matched_tag = tag
+                    break
+            if not matched_tag:
+                continue
+            rate = running_joke_serendipity_rate(row.get("last_used_at"))
+            if rate <= 0 or random.random() > rate:
+                continue
+            if self._should_skip_retrigger(
+                row,
+                session_id=session_id,
+                store=store,
+                cooldown_hours=self._context_cooldown_hours(),
+                dedupe_turns=self._context_dedupe_turns(),
+            ):
+                continue
+            item = self._public_search_item(row, [f"running_joke:{matched_tag}"])
+            item["search_mode"] = "running_joke"
+            hits.append(item)
+        return hits
+
+    def _entity_match_notes(
+        self,
+        query: str,
+        rows: list[dict],
+        *,
+        session_id: Optional[str] = None,
+        store: Any = None,
+        exclude_ids: Optional[set[str]] = None,
+    ) -> list[dict[str, Any]]:
+        exclude_ids = exclude_ids or set()
+        query_lower = query.lower()
+        hits: list[dict[str, Any]] = []
+        for row in rows:
+            note_id = str(row.get("id") or "")
+            if note_id in exclude_ids:
+                continue
+            all_anchors: list[tuple[str, str]] = []
+            for ent in (row.get("entities") or []):
+                all_anchors.append((ent, "entity"))
+            for p in (row.get("people") or []):
+                all_anchors.append((p, "person"))
+            for p in (row.get("places") or []):
+                all_anchors.append((p, "place"))
+            for o in (row.get("objects") or []):
+                all_anchors.append((o, "object"))
+            for k in (row.get("keywords") or []):
+                all_anchors.append((k, "keyword"))
+            if not all_anchors:
+                continue
+            matched_anchor = None
+            matched_type = None
+            for anchor, atype in all_anchors:
+                if _word_boundary_match(anchor.lower(), query_lower):
+                    matched_anchor = anchor
+                    matched_type = atype
+                    break
+            if not matched_anchor:
+                continue
+            if self._should_skip_retrigger(
+                row,
+                session_id=session_id,
+                store=store,
+                cooldown_hours=self._context_cooldown_hours(),
+                dedupe_turns=self._context_dedupe_turns(),
+            ):
+                continue
+            item = self._public_search_item(row, [f"{matched_type}:{matched_anchor}"])
+            item["search_mode"] = "entity"
+            hits.append(item)
+        return hits
 
     async def _semantic_search_notes(
         self,
@@ -1187,6 +1614,14 @@ class MemNoteService:
                 row.get("trigger_text") or "",
                 " ".join(str(item) for item in row.get("trigger_keywords") or []),
                 row.get("review_note") or "",
+                " ".join(str(item) for item in row.get("entities") or []),
+                " ".join(str(item) for item in row.get("people") or []),
+                " ".join(str(item) for item in row.get("places") or []),
+                " ".join(str(item) for item in row.get("objects") or []),
+                row.get("summary") or "",
+                row.get("topic") or "",
+                row.get("promise_text") or "",
+                row.get("joke_text") or "",
             ]
         )
 
@@ -1262,18 +1697,22 @@ class MemNoteService:
         return self._in_cooldown(row, cooldown_hours=cooldown_hours)
 
     async def _mark_triggered(self, rows: list[dict]) -> None:
+        now_ts = iso_now()
         for row in rows:
             note_id = row.get("id")
             if not note_id:
                 continue
             try:
+                patch: dict[str, Any] = {
+                    "last_triggered_at": now_ts,
+                    "trigger_count": int(row.get("trigger_count") or 0) + 1,
+                }
+                if (row.get("memory_kind") or "") == "running_joke":
+                    patch["last_used_at"] = now_ts
                 await self.supabase.update(
                     "shenyu_mem_notes",
                     {"id": note_id},
-                    {
-                        "last_triggered_at": iso_now(),
-                        "trigger_count": int(row.get("trigger_count") or 0) + 1,
-                    },
+                    patch,
                 )
             except Exception as exc:
                 logger.warning("Failed to mark mem note triggered: id=%s error=%s", note_id, exc)
@@ -1288,7 +1727,7 @@ class MemNoteService:
             {
                 "id": f"eq.{note_id}",
                 "limit": "1",
-                "select": "id,content,mem_type,trigger_text,trigger_keywords,status,cooldown_hours,review_note",
+                "select": _MEM_NOTE_SELECT_FIELDS,
             },
         )
         return rows[0] if rows else None
@@ -1307,12 +1746,82 @@ class MemNoteService:
             update["trigger_text"] = _normalize_text(patch.get("trigger_text")).strip()
         if "trigger_keywords" in patch:
             update["trigger_keywords"] = self._keyword_list(patch.get("trigger_keywords"))
+        if "entities" in patch:
+            update["entities"] = self._entity_list(patch.get("entities"))
         if "status" in patch:
             update["status"] = self._status(patch.get("status"), fallback="captured")
         if "cooldown_hours" in patch:
             update["cooldown_hours"] = self._int_range(patch.get("cooldown_hours"), 72, 0, 8760)
         if "review_note" in patch:
             update["review_note"] = _normalize_text(patch.get("review_note")).strip()
+        # v2 fields
+        if "summary" in patch:
+            update["summary"] = _normalize_text(patch.get("summary")).strip() or None
+        if "memory_kind" in patch:
+            update["memory_kind"] = self._memory_kind(patch.get("memory_kind"))
+        if "people" in patch:
+            update["people"] = self._entity_list(patch.get("people"))
+        if "places" in patch:
+            update["places"] = self._entity_list(patch.get("places"))
+        if "objects" in patch:
+            update["objects"] = self._entity_list(patch.get("objects"))
+        if "keywords" in patch:
+            update["keywords"] = self._keyword_list(patch.get("keywords"))
+        if "event_time" in patch:
+            update["event_time"] = _normalize_text(patch.get("event_time")).strip() or None
+        if "importance" in patch:
+            update["importance"] = self._int_range(patch.get("importance"), 1, 0, 5)
+        if "mention_count" in patch:
+            update["mention_count"] = self._int_range(patch.get("mention_count"), 0, 0, 9999)
+        if "promotion_score" in patch:
+            update["promotion_score"] = self._float_range(patch.get("promotion_score"), 0.0, 0.0, 100.0)
+        if "decay_after" in patch:
+            update["decay_after"] = _normalize_text(patch.get("decay_after")).strip() or None
+        # promise
+        if "promise_text" in patch:
+            update["promise_text"] = _normalize_text(patch.get("promise_text")).strip() or None
+        if "trigger_scenarios" in patch:
+            update["trigger_scenarios"] = self._keyword_list(patch.get("trigger_scenarios"))
+        if "due_hint" in patch:
+            update["due_hint"] = _normalize_text(patch.get("due_hint")).strip() or None
+        if "resolved" in patch:
+            update["resolved"] = bool(patch.get("resolved"))
+        if "resolved_at" in patch:
+            update["resolved_at"] = _normalize_text(patch.get("resolved_at")).strip() or None
+        if "next_action" in patch:
+            update["next_action"] = _normalize_text(patch.get("next_action")).strip() or None
+        if "privacy_level" in patch:
+            update["privacy_level"] = _normalize_text(patch.get("privacy_level")).strip() or None
+        # running_joke
+        if "joke_text" in patch:
+            update["joke_text"] = _normalize_text(patch.get("joke_text")).strip() or None
+        if "scene_tags" in patch:
+            update["scene_tags"] = self._keyword_list(patch.get("scene_tags"))
+        if "last_used_at" in patch:
+            update["last_used_at"] = _normalize_text(patch.get("last_used_at")).strip() or None
+        # routine
+        if "routine_domain" in patch:
+            update["routine_domain"] = _normalize_text(patch.get("routine_domain")).strip() or None
+        if "pattern" in patch:
+            update["pattern"] = _normalize_text(patch.get("pattern")).strip() or None
+        if "phase" in patch:
+            update["phase"] = _normalize_text(patch.get("phase")).strip() or None
+        if "constraints" in patch:
+            update["constraints"] = self._keyword_list(patch.get("constraints"))
+        if "last_confirmed_at" in patch:
+            update["last_confirmed_at"] = _normalize_text(patch.get("last_confirmed_at")).strip() or None
+        # thread
+        if "topic" in patch:
+            update["topic"] = _normalize_text(patch.get("topic")).strip() or None
+        if "last_position" in patch:
+            update["last_position"] = _normalize_text(patch.get("last_position")).strip() or None
+        if "open_questions" in patch:
+            update["open_questions"] = self._keyword_list(patch.get("open_questions"))
+        if "next_prompt" in patch:
+            update["next_prompt"] = _normalize_text(patch.get("next_prompt")).strip() or None
+        if "thread_resolved" in patch:
+            update["thread_resolved"] = bool(patch.get("thread_resolved"))
+
         if update:
             update["reviewed_at"] = iso_now()
         if not update:
@@ -1362,10 +1871,11 @@ class MemNoteService:
         mem_type = row.get("mem_type")
         trigger_text = _normalize_text(row.get("trigger_text")).strip()
         trigger_keywords = self._keyword_list(row.get("trigger_keywords"))
+        entities = self._entity_list(row.get("entities"))
         if mem_type not in MEM_NOTE_TYPES:
             return "active mem note requires a known mem_type value."
-        if not trigger_text and not trigger_keywords:
-            return "active mem note requires trigger_text or trigger_keywords."
+        if not trigger_text and not trigger_keywords and not entities:
+            return "active mem note requires trigger_text, trigger_keywords, or entities."
         return ""
 
     def _mem_type(self, value: Any, allow_empty: bool = False) -> Optional[str]:
@@ -1373,6 +1883,12 @@ class MemNoteService:
         if not raw and allow_empty:
             return None
         return raw if raw in MEM_NOTE_TYPES else "心里那一档"
+
+    def _memory_kind(self, value: Any) -> Optional[str]:
+        raw = _normalize_text(value).strip().lower() if value else ""
+        if not raw:
+            return None
+        return raw if raw in MEM_NOTE_MEMORY_KINDS else None
 
     def _status(self, value: Any, fallback: str = "captured", allow_all: bool = False) -> str:
         raw = _normalize_text(value).strip().lower()
@@ -1397,6 +1913,24 @@ class MemNoteService:
                 seen.add(keyword)
                 result.append(keyword)
         return result[:24]
+
+    def _entity_list(self, value: Any) -> list[str]:
+        if not value:
+            return []
+        if isinstance(value, str):
+            raw_items = re.split(r"[,，、\s]+", value)
+        elif isinstance(value, (list, tuple, set)):
+            raw_items = [str(item) for item in value]
+        else:
+            raw_items = [str(value)]
+        result: list[str] = []
+        seen: set[str] = set()
+        for item in raw_items:
+            entity = item.strip()
+            if entity and entity.lower() not in seen:
+                seen.add(entity.lower())
+                result.append(entity)
+        return result[:32]
 
     def _int_range(self, value: Any, fallback: int, min_value: int, max_value: int) -> int:
         try:

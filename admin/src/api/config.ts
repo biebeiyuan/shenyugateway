@@ -145,6 +145,7 @@ export interface GatewayOverview {
 
 export type MemNoteType = '她为我做的事' | '我为她做的事' | '关于她的事实' | '关于我的事' | '心里那一档' | '承诺'
 export type MemNoteStatus = 'captured' | 'active' | 'paused' | 'archived'
+export type MemoryKind = 'event' | 'person_fact' | 'social' | 'trip' | 'object' | 'preference' | 'routine' | 'promise' | 'running_joke' | 'thread'
 
 export interface MemNoteItem {
   id: string
@@ -153,6 +154,7 @@ export interface MemNoteItem {
   mem_type: MemNoteType | '' | null
   trigger_text: string | null
   trigger_keywords: string[] | null
+  entities: string[] | null
   status: MemNoteStatus
   cooldown_hours: number
   last_triggered_at: string | null
@@ -168,20 +170,80 @@ export interface MemNoteItem {
   suggested_trigger_text?: string
   suggested_trigger_keywords?: string[]
   suggestion_reason?: string
+  // v2 structured fields
+  summary?: string | null
+  memory_kind?: MemoryKind | null
+  people?: string[] | null
+  places?: string[] | null
+  objects?: string[] | null
+  keywords?: string[] | null
+  event_time?: string | null
+  importance?: number | null
+  mention_count?: number | null
+  promotion_score?: number | null
+  decay_after?: string | null
+  // promise
+  promise_text?: string | null
+  trigger_scenarios?: string[] | null
+  due_hint?: string | null
+  resolved?: boolean | null
+  resolved_at?: string | null
+  next_action?: string | null
+  privacy_level?: string | null
+  // running_joke
+  joke_text?: string | null
+  scene_tags?: string[] | null
+  last_used_at?: string | null
+  // routine
+  routine_domain?: string | null
+  pattern?: string | null
+  phase?: string | null
+  constraints?: string[] | null
+  last_confirmed_at?: string | null
+  // thread
+  topic?: string | null
+  last_position?: string | null
+  open_questions?: string[] | null
+  next_prompt?: string | null
+  thread_resolved?: boolean | null
 }
 
-export type MemNotePatch = Partial<
-  Pick<
-    MemNoteItem,
-    | 'content'
-    | 'mem_type'
-    | 'trigger_text'
-    | 'trigger_keywords'
-    | 'status'
-    | 'cooldown_hours'
-    | 'review_note'
-  >
->
+export interface MemNotePatch {
+  content?: string | null
+  mem_type?: string | null
+  trigger_text?: string | null
+  trigger_keywords?: string[] | null
+  entities?: string[] | null
+  status?: string | null
+  cooldown_hours?: number | null
+  review_note?: string | null
+  // v2
+  summary?: string | null
+  memory_kind?: string | null
+  people?: string[] | null
+  places?: string[] | null
+  objects?: string[] | null
+  keywords?: string[] | null
+  event_time?: string | null
+  importance?: number | null
+  promise_text?: string | null
+  trigger_scenarios?: string[] | null
+  due_hint?: string | null
+  resolved?: boolean | null
+  next_action?: string | null
+  privacy_level?: string | null
+  joke_text?: string | null
+  scene_tags?: string[] | null
+  routine_domain?: string | null
+  pattern?: string | null
+  phase?: string | null
+  constraints?: string[] | null
+  topic?: string | null
+  last_position?: string | null
+  open_questions?: string[] | null
+  next_prompt?: string | null
+  thread_resolved?: boolean | null
+}
 
 export interface MemNoteBulkPatch {
   ids?: string[]

@@ -161,10 +161,12 @@ class FakeToolService:
         mem_type=None,
         trigger_text="",
         trigger_keywords=None,
+        entities=None,
         status="active",
         cooldown_hours=None,
         review_note="",
         replaces=None,
+        **kwargs,
     ):
         self.calls.append(
             {

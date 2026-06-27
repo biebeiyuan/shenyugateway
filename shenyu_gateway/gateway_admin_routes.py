@@ -385,6 +385,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         session_tag: Optional[str] = None,
         q: str = "",
         mem_type: Optional[str] = None,
+        memory_kind: Optional[str] = None,
     ):
         result = await MemNoteService(cfg, deps.get_supabase_client()).list_notes(
             status=status,
@@ -392,6 +393,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             session_tag=session_tag,
             q=q,
             mem_type=mem_type,
+            memory_kind=memory_kind,
         )
         if not result.get("ok"):
             raise HTTPException(status_code=400, detail=result.get("error") or "mem note query failed")

@@ -22,6 +22,7 @@ import type {
   MemNotePatch,
   MemNoteStatus,
   MemNoteType,
+  MemoryKind,
 } from '@/api/config'
 import {
   bulkUpdateMemNotes,
@@ -43,6 +44,20 @@ const memTypeOptions: Array<{ label: string; value: MemNoteType | '' }> = [
   { label: '关于我的事', value: '关于我的事' },
   { label: '心里那一档', value: '心里那一档' },
   { label: '承诺', value: '承诺' },
+]
+
+const memoryKindOptions: Array<{ label: string; value: MemoryKind | '' }> = [
+  { label: '全部 kind', value: '' },
+  { label: 'event', value: 'event' },
+  { label: 'person_fact', value: 'person_fact' },
+  { label: 'social', value: 'social' },
+  { label: 'trip', value: 'trip' },
+  { label: 'object', value: 'object' },
+  { label: 'preference', value: 'preference' },
+  { label: 'routine', value: 'routine' },
+  { label: 'promise', value: 'promise' },
+  { label: 'running_joke', value: 'running_joke' },
+  { label: 'thread', value: 'thread' },
 ]
 
 const statusOptions: Array<{ label: string; value: MemNoteStatus | 'all' }> = [
@@ -89,12 +104,23 @@ const deletingNoteId = ref('')
 const bulkSaving = ref(false)
 const selectedNoteIds = ref<string[]>([])
 const keywordDrafts = ref<Record<string, string>>({})
+const entityDrafts = ref<Record<string, string>>({})
 
 const noteStatus = ref<MemNoteStatus | 'all'>('captured')
 const noteType = ref<MemNoteType | ''>('')
+const noteMemoryKind = ref<MemoryKind | ''>('')
 const noteSessionTag = ref('')
 const noteQuery = ref('')
 const noteLimit = ref(50)
+
+const peopleDrafts = ref<Record<string, string>>({})
+const placesDrafts = ref<Record<string, string>>({})
+const objectsDrafts = ref<Record<string, string>>({})
+const keywordsDrafts = ref<Record<string, string>>({})
+const sceneDrafts = ref<Record<string, string>>({})
+const triggerScenariosDrafts = ref<Record<string, string>>({})
+const constraintsDrafts = ref<Record<string, string>>({})
+const openQuestionsDrafts = ref<Record<string, string>>({})
 
 const legacyItems = ref<LegacyAtomicMemoryItem[]>([])
 const loadingLegacy = ref(false)
@@ -181,16 +207,53 @@ async function loadNotes() {
       session_tag: noteSessionTag.value.trim() || undefined,
       q: noteQuery.value.trim() || undefined,
       mem_type: noteType.value || undefined,
+      memory_kind: noteMemoryKind.value || undefined,
     })
     notes.value = result.items || []
     keywordDrafts.value = Object.fromEntries(
       notes.value.map((item) => [item.id, (item.trigger_keywords || []).join('，')]),
+    )
+    entityDrafts.value = Object.fromEntries(
+      notes.value.map((item) => [item.id, (item.entities || []).join('，')]),
+    )
+    peopleDrafts.value = Object.fromEntries(
+      notes.value.map((item) => [item.id, (item.people || []).join('，')]),
+    )
+    placesDrafts.value = Object.fromEntries(
+      notes.value.map((item) => [item.id, (item.places || []).join('，')]),
+    )
+    objectsDrafts.value = Object.fromEntries(
+      notes.value.map((item) => [item.id, (item.objects || []).join('，')]),
+    )
+    keywordsDrafts.value = Object.fromEntries(
+      notes.value.map((item) => [item.id, (item.keywords || []).join('，')]),
+    )
+    sceneDrafts.value = Object.fromEntries(
+      notes.value.map((item) => [item.id, (item.scene_tags || []).join('，')]),
+    )
+    triggerScenariosDrafts.value = Object.fromEntries(
+      notes.value.map((item) => [item.id, (item.trigger_scenarios || []).join('，')]),
+    )
+    constraintsDrafts.value = Object.fromEntries(
+      notes.value.map((item) => [item.id, (item.constraints || []).join('，')]),
+    )
+    openQuestionsDrafts.value = Object.fromEntries(
+      notes.value.map((item) => [item.id, (item.open_questions || []).join('，')]),
     )
     const visibleIds = new Set(notes.value.map((item) => item.id))
     selectedNoteIds.value = selectedNoteIds.value.filter((id) => visibleIds.has(id))
   } catch {
     notes.value = []
     keywordDrafts.value = {}
+    entityDrafts.value = {}
+    peopleDrafts.value = {}
+    placesDrafts.value = {}
+    objectsDrafts.value = {}
+    keywordsDrafts.value = {}
+    sceneDrafts.value = {}
+    triggerScenariosDrafts.value = {}
+    constraintsDrafts.value = {}
+    openQuestionsDrafts.value = {}
     message.error('读取便签失败')
   } finally {
     loadingNotes.value = false
@@ -239,20 +302,62 @@ function applySuggestionsToSelection() {
 }
 
 function notePatch(item: MemNoteItem, status?: MemNoteStatus): MemNotePatch {
-  return {
+  const patch: MemNotePatch = {
     content: item.content,
     mem_type: item.mem_type || null,
     trigger_text: item.trigger_text || '',
     trigger_keywords: splitKeywords(keywordDrafts.value[item.id] || ''),
+    entities: splitKeywords(entityDrafts.value[item.id] || ''),
     status: status || item.status,
     cooldown_hours: item.cooldown_hours,
     review_note: item.review_note || '',
+    // v2 common
+    summary: item.summary || null,
+    memory_kind: item.memory_kind || null,
+    people: splitKeywords(peopleDrafts.value[item.id] || ''),
+    places: splitKeywords(placesDrafts.value[item.id] || ''),
+    objects: splitKeywords(objectsDrafts.value[item.id] || ''),
+    keywords: splitKeywords(keywordsDrafts.value[item.id] || ''),
+    event_time: item.event_time || null,
+    importance: item.importance ?? null,
   }
+  // promise fields
+  if (item.memory_kind === 'promise') {
+    patch.promise_text = item.promise_text || null
+    patch.trigger_scenarios = splitKeywords(triggerScenariosDrafts.value[item.id] || '')
+    patch.due_hint = item.due_hint || null
+    patch.resolved = item.resolved ?? false
+    patch.next_action = item.next_action || null
+    patch.privacy_level = item.privacy_level || null
+  }
+  // running_joke fields
+  if (item.memory_kind === 'running_joke') {
+    patch.joke_text = item.joke_text || null
+    patch.scene_tags = splitKeywords(sceneDrafts.value[item.id] || '')
+  }
+  // routine fields
+  if (item.memory_kind === 'routine') {
+    patch.routine_domain = item.routine_domain || null
+    patch.pattern = item.pattern || null
+    patch.phase = item.phase || null
+    patch.constraints = splitKeywords(constraintsDrafts.value[item.id] || '')
+  }
+  // thread fields
+  if (item.memory_kind === 'thread') {
+    patch.topic = item.topic || null
+    patch.last_position = item.last_position || null
+    patch.open_questions = splitKeywords(openQuestionsDrafts.value[item.id] || '')
+    patch.next_prompt = item.next_prompt || null
+    patch.thread_resolved = item.thread_resolved ?? false
+  }
+  return patch
 }
 
 function activationMissing(item: MemNoteItem): string {
   const hasType = Boolean(item.mem_type)
-  const hasTrigger = Boolean((item.trigger_text || '').trim()) || splitKeywords(keywordDrafts.value[item.id] || '').length > 0
+  const hasTrigger = Boolean((item.trigger_text || '').trim())
+    || splitKeywords(keywordDrafts.value[item.id] || '').length > 0
+    || splitKeywords(entityDrafts.value[item.id] || '').length > 0
   if (!hasType && !hasTrigger) return '激活前需要补 type 和触发条件'
   if (!hasType) return '激活前需要补 type'
   if (!hasTrigger) return '激活前需要补触发条件'
@@ -475,6 +580,7 @@ function formatTime(value?: string | null) {
       <div class="rev-toolbar">
         <NSelect v-model:value="noteStatus" :options="statusOptions" style="width:140px" />
         <NSelect v-model:value="noteType" :options="memTypeOptions" style="width:170px" />
+        <NSelect v-model:value="noteMemoryKind" :options="memoryKindOptions" style="width:150px" />
         <input v-model="noteQuery" class="cal-input" placeholder="搜索正文或触发">
         <input v-model="noteSessionTag" class="cal-input short" placeholder="session_tag">
         <input v-model="noteLimit" class="cal-input tiny" type="number" min="1" max="200">
@@ -502,12 +608,17 @@ function formatTime(value?: string | null) {
           <NCheckbox :checked="selectedNoteIds.includes(item.id)" @update:checked="(checked) => toggleSelected(item.id, checked)" />
           <NTag size="small" :type="statusTagType(item.status)">{{ item.status }}</NTag>
           <NTag size="small">{{ item.mem_type || '未分类' }}</NTag>
+          <NTag v-if="item.memory_kind" size="small" type="warning">{{ item.memory_kind }}</NTag>
           <NTag v-if="item.suggested_mem_type && item.suggested_mem_type !== item.mem_type" size="small" type="info">
             建议 {{ item.suggested_mem_type }}
           </NTag>
           <NTag size="small">{{ item.session_tag || 'default' }}</NTag>
           <NTag size="small">反上 {{ item.trigger_count || 0 }} 次</NTag>
           <NTag size="small">上次 {{ formatTime(item.last_triggered_at) }}</NTag>
+          <NTag v-for="ent in (item.entities || [])" :key="ent" size="small" type="success">{{ ent }}</NTag>
+          <NTag v-for="p in (item.people || [])" :key="'p:'+p" size="small" type="error">人:{{ p }}</NTag>
+          <NTag v-for="pl in (item.places || [])" :key="'pl:'+pl" size="small" type="info">地:{{ pl }}</NTag>
+          <NTag v-for="ob in (item.objects || [])" :key="'ob:'+ob" size="small" type="warning">物:{{ ob }}</NTag>
         </div>
 
         <div v-if="item.suggested_mem_type" class="suggestion-row">
@@ -525,13 +636,27 @@ function formatTime(value?: string | null) {
             <NFormItem label="type">
               <NSelect v-model:value="item.mem_type" :options="memTypeOptions" />
             </NFormItem>
+            <NFormItem label="memory_kind">
+              <NSelect v-model:value="item.memory_kind" :options="memoryKindOptions.slice(1)" clearable />
+            </NFormItem>
             <NFormItem label="状态">
               <NSelect v-model:value="item.status" :options="editStatusOptions" />
             </NFormItem>
+          </div>
+          <div class="cfg-inline">
             <NFormItem label="冷却小时">
               <NInputNumber v-model:value="item.cooldown_hours" :min="0" :max="8760" style="width:100%" />
             </NFormItem>
+            <NFormItem label="重要度 (0-5)">
+              <NInputNumber v-model:value="item.importance" :min="0" :max="5" style="width:100%" />
+            </NFormItem>
+            <NFormItem label="event_time">
+              <NInput v-model:value="item.event_time" placeholder="2026-06-15" />
+            </NFormItem>
           </div>
+          <NFormItem label="summary（一句话摘要）">
+            <NInput v-model:value="item.summary" placeholder="简短摘要" />
+          </NFormItem>
           <NFormItem label="trigger_text（参与命中）">
             <NInput v-model:value="item.trigger_text" type="textarea" :autosize="{ minRows: 2, maxRows: 5 }" />
           </NFormItem>
@@ -539,9 +664,105 @@ function formatTime(value?: string | null) {
             <NFormItem label="trigger_keywords（也参与命中）">
               <NInput v-model:value="keywordDrafts[item.id]" placeholder="用逗号分开" />
             </NFormItem>
+            <NFormItem label="entities（精确匹配人名/地名/物名）">
+              <NInput v-model:value="entityDrafts[item.id]" placeholder="老周，蛋糕，新疆" />
+            </NFormItem>
+          </div>
+          <div class="cfg-inline two">
+            <NFormItem label="people（人）">
+              <NInput v-model:value="peopleDrafts[item.id]" placeholder="老周，圆圆" />
+            </NFormItem>
+            <NFormItem label="places（地）">
+              <NInput v-model:value="placesDrafts[item.id]" placeholder="家里，新疆" />
+            </NFormItem>
+          </div>
+          <div class="cfg-inline two">
+            <NFormItem label="objects（物）">
+              <NInput v-model:value="objectsDrafts[item.id]" placeholder="蛋糕，手链" />
+            </NFormItem>
+            <NFormItem label="keywords（v2关键词）">
+              <NInput v-model:value="keywordsDrafts[item.id]" placeholder="生日，惊喜" />
+            </NFormItem>
+          </div>
+          <!-- promise fields -->
+          <template v-if="item.memory_kind === 'promise'">
+            <div class="cfg-inline two">
+              <NFormItem label="promise_text">
+                <NInput v-model:value="item.promise_text" type="textarea" :autosize="{ minRows: 1, maxRows: 3 }" />
+              </NFormItem>
+              <NFormItem label="next_action">
+                <NInput v-model:value="item.next_action" />
+              </NFormItem>
+            </div>
+            <div class="cfg-inline">
+              <NFormItem label="due_hint">
+                <NInput v-model:value="item.due_hint" placeholder="下周三之前" />
+              </NFormItem>
+              <NFormItem label="trigger_scenarios">
+                <NInput v-model:value="triggerScenariosDrafts[item.id]" placeholder="场景逗号分开" />
+              </NFormItem>
+              <NFormItem label="resolved">
+                <NSwitch :value="item.resolved ?? false" @update:value="v => item.resolved = v" />
+              </NFormItem>
+            </div>
+          </template>
+          <!-- running_joke fields -->
+          <template v-if="item.memory_kind === 'running_joke'">
+            <div class="cfg-inline two">
+              <NFormItem label="joke_text">
+                <NInput v-model:value="item.joke_text" type="textarea" :autosize="{ minRows: 1, maxRows: 3 }" />
+              </NFormItem>
+              <NFormItem label="scene_tags">
+                <NInput v-model:value="sceneDrafts[item.id]" placeholder="场景逗号分开" />
+              </NFormItem>
+            </div>
+          </template>
+          <!-- routine fields -->
+          <template v-if="item.memory_kind === 'routine'">
+            <div class="cfg-inline two">
+              <NFormItem label="routine_domain">
+                <NInput v-model:value="item.routine_domain" placeholder="sleep, food, exercise..." />
+              </NFormItem>
+              <NFormItem label="pattern">
+                <NInput v-model:value="item.pattern" />
+              </NFormItem>
+            </div>
+            <div class="cfg-inline two">
+              <NFormItem label="phase">
+                <NInput v-model:value="item.phase" />
+              </NFormItem>
+              <NFormItem label="constraints">
+                <NInput v-model:value="constraintsDrafts[item.id]" placeholder="逗号分开" />
+              </NFormItem>
+            </div>
+          </template>
+          <!-- thread fields -->
+          <template v-if="item.memory_kind === 'thread'">
+            <div class="cfg-inline two">
+              <NFormItem label="topic">
+                <NInput v-model:value="item.topic" />
+              </NFormItem>
+              <NFormItem label="last_position">
+                <NInput v-model:value="item.last_position" />
+              </NFormItem>
+            </div>
+            <div class="cfg-inline two">
+              <NFormItem label="open_questions">
+                <NInput v-model:value="openQuestionsDrafts[item.id]" placeholder="逗号分开" />
+              </NFormItem>
+              <NFormItem label="next_prompt">
+                <NInput v-model:value="item.next_prompt" />
+              </NFormItem>
+            </div>
+            <NFormItem label="thread_resolved">
+              <NSwitch :value="item.thread_resolved ?? false" @update:value="v => item.thread_resolved = v" />
+            </NFormItem>
+          </template>
+          <div class="cfg-inline two">
             <NFormItem label="整理备注">
               <NInput v-model:value="item.review_note" />
             </NFormItem>
+            <NFormItem />
           </div>
         </NForm>
 

@@ -165,9 +165,46 @@ class MemNotePatch(BaseModel):
     mem_type: Optional[str] = None
     trigger_text: Optional[str] = None
     trigger_keywords: Optional[list[str] | str] = None
+    entities: Optional[list[str] | str] = None
     status: Optional[str] = None
     cooldown_hours: Optional[int] = None
     review_note: Optional[str] = None
+    # v2 structured fields
+    summary: Optional[str] = None
+    memory_kind: Optional[str] = None
+    people: Optional[list[str] | str] = None
+    places: Optional[list[str] | str] = None
+    objects: Optional[list[str] | str] = None
+    keywords: Optional[list[str] | str] = None
+    event_time: Optional[str] = None
+    importance: Optional[int] = None
+    mention_count: Optional[int] = None
+    promotion_score: Optional[float] = None
+    decay_after: Optional[str] = None
+    # promise
+    promise_text: Optional[str] = None
+    trigger_scenarios: Optional[list[str] | str] = None
+    due_hint: Optional[str] = None
+    resolved: Optional[bool] = None
+    resolved_at: Optional[str] = None
+    next_action: Optional[str] = None
+    privacy_level: Optional[str] = None
+    # running_joke
+    joke_text: Optional[str] = None
+    scene_tags: Optional[list[str] | str] = None
+    last_used_at: Optional[str] = None
+    # routine
+    routine_domain: Optional[str] = None
+    pattern: Optional[str] = None
+    phase: Optional[str] = None
+    constraints: Optional[list[str] | str] = None
+    last_confirmed_at: Optional[str] = None
+    # thread
+    topic: Optional[str] = None
+    last_position: Optional[str] = None
+    open_questions: Optional[list[str] | str] = None
+    next_prompt: Optional[str] = None
+    thread_resolved: Optional[bool] = None
 
 
 class MemNoteBulkPatch(BaseModel):
