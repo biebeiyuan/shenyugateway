@@ -10,7 +10,6 @@ OpenAI-compatible gateway with:
 from __future__ import annotations
 
 import asyncio
-import json
 import logging
 import os
 import uuid
@@ -19,7 +18,6 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import urlsplit
 
-import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -28,20 +26,11 @@ from shenyu_gateway.admin_shell_routes import AdminShellRouteDeps, build_admin_s
 from shenyu_gateway.archive_routes import ArchiveRouteDeps, build_archive_router
 from shenyu_gateway.calendar_service import CalendarService
 from shenyu_gateway.calendar_routes import CalendarRouteDeps, build_calendar_router
-from shenyu_gateway.chat_archive import ChatArchiveService, archive_window_safely
 from shenyu_gateway.chat_pipeline import ChatPipeline
 from shenyu_gateway.config import RuntimeConfig
 from shenyu_gateway.config_routes import ConfigRouteDeps, build_config_router
 from shenyu_gateway.context_builder import ContextBuilder
 from shenyu_gateway.context_snapshots import write_completion_context_snapshot as _write_completion_context_snapshot
-from shenyu_gateway.context_layers import (
-    assemble_layered_messages,
-    non_system_message_count as _non_system_message_count,
-    trim_client_extra_bundle_attachments as _trim_client_extra_bundle_attachments,
-    trim_client_image_blocks as _trim_client_image_blocks,
-    trim_client_messages as _trim_client_messages,
-    trim_package_install_tool_results as _trim_package_install_tool_results,
-)
 from shenyu_gateway.gateway_tools import GatewayToolService, configure_gateway_tools
 from shenyu_gateway.heartbeat_archive import HeartbeatArchiveService, heartbeat_archive_worker
 from shenyu_gateway.gateway_admin_routes import GatewayAdminRouteDeps, build_gateway_admin_router
@@ -55,7 +44,6 @@ from shenyu_gateway.runtime import (
     persist_env as _persist_env,
 )
 from shenyu_gateway.response_capture import (
-    AssistantTagFilter,
     clean_text_from_filter_source,
     store_heartbeat,
 )
@@ -71,11 +59,6 @@ from shenyu_gateway.schemas import (
 )
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
-from shenyu_gateway.streaming import (
-    _new_stream_chunk_id,
-    _sse_response,
-    _stream_content_event,
-)
 from shenyu_gateway.supabase import SupabaseClient
 from shenyu_gateway.tool_registry import (
     execute_gateway_tool,
@@ -87,10 +70,6 @@ from shenyu_gateway.tool_loop import (
     run_internal_tool_loop_stream as _run_internal_tool_loop_stream_impl,
 )
 from shenyu_gateway.upstream_adapter import (
-    _anthropic_tool_index_override,
-    _anthropic_stop_reason_to_openai,
-    _anthropic_usage_to_openai,
-    _anthropic_to_openai_chunk,
     _anthropic_to_openai_completion,
     _cache_usage_summary,
 )
