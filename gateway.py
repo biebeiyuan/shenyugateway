@@ -22,7 +22,6 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 from shenyu_gateway.admin_shell_routes import AdminShellRouteDeps, build_admin_shell_router
@@ -61,13 +60,11 @@ from shenyu_gateway.response_capture import (
     store_heartbeat,
 )
 from shenyu_gateway.request_logs import (
-    _finish_http_request_event,
     _mark_http_request_event,
     _mark_request_log_phase,
     _record_response_text,
     _record_upstream_payload,
     _request_logs,
-    _start_http_request_event,
 )
 from shenyu_gateway.schemas import (
     ChatRequest,
@@ -348,76 +345,8 @@ if (ADMIN_DIST_DIR / "assets").exists():
     app.mount("/admin/assets", StaticFiles(directory=ADMIN_DIST_DIR / "assets"), name="admin-assets")
 
 
-@app.exception_handler(Exception)
-async def _global_exc_handler(request: Request, exc: Exception):
-    request_id = getattr(request.state, "shenyu_request_id", None) or uuid.uuid4().hex[:8]
-    if not getattr(request.state, "shenyu_error_logged", False):
-        logger.exception("Unhandled exception request_id=%s for %s %s", request_id, request.method, request.url.path)
-    content = {"error": "Internal Server Error", "request_id": request_id}
-    if os.getenv("DEBUG_TRACEBACKS", "").strip().lower() in {"1", "true", "yes", "on"}:
-        import traceback as _tb
-
-        content["detail"] = str(exc)
-        content["traceback"] = _tb.format_exc()
-    return JSONResponse(status_code=500, content=content)
-
-
-@app.middleware("http")
-async def log_unhandled_exceptions(request: Request, call_next):
-    request_id = uuid.uuid4().hex[:8]
-    request.state.shenyu_request_id = request_id
-    track_chat_request = request.url.path == "/v1/chat/completions"
-    started_at = asyncio.get_running_loop().time()
-    if track_chat_request:
-        client_host = request.client.host if request.client else ""
-        _start_http_request_event(
-            request_id=request_id,
-            method=request.method,
-            path=request.url.path,
-            client=client_host,
-            session_tag=request.headers.get("X-Shenyu-Session-Tag") or request.headers.get("X-Session-Tag") or "",
-            client_name=request.headers.get("X-Shenyu-Client") or request.headers.get("X-Client-Name") or "",
-            now_iso=_iso_now(),
-        )
-    try:
-        response = await call_next(request)
-        response.headers["X-Shenyu-Request-Id"] = request_id
-        if track_chat_request:
-            _finish_http_request_event(
-                request_id=request_id,
-                now_iso=_iso_now(),
-                duration_ms=int((asyncio.get_running_loop().time() - started_at) * 1000),
-                http_status=response.status_code,
-            )
-        return response
-    except HTTPException:
-        if track_chat_request:
-            _finish_http_request_event(
-                request_id=request_id,
-                now_iso=_iso_now(),
-                duration_ms=int((asyncio.get_running_loop().time() - started_at) * 1000),
-                error="HTTPException",
-            )
-        raise
-    except Exception:
-        if track_chat_request:
-            _finish_http_request_event(
-                request_id=request_id,
-                now_iso=_iso_now(),
-                duration_ms=int((asyncio.get_running_loop().time() - started_at) * 1000),
-                error="Unhandled exception",
-            )
-        request.state.shenyu_error_logged = True
-        logger.exception("Unhandled exception request_id=%s for %s %s", request_id, request.method, request.url.path)
-        raise
-
-
-# --- 管理端鉴权 ---
-
-@app.middleware("http")
-async def admin_auth_middleware(request: Request, call_next):
-    from shenyu_gateway.auth import admin_auth_middleware_handler
-    return await admin_auth_middleware_handler(request, call_next, cfg=cfg)
+from shenyu_gateway.middleware import register_middlewares
+register_middlewares(app, cfg)
 
 
 def _upstream_for_hisense(is_hisense=False):
@@ -530,204 +459,24 @@ async def _build_upstream_request(request, body, messages_override=None, meta=No
 
 
 async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[dict], dict]:
-    log_entry = getattr(request.state, "shenyu_log_entry", None)
-    _mark_request_log_phase(
-        log_entry,
-        "prepare.start",
-        now_iso=_iso_now(),
-        detail={"messages": len(body.messages), "tools": len(body.tools or [])},
-    )
-    store = _require_session_store()
-    sessions = SessionManager(store, cfg)
-    tools = GatewayToolService()
-    builder = _context_builder(store, sessions, tools)
+    from shenyu_gateway.prepare_messages import PrepareMessagesDeps, prepare_messages
 
-    client_name = _client_name_from_request(request)
-    session_tag = _session_tag_from_request(request, client_name=client_name)
-    session = sessions.open_session(session_tag=session_tag, client_name=client_name)
-    _mark_request_log_phase(
-        log_entry,
-        "prepare.session_opened",
-        now_iso=_iso_now(),
-        detail={"session_tag": session_tag, "client_name": client_name},
+    return await prepare_messages(
+        request,
+        body,
+        PrepareMessagesDeps(
+            cfg=cfg,
+            store=_require_session_store(),
+            supabase_client=supabase_client,
+            context_builder_factory=_context_builder,
+            client_name_from_request=_client_name_from_request,
+            session_tag_from_request=_session_tag_from_request,
+            is_hisense_client=_is_hisense_client,
+            upstream_for_hisense=_upstream_for_hisense,
+            maybe_prepare_cold_start_snapshot=_maybe_prepare_cold_start_snapshot,
+            prune_runtime_state=_prune_runtime_state,
+        ),
     )
-    # 根据请求体判断是否为新对话：非 system 消息只有 1 条 -> 新线程桥接。
-    # 这样不依赖 session 持久化状态，Operit 每次新建对话都能补足上一个窗口。
-    non_system_count = sum(1 for m in body.messages if m.role != "system")
-    is_first_turn = non_system_count <= 1 or sessions.is_first_turn(session)
-
-    raw_messages = [message.model_dump(exclude_none=True) for message in body.messages]
-    raw_messages_for_storage, _ = _trim_client_image_blocks(raw_messages, keep_recent_messages=0)
-    raw_user_text = _latest_user_text(raw_messages_for_storage)
-    store.write_raw_request_window(
-        session_id=session["id"],
-        session_tag=session_tag,
-        client_name=client_name,
-        messages=raw_messages_for_storage,
-        latest_user_text=raw_user_text,
-    )
-    _mark_request_log_phase(
-        log_entry,
-        "prepare.raw_window_stored",
-        now_iso=_iso_now(),
-        detail={"raw_messages": len(raw_messages_for_storage)},
-    )
-    messages, trim_meta = _trim_client_messages(raw_messages, cfg.max_client_messages)
-    messages, attachment_trim_meta = _trim_client_extra_bundle_attachments(messages, keep_recent_messages=3)
-    trim_meta.update(attachment_trim_meta)
-    messages, package_trim_meta = _trim_package_install_tool_results(messages, keep_recent=1)
-    trim_meta.update(package_trim_meta)
-    messages, image_trim_meta = _trim_client_image_blocks(messages, keep_recent_messages=2)
-    trim_meta.update(image_trim_meta)
-    _mark_request_log_phase(
-        log_entry,
-        "prepare.client_messages_trimmed",
-        now_iso=_iso_now(),
-        detail={
-            "original": len(raw_messages),
-            "retained": len(messages),
-            "max_client_messages": cfg.max_client_messages,
-        },
-    )
-    user_text = _latest_user_text(messages)
-    current_message_count = _non_system_message_count(messages)
-    is_hisense = _is_hisense_client(client_name)
-    upstream = _upstream_for_hisense(is_hisense)
-    archive_service = ChatArchiveService(store, supabase_client, cfg)
-    if archive_service.enabled():
-        asyncio.create_task(
-            archive_window_safely(
-                archive_service,
-                session_tag=session_tag,
-                client_name=client_name,
-                messages=raw_messages_for_storage,
-                is_hisense=is_hisense,
-            )
-        )
-    cold_start_snapshot = None
-    if not is_hisense:
-        cold_start_snapshot = _maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count)
-    _mark_request_log_phase(
-        log_entry,
-        "prepare.cold_start_checked",
-        now_iso=_iso_now(),
-        detail={"injected": bool(cold_start_snapshot), "is_first_turn": is_first_turn},
-    )
-    snapshot_messages, _ = _trim_client_image_blocks(messages, keep_recent_messages=0)
-    store.write_request_context_snapshot(
-        session_id=session["id"],
-        session_tag=session_tag,
-        client_name=client_name,
-        messages=snapshot_messages,
-        latest_user_text=_latest_user_text(snapshot_messages),
-    )
-    _mark_request_log_phase(
-        log_entry,
-        "prepare.snapshot_stored",
-        now_iso=_iso_now(),
-        detail={"snapshot_messages": len(snapshot_messages)},
-    )
-    messages, pending_gateway_meta = _inject_pending_gateway_tool_turns(
-        messages,
-        store,
-        session_id=session["id"],
-    )
-    trim_meta.update(pending_gateway_meta)
-    _prune_runtime_state(session["id"])
-    _mark_request_log_phase(
-        log_entry,
-        "prepare.pending_tools_pruned",
-        now_iso=_iso_now(),
-        detail={"pending_gateway_tool_turns": len(pending_gateway_meta.get("pending_gateway_tool_turn_ids", []))},
-    )
-
-    # ── Room Mode Branch ───────────────────────────────────────────
-    is_room = bool(
-        getattr(cfg, "enable_room_mode", True)
-        and not is_hisense
-        and _is_room_mode(user_text)
-    )
-
-    if is_room:
-        package = await builder.build_room_context_package(session, trace_log=log_entry, messages=messages)
-        layers = package["layers"]
-        _mark_request_log_phase(
-            log_entry,
-            "prepare.room_layers_rendered",
-            now_iso=_iso_now(),
-            detail={"charge": package.get("charge")},
-        )
-        messages, layer_meta = assemble_layered_messages(messages, layers, cold_start_snapshot=None)
-        trim_meta.update(layer_meta)
-        _mark_request_log_phase(log_entry, "prepare.done", now_iso=_iso_now(), detail={"prepared_messages": len(messages), "mode": "room"})
-        return messages, {
-            "session": session,
-            "package": package,
-            "is_first_turn": is_first_turn,
-            "snapshot_messages": snapshot_messages,
-            "snapshot_latest_user_text": _latest_user_text(snapshot_messages),
-            "cache_layers": layers,
-            "client_message_window": trim_meta,
-            "pending_gateway_tool_turn_ids": pending_gateway_meta.get("pending_gateway_tool_turn_ids", []),
-            "cold_start_snapshot": None,
-            "is_hisense": False,
-            "is_room": True,
-            "upstream": upstream,
-        }
-
-    # ── Normal / Hisense Path ──────────────────────────────────────
-    package = await builder.build_context_package(
-        session,
-        current_user_text=user_text,
-        is_first_turn=is_first_turn,
-        cold_start_snapshot=cold_start_snapshot,
-        client_name=client_name,
-        trace_log=log_entry,
-    )
-    _mark_request_log_phase(
-        log_entry,
-        "prepare.context_package_built",
-        now_iso=_iso_now(),
-        detail={
-            "mem_notes": len(package.get("mem_notes") or []),
-            "stars": len(package.get("stars") or []),
-            "calendar_days": len((package.get("calendar_context") or {}).get("day") or []),
-        },
-    )
-    layers = builder.render_layered_additions(package)
-    _mark_request_log_phase(
-        log_entry,
-        "prepare.layers_rendered",
-        now_iso=_iso_now(),
-        detail={key: len(value or "") for key, value in layers.items()},
-    )
-
-    messages, layer_meta = assemble_layered_messages(
-        messages,
-        layers,
-        cold_start_snapshot=cold_start_snapshot,
-    )
-    trim_meta.update(layer_meta)
-    _mark_request_log_phase(
-        log_entry,
-        "prepare.done",
-        now_iso=_iso_now(),
-        detail={"prepared_messages": len(messages)},
-    )
-
-    return messages, {
-        "session": session,
-        "package": package,
-        "is_first_turn": is_first_turn,
-        "snapshot_messages": snapshot_messages,
-        "snapshot_latest_user_text": _latest_user_text(snapshot_messages),
-        "cache_layers": layers,
-        "client_message_window": trim_meta,
-        "pending_gateway_tool_turn_ids": pending_gateway_meta.get("pending_gateway_tool_turn_ids", []),
-        "cold_start_snapshot": cold_start_snapshot,
-        "is_hisense": is_hisense,
-        "upstream": upstream,
-    }
 
 
 def _inject_pending_gateway_tool_turns(messages, store, session_id):
@@ -820,299 +569,15 @@ async def _stream_chat(
     on_complete: callable = None,
     latest_user_text: str = "",
 ):
-    """Forward a streaming response and collect assistant text."""
-    proto = upstream["protocol"]
-    client = request.app.state.http
-    chat_url = upstream["chat_url"]
-
-    # 确保 payload 中有 stream 标记。
-    payload["stream"] = True
-    # 请求上游在流式结束时一并回报 usage（OpenAI 兼容上游默认不发；不支持的上游会忽略）。
-    if proto == "openai":
-        stream_options = payload.get("stream_options")
-        if not isinstance(stream_options, dict):
-            stream_options = {}
-        stream_options["include_usage"] = True
-        payload["stream_options"] = stream_options
-
-    # 用 build_request + send(stream=True) 实现真正的流式传输。
-    try:
-        req = client.build_request("POST", chat_url, json=payload, headers=headers)
-        resp = await client.send(req, stream=True)
-    except httpx.ConnectError as exc:
-        raise HTTPException(status_code=502, detail=_connect_error_detail(chat_url, exc))
-    except httpx.TimeoutException as exc:
-        raise HTTPException(status_code=504, detail=f"连接上游超时 {chat_url}: {exc}")
-    except httpx.HTTPError as exc:
-        raise HTTPException(status_code=502, detail=f"上游请求失败 {chat_url}: {exc}")
-
-    # 流式连接下需要手动检查状态码。
-    if resp.status_code >= 400:
-        error_body = await resp.aread()
-        await resp.aclose()
-        raise HTTPException(status_code=resp.status_code, detail=error_body.decode("utf-8", errors="replace")[:500])
-
-    # 收集器 + heartbeat 过滤器。
-    collected_parts = []
-    tag_filter = AssistantTagFilter()
-
-    if proto == "openai":
-        # OpenAI 协议：逐行解析 SSE，过滤 heartbeat，转发干净内容。
-        async def generate():
-            visible_output_sent = False
-            tool_call_seen = False
-            fallback_applied = False
-            stream_usage: dict[str, Any] = {}
-            stream_finish_reason: str = ""
-            stream_chunk_id = _new_stream_chunk_id()
-            stream_created = _now_ts()
-            try:
-                async for raw_line in resp.aiter_lines():
-                    line = raw_line.strip()
-                    if not line:
-                        yield "\n"
-                        continue
-                    if line == "data: [DONE]":
-                        # 刷出 heartbeat 过滤器缓冲区的剩余文本。
-                        remaining = tag_filter.flush()
-                        if remaining:
-                            yield _stream_content_event(
-                                model,
-                                remaining,
-                                finish_reason=None,
-                                chunk_id=stream_chunk_id,
-                                created=stream_created,
-                            )
-                            visible_output_sent = visible_output_sent or bool(remaining.strip())
-                        if not visible_output_sent and not tool_call_seen:
-                            fallback_applied = True
-                            visible_output_sent = True
-                            fallback_text, _ = _private_capture_fallback_text(
-                                latest_user_text,
-                                _private_capture_kinds(
-                                    heartbeat_content=tag_filter.get_heartbeat(),
-                                ),
-                            )
-                            yield _stream_content_event(
-                                model,
-                                fallback_text,
-                                finish_reason=None,
-                                chunk_id=stream_chunk_id,
-                                created=stream_created,
-                            )
-                        yield "data: [DONE]\n\n"
-                        continue
-                    if line.startswith("data: "):
-                        try:
-                            data = json.loads(line[6:])
-                            stream_chunk_id = data.get("id") or stream_chunk_id
-                            stream_created = data.get("created") or stream_created
-                            if isinstance(data.get("usage"), dict):
-                                stream_usage.update(data["usage"])
-                            choice = (data.get("choices") or [{}])[0]
-                            delta = choice.get("delta", {})
-                            if choice.get("finish_reason") is not None:
-                                stream_finish_reason = str(choice.get("finish_reason") or "")
-                            if delta.get("tool_calls"):
-                                tool_call_seen = True
-                            text = delta.get("content")
-                            if text:
-                                collected_parts.append(text)
-                                filtered = tag_filter.feed(text)
-                                if filtered:
-                                    data["choices"][0]["delta"]["content"] = filtered
-                                    yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                                    visible_output_sent = visible_output_sent or bool(filtered.strip())
-                                else:
-                                    delta.pop("content", None)
-                                    if delta or choice.get("finish_reason") is not None:
-                                        yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
-                                continue  # 已处理，不重复转发原始行。
-                            if choice.get("finish_reason") is not None and not visible_output_sent and not tool_call_seen:
-                                fallback_applied = True
-                                visible_output_sent = True
-                                fallback_text, _ = _private_capture_fallback_text(
-                                    latest_user_text,
-                                    _private_capture_kinds(
-                                        heartbeat_content=tag_filter.get_heartbeat(),
-                                    ),
-                                )
-                                yield _stream_content_event(
-                                    model,
-                                    fallback_text,
-                                    finish_reason=None,
-                                    chunk_id=stream_chunk_id,
-                                    created=stream_created,
-                                )
-                        except (json.JSONDecodeError, IndexError, KeyError, TypeError):
-                            pass
-                    # 非 content 行（role、tool_calls 等），原样转发。
-                    yield line + "\n\n"
-            finally:
-                await resp.aclose()
-                if on_complete:
-                    try:
-                        full_text = "".join(collected_parts)
-                        # 对完整文本也做一次过滤（获取干净的 assistant 内容）。
-                        clean_text = clean_text_from_filter_source(full_text)
-                        if fallback_applied and not clean_text.strip():
-                            clean_text, _ = _private_capture_fallback_text(
-                                latest_user_text,
-                                _private_capture_kinds(
-                                    heartbeat_content=tag_filter.get_heartbeat(),
-                                ),
-                            )
-                        on_complete(
-                            clean_text,
-                            tag_filter.get_heartbeat(),
-                            fallback_applied,
-                            stream_usage or None,
-                            stream_finish_reason or None,
-                        )
-                    except Exception:
-                        logger.exception("流式回调执行失败")
-
-        return _sse_response(generate())
-
-    # Anthropic 协议：逐行解析，过滤 heartbeat，转为 OpenAI SSE 格式。
-    async def generate():
-        visible_output_sent = False
-        tool_call_seen = False
-        fallback_applied = False
-        anthropic_stop_reason = ""
-        anthropic_usage: dict[str, Any] = {}
-        stream_chunk_id = _new_stream_chunk_id()
-        stream_created = _now_ts()
-        tool_index_by_block: dict[int, int] = {}
-        try:
-            async for line in resp.aiter_lines():
-                line = line.strip()
-                if not line or line == "data: [DONE]":
-                    continue
-                if line.startswith("event:"):
-                    continue
-                if line.startswith("data: "):
-                    line = line[6:]
-                try:
-                    data = json.loads(line)
-                except json.JSONDecodeError:
-                    continue
-                # 收集文本并过滤 heartbeat。
-                if data.get("type") == "message_start":
-                    usage = (data.get("message") or {}).get("usage")
-                    if isinstance(usage, dict):
-                        anthropic_usage.update(usage)
-                elif data.get("type") == "content_block_delta":
-                    delta = data.get("delta", {})
-                    text = delta.get("text", "")
-                    if text:
-                        collected_parts.append(text)
-                        filtered = tag_filter.feed(text)
-                        if filtered:
-                            delta["text"] = filtered
-                            visible_output_sent = visible_output_sent or bool(filtered.strip())
-                        else:
-                            continue  # heartbeat 内容，不转发。
-                elif data.get("type") == "content_block_start":
-                    block = data.get("content_block", {})
-                    if block.get("type") == "tool_use":
-                        tool_call_seen = True
-                elif data.get("type") == "message_delta":
-                    anthropic_stop_reason = (
-                        data.get("delta", {}).get("stop_reason")
-                        or anthropic_stop_reason
-                    )
-                    usage = data.get("usage")
-                    if isinstance(usage, dict):
-                        anthropic_usage.update(usage)
-                elif data.get("type") == "message_stop" and not visible_output_sent and not tool_call_seen:
-                    fallback_applied = True
-                    visible_output_sent = True
-                    fallback_text, _ = _private_capture_fallback_text(
-                        latest_user_text,
-                        _private_capture_kinds(
-                            heartbeat_content=tag_filter.get_heartbeat(),
-                        ),
-                    )
-                    yield _stream_content_event(
-                        model,
-                        fallback_text,
-                        finish_reason=None,
-                        chunk_id=stream_chunk_id,
-                        created=stream_created,
-                    )
-                finish_reason = _anthropic_stop_reason_to_openai(anthropic_stop_reason)
-                if data.get("type") == "message_stop" and tool_call_seen and finish_reason is None:
-                    finish_reason = "tool_calls"
-                chunk = _anthropic_to_openai_chunk(
-                    model,
-                    data,
-                    finish_reason_override=finish_reason,
-                    tool_index_override=_anthropic_tool_index_override(data, tool_index_by_block),
-                    chunk_id=stream_chunk_id,
-                    created=stream_created,
-                )
-                if chunk:
-                    if data.get("type") == "message_stop" and anthropic_usage:
-                        try:
-                            chunk_data = json.loads(chunk)
-                            chunk_data["usage"] = _anthropic_usage_to_openai(anthropic_usage)
-                            chunk = json.dumps(chunk_data, ensure_ascii=False)
-                        except (TypeError, json.JSONDecodeError):
-                            pass
-                    yield f"data: {chunk}\n\n"
-            # 刷出剩余缓冲。
-            remaining = tag_filter.flush()
-            if remaining:
-                yield _stream_content_event(
-                    model,
-                    remaining,
-                    finish_reason=None,
-                    chunk_id=stream_chunk_id,
-                    created=stream_created,
-                )
-                visible_output_sent = visible_output_sent or bool(remaining.strip())
-            if not visible_output_sent and not tool_call_seen:
-                fallback_applied = True
-                visible_output_sent = True
-                fallback_text, _ = _private_capture_fallback_text(
-                    latest_user_text,
-                    _private_capture_kinds(
-                        heartbeat_content=tag_filter.get_heartbeat(),
-                    ),
-                )
-                yield _stream_content_event(
-                    model,
-                    fallback_text,
-                    finish_reason=None,
-                    chunk_id=stream_chunk_id,
-                    created=stream_created,
-                )
-            yield "data: [DONE]\n\n"
-        finally:
-            await resp.aclose()
-            if on_complete:
-                try:
-                    full_text = "".join(collected_parts)
-                    clean_text = clean_text_from_filter_source(full_text)
-                    if fallback_applied and not clean_text.strip():
-                        clean_text, _ = _private_capture_fallback_text(
-                            latest_user_text,
-                            _private_capture_kinds(
-                                heartbeat_content=tag_filter.get_heartbeat(),
-                            ),
-                        )
-                    on_complete(
-                        clean_text,
-                        tag_filter.get_heartbeat(),
-                        fallback_applied,
-                        _anthropic_usage_to_openai(anthropic_usage) or None,
-                        _anthropic_stop_reason_to_openai(anthropic_stop_reason),
-                    )
-                except Exception:
-                    logger.exception("流式回调执行失败")
-
-    return _sse_response(generate())
+    from shenyu_gateway.stream_proxy import stream_chat
+    return await stream_chat(
+        request, payload, headers, model, upstream,
+        connect_error_detail=_connect_error_detail,
+        private_capture_fallback_text=_private_capture_fallback_text,
+        private_capture_kinds=_private_capture_kinds,
+        on_complete=on_complete,
+        latest_user_text=latest_user_text,
+    )
 
 
 async def _nonstream_chat(request: Request, payload: dict, headers: dict, model: str, upstream: dict):

@@ -1,13 +1,44 @@
 from __future__ import annotations
 
+import asyncio
 import json
-from typing import Any, Optional
+from dataclasses import dataclass
+from typing import Any, Callable, Optional
 
-from .runtime import json_dumps as _json_dumps, logger, now as _now, parse_ts as _parse_ts
-from .context_layers import trim_cold_start_sources as _trim_cold_start_sources
+from fastapi import Request
+
+from .chat_archive import ChatArchiveService, archive_window_safely
+from .context_layers import (
+    assemble_layered_messages,
+    non_system_message_count as _non_system_message_count,
+    trim_client_extra_bundle_attachments as _trim_client_extra_bundle_attachments,
+    trim_client_image_blocks as _trim_client_image_blocks,
+    trim_client_messages as _trim_client_messages,
+    trim_cold_start_sources as _trim_cold_start_sources,
+    trim_package_install_tool_results as _trim_package_install_tool_results,
+)
+from .gateway_tools import GatewayToolService
+from .private_capture import is_room_mode as _is_room_mode
+from .request_logs import _mark_request_log_phase
+from .runtime import iso_now as _iso_now, json_dumps as _json_dumps, logger, now as _now, parse_ts as _parse_ts
+from .sessions import SessionManager
 from .store import NEXT_REQUEST_COLD_START_TAG
+from .tool_loop import _latest_user_text, _tool_call_name
 from .tool_registry import is_gateway_native_tool
-from .tool_loop import _tool_call_name
+
+
+@dataclass(frozen=True)
+class PrepareMessagesDeps:
+    cfg: Any
+    store: Any
+    supabase_client: Any
+    context_builder_factory: Callable[..., Any]
+    client_name_from_request: Callable[[Request], str]
+    session_tag_from_request: Callable[..., str]
+    is_hisense_client: Callable[[Optional[str]], bool]
+    upstream_for_hisense: Callable[..., dict]
+    maybe_prepare_cold_start_snapshot: Callable[..., Optional[dict]]
+    prune_runtime_state: Callable[..., dict]
 
 
 def cold_start_idle_minutes(session: dict) -> float:
@@ -202,4 +233,208 @@ def inject_pending_gateway_tool_turns(
         "pending_gateway_tool_turns_injected": len(pending_ids),
         "pending_gateway_tool_turn_ids": pending_ids,
         "pending_gateway_tool_messages": gateway_tool_messages_count,
+    }
+
+
+async def prepare_messages(
+    request: Request,
+    body: Any,
+    deps: PrepareMessagesDeps,
+) -> tuple[list[dict], dict]:
+    cfg = deps.cfg
+    store = deps.store
+    log_entry = getattr(request.state, "shenyu_log_entry", None)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.start",
+        now_iso=_iso_now(),
+        detail={"messages": len(body.messages), "tools": len(body.tools or [])},
+    )
+    sessions = SessionManager(store, cfg)
+    tools = GatewayToolService()
+    builder = deps.context_builder_factory(store, sessions, tools)
+
+    client_name = deps.client_name_from_request(request)
+    session_tag = deps.session_tag_from_request(request, client_name=client_name)
+    session = sessions.open_session(session_tag=session_tag, client_name=client_name)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.session_opened",
+        now_iso=_iso_now(),
+        detail={"session_tag": session_tag, "client_name": client_name},
+    )
+    non_system_count = sum(1 for m in body.messages if m.role != "system")
+    is_first_turn = non_system_count <= 1 or sessions.is_first_turn(session)
+
+    raw_messages = [message.model_dump(exclude_none=True) for message in body.messages]
+    raw_messages_for_storage, _ = _trim_client_image_blocks(raw_messages, keep_recent_messages=0)
+    raw_user_text = _latest_user_text(raw_messages_for_storage)
+    store.write_raw_request_window(
+        session_id=session["id"],
+        session_tag=session_tag,
+        client_name=client_name,
+        messages=raw_messages_for_storage,
+        latest_user_text=raw_user_text,
+    )
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.raw_window_stored",
+        now_iso=_iso_now(),
+        detail={"raw_messages": len(raw_messages_for_storage)},
+    )
+    messages, trim_meta = _trim_client_messages(raw_messages, cfg.max_client_messages)
+    messages, attachment_trim_meta = _trim_client_extra_bundle_attachments(messages, keep_recent_messages=3)
+    trim_meta.update(attachment_trim_meta)
+    messages, package_trim_meta = _trim_package_install_tool_results(messages, keep_recent=1)
+    trim_meta.update(package_trim_meta)
+    messages, image_trim_meta = _trim_client_image_blocks(messages, keep_recent_messages=2)
+    trim_meta.update(image_trim_meta)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.client_messages_trimmed",
+        now_iso=_iso_now(),
+        detail={
+            "original": len(raw_messages),
+            "retained": len(messages),
+            "max_client_messages": cfg.max_client_messages,
+        },
+    )
+    user_text = _latest_user_text(messages)
+    current_message_count = _non_system_message_count(messages)
+    is_hisense = deps.is_hisense_client(client_name)
+    upstream = deps.upstream_for_hisense(is_hisense)
+    archive_service = ChatArchiveService(store, deps.supabase_client, cfg)
+    if archive_service.enabled():
+        asyncio.create_task(
+            archive_window_safely(
+                archive_service,
+                session_tag=session_tag,
+                client_name=client_name,
+                messages=raw_messages_for_storage,
+                is_hisense=is_hisense,
+            )
+        )
+    cold_start_snapshot = None
+    if not is_hisense:
+        cold_start_snapshot = deps.maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.cold_start_checked",
+        now_iso=_iso_now(),
+        detail={"injected": bool(cold_start_snapshot), "is_first_turn": is_first_turn},
+    )
+    snapshot_messages, _ = _trim_client_image_blocks(messages, keep_recent_messages=0)
+    store.write_request_context_snapshot(
+        session_id=session["id"],
+        session_tag=session_tag,
+        client_name=client_name,
+        messages=snapshot_messages,
+        latest_user_text=_latest_user_text(snapshot_messages),
+    )
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.snapshot_stored",
+        now_iso=_iso_now(),
+        detail={"snapshot_messages": len(snapshot_messages)},
+    )
+    messages, pending_gateway_meta = inject_pending_gateway_tool_turns(
+        messages,
+        store,
+        session_id=session["id"],
+    )
+    trim_meta.update(pending_gateway_meta)
+    deps.prune_runtime_state(session["id"])
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.pending_tools_pruned",
+        now_iso=_iso_now(),
+        detail={"pending_gateway_tool_turns": len(pending_gateway_meta.get("pending_gateway_tool_turn_ids", []))},
+    )
+
+    # ── Room Mode Branch ───────────────────────────────────────────
+    is_room = bool(
+        getattr(cfg, "enable_room_mode", True)
+        and not is_hisense
+        and _is_room_mode(user_text)
+    )
+
+    if is_room:
+        package = await builder.build_room_context_package(session, trace_log=log_entry, messages=messages)
+        layers = package["layers"]
+        _mark_request_log_phase(
+            log_entry,
+            "prepare.room_layers_rendered",
+            now_iso=_iso_now(),
+            detail={"charge": package.get("charge")},
+        )
+        messages, layer_meta = assemble_layered_messages(messages, layers, cold_start_snapshot=None)
+        trim_meta.update(layer_meta)
+        _mark_request_log_phase(log_entry, "prepare.done", now_iso=_iso_now(), detail={"prepared_messages": len(messages), "mode": "room"})
+        return messages, {
+            "session": session,
+            "package": package,
+            "is_first_turn": is_first_turn,
+            "snapshot_messages": snapshot_messages,
+            "snapshot_latest_user_text": _latest_user_text(snapshot_messages),
+            "cache_layers": layers,
+            "client_message_window": trim_meta,
+            "pending_gateway_tool_turn_ids": pending_gateway_meta.get("pending_gateway_tool_turn_ids", []),
+            "cold_start_snapshot": None,
+            "is_hisense": False,
+            "is_room": True,
+            "upstream": upstream,
+        }
+
+    # ── Normal / Hisense Path ──────────────────────────────────────
+    package = await builder.build_context_package(
+        session,
+        current_user_text=user_text,
+        is_first_turn=is_first_turn,
+        cold_start_snapshot=cold_start_snapshot,
+        client_name=client_name,
+        trace_log=log_entry,
+    )
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.context_package_built",
+        now_iso=_iso_now(),
+        detail={
+            "mem_notes": len(package.get("mem_notes") or []),
+            "stars": len(package.get("stars") or []),
+            "calendar_days": len((package.get("calendar_context") or {}).get("day") or []),
+        },
+    )
+    layers = builder.render_layered_additions(package)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.layers_rendered",
+        now_iso=_iso_now(),
+        detail={key: len(value or "") for key, value in layers.items()},
+    )
+
+    messages, layer_meta = assemble_layered_messages(
+        messages,
+        layers,
+        cold_start_snapshot=cold_start_snapshot,
+    )
+    trim_meta.update(layer_meta)
+    _mark_request_log_phase(
+        log_entry,
+        "prepare.done",
+        now_iso=_iso_now(),
+        detail={"prepared_messages": len(messages)},
+    )
+
+    return messages, {
+        "session": session,
+        "package": package,
+        "is_first_turn": is_first_turn,
+        "snapshot_messages": snapshot_messages,
+        "snapshot_latest_user_text": _latest_user_text(snapshot_messages),
+        "cache_layers": layers,
+        "client_message_window": trim_meta,
+        "pending_gateway_tool_turn_ids": pending_gateway_meta.get("pending_gateway_tool_turn_ids", []),
+        "cold_start_snapshot": cold_start_snapshot,
+        "is_hisense": is_hisense,
+        "upstream": upstream,
     }
