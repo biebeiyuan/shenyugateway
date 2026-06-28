@@ -308,9 +308,10 @@ class GatewayToolService:
         self,
         query: str = "",
         session_tag: Optional[str] = None,
-        limit: int = 30,
+        limit: int = 20,
         status: str = "all",
         mem_type: Optional[str] = None,
+        memory_kind: Optional[str] = None,
     ) -> dict:
         return await self._mem_notes().list_notes(
             status=status,
@@ -318,15 +319,17 @@ class GatewayToolService:
             session_tag=session_tag,
             q=query,
             mem_type=mem_type,
+            memory_kind=memory_kind,
         )
 
     async def list_mem_notes(
         self,
         status: str = "captured",
-        limit: int = 50,
+        limit: int = 20,
         session_tag: Optional[str] = None,
         q: str = "",
         mem_type: Optional[str] = None,
+        memory_kind: Optional[str] = None,
     ) -> dict:
         return await self._mem_notes().list_notes(
             status=status,
@@ -334,6 +337,7 @@ class GatewayToolService:
             session_tag=session_tag,
             q=q,
             mem_type=mem_type,
+            memory_kind=memory_kind,
         )
 
     async def write_mem_note(

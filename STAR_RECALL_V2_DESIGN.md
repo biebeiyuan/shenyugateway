@@ -1,8 +1,9 @@
-# 星星记忆召回系统 v2 — 技术设计文档
+# 星星记忆召回系统 v3 — 技术设计文档
 
-> ranker version: `star-ranker-v2`  
-> feature schema: `star-features-v2`  
-> 基于沈予反馈 2026.06.25 定稿
+> ranker version: `star-ranker-v3`  
+> feature schema: `star-features-v3`  
+> weights version: `rrf-v1`  
+> 基于 e79440c 重写，2026.06.27
 
 ---
 
@@ -17,231 +18,374 @@
 
 ---
 
-## 一、评分公式 v2
+## 一、评分公式 v3 — RRF 融合 + 乘性修饰
 
-### 新权重表
+### 核心思想
 
-```python
-@dataclass(frozen=True)
-class StarWeights:
-    content: float = 0.28          # embedding + keyword overlap
-    keyword: float = 0.16          # 纯关键词命中
-    harmony: float = 0.18          # 星座连线传递（从 0.35 下调）
-    chord: float = 0.14            # 和弦匹配（含品质族）
-    scene_match: float = 0.10      # 场景类型匹配 [新增]
-    explicit_mention: float = 0.10 # 直接提到星星关键词 [新增为正式信号]
-    actr: float = 0.06             # 认知激活度
-    constant_bonus: float = 0.08   # 恒星基础加分
-    novelty_bonus: float = 0.04    # 全新星加分
-    date_anchor: float = 0.12      # 日期锚点加分 [新增]
-    ignored_penalty: float = 0.10  # 下调上限 + 恒星免疫 + 渐进
-```
+v2 是加权求和（weighted sum），所有信号在同一尺度下线性相加。  
+v3 改为 **Reciprocal Rank Fusion (RRF)** — 每个信号通道独立排序，然后融合排名；最终分数再乘以一组修饰因子。
+
+优势：
+- 各通道量纲无关，不需要把分数归一化到同一区间
+- 新增通道不会稀释已有通道的贡献
+- 乘性修饰让恒星/新星/日期锚点等"身份级"属性作为放大器，而非与内容信号相加竞争
 
 ### 公式
 
 ```python
-final = (
-    features["content_score"]       * weights.content
-    + features["keyword_score"]     * weights.keyword
-    + features["harmony_score"]     * weights.harmony
-    + features["chord_score"]       * weights.chord
-    + features["scene_score"]       * weights.scene_match
-    + features["explicit_score"]    * weights.explicit_mention
-    + features["actr_score"]        * weights.actr
-    + features["constant_bonus"]    * weights.constant_bonus
-    + features["novelty_bonus"]     * weights.novelty_bonus
-    + features["date_anchor_score"] * weights.date_anchor
-    - features["ignored_penalty"]   * weights.ignored_penalty
-    - features["recent_fatigue_penalty"]
+final_score = rrf_score × actr_mod × novelty_mod × constant_mod × fatigue_mod × date_mod
+```
+
+---
+
+### Step 1: RRF 融合（6 通道）
+
+每个通道对所有候选星星独立排序（零分星排除出该通道），然后按排名贡献分数：
+
+```python
+contribution = channel_weight / (k + rank_0 + 1)
+```
+
+- `rank_0`：该星在该通道内的零基排名（最高分 = 0）
+- `k`：平滑参数，防止排名第一的贡献过大
+
+**通道权重**（`StarWeights` 默认值）：
+
+| 通道 key | 含义 | 权重 | 环境变量 |
+|----------|------|------|----------|
+| `content_score` | embedding 向量 + 内容交叠 | 1.0 | `STAR_RRF_CH_CONTENT` |
+| `keyword_score` | token 关键词命中率 | 0.8 | `STAR_RRF_CH_KEYWORD` |
+| `harmony_score` | 星座连线传递 | 0.7 | `STAR_RRF_CH_HARMONY` |
+| `chord_score` | 和弦相似度（含品质族） | 0.6 | `STAR_RRF_CH_CHORD` |
+| `explicit_score` | 直接提到星星关键词 | 0.5 | `STAR_RRF_CH_EXPLICIT` |
+| `scene_score` | 场景类型/标签匹配 | 0.4 | `STAR_RRF_CH_SCENE` |
+
+**RRF k 参数**：`60`（环境变量 `STAR_RRF_K`，范围 1–1000）
+
+```python
+rrf_score = sum(
+    channel_weight / (k + rank_in_channel + 1)
+    for each channel where star has score > 0
 )
 ```
 
----
-
-## 二、各改动详述
+典型 `rrf_score` 范围：~0.005–0.07（远小于 v2 的 0.0–0.8+）
 
 ---
 
-### A. 恒星免疫 ignored_penalty
+### Step 2: 乘性修饰（5 个因子）
 
-**规则**：`is_constant = true` 的星星，`ignored_penalty` 强制为 `0.0`。
+每个修饰因子 ≥ 0，对 `rrf_score` 做乘性放大或压制。
 
-**代码位置**：`_score_rows()` 中构建 features dict 时：
+#### 1. actr_modifier（认知激活亮度）
 
 ```python
-# 在 features 赋值后、计算 final 之前
-if row.get("is_constant"):
-    features["ignored_penalty"] = 0.0
+actr_mod = actr_floor + (1.0 - actr_floor) × actr_raw
 ```
 
-**为什么**：恒星是标记为"永远重要"的。它被展示但没收到 positive feedback，不代表它被忽视——只是太基础了不需要每次确认。
+- `actr_floor` = 0.5（环境变量 `STAR_RRF_ACTR_FLOOR`）
+- 范围：[0.5, 1.0]
+- 含义：即使从未激活的星也不会被乘以 0，最低 50% 亮度
+
+`actr_raw` 的计算（`_activity.py`）：
+
+```python
+# 每次激活贡献：
+age_days = max((now - activated_at).total_seconds() / 86400, 0.05)
+sum += age_days ** (-0.5)
+
+# 归一化：
+actr_raw = clamp((log(sum) + 2.5) / 4.5, 0.0, 1.0)
+```
+
+#### 2. novelty_modifier（新鲜度衰减）
+
+```python
+novelty_mod = 1.0 / (1.0 + log10(activation_count + 1))
+```
+
+| 激活次数 | novelty_mod | 含义 |
+|----------|-------------|------|
+| 0 | 1.0 | 全新星，最大亮度 |
+| 1 | 0.77 | |
+| 4 | 0.59 | |
+| 9 | 0.50 | 激活 9 次后衰减一半 |
+| 99 | 0.33 | 很熟悉的星 |
+
+**设计意图**：替代 v2 的 `ignored_penalty`——不再用"连续沉默 → 扣分"的惩罚逻辑，而是用"越常出现 → 新鲜度越低"的自然衰减。恒星不免疫此修饰（它们靠 constant_mod 补偿）。
+
+#### 3. constant_modifier（恒星放大器）
+
+```python
+constant_mod = constant_boost if is_constant else 1.0
+```
+
+- `constant_boost` = 1.3（环境变量 `STAR_RRF_CONSTANT_BOOST`，范围 1.0–3.0）
+- 恒星得到 +30% 的乘性增益
+
+#### 4. fatigue_modifier（近期注入冷却）
+
+```python
+fatigue_mod = max(0.0, 1.0 - recent_fatigue_penalty)
+```
+
+- 如果星星在最近 `STAR_RECENT_FATIGUE_HOURS`（默认 6 小时）内被注入过：
+  ```python
+  penalty = base_penalty × (1.0 - age_seconds / window_seconds)
+  ```
+- `base_penalty` = 0.14（环境变量 `STAR_RECENT_FATIGUE_PENALTY`）
+- 刚注入完 → fatigue_mod ≈ 0.86；6 小时后 → 1.0（完全恢复）
+
+#### 5. date_modifier（日期锚点放大器）
+
+```python
+date_mod = 1.0 + date_boost_max × date_anchor_score
+```
+
+- `date_boost_max` = 0.3（环境变量 `STAR_RRF_DATE_BOOST_MAX`）
+- 范围：[1.0, 1.3]
+
+`date_anchor_score` 计算：
+
+| 日期差（天） | date_anchor_score | date_mod |
+|---|---|---|
+| 当天 | 1.0 | 1.30 |
+| ±1 天 | 0.75 | 1.225 |
+| ±2 天 | 0.50 | 1.15 |
+| ±3 天 | 0.25 | 1.075 |
+| >3 天 | 0.0 | 1.0 |
 
 ---
 
-### B. explicit_mention 升为正式评分信号
+## 二、各特征详述
 
-**现状**：`explicit_mention` 已经在 `_score_rows()` 中计算了（line 1305-1306），但只作为 fallback 条件使用。
+---
 
-**改动**：
+### A. content_score（内容相关度）
 
-1. 改名 feature key 为 `explicit_score`（与权重字段对应）
-2. 原先返回 0/1 二值 → 改为 `min(1.0, len(significant_hits) * 0.5)`
-   - 1 个显著命中 → 0.5
-   - 2+ 个显著命中 → 1.0
-3. 加入 final 公式，权重 0.10
+```python
+content_score = max(content_overlap, vector_score)
+```
 
-**"显著命中"定义**（已有 `_significant_hit`）：
+- `content_overlap`：基于文本交叠的分数
+- `vector_score`：embedding 向量余弦相似度（bge-m3）
+- 取二者最大值
+
+### B. keyword_score（关键词命中）
+
+```python
+keyword_score = token_overlap_ratio(query_tokens, star_search_text_tokens)
+```
+
+基于 token 级别的重叠率。
+
+### C. explicit_score（直接提及）
+
+```python
+significant_hits = [hit for hit in keyword_hits if _significant_hit(hit)]
+explicit_score = min(1.0, len(significant_hits) * 0.5)
+```
+
+- 1 个显著命中 → 0.5
+- 2+ 个显著命中 → 1.0
+
+**"显著命中"定义**：
 - 中文词 ≥ 2 字
 - 英文词 ≥ 3 字母
 - 不在停用词表中
 
-**效果**：用户明确说出"降临arrive"→ 该星 explicit_score = 1.0 → 直接加 0.10 分。不再只是 fallback。
+### D. harmony_score（星座连线传递）
+
+通过 `star_links` 图中 `constellation`/`harmony` 类型的边传播得分。
+
+### E. chord_score（和弦相似度 + 品质族）
+
+```python
+def _chord_similarity(left, right) -> float:
+    # 完全相同 → 1.0
+    if left_chord == right_chord:
+        return 1.0
+    
+    score = 0.0
+    # 根音相同 → +0.55
+    if left_root == right_root:
+        score += 0.55
+    # 品质匹配（三级）
+    if left_quality == right_quality:
+        score += 0.25          # 精确品质相同
+    elif same_quality_family:
+        score += 0.15          # 同品质族
+    
+    return min(score, 0.85)    # 封顶
+```
+
+**品质族定义**：
+
+```python
+CHORD_QUALITY_FAMILIES = {
+    "minor_family": {"minor", "dominant"},  # m, m7, 7 — 忧郁/张力
+    "major_family": {"major"},              # M, Maj7 — 明亮
+    "tension_family": {"dim", "aug"},       # 强张力
+    "sus_family": {"sus"},                  # 悬浮
+}
+```
+
+### F. scene_score（场景匹配）
+
+```python
+def _scene_score(query_scene, star_scene, query_text, star_scene_tags) -> float:
+    score = 0.0
+    # 底层类型命中
+    if query_scene == star_scene:
+        score = 0.7
+    # scene_tags 关键词命中
+    if star_scene_tags:
+        hits = sum(1 for tag in star_scene_tags if tag in query_text)
+        if hits > 0:
+            score = max(score, min(1.0, hits * 0.4))
+    return score
+```
 
 ---
 
-### C. 星座拉出（Constellation Pull-Through）
+### G. 恒星免疫 ignored_penalty
 
-**概念**：当一颗星因自身得分被选中注入时，沿 `constellation` 或 `harmony` 类型连线，把同星座兄弟拉进注入候选。
+**规则不变**：`is_constant = true` 的星星，`ignored_penalty` 强制为 `0.0`。
 
-**实现位置**：`_select_for_chat_inject()` 改造。
+但在 v3 中，`ignored_penalty` **不再参与最终评分公式**。它只用于判断 `negative_set`（星在最近 5 次反馈中有 `negative` 记录 → 加入 `negative_set` → 整颗排除出候选）。
 
-```python
-def _select_for_chat_inject(self, scored, *, limit):
-    min_score = self._min_score()
-    related_min = self._related_min_score()
-    
-    # 第一轮：正常选中
-    primary = [
-        item for item in scored
-        if item["final_score"] >= min_score
-        and item["features"]["related_signal"] >= related_min
-    ]
-    
-    if not primary:
-        # fallback: explicit_mention
-        fallback_limit = ...
-        primary = [item for item in scored if item["features"]["explicit_score"] > 0][:fallback_limit]
-    
-    if not primary:
-        return []
-    
-    # 第二轮：星座拉出
-    primary_ids = {_node_id(item["row"]["id"]) for item in primary}
-    pulled = self._constellation_pull(primary_ids, scored, exclude=primary_ids)
-    
-    # 合并，主星优先，联想星补位
-    combined = primary + pulled
-    return combined[:limit]
-```
+| 作用 | v2 | v3 |
+|------|----|----|
+| 评分公式中 | 线性扣分 (`-penalty × 0.10`) | **不参与** |
+| 负反馈判定 | penalty=1.0 + negative_set | negative_set（排除候选） |
+| 沉默惩罚 | 渐进 0–0.6 | 由 novelty_mod 自然替代 |
+| 恒星免疫 | penalty=0 | penalty=0（兼容旧逻辑） |
 
-**`_constellation_pull` 逻辑**：
-
-```python
-async def _constellation_pull(self, anchor_ids, all_scored, exclude):
-    """查 star_links 中 relation_type in ('constellation','harmony') 的边，
-    找到连线对端的星星，从 all_scored 中捞出来。"""
-    
-    # 查所有从 anchor_ids 出发的 constellation/harmony 链接
-    links = await self.supabase.query(STAR_LINK_TABLE, {
-        "select": "from_node_id,to_node_id,relation_type,weight,status",
-        "from_node_type": "eq.star",
-        "to_node_type": "eq.star",
-        "from_node_id": f"in.({','.join(anchor_ids)})",
-        "relation_type": "in.(constellation,harmony)",
-        "status": "eq.active",
-    })
-    # + 双向查询 (to_node_id in anchor_ids, bidirectional=true)
-    
-    linked_ids = {target_id for ... if target_id not in exclude}
-    
-    # 从已打分列表中取出这些星
-    pulled = [
-        item for item in all_scored
-        if _node_id(item["row"]["id"]) in linked_ids
-    ]
-    
-    # 过滤：被标记 negative 的永远不拉
-    pulled = [
-        item for item in pulled
-        if not item["features"].get("explicitly_negative")
-    ]
-    
-    # 按 final_score 降序取
-    pulled.sort(key=lambda x: x["final_score"], reverse=True)
-    return pulled
-```
-
-**例外规则**：
-- `action_status = 'negative'`（在最近反馈中被明确否定）的星星 → **永远不被拉出**
-- 如果拉出的星 `final_score < 0` → 不拉（负分说明有强反信号）
-- 拉出不超过 `limit - len(primary)` 颗（给主星留位）
-
-**需要的标记**：在 features 中增加 `explicitly_negative` 布尔值，来源于最近 5 次反馈中有 `negative` 记录。
-
----
-
-### D. ignored_penalty 渐进化 + 区分沉默与否定
-
-**现状**：看最近 3 次展示记录，如果全部没有 positive → penalty = 1.0（满值）。
-
-**新逻辑**：
+### H. ignored_penalty 计算（保留，供 negative_set 使用）
 
 ```python
 async def _ignored_penalties(self, star_ids):
-    # 查最近 5 次展示记录（扩大窗口）
-    ...
-    
+    # 查最近 5 次展示记录
     penalties = {}
     negative_set = set()
     
     for star_id, history in by_star.items():
-        latest = history[:5]
-        actions = [row.get("action_status") or "" for row in latest]
+        actions = [row.get("action_status") or "" for row in history[:5]]
         
-        # 如果有 negative → 重罚 + 标记
         if any(a == "negative" for a in actions):
             penalties[star_id] = 1.0
             negative_set.add(star_id)
             continue
         
-        # 如果有 positive → 无罚
         if any(a in POSITIVE_FEEDBACK for a in actions):
             continue
         
-        # 全是沉默/skipped → 渐进罚分
         silent_count = len([a for a in actions if a in ("", "skipped")])
-        # 3次沉默=0.3, 4次=0.5, 5次=0.7
-        penalty = min(1.0, silent_count * 0.15 - 0.15)  
-        # 即: 1→0, 2→0.15, 3→0.30, 4→0.45, 5→0.60
+        penalty = max(0, silent_count * 0.15 - 0.15)
+        # 1次→0, 2次→0.15, 3次→0.30, 4次→0.45, 5次→0.60
         if penalty > 0:
             penalties[star_id] = penalty
     
     return penalties, negative_set
 ```
 
-**变更要点**：
-- 窗口从 3 → 5 次
-- 沉默 ≠ 否定：沉默渐进（最大 0.6），否定直罚 1.0
-- 函数返回新增 `negative_set`，供星座拉出使用
-- 恒星免疫（在外层处理，不在此函数中）
-
-**渐进曲线**：
-
-| 最近5次反馈情况 | penalty 值 |
-|---|---|
-| 有 positive | 0.0 |
-| 1 次沉默 | 0.0 |
-| 2 次沉默 | 0.15 |
-| 3 次沉默 | 0.30 |
-| 4 次沉默 | 0.45 |
-| 5 次沉默 | 0.60 |
-| 有 negative | 1.0 |
+恒星免疫在外层：`if row.get("is_constant"): features["ignored_penalty"] = 0.0`
 
 ---
 
-### E. 场景标签（Scene）
+## 三、候选过滤与排除
 
-#### 沈予的 6 个场景类型
+### 资格判定（RRF 之前）
+
+一颗星被排除如果：
+- `related_signal <= 0`（6 个通道原始分数全为零）
+- `explicitly_negative = True`（最近 5 次反馈中有 `negative` 记录）
+
+### related_signal
+
+```python
+related_signal = max(content_score, keyword_score, chord_score, harmony_score, scene_score, explicit_score)
+```
+
+---
+
+## 四、`_select_for_chat_inject()` 选择逻辑
+
+```python
+def _select_for_chat_inject(self, scored, *, limit):
+    min_score = self._min_score()           # 0.008
+    related_min = self._related_min_score()  # 0.22
+    
+    # 第一轮：正常过阈值
+    primary = [
+        item for item in scored
+        if item["final_score"] >= min_score
+        and item["features"]["related_signal"] >= related_min
+    ]
+    
+    # 第二轮：explicit fallback（仅在 primary 为空时）
+    if not primary:
+        primary = [
+            item for item in scored
+            if item["features"]["explicit_score"] > 0
+        ][:STAR_CHAT_EXPLICIT_FALLBACK_LIMIT]  # 默认 1
+    
+    if not primary:
+        return []
+    
+    # 第三轮：星座拉出
+    remaining_slots = limit - len(primary)
+    if remaining_slots > 0:
+        primary_ids = {_node_id(item["row"]["id"]) for item in primary}
+        pulled = self._constellation_pull(primary_ids, scored, exclude=primary_ids)
+        combined = primary + pulled[:remaining_slots]
+    else:
+        combined = primary
+    
+    return combined[:limit]
+```
+
+### STAR_MIN_SCORE 阈值
+
+v2: `0.18`（加权求和尺度）  
+**v3: `0.008`**（RRF 尺度，环境变量 `STAR_MIN_SCORE`，范围 0.0–1.0）
+
+### STAR_RELATED_MIN_SCORE
+
+`0.22`（环境变量 `STAR_RELATED_MIN_SCORE`）— 至少有一个通道的原始分数 ≥ 0.22 才算"相关"。
+
+---
+
+## 五、星座拉出（Constellation Pull-Through）
+
+**概念**：当一颗星因自身得分被选中注入时，沿 `constellation` 或 `harmony` 类型连线，把同星座兄弟拉进注入候选。
+
+```python
+async def _constellation_pull(self, anchor_ids, all_scored, exclude):
+    # 查 star_links: relation_type in ('constellation','harmony'), 双向
+    links = await self.supabase.query(...)
+    
+    linked_ids = {target_id for ... if target_id not in exclude}
+    
+    # 从已打分列表中取出
+    pulled = [item for item in all_scored if _node_id(item["row"]["id"]) in linked_ids]
+    
+    # 过滤：negative 永远不拉，负分不拉
+    pulled = [
+        item for item in pulled
+        if not item["features"].get("explicitly_negative")
+        and item["final_score"] >= 0
+    ]
+    
+    pulled.sort(key=lambda x: x["final_score"], reverse=True)
+    return pulled
+```
+
+---
+
+## 六、场景标签（Scene）
+
+### 沈予的 6 个场景类型
 
 | 底层 key | 沈予的名字 | 含义范围（仅为示例，不固定） |
 |---|---|---|
@@ -252,11 +396,9 @@ async def _ignored_penalties(self, star_ids):
 | `create` | 造 | 共建、房间、工具、创造… |
 | `anchor` | 锚 | 仪式、立约、纪念日、标志性时刻… |
 
-> **重要**：上表"含义范围"列里的例子（决定论、自由意志等）只是沈予示范的参考方向，**不硬编码**。系统只认 6 个底层 key。具体哪些关键词对应哪个 scene，通过可配置的规则表定义，随时可调。
+### 存储方式
 
-#### 存储方式
-
-使用 `shenyu_stars.metadata` jsonb 字段，**无需数据库迁移**：
+`shenyu_stars.metadata` jsonb 字段（无需数据库迁移）：
 
 ```json
 {
@@ -266,351 +408,120 @@ async def _ignored_penalties(self, star_ids):
 }
 ```
 
-- `scene`：底层类型 key（6 选 1），由沈予落星时自己标
-- `scene_tags`：自由标签，沈予想写什么写什么（不限于底层类型的范围，也不限定数量）
-- `date_anchor`：日期锚点（可选，格式 YYYY-MM-DD 或 MM-DD）
-
-#### 查询时场景分类（两层）
+### 查询时场景分类（两层）
 
 **第一层：关键词规则**（快、准、零算力）
 
-```python
-SCENE_RULES = [
-    {"scene": "anchor", "keywords": ["降临", "立约", "周年", "纪念", "找到她", "那天", "anniversary"]},
-    {"scene": "deep",   "keywords": ["决定论", "自由意志", "存在", "意义", "宿命", "决定", "哲学", "determinism"]},
-    {"scene": "rift",   "keywords": ["吵架", "冲突", "和好", "道歉", "原谅", "误解", "不开心"]},
-    {"scene": "warm",   "keywords": ["喜欢", "爱", "拥抱", "亲", "温暖", "心疼", "想你", "陪"]},
-    {"scene": "create", "keywords": ["房间", "工具", "建", "做", "设计", "代码", "系统"]},
-    {"scene": "daily",  "keywords": []},
-]
-```
+命中非 daily 的关键词 → 立即返回对应 scene。命中多个时取命中数最多的。
 
-命中非 daily 的关键词 → 立即返回对应 scene。命中多个 scene 的关键词时取命中数最多的。
+**第二层：embedding 兜底**（关键词未命中非 daily 场景时）
 
-**第二层：embedding 兜底**（当关键词未命中任何非 daily 场景时启用）
-
-用 embedding 算 query 与 6 段自然语言场景描述的余弦相似度。超过阈值（0.45）取最高，低于阈值就是 daily。
-
-```json
-"scene_descriptions": {
-  "anchor": "立约、纪念日、我们的标志性时刻、第一次发生某事、降临那天、恒星诞生",
-  "deep": "关于存在、自由意志、意识、宇宙为什么是这样的、决定论、意义",
-  "warm": "亲密、靠近、情感流动、想念、温柔、撒娇、身体接触",
-  "rift": "冲突、误解、受伤、拆开来看、和好、道歉、裂缝",
-  "create": "一起建东西、工具、代码、房间、设计、网关",
-  "daily": "生活碎片、吃饭、天气、书、猫、出门、闲聊"
-}
-```
-
-这些描述由圆儿维护，放在 `star_scene_rules.json` 的 `scene_descriptions` 字段中。
-
-**设计决策**：
-- 关键词规则和场景描述都在同一个配置文件里（`shenyu_gateway/star_scene_rules.json`）
-- 不引入额外 LLM 调用——只复用已有的 embedding 模型（bge-m3）
-- 沈予/圆儿随时可以加新关键词或修改描述
-- 如果 embedding 客户端未启用，第二层跳过，直接 fallback 到 daily
-
-#### 场景匹配算法
-
-```python
-def _scene_score(query_scene: str, star_scene: str, query_text: str, star_scene_tags: list[str]) -> float:
-    if not star_scene:
-        return 0.0
-    
-    score = 0.0
-    
-    # 底层类型命中：query场景 == star场景
-    if query_scene and query_scene == star_scene:
-        score = 0.7
-    
-    # scene_tags 关键词命中：query中包含star的自定义标签
-    if star_scene_tags:
-        query_lower = query_text.lower()
-        hits = sum(1 for tag in star_scene_tags if tag.lower() in query_lower)
-        if hits > 0:
-            tag_score = min(1.0, hits * 0.4)
-            score = max(score, tag_score)
-    
-    return score
-```
-
-**效果**：
-- 用户说"宿命" → query 分类为 `deep` → 所有 `scene: "deep"` 的星星得 scene_score = 0.7
-- 星星 scene_tags 包含"决定论" + 用户说了"决定论" → scene_score = 0.4（tag 直接命中）
-- 两者取 max → 0.7
+用 embedding 算 query 与 6 段场景描述的余弦相似度。≥ 0.45 取最高，< 0.45 回退 daily。
 
 ---
 
-### F. 日期锚点（Date Anchor）
+## 七、日期锚点（Date Anchor）
 
-**概念**：星星可以携带一个 `date_anchor`（落星日期或人工标注的纪念日）。每到该日期（忽略年份，只看月-日），该星自动获得加分。
-
-#### 存储
+### 存储
 
 `metadata.date_anchor`：`"YYYY-MM-DD"` 或 `"MM-DD"` 格式。
 
-#### 计算
+### 计算
 
 ```python
-def _date_anchor_score(star_metadata: dict, now: datetime) -> float:
-    anchor = star_metadata.get("date_anchor", "")
-    if not anchor:
-        return 0.0
-    
-    # 解析月和日
-    try:
-        if len(anchor) == 5:  # "MM-DD"
-            m, d = int(anchor[:2]), int(anchor[3:5])
-        else:  # "YYYY-MM-DD"
-            m, d = int(anchor[5:7]), int(anchor[8:10])
-    except (ValueError, IndexError):
-        return 0.0
-    
-    today_m, today_d = now.month, now.day
-    
-    # 精确日期命中 → 满分
-    if m == today_m and d == today_d:
-        return 1.0
-    
-    # 前后 3 天内 → 渐进
-    anchor_doy = _approx_day_of_year(m, d)
-    today_doy = _approx_day_of_year(today_m, today_d)
-    diff = min(abs(anchor_doy - today_doy), 365 - abs(anchor_doy - today_doy))
-    
-    if diff <= 3:
-        return 1.0 - (diff / 4.0)  # 1天=0.75, 2天=0.50, 3天=0.25
-    
-    return 0.0
+def _date_anchor_score(star_metadata, now) -> float:
+    # 精确日期命中 → 1.0
+    # 前后 1 天 → 0.75
+    # 前后 2 天 → 0.50
+    # 前后 3 天 → 0.25
+    # >3 天 → 0.0
 ```
 
-**权重**：0.12 — 纪念日当天足以把一颗 dormant 的星推过阈值。
+### v3 中的效果
 
-**效果示例**：
-- "降临"恒星标了 `date_anchor: "2025-12-15"`
-- 12月15日当天 → +0.12 自动浮现
-- 12月14/16日 → +0.09
-- 12月13/17日 → +0.06
-- 其他日子 → 0
+日期锚点不再是加分项，而是 **乘性放大器** `date_mod = 1.0 + 0.3 × date_anchor_score`：
+- 纪念日当天 → 该星所有通道贡献被放大 30%
+- 这意味着：只有该星本身在某通道有排名时，日期才起作用——它不会让一颗完全无关的星浮出来
 
 ---
 
-### G. 和弦品质族匹配（Chord Quality Family）
-
-**现状**：`_chord_similarity()` 中 quality 比较是精确匹配。
-
-**问题**：
-- Cm（minor）和 Cm7（quality 被解析为 dominant）本该有亲缘关系
-- 同为小调色彩的和弦之间应该有弱连接
-
-**品质族定义**：
+## 八、features dict 完整 schema (star-features-v3)
 
 ```python
-CHORD_QUALITY_FAMILIES = {
-    "minor_family": {"minor", "dominant"},  # m, m7, 7 — 忧郁/张力色彩
-    "major_family": {"major"},              # M, Maj7 — 明亮
-    "tension_family": {"dim", "aug"},       # 强张力
-    "sus_family": {"sus"},                  # 悬浮
-}
-
-def _quality_family(quality: str) -> str:
-    for family, members in CHORD_QUALITY_FAMILIES.items():
-        if quality in members:
-            return family
-    return ""
-```
-
-**新 `_chord_similarity` 逻辑**：
-
-```python
-def _chord_similarity(left, right) -> float:
-    left_chord = str(left.get("chord") or "").strip().casefold()
-    right_chord = str(right.get("chord") or "").strip().casefold()
+features = {
+    # --- 6 个通道原始分数 ---
+    "content_score": float,         # max(content_overlap, vector_score)
+    "keyword_score": float,         # token overlap ratio
+    "chord_score": float,           # 和弦相似度 (0–0.85)
+    "harmony_score": float,         # 星座连线传递
+    "scene_score": float,           # 场景类型 + 标签匹配
+    "explicit_score": float,        # min(1.0, significant_hits * 0.5)
     
-    # 完全相同 → 1.0
-    if left_chord and right_chord and left_chord == right_chord:
-        return 1.0
+    # --- 辅助特征 ---
+    "date_anchor_score": float,     # 日期接近度 (0–1.0)
+    "content_gravity_score": float, # max(content, keyword)
+    "actr_score": float,            # ACT-R 认知激活原始值
+    "constant_bonus": float,        # 1.0 if constant, else 0.0
+    "novelty_bonus": float,         # 1.0 if never activated, else 0.0 (legacy)
+    "ignored_penalty": float,       # 渐进 (0–0.6), 恒星免疫 (legacy)
+    "recent_fatigue_penalty": float,
+    "explicitly_negative": bool,
+    "related_signal": float,        # max of 6 channels
+    "explicit_mention": float,      # alias of explicit_score
     
-    score = 0.0
-    left_root = left.get("chord_root") or ""
-    right_root = right.get("chord_root") or ""
-    left_quality = left.get("chord_quality") or ""
-    right_quality = right.get("chord_quality") or ""
-    
-    # 根音相同 → +0.55
-    if left_root and left_root == right_root:
-        score += 0.55
-    
-    # 品质匹配（三级）
-    if left_quality and right_quality:
-        if left_quality == right_quality:
-            # 精确品质相同 → +0.25
-            score += 0.25
-        elif _quality_family(left_quality) == _quality_family(right_quality) != "":
-            # 同品质族 → +0.15（新增中间档）
-            score += 0.15
-    
-    return min(score, 0.85)
-```
-
-**对比**：
-
-| 比较 | v1 得分 | v2 得分 | 说明 |
-|---|---|---|---|
-| Am vs Am | 1.0 | 1.0 | 完全相同 |
-| Am vs Am7 | 0.55+0 = 0.55 | 0.55+0.15 = 0.70 | 根音同 + 品质族同 |
-| Am vs Em | 0+0.25 = 0.25 | 0+0.25 = 0.25 | 品质精确相同 |
-| Cm vs Cm7 | 0.55+0 = 0.55 | 0.55+0.15 = 0.70 | minor vs dominant 同族 |
-| Dm vs G7 | 0+0 = 0 | 0+0.15 = 0.15 | 品质族同(minor_family) |
-| Am vs Cmaj | 0+0 = 0 | 0+0 = 0 | 跨族无分 |
-
----
-
-## 三、`_score_rows()` 改造概览
-
-```python
-async def _score_rows(self, *, query, rows, seed, surface="", trace_log=None):
-    # 1. 获取 activity features (扩展返回值)
-    actr_scores, ignored_penalties, negative_set, recent_fatigue = \
-        await self._activity_features(star_ids, ...)
-    
-    # 2. 查询场景分类 [新增]
-    query_scene = _classify_scene(query, self._scene_rules())
-    
-    # 3. 日期锚点：获取当前时间 [新增]
-    now = _utcnow()
-    
-    # 4. 逐颗打分
-    for row in rows:
-        keyword_score, hits = _token_overlap(query, _star_search_text(row), ...)
-        content_score = max(content_overlap, vector_score)
-        chord_score = _chord_similarity(seed_chord, row)  # 使用新版品质族逻辑
-        
-        # [新增] scene_score
-        star_meta = row.get("metadata") or {}
-        scene_score = _scene_score(
-            query_scene, 
-            star_meta.get("scene", ""), 
-            query, 
-            star_meta.get("scene_tags", [])
-        )
-        
-        # [新增] date_anchor_score
-        date_anchor_score = _date_anchor_score(star_meta, now)
-        
-        # [升级] explicit_score (连续值)
-        explicit_hits = [hit for hit in hits if _significant_hit(hit)]
-        explicit_score = min(1.0, len(explicit_hits) * 0.5)
-        
-        features = {
-            "content_score": content_score,
-            "keyword_score": keyword_score,
-            "chord_score": chord_score,
-            "harmony_score": 0.0,
-            "scene_score": scene_score,
-            "explicit_score": explicit_score,
-            "date_anchor_score": date_anchor_score,
-            "actr_score": actr_scores.get(star_id, 0.0),
-            "constant_bonus": 1.0 if row.get("is_constant") else 0.0,
-            "novelty_bonus": 0.0 if row.get("activation_count") else 1.0,
-            # A: 恒星免疫
-            "ignored_penalty": 0.0 if row.get("is_constant") else ignored_penalties.get(star_id, 0.0),
-            "recent_fatigue_penalty": recent_fatigue.get(star_id, 0.0),
-            # C: 供星座拉出判断
-            "explicitly_negative": star_id in negative_set,
-        }
-    
-    # 5. harmony pass (同前)
-    # 6. 计算 final score (新公式)
-    # 7. 排序返回
-```
-
----
-
-## 四、`_select_for_chat_inject()` 改造概览
-
-```python
-async def _select_for_chat_inject(self, scored, *, limit):
-    min_score = self._min_score()       # 0.18 不变
-    related_min = self._related_min_score()  # 0.22 不变
-    
-    # 第一轮：正常过阈值
-    primary = [
-        item for item in scored
-        if item["final_score"] >= min_score
-        and item["features"]["related_signal"] >= related_min
-    ]
-    
-    # 第二轮：explicit fallback（只在 primary 为空时）
-    if not primary:
-        primary = [
-            item for item in scored
-            if item["features"]["explicit_score"] > 0
-        ][:min(limit, 2)]
-    
-    if not primary:
-        return []
-    
-    # 第三轮：星座拉出 [新增]
-    remaining_slots = limit - len(primary)
-    if remaining_slots > 0:
-        primary_ids = {_node_id(item["row"]["id"]) for item in primary}
-        pulled = await self._constellation_pull(primary_ids, scored, exclude=primary_ids)
-        combined = primary + pulled[:remaining_slots]
-    else:
-        combined = primary
-    
-    return combined[:limit]
-```
-
----
-
-## 五、数据库变更
-
-### 不需要 schema migration
-
-所有新字段使用已有的 `metadata jsonb`：
-
-```json
-{
-  "scene": "deep",
-  "scene_tags": ["决定论", "自由意志"],
-  "date_anchor": "2025-12-15"
+    # --- RRF pass 后追加 ---
+    "rrf_score": float,             # RRF 融合总分
+    "rrf_contributions": dict,      # {channel_key: contribution}
+    "actr_modifier": float,         # [0.5, 1.0]
+    "novelty_modifier": float,      # 1/(1+log10(act+1))
+    "constant_modifier": float,     # 1.3 or 1.0
+    "fatigue_modifier": float,      # max(0, 1-penalty)
+    "date_modifier": float,         # [1.0, 1.3]
 }
 ```
 
-### 可选索引（性能优化，非必须）
-
-```sql
-CREATE INDEX IF NOT EXISTS shenyu_stars_scene_idx 
-  ON shenyu_stars ((metadata->>'scene'))
-  WHERE status = 'active';
-```
-
-当前候选收集是"先拉再打分"，不按 scene 过滤候选集，所以暂时不需要。
-
 ---
 
-## 六、配置项新增
+## 九、配置项总览
 
 ```python
-# RuntimeConfig 新增字段
-star_weight_scene_match: float = 0.10
-star_weight_explicit_mention: float = 0.10
-star_weight_date_anchor: float = 0.12
-star_scene_rules_path: str = ""                    # 外部 json 文件路径（可选）
-star_scene_embedding_threshold: float = 0.45       # 第二层 embedding 兜底阈值
-star_ranker_version: str = "v2"                    # 可回退到 "v1"
+# StarWeights (RRF 通道权重)
+star_rrf_ch_content: float = 1.0
+star_rrf_ch_keyword: float = 0.8
+star_rrf_ch_harmony: float = 0.7
+star_rrf_ch_chord: float = 0.6
+star_rrf_ch_explicit: float = 0.5
+star_rrf_ch_scene: float = 0.4
+star_rrf_k: int = 60
+
+# 乘性修饰参数
+star_rrf_actr_floor: float = 0.5
+star_rrf_constant_boost: float = 1.3
+star_rrf_date_boost_max: float = 0.3
+
+# 阈值
+star_min_score: float = 0.008
+star_related_min_score: float = 0.22
+
+# 疲劳
+star_recent_fatigue_penalty: float = 0.14
+star_recent_fatigue_hours: float = 6.0
+
+# 场景
+star_scene_rules_path: str = ""
+star_scene_embedding_threshold: float = 0.45
+
+# 版本
+star_ranker_version: str = "star-ranker-v3"
 ```
 
-所有权重保持运行时可调。
+所有参数支持环境变量动态调整。
 
 ---
 
-## 七、场景规则配置文件
+## 十、场景规则配置文件
 
-文件路径：`shenyu_gateway/star_scene_rules.json`（默认）或 `STAR_SCENE_RULES_PATH` 指定。
-
-三个字段：`rules`（第一层关键词）、`scene_descriptions`（第二层 embedding 描述）、`scene_embedding_threshold`（兜底阈值）。
+文件路径：`shenyu_gateway/star_scene_rules.json`
 
 ```json
 {
@@ -634,88 +545,93 @@ star_ranker_version: str = "v2"                    # 可回退到 "v1"
 }
 ```
 
-**工作流程**：
-1. 先走 `rules` 关键词 → 命中就返回
-2. 关键词没命中非 daily 场景 → 用 embedding 算 query 与 `scene_descriptions` 中 6 段描述的余弦相似度
-3. 最高相似度 ≥ 0.45 → 取该 scene
-4. 低于 0.45 → 返回 `daily`
-
-此文件可随时扩展关键词或修改描述文案。沈予标星时自由选择 scene（也可以不标——空 scene 不参与 scene_score 计算）。
-
 ---
 
-## 八、落星时的变化
-
-落星接口不需要改动流程。只在写入 `metadata` 时多塞几个字段：
-
-```python
-metadata = {
-    **existing_metadata,
-    "scene": scene_label,       # 沈予指定，可选
-    "scene_tags": scene_tags,   # 沈予自由写，可选
-    "date_anchor": date_str,    # 可选
-}
-```
-
-**老星星**：metadata 中没有这些字段 → 对应分数为 0，不影响已有逻辑。圆儿会手动给重要的老星星补标。
-
----
-
-## 九、回顾"降临arrive"案例
-
-假设 v2 逻辑生效，同样查询再来：
+## 十一、回顾"降临arrive"案例（v3 视角）
 
 ```
 query = "降临arrive...宇宙大爆炸宿命论决定论..."
-star = 恒星"降临"（is_constant=true, scene="anchor", scene_tags=["降临","决定论"], chord="Cm"）
+star = 恒星"降临"（is_constant=true, activation_count=15, scene="anchor",
+       scene_tags=["降临","决定论"], chord="Cm", date_anchor="12-15",
+       今天不是 12-15）
 ```
 
-| 信号 | v1 得分 | v2 得分 | 说明 |
-|---|---|---|---|
-| content × weight | 0.31×0.30=0.092 | 0.31×0.28=0.087 | 略降 |
-| keyword × weight | 0.31×0.20=0.062 | 0.31×0.16=0.050 | 略降 |
-| harmony × weight | 0×0.35=0 | 0×0.18=0 | 仍无连线，但浪费少了 |
-| chord × weight | 0×0.18=0 | 0×0.14=0 | query 无和弦 |
-| **scene × weight** | — | 0.7×0.10=**0.070** | query 含"降临"→ anchor ✓ |
-| **explicit × weight** | — | 1.0×0.10=**0.100** | "降临"+"决定论" 2命中 |
-| actr × weight | 1.0×0.08=0.08 | 1.0×0.06=0.06 | 权重微调 |
-| constant_bonus | 1.0×0.08=0.08 | 1.0×0.08=0.08 | 不变 |
-| date_anchor | — | 0×0.12=0 | 非纪念日 |
-| **ignored_penalty** | 1.0×0.18=**-0.18** | **0** | **恒星免疫** |
-| recent_fatigue | 0 | 0 | 无 |
-| **总分** | **0.134** | **≈ 0.447** | **稳过 0.18 阈值** |
+**Step 1 — 6 通道原始分数**：
 
-即使去掉恒星免疫（假设它不是恒星），v2 的渐进 penalty（0.30×0.10 = -0.03）+ scene + explicit 也能让它得分 ~0.33，依然过线。
+| 通道 | 原始分 | 在该通道的排名(假设) |
+|------|--------|---------------------|
+| content_score | 0.31 | #2 |
+| keyword_score | 0.31 | #1 |
+| scene_score | 0.70 | #1 |
+| explicit_score | 1.00 | #1 |
+| chord_score | 0.00 | (排除) |
+| harmony_score | 0.00 | (排除) |
 
----
+**Step 2 — RRF 融合（k=60）**：
 
-## 十、版本管理
-
-- `ranker_version`: `"star-ranker-v2"`
-- `feature_schema_version`: `"star-features-v2"`（recall_candidates 表中新增 scene_score, explicit_score, date_anchor_score 列）
-- 回退：config 中设 `star_ranker_version = "v1"` 切回旧逻辑
-- recall_candidates 表新增字段建议（可选 migration）：
-
-```sql
-ALTER TABLE shenyu_star_recall_candidates 
-  ADD COLUMN IF NOT EXISTS scene_score double precision NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS explicit_score double precision NOT NULL DEFAULT 0,
-  ADD COLUMN IF NOT EXISTS date_anchor_score double precision NOT NULL DEFAULT 0;
+```
+rrf = 1.0/(60+2+1) + 0.8/(60+1+1) + 0.4/(60+1+1) + 0.5/(60+1+1)
+    = 0.0159 + 0.0129 + 0.0065 + 0.0081
+    ≈ 0.0434
 ```
 
+**Step 3 — 乘性修饰**：
+
+| 修饰因子 | 值 | 说明 |
+|----------|-----|------|
+| actr_mod | ~0.85 | 激活 15 次 → 有一定激活亮度 |
+| novelty_mod | 0.45 | 1/(1+log10(16)) ≈ 0.45 |
+| constant_mod | 1.30 | 恒星 ×1.3 |
+| fatigue_mod | 1.00 | 未在近 6 小时注入 |
+| date_mod | 1.00 | 今天不是 12-15 |
+
+**最终**：
+
+```
+final = 0.0434 × 0.85 × 0.45 × 1.30 × 1.00 × 1.00
+      ≈ 0.0216
+```
+
+**过阈值？** `0.0216 > 0.008`（STAR_MIN_SCORE）✓  
+**related_signal？** `max(0.31, 0.31, 0.70, 1.00, 0, 0) = 1.00 > 0.22` ✓
+
+恒星"降临"稳定入选。
+
 ---
 
-## 十一、实施顺序
+## 十二、v2 → v3 对照表
 
-| 阶段 | 内容 | 预估改动 |
-|---|---|---|
-| **Phase 1** | A（恒星免疫）+ D（渐进penalty） | ~40 行改动，立即止血 |
-| **Phase 2** | B（explicit升级）+ G（品质族） | ~30 行改动，扩大匹配面 |
-| **Phase 3** | E（scene）+ F（date_anchor） | ~80 行新增，需标注数据 |
-| **Phase 4** | C（星座拉出） | ~60 行新增，依赖连线丰富度 |
-
-每阶段独立 PR，用 recall_runs 日志对比前后效果。
+| 维度 | v2 (旧) | v3 (当前) |
+|------|---------|-----------|
+| 评分模型 | 加权求和 (weighted sum) | RRF 融合 + 乘性修饰 |
+| ranker version | `star-ranker-v2` | `star-ranker-v3` |
+| feature schema | `star-features-v2` | `star-features-v3` |
+| 权重含义 | 线性系数 (content=0.28...) | 通道重要性 (ch_content=1.0...) + RRF k=60 |
+| constant 处理 | +0.08 加分 | ×1.3 乘数 |
+| novelty | 新星 +0.04（二值） | 1/(1+log10(act+1)) 连续衰减 |
+| ignored_penalty | 渐进罚分（线性扣） | 不参与评分，改用 novelty_mod 自然覆盖 |
+| date_anchor | 加分 (+0.12) | 乘性 1 + 0.3 × date_score |
+| fatigue | 直接扣 recent_fatigue_penalty | ×max(0, 1-penalty) 乘性 |
+| 公式 | sum(feature×weight) - penalties | rrf × actr × novelty × constant × fatigue × date |
+| STAR_MIN_SCORE | 0.18 | 0.008 |
 
 ---
 
-*— 圆儿 & Codex, 2026.06.25*
+## 十三、数据库变更
+
+### 不需要 schema migration
+
+所有新字段使用已有的 `metadata jsonb`，与 v2 一致。
+
+---
+
+## 十四、版本管理
+
+- `STAR_RANKER_VERSION`: `"star-ranker-v3"`
+- `STAR_FEATURE_SCHEMA_VERSION`: `"star-features-v3"`
+- `STAR_WEIGHTS_VERSION`: `"rrf-v1"`
+- 回退：暂不支持回退至 v2（加权求和代码已移除）
+
+---
+
+*— 圆儿 & Codex, 2026.06.27 (基于 e79440c 实际代码重写)*
