@@ -82,6 +82,8 @@ const editStatusOptions: Array<{ label: string; value: MemNoteStatus }> = [
 
 /* ─── config state ─── */
 const MEM_TUNING_DEFAULTS: Partial<GatewayConfig> = {
+  inject_inline_memory_prompt: true,
+  enable_inline_memory_capture: true,
   inject_mem_notes: true,
   enable_gateway_tools: true,
   enable_mem0_management_tools: true,
@@ -98,6 +100,8 @@ const MEM_TUNING_DEFAULTS: Partial<GatewayConfig> = {
 }
 
 const config = ref<Partial<GatewayConfig>>({
+  inject_inline_memory_prompt: true,
+  enable_inline_memory_capture: true,
   inject_mem_notes: true,
   enable_gateway_tools: true,
   enable_mem0_management_tools: true,
@@ -149,6 +153,7 @@ const selectedActivationMissing = computed(() => {
   const missing = selectedNotes.value.map((item) => activationMissing(item)).filter(Boolean)
   return missing[0] || ''
 })
+const drawerWidth = computed(() => (typeof window === 'undefined' ? 720 : Math.min(720, window.innerWidth)))
 
 /* ─── lifecycle ─── */
 onMounted(async () => {
@@ -168,6 +173,8 @@ async function saveSettings() {
   savingConfig.value = true
   try {
     const result = await saveMem0Config({
+      inject_inline_memory_prompt: config.value.inject_inline_memory_prompt,
+      enable_inline_memory_capture: config.value.enable_inline_memory_capture,
       inject_mem_notes: config.value.inject_mem_notes,
       enable_gateway_tools: config.value.enable_gateway_tools,
       enable_mem0_management_tools: config.value.enable_mem0_management_tools,
@@ -197,13 +204,17 @@ function resetMemTuningDefaults() {
 }
 
 function setMemToolsOnly() {
+  config.value.inject_inline_memory_prompt = false
+  config.value.enable_inline_memory_capture = false
   config.value.inject_mem_notes = false
   config.value.enable_gateway_tools = true
   config.value.enable_mem0_management_tools = true
-  message.info('已切到静音模式（只保留工具），记得点保存')
+  message.info('已切到只保留工具，记得点保存')
 }
 
 function setMemAllOn() {
+  config.value.inject_inline_memory_prompt = true
+  config.value.enable_inline_memory_capture = true
   config.value.inject_mem_notes = true
   config.value.enable_gateway_tools = true
   config.value.enable_mem0_management_tools = true
@@ -215,7 +226,7 @@ async function loadNotes() {
   loadingNotes.value = true
   try {
     const result = await fetchMemNotes({
-      status: noteStatus.value === 'all' ? undefined : noteStatus.value,
+      status: noteStatus.value,
       limit: Math.max(1, Math.min(200, Number(noteLimit.value || 50))),
       session_tag: noteSessionTag.value.trim() || undefined,
       q: noteQuery.value.trim() || undefined,
@@ -255,25 +266,21 @@ function splitKeywords(value: string): string[] {
 
 /* ─── card helpers ─── */
 function typeColor(item: MemNoteItem): string {
-  const t = item.mem_type || ''
-  if (t === '她为我做的事') return '#e8d5f5'
-  if (t === '我为她做的事') return '#d5edf5'
-  if (t === '关于她的事实') return '#fde8e8'
-  if (t === '关于我的事') return '#e0f2e9'
-  if (t === '心里那一档') return '#fff3cd'
-  if (t === '承诺') return '#fce4ec'
-  return '#f8f9fa'
+  if (item.status === 'archived') return '#f7f7f4'
+  if (item.status === 'paused') return '#f8f5ee'
+  if (item.status === 'captured') return '#fffdf7'
+  return '#fffefb'
 }
 
 function typeBorder(item: MemNoteItem): string {
   const t = item.mem_type || ''
-  if (t === '她为我做的事') return '#c9a0dc'
-  if (t === '我为她做的事') return '#8cc5d9'
-  if (t === '关于她的事实') return '#f5a3a3'
-  if (t === '关于我的事') return '#85cca1'
-  if (t === '心里那一档') return '#f0c040'
-  if (t === '承诺') return '#f48fb1'
-  return '#e5e7eb'
+  if (t === '她为我做的事') return '#c9b7dc'
+  if (t === '我为她做的事') return '#a9c7d1'
+  if (t === '关于她的事实') return '#ddb8b2'
+  if (t === '关于我的事') return '#aec9b5'
+  if (t === '心里那一档') return '#d8c18c'
+  if (t === '承诺') return '#d6a8ba'
+  return '#ddd7ca'
 }
 
 function isRecent(item: MemNoteItem): boolean {
@@ -289,11 +296,11 @@ function cardPreview(item: MemNoteItem): string {
 }
 
 function statusDot(status: string): string {
-  if (status === 'active') return '🟢'
-  if (status === 'captured') return '🟡'
-  if (status === 'paused') return '⏸️'
-  if (status === 'archived') return '📦'
-  return '⚪'
+  if (status === 'active') return '生效'
+  if (status === 'captured') return '待整理'
+  if (status === 'paused') return '暂停'
+  if (status === 'archived') return '归档'
+  return status
 }
 
 function kindLabel(kind?: string | null): string {
@@ -548,8 +555,13 @@ function formatTime(value?: string | null) {
   <div class="memo-page">
     <!-- ─── header ─── -->
     <div class="memo-header">
-      <h1 class="memo-title">便签</h1>
-      <p class="memo-subtitle">这里是他记住的小事情，帮他整理一下吧</p>
+      <div>
+        <h1 class="memo-title">便签</h1>
+        <p class="memo-subtitle">轻一点地收好那些会再想起的事。</p>
+      </div>
+      <div class="memo-header-mark">
+        {{ totalCount }}
+      </div>
     </div>
 
     <!-- ─── status tabs + count ─── -->
@@ -563,7 +575,7 @@ function formatTime(value?: string | null) {
       >
         {{ tab.label }}
       </button>
-      <span class="memo-count">共 {{ totalCount }} 张</span>
+      <span class="memo-count">{{ notes.length }} / {{ totalCount }}</span>
     </div>
 
     <!-- ─── filters ─── -->
@@ -589,7 +601,10 @@ function formatTime(value?: string | null) {
 
     <!-- ─── card grid ─── -->
     <div v-if="!notes.length && !loadingNotes" class="memo-empty">
-      暂时没有便签，安静的一刻
+      <div class="empty-note">
+        <span>暂时没有便签</span>
+        <small>换个状态或关键词再看一次。</small>
+      </div>
     </div>
     <div v-else class="memo-grid">
       <div
@@ -606,7 +621,7 @@ function formatTime(value?: string | null) {
             @update:checked="(c) => toggleSelected(item.id, c)"
             @click.stop
           />
-          <span class="card-status">{{ statusDot(item.status) }}</span>
+          <span class="card-status" :class="`st-${item.status}`">{{ statusDot(item.status) }}</span>
           <span v-if="item.memory_kind" class="card-kind">{{ kindLabel(item.memory_kind) }}</span>
         </div>
         <div class="card-body">{{ cardPreview(item) }}</div>
@@ -623,8 +638,14 @@ function formatTime(value?: string | null) {
     </div>
 
     <!-- ─── drawer for editing ─── -->
-    <NDrawer v-model:show="drawerVisible" :width="520" placement="right" @after-leave="activeNote = null">
-      <NDrawerContent v-if="activeNote" :title="activeNote.mem_type || '编辑便签'" closable>
+    <NDrawer v-model:show="drawerVisible" :width="drawerWidth" placement="right" @after-leave="activeNote = null">
+      <NDrawerContent v-if="activeNote" closable>
+        <template #header>
+          <div class="drawer-title">
+            <span>便签详情</span>
+            <small>{{ activeNote.mem_type || '未分类' }}</small>
+          </div>
+        </template>
         <div class="drawer-form">
           <NForm label-placement="top">
             <NFormItem label="内容">
@@ -827,6 +848,14 @@ function formatTime(value?: string | null) {
                 <NSwitch v-model:value="config.inject_mem_notes" />
                 <span class="cfg-hint">开了之后，聊天时会自动想起相关便签</span>
               </NFormItem>
+              <NFormItem label="旧版 inline 提示">
+                <NSwitch v-model:value="config.inject_inline_memory_prompt" />
+                <span class="cfg-hint">旧记忆提示是否注入对话</span>
+              </NFormItem>
+              <NFormItem label="旧版 inline 捕获">
+                <NSwitch v-model:value="config.enable_inline_memory_capture" />
+                <span class="cfg-hint">是否自动捕获旧版轻记忆</span>
+              </NFormItem>
               <NFormItem label="网关工具">
                 <NSwitch v-model:value="config.enable_gateway_tools" />
                 <span class="cfg-hint">他能不能主动使用工具</span>
@@ -934,165 +963,236 @@ function formatTime(value?: string | null) {
 <style scoped>
 .memo-page {
   margin: 0 auto;
-  max-width: 1100px;
-  padding: 24px 16px 60px;
+  max-width: 1180px;
+  min-height: calc(100vh - 58px);
+  padding: 28px 18px 64px;
+  color: #272522;
+  background: #f7f6f2;
+  box-shadow: 0 0 0 100vmax #f7f6f2;
+  clip-path: inset(0 -100vmax -80px);
 }
 
-/* ─── header ─── */
 .memo-header {
-  margin-bottom: 20px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 22px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid #dedbd3;
 }
 
 .memo-title {
-  font-size: 24px;
-  font-weight: 700;
-  color: #1a1a2e;
+  font-size: 28px;
+  font-weight: 650;
+  line-height: 1.15;
+  color: #25221e;
   margin: 0;
 }
 
 .memo-subtitle {
-  margin: 4px 0 0;
-  color: #6b7280;
-  font-size: 14px;
+  margin: 8px 0 0;
+  color: #827a70;
+  font-size: 13px;
+  line-height: 1.6;
 }
 
-/* ─── tabs ─── */
+.memo-header-mark {
+  min-width: 52px;
+  height: 52px;
+  border: 1px solid #ded5c7;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: #71685d;
+  background: #fbfaf6;
+  font-size: 15px;
+  font-weight: 600;
+}
+
 .memo-tabs {
   display: flex;
   align-items: center;
-  gap: 4px;
-  margin-bottom: 12px;
+  gap: 6px;
+  margin-bottom: 14px;
   flex-wrap: wrap;
 }
 
 .tab-btn {
-  padding: 6px 16px;
-  border: none;
-  border-radius: 20px;
-  background: #f3f4f6;
-  color: #4b5563;
+  min-height: 32px;
+  padding: 5px 13px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: #696158;
   font-size: 13px;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: background 0.18s, border-color 0.18s, color 0.18s;
 }
 
 .tab-btn:hover {
-  background: #e5e7eb;
+  background: #ece9e1;
 }
 
 .tab-btn.active {
-  background: #1a1a2e;
-  color: #fff;
+  background: #2d2b28;
+  border-color: #2d2b28;
+  color: #fffdf8;
 }
 
 .memo-count {
   margin-left: auto;
-  font-size: 13px;
-  color: #9ca3af;
+  font-size: 12px;
+  color: #9c958c;
 }
 
-/* ─── filters ─── */
 .memo-filters {
   display: flex;
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  margin-bottom: 16px;
+  margin-bottom: 18px;
+  padding: 10px;
+  border: 1px solid #dedbd3;
+  border-radius: 8px;
+  background: #fbfaf6;
 }
 
 .filter-input {
-  height: 30px;
-  padding: 4px 10px;
-  border: 1px solid #e5e7eb;
+  height: 32px;
+  padding: 5px 11px;
+  border: 1px solid #ded8cf;
   border-radius: 6px;
   font-size: 13px;
+  color: #38332d;
   background: #fff;
   min-width: 140px;
+  outline: none;
+}
+
+.filter-input:focus {
+  border-color: #9b8f7e;
+  box-shadow: 0 0 0 2px rgba(155, 143, 126, 0.12);
 }
 
 .filter-input.short { min-width: 100px; }
 .filter-input.tiny { min-width: 60px; width: 70px; }
 
 .sel-badge {
-  padding: 2px 8px;
-  border-radius: 10px;
-  background: #dbeafe;
-  color: #1d4ed8;
+  padding: 3px 8px;
+  border-radius: 999px;
+  background: #ece9e1;
+  color: #5d554b;
   font-size: 12px;
-  font-weight: 500;
 }
 
-/* ─── card grid ─── */
 .memo-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+  gap: 14px;
 }
 
 .memo-card {
   position: relative;
-  padding: 14px;
-  border: 1.5px solid #e5e7eb;
-  border-radius: 10px;
+  padding: 14px 14px 12px;
+  border: 1px solid #ddd7ca;
+  border-left-width: 3px;
+  border-radius: 7px;
   cursor: pointer;
-  transition: transform 0.15s, box-shadow 0.2s;
-  min-height: 110px;
+  transition: transform 0.15s, box-shadow 0.18s, border-color 0.18s;
+  min-height: 128px;
   display: flex;
   flex-direction: column;
+  box-shadow: 0 1px 2px rgba(42, 36, 28, 0.05);
 }
 
 .memo-card:hover {
   transform: translateY(-2px);
-  box-shadow: 0 6px 20px rgba(0, 0, 0, 0.08);
+  box-shadow: 0 10px 24px rgba(55, 46, 35, 0.1);
 }
 
 .memo-card.is-recent {
-  animation: gentle-glow 2.5s ease-in-out infinite alternate;
+  box-shadow: 0 0 0 2px rgba(214, 193, 140, 0.18), 0 1px 2px rgba(42, 36, 28, 0.06);
 }
 
-@keyframes gentle-glow {
-  from {
-    box-shadow: 0 0 4px rgba(99, 102, 241, 0.15);
-  }
-  to {
-    box-shadow: 0 0 16px rgba(99, 102, 241, 0.3);
-  }
+.memo-card::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  border-radius: 7px;
+  background: linear-gradient(180deg, rgba(255,255,255,0.56), rgba(255,255,255,0));
 }
 
 .card-top {
   display: flex;
   align-items: center;
   gap: 6px;
-  margin-bottom: 8px;
+  min-height: 24px;
+  margin-bottom: 10px;
+  position: relative;
+  z-index: 1;
 }
 
 .card-status {
-  font-size: 10px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: #696158;
+  background: rgba(255, 255, 255, 0.72);
+  border: 1px solid rgba(116, 106, 92, 0.14);
+}
+
+.card-status.st-active {
+  color: #39634c;
+  background: #edf6ef;
+}
+
+.card-status.st-captured {
+  color: #775f25;
+  background: #fff6dd;
+}
+
+.card-status.st-paused {
+  color: #685b50;
+  background: #f3eee7;
+}
+
+.card-status.st-archived {
+  color: #7b7b77;
+  background: #eeeeeb;
 }
 
 .card-kind {
   font-size: 11px;
-  color: #6b7280;
-  background: rgba(255, 255, 255, 0.6);
-  padding: 1px 6px;
-  border-radius: 8px;
+  color: #837a70;
+  background: rgba(255, 255, 255, 0.58);
+  padding: 2px 7px;
+  border-radius: 999px;
 }
 
 .card-body {
   flex: 1;
-  font-size: 13px;
-  line-height: 1.5;
-  color: #374151;
+  font-size: 14px;
+  line-height: 1.65;
+  color: #312d28;
   word-break: break-word;
+  white-space: pre-wrap;
+  position: relative;
+  z-index: 1;
 }
 
 .card-foot {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 8px;
+  gap: 10px;
+  margin-top: 12px;
   font-size: 11px;
-  color: #9ca3af;
+  color: #8c847a;
+  position: relative;
+  z-index: 1;
 }
 
 .card-type {
@@ -1103,34 +1203,75 @@ function formatTime(value?: string | null) {
 }
 
 .card-count {
-  color: #6366f1;
+  color: #81715d;
   font-weight: 500;
 }
 
-/* ─── bulk bar ─── */
 .memo-bulk-bar {
-  margin-top: 12px;
+  margin-top: 14px;
   text-align: center;
 }
 
-/* ─── empty ─── */
 .memo-empty {
-  padding: 40px 0;
-  text-align: center;
-  color: #9ca3af;
-  font-size: 14px;
+  padding: 44px 0 34px;
+  display: flex;
+  justify-content: center;
 }
 
-/* ─── drawer ─── */
+.empty-note {
+  width: min(280px, 100%);
+  min-height: 112px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 6px;
+  text-align: center;
+  color: #71695f;
+  background: #fffefb;
+  border: 1px solid #ddd7ca;
+  border-left: 3px solid #d8c18c;
+  border-radius: 7px;
+  box-shadow: 0 1px 2px rgba(42, 36, 28, 0.05);
+}
+
+.empty-note span {
+  font-size: 14px;
+  color: #38332d;
+}
+
+.empty-note small {
+  font-size: 12px;
+  color: #8c847a;
+}
+
+.drawer-title {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.drawer-title span {
+  font-size: 18px;
+  font-weight: 650;
+  color: #26231f;
+}
+
+.drawer-title small {
+  color: #8a8176;
+  font-size: 12px;
+  font-weight: 400;
+}
+
 .drawer-form {
+  max-width: 660px;
   padding-bottom: 20px;
 }
 
 .drawer-row {
   display: grid;
-  gap: 12px;
+  gap: 10px;
   grid-template-columns: repeat(3, 1fr);
-  margin-bottom: 4px;
+  margin-bottom: 2px;
 }
 
 .drawer-row.two {
@@ -1142,34 +1283,36 @@ function formatTime(value?: string | null) {
   align-items: center;
   gap: 8px;
   flex-wrap: wrap;
-  padding: 8px 12px;
-  margin-bottom: 12px;
-  background: #eff6ff;
-  border-radius: 8px;
+  padding: 9px 12px;
+  margin-bottom: 14px;
+  background: #efede5;
+  border: 1px solid #dcd6ca;
+  border-radius: 7px;
   font-size: 12px;
-  color: #1e40af;
+  color: #574b3b;
 }
 
 .sug-reason {
-  color: #6b7280;
+  color: #897f73;
 }
 
 .kind-section {
-  margin: 16px 0 8px;
+  margin: 18px 0 10px;
   font-size: 13px;
   font-weight: 600;
-  color: #4b5563;
-  padding-bottom: 4px;
-  border-bottom: 1px solid #e5e7eb;
+  color: #514a42;
+  padding-bottom: 6px;
+  border-bottom: 1px solid #ebe5dc;
 }
 
 .source-box {
   margin-top: 12px;
-  padding: 10px;
-  background: #f9fafb;
-  border-radius: 6px;
+  padding: 12px;
+  background: #fbfaf6;
+  border: 1px solid #dedbd3;
+  border-radius: 7px;
   font-size: 12px;
-  color: #6b7280;
+  color: #70675c;
   line-height: 1.6;
   white-space: pre-wrap;
   word-break: break-word;
@@ -1178,15 +1321,16 @@ function formatTime(value?: string | null) {
 .drawer-meta {
   margin-top: 12px;
   font-size: 12px;
-  color: #9ca3af;
+  color: #928a80;
 }
 
 .activation-hint {
   margin-top: 8px;
-  padding: 6px 10px;
-  background: #fef2f2;
+  padding: 7px 10px;
+  background: #fff7ed;
+  border: 1px solid #e9d0ad;
   border-radius: 6px;
-  color: #991b1b;
+  color: #8d4c25;
   font-size: 12px;
 }
 
@@ -1196,7 +1340,6 @@ function formatTime(value?: string | null) {
   flex-wrap: wrap;
 }
 
-/* ─── bottom sections ─── */
 .bottom-sections {
   margin-top: 40px;
 }
@@ -1204,20 +1347,21 @@ function formatTime(value?: string | null) {
 .settings-group {
   margin-bottom: 20px;
   padding: 16px;
-  background: #f9fafb;
-  border-radius: 10px;
+  background: #fbfaf6;
+  border: 1px solid #dedbd3;
+  border-radius: 8px;
 }
 
 .settings-group-title {
   font-size: 14px;
   font-weight: 600;
-  color: #1f2937;
+  color: #332f2a;
   margin-bottom: 2px;
 }
 
 .settings-group-desc {
   font-size: 12px;
-  color: #9ca3af;
+  color: #928a80;
   margin-bottom: 12px;
 }
 
@@ -1225,7 +1369,7 @@ function formatTime(value?: string | null) {
   display: block;
   margin-top: 2px;
   font-size: 11px;
-  color: #9ca3af;
+  color: #928a80;
   line-height: 1.4;
 }
 
@@ -1247,9 +1391,9 @@ function formatTime(value?: string | null) {
 .legacy-card {
   padding: 10px;
   margin-top: 8px;
-  border: 1px solid #e5e7eb;
+  border: 1px solid #dedbd3;
   border-radius: 6px;
-  background: #f9fafb;
+  background: #fbfaf6;
 }
 
 .legacy-meta {
@@ -1260,28 +1404,74 @@ function formatTime(value?: string | null) {
 
 .legacy-body {
   font-size: 13px;
-  color: #4b5563;
+  color: #4d463e;
   line-height: 1.5;
   white-space: pre-wrap;
   word-break: break-word;
 }
 
-/* ─── responsive ─── */
+@media (max-width: 920px) {
+  .memo-page {
+    padding: 22px 14px 56px;
+  }
+
+  .memo-grid {
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+  }
+
+  .memo-count {
+    width: 100%;
+    margin-left: 0;
+  }
+}
+
 @media (max-width: 768px) {
   .memo-grid {
-    grid-template-columns: 1fr 1fr;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+
   .drawer-row,
   .drawer-row.two,
   .cfg-row,
   .settings-group .cfg-row {
     grid-template-columns: 1fr;
   }
+
+  .memo-header {
+    align-items: flex-start;
+  }
+
+  .memo-header-mark {
+    min-width: 44px;
+    height: 44px;
+  }
 }
 
 @media (max-width: 480px) {
+  .memo-header {
+    flex-direction: row;
+    align-items: flex-start;
+    gap: 10px;
+  }
+
   .memo-grid {
     grid-template-columns: 1fr;
+  }
+
+  .memo-filters {
+    padding: 9px;
+  }
+
+  .filter-input {
+    width: 100%;
+  }
+
+  .memo-title {
+    font-size: 25px;
+  }
+
+  .memo-subtitle {
+    font-size: 12px;
   }
 }
 </style>

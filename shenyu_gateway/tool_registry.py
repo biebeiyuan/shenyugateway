@@ -133,11 +133,11 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
 
 便签
   write_mem_note(content*, mem_type?, trigger_text?)
-  list_mem_notes(status?: captured|active|paused|archived|all, mem_type?, limit?)
+  list_mem_notes(status?: captured|active|paused|archived|all, query?, mem_type?, memory_kind?, limit?)
   update_mem_note(note_id*, content?, mem_type?, status?: captured|active|paused|archived)
-  bulk_update_mem_notes(ids*[], status?, use_suggestions?: bool)
+  bulk_update_mem_notes(ids[] 或 updates[], status?, use_suggestions?: bool)
   delete_mem_note(note_id*)
-  search_mem_notes(query?, status?: captured|active|paused|archived|all, limit?)
+  search_mem_notes(query 或 q, status?: captured|active|paused|archived|all, memory_kind?, limit?)
 
 日记
   add_calendar(content*, date?: YYYY-MM-DD, period_type?: day|week|month, mode?: append|replace)
@@ -172,7 +172,7 @@ _BROKER_DAILY_DESCRIPTION = """\
 
 便签
   write_mem_note(content*, mem_type?, trigger_text?)
-  search_mem_notes(query?, status?, limit?)
+  search_mem_notes(query 或 q, status?, limit?)
 
 日记
   add_calendar(content*, date?: YYYY-MM-DD, period_type?: day|week|month, mode?: append|replace)
@@ -261,9 +261,11 @@ def _gateway_list_mem_notes_tool() -> dict:
                 "type": "object",
                 "properties": {
                     "query": {"type": "string", "description": "搜索内容或触发词"},
+                    "q": {"type": "string", "description": "query 的别名"},
                     "status": {"type": "string", "enum": ["captured", "active", "paused", "archived", "all"]},
                     "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
                     "memory_kind": {"type": "string", "enum": list(MEM_NOTE_MEMORY_KINDS)},
+                    "session_tag": {"type": "string"},
                     "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
                 },
             },
@@ -510,12 +512,13 @@ def _gateway_core_tools() -> list[dict]:
                     "type": "object",
                     "properties": {
                         "query": {"type": "string", "description": "搜什么"},
+                        "q": {"type": "string", "description": "query 的别名"},
                         "status": {"type": "string", "enum": ["captured", "active", "paused", "archived", "all"], "default": "all"},
                         "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
                         "memory_kind": {"type": "string", "enum": list(MEM_NOTE_MEMORY_KINDS)},
+                        "session_tag": {"type": "string"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
                     },
-                    "required": ["query"],
                 },
             },
         },
@@ -586,18 +589,30 @@ def _gateway_core_tools() -> list[dict]:
                         "event_time": {"type": "string", "description": "什么时候的事（模糊就好：上周、2026年6月、昨天晚上）"},
                         "importance": {"type": "integer", "minimum": 0, "maximum": 5, "default": 2, "description": "重要度 0-5，默认 2"},
                         "trigger_text": {"type": "string", "description": "用自然语言描述什么场景下该想起来"},
+                        "trigger_keywords": {"type": "array", "items": {"type": "string"}, "description": "旧版触发关键词（兼容）"},
+                        "entities": {"type": "array", "items": {"type": "string"}, "description": "旧版精确锚点（兼容）"},
                         "replaces": {"type": "array", "items": {"type": "string"}, "description": "要归档掉的旧便签 id"},
                         "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"], "default": "active"},
                         "cooldown_hours": {"type": "integer", "minimum": 0, "maximum": 8760, "description": "想起来一次后冷却多少小时"},
+                        "review_note": {"type": "string"},
+                        "session_tag": {"type": "string"},
                         # kind-specific (optional, pass when relevant)
                         "promise_text": {"type": "string", "description": "如果是承诺：承诺的具体内容"},
+                        "trigger_scenarios": {"type": "array", "items": {"type": "string"}, "description": "如果是承诺：触发场景"},
                         "due_hint": {"type": "string", "description": "如果是承诺：截止提示（下周三之前）"},
+                        "resolved": {"type": "boolean", "description": "如果是承诺：是否已兑现"},
                         "next_action": {"type": "string", "description": "如果是承诺：下一步要做的事"},
+                        "privacy_level": {"type": "string", "description": "如果是承诺：隐私级别"},
                         "joke_text": {"type": "string", "description": "如果是梗：梗本体"},
                         "scene_tags": {"type": "array", "items": {"type": "string"}, "description": "如果是梗：什么场景适合玩这个梗"},
+                        "routine_domain": {"type": "string", "description": "如果是日常：领域"},
+                        "pattern": {"type": "string", "description": "如果是日常：规律描述"},
+                        "phase": {"type": "string", "description": "如果是日常：阶段"},
+                        "constraints": {"type": "array", "items": {"type": "string"}, "description": "如果是日常：限制或偏好"},
                         "topic": {"type": "string", "description": "如果是话题线：话题名"},
                         "last_position": {"type": "string", "description": "如果是话题线：上次聊到哪"},
                         "open_questions": {"type": "array", "items": {"type": "string"}, "description": "如果是话题线：还没聊完的问题"},
+                        "next_prompt": {"type": "string", "description": "如果是话题线：下次切入点"},
                     },
                     "required": ["content"],
                 },
@@ -689,11 +704,14 @@ def _gateway_mem0_management_tools() -> list[dict]:
                     "properties": {
                         "note_id": {"type": "string", "description": "要改哪条便签"},
                         "id": {"type": "string", "description": "note_id 的别名"},
+                        "noteId": {"type": "string", "description": "note_id 的别名"},
                         "content": {"type": "string"},
                         "summary": {"type": "string"},
                         "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
                         "memory_kind": {"type": "string", "enum": list(MEM_NOTE_MEMORY_KINDS)},
                         "keywords": {"type": "array", "items": {"type": "string"}},
+                        "trigger_keywords": {"type": "array", "items": {"type": "string"}},
+                        "entities": {"type": "array", "items": {"type": "string"}},
                         "people": {"type": "array", "items": {"type": "string"}},
                         "places": {"type": "array", "items": {"type": "string"}},
                         "objects": {"type": "array", "items": {"type": "string"}},
@@ -702,6 +720,7 @@ def _gateway_mem0_management_tools() -> list[dict]:
                         "importance": {"type": "integer", "minimum": 0, "maximum": 5},
                         "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"]},
                         "cooldown_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
+                        "review_note": {"type": "string"},
                         "resolved": {"type": "boolean", "description": "承诺是否已兑现"},
                         "thread_resolved": {"type": "boolean", "description": "话题线是否已结束"},
                     },
@@ -714,19 +733,31 @@ def _gateway_mem0_management_tools() -> list[dict]:
             "function": {
                 "name": "shenyu_bulk_update_mem_notes",
                 "description": (
-                    "批量改便签。两种用法：\n"
+                    "批量改便签。必须传 ids 或 updates。两种用法：\n"
                     "1. ids + patch：给这些便签统一改相同字段（比如全部 status→active）\n"
-                    "2. ids + use_suggestions: true：用系统建议自动补全分类和触发词然后激活"
+                    "2. updates：每条便签单独给 patch；也可以 ids + use_suggestions: true 自动补全分类和触发词然后激活"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "ids": {"type": "array", "items": {"type": "string"}, "description": "要改的便签 id 列表"},
+                        "note_ids": {"type": "array", "items": {"type": "string"}, "description": "ids 的别名"},
                         "patch": {"type": "object", "additionalProperties": True, "description": "统一应用的改动"},
+                        "updates": {"type": "array", "items": {"type": "object", "additionalProperties": True}, "description": "逐条更新：[{id, patch}]"},
                         "use_suggestions": {"type": "boolean", "default": False, "description": "用系统建议补全再激活"},
+                        "content": {"type": "string"},
+                        "mem_type": {"type": "string", "enum": MEM_NOTE_TYPE_ENUM},
+                        "memory_kind": {"type": "string", "enum": list(MEM_NOTE_MEMORY_KINDS)},
+                        "trigger_text": {"type": "string"},
+                        "trigger_keywords": {"type": "array", "items": {"type": "string"}},
+                        "keywords": {"type": "array", "items": {"type": "string"}},
+                        "people": {"type": "array", "items": {"type": "string"}},
+                        "places": {"type": "array", "items": {"type": "string"}},
+                        "objects": {"type": "array", "items": {"type": "string"}},
                         "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"]},
+                        "cooldown_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
+                        "review_note": {"type": "string"},
                     },
-                    "required": ["ids"],
                 },
             },
         },
@@ -740,6 +771,7 @@ def _gateway_mem0_management_tools() -> list[dict]:
                     "properties": {
                         "note_id": {"type": "string", "description": "要删的便签 id"},
                         "id": {"type": "string", "description": "note_id 的别名"},
+                        "noteId": {"type": "string", "description": "note_id 的别名"},
                     },
                     "required": ["note_id"],
                 },
@@ -1307,28 +1339,32 @@ async def _handle_ask_memory(ctx: ToolContext) -> dict:
 
 @_tool_handler("shenyu_search_mem_notes")
 async def _handle_search_mem_notes(ctx: ToolContext) -> dict:
-    return await ctx.service.search_mem_notes(
-        query=_query_arg(ctx.arguments),
-        session_tag=ctx.resolved_session_tag,
-        limit=_int_arg(ctx.arguments, "limit", 20),
-        status=ctx.arguments.get("status", "all"),
-        mem_type=ctx.arguments.get("mem_type"),
-        memory_kind=ctx.arguments.get("memory_kind"),
-    )
+    kwargs = {
+        "query": _query_arg(ctx.arguments),
+        "session_tag": ctx.resolved_session_tag,
+        "limit": _int_arg(ctx.arguments, "limit", 20),
+        "status": ctx.arguments.get("status", "all"),
+        "mem_type": ctx.arguments.get("mem_type"),
+    }
+    if ctx.arguments.get("memory_kind"):
+        kwargs["memory_kind"] = ctx.arguments.get("memory_kind")
+    return await ctx.service.search_mem_notes(**kwargs)
 
 
 @_tool_handler("shenyu_list_mem_notes")
 async def _handle_list_mem_notes(ctx: ToolContext) -> dict:
     query = ctx.arguments.get("query") or ctx.arguments.get("q", "")
     default_status = "all" if query else "captured"
-    return await ctx.service.list_mem_notes(
-        status=ctx.arguments.get("status", default_status),
-        limit=_int_arg(ctx.arguments, "limit", 20),
-        session_tag=ctx.resolved_session_tag,
-        q=query,
-        mem_type=ctx.arguments.get("mem_type"),
-        memory_kind=ctx.arguments.get("memory_kind"),
-    )
+    kwargs = {
+        "status": ctx.arguments.get("status", default_status),
+        "limit": _int_arg(ctx.arguments, "limit", 20),
+        "session_tag": ctx.resolved_session_tag,
+        "q": query,
+        "mem_type": ctx.arguments.get("mem_type"),
+    }
+    if ctx.arguments.get("memory_kind"):
+        kwargs["memory_kind"] = ctx.arguments.get("memory_kind")
+    return await ctx.service.list_mem_notes(**kwargs)
 
 
 @_tool_handler("shenyu_write_mem_note")
