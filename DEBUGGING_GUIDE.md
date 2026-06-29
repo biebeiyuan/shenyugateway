@@ -76,7 +76,8 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 - `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations. Look here for Supabase table tools, recall compatibility helpers, heartbeat reads, notebook helpers, and memory helper behavior.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, heartbeat persistence helper.
-- `shenyu_gateway/mem_notes.py`: captures explicit `[mem]` notes into `shenyu_mem_notes`, searches active notes for injection, and exposes review/update/delete helpers.
+- `shenyu_gateway/mem_notes.py`: note CRUD with memory_kind alias resolution, auto-enrichment (only `content` required), heat exposure, and old atomic read-only lookup.
+- `shenyu_gateway/mem_notes_relevance.py`: pure helpers for recall scoring, anchor matching, auto-extraction (people/places/objects/keywords/summary/memory_kind), `compute_heat()`, and `running_joke_serendipity_rate()`.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic payload, cache, stream, and model URL conversion helpers.
 
 ## Chat Request Flow

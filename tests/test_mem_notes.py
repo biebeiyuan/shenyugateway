@@ -986,3 +986,192 @@ def test_active_validation_accepts_structured_v2_anchors():
     )
 
     assert error == ""
+
+
+# ── Tests for Codex review fixes (A-D) ──────────────────────────────────────
+
+
+def test_create_note_auto_infers_mem_type_via_suggest():
+    """Fix A: create_note without explicit mem_type should infer from content."""
+    supabase = FakeSupabase()
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), supabase)
+
+    result = asyncio.run(
+        service.create_note(
+            "我答应她下次一定提前说。",
+            session_tag="6.29",
+        )
+    )
+
+    assert result["ok"] is True
+    inserted = supabase.inserts[-1]["data"]
+    assert inserted["mem_type"] == "承诺"
+
+
+def test_create_note_auto_infers_mem_type_fallback():
+    """Fix A: content without strong signal should still get a type (fallback)."""
+    supabase = FakeSupabase()
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), supabase)
+
+    result = asyncio.run(
+        service.create_note(
+            "今天天气不错。",
+            session_tag="6.29",
+        )
+    )
+
+    assert result["ok"] is True
+    inserted = supabase.inserts[-1]["data"]
+    assert inserted.get("mem_type") is not None
+    assert inserted["mem_type"] != ""
+
+
+def test_context_layers_prefers_summary_over_content():
+    """Fix C: rendering should prefer summary when available."""
+    from shenyu_gateway.context_layers import render_layered_additions
+
+    class FakeSettings:
+        enable_cold_start = False
+        enable_gateway_tools = False
+        heartbeat_prompt = ""
+        calendar_inject_day = ""
+        calendar_inject_week = ""
+        calendar_inject_month = ""
+        tool_policy_mini = False
+        cold_start_bridge = ""
+
+    package = {
+        "stable_charter": "",
+        "mem_notes": [
+            {
+                "content": "她做了蛋糕寄给老周，过程很费时但她觉得值得。",
+                "summary": "她做蛋糕寄给老周",
+                "mem_type": "关于她的事实",
+                "people": ["老周"],
+                "places": [],
+                "objects": ["蛋糕"],
+            },
+        ],
+        "stars": [],
+    }
+
+    layers = render_layered_additions(package, settings=FakeSettings())
+    mem_layer = layers.get("mem", "")
+
+    assert "她做蛋糕寄给老周" in mem_layer
+    assert "过程很费时但她觉得值得" not in mem_layer
+    assert "人：老周" in mem_layer
+    assert "物：蛋糕" in mem_layer
+
+
+def test_context_layers_falls_back_to_content_when_no_summary():
+    """Fix C: when summary is absent, fall back to content."""
+    from shenyu_gateway.context_layers import render_layered_additions
+
+    class FakeSettings:
+        enable_cold_start = False
+        enable_gateway_tools = False
+        heartbeat_prompt = ""
+        calendar_inject_day = ""
+        calendar_inject_week = ""
+        calendar_inject_month = ""
+        tool_policy_mini = False
+        cold_start_bridge = ""
+
+    package = {
+        "stable_charter": "",
+        "mem_notes": [
+            {
+                "content": "今天天气很好我们出门了。",
+                "summary": "",
+                "mem_type": "心里那一档",
+                "people": [],
+                "places": [],
+                "objects": [],
+            },
+        ],
+        "stars": [],
+    }
+
+    layers = render_layered_additions(package, settings=FakeSettings())
+    mem_layer = layers.get("mem", "")
+
+    assert "今天天气很好我们出门了" in mem_layer
+
+
+def test_query_scene_terms_extracts_from_long_text():
+    """Fix D: _query_scene_terms should extract high-info anchors from long queries."""
+    from shenyu_gateway.mem_notes_relevance import _query_scene_terms
+
+    query = (
+        "她之前提到过老周，说在上海南京路那边碰到了，"
+        "还买了一个新的相机，说是《数码摄影手册》里推荐的那款。"
+    )
+
+    terms = _query_scene_terms(query)
+
+    assert len(terms) <= 12
+    assert len(terms) >= 2
+    has_person = any("老周" in t for t in terms)
+    has_place = any("南京路" in t or "上海" in t for t in terms)
+    has_book = any("数码摄影手册" in t for t in terms)
+    assert has_person or has_place or has_book
+
+
+def test_query_scene_terms_returns_empty_for_short_text():
+    """Fix D: short queries should not produce scene terms."""
+    from shenyu_gateway.mem_notes_relevance import _query_scene_terms
+
+    assert _query_scene_terms("你好") == []
+    assert _query_scene_terms("") == []
+
+
+def test_query_scene_terms_filters_stop_words():
+    """Fix D: scene terms should not include generic stop words."""
+    from shenyu_gateway.mem_notes_relevance import _query_scene_terms
+
+    query = "什么东西可以不是还是为什么现在自己我们他们怎么没有不会知道觉得" * 3
+
+    terms = _query_scene_terms(query)
+
+    stop_leaks = {"什么", "东西", "可以", "不是", "还是", "为什么", "现在", "自己", "我们"}
+    for term in terms:
+        assert term not in stop_leaks
+
+
+def test_entity_match_uses_scene_terms_for_long_queries():
+    """Fix D integration: scene terms should assist entity matching for long queries."""
+    note = {
+        "id": "note-scene",
+        "session_tag": "6.29",
+        "content": "她和老周在上海见面了。",
+        "summary": "和老周在上海碰面",
+        "mem_type": "关于她的事实",
+        "memory_kind": "social",
+        "people": ["老周"],
+        "places": ["上海"],
+        "objects": [],
+        "keywords": [],
+        "entities": [],
+        "trigger_text": "",
+        "trigger_keywords": [],
+        "status": "active",
+        "cooldown_hours": 0,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-06-29T00:00:00+00:00",
+        "updated_at": "2026-06-29T00:00:00+00:00",
+    }
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=[note]))
+
+    long_query = (
+        "前段时间她说过去上海出差的事情，是不是还见了什么人来着？"
+        "我记得好像提过一个朋友，但具体是谁我忘了，"
+        "反正是在上海那边，当时还说了什么来着。"
+    )
+    result = asyncio.run(
+        service.search_notes_contextual(long_query, session_tag="6.29", mark_triggered=False)
+    )
+
+    assert result["count"] >= 1
+    assert any(item["id"] == "note-scene" for item in result["items"])

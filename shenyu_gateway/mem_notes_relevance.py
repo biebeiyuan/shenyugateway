@@ -1,6 +1,7 @@
 # -*- coding: utf-8 -*-
 from __future__ import annotations
 
+import math
 import re
 from typing import Any
 
@@ -486,6 +487,237 @@ def _auto_extract_entities(content: str) -> list[str]:
             entities.append(name)
 
     return entities[:16]
+
+
+# ── Auto-enrichment functions ────────────────────────────────────────────────
+
+_KNOWN_NAMES = {"圆圆", "圆儿", "沈予", "予予", "哥哥"}
+_PERSON_RELATION_SUFFIXES = re.compile(
+    r"[一-鿿]{1,3}(?:哥|姐|叔|婶|阿姨|姑|舅|爸|妈|爷|奶|老师|同学|朋友|老板|同事)"
+)
+_PERSON_TITLE_RE = re.compile(r"(?:老|小|阿)[一-鿿]{1,2}")
+_PLACE_RE = re.compile(
+    r"[一-鿿]{2,6}(?:省|市|区|县|镇|村|路|街|巷|弄|号|楼|店|馆|院|厅|场|站|园|寺|塔|桥)"
+    r"|[一-鿿]{2,4}(?:咖啡|餐厅|酒店|医院|公司|学校|大学|机场|火车站|地铁站|超市|商场|公园|图书馆)"
+)
+_OBJECT_RE = re.compile(
+    r"(?:那|这|她的|我的|他的|一个|一只|一本|一把|一件|一双|一条)?[一-鿿]{1,4}"
+    r"(?:书|包|杯|碗|盘|手机|电脑|耳机|钥匙|戒指|项链|手表|相机|花|画|信|本|笔|伞|猫|狗|鱼|鸟|车)"
+)
+_MEMORY_KIND_PATTERNS: list[tuple[str, list[str]]] = [
+    ("promise", [r"承诺|答应|约定|说好|保证|一定会|会继续|以后.{0,6}(要|会)|下次.{0,6}(要|会)"]),
+    ("preference", [r"喜欢|不喜欢|讨厌|偏好|爱吃|爱喝|爱看|爱听|习惯|癖好|受不了|最爱"]),
+    ("routine", [r"每天|每周|每次|每晚|每早|固定|规律|作息|一般都|通常都|习惯.{0,4}(是|都)"]),
+    ("running_joke", [r"梗|笑|哈哈|玩笑|段子|口头禅|吐槽"]),
+    ("trip", [r"去了|旅行|出发|飞|高铁|自驾|行程|景点|酒店|民宿|签证|机票"]),
+    ("social", [r"聚|约|饭局|见面|派对|party|聊天|一起.{0,4}(吃|玩|看|逛)"]),
+    ("person_fact", [
+        r"(她|他|圆圆|沈予).{0,12}(是|叫|住在|生日|工作|喜欢|不喜欢|习惯|怕|过敏)",
+        r"(我|自己).{0,12}(是|住在|生日|工作|身高|体重|血型|星座)",
+    ]),
+    ("object", [r"买了|收到|送了|丢了|坏了|修了|换了|新的.{0,4}(手机|电脑|耳机|包|鞋|衣服)"]),
+    ("thread", [r"聊到|讨论|话题|说到一半|下次继续|还没聊完|接着上次"]),
+]
+_KEYWORD_STOP_WORDS = {
+    "什么", "那个", "这个", "一下", "可以", "不是", "还是", "为什么",
+    "现在", "以后", "自己", "我们", "你们", "他们", "她们", "怎么",
+    "没有", "不会", "知道", "觉得", "一些", "所以", "因为", "如果",
+    "已经", "这样", "那样", "于是", "然后", "关于", "虽然", "但是",
+    "的", "了", "吗", "呢", "吧", "啊", "呀", "嘛", "是", "在", "有",
+    "也", "就", "都", "会", "要", "想", "能", "把", "被", "让",
+    "很", "太", "好", "真", "还", "又", "才", "只", "不",
+}
+
+
+def _infer_memory_kind(content: str, mem_type: str = "") -> str:
+    """Infer memory_kind from content using regex patterns. Returns best match or 'event'."""
+    compact = re.sub(r"\s+", "", content or "")
+    if mem_type == "承诺":
+        return "promise"
+    for kind, patterns in _MEMORY_KIND_PATTERNS:
+        if any(re.search(p, compact, re.IGNORECASE) for p in patterns):
+            return kind
+    return "event"
+
+
+def _auto_generate_summary(content: str) -> str:
+    """Extract first meaningful sentence or first 60 chars as summary."""
+    text = (content or "").strip()
+    if not text:
+        return ""
+    text = _strip_tool_result_blocks(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    sentences = re.split(r"[。！？\n]", text)
+    for sentence in sentences:
+        clean = sentence.strip()
+        if len(clean) >= 4:
+            return clean[:60]
+    return text[:60]
+
+
+def _auto_extract_people(content: str) -> list[str]:
+    """Extract person names from content."""
+    if not content:
+        return []
+    people: list[str] = []
+    seen: set[str] = set()
+
+    def _add(name: str) -> None:
+        if name and name.lower() not in seen and name not in _ENTITY_STOP_WORDS and len(name) >= 2:
+            seen.add(name.lower())
+            people.append(name)
+
+    for name in _KNOWN_NAMES:
+        if name in content:
+            _add(name)
+    for match in _PERSON_RELATION_SUFFIXES.finditer(content):
+        _add(match.group())
+    for match in _PERSON_TITLE_RE.finditer(content):
+        _add(match.group())
+    for match in _ENTITY_ENGLISH_NAME.finditer(content):
+        name = match.group().strip()
+        if len(name) >= 2:
+            _add(name)
+    return people[:10]
+
+
+def _auto_extract_places(content: str) -> list[str]:
+    """Extract place names from content."""
+    if not content:
+        return []
+    places: list[str] = []
+    seen: set[str] = set()
+    for match in _PLACE_RE.finditer(content):
+        place = match.group().strip()
+        if place and place.lower() not in seen:
+            seen.add(place.lower())
+            places.append(place)
+    return places[:10]
+
+
+def _auto_extract_objects(content: str) -> list[str]:
+    """Extract notable objects/things from content."""
+    if not content:
+        return []
+    objects: list[str] = []
+    seen: set[str] = set()
+    for match in _OBJECT_RE.finditer(content):
+        obj = match.group().strip()
+        clean = re.sub(r"^(?:那|这|她的|我的|他的|一个|一只|一本|一把|一件|一双|一条)", "", obj)
+        if clean and clean.lower() not in seen and len(clean) >= 2:
+            seen.add(clean.lower())
+            objects.append(clean)
+    return objects[:10]
+
+
+def _auto_extract_keywords(content: str) -> list[str]:
+    """Extract distinctive keywords from content using recall_terms + filtering."""
+    if not content:
+        return []
+    clean = _strip_tool_result_blocks(content)
+    terms = recall_terms(clean)
+    keywords: list[str] = []
+    seen: set[str] = set()
+    for term in terms:
+        if term in _KEYWORD_STOP_WORDS or term in _TRIGGER_KEYWORD_JUNK_TOKENS:
+            continue
+        if term.isdigit() or len(term) < 2:
+            continue
+        normalized = term.lower()
+        if normalized in seen:
+            continue
+        if normalized in CONTEXT_WEAK_KEYWORD_HITS:
+            continue
+        seen.add(normalized)
+        keywords.append(term)
+        if len(keywords) >= 8:
+            break
+    return keywords
+
+
+# ── Scene terms for long-text queries ────────────────────────────────────────
+
+_QUOTED_CONTENT_RE = re.compile(r'[「『"《]([^」』"》]{2,20})[」』"》]')
+_ENGLISH_TECH_TERM_RE = re.compile(r"\b[A-Za-z][A-Za-z0-9_./-]{2,20}\b")
+_CHINESE_FRAGMENT_RE = re.compile(r"[一-鿿]{2,8}")
+_SCENE_STOP_TERMS = CONTEXT_SEMANTIC_ANCHOR_STOP_TERMS | _KEYWORD_STOP_WORDS | _TRIGGER_KEYWORD_JUNK_TOKENS
+
+
+def _query_scene_terms(query: str) -> list[str]:
+    """Extract high-information anchor terms from a long query for recall assist.
+
+    Combines: quoted/book-title content, English tech terms, Chinese 2-8 char
+    fragments, auto-extracted people/places/objects, and recall_terms — all
+    filtered against stop words. Returns at most 12 de-duplicated terms.
+    """
+    text = _clean_context_query(query) if query else ""
+    if not text or len(text) < 8:
+        return []
+
+    seen: set[str] = set()
+    terms: list[str] = []
+
+    def _add(t: str) -> None:
+        normalized = t.strip().lower()
+        if not normalized or len(normalized) < 2:
+            return
+        if normalized in seen or normalized in _SCENE_STOP_TERMS:
+            return
+        seen.add(normalized)
+        terms.append(t.strip())
+
+    for m in _QUOTED_CONTENT_RE.finditer(text):
+        _add(m.group(1))
+
+    for name in _auto_extract_people(text):
+        _add(name)
+    for place in _auto_extract_places(text):
+        _add(place)
+    for obj in _auto_extract_objects(text):
+        _add(obj)
+
+    for m in _ENGLISH_TECH_TERM_RE.finditer(text):
+        term = m.group()
+        if term.lower() not in _SCENE_STOP_TERMS and not term.isdigit():
+            _add(term)
+
+    for term in recall_terms(text):
+        if re.fullmatch(r"[一-鿿]{2,8}", term):
+            _add(term)
+
+    return terms[:12]
+
+
+# ── Heat score ───────────────────────────────────────────────────────────────
+
+HEAT_BASE_HALF_LIFE_DAYS = 14.0
+
+
+def compute_heat(row: dict, now: Any = None) -> float:
+    """Unified recall priority score [0.0, 1.0].
+
+    Combines importance, time decay (Ebbinghaus-style), and recall frequency.
+    Currently computed but not used for injection decisions — data collection phase.
+    """
+    if now is None:
+        now = _now()
+    importance = max(0, min(int(row.get("importance") or 1), 5))
+    initial_temp = 0.3 + (importance / 5) * 0.7
+
+    updated = _parse_ts(row.get("last_triggered_at") or row.get("updated_at") or row.get("created_at"))
+    if updated:
+        age_days = max(0, (now - updated).total_seconds() / 86400)
+    else:
+        age_days = 30.0
+
+    trigger_count = int(row.get("trigger_count") or 0)
+    half_life = HEAT_BASE_HALF_LIFE_DAYS * (1 + math.log2(1 + trigger_count))
+
+    decay = 2 ** (-age_days / half_life)
+    recall_bonus = min(0.2, trigger_count * 0.03)
+
+    heat = initial_temp * decay + recall_bonus
+    return max(0.0, min(1.0, heat))
 
 
 def running_joke_serendipity_rate(last_used_at: Any, now: Any = None) -> float:

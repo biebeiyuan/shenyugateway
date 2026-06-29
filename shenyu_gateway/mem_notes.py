@@ -27,16 +27,24 @@ from .mem_notes_relevance import (
     _TRIGGER_PHRASE_SPLIT_RE,
     _anchor_match,
     _auto_extract_entities,
+    _auto_extract_keywords,
+    _auto_extract_objects,
+    _auto_extract_people,
+    _auto_extract_places,
+    _auto_generate_summary,
     _clean_context_query,
+    _infer_memory_kind,
     _low_information_semantic_query,
     _overlap,
     _query_semantic_signal_terms,
+    _query_scene_terms,
     _semantic_anchor_hits,
     _skip_auto_surface,
     _strip_tool_result_blocks,
     _terms,
     _trigger_overlap,
     _trigger_units,
+    compute_heat,
     running_joke_serendipity_rate,
 )
 from .runtime import iso_now, now as _now, parse_ts as _parse_ts
@@ -48,6 +56,27 @@ MEM_NOTE_MEMORY_KINDS = (
     "event", "person_fact", "social", "trip", "object", "preference",
     "routine", "promise", "running_joke", "thread",
 )
+MEM_NOTE_MEMORY_KIND_ALIASES: dict[str, str] = {
+    # 中文 → English
+    "事件": "event", "活动": "event",
+    "人": "person_fact", "人物": "person_fact", "事实": "person_fact",
+    "社交": "social", "聚会": "social",
+    "旅行": "trip", "出行": "trip", "travel": "trip",
+    "物品": "object", "东西": "object", "item": "object", "thing": "object",
+    "偏好": "preference", "喜好": "preference", "pref": "preference",
+    "习惯": "routine", "作息": "routine", "habit": "routine",
+    "承诺": "promise", "约定": "promise",
+    "梗": "running_joke", "笑话": "running_joke", "joke": "running_joke",
+    "话题": "thread", "讨论": "thread", "conversation": "thread",
+    # English aliases / typos
+    "fact": "person_fact", "person": "person_fact", "personal_fact": "person_fact",
+    "travel": "trip", "journey": "trip",
+    "item": "object", "thing": "object",
+    "pref": "preference", "like": "preference",
+    "habit": "routine", "pattern": "routine",
+    "joke": "running_joke", "meme": "running_joke",
+    "topic": "thread", "conversation": "thread", "chat": "thread",
+}
 _UUID_RE = re.compile(
     r"[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}"
 )
@@ -387,8 +416,9 @@ class MemNoteService:
         }
 
         resolved_type = self._mem_type(mem_type, allow_empty=True)
-        if resolved_status == "active" and not resolved_type:
-            resolved_type = "心里那一档"
+        if not resolved_type:
+            suggested_type, _ = self._suggest_mem_type(normalized_content)
+            resolved_type = suggested_type
         if resolved_type:
             payload["mem_type"] = resolved_type
 
@@ -413,23 +443,36 @@ class MemNoteService:
             payload["review_note"] = normalized_review_note
             payload["reviewed_at"] = iso_now()
 
-        # v2 structured fields
+        # v2 structured fields — auto-enrich from content when not provided
         normalized_summary = _normalize_text(summary).strip() if summary else ""
         if normalized_summary:
             payload["summary"] = normalized_summary
+        else:
+            auto_summary = _auto_generate_summary(normalized_content)
+            if auto_summary:
+                payload["summary"] = auto_summary
         resolved_kind = self._memory_kind(memory_kind)
-        if resolved_kind:
-            payload["memory_kind"] = resolved_kind
+        if not resolved_kind:
+            resolved_kind = _infer_memory_kind(normalized_content, resolved_type or "")
+        payload["memory_kind"] = resolved_kind
         resolved_people = self._entity_list(people)
+        if not resolved_people:
+            resolved_people = _auto_extract_people(normalized_content)
         if resolved_people:
             payload["people"] = resolved_people
         resolved_places = self._entity_list(places)
+        if not resolved_places:
+            resolved_places = _auto_extract_places(normalized_content)
         if resolved_places:
             payload["places"] = resolved_places
         resolved_objects = self._entity_list(objects)
+        if not resolved_objects:
+            resolved_objects = _auto_extract_objects(normalized_content)
         if resolved_objects:
             payload["objects"] = resolved_objects
         resolved_keywords = self._keyword_list(keywords)
+        if not resolved_keywords:
+            resolved_keywords = _auto_extract_keywords(normalized_content)
         if resolved_keywords:
             payload["keywords"] = resolved_keywords
         normalized_event_time = _normalize_text(event_time).strip() if event_time else ""
@@ -777,6 +820,7 @@ class MemNoteService:
         item["suggested_trigger_text"] = suggestions["trigger_text"]
         item["suggested_trigger_keywords"] = suggestions["trigger_keywords"]
         item["suggestion_reason"] = suggestions["reason"]
+        item["heat"] = round(compute_heat(row), 3)
         return item
 
     def suggest_note_fields(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -978,6 +1022,8 @@ class MemNoteService:
     ) -> list[dict[str, Any]]:
         exclude_ids = exclude_ids or set()
         query_lower = query.lower()
+        scene_terms = _query_scene_terms(query) if len(query) > 40 else []
+        scene_lower = {t.lower() for t in scene_terms}
         hits: list[dict[str, Any]] = []
         for row in rows:
             if _skip_auto_surface(row):
@@ -1001,9 +1047,14 @@ class MemNoteService:
             matched_anchor = None
             matched_type = None
             for anchor, atype in all_anchors:
-                if _anchor_match(anchor.lower(), query_lower):
+                anchor_low = anchor.lower()
+                if _anchor_match(anchor_low, query_lower):
                     matched_anchor = anchor
                     matched_type = atype
+                    break
+                if scene_lower and anchor_low in scene_lower:
+                    matched_anchor = anchor
+                    matched_type = f"scene_{atype}"
                     break
             if not matched_anchor:
                 continue
@@ -1451,7 +1502,14 @@ class MemNoteService:
         raw = _normalize_text(value).strip().lower() if value else ""
         if not raw:
             return None
-        return raw if raw in MEM_NOTE_MEMORY_KINDS else None
+        if raw in MEM_NOTE_MEMORY_KINDS:
+            return raw
+        if raw in MEM_NOTE_MEMORY_KIND_ALIASES:
+            return MEM_NOTE_MEMORY_KIND_ALIASES[raw]
+        for kind in MEM_NOTE_MEMORY_KINDS:
+            if kind in raw or raw in kind:
+                return kind
+        return None
 
     def _status(self, value: Any, fallback: str = "captured", allow_all: bool = False) -> str:
         raw = _normalize_text(value).strip().lower()

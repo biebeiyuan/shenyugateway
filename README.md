@@ -35,7 +35,8 @@ The codebase is partly layered already:
 - `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations, including Supabase table tools, recall compatibility helpers, heartbeats, notebook, and memory helpers.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, heartbeat persistence helper.
-- `shenyu_gateway/mem_notes.py`: clean note search, review/update/delete helpers, and old atomic read-only lookup.
+- `shenyu_gateway/mem_notes.py`: note CRUD with memory_kind alias resolution, auto-enrichment pipeline, heat exposure, and old atomic read-only lookup.
+- `shenyu_gateway/mem_notes_relevance.py`: pure-function helpers for mem-note recall scoring, anchor matching, auto-extraction (people/places/objects/keywords/summary/memory_kind inference), `compute_heat()`, and `running_joke_serendipity_rate()`.
 - `shenyu_gateway/stars/`: Star memory service (package split into mixins: `_helpers`, `_chord`, `_scene`, `_weights`, `_crud`, `_recall`, `_activity`, `_review`, `_feedback`, `_logging`, `_render`, `_embedding`). ACT-R activation, chord/content/harmony scoring, review candidates, feedback logging, and constellation links.
 - `shenyu_gateway/sessions.py`: session/message logging facade.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
@@ -413,6 +414,17 @@ Mem notes are small personal notes, separate from event memories and calendar pa
 `INJECT_MEM_NOTES` controls injection: before a reply, search active mem notes and inject relevant hits in the `mem` layer.
 
 Inline `[mem]...[/mem]` tag capture has been removed. Mem notes are now written exclusively via tool call (`shenyu_write_mem_note`). The note types are `她为我做的事`, `我为她做的事`, `关于她的事实`, `关于我的事`, `心里那一档`, and `承诺`. If type or trigger is missing, the writer fills safe defaults so the note can surface immediately.
+
+Writing a note requires only `content`. All other fields are auto-enriched from the content when not explicitly provided:
+
+- `memory_kind`: resolved through alias map (中英文 + fuzzy substring), then regex inference from content.
+- `summary`: first sentence or first 60 characters.
+- `people/places/objects/keywords`: heuristic extraction (known names, relation suffixes, geo suffixes, quantifier+noun patterns, recall-token filtering).
+- `mem_type`: regex pattern matching on Chinese content.
+
+The `memory_kind` alias map accepts Chinese variants (`承诺`→`promise`, `梗`→`running_joke`, `旅行`→`trip`, etc.) and English shorthand (`joke`, `habit`, `fact`, `person`, etc.). Unrecognized values trigger auto-inference rather than silently dropping to NULL.
+
+Heat score (`compute_heat`): an Ebbinghaus-style temperature combining importance-based initial heat, time decay with half-life extending per recall count, and a small recall bonus. Heat is computed on read and returned in list items for observability. It does not currently affect injection ordering or filtering.
 
 Search/injection flow:
 

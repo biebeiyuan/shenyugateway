@@ -488,10 +488,39 @@ rg "淇|閺|鈹|銆|锛|紝|娌堜簣"
 
 第一版只要做到：
 
-- 能记“谁 + 做了什么 + 物品/地点”。
+- 能记”谁 + 做了什么 + 物品/地点”。
 - 聊到同一人/物/地点时，最多提醒 1-2 条。
 - 不靠泛语义乱召回。
 - 后台能按人/物/地点回顾。
 - 重复提到的轻记忆能进入升星候选。
 
-这样就能解决“沈予别像完全不知道我生活里发生过什么”的核心问题。
+这样就能解决”沈予别像完全不知道我生活里发生过什么”的核心问题。
+
+---
+
+## 13. 2026-06-29 实施记录
+
+### 已完成
+
+| 项目 | 状态 | 说明 |
+|---|---|---|
+| memory_kind alias 映射 | ✅ | 中英文别名表 + 子串模糊匹配。传”承诺”→”promise”，传”joke”→”running_joke”。不再静默丢弃。 |
+| 自动推断 memory_kind | ✅ | `_infer_memory_kind(content)` 根据中文 regex 推断，不填也能自动分类。 |
+| 自动生成 summary | ✅ | `_auto_generate_summary(content)` 取首句或前60字。 |
+| 自动抽取 people | ✅ | `_auto_extract_people(content)` 识别已知名字 + 关系称呼 + 英文名。 |
+| 自动抽取 places | ✅ | `_auto_extract_places(content)` 识别带地理后缀的中文地名。 |
+| 自动抽取 objects | ✅ | `_auto_extract_objects(content)` 识别量词+物品名组合。 |
+| 自动抽取 keywords | ✅ | `_auto_extract_keywords(content)` 用 recall_terms 提取有信息量的词。 |
+| create_note 自动填充 | ✅ | 只传 content 即可，所有字段自动从内容推断。手动传的优先，不覆盖。 |
+| heat 热度计算 | ✅ | `compute_heat(row)` 纯函数：importance × 时间衰减(艾宾浩斯) + 唤起奖励。在 list 返回里展示。 |
+
+### 设计决策（已确认）
+
+- **heat 用法**：先算不用。不影响注入逻辑。观察两周再定是否分档展示。
+- **软遗忘**：不做。不要”不可逆的模糊化”。heat 衰减够了——冷的排后面但完整地在。
+- **必填字段**：只需 `content`。`memory_kind` 传了就验证+alias，没传就自动推断。
+
+### 相关文件
+
+- `shenyu_gateway/mem_notes_relevance.py` — 新增 7 个函数 + `compute_heat`
+- `shenyu_gateway/mem_notes.py` — `_memory_kind()` alias + `create_note()` auto-enrich + `_public_list_item()` 加 heat

@@ -1063,7 +1063,40 @@ class RecallIndexService:
         docs = []
         for row in rows:
             keywords = _json_list(row.get("trigger_keywords"))
-            body = "\n\n".join(part for part in [row.get("content"), row.get("trigger_text"), " ".join(keywords), row.get("review_note")] if part)
+            # v2 anchors — safe for legacy rows where these are None
+            v2_people = _json_list(row.get("people"))
+            v2_places = _json_list(row.get("places"))
+            v2_objects = _json_list(row.get("objects"))
+            v2_keywords = _json_list(row.get("keywords"))
+            v2_scene_tags = _json_list(row.get("scene_tags"))
+            v2_trigger_scenarios = _json_list(row.get("trigger_scenarios"))
+            body_parts = [
+                row.get("content"),
+                row.get("summary"),
+                row.get("trigger_text"),
+                " ".join(keywords),
+                row.get("review_note"),
+                row.get("promise_text"),
+                row.get("joke_text"),
+                row.get("topic"),
+                row.get("last_position"),
+                row.get("next_prompt"),
+                row.get("routine_domain"),
+                row.get("pattern"),
+                " ".join(v2_people + v2_places + v2_objects + v2_keywords + v2_scene_tags + v2_trigger_scenarios),
+            ]
+            body = "\n\n".join(part for part in body_parts if part and part.strip())
+            tags = [
+                row.get("mem_type"),
+                row.get("memory_kind"),
+            ] + keywords + v2_people + v2_places + v2_objects + v2_keywords + v2_scene_tags + v2_trigger_scenarios
+            tags = [t for t in tags if t]
+            metadata: dict[str, Any] = {
+                "trigger_count": row.get("trigger_count"),
+                "source_model": row.get("source_model"),
+            }
+            if row.get("memory_kind"):
+                metadata["memory_kind"] = row["memory_kind"]
             docs.extend(
                 _make_documents(
                     source_table="shenyu_mem_notes",
@@ -1072,8 +1105,8 @@ class RecallIndexService:
                     title=row.get("mem_type") or _shorten(row.get("content") or "", 60),
                     body=body,
                     session_tag=row.get("session_tag"),
-                    tags=[row.get("mem_type")] + keywords,
-                    metadata={"trigger_count": row.get("trigger_count"), "source_model": row.get("source_model")},
+                    tags=tags,
+                    metadata=metadata,
                     event_date=row.get("updated_at"),
                     created_at=row.get("created_at"),
                     updated_at=row.get("updated_at"),

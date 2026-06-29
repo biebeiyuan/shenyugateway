@@ -95,12 +95,20 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
     if mem_notes:
         lines = ["## 我之前写下的便签，可能用的到。"]
         for item in mem_notes:
+            summary = (item.get("summary") or "").strip()
             content = (item.get("content") or "").strip()
-            if not content:
+            text = summary or content
+            if not text:
                 continue
             mem_type = (item.get("mem_type") or "").strip()
             prefix = f"{mem_type}：" if mem_type else ""
-            lines.append(f"- {prefix}{shorten(content, 220)}")
+            anchors_parts: list[str] = []
+            for label, key in (("人", "people"), ("地", "places"), ("物", "objects")):
+                vals = item.get(key) or []
+                if vals:
+                    anchors_parts.append(f"{label}：{'、'.join(vals[:3])}")
+            anchor_suffix = f"（{'；'.join(anchors_parts)}）" if anchors_parts else ""
+            lines.append(f"- {prefix}{shorten(text, 180)}{anchor_suffix}")
         mem_blocks.append("\n".join(lines))
     mem = "\n\n".join(mem_blocks)
 
