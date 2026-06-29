@@ -66,6 +66,117 @@ def _json_dict(value: Any) -> dict[str, Any]:
     return {"value": value}
 
 
+_MEM_NOTE_KEYWORD_STOP_TERMS = {
+    "0",
+    "mem",
+    "note",
+    "一下",
+    "可以",
+    "东西",
+    "为什么",
+    "什么",
+    "现在",
+    "到底",
+    "还是",
+    "不是",
+    "自己",
+    "我们",
+    "你们",
+    "他们",
+    "她们",
+    "怎么",
+    "没有",
+    "不会",
+    "知道",
+    "觉得",
+    "一些",
+    "所以",
+    "因为",
+    "如果",
+    "已经",
+    "这样",
+    "那样",
+    "然后",
+    "关于",
+    "但是",
+    "今天",
+    "昨天",
+    "明天",
+    "以后",
+    "之前",
+    "之后",
+    "时候",
+    "感觉",
+    "需要",
+    "真的",
+    "可能",
+    "一点",
+    "这种",
+    "那个",
+    "这个",
+    "工具",
+    "便签",
+    "命中",
+    "逻辑",
+    "对话",
+    "回答",
+    "情绪",
+    "心情",
+    "喜欢",
+    "帮我",
+    "我把",
+    "你的",
+    "我的",
+}
+_MEM_NOTE_KEYWORD_JUNK_TERMS = {
+    "tool_call_id",
+    "tool_call",
+    "tool_use",
+    "tool_use_id",
+    "tool",
+    "name",
+    "arguments",
+    "function",
+    "type",
+    "content",
+    "role",
+    "assistant",
+    "user",
+    "system",
+    "id",
+    "ok",
+    "error",
+    "status",
+    "null",
+    "true",
+    "false",
+}
+
+
+def _mem_note_keyword_anchor_is_specific(value: Any) -> bool:
+    """Filter noisy v2 auto keywords before indexing them as recall tags."""
+    text = _normalize_text(value).strip()
+    normalized = text.lower()
+    if not normalized or len(normalized) < 2:
+        return False
+    if normalized in _MEM_NOTE_KEYWORD_STOP_TERMS or normalized in _MEM_NOTE_KEYWORD_JUNK_TERMS:
+        return False
+    if normalized.isdigit():
+        return False
+    if re.fullmatch(r"[\u4e00-\u9fff]+", text):
+        if len(text) <= 2:
+            return text in {"和弦", "海信", "上游", "预设", "气泡"} or text.lower() in {"mem"}
+        if len(text) <= 4 and (
+            text.startswith(("是", "在", "有", "我", "你", "他", "她", "这", "那", "不", "没"))
+            or text.endswith(("的", "了", "个", "吗", "呢", "吧", "啊", "呀", "嘛"))
+        ):
+            return False
+        return True
+    if re.fullmatch(r"[A-Za-z0-9_.+-]+", text):
+        return len(text) >= 4
+    return len(text) >= 3
+
+
 def recall_terms(text: str) -> list[str]:
     raw = (text or "").replace("\n", " ")
     terms: list[str] = []
@@ -1067,7 +1178,7 @@ class RecallIndexService:
             v2_people = _json_list(row.get("people"))
             v2_places = _json_list(row.get("places"))
             v2_objects = _json_list(row.get("objects"))
-            v2_keywords = _json_list(row.get("keywords"))
+            v2_keywords = [item for item in _json_list(row.get("keywords")) if _mem_note_keyword_anchor_is_specific(item)]
             v2_scene_tags = _json_list(row.get("scene_tags"))
             v2_trigger_scenarios = _json_list(row.get("trigger_scenarios"))
             body_parts = [

@@ -45,6 +45,16 @@ class FakeSupabase:
         return self.vector_rows
 
 
+class FakeSourceSupabase:
+    def __init__(self, rows):
+        self.rows = rows
+        self.queries = []
+
+    async def query(self, table, params=None):
+        self.queries.append((table, params or {}))
+        return self.rows
+
+
 class FakeEmbeddingClient:
     def __init__(self, vector=None, error=None):
         self.enabled = True
@@ -704,3 +714,38 @@ def test_recall_rejects_removed_source_types_without_widening_to_all():
 
     assert result == {"ok": True, "count": 0, "items": []}
     assert supabase.rpc_calls == []
+
+
+def test_load_mem_notes_filters_noisy_v2_keywords_from_recall_index():
+    supabase = FakeSourceSupabase(
+        [
+            {
+                "id": "note-1",
+                "session_tag": "6.29",
+                "content": "圆圆今天帮我把上游预设修回气泡。",
+                "summary": "圆圆修回上游预设气泡",
+                "mem_type": "她为我做的事",
+                "memory_kind": "event",
+                "trigger_keywords": [],
+                "people": ["圆圆"],
+                "places": [],
+                "objects": [],
+                "keywords": ["今天", "帮我", "我把", "上游预设"],
+                "scene_tags": [],
+                "trigger_scenarios": [],
+                "status": "active",
+                "created_at": "2026-06-29T00:00:00+00:00",
+                "updated_at": "2026-06-29T00:00:00+00:00",
+            }
+        ]
+    )
+
+    docs = asyncio.run(RecallIndexService(supabase)._load_mem_notes())
+
+    assert len(docs) == 1
+    doc = docs[0]
+    assert "上游预设" in doc.search_text
+    assert "上游预设" in doc.tags_json
+    assert "今天" not in doc.tags_json
+    assert "帮我" not in doc.tags_json
+    assert "我把" not in doc.tags_json

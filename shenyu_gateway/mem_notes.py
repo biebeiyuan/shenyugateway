@@ -34,6 +34,7 @@ from .mem_notes_relevance import (
     _auto_generate_summary,
     _clean_context_query,
     _infer_memory_kind,
+    _keyword_anchor_is_specific,
     _low_information_semantic_query,
     _overlap,
     _query_semantic_signal_terms,
@@ -173,6 +174,7 @@ class MemNoteService:
         store: Any = None,
         cooldown_hours: Optional[int] = None,
         dedupe_turns: Optional[int] = None,
+        specific_content_only: bool = False,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "query": query, "count": 0, "items": [], "note": "Supabase is not configured."}
@@ -207,7 +209,7 @@ class MemNoteService:
                 dedupe_turns=dedupe_turns,
             ):
                 continue
-            score, reasons = self._score(query, row)
+            score, reasons = self._score(query, row, specific_content_only=specific_content_only)
             if score >= min_score:
                 scored.append((score, row, reasons))
 
@@ -281,6 +283,7 @@ class MemNoteService:
                 store=store,
                 cooldown_hours=self._context_cooldown_hours(),
                 dedupe_turns=self._context_dedupe_turns(),
+                specific_content_only=True,
             )
             for kw_item in keyword_result.get("items") or []:
                 kw_id = str(kw_item.get("id") or "")
@@ -736,14 +739,14 @@ class MemNoteService:
         return "\n".join(lines)
 
 
-    def _score(self, query: str, row: dict) -> tuple[float, list[str]]:
+    def _score(self, query: str, row: dict, *, specific_content_only: bool = False) -> tuple[float, list[str]]:
         keywords = row.get("trigger_keywords") or []
         trigger_text = row.get("trigger_text") or ""
         content = row.get("content") or ""
         mem_type = row.get("mem_type") or ""
 
         trigger_score, trigger_hits = _trigger_overlap(query, trigger_text, keywords)
-        content_score = _overlap(query, content)
+        content_score = _overlap(query, content, specific_only=specific_content_only)
         type_score = _overlap(query, mem_type)
         recency_score = self._recency_score(row.get("updated_at") or row.get("created_at"))
         never_seen_bonus = 0.05 if not row.get("last_triggered_at") else 0.0
@@ -775,8 +778,15 @@ class MemNoteService:
     def _anchor_overlap(self, query: str, row: dict) -> tuple[float, list[str]]:
         query_lower = query.lower()
         all_anchors: list[str] = []
+        weak_relation_names = {item.lower() for item in CONTEXT_RELATION_NAME_TERMS}
         for field in ("people", "places", "objects", "keywords"):
-            all_anchors.extend(row.get(field) or [])
+            for anchor in row.get(field) or []:
+                anchor_text = str(anchor)
+                if field == "people" and anchor_text.lower() in weak_relation_names:
+                    continue
+                if field == "keywords" and not _keyword_anchor_is_specific(anchor_text):
+                    continue
+                all_anchors.append(anchor_text)
         if not all_anchors:
             return 0.0, []
         hits: list[str] = []
@@ -1024,6 +1034,7 @@ class MemNoteService:
         query_lower = query.lower()
         scene_terms = _query_scene_terms(query) if len(query) > 40 else []
         scene_lower = {t.lower() for t in scene_terms}
+        weak_relation_names = {item.lower() for item in CONTEXT_RELATION_NAME_TERMS}
         hits: list[dict[str, Any]] = []
         for row in rows:
             if _skip_auto_surface(row):
@@ -1033,15 +1044,18 @@ class MemNoteService:
                 continue
             all_anchors: list[tuple[str, str]] = []
             for ent in (row.get("entities") or []):
-                all_anchors.append((ent, "entity"))
+                if ent.lower() not in weak_relation_names:
+                    all_anchors.append((ent, "entity"))
             for p in (row.get("people") or []):
-                all_anchors.append((p, "person"))
+                if p.lower() not in weak_relation_names:
+                    all_anchors.append((p, "person"))
             for p in (row.get("places") or []):
                 all_anchors.append((p, "place"))
             for o in (row.get("objects") or []):
                 all_anchors.append((o, "object"))
             for k in (row.get("keywords") or []):
-                all_anchors.append((k, "keyword"))
+                if _keyword_anchor_is_specific(k):
+                    all_anchors.append((k, "keyword"))
             if not all_anchors:
                 continue
             matched_anchor = None

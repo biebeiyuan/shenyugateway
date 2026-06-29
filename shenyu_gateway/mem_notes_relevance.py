@@ -86,6 +86,7 @@ CONTEXT_RELATION_NAME_TERMS = {
     "圆儿",
     "予予",
 }
+_CONTEXT_RELATION_NAME_TERMS_NORMALIZED = {item.lower() for item in CONTEXT_RELATION_NAME_TERMS}
 _COMMON_TRIGGER_TERMS = {
     "工具",
     "便签",
@@ -240,8 +241,29 @@ def _skip_auto_surface(row: dict) -> bool:
     return (row.get("memory_kind") or "") == "promise" and bool(row.get("resolved"))
 
 
-def _overlap(query: str, text: str) -> float:
+def _specific_overlap_term(term: str) -> bool:
+    normalized = _normalize_text(term).strip().lower()
+    if not normalized:
+        return False
+    if normalized in CONTEXT_WEAK_KEYWORD_HITS or normalized in AUTO_TRIGGER_GENERIC_TERMS:
+        return False
+    if normalized in _CONTEXT_RELATION_NAME_TERMS_NORMALIZED:
+        return False
+    if normalized in _TRIGGER_KEYWORD_STOP_TERMS or normalized in _TRIGGER_KEYWORD_JUNK_TOKENS:
+        return False
+    if normalized.isdigit() or len(normalized) < 3:
+        return False
+    if re.fullmatch(r"[一-鿿]+", normalized):
+        if _generic_chinese_semantic_fragment(normalized):
+            return False
+        return len(normalized) >= 3
+    return len(normalized) >= 4
+
+
+def _overlap(query: str, text: str, *, specific_only: bool = False) -> float:
     terms = recall_terms(query)
+    if specific_only:
+        terms = [term for term in terms if _specific_overlap_term(term)]
     if not terms:
         return 0.0
     haystack = (text or "").lower()
@@ -611,28 +633,87 @@ def _auto_extract_objects(content: str) -> list[str]:
 
 
 def _auto_extract_keywords(content: str) -> list[str]:
-    """Extract distinctive keywords from content using recall_terms + filtering."""
+    """Extract distinctive keywords without preserving noisy Chinese n-grams."""
     if not content:
         return []
-    clean = _strip_tool_result_blocks(content)
-    terms = recall_terms(clean)
+    clean = _clean_context_query(content)
     keywords: list[str] = []
     seen: set[str] = set()
-    for term in terms:
-        if term in _KEYWORD_STOP_WORDS or term in _TRIGGER_KEYWORD_JUNK_TOKENS:
-            continue
-        if term.isdigit() or len(term) < 2:
-            continue
-        normalized = term.lower()
-        if normalized in seen:
-            continue
-        if normalized in CONTEXT_WEAK_KEYWORD_HITS:
-            continue
+
+    seed_terms = {item.lower() for item in _SUGGESTION_SEED_KEYWORDS} | _CONTEXT_SEMANTIC_STRONG_TERMS_NORMALIZED
+
+    def _add(term: str, *, allow_short: bool = False) -> None:
+        keyword = _normalize_text(term).strip()
+        normalized = keyword.lower()
+        if not normalized or normalized in seen:
+            return
+        if normalized in _KEYWORD_STOP_WORDS or normalized in _TRIGGER_KEYWORD_JUNK_TOKENS:
+            return
+        if normalized in CONTEXT_WEAK_KEYWORD_HITS or normalized in AUTO_TRIGGER_GENERIC_TERMS:
+            return
+        if normalized.isdigit() or len(normalized) < 2:
+            return
+        if re.fullmatch(r"[一-鿿]+", keyword):
+            if _generic_chinese_semantic_fragment(normalized):
+                return
+            if len(keyword) <= 2 and not allow_short and normalized not in seed_terms:
+                return
         seen.add(normalized)
-        keywords.append(term)
-        if len(keywords) >= 8:
-            break
-    return keywords
+        keywords.append(keyword)
+
+    for match in _QUOTED_CONTENT_RE.finditer(clean):
+        _add(match.group(1), allow_short=True)
+
+    clean_lower = clean.lower()
+    for seed in _SUGGESTION_SEED_KEYWORDS:
+        if seed.lower() in clean_lower:
+            _add(seed, allow_short=True)
+
+    for match in _ENGLISH_TECH_TERM_RE.finditer(clean):
+        _add(match.group(), allow_short=True)
+
+    for phrase in _TRIGGER_PHRASE_SPLIT_RE.split(clean):
+        chunk = re.sub(r"[^\w一-鿿_.+-]+", "", phrase, flags=re.UNICODE)
+        if 3 <= len(chunk) <= 12:
+            _add(chunk)
+
+    if len(keywords) < 4:
+        for term in recall_terms(clean):
+            if term.lower() in _CONTEXT_SEMANTIC_STRONG_TERMS_NORMALIZED:
+                _add(term, allow_short=True)
+            elif re.fullmatch(r"[一-鿿]{3,8}", term):
+                _add(term)
+            elif re.fullmatch(r"[A-Za-z0-9_.+-]{4,20}", term):
+                _add(term, allow_short=True)
+            if len(keywords) >= 8:
+                break
+    return keywords[:8]
+
+
+def _keyword_anchor_is_specific(value: Any) -> bool:
+    """Return True when a v2 keyword is specific enough for no-threshold entity recall."""
+    text = _normalize_text(value).strip()
+    normalized = text.lower()
+    if not normalized:
+        return False
+    if normalized in _KEYWORD_STOP_WORDS or normalized in _TRIGGER_KEYWORD_STOP_TERMS:
+        return False
+    if normalized in CONTEXT_WEAK_KEYWORD_HITS or normalized in AUTO_TRIGGER_GENERIC_TERMS:
+        return False
+    if normalized in _TRIGGER_KEYWORD_JUNK_TOKENS or normalized.isdigit():
+        return False
+    if normalized in _CONTEXT_SEMANTIC_STRONG_TERMS_NORMALIZED:
+        return True
+    if re.fullmatch(r"[一-鿿]+", text):
+        if _generic_chinese_semantic_fragment(normalized):
+            return False
+        if len(text) <= 2:
+            seed_terms = {item.lower() for item in _SUGGESTION_SEED_KEYWORDS}
+            return normalized in seed_terms and normalized not in _COMMON_TRIGGER_TERMS
+        return True
+    if _has_non_word_symbol(text):
+        return len(text) >= 3
+    return len(text) >= 4
 
 
 # ── Scene terms for long-text queries ────────────────────────────────────────

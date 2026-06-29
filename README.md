@@ -419,7 +419,7 @@ Writing a note requires only `content`. All other fields are auto-enriched from 
 
 - `memory_kind`: resolved through alias map (中英文 + fuzzy substring), then regex inference from content.
 - `summary`: first sentence or first 60 characters.
-- `people/places/objects/keywords`: heuristic extraction (known names, relation suffixes, geo suffixes, quantifier+noun patterns, recall-token filtering).
+- `people/places/objects/keywords`: heuristic extraction (known names, relation suffixes, geo suffixes, quantifier+noun patterns, filtered scene keywords). Auto keywords deliberately avoid common Chinese n-gram fragments.
 - `mem_type`: regex pattern matching on Chinese content.
 
 The `memory_kind` alias map accepts Chinese variants (`承诺`→`promise`, `梗`→`running_joke`, `旅行`→`trip`, etc.) and English shorthand (`joke`, `habit`, `fact`, `person`, etc.). Unrecognized values trigger auto-inference rather than silently dropping to NULL.
@@ -429,7 +429,7 @@ Heat score (`compute_heat`): an Ebbinghaus-style temperature combining importanc
 Search/injection flow:
 
 1. `ContextBuilder` calls `MemNoteService.search_notes_contextual()` when enabled.
-2. Active rows are matched through narrow anchors first: legacy `entities`, then v2 `people`, `places`, `objects`, and `keywords`. Chinese anchors use recall-token matching so names and objects still match inside normal no-space Chinese sentences.
+2. Active rows are matched through narrow anchors first: legacy `entities`, then v2 `people`, `places`, and `objects`. v2 `keywords` only join this no-threshold anchor path after a specificity filter, so generic auto-filled fragments such as "今天" or "帮我" do not surface unrelated notes. Chinese anchors use recall-token matching so names and objects still match inside normal no-space Chinese sentences.
 3. `running_joke` rows use `scene_tags` plus a time-decay serendipity gate instead of a fixed probability: just-used jokes are suppressed, then gradually recover toward 0.3 after a month. At most one running joke is injected per turn, and `last_used_at` is updated only when it actually surfaces.
 4. `promise` rows with `resolved=true` stay available for admin/manual review but are skipped by automatic context injection.
 5. Semantic recall is capped as anchored support and no longer fills empty slots with generic matches.

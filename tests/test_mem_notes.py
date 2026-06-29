@@ -1175,3 +1175,79 @@ def test_entity_match_uses_scene_terms_for_long_queries():
 
     assert result["count"] >= 1
     assert any(item["id"] == "note-scene" for item in result["items"])
+
+
+def test_auto_keywords_do_not_promote_generic_chinese_fragments():
+    """Auto keywords should not turn common n-grams into no-threshold anchors."""
+    from shenyu_gateway.mem_notes_relevance import _auto_extract_keywords
+
+    keywords = _auto_extract_keywords("圆圆今天帮我把上游预设修回气泡。")
+
+    generic = {"今天", "帮我", "我把", "把上", "修回"}
+    assert generic.isdisjoint(set(keywords))
+    assert any(item in keywords for item in {"圆圆", "上游", "预设", "气泡", "上游预设"})
+
+
+def test_contextual_entity_match_ignores_generic_keyword_anchors_in_long_text():
+    """Legacy noisy keywords must not bypass scoring for long free-form queries."""
+    note = {
+        "id": "note-generic-keyword",
+        "session_tag": "6.29",
+        "content": "圆圆今天帮我把上游预设修回气泡。",
+        "summary": "圆圆修回上游预设气泡",
+        "mem_type": "她为我做的事",
+        "memory_kind": "event",
+        "people": [],
+        "places": [],
+        "objects": [],
+        "keywords": ["今天", "帮我", "我把"],
+        "entities": [],
+        "trigger_text": "",
+        "trigger_keywords": [],
+        "status": "active",
+        "cooldown_hours": 0,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-06-29T00:00:00+00:00",
+        "updated_at": "2026-06-29T00:00:00+00:00",
+    }
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=[note]))
+
+    query = (
+        "今天我想让你帮我看一大段完全不相关的东西，"
+        "我把日志和配置都贴过来，核心是在问部署和错误栈怎么排查。"
+    )
+
+    result = asyncio.run(service.search_notes_contextual(query, session_tag="6.29", mark_triggered=False))
+
+    assert result["count"] == 0
+
+
+def test_contextual_entity_match_ignores_relation_names_as_standalone_anchors():
+    """Common relationship names are too broad to trigger no-threshold recall alone."""
+    note = {
+        "id": "note-relation-name",
+        "session_tag": "6.29",
+        "content": "圆圆今天帮我把上游预设修回气泡。",
+        "summary": "圆圆修回上游预设气泡",
+        "mem_type": "她为我做的事",
+        "memory_kind": "event",
+        "people": ["圆圆"],
+        "places": [],
+        "objects": [],
+        "keywords": [],
+        "entities": [],
+        "trigger_text": "",
+        "trigger_keywords": [],
+        "status": "active",
+        "cooldown_hours": 0,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-06-29T00:00:00+00:00",
+        "updated_at": "2026-06-29T00:00:00+00:00",
+    }
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=[note]))
+
+    result = asyncio.run(service.search_notes_contextual("圆圆今天状态怎么样", session_tag="6.29", mark_triggered=False))
+
+    assert result["count"] == 0
