@@ -184,10 +184,6 @@ _PASSIVE_HINTS: dict[str, list[str]] = {
         "最上面那个木盒子好像沉了一点。",
         "木盒子的盖子没盖严。",
     ],
-    "star_map": [
-        "星图墙上有几颗新落的星，还没暗下去。",
-        "对面墙上有光在闪。是星图上新的。",
-    ],
     "notebook": [
         "笔记本翻开着，最后一页有新写的几行。",
     ],
@@ -200,16 +196,87 @@ _MAX_PASSIVE_HINTS = 3
 
 
 def _render_passive_hints(door_specs: list[dict]) -> str:
-    """Pick up to 2 spatial hints for doors with activity."""
+    """Pick up to 2 spatial hints for doors with activity, plus star wall summary."""
     count_map = {d["key"]: d.get("count", 0) for d in door_specs}
     active = [key for key, count in count_map.items() if count > 0 and key in _PASSIVE_HINTS]
-    if not active:
-        return ""
-    random.shuffle(active)
     hints = []
+
+    # Star map wall: real data summary (always rendered if stars exist)
+    star_spec = next((d for d in door_specs if d["key"] == "star_map"), None)
+    if star_spec and star_spec.get("total", 0) > 0:
+        star_hint = _render_star_wall_hint(star_spec)
+        if star_hint:
+            hints.append(star_hint)
+
+    if not active:
+        return "\n".join(hints)
+    random.shuffle(active)
     for key in active[:_MAX_PASSIVE_HINTS]:
         hints.append(random.choice(_PASSIVE_HINTS[key]))
     return "\n".join(hints)
+
+
+def _render_star_wall_hint(spec: dict) -> str:
+    """Build star wall passive hint from real statistics."""
+    total = spec.get("total", 0)
+    links = spec.get("links", 0)
+    latest = spec.get("latest")
+    fading = spec.get("fading")
+
+    # Line 1: total count + constellation lines
+    if links > 0:
+        line1 = f"星图墙亮着{total}颗星，{links}条星座线。"
+    else:
+        line1 = f"星图墙亮着{total}颗星。"
+
+    parts = [line1]
+
+    # Line 2: most recent star
+    if latest:
+        chord = latest.get("chord") or ""
+        content = latest.get("content") or ""
+        created_at = latest.get("created_at") or ""
+        days_ago = _days_since(created_at)
+        snippet = f"{chord}，{content}" if chord else content
+        if snippet:
+            if days_ago is not None and days_ago > 7:
+                parts.append(f"最亮的那颗是{_human_time_ago(days_ago)}的——{snippet}")
+            else:
+                parts.append(f"最近的一颗还亮着——{snippet}")
+
+    # Line 3: fading star
+    if fading:
+        chord = fading.get("chord") or ""
+        last_at = fading.get("last_activated_at") or ""
+        days_ago = _days_since(last_at)
+        if chord and days_ago is not None:
+            parts.append(f"角落里有一颗在暗——{chord}，{_human_time_ago(days_ago)}。")
+
+    return "\n".join(parts)
+
+
+def _days_since(iso_str: str) -> int | None:
+    if not iso_str:
+        return None
+    dt = parse_ts(iso_str)
+    if not dt:
+        return None
+    return max(int((now() - dt).total_seconds() / 86400.0), 0)
+
+
+def _human_time_ago(days: int) -> str:
+    if days < 1:
+        return "今天"
+    if days == 1:
+        return "昨天"
+    if days < 7:
+        return f"{days}天前"
+    weeks = days // 7
+    if weeks == 1:
+        return "一周前"
+    if weeks < 5:
+        return f"{weeks}周前"
+    return f"{days}天前"
 
 
 # ── Full Layer Assembly ────────────────────────────────────────────────

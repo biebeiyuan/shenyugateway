@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any, Iterable, Optional
 
 
@@ -467,6 +468,7 @@ async def collect_door_counts(
         counts["read_box"] = 0
 
     # Star map: unreviewed stars (落了星还没看)
+    star_stats: dict[str, Any] = {}
     try:
         if supabase_client:
             rows = await supabase_client.query(
@@ -474,6 +476,54 @@ async def collect_door_counts(
                 {"select": "id", "reviewed_at": "is.null", "limit": "10"},
             )
             counts["star_map"] = len(rows) if rows else 0
+
+            # Total active stars
+            all_active = await supabase_client.query(
+                "shenyu_stars",
+                {"select": "id", "status": "eq.active", "limit": "999"},
+            )
+            star_stats["total"] = len(all_active) if all_active else 0
+
+            # Constellation links
+            links = await supabase_client.query(
+                "shenyu_star_links",
+                {"select": "id", "relation_type": "eq.constellation", "status": "eq.active", "limit": "999"},
+            )
+            star_stats["links"] = len(links) if links else 0
+
+            # Most recent star
+            latest_rows = await supabase_client.query(
+                "shenyu_stars",
+                {"select": "id,chord,content,created_at", "status": "eq.active", "order": "created_at.desc", "limit": "1"},
+            )
+            if latest_rows:
+                r = latest_rows[0]
+                star_stats["latest"] = {
+                    "chord": r.get("chord", ""),
+                    "content": (r.get("content") or "")[:8],
+                    "created_at": r.get("created_at", ""),
+                }
+
+            # Fading star: last_activated_at > 14 days ago, not constant
+            from .runtime import now as _now
+            cutoff = (_now() - timedelta(days=14)).isoformat()
+            fading_rows = await supabase_client.query(
+                "shenyu_stars",
+                {
+                    "select": "id,chord,content,last_activated_at,created_at",
+                    "status": "eq.active",
+                    "is_constant": "eq.false",
+                    "last_activated_at": f"lt.{cutoff}",
+                    "order": "last_activated_at.asc",
+                    "limit": "1",
+                },
+            )
+            if fading_rows:
+                r = fading_rows[0]
+                star_stats["fading"] = {
+                    "chord": r.get("chord", ""),
+                    "last_activated_at": r.get("last_activated_at") or r.get("created_at", ""),
+                }
         else:
             counts["star_map"] = 0
     except Exception:
@@ -520,7 +570,7 @@ async def collect_door_counts(
     return [
         {"key": "drawer_notes", "name": "圆儿的纸条抽屉", "count": counts["drawer_notes"]},
         {"key": "read_box", "name": "木盒子", "count": counts["read_box"]},
-        {"key": "star_map", "name": "星图", "count": counts["star_map"]},
+        {"key": "star_map", "name": "星图", "count": counts["star_map"], **star_stats},
         {"key": "notebook", "name": "笔记本", "count": counts["notebook"]},
         {"key": "scribble", "name": "窗台涂鸦本", "count": counts["scribble"]},
         {"key": "wall_pins", "name": "墙上便签", "count": counts["wall_pins"]},

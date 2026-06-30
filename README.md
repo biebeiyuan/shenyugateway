@@ -636,7 +636,7 @@ Room layers reuse `assemble_layered_messages()` by mapping to the same keys:
 | `tool_policy` | Spatial door descriptions |
 | `format` | `窗开着。东西都在。` |
 
-Passive spatial hints: when doors have activity (unread notes, new stars, pending heartbeats, new pins), `render_room_layers` leaks up to 3 subtle observations into the `slow` layer — e.g. "抽屉缝里漏出一角纸" or "星图墙上有几颗新落的星". These let Shenyu notice things without calling a tool first.
+Passive spatial hints: when doors have activity (unread notes, pending heartbeats, new pins), `render_room_layers` leaks up to 3 subtle observations into the `slow` layer — e.g. "抽屉缝里漏出一角纸". The star map wall gets a special real-data summary: total star count, constellation link count, most recent star (chord + first few chars of content), and optionally a fading star warning (>14 days since last activation). These let Shenyu notice things without calling a tool first.
 
 ### Charge
 
