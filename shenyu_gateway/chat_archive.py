@@ -15,6 +15,7 @@ so the same sliding window resent on every request archives each message once,
 while a genuinely repeated message months later is archived again as a new event.
 """
 
+import asyncio
 import hashlib
 import re
 from datetime import datetime, timezone, timedelta
@@ -191,5 +192,9 @@ async def archive_window_safely(service: ChatArchiveService, **kwargs) -> None:
         result = await service.archive_window(**kwargs)
         if result.get("archived"):
             logger.info("[ChatArchive] archived=%s thread=%s", result["archived"], result.get("thread"))
+    except asyncio.CancelledError:
+        # A retained task should not be GC-cancelled, but surface it if it ever is.
+        logger.warning("[ChatArchive] archive task cancelled before completion")
+        raise
     except Exception:
         logger.exception("[ChatArchive] archive pass failed")

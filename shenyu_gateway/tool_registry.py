@@ -27,22 +27,6 @@ HIDDEN_COMPAT_TOOL_NAMES = {
     "shenyu_surface_passages",
 }
 
-_BROKER_TOOL_HINTS = {
-    "shenyu_recall": "翻旧上下文，可 source_types 限定范围",
-    "shenyu_search_stars": "搜星星记忆",
-    "shenyu_star_review": "我看网关推来的最近新星和可能相关的旧星",
-    "shenyu_star_feedback": "我给星星候选评分，也能补 missed",
-    "shenyu_connect_constellation": "我按心里的顺序把几颗星连成星座",
-    "shenyu_list_mem_notes": "列 mem 便签（status: captured / active）",
-    "shenyu_update_mem_note": "改某条 mem",
-    "shenyu_notebook_list": "读 notebook（跨窗口/海信那边）",
-    "shenyu_notebook_write": "写 notebook",
-    "shenyu_add_calendar": "把今天的感触写进正文吧，它会像日历一样在我醒来的时候挂在旁边",
-    "shenyu_read_heartbeat": "读我自己的心跳",
-    "shenyu_conflict_read": "翻一本矛盾书（书架在上下文里）",
-    "shenyu_supabase_guide": "忘了 Supabase 表结构看这个",
-}
-
 DAILY_GATEWAY_TOOL_NAMES = {
     "shenyu_recall",
     "shenyu_create_star",
@@ -233,15 +217,6 @@ def _expanded_gateway_native_tools(cfg: Any) -> list[dict]:
 
 def _gateway_tool_names(cfg: Any) -> list[str]:
     return [tool["function"]["name"] for tool in _expanded_gateway_native_tools(cfg)]
-
-
-def _broker_tool_summary(tool: dict) -> str:
-    function = tool.get("function") or {}
-    name = str(function.get("name") or "")
-    hint = _BROKER_TOOL_HINTS.get(name)
-    if hint:
-        return hint
-    return str(function.get("description") or "").strip().rstrip("。") or "网关工具"
 
 
 def _gateway_broker_tool(cfg: Any) -> dict:

@@ -27,6 +27,19 @@ from .tool_loop import _latest_user_text, _tool_call_name
 from .tool_registry import is_gateway_native_tool
 
 
+# Fire-and-forget background tasks (e.g. chat archiving). The event loop only keeps
+# a weak reference to tasks created via asyncio.create_task, so an un-retained task
+# can be garbage-collected mid-run and silently lose the archive write. Hold a strong
+# reference here and drop it on completion — same pattern the lifespan workers use.
+_BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _spawn_background_task(coro) -> None:
+    task = asyncio.create_task(coro)
+    _BACKGROUND_TASKS.add(task)
+    task.add_done_callback(_BACKGROUND_TASKS.discard)
+
+
 @dataclass(frozen=True)
 class PrepareMessagesDeps:
     cfg: Any
@@ -305,7 +318,7 @@ async def prepare_messages(
     upstream = deps.upstream_for_hisense(is_hisense)
     archive_service = ChatArchiveService(store, deps.supabase_client, cfg)
     if archive_service.enabled():
-        asyncio.create_task(
+        _spawn_background_task(
             archive_window_safely(
                 archive_service,
                 session_tag=session_tag,
