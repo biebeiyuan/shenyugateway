@@ -428,10 +428,11 @@ def test_room_trigger_only_matches_shenyu_huijia():
     is_free_time = gateway_namespace["_is_free_time_fallback_context"]
 
     assert is_free_time('<proxy_sender name="沈予"/> 回家了。')
+    assert is_free_time('<proxy_sender name="沈予"/> 自动提醒')
+    assert is_free_time('<proxy_sender name="沈予"/> 今天心情不错')
     assert not is_free_time("沈予回家了")
     assert not is_free_time("【提醒】予予现在是自由时间")
     assert not is_free_time("workflow=free_time")
-    assert not is_free_time('<proxy_sender name="沈予"/> 自动提醒')
     assert not is_free_time("普通聊天")
     assert not is_free_time("回家了")
 

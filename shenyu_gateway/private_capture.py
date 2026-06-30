@@ -46,7 +46,7 @@ def mark_context_consumed(meta: dict, *, store: Any):
 
 def is_free_time_fallback_context(latest_user_text: str) -> bool:
     text = latest_user_text or ""
-    return "proxy_sender" in text and "沈予" in text and "回家了" in text
+    return "proxy_sender" in text and "沈予" in text
 
 
 def is_room_mode(latest_user_text: str) -> bool:

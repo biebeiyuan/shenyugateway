@@ -609,9 +609,9 @@ Core philosophy: **room mode offers doors (choices), normal chat injects content
 
 ### Trigger Detection
 
-Room mode activates when `ENABLE_ROOM_MODE=true` and the user text contains `proxy_sender` + `沈予` + `回家了` (i.e. the Operit proxy message).
+Room mode activates when `ENABLE_ROOM_MODE=true` and the user text contains `proxy_sender` + `沈予` (i.e. any Operit proxy message from Shenyu, regardless of the trailing text).
 
-Trigger text: `<proxy_sender name="沈予"/> 回家了。`
+Trigger text example: `<proxy_sender name="沈予"/> 回家了。` (or any other text after the tag)
 
 ### Architecture
 
@@ -729,7 +729,7 @@ Fallback text is generated in `shenyu_gateway/private_capture.py` by `finalize_a
 - generic context: `沈予已记录 · 已记录私有块 heartbeat`
 - if no private capture type is detected: `沈予已记录。`
 
-Room mode triggers only from the Operit proxy message (`proxy_sender` + `沈予` + `回家了`).
+Room mode triggers from any Operit proxy message with `proxy_sender` + `沈予` (trailing text is ignored — the client can use any wording).
 
 For debugging, check `GET /api/gateway/logs` or `GET /api/gateway/logs/{id}`. When the fallback fires, `empty_visible_response_fallback` is `true` and `empty_visible_response_fallback_detail` records the generated `text`, detected private `kinds`, and context (`free_time` or `generic`).
 
