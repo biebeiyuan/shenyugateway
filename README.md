@@ -4,7 +4,17 @@ Shenyu Gateway is the single OpenAI-compatible provider entrypoint for Operit. I
 
 The gateway is not a persona layer or roleplay wrapper. It is a context and memory gateway: current conversation text stays primary, long-form primary text can surface softly, and durable memory is handled by explicit layers.
 
-For future debugging and cleanup work, start with `DEBUGGING_GUIDE.md`. It records the current module boundaries, chat/context flow, external frontend contracts, and verification checklist.
+## 新线程阅读顺序
+
+| 顺序 | 文档 | 用途 |
+|------|------|------|
+| 1 | **`DESIGN.md`** | 记忆系统设计哲学、内核逻辑、改动边界（**先读这个**） |
+| 2 | 本文件 `README.md` § Maintenance Map | 文件地图、API 清单、配置参考 |
+| 3 | `AGENTS.md` | Agent/Claude 编码规则（UTF-8、排错优先等） |
+| 按需 | `DEBUGGING_GUIDE.md` | 排错时的日志命令和验证清单 |
+| 按需 | `STAR_RECALL_V2_DESIGN.md` | 改 star 排序算法时的历史设计稿 |
+| 按需 | `MEM0_LIGHT_MEMORY_V2_DESIGN.md` | 改 mem notes 时的历史设计稿 |
+| 按需 | `REFACTOR_PLAN.md` | 做文件拆分重构时的执行方案 |
 
 ## Current Architecture
 
@@ -26,29 +36,134 @@ Operit
 
 The codebase is partly layered already:
 
+### Core entrypoint
+
+- `gateway.py`: FastAPI app entrypoint, lifespan, CORS, route registration, and model listing. Chat, calendar, admin, hisense, archive, and config routes have been extracted into dedicated modules.
+
+### Config & runtime
+
 - `shenyu_gateway/config.py`: environment-backed runtime config.
+- `shenyu_gateway/runtime.py`: shared runtime utilities (logger, `now_ts`, `iso_now`, `json_dumps`, dotenv loading).
+- `shenyu_gateway/schemas.py`: Pydantic data models (`ChatMessage`, request/response shapes).
+
+### Storage
+
 - `shenyu_gateway/store/`: SQLite runtime state (package split into mixins: `_base`, `_sessions`, `_messages`, `_pending`, `_snapshots`, `_cold_start`, `_heartbeats`, `_cache`, `_room`, `_admin`).
 - `shenyu_gateway/supabase.py`: low-level Supabase REST client.
-- `shenyu_gateway/calendar.py`: date/key helpers and calendar JSON parsing.
-- `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
+
+### Chat pipeline & streaming
+
+- `shenyu_gateway/chat_pipeline.py`: main chat request orchestration (context build → upstream call → tool loop → response).
+- `shenyu_gateway/streaming.py`: SSE streaming helpers, chunk serialization, keepalive logic.
+- `shenyu_gateway/stream_proxy.py`: plain pass-through streaming with `<heartbeat>` filtering.
+- `shenyu_gateway/tool_loop.py`: internal gateway tool loop (`_run_internal_tool_loop_stream`).
+- `shenyu_gateway/middleware.py`: FastAPI middleware registration (global exception handler, request-id injection, HTTP event logging).
+
+### Context assembly
+
+- `shenyu_gateway/context_builder.py`: async parallel gathering of all memory sources into a context package.
 - `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, and cold-start bridge insertion.
-- `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations, including Supabase table tools, recall compatibility helpers, heartbeats, notebook, and memory helpers.
-- `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
-- `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, heartbeat persistence helper.
-- `shenyu_gateway/mem_notes.py`: note CRUD with memory_kind alias resolution, auto-enrichment pipeline, heat exposure, and old atomic read-only lookup.
-- `shenyu_gateway/mem_notes_relevance.py`: pure-function helpers for mem-note recall scoring, anchor matching, auto-extraction (people/places/objects/keywords/summary/memory_kind inference), `compute_heat()`, and `running_joke_serendipity_rate()`.
-- `shenyu_gateway/stars/`: Star memory service (package split into mixins: `_helpers`, `_chord`, `_scene`, `_weights`, `_crud`, `_recall`, `_activity`, `_review`, `_feedback`, `_logging`, `_render`, `_embedding`). ACT-R activation, chord/content/harmony scoring, review candidates, feedback logging, and constellation links.
-- `shenyu_gateway/sessions.py`: session/message logging facade.
-- `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
-- `shenyu_gateway/auth.py`: admin auth middleware, API key verification, login page HTML, and `ADMIN_PROTECTED_PREFIXES`.
-- `shenyu_gateway/upstream_client.py`: upstream HTTP client construction, protocol detection, URL routing, request building, streaming chunk iteration, model listing, and connection error formatting.
+- `shenyu_gateway/context_snapshots.py`: context snapshot creation and helpers for calendar/cold-start sources.
 - `shenyu_gateway/prepare_messages.py`: cold-start snapshot preparation, runtime state pruning, pending gateway tool turn injection, and message/tool-call helpers.
+
+### Upstream communication
+
+- `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
+- `shenyu_gateway/upstream_client.py`: upstream HTTP client construction, protocol detection, URL routing, request building, streaming chunk iteration, model listing, and connection error formatting.
+
+### Tools
+
+- `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations (`GatewayToolService`), including Supabase table tools, recall compatibility helpers, heartbeats, notebook, and memory helpers.
+- `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
+- `shenyu_gateway/tool_schemas.py`: tool JSON schema definitions (separated from registry logic).
+
+### Memory subsystems
+
+- `shenyu_gateway/stars/`: Star memory service (package split into mixins: `_helpers`, `_chord`, `_scene`, `_weights`, `_crud`, `_recall`, `_activity`, `_review`, `_feedback`, `_logging`, `_render`, `_embedding`). ACT-R activation, chord/content/harmony scoring, review candidates, feedback logging, and constellation links.
+- `shenyu_gateway/mem_notes/`: note service package (mixin pattern, like stars/): `_helpers` (constants), `_validation` (field validation), `_suggestions` (auto mem_type/keyword inference), `_search` (keyword/semantic/entity matching, scoring, cooldown, rendering), `_crud` (create/update/delete/list/legacy-atomic). `__init__.py` assembles `MemNoteService` and re-exports backward-compat symbols.
+- `shenyu_gateway/mem_notes_relevance.py`: pure-function helpers for mem-note recall scoring, anchor matching, auto-extraction (people/places/objects/keywords/summary/memory_kind inference), `compute_heat()`, and `running_joke_serendipity_rate()`.
+- `shenyu_gateway/recall.py`: unified recall index — keyword + vector hybrid search across 7 data sources.
+- `shenyu_gateway/embeddings.py`: embedding client (SiliconFlow / BAAI/bge-m3).
+
+### Capture & private content
+
+- `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, heartbeat persistence helper.
 - `shenyu_gateway/private_capture.py`: private assistant content finalization (`<heartbeat>` extraction), context-consumed marking, fallback text generation, and free-time detection.
+
+### Durable archive
+
+- `shenyu_gateway/chat_archive.py`: L0 verbatim chat archive service (fire-and-forget archival to Supabase `shenyu_chat_archive`).
+- `shenyu_gateway/heartbeat_archive.py`: heartbeat disaster recovery archive to Supabase (`shenyu_heartbeat_archive`), settle window, soft-delete reconciliation.
+- `shenyu_gateway/conflict_books.py`: conflict books CRUD, invariant enforcement (frozen original_text, append-only annotations).
+
+### Calendar
+
+- `shenyu_gateway/calendar.py`: date/key helpers and calendar JSON parsing.
+- `shenyu_gateway/calendar_service.py`: `CalendarService` — calendar page generation orchestration.
+- `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
+
+### Room mode
+
 - `shenyu_gateway/room_text.py`: all room mode copy — charter, atmosphere scenes, door descriptions, trace phrases. Change text here only.
 - `shenyu_gateway/room_context.py`: room mode charge calculation, layer rendering, door filtering logic.
 - `shenyu_gateway/room_tools.py`: room mode tool definitions, compatibility broker, execute dispatch, and door count collection.
+- `shenyu_gateway/room_scenes.py`: window scenes (weather, atmosphere, landscape). Change scene copy here only.
+
+### Auth & sessions
+
+- `shenyu_gateway/auth.py`: admin auth middleware, API key verification, login page HTML, and `ADMIN_PROTECTED_PREFIXES`.
+- `shenyu_gateway/sessions.py`: session/message logging facade.
+
+### Route modules (extracted from gateway.py)
+
+- `shenyu_gateway/gateway_admin_routes.py`: admin API routes (stars, mem notes, room, overview, prune, etc.).
+- `shenyu_gateway/calendar_routes.py`: calendar API routes (prompts, month grid, generation, preview).
+- `shenyu_gateway/hisense_routes.py`: Hisense API routes (preview, notebook, session).
+- `shenyu_gateway/archive_routes.py`: archive reader and conflict book API routes.
+- `shenyu_gateway/config_routes.py`: configuration API routes (get/set runtime config).
+- `shenyu_gateway/admin_shell_routes.py`: admin shell/UI routes (static file serving, login page).
+
+### Request logging
+
+- `shenyu_gateway/request_logs.py`: in-memory request log ring buffer, phase markers, HTTP event tracking.
+
+### Shared utilities
+
 - `shenyu_gateway/utils.py`: shared utilities (`shorten`, `clean_config_text`, `normalize_text`) used across multiple modules.
-- `gateway.py`: FastAPI app entrypoint, lifespan, CORS, route handlers, context orchestration, tool-loop orchestration, streaming chat pipeline, calendar generation service, and Hisense routes.
+
+### Admin frontend
+
+- `admin/src/api/http.ts`: shared HTTP client (axios instance, auth token).
+- `admin/src/api/config.ts`: gateway and upstream configuration.
+- `admin/src/api/mem0.ts`: Mem config, mem-note review APIs, and old atomic read-only lookup.
+- `admin/src/api/stars.ts`: Star list/search/create/review/feedback/connect APIs.
+- `admin/src/api/sessions.ts`: local SQLite session browser.
+- `admin/src/api/logs.ts`: request log list and detail APIs.
+- `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
+- `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
+- `admin/src/api/archive.ts`: chat archive reader and conflict book APIs.
+- `admin/src/api/room.ts`: room mode APIs (traces, drawer notes, scribbles, pins).
+- `admin/src/api/toolErrors.ts`: tool error log APIs.
+- `admin/src/views/HomeView.vue`: admin landing/dashboard page.
+- `admin/src/views/ConfigView.vue`: configuration page.
+- `admin/src/views/Mem0View.vue`: Mem prompt/capture/injection/tool controls, mem-note attribute workflow, and old atomic read-only lookup.
+- `admin/src/views/StarsView.vue`: standalone Star entry shell at `/stars`, with split Star panels under `admin/src/views/stars/`.
+- `admin/src/views/stars/StarsReviewPanel.vue`: admin review scoring, missed recording, and candidate constellation feedback.
+- `admin/src/views/stars/StarsSettingsPanel.vue`: Star memory configuration controls.
+- `admin/src/views/stars/StarsWritePanel.vue`: manual star creation and search.
+- `admin/src/views/stars/StarsListPanel.vue`: star list/filter panel.
+- `admin/src/views/stars/StarMapView.vue`: Three.js star graph view (memory star map at `/stars/map`).
+- `admin/src/views/stars/starMelody.ts`: constellation → Web Audio melody.
+- `admin/src/views/stars/starUi.ts`: shared Star UI formatting and link-order helpers.
+- `admin/src/views/SessionsView.vue`: session inspection page.
+- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs.
+- `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
+- `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
+- `admin/src/views/ArchiveView.vue`: chat archive reader and conflict book clip flow.
+- `admin/src/views/ConflictView.vue`: conflict book management (edit title/notes/epilogue/status, soft delete).
+- `admin/src/views/RoomView.vue`: room mode admin preview (charge, traces, drawer notes, pins).
+- `admin/src/views/ToolErrorsView.vue`: tool error log viewer.
+- `admin/src/components/AppShell.vue`: shared admin navigation and layout.
 
 When cleaning or refactoring, preserve behavior first and move code by boundary:
 
@@ -931,11 +1046,24 @@ Completed extractions:
 - `shenyu_gateway/prepare_messages.py` — cold-start snapshot, runtime pruning, pending gateway tool turn injection, message helpers.
 - `shenyu_gateway/private_capture.py` — private content finalization (heartbeat only), fallback text, context-consumed marking.
 - `shenyu_gateway/utils.py` — consolidated `shorten` and `clean_config_text` from duplicated definitions across modules.
+- `shenyu_gateway/runtime.py` — shared runtime utilities (logger, timestamps, json_dumps, dotenv).
+- `shenyu_gateway/schemas.py` — Pydantic data models.
+- `shenyu_gateway/middleware.py` — FastAPI middleware registration.
+- `shenyu_gateway/chat_pipeline.py` — main chat request orchestration.
+- `shenyu_gateway/streaming.py` — SSE streaming helpers.
+- `shenyu_gateway/stream_proxy.py` — plain pass-through streaming.
+- `shenyu_gateway/tool_loop.py` — internal gateway tool loop.
+- `shenyu_gateway/context_snapshots.py` — context snapshot creation helpers.
+- `shenyu_gateway/request_logs.py` — in-memory request log ring buffer.
+- `shenyu_gateway/tool_schemas.py` — tool JSON schema definitions.
+- `shenyu_gateway/calendar_routes.py` — calendar API routes.
+- `shenyu_gateway/hisense_routes.py` — Hisense API routes.
+- `shenyu_gateway/archive_routes.py` — archive/conflict book API routes.
+- `shenyu_gateway/config_routes.py` — configuration API routes.
+- `shenyu_gateway/admin_shell_routes.py` — admin shell/UI routes.
+- `shenyu_gateway/room_scenes.py` — window scene copy and weather logic.
 
-Remaining candidates:
-- Calendar service extraction.
-- Admin routes extraction (most surface area, least bearing on chat correctness — extract last).
-- Streaming helpers if `_stream_chat` / `_nonstream_chat` grow further.
+`gateway.py` is now ~740 lines (down from ~1157). It remains the app entrypoint and route registrar; chat pipeline logic lives in `chat_pipeline.py`.
 
 ## DevOps Plan | 部署计划
 

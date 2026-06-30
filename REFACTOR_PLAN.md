@@ -7,11 +7,18 @@
 
 ---
 
-## 当前现状（2026-06-28 工作区）
+## 当前现状（2026-07-01 更新）
 
-- `gateway.py`：当前约 1157 行，不是旧计划里的 1296 行。
-- `shenyu_gateway/tool_registry.py`：当前约 1486 行，不是旧计划里的 1656 行。
-- `shenyu_gateway/mem_notes.py`：当前约 1837 行，不是旧计划里的 1985 行。
+- `gateway.py`：~740 行（从 1157 行大幅缩减）。chat pipeline、streaming、tool loop、routes 等已拆出。
+- `shenyu_gateway/tool_registry.py`：~928 行（从 1486 行缩减）。tool_schemas 已拆出。
+- `shenyu_gateway/mem_notes/`：已从 1595 行单文件拆成 mixin 包（按 stars/ 模式），各文件均 ≤ 570 行：
+  - `__init__.py`（~45 行）：组装 MemNoteService，re-export 向后兼容符号
+  - `_helpers.py`（~105 行）：常量、ID 规范化、select 字段
+  - `_validation.py`（~110 行）：类型/状态/字段校验 mixin
+  - `_suggestions.py`（~145 行）：自动推荐 mem_type / trigger_keywords mixin
+  - `_search.py`（~570 行）：搜索/匹配/评分/cooldown/渲染 mixin
+  - `_crud.py`（~420 行）：增删改查 mixin
+- `shenyu_gateway/mem_notes_relevance.py`：~820 行纯函数，保持不变。
 - `admin/src/views/Mem0View.vue`：仍是前端大文件，建议单独一轮处理，不要和后端核心重构混在一起。
 
 这些数字不影响重构方向，但执行时不要按旧行号机械切文件。以函数名为准。
@@ -401,11 +408,14 @@ pytest tests/test_gateway_tool_registry.py tests/test_gateway_tools_return_forma
 
 ---
 
-## Phase 3：拆 `mem_notes.py`（P1）
+## Phase 3：拆 `mem_notes.py`（P1）✅ 已完成
 
 目标：让 `mem_notes.py` 主要保留 `MemNoteService` 和 DB/service 层逻辑，把匹配、评分、清洗等纯函数拿出去。
 
-### Step 3.1：提取匹配/评分逻辑 → `shenyu_gateway/mem_notes_relevance.py`
+> **Status**: Step 3.1（relevance 纯函数提取）和 Step 3.2（mixin 包拆分）均已完成。
+> `mem_notes.py` 已删除，替换为 `mem_notes/` 包。39/39 测试通过，所有外部 import 向后兼容。
+
+### Step 3.1：提取匹配/评分逻辑 → `shenyu_gateway/mem_notes_relevance.py` ✅
 
 **推荐文件名**：
 

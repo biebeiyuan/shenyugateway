@@ -961,7 +961,7 @@ def test_running_joke_contextual_search_surfaces_at_most_one(monkeypatch):
             "updated_at": "2026-06-27T00:00:00+00:00",
         },
     ]
-    monkeypatch.setattr("shenyu_gateway.mem_notes.random.random", lambda: 0.0)
+    monkeypatch.setattr("shenyu_gateway.mem_notes._search.random.random", lambda: 0.0)
     service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=rows))
 
     result = asyncio.run(service.search_notes_contextual("今天吃圆形食物", session_tag="6.27", limit=3, mark_triggered=False))
