@@ -6,7 +6,7 @@ import pytest
 from types import SimpleNamespace
 
 from shenyu_gateway.room_context import render_room_layers, visible_room_tool_names
-from shenyu_gateway.room_tools import room_tool_definitions
+from shenyu_gateway.room_tools import collect_door_counts, room_tool_definitions
 from shenyu_gateway.tool_registry import execute_gateway_tool, gateway_native_tools, merge_tools
 from shenyu_gateway.tool_loop import _tool_call_arguments
 
@@ -2009,6 +2009,71 @@ def test_visible_room_tools_follow_visible_low_charge_doors():
     assert "room_wall_pins" not in tool_names
     assert "`room_drawer_notes`" in layers["tool_policy"]
     assert "`room_wall_pins`" not in layers["tool_policy"]
+
+
+def test_collect_door_counts_keeps_star_count_when_optional_star_stats_fail():
+    class FakeConn:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def execute(self, *_args, **_kwargs):
+            return self
+
+        def fetchone(self):
+            return {"cnt": 0}
+
+    class FakeStore:
+        def drawer_note_count_unread(self):
+            return 0
+
+        def _connect(self):
+            return FakeConn()
+
+        def recent_room_scribbles(self, limit=1):
+            return []
+
+        def room_pin_count_undone(self):
+            return 0
+
+    class PartlyFailingSupabase:
+        async def query(self, table, params):
+            if table == "shenyu_stars" and params.get("reviewed_at") == "is.null":
+                return [{"id": "star-new-1"}, {"id": "star-new-2"}]
+            if table == "shenyu_star_links":
+                raise RuntimeError("links temporarily unavailable")
+            if table == "shenyu_stars" and params.get("order") == "created_at.desc":
+                return [{
+                    "id": "star-latest",
+                    "chord": "Cmaj7",
+                    "content": "新的星星内容",
+                    "created_at": "2026-06-30T00:00:00+00:00",
+                }]
+            if table == "shenyu_stars" and params.get("last_activated_at", "").startswith("lt."):
+                return []
+            if table == "shenyu_stars":
+                return [{"id": "star-1"}, {"id": "star-2"}, {"id": "star-3"}]
+            if table == "shenyu_mem_notes":
+                return []
+            if table == "shenyu_conflict_books":
+                return []
+            return []
+
+    door_specs = asyncio.run(
+        collect_door_counts(
+            store=FakeStore(),
+            cfg=SimpleNamespace(),
+            supabase_client=PartlyFailingSupabase(),
+        )
+    )
+    star_spec = next(item for item in door_specs if item["key"] == "star_map")
+
+    assert star_spec["count"] == 2
+    assert star_spec["total"] == 3
+    assert "links" not in star_spec
+    assert star_spec["latest"]["chord"] == "Cmaj7"
 
 
 def test_upstream_tools_toggle_is_total_forwarding_gate():

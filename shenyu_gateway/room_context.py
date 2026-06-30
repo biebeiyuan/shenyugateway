@@ -240,7 +240,7 @@ def _render_star_wall_hint(spec: dict) -> str:
         snippet = f"{chord}，{content}" if chord else content
         if snippet:
             if days_ago is not None and days_ago > 7:
-                parts.append(f"最亮的那颗是{_human_time_ago(days_ago)}的——{snippet}")
+                parts.append(f"最近落下的那颗是{_human_time_ago(days_ago)}的——{snippet}")
             else:
                 parts.append(f"最近的一颗还亮着——{snippet}")
 
