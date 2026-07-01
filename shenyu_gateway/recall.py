@@ -153,6 +153,31 @@ _MEM_NOTE_KEYWORD_JUNK_TERMS = {
 }
 
 
+# Single source of truth for "generic Chinese fragment" detection, shared by the
+# recall-tag filter here and mem_notes_relevance._generic_chinese_semantic_fragment.
+# Keeping the prefix/suffix tuples in one place stops the two copies drifting
+# (they previously disagreed on '它').
+_GENERIC_CN_PREFIXES = ("是", "在", "有", "我", "你", "他", "她", "它", "这", "那", "不", "没")
+_GENERIC_CN_SUFFIXES = ("的", "了", "个", "吗", "呢", "吧", "啊", "呀", "嘛")
+
+
+def is_generic_chinese_fragment(text: str) -> bool:
+    """True if a short pure-CJK term is a generic prefix/suffix-led fragment.
+
+    Judges only the prefix/suffix generic test; callers layer their own
+    length/allowlist rules on top.
+    """
+    if not text or not re.fullmatch(r"[一-鿿]+", text):
+        return False
+    if len(text) <= 1:
+        return True
+    if len(text) <= 4 and (
+        text.startswith(_GENERIC_CN_PREFIXES) or text.endswith(_GENERIC_CN_SUFFIXES)
+    ):
+        return True
+    return False
+
+
 def _mem_note_keyword_anchor_is_specific(value: Any) -> bool:
     """Filter noisy v2 auto keywords before indexing them as recall tags."""
     text = _normalize_text(value).strip()
@@ -166,10 +191,7 @@ def _mem_note_keyword_anchor_is_specific(value: Any) -> bool:
     if re.fullmatch(r"[\u4e00-\u9fff]+", text):
         if len(text) <= 2:
             return text in {"和弦", "海信", "上游", "预设", "气泡"} or text.lower() in {"mem"}
-        if len(text) <= 4 and (
-            text.startswith(("是", "在", "有", "我", "你", "他", "她", "这", "那", "不", "没"))
-            or text.endswith(("的", "了", "个", "吗", "呢", "吧", "啊", "呀", "嘛"))
-        ):
+        if is_generic_chinese_fragment(text):
             return False
         return True
     if re.fullmatch(r"[A-Za-z0-9_.+-]+", text):

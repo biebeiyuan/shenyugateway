@@ -5,7 +5,7 @@ import math
 import re
 from typing import Any
 
-from shenyu_gateway.recall import recall_terms
+from shenyu_gateway.recall import is_generic_chinese_fragment, recall_terms
 from shenyu_gateway.utils import normalize_text as _normalize_text
 from .runtime import now as _now, parse_ts as _parse_ts
 
@@ -417,15 +417,9 @@ def _has_non_word_symbol(text: str) -> bool:
 
 
 def _generic_chinese_semantic_fragment(term: str) -> bool:
-    if not re.fullmatch(r"[一-鿿]+", term):
-        return False
-    if len(term) <= 1:
-        return True
-    generic_prefixes = ("是", "在", "有", "我", "你", "他", "她", "它", "这", "那", "不", "没")
-    generic_suffixes = ("的", "了", "个", "吗", "呢", "吧", "啊", "呀", "嘛")
-    if len(term) <= 4 and (term.startswith(generic_prefixes) or term.endswith(generic_suffixes)):
-        return True
-    return False
+    # Delegate to the single shared predicate in recall.py so the prefix/suffix
+    # generic-fragment logic cannot drift between the two subsystems.
+    return is_generic_chinese_fragment(term)
 
 
 def _valid_semantic_anchor_term(normalized: str) -> bool:
