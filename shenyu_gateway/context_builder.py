@@ -141,83 +141,87 @@ class ContextBuilder:
             "conflict_books": [],
         }
 
-        _mark_request_log_phase(trace_log, "context.calendar_start")
-        package["calendar_context"] = await self.calendar_context_pages()
+        # Collect all independent context sources concurrently. calendar and the
+        # conflict shelf are internally fail-soft (return [] on error), so only the
+        # mem_notes/stars coroutines can raise — a bare gather therefore preserves
+        # today's error semantics (a memory failure propagates; everything else is
+        # soft) while removing the serial calendar → conflict → memory awaits.
+        want_conflict = (not is_hisense) and getattr(self.cfg, "inject_conflict_shelf", True)
+        inject_mem_notes = bool(current_user_text.strip() and self.cfg.inject_mem_notes)
+        inject_stars = bool(current_user_text.strip() and getattr(self.cfg, "inject_stars", True))
+
+        calendar_task = self.calendar_context_pages()
+        conflict_task = self._conflict_shelf_books() if want_conflict else asyncio.sleep(0, result=[])
+
         _mark_request_log_phase(
             trace_log,
-            "context.calendar_done",
+            "context.sources_start",
             detail={
-                "day": len(package["calendar_context"].get("day") or []),
-                "week": len(package["calendar_context"].get("week") or []),
-                "month": len(package["calendar_context"].get("month") or []),
+                "is_hisense": is_hisense,
+                "want_conflict": want_conflict,
+                "inject_mem_notes": inject_mem_notes,
+                "inject_stars": inject_stars,
             },
         )
-        if not is_hisense and getattr(self.cfg, "inject_conflict_shelf", True):
-            _mark_request_log_phase(trace_log, "context.conflict_shelf_start")
-            package["conflict_books"] = await self._conflict_shelf_books()
-            _mark_request_log_phase(
-                trace_log,
-                "context.conflict_shelf_done",
-                detail={"books": len(package.get("conflict_books") or [])},
-            )
 
         if is_hisense:
-            _mark_request_log_phase(trace_log, "context.hisense_start")
-            package["notebook_items"] = await self._hisense_notebook_items()
-            package["last_wake_recap"] = await self._hisense_last_wake_recap(session)
-            _mark_request_log_phase(
-                trace_log,
-                "context.hisense_done",
-                detail={"notebook_items": len(package.get("notebook_items") or [])},
+            notebook_task = self._hisense_notebook_items()
+            wake_task = self._hisense_last_wake_recap(session)
+            calendar_context, conflict_books, notebook_items, last_wake_recap = await asyncio.gather(
+                calendar_task, conflict_task, notebook_task, wake_task
             )
+            package["calendar_context"] = calendar_context
+            package["notebook_items"] = notebook_items
+            package["last_wake_recap"] = last_wake_recap
+            notes_result = {"ok": True, "items": []}
+            stars_result = {"ok": True, "items": []}
         else:
-            tasks = []
-            if current_user_text.strip() and self.cfg.inject_mem_notes:
-                tasks.append(
-                    MemNoteService(self.cfg, self.supabase_client).search_notes_contextual(
-                        current_user_text,
-                        session_tag=session["session_tag"],
-                        limit=self.cfg.mem_note_limit,
-                        session_id=session.get("id"),
-                        store=self.store,
-                    )
+            if inject_mem_notes:
+                notes_task = MemNoteService(self.cfg, self.supabase_client).search_notes_contextual(
+                    current_user_text,
+                    session_tag=session["session_tag"],
+                    limit=self.cfg.mem_note_limit,
+                    session_id=session.get("id"),
+                    store=self.store,
                 )
             else:
-                tasks.append(asyncio.sleep(0, result={"ok": True, "items": []}))
+                notes_task = asyncio.sleep(0, result={"ok": True, "items": []})
 
-            if current_user_text.strip() and getattr(self.cfg, "inject_stars", True):
-                tasks.append(
-                    StarService(self.cfg, self.supabase_client).search_context(
-                        current_user_text,
-                        session_tag=session["session_tag"],
-                        session_id=session.get("id"),
-                        limit=getattr(self.cfg, "star_inject_limit", 3),
-                        trace_log=trace_log,
-                    )
+            if inject_stars:
+                stars_task = StarService(self.cfg, self.supabase_client).search_context(
+                    current_user_text,
+                    session_tag=session["session_tag"],
+                    session_id=session.get("id"),
+                    limit=getattr(self.cfg, "star_inject_limit", 3),
+                    trace_log=trace_log,
                 )
             else:
-                tasks.append(asyncio.sleep(0, result={"ok": True, "items": []}))
+                stars_task = asyncio.sleep(0, result={"ok": True, "items": []})
 
-            _mark_request_log_phase(
-                trace_log,
-                "context.memory_tasks_start",
-                detail={
-                    "inject_mem_notes": bool(current_user_text.strip() and self.cfg.inject_mem_notes),
-                    "inject_stars": bool(current_user_text.strip() and getattr(self.cfg, "inject_stars", True)),
-                },
+            calendar_context, conflict_books, notes_result, stars_result = await asyncio.gather(
+                calendar_task, conflict_task, notes_task, stars_task
             )
-            notes_result, stars_result = await asyncio.gather(*tasks)
-            _mark_request_log_phase(
-                trace_log,
-                "context.memory_tasks_done",
-                detail={
-                    "mem_notes": len(notes_result.get("items") or []),
-                    "stars": len(stars_result.get("items") or []),
-                    "stars_ok": bool(stars_result.get("ok")),
-                },
-            )
+            package["calendar_context"] = calendar_context
             package["mem_notes"] = notes_result.get("items") or []
             package["stars"] = stars_result.get("items") or []
+
+        if want_conflict:
+            package["conflict_books"] = conflict_books
+
+        _mark_request_log_phase(
+            trace_log,
+            "context.sources_done",
+            detail={
+                "day": len((package.get("calendar_context") or {}).get("day") or []),
+                "week": len((package.get("calendar_context") or {}).get("week") or []),
+                "month": len((package.get("calendar_context") or {}).get("month") or []),
+                "books": len(package.get("conflict_books") or []),
+                "mem_notes": len(notes_result.get("items") or []),
+                "stars": len(stars_result.get("items") or []),
+                "stars_ok": bool(stars_result.get("ok")),
+                "notebook_items": len(package.get("notebook_items") or []),
+            },
+        )
         _mark_request_log_phase(trace_log, "context.done")
         return package
 
