@@ -60,6 +60,26 @@ def _classify_scene_by_keywords(query: str, rules: list[dict[str, Any]]) -> str:
     return best_scene
 
 
+# Scene descriptions are static config, so their embeddings never change for a
+# given model. Cache them across requests keyed by (model, description text) —
+# otherwise every keyword-miss re-embeds all 6 descriptions over the network.
+_DESC_VECTOR_CACHE: dict[tuple[str, str], list[float]] = {}
+
+
+async def _embed_scene_description(
+    embedding_client: "EmbeddingClient", desc: str
+) -> Optional[list[float]]:
+    cache_key = (embedding_client.model, desc)
+    cached = _DESC_VECTOR_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    desc_vec, desc_err = await embedding_client.embed(desc)
+    if desc_err or desc_vec is None:
+        return None
+    _DESC_VECTOR_CACHE[cache_key] = desc_vec
+    return desc_vec
+
+
 async def _classify_scene_by_embedding(
     query: str,
     descriptions: dict[str, str],
@@ -76,8 +96,8 @@ async def _classify_scene_by_embedding(
     for scene_key, desc in descriptions.items():
         if scene_key not in SCENE_KEYS:
             continue
-        desc_vec, desc_err = await embedding_client.embed(desc)
-        if desc_err or desc_vec is None:
+        desc_vec = await _embed_scene_description(embedding_client, desc)
+        if desc_vec is None:
             continue
         sim = _cosine_similarity(query_vec, desc_vec)
         if sim > best_sim:
