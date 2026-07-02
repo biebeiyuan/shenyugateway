@@ -36,6 +36,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "upstream_provider_order_enabled": cfg.upstream_provider_order_enabled,
         "upstream_provider_format": cfg.upstream_provider_format,
         "upstream_provider_order": cfg.upstream_provider_order,
+        "upstream_extra_body": cfg.upstream_extra_body,
         "hisense_upstream_url": cfg.hisense_upstream_url,
         "hisense_api_key": cfg.hisense_api_key,
         "hisense_protocol": cfg.hisense_protocol,
@@ -141,6 +142,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "upstream_provider_order_enabled": "UPSTREAM_PROVIDER_ORDER_ENABLED",
             "upstream_provider_format": "UPSTREAM_PROVIDER_FORMAT",
             "upstream_provider_order": "UPSTREAM_PROVIDER_ORDER",
+            "upstream_extra_body": "UPSTREAM_EXTRA_BODY",
             "hisense_upstream_url": "HISENSE_UPSTREAM_URL",
             "hisense_api_key": "HISENSE_API_KEY",
             "hisense_protocol": "HISENSE_PROTOCOL",
@@ -326,6 +328,30 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.upstream_provider_order = provider_order
             changed.append("upstream_provider_order")
             env_updates[env_names["upstream_provider_order"]] = json.dumps(provider_order, ensure_ascii=False)
+
+        if "upstream_extra_body" in body.model_fields_set:
+            raw_extra_body = body.upstream_extra_body
+            if raw_extra_body is None or raw_extra_body == "":
+                extra_body: dict[str, Any] = {}
+            elif isinstance(raw_extra_body, str):
+                try:
+                    parsed_extra_body = json.loads(raw_extra_body)
+                except json.JSONDecodeError as exc:
+                    raise HTTPException(status_code=400, detail="UPSTREAM_EXTRA_BODY 必须是 JSON object。") from exc
+                if not isinstance(parsed_extra_body, dict):
+                    raise HTTPException(status_code=400, detail="UPSTREAM_EXTRA_BODY 必须是 JSON object。")
+                extra_body = parsed_extra_body
+            elif isinstance(raw_extra_body, dict):
+                extra_body = raw_extra_body
+            else:
+                raise HTTPException(status_code=400, detail="UPSTREAM_EXTRA_BODY 必须是 JSON object。")
+            cfg.upstream_extra_body = {
+                str(key): value
+                for key, value in extra_body.items()
+                if str(key)
+            }
+            changed.append("upstream_extra_body")
+            env_updates[env_names["upstream_extra_body"]] = json.dumps(cfg.upstream_extra_body, ensure_ascii=False)
 
         if body.max_internal_tool_rounds is not None:
             cfg.max_internal_tool_rounds = max(1, body.max_internal_tool_rounds)

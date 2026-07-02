@@ -714,6 +714,35 @@ def test_build_upstream_request_includes_provider_order_object_for_openai(monkey
     assert payload["provider"] == {"order": ["Amazon Bedrock", "OpenAI"]}
 
 
+def test_build_upstream_request_adds_extra_body_for_pioneer_auto(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "openai")
+    monkeypatch.setenv("UPSTREAM_URL", "https://example.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("UPSTREAM_EXTRA_BODY", '{"models":["claude-opus-4-7"]}')
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="pioneer/auto",
+            messages=[{"role": "user", "content": "hello"}],
+        )
+
+        payload, _, model_name, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert model_name == "pioneer/auto"
+    assert payload["model"] == "pioneer/auto"
+    assert payload["models"] == ["claude-opus-4-7"]
+    assert payload["messages"] == [{"role": "user", "content": "hello"}]
+
+
 def test_build_upstream_request_omits_provider_order_for_anthropic(monkeypatch):
     monkeypatch.setenv("UPSTREAM_PROTOCOL", "anthropic")
     monkeypatch.setenv("UPSTREAM_URL", "https://api.anthropic.com")

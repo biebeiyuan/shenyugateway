@@ -54,6 +54,7 @@ const config = ref<GatewayConfig>({
   upstream_provider_order_enabled: false,
   upstream_provider_format: 'string',
   upstream_provider_order: [],
+  upstream_extra_body: {},
   hisense_upstream_url: '',
   hisense_api_key: '',
   hisense_protocol: '',
@@ -82,6 +83,7 @@ const switchingPreset = ref('')
 const presetName = ref('')
 const presets = ref<UpstreamPreset[]>([])
 const modelEntries = ref<[string, string][]>([])
+const upstreamExtraBodyText = ref('')
 const overview = ref<GatewayOverview | null>(null)
 const coldPreview = ref<ColdStartPreview | null>(null)
 const sessions = ref<GatewaySession[]>([])
@@ -185,11 +187,33 @@ function persistPresets() {
   localStorage.setItem(PRESETS_KEY, JSON.stringify(raw))
 }
 
+function formatExtraBody(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return ''
+  const entries = Object.keys(value as Record<string, unknown>)
+  return entries.length ? JSON.stringify(value, null, 2) : ''
+}
+
+function parseExtraBody() {
+  const raw = upstreamExtraBodyText.value.trim()
+  if (!raw) return {}
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error('上游 extra_body 必须是有效 JSON object')
+  }
+  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+    throw new Error('上游 extra_body 必须是 JSON object')
+  }
+  return parsed as Record<string, unknown>
+}
+
 async function loadConfig() {
   try {
     const data = await fetchConfig()
     config.value = data
     modelEntries.value = Object.entries(data.model_mapping || {})
+    upstreamExtraBodyText.value = formatExtraBody(data.upstream_extra_body)
   } catch {
     message.error('Failed to load config')
   }
@@ -198,6 +222,7 @@ async function loadConfig() {
 async function doSave() {
   saving.value = true
   try {
+    const upstreamExtraBody = parseExtraBody()
     const body: Partial<GatewayConfig> = {
       gateway_key: config.value.gateway_key,
       upstream_url: config.value.upstream_url,
@@ -210,6 +235,7 @@ async function doSave() {
       upstream_provider_order_enabled: config.value.upstream_provider_order_enabled,
       upstream_provider_format: config.value.upstream_provider_format,
       upstream_provider_order: config.value.upstream_provider_order || [],
+      upstream_extra_body: upstreamExtraBody,
       hisense_upstream_url: config.value.hisense_upstream_url,
       hisense_api_key: config.value.hisense_api_key,
       hisense_protocol: config.value.hisense_protocol,
@@ -237,10 +263,11 @@ async function doSave() {
     const result = await saveConfig(body)
     config.value = result.config
     modelEntries.value = Object.entries(result.config.model_mapping || {})
+    upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
     message.success(`Saved ${result.changed.length} field${result.changed.length === 1 ? '' : 's'}`)
     await checkHealth()
-  } catch {
-    message.error('Save failed')
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : 'Save failed')
   } finally {
     saving.value = false
   }
@@ -252,6 +279,7 @@ async function clearWakeWelcomeMessage() {
     const result = await saveConfig({ clear_wake_welcome_message: true })
     config.value = result.config
     modelEntries.value = Object.entries(result.config.model_mapping || {})
+    upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
     message.success('已清空醒来欢迎词')
   } catch {
     message.error('清空失败')
@@ -301,6 +329,7 @@ async function applyPreset(name: string | null) {
     })
     config.value = result.config
     modelEntries.value = Object.entries(result.config.model_mapping || {})
+    upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
     message.success(`Switched to ${name}`)
     notification.success({
       title: 'Upstream preset switched',
@@ -479,6 +508,17 @@ function removeModel(index: number) {
                 Pioneer 这类上游通常用字符串；OpenRouter 风格上游才用 provider.order 对象。
               </div>
             </div>
+            <NFormItem label="上游 extra_body">
+              <NInput
+                v-model:value="upstreamExtraBodyText"
+                type="textarea"
+                :autosize="{ minRows: 4, maxRows: 10 }"
+                placeholder='{"models":["claude-opus-4-7"]}'
+              />
+              <div class="provider-order-hint">
+                保存为 JSON object，会追加到最终请求主体；例如可填 {"models":["claude-opus-4-7"]}。
+              </div>
+            </NFormItem>
             <NFormItem label="海信专用接口地址">
               <NInput v-model:value="config.hisense_upstream_url" placeholder="留空继承全局上游" />
             </NFormItem>

@@ -168,6 +168,13 @@ def upstream_provider_value(cfg: Any, proto: str) -> Any:
     return providers[0]
 
 
+def apply_upstream_extra_body(payload: dict[str, Any], cfg: Any) -> dict[str, Any]:
+    extra_body = getattr(cfg, "upstream_extra_body", {}) or {}
+    if isinstance(extra_body, dict):
+        payload.update(extra_body)
+    return payload
+
+
 def make_upstream_http_client(cfg: Any) -> httpx.AsyncClient:
     kwargs: dict[str, Any] = {
         "timeout": httpx.Timeout(connect=15.0, read=None, write=30.0, pool=15.0),
@@ -305,6 +312,7 @@ async def build_upstream_request(
             payload["thinking"] = anthropic_thinking
         if output_config:
             payload["output_config"] = output_config
+        apply_upstream_extra_body(payload, cfg)
         headers = {
             "x-api-key": upstream["api_key"],
             "anthropic-version": cfg.upstream_version,
@@ -340,6 +348,7 @@ async def build_upstream_request(
         payload["provider"] = provider_value
     if cache_tools:
         payload["tools"] = cache_tools
+    apply_upstream_extra_body(payload, cfg)
     headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
     return payload, headers, model_name, cache_meta, upstream
 

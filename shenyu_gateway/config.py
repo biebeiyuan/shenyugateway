@@ -74,6 +74,7 @@ class RuntimeConfig:
         self.upstream_provider_order_enabled: bool = _env_bool("UPSTREAM_PROVIDER_ORDER_ENABLED", False)
         self.upstream_provider_format: str = self._normalize_provider_format(os.getenv("UPSTREAM_PROVIDER_FORMAT", "string"))
         self.upstream_provider_order: list[str] = self._load_provider_order()
+        self.upstream_extra_body: dict[str, Any] = self._load_upstream_extra_body()
         self.hisense_upstream_url: str = os.getenv("HISENSE_UPSTREAM_URL", "").strip()
         self.hisense_api_key: str = os.getenv("HISENSE_API_KEY", "").strip()
         self.hisense_protocol: str = os.getenv("HISENSE_PROTOCOL", "").strip().lower()
@@ -195,6 +196,7 @@ class RuntimeConfig:
             "upstream_provider_order_enabled": self.upstream_provider_order_enabled,
             "upstream_provider_format": self.upstream_provider_format,
             "upstream_provider_order": self.upstream_provider_order,
+            "upstream_extra_body": self.upstream_extra_body,
             "hisense_upstream_url": self.hisense_upstream_url,
             "hisense_api_key": mask(self.hisense_api_key),
             "hisense_protocol": self.hisense_protocol,
@@ -328,6 +330,22 @@ class RuntimeConfig:
             seen.add(provider)
             providers.append(provider)
         return providers
+
+    def _load_upstream_extra_body(self) -> dict[str, Any]:
+        raw = os.getenv("UPSTREAM_EXTRA_BODY", "").strip()
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            return {}
+        if not isinstance(data, dict):
+            return {}
+        return {
+            str(key): value
+            for key, value in data.items()
+            if str(key)
+        }
 
     def _normalize_provider_format(self, value: Any) -> str:
         raw = str(value or "").strip().lower().replace("-", "_")

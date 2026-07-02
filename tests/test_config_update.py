@@ -15,6 +15,7 @@ DEFAULTED_ENV_KEYS = [
     "UPSTREAM_PROVIDER_ORDER_ENABLED",
     "UPSTREAM_PROVIDER_FORMAT",
     "UPSTREAM_PROVIDER_ORDER",
+    "UPSTREAM_EXTRA_BODY",
     "ENABLE_INLINE_MEMORY_CAPTURE",
     "INJECT_INLINE_MEMORY_PROMPT",
     "INJECT_MEM_NOTES",
@@ -43,6 +44,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.upstream_provider_order_enabled is False
     assert cfg.upstream_provider_format == "string"
     assert cfg.upstream_provider_order == []
+    assert cfg.upstream_extra_body == {}
     assert cfg.inject_inline_memory_prompt is True
     assert cfg.enable_inline_memory_capture is True
     assert cfg.inject_mem_notes is True
@@ -73,6 +75,17 @@ def test_provider_order_env_accepts_comma_list(monkeypatch):
     cfg = RuntimeConfig()
 
     assert cfg.upstream_provider_order == ["Amazon Bedrock", "OpenAI"]
+
+
+def test_upstream_extra_body_env_accepts_json_object(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_EXTRA_BODY", '{"models":["claude-opus-4-7"],"models ":["claude-opus-4-7"]}')
+
+    cfg = RuntimeConfig()
+
+    assert cfg.upstream_extra_body == {
+        "models": ["claude-opus-4-7"],
+        "models ": ["claude-opus-4-7"],
+    }
 
 
 def test_blank_wake_welcome_message_preserves_existing_value(monkeypatch):
@@ -149,6 +162,34 @@ def test_config_update_saves_provider_order(monkeypatch):
     assert persisted[-1]["UPSTREAM_PROVIDER_ORDER_ENABLED"] == "true"
     assert persisted[-1]["UPSTREAM_PROVIDER_FORMAT"] == "order_object"
     assert persisted[-1]["UPSTREAM_PROVIDER_ORDER"] == '["Amazon Bedrock", "OpenAI"]'
+
+
+def test_config_update_saves_upstream_extra_body(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "upstream_extra_body", {})
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"upstream_extra_body": {"models": ["claude-opus-4-7"], "models ": ["claude-opus-4-7"]}},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["upstream_extra_body"] == {
+        "models": ["claude-opus-4-7"],
+        "models ": ["claude-opus-4-7"],
+    }
+    assert "upstream_extra_body" in payload["changed"]
+    assert gateway.cfg.upstream_extra_body == {
+        "models": ["claude-opus-4-7"],
+        "models ": ["claude-opus-4-7"],
+    }
+    assert persisted[-1]["UPSTREAM_EXTRA_BODY"] == (
+        '{"models": ["claude-opus-4-7"], "models ": ["claude-opus-4-7"]}'
+    )
 
 
 def test_config_update_saves_anthropic_auto_thinking(monkeypatch):

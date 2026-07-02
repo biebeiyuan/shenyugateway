@@ -38,6 +38,7 @@ class ConfigUpdate(BaseModel):
     upstream_provider_order_enabled: Optional[bool] = None
     upstream_provider_format: Optional[str] = None
     upstream_provider_order: Optional[list[str] | str] = None
+    upstream_extra_body: Optional[dict[str, Any] | str] = None
     hisense_upstream_url: Optional[str] = None
     hisense_api_key: Optional[str] = None
     hisense_protocol: Optional[str] = None
