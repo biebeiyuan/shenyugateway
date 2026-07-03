@@ -1501,6 +1501,71 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
     asyncio.run(run_case())
 
 
+def test_internal_stream_loop_treats_empty_upstream_stream_as_502():
+    async def run_case():
+        class Body:
+            model = "test-model"
+
+        class Cfg:
+            max_internal_tool_rounds = 1
+
+        async def build_upstream_request(request, body, messages_override=None, meta=None):
+            return (
+                {"model": body.model, "messages": messages_override or [], "tools": []},
+                {},
+                "",
+                {},
+                {"chat_url": "https://upstream.test/v1/chat/completions", "protocol": "openai"},
+            )
+
+        async def stream_upstream_openai_chunks(request, payload, headers, model, upstream):
+            if False:
+                yield {}
+
+        class Sessions:
+            def log_assistant_output(self, *args, **kwargs):
+                pass
+
+        ctx = InternalToolLoopContext(
+            request=_DisconnectProbe(),
+            body=Body(),
+            prepared_messages=[{"role": "user", "content": "hello"}],
+            meta={"session": {"id": "session-1", "session_tag": "5.15"}},
+            log_entry={},
+            cfg=Cfg(),
+            store=None,
+            sessions=Sessions(),
+            build_upstream_request=build_upstream_request,
+            call_upstream_json=None,
+            stream_upstream_openai_chunks=stream_upstream_openai_chunks,
+            execute_gateway_tool=lambda *args, **kwargs: None,
+            record_upstream_payload=lambda log_entry, payload: None,
+            aggregate_cache_usage=lambda usages: {},
+            finalize_assistant_private_content=lambda assistant_message, **kwargs: (
+                assistant_message.get("content", ""),
+                "",
+                {"applied": False},
+            ),
+            store_heartbeat=lambda *args, **kwargs: None,
+            mark_context_consumed=lambda meta: None,
+            write_completion_context_snapshot=lambda *args, **kwargs: None,
+            record_response_text=lambda log_entry, text: log_entry.__setitem__("response_text", text),
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            async for _event in run_internal_tool_loop_stream(ctx):
+                pass
+
+        assert exc_info.value.status_code == 502
+        assert "上游返回空流" in exc_info.value.detail
+        phases = [item["phase"] for item in ctx.log_entry.get("timeline", [])]
+        assert "upstream.stream_exhausted" in phases
+        assert "upstream.stream_first_chunk" not in phases
+        assert "response_text" not in ctx.log_entry
+
+    asyncio.run(run_case())
+
+
 def test_read_next_stream_chunk_returns_exhausted_at_end_of_stream():
     async def run_case():
         upstream = _ClosableAsyncIterator([])

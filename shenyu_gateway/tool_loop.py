@@ -374,6 +374,8 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                     return
                 if read_result.kind == "exhausted":
                     _mark_request_log_phase(ctx.log_entry, "upstream.stream_exhausted", detail={"round": round_index + 1})
+                    if not first_upstream_chunk_seen:
+                        raise HTTPException(status_code=502, detail="上游返回空流，未收到任何有效响应事件。")
                     break
 
                 data = read_result.data or {}
