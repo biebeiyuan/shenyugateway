@@ -59,6 +59,7 @@ class ContextBuilder:
             enable_gateway_tools=bool(getattr(self.cfg, "enable_upstream_tools", True))
             and bool(getattr(self.cfg, "enable_gateway_tools", True)),
             heartbeat_prompt=_HEARTBEAT_PROMPT,
+            client_tool_surface=getattr(self.cfg, "client_tool_surface", "all"),
         )
 
     async def calendar_context_pages(self) -> dict[str, list[dict[str, Any]]]:

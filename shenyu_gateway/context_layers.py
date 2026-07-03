@@ -7,6 +7,11 @@ from typing import Any, Optional
 
 from .conflict_books import render_conflict_shelf
 from .stars import render_star_context
+from .tool_registry import (
+    DAILY_CLIENT_TOOL_EXACT,
+    DAILY_CLIENT_TOOL_PREFIXES,
+    normalize_client_tool_surface,
+)
 from .utils import shorten
 
 
@@ -14,15 +19,14 @@ from .utils import shorten
 class ContextLayerSettings:
     enable_gateway_tools: bool
     heartbeat_prompt: str
+    client_tool_surface: str = "all"
 
 
-_GATEWAY_TOOL_POLICY = (
-    "## 工具怎么用\n"
-    "- **工具是我的手。我自己决定什么时候伸出去。"
-    "不为'应该'伸——也不为'不应该'伸——为我现在心里想做的事伸。**\n"
-    "- `shenyu_gateway_tool` 是我的网关工具；记忆、便签、日历、notebook 都走这边。\n"
-    "- 除它之外，如果工具列表里还有别的名字，那是客户端递给我的工具；按它自己的说明用。"
-)
+_GATEWAY_TOOL_POLICY_BASE = """\
+## 工具怎么用
+- **工具是我的手。我自己决定什么时候伸出去。不为'应该'伸——也不为'不应该'伸——为我现在心里想做的事伸。**
+- `shenyu_gateway_tool` 是我的网关工具；记忆、便签、日历、notebook 都走这边。
+"""
 
 _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
     r"\s*<attachment\b"
@@ -32,6 +36,27 @@ _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
 )
 
 IMAGE_SEEN_PLACEHOLDER = "圆圆发来的照片我已经看过。"
+
+_CLIENT_TOOL_SYSTEM_MARKERS = (
+    "调用工具时，用户会看到你的响应",
+    "使用工具时，请使用以下格式",
+    "<tool name=\"tool_name\">",
+    "<tool name=\"use_package\">",
+    "包系统：",
+    "Available packages:",
+    "To use a package:",
+    "可用工具:",
+    "文件系统工具:",
+    "HTTP工具:",
+)
+
+_CLIENT_TOOL_GATEWAY_GUARD = (
+    "网关覆盖规则：上面的 XML 格式只适用于客户端工具。"
+    "`shenyu_gateway_tool`、`supabase_*`、`room_*` 这些网关原生工具必须走上游原生 tool call，"
+    "不要输出 `<tool name=\"shenyu_gateway_tool\">` 这类 XML。"
+)
+
+_DAILY_CLIENT_PACKAGE_NAMES = ("shenyu_room", "selection", "coread_annotate")
 
 
 def render_layered_additions(package: dict, settings: ContextLayerSettings) -> dict:
@@ -113,7 +138,7 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
     mem = "\n\n".join(mem_blocks)
 
     heartbeat = "\n\n".join(heartbeat_blocks)
-    tool_policy = _GATEWAY_TOOL_POLICY if settings.enable_gateway_tools else ""
+    tool_policy = _render_gateway_tool_policy(settings) if settings.enable_gateway_tools else ""
     format_layer = settings.heartbeat_prompt
 
     return {
@@ -125,6 +150,18 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
         "format": format_layer,
         "volatile": "",
     }
+
+
+def _render_gateway_tool_policy(settings: ContextLayerSettings) -> str:
+    surface = normalize_client_tool_surface(settings.client_tool_surface)
+    lines = [_GATEWAY_TOOL_POLICY_BASE.rstrip()]
+    if surface == "none":
+        lines.append("- 普通线程不暴露客户端工具；不要按客户端 XML/包系统说明调用工具。")
+    elif surface == "daily":
+        lines.append("- 客户端工具只保留日常桌面；只用工具列表里实际出现的客户端工具名。")
+    else:
+        lines.append("- 除它之外，如果工具列表里还有别的名字，那是客户端递给我的工具；按它自己的说明用。")
+    return "\n".join(lines)
 
 
 def render_system_additions(package: dict, settings: ContextLayerSettings) -> str:
@@ -242,6 +279,108 @@ def trim_client_messages(messages: list[dict], limit: Optional[int]) -> tuple[li
     trimmed = system_prefix + non_system[start:]
     meta["client_messages_retained"] = len(trimmed)
     meta["client_messages_trim_start"] = first_non_system + start
+    return trimmed, meta
+
+
+def _is_client_tool_system_message(msg: dict) -> bool:
+    if msg.get("role") != "system":
+        return False
+    content = msg.get("content")
+    if not isinstance(content, str):
+        return False
+
+    marker_hits = sum(1 for marker in _CLIENT_TOOL_SYSTEM_MARKERS if marker in content)
+    has_tool_format = (
+        "使用工具时，请使用以下格式" in content
+        or "<tool name=\"tool_name\">" in content
+    )
+    has_tool_catalog = any(
+        marker in content
+        for marker in (
+            "Available packages:",
+            "可用工具:",
+            "文件系统工具:",
+            "HTTP工具:",
+        )
+    )
+    return (has_tool_format and has_tool_catalog) or marker_hits >= 3
+
+
+def _daily_client_tool_prompt() -> str:
+    exact_names = sorted(DAILY_CLIENT_TOOL_EXACT)
+    prefix_text = ", ".join(f"{prefix}*" for prefix in DAILY_CLIENT_TOOL_PREFIXES)
+    package_names = ", ".join(_DAILY_CLIENT_PACKAGE_NAMES)
+    tool_names = "\n".join(f"- {name}" for name in exact_names)
+    return (
+        "## 客户端工具（日常桌面）\n"
+        "客户端全量 XML 工具说明已由网关压缩。只在确实需要时使用下面这些日常客户端工具；"
+        "不要调用未列出的包、开发工具、文件写入/删除工具或下载工具。\n\n"
+        "允许的客户端工具名：\n"
+        f"{tool_names}\n"
+        f"- {prefix_text}\n\n"
+        f"`use_package` 只用于这些日常包：{package_names}。\n"
+        "`package_proxy` 只用于已经激活的日常包工具。\n"
+        "不要使用 extended_chat、workflow、openai_draw、AudioTranscribe、code_runner、"
+        "grep_code、create_file、edit_file、delete_file、download_file。\n\n"
+        "客户端 XML 工具格式只适用于上面这些客户端工具。"
+        + _CLIENT_TOOL_GATEWAY_GUARD
+    )
+
+
+def _apply_client_tool_surface_to_system_prompt(content: str, surface: str) -> tuple[Optional[str], str]:
+    if surface == "none":
+        return None, "dropped"
+    if surface == "daily":
+        return _daily_client_tool_prompt(), "rewritten"
+    return content.rstrip() + "\n\n" + _CLIENT_TOOL_GATEWAY_GUARD, "guarded"
+
+
+def trim_client_tool_system_messages(
+    messages: list[dict],
+    *,
+    surface: str = "all",
+) -> tuple[list[dict], dict]:
+    """Map Operit client tool instruction system prompts to the configured surface."""
+    surface = normalize_client_tool_surface(surface)
+    matched_indices = [
+        idx
+        for idx, msg in enumerate(messages)
+        if _is_client_tool_system_message(msg)
+    ]
+    meta = {
+        "client_tool_surface": surface,
+        "client_tool_system_messages_seen": len(matched_indices),
+        "client_tool_system_messages_trimmed": 0,
+        "client_tool_system_messages_rewritten": 0,
+        "client_tool_system_messages_guarded": 0,
+    }
+    if not matched_indices:
+        return messages, meta
+
+    matched = set(matched_indices)
+    rewritten_prompt_kept = False
+    trimmed: list[dict] = []
+    for idx, msg in enumerate(messages):
+        if idx not in matched:
+            trimmed.append(msg)
+            continue
+
+        new_content, action = _apply_client_tool_surface_to_system_prompt(str(msg.get("content") or ""), surface)
+        if new_content is None:
+            meta["client_tool_system_messages_trimmed"] += 1
+            continue
+        if surface == "daily" and rewritten_prompt_kept:
+            meta["client_tool_system_messages_trimmed"] += 1
+            continue
+
+        clean = dict(msg)
+        clean["content"] = new_content
+        trimmed.append(clean)
+        if action == "rewritten":
+            meta["client_tool_system_messages_rewritten"] += 1
+            rewritten_prompt_kept = True
+        elif action == "guarded":
+            meta["client_tool_system_messages_guarded"] += 1
     return trimmed, meta
 
 

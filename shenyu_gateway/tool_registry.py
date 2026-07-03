@@ -57,6 +57,7 @@ DAILY_CLIENT_TOOL_EXACT = {
     "coread_annotate",
 }
 DAILY_CLIENT_TOOL_PREFIXES = ("coread_",)
+CLIENT_TOOL_SURFACES = {"all", "daily", "none"}
 
 _BROKER_CATEGORIZED_DESCRIPTION = """\
 记忆库总入口。tool=工具全名，params=参数对象（直接传对象，不要传 JSON 字符串）。
@@ -157,8 +158,12 @@ def _gateway_tool_surface(cfg: Any) -> str:
 
 
 def _client_tool_surface(cfg: Any) -> str:
-    value = str(getattr(cfg, "client_tool_surface", "all") or "all").strip().lower()
-    return value if value in {"all", "daily", "none"} else "all"
+    return normalize_client_tool_surface(getattr(cfg, "client_tool_surface", "all"))
+
+
+def normalize_client_tool_surface(value: Any) -> str:
+    value = str(value or "all").strip().lower()
+    return value if value in CLIENT_TOOL_SURFACES else "all"
 
 
 def _filter_gateway_tools_for_surface(tools: list[dict], cfg: Any) -> list[dict]:

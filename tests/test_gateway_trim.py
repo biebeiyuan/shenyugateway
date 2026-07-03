@@ -6,6 +6,7 @@ from shenyu_gateway.context_layers import (
     trim_client_extra_bundle_attachments,
     trim_client_image_blocks,
     trim_client_messages,
+    trim_client_tool_system_messages,
 )
 from shenyu_gateway.tool_loop import _latest_user_text
 
@@ -83,6 +84,112 @@ def test_trim_client_messages_preserves_original_prompt_window_before_tool_tail(
     assert trimmed[-1]["tool_call_id"] == "call_a"
     assert meta["client_messages_retained"] == 82
     assert meta["client_tool_tail_messages"] == 2
+
+
+def test_trim_client_tool_system_messages_drops_operit_tool_prompt_when_hidden():
+    client_tool_prompt = """调用工具时，用户会看到你的响应，然后会自动将工具结果发送回给你。
+
+使用工具时，请使用以下格式：
+
+<tool name="tool_name">
+<param name="parameter_name">parameter_value</param>
+</tool>
+
+包系统：
+- 一些额外功能通过包提供
+
+Available packages:
+- code_runner : run code
+
+可用工具:
+- use_package
+
+文件系统工具:
+- read_file
+
+HTTP工具:
+- visit_web
+"""
+    messages = [
+        {"role": "system", "content": "regular system prompt"},
+        {"role": "system", "content": client_tool_prompt},
+        {"role": "user", "content": "hello"},
+    ]
+
+    trimmed, meta = trim_client_tool_system_messages(messages, surface="none")
+
+    assert [msg["content"] for msg in trimmed] == ["regular system prompt", "hello"]
+    assert meta["client_tool_surface"] == "none"
+    assert meta["client_tool_system_messages_seen"] == 1
+    assert meta["client_tool_system_messages_trimmed"] == 1
+    assert meta["client_tool_system_messages_rewritten"] == 0
+
+
+def test_trim_client_tool_system_messages_keeps_regular_system_prompt():
+    messages = [
+        {"role": "system", "content": "请在需要时使用工具，但先解释你的判断。"},
+        {"role": "user", "content": "hello"},
+    ]
+
+    trimmed, meta = trim_client_tool_system_messages(messages, surface="none")
+
+    assert trimmed == messages
+    assert meta["client_tool_system_messages_seen"] == 0
+    assert meta["client_tool_system_messages_trimmed"] == 0
+
+
+def test_trim_client_tool_system_messages_guards_all_surface_without_removing_catalog():
+    messages = [
+        {
+            "role": "system",
+            "content": "包系统：\nAvailable packages:\nTo use a package:\n<tool name=\"use_package\">",
+        },
+        {"role": "user", "content": "hello"},
+    ]
+
+    trimmed, meta = trim_client_tool_system_messages(messages, surface="all")
+
+    assert len(trimmed) == 2
+    assert "Available packages:" in trimmed[0]["content"]
+    assert "网关覆盖规则" in trimmed[0]["content"]
+    assert "<tool name=\"shenyu_gateway_tool\">" in trimmed[0]["content"]
+    assert meta["client_tool_system_messages_seen"] == 1
+    assert meta["client_tool_system_messages_trimmed"] == 0
+    assert meta["client_tool_system_messages_guarded"] == 1
+
+
+def test_trim_client_tool_system_messages_rewrites_daily_surface_to_daily_catalog():
+    messages = [
+        {
+            "role": "system",
+            "content": "调用工具时，用户会看到你的响应\n使用工具时，请使用以下格式：\n"
+            "<tool name=\"tool_name\">\nAvailable packages:\n- workflow\n- code_runner\n"
+            "文件系统工具:\n- create_file\nHTTP工具:\n- download_file",
+        },
+        {
+            "role": "system",
+            "content": "包系统：\nAvailable packages:\nTo use a package:\n<tool name=\"use_package\">",
+        },
+        {"role": "user", "content": "hello"},
+    ]
+
+    trimmed, meta = trim_client_tool_system_messages(messages, surface="daily")
+
+    assert len(trimmed) == 2
+    daily_prompt = trimmed[0]["content"]
+    assert "客户端工具（日常桌面）" in daily_prompt
+    assert "- read_file" in daily_prompt
+    assert "- visit_web" in daily_prompt
+    assert "coread_*" in daily_prompt
+    assert "code_runner" in daily_prompt
+    assert "不要使用" in daily_prompt
+    assert "create_file" in daily_prompt
+    assert "网关覆盖规则" in daily_prompt
+    assert trimmed[1]["content"] == "hello"
+    assert meta["client_tool_surface"] == "daily"
+    assert meta["client_tool_system_messages_seen"] == 2
+    assert meta["client_tool_system_messages_rewritten"] == 1
+    assert meta["client_tool_system_messages_trimmed"] == 1
 
 
 def test_tool_safe_trim_start_drops_incomplete_assistant_tool_turn():

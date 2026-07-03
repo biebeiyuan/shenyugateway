@@ -188,6 +188,39 @@ def test_gateway_tool_policy_names_broker_call_shape_and_tool_list():
     assert "客户端递给我的工具；按它自己的说明用" in tool_policy
 
 
+def test_gateway_tool_policy_reflects_client_tool_surface():
+    package = {
+        "stable_charter": "stable charter",
+        "calendar_context": {},
+        "heartbeat_digest": "",
+        "hisense_heartbeat_digest": "",
+        "notebook_items": [],
+        "last_wake_recap": "",
+        "mem_notes": [],
+    }
+
+    daily_layers = context_layers.render_layered_additions(
+        package,
+        context_layers.ContextLayerSettings(
+            enable_gateway_tools=True,
+            heartbeat_prompt="heartbeat prompt",
+            client_tool_surface="daily",
+        ),
+    )
+    none_layers = context_layers.render_layered_additions(
+        package,
+        context_layers.ContextLayerSettings(
+            enable_gateway_tools=True,
+            heartbeat_prompt="heartbeat prompt",
+            client_tool_surface="none",
+        ),
+    )
+
+    assert "客户端工具只保留日常桌面" in daily_layers["tool_policy"]
+    assert "普通线程不暴露客户端工具" in none_layers["tool_policy"]
+    assert "客户端递给我的工具；按它自己的说明用" not in none_layers["tool_policy"]
+
+
 def test_calendar_memory_renders_page_content_not_summary_or_digest():
     layers = context_layers.render_layered_additions(
         {

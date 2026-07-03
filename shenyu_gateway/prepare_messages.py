@@ -14,6 +14,7 @@ from .context_layers import (
     trim_client_extra_bundle_attachments as _trim_client_extra_bundle_attachments,
     trim_client_image_blocks as _trim_client_image_blocks,
     trim_client_messages as _trim_client_messages,
+    trim_client_tool_system_messages as _trim_client_tool_system_messages,
     trim_cold_start_sources as _trim_cold_start_sources,
     trim_package_install_tool_results as _trim_package_install_tool_results,
 )
@@ -296,6 +297,12 @@ async def prepare_messages(
         detail={"raw_messages": len(raw_messages_for_storage)},
     )
     messages, trim_meta = _trim_client_messages(raw_messages, cfg.max_client_messages)
+    client_tool_surface = str(getattr(cfg, "client_tool_surface", "all") or "all").strip().lower()
+    messages, tool_system_trim_meta = _trim_client_tool_system_messages(
+        messages,
+        surface=client_tool_surface,
+    )
+    trim_meta.update(tool_system_trim_meta)
     messages, attachment_trim_meta = _trim_client_extra_bundle_attachments(messages, keep_recent_messages=3)
     trim_meta.update(attachment_trim_meta)
     messages, package_trim_meta = _trim_package_install_tool_results(messages, keep_recent=1)
