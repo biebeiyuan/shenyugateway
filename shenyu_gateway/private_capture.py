@@ -96,7 +96,7 @@ def finalize_assistant_private_content(
         assistant_message["content"] = clean_content
     stored_kinds = private_capture_kinds(heartbeat_content=heartbeat_content)
     fallback_text, fallback_context = private_capture_fallback_text(latest_user_text, stored_kinds)
-    fallback_applied = ensure_visible_assistant_content(assistant_message, fallback_text)
+    fallback_applied = bool(stored_kinds) and ensure_visible_assistant_content(assistant_message, fallback_text)
     fallback_meta = {
         "applied": fallback_applied,
         "text": fallback_text if fallback_applied else "",

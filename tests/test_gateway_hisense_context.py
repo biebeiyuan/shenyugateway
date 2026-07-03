@@ -424,6 +424,35 @@ def test_home_trigger_private_capture_fallback():
     }
 
 
+def test_empty_assistant_content_without_private_capture_keeps_empty():
+    finalize = gateway_namespace["_finalize_assistant_private_content"]
+    message = {"role": "assistant", "content": ""}
+
+    clean, heartbeat, fallback_meta = finalize(message)
+
+    assert clean == ""
+    assert message["content"] == ""
+    assert heartbeat == ""
+    assert fallback_meta == {
+        "applied": False,
+        "text": "",
+        "kinds": [],
+        "context": "",
+    }
+
+
+def test_gateway_error_text_is_not_private_capture_fallback():
+    finalize = gateway_namespace["_finalize_assistant_private_content"]
+    message = {"role": "assistant", "content": "[网关错误] 400: upstream rejected payload"}
+
+    clean, heartbeat, fallback_meta = finalize(message)
+
+    assert clean == "[网关错误] 400: upstream rejected payload"
+    assert message["content"] == "[网关错误] 400: upstream rejected payload"
+    assert heartbeat == ""
+    assert fallback_meta["applied"] is False
+
+
 def test_room_trigger_only_matches_shenyu_huijia():
     is_free_time = gateway_namespace["_is_free_time_fallback_context"]
 

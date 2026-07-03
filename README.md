@@ -836,13 +836,12 @@ Closed private assistant blocks are removed from visible replies:
 
 Inline `[mem]...[/mem]` and `[star]...[/star]` tag capture has been removed. Mem notes are written via tool call (`shenyu_write_mem_note`); stars are written via tool call (`shenyu_create_star`).
 
-If all visible text is removed and there are no client-executable tool calls, the gateway sends a short visible fallback instead of returning an empty successful assistant message. This prevents clients and automated workflows from treating a successful private capture as a malformed empty response.
+If a captured `<heartbeat>` removes all visible text and there are no client-executable tool calls, the gateway sends a short visible fallback instead of returning an empty successful assistant message. Plain empty replies without a captured private block are left empty, and gateway/upstream error text is not rewritten as this fallback.
 
 Fallback text is generated in `shenyu_gateway/private_capture.py` by `finalize_assistant_private_content()`, `private_capture_fallback_text()`, and `is_free_time_fallback_context()`:
 
 - room context (回家了 trigger): `沈予回家了 · 已记录私有块 heartbeat`
 - generic context: `沈予已记录 · 已记录私有块 heartbeat`
-- if no private capture type is detected: `沈予已记录。`
 
 Room mode triggers from any Operit proxy message with `proxy_sender` + `沈予` (trailing text is ignored — the client can use any wording).
 

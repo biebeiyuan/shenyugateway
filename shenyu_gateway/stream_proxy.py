@@ -91,13 +91,14 @@ async def stream_chat(
                                 created=stream_created,
                             )
                             visible_output_sent = visible_output_sent or bool(remaining.strip())
-                        if not visible_output_sent and not tool_call_seen:
+                        heartbeat_content = tag_filter.get_heartbeat()
+                        if not visible_output_sent and not tool_call_seen and heartbeat_content:
                             fallback_applied = True
                             visible_output_sent = True
                             fallback_text, _ = private_capture_fallback_text(
                                 latest_user_text,
                                 private_capture_kinds(
-                                    heartbeat_content=tag_filter.get_heartbeat(),
+                                    heartbeat_content=heartbeat_content,
                                 ),
                             )
                             yield _stream_content_event(
@@ -135,13 +136,19 @@ async def stream_chat(
                                     if delta or choice.get("finish_reason") is not None:
                                         yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
                                 continue
-                            if choice.get("finish_reason") is not None and not visible_output_sent and not tool_call_seen:
+                            heartbeat_content = tag_filter.get_heartbeat()
+                            if (
+                                choice.get("finish_reason") is not None
+                                and not visible_output_sent
+                                and not tool_call_seen
+                                and heartbeat_content
+                            ):
                                 fallback_applied = True
                                 visible_output_sent = True
                                 fallback_text, _ = private_capture_fallback_text(
                                     latest_user_text,
                                     private_capture_kinds(
-                                        heartbeat_content=tag_filter.get_heartbeat(),
+                                        heartbeat_content=heartbeat_content,
                                     ),
                                 )
                                 yield _stream_content_event(
@@ -229,13 +236,19 @@ async def stream_chat(
                     usage = data.get("usage")
                     if isinstance(usage, dict):
                         anthropic_usage.update(usage)
-                elif data.get("type") == "message_stop" and not visible_output_sent and not tool_call_seen:
+                elif (
+                    data.get("type") == "message_stop"
+                    and not visible_output_sent
+                    and not tool_call_seen
+                    and tag_filter.get_heartbeat()
+                ):
                     fallback_applied = True
                     visible_output_sent = True
+                    heartbeat_content = tag_filter.get_heartbeat()
                     fallback_text, _ = private_capture_fallback_text(
                         latest_user_text,
                         private_capture_kinds(
-                            heartbeat_content=tag_filter.get_heartbeat(),
+                            heartbeat_content=heartbeat_content,
                         ),
                     )
                     yield _stream_content_event(
@@ -275,13 +288,14 @@ async def stream_chat(
                     created=stream_created,
                 )
                 visible_output_sent = visible_output_sent or bool(remaining.strip())
-            if not visible_output_sent and not tool_call_seen:
+            heartbeat_content = tag_filter.get_heartbeat()
+            if not visible_output_sent and not tool_call_seen and heartbeat_content:
                 fallback_applied = True
                 visible_output_sent = True
                 fallback_text, _ = private_capture_fallback_text(
                     latest_user_text,
                     private_capture_kinds(
-                        heartbeat_content=tag_filter.get_heartbeat(),
+                        heartbeat_content=heartbeat_content,
                     ),
                 )
                 yield _stream_content_event(
