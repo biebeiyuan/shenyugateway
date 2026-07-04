@@ -55,6 +55,7 @@ const config = ref<GatewayConfig>({
   upstream_provider_format: 'string',
   upstream_provider_order: [],
   upstream_extra_body: {},
+  upstream_passthrough_headers: ['x-api-key'],
   hisense_upstream_url: '',
   hisense_api_key: '',
   hisense_protocol: '',
@@ -236,6 +237,7 @@ async function doSave() {
       upstream_provider_format: config.value.upstream_provider_format,
       upstream_provider_order: config.value.upstream_provider_order || [],
       upstream_extra_body: upstreamExtraBody,
+      upstream_passthrough_headers: config.value.upstream_passthrough_headers || [],
       hisense_upstream_url: config.value.hisense_upstream_url,
       hisense_api_key: config.value.hisense_api_key,
       hisense_protocol: config.value.hisense_protocol,
@@ -517,6 +519,21 @@ function removeModel(index: number) {
               />
               <div class="provider-order-hint">
                 保存为 JSON object，会追加到最终请求主体；例如可填 {"models":["claude-opus-4-7"]}。
+            <NFormItem label="透传到上游的请求头">
+              <NSelect
+                v-model:value="config.upstream_passthrough_headers"
+                multiple
+                filterable
+                tag
+                clearable
+                :options="[]"
+                placeholder="输入回车添加，例如 x-api-key"
+              />
+              <div class="provider-order-hint">
+                白名单：只有这里的请求头会从客户端透传到上游。authorization / content-type / 网关识别头（X-Shenyu-*、X-Session-Tag、X-Client-Name）始终隔离，不会泄露。默认 x-api-key。
+              </div>
+            </NFormItem>
+
               </div>
             </NFormItem>
             <NFormItem label="海信专用接口地址">

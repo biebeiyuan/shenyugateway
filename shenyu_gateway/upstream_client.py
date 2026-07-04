@@ -175,6 +175,55 @@ def apply_upstream_extra_body(payload: dict[str, Any], cfg: Any) -> dict[str, An
     return payload
 
 
+# Headers the gateway must always own. Even if a name is mistakenly added to
+# the passthrough whitelist, these are never forwarded to the upstream:
+#   - authorization / content-type: the gateway rebuilds these per protocol
+#   - hop-by-hop headers (RFC 7230): not valid to forward across a proxy
+#   - the gateway's own identification headers (X-Shenyu-* / X-Session-Tag / X-Client-Name)
+_PASSTHROUGH_RESERVED_HEADERS = {
+    "authorization",
+    "content-type",
+    "content-length",
+    "host",
+    "connection",
+    "transfer-encoding",
+    "te",
+    "trailer",
+    "upgrade",
+    "cookie",
+    "x-shenyu-session-tag",
+    "x-session-tag",
+    "x-shenyu-client",
+    "x-client-name",
+    "x-shenyu-request-id",
+}
+
+
+def forwarded_client_headers(request: Any, cfg: Any) -> dict[str, str]:
+    """Return whitelisted client headers to forward to the upstream.
+
+    Only header names listed in ``cfg.upstream_passthrough_headers`` are
+    considered. A reserved set (auth, content-type, hop-by-hop, and the
+    gateway's own identification headers) is always excluded so the gateway
+    stays in control of those. Returned keys are lowercased; values come
+    straight from the inbound request headers.
+    """
+    whitelist = getattr(cfg, "upstream_passthrough_headers", []) or []
+    if not isinstance(whitelist, list):
+        whitelist = [whitelist]
+    forwarded: dict[str, str] = {}
+    seen: set[str] = set()
+    for name in whitelist:
+        normalized = str(name or "").strip().lower()
+        if not normalized or normalized in seen or normalized in _PASSTHROUGH_RESERVED_HEADERS:
+            continue
+        seen.add(normalized)
+        value = request.headers.get(normalized)
+        if value:
+            forwarded[normalized] = value
+    return forwarded
+
+
 def make_upstream_http_client(cfg: Any) -> httpx.AsyncClient:
     kwargs: dict[str, Any] = {
         "timeout": httpx.Timeout(connect=15.0, read=None, write=30.0, pool=15.0),
@@ -318,6 +367,7 @@ async def build_upstream_request(
             "anthropic-version": cfg.upstream_version,
             "content-type": "application/json",
         }
+        headers.update(forwarded_client_headers(request, cfg))
         cache_meta["breakpoints"] = cache_paths
         cache_meta["note"] = "cache_control breakpoints added to configured Anthropic layer blocks."
         return payload, headers, model_name, cache_meta, upstream
@@ -350,6 +400,7 @@ async def build_upstream_request(
         payload["tools"] = cache_tools
     apply_upstream_extra_body(payload, cfg)
     headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
+    headers.update(forwarded_client_headers(request, cfg))
     return payload, headers, model_name, cache_meta, upstream
 
 

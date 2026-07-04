@@ -39,6 +39,7 @@ class ConfigUpdate(BaseModel):
     upstream_provider_format: Optional[str] = None
     upstream_provider_order: Optional[list[str] | str] = None
     upstream_extra_body: Optional[dict[str, Any] | str] = None
+    upstream_passthrough_headers: Optional[list[str] | str] = None
     hisense_upstream_url: Optional[str] = None
     hisense_api_key: Optional[str] = None
     hisense_protocol: Optional[str] = None
@@ -85,6 +86,7 @@ class ConfigUpdate(BaseModel):
     enable_cold_start: Optional[bool] = None
     enable_upstream_tools: Optional[bool] = None
     enable_gateway_tools: Optional[bool] = None
+    enable_stream_duplicate_guard: Optional[bool] = None
     enable_mem0_management_tools: Optional[bool] = None
     expose_supabase_tools: Optional[bool] = None
     gateway_tool_mode: Optional[str] = None

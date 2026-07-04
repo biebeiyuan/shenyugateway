@@ -75,6 +75,7 @@ class RuntimeConfig:
         self.upstream_provider_format: str = self._normalize_provider_format(os.getenv("UPSTREAM_PROVIDER_FORMAT", "string"))
         self.upstream_provider_order: list[str] = self._load_provider_order()
         self.upstream_extra_body: dict[str, Any] = self._load_upstream_extra_body()
+        self.upstream_passthrough_headers: list[str] = self._load_passthrough_headers()
         self.hisense_upstream_url: str = os.getenv("HISENSE_UPSTREAM_URL", "").strip()
         self.hisense_api_key: str = os.getenv("HISENSE_API_KEY", "").strip()
         self.hisense_protocol: str = os.getenv("HISENSE_PROTOCOL", "").strip().lower()
@@ -126,6 +127,7 @@ class RuntimeConfig:
         self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
         self.enable_upstream_tools: bool = _env_bool("ENABLE_UPSTREAM_TOOLS", True)
         self.enable_gateway_tools: bool = _env_bool("ENABLE_GATEWAY_TOOLS", True)
+        self.enable_stream_duplicate_guard: bool = _env_bool("ENABLE_STREAM_DUPLICATE_GUARD", True)
         self.enable_mem0_management_tools: bool = _env_bool("ENABLE_MEM0_MANAGEMENT_TOOLS", True)
         self.expose_supabase_tools: bool = _env_bool("EXPOSE_SUPABASE_TOOLS", True)
         self.gateway_tool_mode: str = self._normalize_tool_mode(os.getenv("GATEWAY_TOOL_MODE", "broker"))
@@ -197,6 +199,7 @@ class RuntimeConfig:
             "upstream_provider_format": self.upstream_provider_format,
             "upstream_provider_order": self.upstream_provider_order,
             "upstream_extra_body": self.upstream_extra_body,
+            "upstream_passthrough_headers": self.upstream_passthrough_headers,
             "hisense_upstream_url": self.hisense_upstream_url,
             "hisense_api_key": mask(self.hisense_api_key),
             "hisense_protocol": self.hisense_protocol,
@@ -241,6 +244,7 @@ class RuntimeConfig:
             "enable_cold_start": self.enable_cold_start,
             "enable_upstream_tools": self.enable_upstream_tools,
             "enable_gateway_tools": self.enable_gateway_tools,
+            "enable_stream_duplicate_guard": self.enable_stream_duplicate_guard,
             "enable_mem0_management_tools": self.enable_mem0_management_tools,
             "expose_supabase_tools": self.expose_supabase_tools,
             "gateway_tool_mode": self.gateway_tool_mode,
@@ -346,6 +350,28 @@ class RuntimeConfig:
             for key, value in data.items()
             if str(key)
         }
+
+    def _load_passthrough_headers(self) -> list[str]:
+        raw = os.getenv("UPSTREAM_PASSTHROUGH_HEADERS", "").strip()
+        if not raw:
+            return ["x-api-key"]
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError:
+            data = raw.split(",")
+        if isinstance(data, str):
+            data = [data]
+        if not isinstance(data, list):
+            return []
+        seen: set[str] = set()
+        names: list[str] = []
+        for item in data:
+            name = str(item or "").strip().lower()
+            if not name or name in seen:
+                continue
+            seen.add(name)
+            names.append(name)
+        return names
 
     def _normalize_provider_format(self, value: Any) -> str:
         raw = str(value or "").strip().lower().replace("-", "_")

@@ -13,6 +13,7 @@ export interface GatewayConfig {
   upstream_provider_format?: string
   upstream_provider_order?: string[]
   upstream_extra_body?: Record<string, unknown>
+  upstream_passthrough_headers?: string[]
   hisense_upstream_url?: string
   hisense_api_key?: string
   hisense_protocol?: string
@@ -76,6 +77,7 @@ export interface GatewayConfig {
   calendar_context_month_limit?: number
 
   enable_gateway_tools?: boolean
+  enable_stream_duplicate_guard?: boolean
   enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
   gateway_tool_mode?: string
@@ -118,6 +120,7 @@ export interface HealthStatus {
   gateway_db_path?: string
   enable_upstream_tools?: boolean
   enable_gateway_tools?: boolean
+  enable_stream_duplicate_guard?: boolean
   enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
   gateway_tool_mode?: string

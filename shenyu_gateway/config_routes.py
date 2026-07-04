@@ -37,6 +37,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "upstream_provider_format": cfg.upstream_provider_format,
         "upstream_provider_order": cfg.upstream_provider_order,
         "upstream_extra_body": cfg.upstream_extra_body,
+        "upstream_passthrough_headers": cfg.upstream_passthrough_headers,
         "hisense_upstream_url": cfg.hisense_upstream_url,
         "hisense_api_key": cfg.hisense_api_key,
         "hisense_protocol": cfg.hisense_protocol,
@@ -82,6 +83,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "enable_cold_start": cfg.enable_cold_start,
         "enable_upstream_tools": cfg.enable_upstream_tools,
         "enable_gateway_tools": cfg.enable_gateway_tools,
+        "enable_stream_duplicate_guard": cfg.enable_stream_duplicate_guard,
         "enable_mem0_management_tools": cfg.enable_mem0_management_tools,
         "expose_supabase_tools": cfg.expose_supabase_tools,
         "gateway_tool_mode": cfg.gateway_tool_mode,
@@ -143,6 +145,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "upstream_provider_format": "UPSTREAM_PROVIDER_FORMAT",
             "upstream_provider_order": "UPSTREAM_PROVIDER_ORDER",
             "upstream_extra_body": "UPSTREAM_EXTRA_BODY",
+            "upstream_passthrough_headers": "UPSTREAM_PASSTHROUGH_HEADERS",
             "hisense_upstream_url": "HISENSE_UPSTREAM_URL",
             "hisense_api_key": "HISENSE_API_KEY",
             "hisense_protocol": "HISENSE_PROTOCOL",
@@ -188,6 +191,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "enable_cold_start": "ENABLE_COLD_START",
             "enable_upstream_tools": "ENABLE_UPSTREAM_TOOLS",
             "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
+            "enable_stream_duplicate_guard": "ENABLE_STREAM_DUPLICATE_GUARD",
             "enable_mem0_management_tools": "ENABLE_MEM0_MANAGEMENT_TOOLS",
             "expose_supabase_tools": "EXPOSE_SUPABASE_TOOLS",
             "gateway_tool_mode": "GATEWAY_TOOL_MODE",
@@ -256,6 +260,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "enable_cold_start",
             "enable_upstream_tools",
             "enable_gateway_tools",
+            "enable_stream_duplicate_guard",
             "enable_mem0_management_tools",
             "expose_supabase_tools",
             "gateway_tool_mode",
@@ -352,6 +357,31 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             }
             changed.append("upstream_extra_body")
             env_updates[env_names["upstream_extra_body"]] = json.dumps(cfg.upstream_extra_body, ensure_ascii=False)
+
+        if "upstream_passthrough_headers" in body.model_fields_set:
+            raw_headers = body.upstream_passthrough_headers
+            if raw_headers is None or raw_headers == "":
+                raw_items = []
+            elif isinstance(raw_headers, str):
+                raw_items = raw_headers.split(",")
+            elif isinstance(raw_headers, list):
+                raw_items = raw_headers
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="UPSTREAM_PASSTHROUGH_HEADERS 必须是字符串数组或逗号分隔的字符串。",
+                )
+            seen_names: set[str] = set()
+            passthrough_names: list[str] = []
+            for item in raw_items:
+                name = str(item or "").strip().lower()
+                if not name or name in seen_names:
+                    continue
+                seen_names.add(name)
+                passthrough_names.append(name)
+            cfg.upstream_passthrough_headers = passthrough_names
+            changed.append("upstream_passthrough_headers")
+            env_updates[env_names["upstream_passthrough_headers"]] = json.dumps(passthrough_names, ensure_ascii=False)
 
         if body.max_internal_tool_rounds is not None:
             cfg.max_internal_tool_rounds = max(1, body.max_internal_tool_rounds)
