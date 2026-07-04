@@ -865,6 +865,8 @@ UPSTREAM_PROXY=
 UPSTREAM_TRUST_ENV=false
 ENABLE_OPENAI_CACHE_CONTROL=true
 ENABLE_ANTHROPIC_AUTO_THINKING=false
+UPSTREAM_EXTRA_BODY=
+UPSTREAM_PASSTHROUGH_HEADERS=
 HISENSE_UPSTREAM_URL=
 HISENSE_API_KEY=
 HISENSE_PROTOCOL=
@@ -914,6 +916,23 @@ UPSTREAM_PROXY=http://127.0.0.1:7897
 When `UPSTREAM_PROXY` is set, upstream LLM requests use that explicit proxy and ignore ambient proxy environment variables. If you prefer to inherit `HTTP_PROXY` / `HTTPS_PROXY` from the process environment, leave `UPSTREAM_PROXY` empty and set `UPSTREAM_TRUST_ENV=true`.
 
 Cloudflare Tunnel only handles inbound traffic to the gateway. It can make `https://your-domain` reach `localhost:8010`, but it does not by itself make the gateway's outbound connection to `UPSTREAM_URL` work. If requests fail with `无法连接上游 ... All connection attempts failed`, check the gateway machine's outbound route to the upstream host, local proxy/TUN mode, and `UPSTREAM_PROXY`.
+
+`UPSTREAM_EXTRA_BODY` is a JSON object merged into every upstream request body. It is the single customization point for request-body fields the gateway does not manage itself, including `provider`:
+
+```text
+# Pin the upstream provider (Pioneer-style string):
+UPSTREAM_EXTRA_BODY={"provider":"Amazon Bedrock"}
+# Or an ordered provider list (OpenRouter-style order object):
+UPSTREAM_EXTRA_BODY={"provider":{"order":["Amazon Bedrock","OpenAI"]}}
+# Extra non-provider fields, e.g. a custom model list:
+UPSTREAM_EXTRA_BODY={"models":["claude-opus-4-7"]}
+```
+
+The merge is a shallow `payload.update(extra_body)`, so an explicit `model`, `messages`, or `tools` key would override the gateway-built body. The admin UI warns on save when one of those core fields is present; treat such overrides as deliberate only. The provider field is honored on OpenAI-compatible upstreams and is dropped on the Anthropic protocol (Anthropic has no provider concept).
+
+`UPSTREAM_PASSTHROUGH_HEADERS` is a comma-separated or JSON-array whitelist of client request headers forwarded to the upstream. Defaults to `x-api-key` when unset. Reserved headers are always excluded even if listed: `authorization`, `content-type`, hop-by-hop headers, and the gateway's own identification headers (`X-Shenyu-*`, `X-Session-Tag`, `X-Client-Name`) — the gateway rebuilds or isolates those itself.
+
+Legacy `UPSTREAM_PROVIDER_ORDER` / `UPSTREAM_PROVIDER_FORMAT` / `UPSTREAM_PROVIDER_ORDER_ENABLED` are deprecated: on startup they are auto-migrated into `UPSTREAM_EXTRA_BODY["provider"]` (OpenAI-compatible only) and a warning is logged. Move the value into `UPSTREAM_EXTRA_BODY`; these legacy variables will be removed in a future release.
 
 ## Running
 
