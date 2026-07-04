@@ -9,9 +9,6 @@ export interface GatewayConfig {
   upstream_trust_env?: boolean
   enable_openai_cache_control?: boolean
   enable_anthropic_auto_thinking?: boolean
-  upstream_provider_order_enabled?: boolean
-  upstream_provider_format?: string
-  upstream_provider_order?: string[]
   upstream_extra_body?: Record<string, unknown>
   upstream_passthrough_headers?: string[]
   hisense_upstream_url?: string
@@ -106,9 +103,6 @@ export interface HealthStatus {
   upstream_trust_env?: boolean
   enable_openai_cache_control?: boolean
   enable_anthropic_auto_thinking?: boolean
-  upstream_provider_order_enabled?: boolean
-  upstream_provider_format?: string
-  upstream_provider_order?: string[]
   upstream_extra_body?: Record<string, unknown>
   hisense_upstream?: string
   hisense_upstream_chat_url?: string
@@ -133,6 +127,7 @@ export interface HealthStatus {
 export interface SaveConfigResult {
   ok: boolean
   changed: string[]
+  warnings?: string[]
   config: GatewayConfig
 }
 

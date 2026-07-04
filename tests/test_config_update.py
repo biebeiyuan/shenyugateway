@@ -41,9 +41,6 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.enable_openai_cache_control is True
     assert cfg.enable_anthropic_auto_thinking is False
     assert cfg.anthropic_default_max_tokens == 128000
-    assert cfg.upstream_provider_order_enabled is False
-    assert cfg.upstream_provider_format == "string"
-    assert cfg.upstream_provider_order == []
     assert cfg.upstream_extra_body == {}
     assert cfg.inject_inline_memory_prompt is True
     assert cfg.enable_inline_memory_capture is True
@@ -61,20 +58,42 @@ def test_blank_max_client_messages_still_means_unlimited(monkeypatch):
     assert cfg.max_client_messages is None
 
 
-def test_provider_order_env_accepts_json_and_dedupes(monkeypatch):
+def test_legacy_provider_order_migrates_into_extra_body_string(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER_ENABLED", "true")
     monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER", '["Amazon Bedrock", "Amazon Bedrock", "OpenAI"]')
 
     cfg = RuntimeConfig()
 
-    assert cfg.upstream_provider_order == ["Amazon Bedrock", "OpenAI"]
+    assert cfg.upstream_extra_body["provider"] == "Amazon Bedrock"
 
 
-def test_provider_order_env_accepts_comma_list(monkeypatch):
+def test_legacy_provider_order_migrates_into_extra_body_order_object(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER_ENABLED", "true")
+    monkeypatch.setenv("UPSTREAM_PROVIDER_FORMAT", "order_object")
     monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER", "Amazon Bedrock, OpenAI")
 
     cfg = RuntimeConfig()
 
-    assert cfg.upstream_provider_order == ["Amazon Bedrock", "OpenAI"]
+    assert cfg.upstream_extra_body["provider"] == {"order": ["Amazon Bedrock", "OpenAI"]}
+
+
+def test_explicit_extra_body_provider_not_overridden_by_legacy_order(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER_ENABLED", "true")
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER", '["Amazon Bedrock"]')
+    monkeypatch.setenv("UPSTREAM_EXTRA_BODY", '{"provider": "OpenAI"}')
+
+    cfg = RuntimeConfig()
+
+    assert cfg.upstream_extra_body["provider"] == "OpenAI"
+
+
+def test_legacy_provider_order_not_migrated_when_disabled(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER_ENABLED", "false")
+    monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER", '["Amazon Bedrock"]')
+
+    cfg = RuntimeConfig()
+
+    assert "provider" not in cfg.upstream_extra_body
 
 
 def test_upstream_extra_body_env_accepts_json_object(monkeypatch):
@@ -133,35 +152,42 @@ def test_wake_welcome_message_can_be_cleared_explicitly(monkeypatch):
     assert persisted[-1]["WAKE_WELCOME_MESSAGE"] == ""
 
 
-def test_config_update_saves_provider_order(monkeypatch):
+def test_config_update_saves_provider_via_extra_body(monkeypatch):
     client, persisted = _config_client(monkeypatch)
-    monkeypatch.setattr(gateway.cfg, "upstream_provider_order_enabled", False)
-    monkeypatch.setattr(gateway.cfg, "upstream_provider_format", "string")
-    monkeypatch.setattr(gateway.cfg, "upstream_provider_order", [])
+    monkeypatch.setattr(gateway.cfg, "upstream_extra_body", {})
 
     try:
         response = client.post(
             "/api/config",
-            json={
-                "upstream_provider_order_enabled": True,
-                "upstream_provider_format": "order_object",
-                "upstream_provider_order": ["Amazon Bedrock", "Amazon Bedrock", "OpenAI"],
-            },
+            json={"upstream_extra_body": {"provider": {"order": ["Amazon Bedrock", "OpenAI"]}}},
         )
     finally:
         client.close()
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["config"]["upstream_provider_order_enabled"] is True
-    assert payload["config"]["upstream_provider_format"] == "order_object"
-    assert payload["config"]["upstream_provider_order"] == ["Amazon Bedrock", "OpenAI"]
-    assert "upstream_provider_order_enabled" in payload["changed"]
-    assert "upstream_provider_format" in payload["changed"]
-    assert "upstream_provider_order" in payload["changed"]
-    assert persisted[-1]["UPSTREAM_PROVIDER_ORDER_ENABLED"] == "true"
-    assert persisted[-1]["UPSTREAM_PROVIDER_FORMAT"] == "order_object"
-    assert persisted[-1]["UPSTREAM_PROVIDER_ORDER"] == '["Amazon Bedrock", "OpenAI"]'
+    assert payload["config"]["upstream_extra_body"] == {"provider": {"order": ["Amazon Bedrock", "OpenAI"]}}
+    assert "upstream_extra_body" in payload["changed"]
+    assert gateway.cfg.upstream_extra_body == {"provider": {"order": ["Amazon Bedrock", "OpenAI"]}}
+    assert persisted[-1]["UPSTREAM_EXTRA_BODY"] == '{"provider": {"order": ["Amazon Bedrock", "OpenAI"]}}'
+
+
+def test_config_update_warns_when_extra_body_overrides_core_fields(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "upstream_extra_body", {})
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"upstream_extra_body": {"model": "override-me", "tools": []}},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert "warnings" in payload
+    assert any("model" in w and "tools" in w for w in payload["warnings"])
 
 
 def test_config_update_saves_upstream_extra_body(monkeypatch):

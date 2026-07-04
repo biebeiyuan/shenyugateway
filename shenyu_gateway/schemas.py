@@ -35,9 +35,6 @@ class ConfigUpdate(BaseModel):
     enable_openai_cache_control: Optional[bool] = None
     enable_anthropic_auto_thinking: Optional[bool] = None
     anthropic_default_max_tokens: Optional[int] = Field(default=None, ge=1)
-    upstream_provider_order_enabled: Optional[bool] = None
-    upstream_provider_format: Optional[str] = None
-    upstream_provider_order: Optional[list[str] | str] = None
     upstream_extra_body: Optional[dict[str, Any] | str] = None
     upstream_passthrough_headers: Optional[list[str] | str] = None
     hisense_upstream_url: Optional[str] = None

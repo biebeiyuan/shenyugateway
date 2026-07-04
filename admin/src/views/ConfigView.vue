@@ -35,6 +35,8 @@ interface UpstreamPreset {
   key: string
   protocol: string
   proto?: string
+  extra_body?: string
+  passthrough_headers?: string[]
 }
 
 const PRESETS_KEY = 'shenyu_upstream_presets'
@@ -51,9 +53,6 @@ const config = ref<GatewayConfig>({
   upstream_trust_env: false,
   enable_openai_cache_control: true,
   enable_anthropic_auto_thinking: false,
-  upstream_provider_order_enabled: false,
-  upstream_provider_format: 'string',
-  upstream_provider_order: [],
   upstream_extra_body: {},
   upstream_passthrough_headers: ['x-api-key'],
   hisense_upstream_url: '',
@@ -111,13 +110,16 @@ const clientToolSurfaceOptions = [
   { label: '日常客户端工具', value: 'daily' },
   { label: '不暴露客户端工具', value: 'none' },
 ]
-const providerOrderOptions = [
-  { label: 'Amazon Bedrock', value: 'Amazon Bedrock' },
+const extraBodySnippets = [
+  { label: 'provider 字符串 · Amazon Bedrock', value: '{"provider":"Amazon Bedrock"}' },
+  { label: 'provider.order 对象', value: '{"provider":{"order":["Amazon Bedrock"]}}' },
+  { label: '自定义模型列表', value: '{"models":["claude-opus-4-7"]}' },
 ]
-const providerFormatOptions = [
-  { label: 'provider 字符串', value: 'string' },
-  { label: 'provider.order 对象', value: 'order_object' },
+const headerPresetOptions = [
+  { label: 'x-api-key（Anthropic 风格）', value: 'x-api-key' },
+  { label: 'x-request-id（链路追踪）', value: 'x-request-id' },
 ]
+const protectedHeaders = ['authorization', 'content-type', 'x-shenyu-session-tag', 'x-session-tag', 'x-shenyu-client', 'x-client-name']
 const sessionOptions = computed(() => sessions.value.map((item) => ({
   label: `${item.session_tag}${item.latest_user_text ? ` · ${item.latest_user_text.slice(0, 24)}` : ''}`,
   value: item.session_tag,
@@ -167,6 +169,8 @@ function loadPresets() {
         url: preset.url || '',
         key: preset.key || '',
         protocol: preset.protocol || preset.proto || 'auto',
+        extra_body: preset.extra_body || '',
+        passthrough_headers: preset.passthrough_headers || [],
       }
     })
   } catch {
@@ -182,6 +186,8 @@ function persistPresets() {
         url: preset.url,
         key: preset.key,
         protocol: preset.protocol,
+        extra_body: preset.extra_body || '',
+        passthrough_headers: preset.passthrough_headers || [],
       },
     ]),
   )
@@ -209,6 +215,42 @@ function parseExtraBody() {
   return parsed as Record<string, unknown>
 }
 
+function insertExtraBodySnippet(snippet: string) {
+  let current: Record<string, unknown> = {}
+  try {
+    current = parseExtraBody()
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : 'extra_body 解析失败')
+    return
+  }
+  let patch: Record<string, unknown> = {}
+  try {
+    patch = JSON.parse(snippet) as Record<string, unknown>
+  } catch {
+    message.error('片段 JSON 无效')
+    return
+  }
+  const merged = { ...current, ...patch }
+  upstreamExtraBodyText.value = Object.keys(merged).length ? JSON.stringify(merged, null, 2) : ''
+}
+
+function addPassthroughHeader(name: string) {
+  const normalized = name.trim().toLowerCase()
+  if (!normalized) return
+  const existing = config.value.upstream_passthrough_headers || []
+  if (existing.includes(normalized)) return
+  config.value.upstream_passthrough_headers = [...existing, normalized]
+}
+
+function showSaveWarnings(warnings?: string[]) {
+  if (!warnings || !warnings.length) return
+  notification.warning({
+    title: '保存提醒',
+    content: warnings.join('\n'),
+    duration: 8000,
+  })
+}
+
 async function loadConfig() {
   try {
     const data = await fetchConfig()
@@ -233,9 +275,6 @@ async function doSave() {
       upstream_trust_env: config.value.upstream_trust_env,
       enable_openai_cache_control: config.value.enable_openai_cache_control,
       enable_anthropic_auto_thinking: config.value.enable_anthropic_auto_thinking,
-      upstream_provider_order_enabled: config.value.upstream_provider_order_enabled,
-      upstream_provider_format: config.value.upstream_provider_format,
-      upstream_provider_order: config.value.upstream_provider_order || [],
       upstream_extra_body: upstreamExtraBody,
       upstream_passthrough_headers: config.value.upstream_passthrough_headers || [],
       hisense_upstream_url: config.value.hisense_upstream_url,
@@ -267,6 +306,7 @@ async function doSave() {
     modelEntries.value = Object.entries(result.config.model_mapping || {})
     upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
     message.success(`Saved ${result.changed.length} field${result.changed.length === 1 ? '' : 's'}`)
+    showSaveWarnings(result.warnings)
     await checkHealth()
   } catch (error) {
     message.error(error instanceof Error ? error.message : 'Save failed')
@@ -301,6 +341,8 @@ function saveCurrentPreset() {
     url: config.value.upstream_url,
     key: config.value.upstream_api_key,
     protocol: config.value.upstream_protocol || 'auto',
+    extra_body: upstreamExtraBodyText.value,
+    passthrough_headers: [...(config.value.upstream_passthrough_headers || [])],
   }
   const existingIndex = presets.value.findIndex((preset) => preset.name === name)
   if (existingIndex >= 0) {
@@ -321,6 +363,20 @@ async function applyPreset(name: string | null) {
   config.value.upstream_url = preset.url
   config.value.upstream_api_key = preset.key
   config.value.upstream_protocol = preset.protocol
+  const presetHeaders = [...(preset.passthrough_headers || [])]
+  config.value.upstream_passthrough_headers = presetHeaders
+  let presetExtraBody: Record<string, unknown> = {}
+  if (preset.extra_body) {
+    upstreamExtraBodyText.value = preset.extra_body
+    try {
+      presetExtraBody = JSON.parse(preset.extra_body) as Record<string, unknown>
+    } catch {
+      presetExtraBody = {}
+    }
+  } else {
+    upstreamExtraBodyText.value = ''
+  }
+  config.value.upstream_extra_body = presetExtraBody
 
   switchingPreset.value = name
   try {
@@ -328,10 +384,13 @@ async function applyPreset(name: string | null) {
       upstream_url: preset.url,
       upstream_api_key: preset.key,
       upstream_protocol: preset.protocol,
+      upstream_extra_body: presetExtraBody,
+      upstream_passthrough_headers: presetHeaders,
     })
     config.value = result.config
     modelEntries.value = Object.entries(result.config.model_mapping || {})
     upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
+    showSaveWarnings(result.warnings)
     message.success(`Switched to ${name}`)
     notification.success({
       title: 'Upstream preset switched',
@@ -482,44 +541,44 @@ function removeModel(index: number) {
                 <span class="switch-hint">Anthropic 协议且请求未显式传 thinking 时，自动补 type=adaptive。</span>
               </div>
             </NFormItem>
-            <div class="provider-order-box">
-              <div class="provider-order-head">
-                <div>
-                  <div class="provider-order-title">Provider order</div>
-                  <div class="provider-order-sub">仅 OpenAI-compatible 上游会收到 provider</div>
-                </div>
-                <NSwitch v-model:value="config.upstream_provider_order_enabled" />
+            <div class="upstream-custom-box">
+              <div class="upstream-custom-title">请求主体定制（extra body）</div>
+              <div class="snippet-row">
+                <span class="snippet-label">片段预设：</span>
+                <NButton
+                  v-for="snippet in extraBodySnippets"
+                  :key="snippet.value"
+                  size="tiny"
+                  quaternary
+                  @click="insertExtraBodySnippet(snippet.value)"
+                >
+                  {{ snippet.label }}
+                </NButton>
               </div>
-              <NSelect
-                v-model:value="config.upstream_provider_format"
-                :disabled="!config.upstream_provider_order_enabled"
-                :options="providerFormatOptions"
-                class="provider-format-select"
-              />
-              <NSelect
-                v-model:value="config.upstream_provider_order"
-                multiple
-                filterable
-                tag
-                clearable
-                :disabled="!config.upstream_provider_order_enabled"
-                :options="providerOrderOptions"
-                placeholder="例如 Amazon Bedrock"
-              />
-              <div class="provider-order-hint">
-                Pioneer 这类上游通常用字符串；OpenRouter 风格上游才用 provider.order 对象。
-              </div>
-            </div>
-            <NFormItem label="上游 extra_body">
               <NInput
                 v-model:value="upstreamExtraBodyText"
                 type="textarea"
                 :autosize="{ minRows: 4, maxRows: 10 }"
-                placeholder='{"models":["claude-opus-4-7"]}'
+                placeholder='{"provider":"Amazon Bedrock"} 或 {"models":["claude-opus-4-7"]}'
               />
               <div class="provider-order-hint">
-                保存为 JSON object，会追加到最终请求主体；例如可填 {"models":["claude-opus-4-7"]}。
-            <NFormItem label="透传到上游的请求头">
+                保存为 JSON object，会合并进最终请求主体（可覆盖网关内置字段；覆盖 model/messages/tools 会在保存时提醒）。provider 在这里写即可，无需单独开关。
+              </div>
+            </div>
+            <div class="upstream-custom-box">
+              <div class="upstream-custom-title">请求头透传白名单</div>
+              <div class="snippet-row">
+                <span class="snippet-label">常用头：</span>
+                <NButton
+                  v-for="opt in headerPresetOptions"
+                  :key="opt.value"
+                  size="tiny"
+                  quaternary
+                  @click="addPassthroughHeader(opt.value)"
+                >
+                  {{ opt.label }}
+                </NButton>
+              </div>
               <NSelect
                 v-model:value="config.upstream_passthrough_headers"
                 multiple
@@ -530,12 +589,13 @@ function removeModel(index: number) {
                 placeholder="输入回车添加，例如 x-api-key"
               />
               <div class="provider-order-hint">
-                白名单：只有这里的请求头会从客户端透传到上游。authorization / content-type / 网关识别头（X-Shenyu-*、X-Session-Tag、X-Client-Name）始终隔离，不会泄露。默认 x-api-key。
+                白名单：只有这里的请求头会从客户端透传到上游。默认 x-api-key。
               </div>
-            </NFormItem>
-
+              <div class="protected-headers">
+                <span class="snippet-label">始终由网关接管（不透传）：</span>
+                <NTag v-for="h in protectedHeaders" :key="h" size="tiny" round>{{ h }}</NTag>
               </div>
-            </NFormItem>
+            </div>
             <NFormItem label="海信专用接口地址">
               <NInput v-model:value="config.hisense_upstream_url" placeholder="留空继承全局上游" />
             </NFormItem>
@@ -810,32 +870,6 @@ function removeModel(index: number) {
   align-items: center;
 }
 
-.provider-order-box {
-  border: 1px solid #e8e8e8;
-  border-radius: 8px;
-  padding: 10px;
-  margin-bottom: 12px;
-}
-
-.provider-order-head {
-  display: flex;
-  justify-content: space-between;
-  gap: 12px;
-  align-items: center;
-  margin-bottom: 8px;
-}
-
-.provider-order-title {
-  color: #1f1f1f;
-  font-size: 13px;
-  font-weight: 600;
-}
-
-.provider-format-select {
-  margin-bottom: 8px;
-}
-
-.provider-order-sub,
 .provider-order-hint {
   color: #7d8590;
   font-size: 11px;
@@ -844,6 +878,41 @@ function removeModel(index: number) {
 
 .provider-order-hint {
   margin-top: 6px;
+}
+
+.upstream-custom-box {
+  border: 1px solid #e8e8e8;
+  border-radius: 8px;
+  padding: 10px;
+  margin-bottom: 12px;
+}
+
+.upstream-custom-title {
+  color: #1f1f1f;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
+
+.snippet-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-bottom: 8px;
+}
+
+.snippet-label {
+  color: #7d8590;
+  font-size: 11px;
+}
+
+.protected-headers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  margin-top: 8px;
 }
 
 .switch-row {

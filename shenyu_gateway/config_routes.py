@@ -7,6 +7,7 @@ from typing import Any, Callable
 from fastapi import APIRouter, HTTPException, Request
 
 from .schemas import ConfigUpdate
+from .runtime import logger
 
 
 @dataclass(frozen=True)
@@ -33,9 +34,6 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "enable_openai_cache_control": cfg.enable_openai_cache_control,
         "enable_anthropic_auto_thinking": cfg.enable_anthropic_auto_thinking,
         "anthropic_default_max_tokens": cfg.anthropic_default_max_tokens,
-        "upstream_provider_order_enabled": cfg.upstream_provider_order_enabled,
-        "upstream_provider_format": cfg.upstream_provider_format,
-        "upstream_provider_order": cfg.upstream_provider_order,
         "upstream_extra_body": cfg.upstream_extra_body,
         "upstream_passthrough_headers": cfg.upstream_passthrough_headers,
         "hisense_upstream_url": cfg.hisense_upstream_url,
@@ -129,6 +127,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
     @router.post("/api/config")
     async def update_config(request: Request, body: ConfigUpdate):
         changed = []
+        warnings: list[str] = []
         env_updates: dict[str, Any] = {}
 
         env_names = {
@@ -141,9 +140,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "enable_openai_cache_control": "ENABLE_OPENAI_CACHE_CONTROL",
             "enable_anthropic_auto_thinking": "ENABLE_ANTHROPIC_AUTO_THINKING",
             "anthropic_default_max_tokens": "ANTHROPIC_DEFAULT_MAX_TOKENS",
-            "upstream_provider_order_enabled": "UPSTREAM_PROVIDER_ORDER_ENABLED",
-            "upstream_provider_format": "UPSTREAM_PROVIDER_FORMAT",
-            "upstream_provider_order": "UPSTREAM_PROVIDER_ORDER",
             "upstream_extra_body": "UPSTREAM_EXTRA_BODY",
             "upstream_passthrough_headers": "UPSTREAM_PASSTHROUGH_HEADERS",
             "hisense_upstream_url": "HISENSE_UPSTREAM_URL",
@@ -235,8 +231,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "enable_openai_cache_control",
             "enable_anthropic_auto_thinking",
             "anthropic_default_max_tokens",
-            "upstream_provider_order_enabled",
-            "upstream_provider_format",
             "hisense_upstream_url",
             "hisense_api_key",
             "hisense_protocol",
@@ -301,38 +295,11 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                     value = str(value or "").strip().lower()
                     if value not in {"all", "daily", "none"}:
                         raise HTTPException(status_code=400, detail="CLIENT_TOOL_SURFACE must be all, daily, or none.")
-                elif field == "upstream_provider_format":
-                    value = str(value or "").strip().lower().replace("-", "_")
-                    if value not in {"string", "order_object"}:
-                        raise HTTPException(
-                            status_code=400,
-                            detail="UPSTREAM_PROVIDER_FORMAT must be string or order_object.",
-                        )
                 elif isinstance(value, str):
                     value = value.strip()
                 setattr(cfg, field, value)
                 changed.append(field)
                 env_updates[env_names[field]] = str(value).lower() if isinstance(value, bool) else value
-
-        if body.upstream_provider_order is not None:
-            raw_order = body.upstream_provider_order
-            if isinstance(raw_order, str):
-                raw_items = raw_order.split(",")
-            elif isinstance(raw_order, list):
-                raw_items = raw_order
-            else:
-                raw_items = []
-            seen: set[str] = set()
-            provider_order: list[str] = []
-            for item in raw_items:
-                provider = str(item or "").strip()
-                if not provider or provider in seen:
-                    continue
-                seen.add(provider)
-                provider_order.append(provider)
-            cfg.upstream_provider_order = provider_order
-            changed.append("upstream_provider_order")
-            env_updates[env_names["upstream_provider_order"]] = json.dumps(provider_order, ensure_ascii=False)
 
         if "upstream_extra_body" in body.model_fields_set:
             raw_extra_body = body.upstream_extra_body
@@ -357,6 +324,14 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             }
             changed.append("upstream_extra_body")
             env_updates[env_names["upstream_extra_body"]] = json.dumps(cfg.upstream_extra_body, ensure_ascii=False)
+            protected_hits = [k for k in ("model", "messages", "tools") if k in cfg.upstream_extra_body]
+            if protected_hits:
+                msg = (
+                    "UPSTREAM_EXTRA_BODY 包含网关核心字段 " + ", ".join(protected_hits)
+                    + "，会覆盖网关生成的请求体；若非刻意覆盖，建议从 extra body 移除这些字段。"
+                )
+                logger.warning("upstream_extra_body overrides core request fields: %s", protected_hits)
+                warnings.append(msg)
 
         if "upstream_passthrough_headers" in body.model_fields_set:
             raw_headers = body.upstream_passthrough_headers
@@ -588,6 +563,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             request.app.state.http = deps.make_upstream_http_client()
             await old_client.aclose()
 
-        return {"ok": True, "changed": changed, "config": _full_config(cfg)}
+        return {"ok": True, "changed": changed, "warnings": warnings, "config": _full_config(cfg)}
 
     return router

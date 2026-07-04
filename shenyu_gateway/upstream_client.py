@@ -140,34 +140,6 @@ def mapped_model_name(cfg: Any, model_name: str) -> str:
     return cfg.model_mapping.get(model, model)
 
 
-def upstream_provider_value(cfg: Any, proto: str) -> Any:
-    if proto != "openai":
-        return None
-    if not bool(getattr(cfg, "upstream_provider_order_enabled", False)):
-        return None
-    raw_order = getattr(cfg, "upstream_provider_order", [])
-    if isinstance(raw_order, str):
-        raw_items = raw_order.split(",")
-    elif isinstance(raw_order, list):
-        raw_items = raw_order
-    else:
-        return None
-    seen: set[str] = set()
-    providers: list[str] = []
-    for item in raw_items:
-        provider = str(item or "").strip()
-        if not provider or provider in seen:
-            continue
-        seen.add(provider)
-        providers.append(provider)
-    if not providers:
-        return None
-    provider_format = str(getattr(cfg, "upstream_provider_format", "string") or "string").strip().lower()
-    if provider_format == "order_object":
-        return {"order": providers}
-    return providers[0]
-
-
 def apply_upstream_extra_body(payload: dict[str, Any], cfg: Any) -> dict[str, Any]:
     extra_body = getattr(cfg, "upstream_extra_body", {}) or {}
     if isinstance(extra_body, dict):
@@ -208,6 +180,8 @@ def forwarded_client_headers(request: Any, cfg: Any) -> dict[str, str]:
     stays in control of those. Returned keys are lowercased; values come
     straight from the inbound request headers.
     """
+    if request is None:
+        return {}
     whitelist = getattr(cfg, "upstream_passthrough_headers", []) or []
     if not isinstance(whitelist, list):
         whitelist = [whitelist]
@@ -393,9 +367,6 @@ async def build_upstream_request(
         payload["max_tokens"] = body.max_tokens
     if body.temperature is not None:
         payload["temperature"] = body.temperature
-    provider_value = upstream_provider_value(cfg, proto)
-    if provider_value:
-        payload["provider"] = provider_value
     if cache_tools:
         payload["tools"] = cache_tools
     apply_upstream_extra_body(payload, cfg)

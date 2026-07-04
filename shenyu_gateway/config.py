@@ -4,7 +4,7 @@ import os
 import json
 from typing import Any, Optional
 
-from .runtime import mask, _env_bool
+from .runtime import logger, mask, _env_bool
 
 
 def _env_optional_int(name: str, default: Optional[int] = None) -> Optional[int]:
@@ -71,9 +71,6 @@ class RuntimeConfig:
         self.enable_openai_cache_control: bool = _env_bool("ENABLE_OPENAI_CACHE_CONTROL", True)
         self.enable_anthropic_auto_thinking: bool = _env_bool("ENABLE_ANTHROPIC_AUTO_THINKING", False)
         self.anthropic_default_max_tokens: int = _env_int("ANTHROPIC_DEFAULT_MAX_TOKENS", 128000, 1)
-        self.upstream_provider_order_enabled: bool = _env_bool("UPSTREAM_PROVIDER_ORDER_ENABLED", False)
-        self.upstream_provider_format: str = self._normalize_provider_format(os.getenv("UPSTREAM_PROVIDER_FORMAT", "string"))
-        self.upstream_provider_order: list[str] = self._load_provider_order()
         self.upstream_extra_body: dict[str, Any] = self._load_upstream_extra_body()
         self.upstream_passthrough_headers: list[str] = self._load_passthrough_headers()
         self.hisense_upstream_url: str = os.getenv("HISENSE_UPSTREAM_URL", "").strip()
@@ -195,9 +192,6 @@ class RuntimeConfig:
             "enable_openai_cache_control": self.enable_openai_cache_control,
             "enable_anthropic_auto_thinking": self.enable_anthropic_auto_thinking,
             "anthropic_default_max_tokens": self.anthropic_default_max_tokens,
-            "upstream_provider_order_enabled": self.upstream_provider_order_enabled,
-            "upstream_provider_format": self.upstream_provider_format,
-            "upstream_provider_order": self.upstream_provider_order,
             "upstream_extra_body": self.upstream_extra_body,
             "upstream_passthrough_headers": self.upstream_passthrough_headers,
             "hisense_upstream_url": self.hisense_upstream_url,
@@ -313,7 +307,39 @@ class RuntimeConfig:
             if str(key).strip() and str(value).strip()
         }
 
-    def _load_provider_order(self) -> list[str]:
+    def _load_upstream_extra_body(self) -> dict[str, Any]:
+        """Load UPSTREAM_EXTRA_BODY; auto-migrate legacy UPSTREAM_PROVIDER_* once.
+
+        The standalone provider-order controls were folded into the extra body so
+        request-body customization has a single source of truth. If the legacy
+        UPSTREAM_PROVIDER_ORDER was enabled and the extra body does not already pin
+        a provider field, the configured providers are injected once and a warning
+        is logged so operators can move the value into UPSTREAM_EXTRA_BODY.
+        """
+        body: dict[str, Any] = {}
+        raw = os.getenv("UPSTREAM_EXTRA_BODY", "").strip()
+        if raw:
+            try:
+                data = json.loads(raw)
+            except json.JSONDecodeError:
+                data = None
+            if isinstance(data, dict):
+                body = {str(k): v for k, v in data.items() if str(k)}
+        if "provider" not in body and _env_bool("UPSTREAM_PROVIDER_ORDER_ENABLED", False) and self.upstream_protocol != "anthropic":
+            providers = self._parse_legacy_provider_order()
+            if providers:
+                fmt = str(os.getenv("UPSTREAM_PROVIDER_FORMAT", "string") or "").strip().lower().replace("-", "_")
+                fmt = fmt if fmt in {"string", "order_object"} else "string"
+                body["provider"] = providers[0] if fmt == "string" else {"order": list(providers)}
+                logger.warning(
+                    "UPSTREAM_PROVIDER_ORDER auto-migrated into upstream_extra_body[provider]=%r; "
+                    "move it into UPSTREAM_EXTRA_BODY, the legacy UPSTREAM_PROVIDER_* vars will be removed.",
+                    body["provider"],
+                )
+        return body
+
+    @staticmethod
+    def _parse_legacy_provider_order() -> list[str]:
         raw = os.getenv("UPSTREAM_PROVIDER_ORDER", "").strip()
         if not raw:
             return []
@@ -334,22 +360,6 @@ class RuntimeConfig:
             seen.add(provider)
             providers.append(provider)
         return providers
-
-    def _load_upstream_extra_body(self) -> dict[str, Any]:
-        raw = os.getenv("UPSTREAM_EXTRA_BODY", "").strip()
-        if not raw:
-            return {}
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError:
-            return {}
-        if not isinstance(data, dict):
-            return {}
-        return {
-            str(key): value
-            for key, value in data.items()
-            if str(key)
-        }
 
     def _load_passthrough_headers(self) -> list[str]:
         raw = os.getenv("UPSTREAM_PASSTHROUGH_HEADERS", "").strip()
@@ -372,10 +382,6 @@ class RuntimeConfig:
             seen.add(name)
             names.append(name)
         return names
-
-    def _normalize_provider_format(self, value: Any) -> str:
-        raw = str(value or "").strip().lower().replace("-", "_")
-        return raw if raw in {"string", "order_object"} else "string"
 
     def _normalize_tool_mode(self, value: Any) -> str:
         raw = str(value or "").strip().lower()
