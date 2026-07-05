@@ -49,9 +49,20 @@ def is_free_time_fallback_context(latest_user_text: str) -> bool:
     return "proxy_sender" in text and "沈予" in text
 
 
+# 进房间还需要在沈予 proxy 消息里出现这个关键词，触发文本形如
+# <proxy_sender name="沈予"/>——窗边。要换关键词，只改这一行。
+ROOM_TRIGGER_KEYWORD = "窗边"
+
+
 def is_room_mode(latest_user_text: str) -> bool:
-    """Detect room mode trigger — same signals as free-time fallback, used for routing."""
-    return is_free_time_fallback_context(latest_user_text)
+    """Detect room mode trigger — used for routing into the spatial room.
+
+    进房间 = 沈予 proxy 消息（is_free_time_fallback_context）+ 文本里带「窗边」。
+    只有 <proxy_sender name="沈予"/> 但没有「窗边」的普通消息走正常聊天路径；
+    心跳/私有块捕获回退仍由 is_free_time_fallback_context 单独判定，不受这里影响。
+    """
+    text = latest_user_text or ""
+    return is_free_time_fallback_context(text) and ROOM_TRIGGER_KEYWORD in text
 
 
 def private_capture_kinds(*, heartbeat_content: str = "") -> list[str]:

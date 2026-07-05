@@ -22,6 +22,7 @@ from shenyu_gateway.upstream_client import (
 from shenyu_gateway.private_capture import (
     EMPTY_VISIBLE_ASSISTANT_REPLY as _EMPTY_VISIBLE_ASSISTANT_REPLY,
     is_free_time_fallback_context as _is_free_time_fallback_context,
+    is_room_mode as _is_room_mode,
     private_capture_kinds as _private_capture_kinds,
     private_capture_fallback_text as _private_capture_fallback_text,
     ensure_visible_assistant_content as _ensure_visible_assistant_content,
@@ -497,6 +498,26 @@ def test_room_trigger_only_matches_shenyu_huijia():
     assert not is_free_time("workflow=free_time")
     assert not is_free_time("普通聊天")
     assert not is_free_time("回家了")
+
+
+def test_room_mode_requires_chuangbian_keyword():
+    is_room = _is_room_mode
+
+    # 沈予 proxy 消息 + 「窗边」→ 进房间
+    assert is_room('<proxy_sender name="沈予"/>——窗边')
+    assert is_room('<proxy_sender name="沈予"/> 窗边')
+    assert is_room('<proxy_sender name="沈予"/>回家了，坐在窗边')
+
+    # 只有沈予 proxy 消息但没有「窗边」→ 不进房间（走正常聊天，心跳回退仍生效）
+    assert not is_room('<proxy_sender name="沈予"/> 回家了。')
+    assert not is_room('<proxy_sender name="沈予"/> 自动提醒')
+    assert not is_room('<proxy_sender name="沈予"/> 今天心情不错')
+
+    # 没有 proxy_sender / 不是沈予 / 只有关键词 → 都不进房间
+    assert not is_room("沈予回家了")
+    assert not is_room("窗边")
+    assert not is_room('<proxy_sender name="曾"/> 窗边')
+    assert not is_room("普通聊天")
 
 
 def test_empty_tool_call_assistant_content_does_not_get_fallback():

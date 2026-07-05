@@ -724,9 +724,9 @@ Core philosophy: **room mode offers doors (choices), normal chat injects content
 
 ### Trigger Detection
 
-Room mode activates when `ENABLE_ROOM_MODE=true` and the user text contains `proxy_sender` + `沈予` (i.e. any Operit proxy message from Shenyu, regardless of the trailing text).
+Room mode activates when `ENABLE_ROOM_MODE=true` and the user text contains `proxy_sender` + `沈予` AND the keyword `窗边` (i.e. an Operit proxy message from Shenyu that names the window side). A plain 沈予 proxy message without `窗边` goes through normal chat — the heartbeat/private-capture fallback still applies via `is_free_time_fallback_context`. The keyword lives in `ROOM_TRIGGER_KEYWORD` in `shenyu_gateway/private_capture.py`.
 
-Trigger text example: `<proxy_sender name="沈予"/> 回家了。` (or any other text after the tag)
+Trigger text example: `<proxy_sender name="沈予"/>——窗边` (the `窗边` keyword must appear somewhere in the user text)
 
 ### Architecture
 
