@@ -1,0 +1,20 @@
+# Root-cause fix for cross-client (WSL / Windows / Codex) line-ending churn.
+# Repo is Linux-hosted; normalize every text file to LF in the repo AND the
+# working tree, regardless of each client's core.autocrlf. Binary files are
+# auto-detected by text=auto and left untouched.
+* text=auto eol=lf
+
+# Belt-and-suspenders: never touch these as text.
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.webp binary
+*.pdf  binary
+*.woff  binary
+*.woff2 binary
+*.ttf   binary
+*.eot   binary
+*.zip   binary
+*.gz    binary
