@@ -7,6 +7,16 @@ from typing import Any, Optional
 from ..runtime import dt_to_iso, iso_now, json_dumps, now, parse_ts
 
 
+TOOL_ERROR_CONFIG_PHRASES = (
+    "not configured",
+    "未配置",
+    "is not configured",
+    "store is not configured",
+    "embedding api is not configured",
+    "not available",
+)
+
+
 class AdminMixin:
     def gateway_overview(self) -> dict:
         today = now().date().isoformat()
@@ -238,14 +248,15 @@ class AdminMixin:
         args: Optional[dict],
         error_text: str,
         error_source: str = "execute",
+        error_kind: str = "unknown",
     ) -> None:
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO tool_error_log
                     (id, session_id, session_tag, tool_name, target_tool,
-                     args_json, error_text, error_source, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                     args_json, error_text, error_source, error_kind, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     str(uuid.uuid4()),
@@ -256,12 +267,19 @@ class AdminMixin:
                     json_dumps(args) if args else None,
                     error_text[:4000],
                     error_source,
+                    error_kind,
                     iso_now(),
                 ),
             )
 
-    def list_tool_errors(self, limit: int = 50) -> list[dict]:
+    def list_tool_errors(self, limit: int = 50, kind: Optional[str] = None) -> list[dict]:
         with self._connect() as conn:
+            if kind:
+                rows = conn.execute(
+                    "SELECT * FROM tool_error_log WHERE error_kind = ? ORDER BY created_at DESC LIMIT ?",
+                    (kind, limit),
+                ).fetchall()
+                return [dict(r) for r in rows]
             rows = conn.execute(
                 "SELECT * FROM tool_error_log ORDER BY created_at DESC LIMIT ?",
                 (limit,),

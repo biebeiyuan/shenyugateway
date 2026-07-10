@@ -13,6 +13,7 @@ from .request_logs import _mark_request_log_phase, _record_completion_finish_rea
 from .response_capture import AssistantTagFilter, split_private_assistant_tags
 from .runtime import json_dumps as _json_dumps
 from .runtime import logger, now_ts as _now_ts
+from .store._admin import TOOL_ERROR_CONFIG_PHRASES
 from .streaming import (
     StreamReplayAccumulator,
     _apply_openai_stream_chunk,
@@ -201,7 +202,7 @@ async def _execute_mixed_gateway_tool_calls(
             result = await ctx.execute_gateway_tool(name, args, session_tag=ctx.session_tag, cfg=ctx.cfg)
         except Exception as exc:
             logger.exception("[GatewayTool] Mixed tool call failed: %s", name)
-            result = {"ok": False, "error": str(exc)}
+            result = {"ok": False, "error": str(exc), "error_kind": "exception"}
         ctx.sessions.log_tool_result(ctx.session_id, name, args, result)
         if isinstance(result, dict) and result.get("ok") is False:
             _record_tool_error(ctx, name, args, result)
@@ -599,7 +600,7 @@ async def _execute_internal_tool_call(
             result = await ctx.execute_gateway_tool(name, args, session_tag=ctx.session_tag, cfg=ctx.cfg)
         except Exception as exc:
             logger.exception("[GatewayTool] %s: %s", log_label, name)
-            result = {"ok": False, "error": str(exc)}
+            result = {"ok": False, "error": str(exc), "error_kind": "exception"}
         duration_ms = int((time.monotonic() - t0) * 1000)
         tool_result_cache[cache_key] = result
         ctx.sessions.log_tool_result(ctx.session_id, name, args, result)
@@ -636,11 +637,34 @@ def _target_tool_name(name: str, args: dict) -> str:
     return str(args.get("tool") or args.get("name") or args.get("action") or "") if name == "shenyu_gateway_tool" else name
 
 
+def _classify_tool_error(result: dict) -> str:
+    if not isinstance(result, dict):
+        return "exception"
+    declared = result.get("error_kind")
+    if declared in {"validation", "config", "exception"}:
+        return str(declared)
+    error_text = str(result.get("error") or result.get("message") or "")
+    lowered = error_text.lower()
+    if any(phrase in lowered for phrase in TOOL_ERROR_CONFIG_PHRASES):
+        return "config"
+    exception_markers = (
+        "traceback",
+        "exception",
+        "attributeerror",
+        "typeerror",
+        "object has no attribute",
+    )
+    if any(marker in lowered for marker in exception_markers):
+        return "exception"
+    return "validation"
+
+
 def _record_tool_error(ctx: InternalToolLoopContext, name: str, args: dict, result: dict) -> None:
     try:
         target = _target_tool_name(name, args)
         error_text = result.get("error") or result.get("message") or str(result)
-        error_source = "execute" if "Traceback" in str(error_text) or "Exception" in str(error_text) else "result"
+        error_kind = _classify_tool_error(result)
+        error_source = "execute" if error_kind == "exception" else "result"
         ctx.store.log_tool_error(
             session_id=ctx.session_id,
             session_tag=getattr(ctx, "session_tag", None),
@@ -649,6 +673,7 @@ def _record_tool_error(ctx: InternalToolLoopContext, name: str, args: dict, resu
             args=args,
             error_text=str(error_text),
             error_source=error_source,
+            error_kind=error_kind,
         )
     except Exception:
         logger.debug("[ToolErrorLog] Failed to record tool error", exc_info=True)

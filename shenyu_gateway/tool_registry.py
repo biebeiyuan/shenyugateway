@@ -21,10 +21,12 @@ _logger = logging.getLogger(__name__)
 MEM_NOTE_TYPE_ENUM = list(MEM_NOTE_TYPES)
 MEM_NOTE_PATCH_KEYS = MEM_NOTE_PATCH_FIELDS
 HIDDEN_COMPAT_TOOL_NAMES = {
-    "shenyu_ask_memory",
-    "shenyu_get_meta_summaries",
-    "shenyu_search_primary_texts",
     "shenyu_surface_passages",
+}
+DEPRECATED_COMPAT_TOOL_MESSAGES = {
+    "shenyu_ask_memory": "Deprecated gateway tool: shenyu_ask_memory. Use shenyu_recall instead.",
+    "shenyu_get_meta_summaries": "Deprecated gateway tool: shenyu_get_meta_summaries.",
+    "shenyu_search_primary_texts": "Deprecated gateway tool: shenyu_search_primary_texts. Use shenyu_recall instead.",
 }
 
 DAILY_GATEWAY_TOOL_NAMES = {
@@ -103,7 +105,7 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   conflict_read(book_id*)
   conflict_annotate(book_id*, content*)
 
-Supabase 直接操作看 supabase_guide。所有工具名省略 shenyu_ 前缀也行。"""
+Supabase 直接操作看 supabase_guide。"""
 
 _BROKER_DAILY_DESCRIPTION = """\
 记忆库日常入口。tool=工具全名，params=参数对象（直接传对象，不要传 JSON 字符串）。
@@ -245,11 +247,6 @@ def _gateway_broker_tool(cfg: Any) -> dict:
                         "type": "object",
                         "additionalProperties": True,
                         "description": "选中工具的参数对象。",
-                    },
-                    "arguments": {
-                        "type": "object",
-                        "additionalProperties": True,
-                        "description": "旧兼容字段，优先用 params。",
                     },
                 },
                 "required": ["tool"],
@@ -549,16 +546,6 @@ async def _handle_surface_passages(ctx: ToolContext) -> dict:
     )
 
 
-@_tool_handler("shenyu_search_primary_texts")
-async def _handle_search_primary_texts(ctx: ToolContext) -> dict:
-    return await ctx.service.search_primary_texts(
-        query=_query_arg(ctx.arguments),
-        categories=ctx.arguments.get("categories"),
-        session_tag=ctx.resolved_session_tag,
-        limit=_int_arg(ctx.arguments, "limit", 5),
-    )
-
-
 @_tool_handler("shenyu_add_calendar")
 async def _handle_add_calendar(ctx: ToolContext) -> dict:
     period_key = ctx.arguments.get("period_key") or ctx.arguments.get("date") or ctx.arguments.get("anchor_date")
@@ -575,18 +562,6 @@ async def _handle_add_calendar(ctx: ToolContext) -> dict:
 @_tool_handler("shenyu_supabase_guide")
 async def _handle_supabase_guide(ctx: ToolContext) -> dict:
     return await ctx.service.supabase_guide()
-
-
-@_tool_handler("shenyu_ask_memory")
-async def _handle_ask_memory(ctx: ToolContext) -> dict:
-    return await ctx.service.ask_memory(
-        query=_query_arg(ctx.arguments),
-        session_tag=ctx.arguments.get("session_tag"),
-        limit=_int_arg(ctx.arguments, "limit", 8),
-        date=ctx.arguments.get("date"),
-        date_from=ctx.arguments.get("date_from"),
-        date_to=ctx.arguments.get("date_to"),
-    )
 
 
 @_tool_handler("shenyu_search_mem_notes")
@@ -725,11 +700,6 @@ async def _handle_delete_mem_note(ctx: ToolContext) -> dict:
     return await ctx.service.delete_mem_note(_mem_note_id_arg(ctx.arguments))
 
 
-@_tool_handler("shenyu_get_meta_summaries")
-async def _handle_get_meta_summaries(ctx: ToolContext) -> dict:
-    return {"meta_summaries": await ctx.service.meta_summaries()}
-
-
 @_tool_handler("shenyu_last_seen")
 async def _handle_last_seen(ctx: ToolContext) -> dict:
     return {"last_seen": await ctx.service.last_seen()}
@@ -847,6 +817,12 @@ async def execute_gateway_tool(
         exposed = set(_gateway_tool_names(cfg))
         from .room_tools import ROOM_TOOL_NAMES as _ROOM_TOOL_NAMES
         allowed = exposed | HIDDEN_COMPAT_TOOL_NAMES | _ROOM_TOOL_NAMES
+        if target_name in DEPRECATED_COMPAT_TOOL_MESSAGES:
+            return {
+                "ok": False,
+                "error": DEPRECATED_COMPAT_TOOL_MESSAGES[target_name],
+                "error_kind": "validation",
+            }
         if target_name not in allowed:
             return {
                 "ok": False,
@@ -902,6 +878,8 @@ async def execute_gateway_tool(
         cfg=cfg,
         service=service,
     )
+    if name in DEPRECATED_COMPAT_TOOL_MESSAGES:
+        return {"ok": False, "error": DEPRECATED_COMPAT_TOOL_MESSAGES[name], "error_kind": "validation"}
     handler = _TOOL_HANDLERS.get(name)
     if handler:
         return await handler(ctx)

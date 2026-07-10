@@ -9,10 +9,13 @@ export interface ToolError {
   args_json: string | null
   error_text: string
   error_source: string
+  error_kind: string
   created_at: string
 }
 
-export async function fetchToolErrors(limit = 50): Promise<{ errors: ToolError[] }> {
-  const { data } = await api.get(`/api/gateway/tool-errors?limit=${limit}`)
+export async function fetchToolErrors(limit = 50, kind?: string): Promise<{ errors: ToolError[] }> {
+  const { data } = await api.get('/api/gateway/tool-errors', {
+    params: { limit, ...(kind ? { kind } : {}) },
+  })
   return data
 }

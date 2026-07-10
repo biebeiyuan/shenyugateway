@@ -1,17 +1,43 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { fetchToolErrors, type ToolError } from '@/api/toolErrors'
 
 const errors = ref<ToolError[]>([])
 const loading = ref(false)
 const expandedIds = ref(new Set<string>())
 const autoRefresh = ref(true)
+const activeFilter = ref<'all' | 'actionable' | 'validation'>('all')
 let timer: ReturnType<typeof setInterval> | null = null
 const optimizationNote = '从这里开始看：已补兜底，星星反馈兼容 label/reason/good-bad-neutral；日历同日重复写入会先关旧 latest，再写新版本。'
+const refreshMs = 15000
+
+const visibleErrors = computed(() => {
+  if (activeFilter.value === 'actionable') {
+    return errors.value.filter((item) => ['exception', 'config'].includes(errorKind(item)))
+  }
+  if (activeFilter.value === 'validation') {
+    return errors.value.filter((item) => errorKind(item) === 'validation')
+  }
+  return errors.value
+})
+
+const filterTabs = computed(() => [
+  { key: 'all' as const, label: '全部', count: errors.value.length },
+  {
+    key: 'actionable' as const,
+    label: '真报错',
+    count: errors.value.filter((item) => ['exception', 'config'].includes(errorKind(item))).length,
+  },
+  {
+    key: 'validation' as const,
+    label: '调用被拒',
+    count: errors.value.filter((item) => errorKind(item) === 'validation').length,
+  },
+])
 
 onMounted(async () => {
   await loadErrors()
-  if (autoRefresh.value) timer = setInterval(loadErrors, 5000)
+  if (autoRefresh.value) timer = setInterval(loadErrors, refreshMs)
 })
 
 onUnmounted(() => {
@@ -29,7 +55,7 @@ async function loadErrors() {
 
 function toggleAuto() {
   if (autoRefresh.value) {
-    timer = setInterval(loadErrors, 5000)
+    timer = setInterval(loadErrors, refreshMs)
   } else {
     if (timer) { clearInterval(timer); timer = null }
   }
@@ -55,6 +81,17 @@ function toolLabel(e: ToolError) {
   return e.tool_name
 }
 
+function errorKind(e: ToolError) {
+  return e.error_kind || 'unknown'
+}
+
+function kindLabel(kind: string) {
+  if (kind === 'exception') return '真异常'
+  if (kind === 'config') return '配置缺失'
+  if (kind === 'validation') return '调用被拒'
+  return '未知'
+}
+
 function truncate(s: string, n: number) {
   return s.length > n ? s.slice(0, n) + '...' : s
 }
@@ -73,7 +110,7 @@ function tryParseJson(s: string | null) {
         <span class="subtitle">Tool Errors</span>
       </div>
       <div class="header-right">
-        <span class="error-count">{{ errors.length }} 条记录</span>
+        <span class="error-count">{{ visibleErrors.length }} / {{ errors.length }} 条记录</span>
         <label class="auto-toggle">
           <input type="checkbox" v-model="autoRefresh" @change="toggleAuto" />
           <span>自动刷新</span>
@@ -82,13 +119,26 @@ function tryParseJson(s: string | null) {
       </div>
     </header>
 
-    <div v-if="!errors.length && !loading" class="empty-state">
+    <div class="filter-tabs">
+      <button
+        v-for="tab in filterTabs"
+        :key="tab.key"
+        class="filter-tab"
+        :class="{ active: activeFilter === tab.key }"
+        @click="activeFilter = tab.key"
+      >
+        <span>{{ tab.label }}</span>
+        <span class="tab-count">{{ tab.count }}</span>
+      </button>
+    </div>
+
+    <div v-if="!visibleErrors.length && !loading" class="empty-state">
       <span class="empty-icon">✓</span>
       <p>暂无工具报错</p>
     </div>
 
     <div v-else class="error-list">
-      <template v-for="(e, idx) in errors" :key="e.id">
+      <template v-for="(e, idx) in visibleErrors" :key="e.id">
         <div
           class="error-row"
           :class="{ expanded: expandedIds.has(e.id) }"
@@ -96,6 +146,7 @@ function tryParseJson(s: string | null) {
         >
           <div class="error-summary">
             <span class="err-time">{{ shortTime(e.created_at) }}</span>
+            <span class="err-kind" :class="errorKind(e)">{{ kindLabel(errorKind(e)) }}</span>
             <span class="err-source" :class="e.error_source">{{ e.error_source }}</span>
             <span class="err-tool">{{ toolLabel(e) }}</span>
             <span class="err-text">{{ truncate(e.error_text, 80) }}</span>
@@ -105,13 +156,18 @@ function tryParseJson(s: string | null) {
               <span class="detail-label">Session</span>
               <span class="detail-value">{{ e.session_tag || e.session_id }}</span>
             </div>
-            <div class="detail-section">
-              <span class="detail-label">Error</span>
-              <pre class="detail-pre">{{ e.error_text }}</pre>
-            </div>
-            <div class="detail-section" v-if="e.args_json">
-              <span class="detail-label">Args</span>
-              <pre class="detail-pre">{{ tryParseJson(e.args_json) }}</pre>
+            <div
+              class="detail-grid"
+              :class="{ pair: errorKind(e) === 'validation' && e.args_json }"
+            >
+              <div class="detail-section" v-if="e.args_json">
+                <span class="detail-label">Args</span>
+                <pre class="detail-pre">{{ tryParseJson(e.args_json) }}</pre>
+              </div>
+              <div class="detail-section">
+                <span class="detail-label">Error</span>
+                <pre class="detail-pre">{{ e.error_text }}</pre>
+              </div>
             </div>
           </div>
         </div>
@@ -161,6 +217,45 @@ function tryParseJson(s: string | null) {
   font-size: 12px;
   color: #c87a5a;
   font-weight: 500;
+}
+
+.filter-tabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -10px 4px 16px;
+  padding: 3px;
+  width: fit-content;
+  max-width: 100%;
+  border: 1px solid #eee7df;
+  border-radius: 8px;
+  background: #fbfaf8;
+}
+
+.filter-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: #8d8278;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.filter-tab.active {
+  background: #fff;
+  color: #5c504a;
+  box-shadow: 0 1px 4px #d6cbc030;
+}
+
+.tab-count {
+  font-size: 10px;
+  color: #b6aaa1;
+  font-variant-numeric: tabular-nums;
 }
 
 .fix-note {
@@ -283,6 +378,29 @@ function tryParseJson(s: string | null) {
   background: #fef3e2;
   color: #c87a1a;
 }
+.err-kind {
+  font-size: 10px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  flex-shrink: 0;
+  font-weight: 600;
+}
+.err-kind.exception {
+  background: #fdf0f0;
+  color: #c05050;
+}
+.err-kind.config {
+  background: #f2f0ff;
+  color: #7162bb;
+}
+.err-kind.validation {
+  background: #fef3e2;
+  color: #b97218;
+}
+.err-kind.unknown {
+  background: #f0f0f0;
+  color: #888;
+}
 .err-tool {
   font-size: 12px;
   color: #666;
@@ -308,6 +426,14 @@ function tryParseJson(s: string | null) {
   margin-bottom: 10px;
 }
 .detail-section:last-child { margin-bottom: 0; }
+.detail-grid {
+  display: grid;
+  gap: 10px;
+}
+.detail-grid.pair {
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: start;
+}
 .detail-label {
   display: block;
   font-size: 10px;
@@ -346,6 +472,16 @@ function tryParseJson(s: string | null) {
   }
   .error-summary {
     flex-wrap: wrap;
+  }
+  .filter-tabs {
+    width: 100%;
+  }
+  .filter-tab {
+    flex: 1;
+    justify-content: center;
+  }
+  .detail-grid.pair {
+    grid-template-columns: 1fr;
   }
 }
 </style>

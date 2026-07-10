@@ -197,6 +197,7 @@ class BaseStoreMixin:
                     args_json TEXT,
                     error_text TEXT NOT NULL,
                     error_source TEXT NOT NULL DEFAULT 'execute',
+                    error_kind TEXT NOT NULL DEFAULT 'unknown',
                     created_at TEXT NOT NULL
                 );
 
@@ -245,6 +246,12 @@ class BaseStoreMixin:
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")
             self._ensure_column(conn, HISENSE_HEARTBEAT_TABLE, "synced_at", "TEXT")
+            self._ensure_column(
+                conn,
+                "tool_error_log",
+                "error_kind",
+                "TEXT NOT NULL DEFAULT 'unknown'",
+            )
             cold_start_active_added = self._ensure_column(
                 conn,
                 "cold_start_snapshots",

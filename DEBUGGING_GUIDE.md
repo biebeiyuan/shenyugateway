@@ -110,8 +110,8 @@ Useful boundary map:
 - Broker mode exposes only `shenyu_gateway_tool`; call it with `tool` set to the full gateway tool name, including the `shenyu_` or `supabase_` prefix, and put the selected tool's arguments in the `params` object, not a JSON-encoded string. The old `arguments` field is still accepted for compatibility.
 - `shenyu_recall`: visible unified recall tool; reads `shenyu_recall_index`, covering `memory`, `journal`, `room`, `board`, `calendar`, `mem_note`, and `notebook`.
 - `shenyu_list_mem_notes`: visible mem-note browse/review tool; reads Supabase `shenyu_mem_notes`.
-- `shenyu_ask_memory`: hidden compatibility handler; it now delegates to `shenyu_recall` with `source_types=["memory"]`.
-- `shenyu_search_primary_texts`: hidden compatibility handler; it now delegates to `shenyu_recall`, mapping primary-text categories to `journal`, `room`, and `board`.
+- `shenyu_ask_memory`: deprecated compatibility name; direct or broker calls are rejected with `error_kind=validation`. Use `shenyu_recall` with `source_types=["memory"]`.
+- `shenyu_search_primary_texts`: deprecated compatibility name; direct or broker calls are rejected with `error_kind=validation`. Use `shenyu_recall` with the matching source types.
 - `shenyu_surface_passages`: hidden/internal compatibility handler. Calendar generation still uses its random room/message-board surfacing, but it is not part of the visible model tool schema.
 - `shenyu_search_mem_notes`: visible mem-note search tool; reads Supabase `shenyu_mem_notes`.
 - `shenyu_read_heartbeat`: gateway tool; reads SQLite `heartbeat_entries` or `hisense_heartbeat`.

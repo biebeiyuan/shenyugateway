@@ -259,6 +259,26 @@ Adding ordinary gateway-native tools should not require changes to the streaming
 
 `shenyu_gateway/upstream_adapter.py` normalizes upstream stream protocols. Anthropic `tool_use` / `input_json_delta` chunks are converted into OpenAI-compatible `tool_calls` deltas, and completion-to-SSE conversion can skip duplicate role chunks and split large final content into smaller events.
 
+## Tool Error Log
+
+When a gateway-native tool call fails, the gateway records the failure in SQLite `tool_error_log` and surfaces it in the admin **工具报错** page (`/admin/#/tool-errors`). The point is to answer one question: *where is Shenyu's tool use going wrong, and is it our bug or a malformed call?*
+
+Each row is classified into one `error_kind`:
+
+- `exception`: a real server-side crash (traceback / attribute error / type error). Gateway bugs to fix.
+- `config`: a missing or disabled dependency (`... not configured`, `embedding api is not configured`, `not available`). Fix by configuration, not code.
+- `validation`: the model called the tool wrong — unknown/deprecated tool name, bad arguments, or a rejected broker target. These point at tool schema/description problems, i.e. Shenyu being led astray.
+
+Classification lives in `_classify_tool_error()` (`shenyu_gateway/tool_loop.py`) and prefers an `error_kind` the handler declared explicitly; genuine exceptions are tagged at the `except` site rather than guessed, and a small keyword heuristic is only a fallback. The config-phrase list is `TOOL_ERROR_CONFIG_PHRASES` at the top of `shenyu_gateway/store/_admin.py`. The legacy `error_source` column is retained and derived from `error_kind`.
+
+The admin view groups errors into three tabs — `全部` / `真报错` (`exception` + `config`) / `调用被拒` (`validation`) — and expands a `调用被拒` row to show `args_json` (what Shenyu actually passed) beside `error_text` (what was expected). That side-by-side is the evidence base for tightening tool schemas so Shenyu stops mis-calling them.
+
+- Table: SQLite `tool_error_log`. The `error_kind` column is auto-migrated on startup via `_ensure_column` (existing rows default to `unknown`); no manual migration or new env var is required.
+- API: `GET /api/gateway/tool-errors?limit=50&kind=<exception|config|validation>` (`kind` optional; the view currently filters client-side).
+- Frontend: `admin/src/views/ToolErrorsView.vue`, `admin/src/api/toolErrors.ts`.
+
+The deprecated compatibility names `shenyu_ask_memory`, `shenyu_search_primary_texts`, and `shenyu_get_meta_summaries` are now rejected with `error_kind=validation` and a redirect to `shenyu_recall`, instead of silently forwarding. The broker `shenyu_gateway_tool` schema exposes only `tool` + `params` (the old `arguments` field is still accepted server-side but no longer advertised).
+
 ## SQLite Runtime State
 
 SQLite stores only gateway runtime state:

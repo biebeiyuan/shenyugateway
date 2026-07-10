@@ -8,7 +8,7 @@ from types import SimpleNamespace
 from shenyu_gateway.room_context import render_room_layers, visible_room_tool_names
 from shenyu_gateway.room_tools import collect_door_counts, room_tool_definitions
 from shenyu_gateway.tool_registry import execute_gateway_tool, gateway_native_tools, merge_tools
-from shenyu_gateway.tool_loop import _tool_call_arguments
+from shenyu_gateway.tool_loop import _classify_tool_error, _tool_call_arguments
 
 
 class FakeToolService:
@@ -991,6 +991,14 @@ def test_execute_gateway_tool_reports_invalid_broker_arguments():
     assert result == {"ok": False, "error": "`params`/`arguments` must be an object or a JSON object string."}
 
 
+def test_classify_tool_error_uses_declared_kind_first():
+    assert _classify_tool_error({"ok": False, "error": "content is required"}) == "validation"
+    assert _classify_tool_error({"ok": False, "error": "Supabase not configured"}) == "config"
+    assert _classify_tool_error({"ok": False, "error": "'list' object has no attribute 'strip'"}) == "exception"
+    assert _classify_tool_error({"ok": False, "error": "not configured", "error_kind": "validation"}) == "validation"
+    assert _classify_tool_error("boom") == "exception"
+
+
 def test_execute_gateway_tool_reports_unsupported_broker_target():
     result = asyncio.run(
         execute_gateway_tool(
@@ -1023,7 +1031,8 @@ def test_gateway_broker_description_matches_scan_friendly_sample():
     assert "add_calendar" in description
     assert "shenyu_get_meta_summaries" not in description
     assert properties["params"]["description"] == "选中工具的参数对象。"
-    assert properties["arguments"]["description"] == "旧兼容字段，优先用 params。"
+    assert "arguments" not in properties
+    assert "省略 shenyu_ 前缀" not in description
     assert function["parameters"]["required"] == ["tool"]
 
 
@@ -1219,7 +1228,7 @@ def test_execute_gateway_tool_routes_hidden_search_mem_notes_for_compat():
     ]
 
 
-def test_execute_gateway_tool_routes_hidden_ask_memory_for_compat():
+def test_execute_gateway_tool_rejects_hidden_ask_memory_broker_target():
     service = FakeToolService()
 
     result = asyncio.run(
@@ -1241,21 +1250,15 @@ def test_execute_gateway_tool_routes_hidden_ask_memory_for_compat():
         )
     )
 
-    assert result == {"ok": True, "query": "北海道", "limit": 6}
-    assert service.calls == [
-        {
-            "tool": "shenyu_ask_memory",
-            "query": "北海道",
-            "session_tag": None,
-            "limit": 6,
-            "date": "2026-06-03",
-            "date_from": "2026-06-01",
-            "date_to": "2026-06-03",
-        }
-    ]
+    assert result == {
+        "ok": False,
+        "error": "Deprecated gateway tool: shenyu_ask_memory. Use shenyu_recall instead.",
+        "error_kind": "validation",
+    }
+    assert service.calls == []
 
 
-def test_execute_gateway_tool_routes_hidden_primary_text_search_for_compat():
+def test_execute_gateway_tool_rejects_hidden_primary_text_search_broker_target():
     service = FakeToolService()
 
     result = asyncio.run(
@@ -1271,16 +1274,12 @@ def test_execute_gateway_tool_routes_hidden_primary_text_search_for_compat():
         )
     )
 
-    assert result == {"ok": True, "query": "海獭", "limit": 5}
-    assert service.calls == [
-        {
-            "tool": "shenyu_search_primary_texts",
-            "query": "海獭",
-            "categories": ["journal"],
-            "session_tag": "5.15",
-            "limit": 5,
-        }
-    ]
+    assert result == {
+        "ok": False,
+        "error": "Deprecated gateway tool: shenyu_search_primary_texts. Use shenyu_recall instead.",
+        "error_kind": "validation",
+    }
+    assert service.calls == []
 
 
 def test_execute_gateway_tool_routes_hidden_surface_passages_for_compat():
@@ -1307,7 +1306,7 @@ def test_execute_gateway_tool_routes_hidden_surface_passages_for_compat():
     ]
 
 
-def test_execute_gateway_tool_routes_hidden_meta_summaries_for_compat():
+def test_execute_gateway_tool_rejects_hidden_meta_summaries_broker_target():
     service = FakeToolService()
 
     result = asyncio.run(
@@ -1320,8 +1319,12 @@ def test_execute_gateway_tool_routes_hidden_meta_summaries_for_compat():
         )
     )
 
-    assert result == {"meta_summaries": [{"summary": "meta"}]}
-    assert service.calls == [{"tool": "shenyu_get_meta_summaries"}]
+    assert result == {
+        "ok": False,
+        "error": "Deprecated gateway tool: shenyu_get_meta_summaries.",
+        "error_kind": "validation",
+    }
+    assert service.calls == []
 
 
 def test_execute_gateway_tool_accepts_broker_json_string_arguments():
@@ -1577,7 +1580,7 @@ def test_execute_gateway_tool_unwraps_nested_broker_arguments_object():
     assert service.calls[0]["limit"] == 3
 
 
-def test_execute_gateway_tool_accepts_q_alias_for_hidden_primary_text_search_compat():
+def test_execute_gateway_tool_rejects_hidden_primary_text_search_direct_call():
     service = FakeToolService()
 
     result = asyncio.run(
@@ -1590,16 +1593,12 @@ def test_execute_gateway_tool_accepts_q_alias_for_hidden_primary_text_search_com
         )
     )
 
-    assert result == {"ok": True, "query": "海獭", "limit": 5}
-    assert service.calls == [
-        {
-            "tool": "shenyu_search_primary_texts",
-            "query": "海獭",
-            "categories": None,
-            "session_tag": "5.15",
-            "limit": 5,
-        }
-    ]
+    assert result == {
+        "ok": False,
+        "error": "Deprecated gateway tool: shenyu_search_primary_texts. Use shenyu_recall instead.",
+        "error_kind": "validation",
+    }
+    assert service.calls == []
 
 
 def test_execute_gateway_tool_accepts_q_alias_for_surface_passages():

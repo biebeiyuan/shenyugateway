@@ -51,6 +51,39 @@ def test_get_or_create_session_refreshes_client_name(tmp_path):
     assert store.get_session_by_tag("shared")["client_name"] == "hisense"
 
 
+def test_tool_error_log_records_error_kind_and_filters(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("main", "operit")
+
+    store.log_tool_error(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        tool_name="shenyu_gateway_tool",
+        target_tool="shenyu_write_mem_note",
+        args={"tool": "shenyu_write_mem_note", "params": {}},
+        error_text="content is required",
+        error_source="result",
+        error_kind="validation",
+    )
+    store.log_tool_error(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        tool_name="shenyu_gateway_tool",
+        target_tool="shenyu_recall",
+        args={"tool": "shenyu_recall", "params": {}},
+        error_text="Store not available",
+        error_source="result",
+        error_kind="config",
+    )
+
+    all_errors = store.list_tool_errors(limit=10)
+    validation_errors = store.list_tool_errors(limit=10, kind="validation")
+
+    assert {item["error_kind"] for item in all_errors} == {"validation", "config"}
+    assert len(validation_errors) == 1
+    assert validation_errors[0]["target_tool"] == "shenyu_write_mem_note"
+
+
 def test_latest_cross_session_context_accumulates_multiple_snapshots(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     session = store.get_or_create_session("main", "operit")
