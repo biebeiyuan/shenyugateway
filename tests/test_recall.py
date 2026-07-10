@@ -105,6 +105,22 @@ class PagingSupabase:
         return self.rows[offset : offset + limit]
 
 
+class StrictBatchSupabase:
+    def __init__(self, existing_rows):
+        self.existing_rows = existing_rows
+        self.upsert_batches = []
+
+    async def query(self, table, params=None):
+        return self.existing_rows
+
+    async def upsert(self, table, data, on_conflict=None):
+        key_sets = {frozenset(row) for row in data}
+        if len(key_sets) != 1:
+            raise RuntimeError("PostgREST PGRST102: All object keys must match")
+        self.upsert_batches.append(data)
+        return data
+
+
 def test_split_recall_chunks_keeps_embedding_sized_chunks():
     text = "第一段。" * 1200
 
@@ -133,6 +149,52 @@ def test_query_all_rows_pages_without_the_old_source_cap():
 
     assert [row["id"] for row in rows] == ["0", "1", "2", "3", "4"]
     assert [params["offset"] for _, params in supabase.queries] == ["0", "2", "4"]
+
+
+def test_upsert_groups_changed_and_unchanged_documents_by_columns():
+    service = RecallIndexService(None)
+    docs = service._windowsill_documents(
+        {
+            "id": "window-unchanged",
+            "title": "旧窗台",
+            "content": "这条已经有向量。",
+            "mood": "安静",
+            "created_at": "2026-07-09T00:00:00+00:00",
+        }
+    ) + service._windowsill_documents(
+        {
+            "id": "window-changed",
+            "title": "新窗台",
+            "content": "这条正文刚刚变化。",
+            "mood": "明亮",
+            "created_at": "2026-07-10T00:00:00+00:00",
+        }
+    )
+    supabase = StrictBatchSupabase(
+        [
+            {
+                "source_id": "window-unchanged",
+                "chunk_index": 0,
+                "content_hash": docs[0].content_hash,
+            },
+            {
+                "source_id": "window-changed",
+                "chunk_index": 0,
+                "content_hash": "old-hash",
+            },
+        ]
+    )
+    service.supabase = supabase
+
+    asyncio.run(service._upsert_documents(docs))
+
+    assert len(supabase.upsert_batches) == 2
+    rows = [row for batch in supabase.upsert_batches for row in batch]
+    unchanged = next(row for row in rows if row["source_id"] == "window-unchanged")
+    changed = next(row for row in rows if row["source_id"] == "window-changed")
+    assert "embedding" not in unchanged
+    assert changed["embedding"] is None
+    assert changed["embedding_status"] == "pending"
 
 
 def test_windowsill_adapter_indexes_title_content_mood_and_created_at():
