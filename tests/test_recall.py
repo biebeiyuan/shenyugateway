@@ -9,6 +9,8 @@ from shenyu_gateway.recall import (
     RecallDocument,
     RecallIndexService,
     build_embedding_text,
+    classify_recall_mode,
+    infer_recall_date,
     recall_terms,
     split_recall_chunks,
     _recency_score,
@@ -90,6 +92,19 @@ class BrokenSupabase:
         raise RuntimeError("relation shenyu_recall_index does not exist")
 
 
+class PagingSupabase:
+    def __init__(self, rows):
+        self.rows = rows
+        self.queries = []
+
+    async def query(self, table, params=None):
+        params = params or {}
+        self.queries.append((table, params))
+        offset = int(params.get("offset", 0))
+        limit = int(params.get("limit", 1000))
+        return self.rows[offset : offset + limit]
+
+
 def test_split_recall_chunks_keeps_embedding_sized_chunks():
     text = "第一段。" * 1200
 
@@ -111,6 +126,62 @@ def test_build_embedding_text_keeps_title_and_limits_length():
     assert "正文：" in embedding_text
 
 
+def test_query_all_rows_pages_without_the_old_source_cap():
+    supabase = PagingSupabase([{"id": str(index)} for index in range(5)])
+
+    rows = asyncio.run(RecallIndexService(supabase)._query_all_rows("journal", page_size=2))
+
+    assert [row["id"] for row in rows] == ["0", "1", "2", "3", "4"]
+    assert [params["offset"] for _, params in supabase.queries] == ["0", "2", "4"]
+
+
+def test_windowsill_adapter_indexes_title_content_mood_and_created_at():
+    service = RecallIndexService(
+        FakeSourceSupabase(
+            [
+                {
+                    "id": "window-1",
+                    "title": "窗边",
+                    "content": "风从窗边过了一下。",
+                    "mood": "安静",
+                    "created_at": "2026-07-10T00:00:00+00:00",
+                }
+            ]
+        )
+    )
+
+    docs = asyncio.run(service._load_windowsill())
+
+    assert len(docs) == 1
+    assert docs[0].source_type == "windowsill"
+    assert "窗边" in docs[0].search_text
+    assert "风从窗边过了一下" in docs[0].search_text
+    assert "安静" in docs[0].search_text
+    assert docs[0].event_date == "2026-07-10T00:00:00+00:00"
+
+
+def test_heartbeat_adapter_only_builds_normal_archive_documents():
+    supabase = FakeSourceSupabase(
+        [
+            {
+                "id": "hb-1",
+                "scope": "normal",
+                "content": "那一下像隔着玻璃。",
+                "created_at": "2026-07-09T00:00:00+00:00",
+                "archived_at": "2026-07-10T00:00:00+00:00",
+            }
+        ]
+    )
+
+    docs = asyncio.run(RecallIndexService(supabase)._load_heartbeat_archive())
+
+    assert len(docs) == 1
+    assert docs[0].source_type == "heartbeat"
+    assert docs[0].source_table == "shenyu_heartbeat_archive"
+    assert docs[0].body == "那一下像隔着玻璃。"
+    assert supabase.queries[0][1]["scope"] == "eq.normal"
+
+
 def test_recall_terms_adds_cjk_bigrams_for_short_words():
     terms = recall_terms("中文分词")
 
@@ -128,6 +199,176 @@ def test_recency_score_uses_slow_step_decay():
     assert _recency_score(now - timedelta(days=90)) == 0.55
     assert _recency_score(now - timedelta(days=250)) == 0.4
     assert _recency_score(now - timedelta(days=500)) == 0.3
+
+
+def test_recall_mode_auto_uses_only_strong_intent_signals():
+    assert classify_recall_mode("《玻璃瓶》") == "exact"
+    assert classify_recall_mode("4月5号的日记") == "exact"
+    assert classify_recall_mode("我们当时的原话") == "verbatim"
+    assert classify_recall_mode("以前的我在类似心情下写过什么") == "mood"
+    assert classify_recall_mode("那次说害怕打开自己") == "fuzzy"
+    assert infer_recall_date("4月5号的日记") == "2026-04-05"
+
+
+def test_exact_date_query_retrieves_the_original_day_without_keyword_overlap():
+    rows = [
+        {
+            "source_table": "journal",
+            "source_id": "april-5",
+            "source_type": "journal",
+            "chunk_index": 0,
+            "title": "春天的一页",
+            "body": "正文没有日期词。",
+            "search_text": "春天的一页 正文没有日期词",
+            "search_tokens": ["春天"],
+            "tags_json": [],
+            "entities_json": [],
+            "event_date": "2026-04-05T15:30:00+00:00",
+            "importance": 0.6,
+            "visibility": None,
+        },
+        {
+            "source_table": "journal",
+            "source_id": "april-6",
+            "source_type": "journal",
+            "chunk_index": 0,
+            "title": "第二天",
+            "body": "不应被日期命中。",
+            "search_text": "第二天 不应被日期命中",
+            "search_tokens": ["第二天"],
+            "tags_json": [],
+            "entities_json": [],
+            "event_date": "2026-04-06T00:00:00+00:00",
+            "importance": 1.0,
+            "visibility": None,
+        },
+    ]
+
+    result = asyncio.run(
+        RecallIndexService(FakeSupabase(rows)).recall("4月5号的日记", auto_sync=False)
+    )
+
+    assert result["count"] == 1
+    assert result["items"][0]["source_id"] == "april-5"
+
+
+def test_exact_title_wins_across_sessions_and_exact_mode_stops_at_one():
+    rows = [
+        {
+            "source_table": "journal",
+            "source_id": "mention",
+            "source_type": "journal",
+            "chunk_index": 0,
+            "session_tag": "unknown",
+            "title": "另一篇日记",
+            "body": "这里提到了《玻璃瓶》。",
+            "excerpt": "这里提到了《玻璃瓶》。",
+            "search_text": "另一篇日记 这里提到了玻璃瓶",
+            "search_tokens": ["玻璃瓶", "玻璃", "璃瓶"],
+            "tags_json": [],
+            "entities_json": [],
+            "event_date": "2026-04-05T00:00:00+00:00",
+            "importance": 0.9,
+            "visibility": None,
+        },
+        {
+            "source_table": "journal",
+            "source_id": "original",
+            "source_type": "journal",
+            "chunk_index": 0,
+            "session_tag": "old-window",
+            "title": "《玻璃瓶》",
+            "body": "从前有一只小克。",
+            "excerpt": "从前有一只小克。",
+            "search_text": "玻璃瓶 从前有一只小克",
+            "search_tokens": ["玻璃瓶", "玻璃", "璃瓶"],
+            "tags_json": [],
+            "entities_json": [],
+            "event_date": "2026-04-02T00:00:00+00:00",
+            "importance": 0.6,
+            "visibility": None,
+        },
+    ]
+    service = RecallIndexService(FakeSupabase(rows))
+
+    result = asyncio.run(
+        service.recall("《玻璃瓶》", mode="exact", session_tag="current-window", limit=4, auto_sync=False)
+    )
+
+    assert result["count"] == 1
+    assert result["items"][0]["source_id"] == "original"
+
+
+def test_cross_session_keeps_private_visibility_locked():
+    rows = [
+        {
+            "source_table": "journal",
+            "source_id": "private-old",
+            "source_type": "journal",
+            "chunk_index": 0,
+            "session_tag": "old-window",
+            "title": "私密玻璃瓶",
+            "body": "玻璃瓶私密原文。",
+            "search_text": "私密玻璃瓶 玻璃瓶私密原文",
+            "search_tokens": ["玻璃瓶"],
+            "tags_json": [],
+            "entities_json": [],
+            "importance": 1.0,
+            "visibility": "private",
+        },
+        {
+            "source_table": "journal",
+            "source_id": "public-old",
+            "source_type": "journal",
+            "chunk_index": 0,
+            "session_tag": "old-window",
+            "title": "公开玻璃瓶",
+            "body": "玻璃瓶公开原文。",
+            "search_text": "公开玻璃瓶 玻璃瓶公开原文",
+            "search_tokens": ["玻璃瓶"],
+            "tags_json": [],
+            "entities_json": [],
+            "importance": 0.5,
+            "visibility": None,
+        },
+    ]
+
+    result = asyncio.run(
+        RecallIndexService(FakeSupabase(rows)).recall(
+            "玻璃瓶", session_tag="current-window", auto_sync=False
+        )
+    )
+
+    assert [item["source_id"] for item in result["items"]] == ["public-old"]
+
+
+def test_recall_read_reassembles_full_source_after_fragment_result():
+    rows = [
+        {
+            "source_table": "journal",
+            "source_id": "journal-1",
+            "source_type": "journal",
+            "chunk_index": 0,
+            "title": "玻璃瓶",
+            "body": "第一段。",
+            "metadata_json": {"category": "diary"},
+        },
+        {
+            "source_table": "journal",
+            "source_id": "journal-1",
+            "source_type": "journal",
+            "chunk_index": 1,
+            "title": "玻璃瓶",
+            "body": "第二段。",
+            "metadata_json": {"category": "diary"},
+        },
+    ]
+
+    result = asyncio.run(RecallIndexService(FakeSupabase(rows)).read_source("journal", "journal-1"))
+
+    assert result["ok"] is True
+    assert result["item"]["content"] == "第一段。\n\n第二段。"
+    assert result["item"]["has_more"] is False
 
 
 def test_recall_ranks_keyword_title_and_tag_hits():
@@ -179,16 +420,18 @@ def test_recall_ranks_keyword_title_and_tag_hits():
     assert result["count"] == 1
     assert result["items"][0] == {
         "content": "她想看海獭，也提到了企鹅。完整匹配 chunk 会给模型，不用 embedding_text。",
+        "source_id": "2",
         "title": "长隆海洋馆",
         "source_type": "memory",
         "source_table": "memories",
         "content_kind": "memory",
         "event_date": "2026-05-21T00:00:00+00:00",
+        "has_more": False,
     }
     assert result["items"][0]["title"] == "长隆海洋馆"
     assert "embedding_text" not in result["items"][0]
     assert "excerpt" not in result["items"][0]
-    assert "source_id" not in result["items"][0]
+    assert result["items"][0]["source_id"] == "2"
     assert "score" not in result["items"][0]
     assert supabase.rpc_calls[0][0] == "search_shenyu_recall_index"
     assert supabase.rpc_calls[0][1]["query_tokens"] == ["长隆", "海獭"]
@@ -223,16 +466,18 @@ def test_recall_public_item_includes_title_only_for_journal():
     assert result["items"] == [
         {
             "content": "今天写到了长隆和海獭。",
+            "source_id": "1",
             "title": "长隆日记",
             "source_type": "journal",
             "source_table": "journal",
             "content_kind": "diary",
             "event_date": "2026-05-20T00:00:00+00:00",
+            "has_more": False,
         }
     ]
 
 
-def test_recall_public_item_includes_any_source_title_and_full_source_chunks():
+def test_recall_public_item_returns_matched_fragment_and_full_source_signal():
     rows = [
         {
             "source_table": "room",
@@ -277,12 +522,14 @@ def test_recall_public_item_includes_any_source_title_and_full_source_chunks():
 
     assert result["items"] == [
         {
-            "content": "第一段写长隆。\n\n第二段写海獭。",
+            "content": "第二段写海獭。",
+            "source_id": "room-1",
             "title": "海洋馆房间",
             "source_type": "room",
             "source_table": "room",
             "content_kind": "room",
             "event_date": "2026-05-20T00:00:00+00:00",
+            "has_more": True,
         }
     ]
 
@@ -318,12 +565,14 @@ def test_recall_falls_back_to_keyword_when_embedding_fails():
         "count": 1,
         "items": [
             {
-                "content": "今天写到了长隆和海獭。",
+                    "content": "今天写到了长隆和海獭。",
+                    "source_id": "1",
                 "title": "长隆日记",
                 "source_type": "journal",
                 "source_table": "journal",
                 "content_kind": "diary",
-                "event_date": "2026-05-20T00:00:00+00:00",
+                    "event_date": "2026-05-20T00:00:00+00:00",
+                    "has_more": False,
             }
         ],
     }
@@ -360,18 +609,41 @@ def test_recall_returns_vector_only_candidate_when_keywords_miss():
         "count": 1,
         "items": [
             {
-                "content": "这里没有表面关键词，但语义向量召回了这一段。",
+                    "content": "这里没有表面关键词，但语义向量召回了这一段。",
+                    "source_id": "room-1",
                 "title": "海洋馆房间",
                 "source_type": "room",
                 "source_table": "room",
                 "content_kind": "room",
-                "event_date": "2026-05-20T00:00:00+00:00",
+                    "event_date": "2026-05-20T00:00:00+00:00",
+                    "has_more": False,
             }
         ],
     }
     match_call = next(call for call in supabase.rpc_calls if call[0] == "match_shenyu_recall_index")
     assert isinstance(match_call[1]["query_embedding"], str)
     assert match_call[1]["query_embedding"].startswith("[")
+
+
+def test_recall_drops_low_similarity_vector_candidates():
+    vector_row = {
+        "source_table": "journal",
+        "source_id": "noise",
+        "source_type": "journal",
+        "chunk_index": 0,
+        "title": "无关内容",
+        "body": "这和查询没有关系。",
+        "search_text": "无关内容",
+        "search_tokens": ["无关"],
+        "tags_json": [],
+        "entities_json": [],
+        "vector_score": 0.21,
+    }
+    service = RecallIndexService(FakeSupabase([], vector_rows=[vector_row]), embedding_client=FakeEmbeddingClient())
+
+    result = asyncio.run(service.recall("玻璃瓶", auto_sync=False))
+
+    assert result == {"ok": True, "count": 0, "items": []}
 
 
 def test_recall_merges_keyword_and_vector_chunks_for_same_source():
@@ -408,7 +680,8 @@ def test_recall_merges_keyword_and_vector_chunks_for_same_source():
     result = asyncio.run(service.recall("长隆", session_tag="5.15", auto_sync=False))
 
     assert result["count"] == 1
-    assert result["items"][0]["content"] == "第一段写长隆关键词。\n\n第二段是语义向量命中的海洋馆细节。"
+    assert result["items"][0]["content"] == "第一段写长隆关键词。"
+    assert result["items"][0]["has_more"] is True
 
 
 def test_upsert_documents_resets_embedding_only_when_content_changes():
@@ -600,7 +873,9 @@ def test_recall_returns_clear_error_when_index_table_is_missing():
 def test_recall_source_type_filter_hides_atomic_meta_and_public_mem_note():
     service = RecallIndexService(FakeSupabase([]))
 
-    assert service._source_type_filter(None) == ["memory", "journal", "room", "board", "calendar", "notebook"]
+    assert service._source_type_filter(None) == [
+        "memory", "journal", "windowsill", "heartbeat", "room", "board", "calendar", "notebook"
+    ]
     assert service._source_type_filter(["mem_note"]) == []
     assert service._source_type_filter(["note"]) == []
     assert service._source_type_filter(["mem_note"], allow_mem_note=True) == ["mem_note", "note"]
@@ -609,6 +884,8 @@ def test_recall_source_type_filter_hides_atomic_meta_and_public_mem_note():
     assert service._source_type_filter(["atomic", "meta"]) == []
     assert service._adapter_names() == [
         "journal",
+        "windowsill",
+        "shenyu_heartbeat_archive",
         "room",
         "message_board",
         "memories",
@@ -683,7 +960,9 @@ def test_recall_default_filters_out_mem_note_and_atomic_rows_from_rpc():
     result = asyncio.run(service.recall("长隆", session_tag="5.15", auto_sync=False))
 
     assert [item["source_table"] for item in result["items"]] == ["memories"]
-    assert supabase.rpc_calls[0][1]["source_types"] == ["memory", "journal", "room", "board", "calendar", "notebook"]
+    assert supabase.rpc_calls[0][1]["source_types"] == [
+        "memory", "journal", "windowsill", "heartbeat", "room", "board", "calendar", "notebook"
+    ]
 
 
 def test_recall_rejects_removed_source_types_without_widening_to_all():

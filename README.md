@@ -365,22 +365,36 @@ The mem review UI reads and updates Supabase `shenyu_mem_notes`. The star review
 
 - `shenyu_windowsill_write(content, title?, mood?)` leaves a new entry. PostgreSQL generates `id` and `created_at`; neither is supplied by the model.
 - `shenyu_windowsill_list(mood?, limit?)` returns recent entries, newest first, with optional exact mood filtering.
+- Successful writes are indexed immediately; the periodic recall reconciliation worker repairs any missed write later.
 - The table is intentionally reached through these dedicated tools. Raw Supabase tools remain an explicit maintenance/debug surface rather than a daily Shenyu surface.
 
 ## Recall Index
 
-`shenyu_recall` is the unified search entrypoint for old context. It searches the `shenyu_recall_index` Supabase table with keyword matching first and vector matching when embeddings are configured. Public recall searches `memory`, `journal`, `room`, `board`, `calendar`, and `notebook` sources by default. Active `shenyu_mem_notes` are surfaced by the automatic mem-note context path instead of public recall.
+`shenyu_recall` is the unified search entrypoint for old context. It returns a small matched excerpt plus `source_type` and `source_id`; use `shenyu_recall_read(source_type, source_id)` only when the full original is needed. It never exposes rank scores or match explanations to Shenyu. Full candidate and selection traces stay in gateway logs.
+
+Recall accepts `mode=auto|exact|fuzzy|mood|verbatim`. `auto` only switches on strong intent signals and otherwise behaves as `fuzzy`:
+
+- `exact`: one primary original, optionally one strongly related star/mem note/heartbeat.
+- `fuzzy`: up to three primary excerpts plus at most one strongly related federated item; default total limit 4.
+- `mood`: at most three sparse results, with stars/heartbeats/mem notes eligible as first-class lanes.
+- `verbatim`: explicitly searches `shenyu_chat_archive`; raw chat does not enter ordinary recall.
+
+Ordinary memories search across historical session tags. `session_tag` remains provenance and a possible future tie-breaker, not a visibility boundary. Rows explicitly marked `private` or `hidden` still require an exact session match.
 
 Indexed public source types:
 
 - `memory`: rows from `memories`
 - `journal`: rows from `journal`
+- `windowsill`: personal writing from `windowsill`
+- `heartbeat`: settled normal-scope rows from `shenyu_heartbeat_archive`
 - `room`: rows from `room`
 - `board`: rows from `message_board`
 - `calendar`: rows from `calendar_pages`
 - `notebook`: rows from `shenyu_notebook`
 
-`atomic_memories`, `meta_summaries`, and `shenyu_mem_notes` are not exposed through the public recall source filter. Mem-note rows are still indexed for the internal automatic mem-note semantic fallback.
+Stars and active mem notes are federated through their existing specialized rankers instead of being duplicated into the public document source filter. Recent unsettled normal heartbeats are scored from SQLite; settled heartbeats are indexed from the Supabase archive. `atomic_memories` and `meta_summaries` remain internal/legacy sources.
+
+`shenyu_mem_notes` is the single canonical light-memory table. Legacy rows and v2 rows are not separate pools: legacy trigger/content fields remain readable, while missing `summary` and `memory_kind` receive a non-destructive runtime projection. Automatic mem-note recall is cross-session for normal chat. Only active notes enter the semantic index; captured and archived notes remain available to management/search tools without automatically surfacing.
 
 Required Supabase migrations:
 
@@ -393,6 +407,9 @@ Recall-related env vars:
 ```text
 ENABLE_RECALL_AUTO_SYNC=false
 RECALL_CANDIDATE_LIMIT=160
+RECALL_VECTOR_MIN_SCORE=0.42
+ENABLE_RECALL_SYNC_WORKER=true
+RECALL_SYNC_WORKER_INTERVAL_SECONDS=900
 
 ENABLE_RECALL_EMBEDDINGS=false
 ENABLE_RECALL_EMBEDDING_WORKER=true
@@ -404,7 +421,9 @@ EMBEDDING_MODEL=BAAI/bge-m3
 EMBEDDING_DIM=1024
 ```
 
-When `ENABLE_RECALL_EMBEDDINGS=true`, the gateway can fill pending embeddings. The in-process worker runs every `RECALL_EMBEDDING_WORKER_INTERVAL_SECONDS` seconds and embeds up to `RECALL_EMBEDDING_WORKER_BATCH_SIZE` pending rows per pass. This keeps normal `shenyu_recall` calls fast: live search reads the index and only embeds the query vector when vector recall is enabled; it does not rebuild or backfill the whole index during a user request.
+The in-process recall worker first reconciles source tables into `shenyu_recall_index` every `RECALL_SYNC_WORKER_INTERVAL_SECONDS`, then embeds pending rows when embeddings and a valid API key are enabled. It embeds up to `RECALL_EMBEDDING_WORKER_BATCH_SIZE` rows per pass. Request-time auto sync remains an emergency fallback rather than the freshness strategy.
+
+`BAAI/bge-m3` remains the compatibility default: it is multilingual, produces the existing 1024-dimensional vectors, and handles inputs up to 8192 tokens. A model change requires a measured recall A/B run and full re-embedding; do not mix vectors from different models in the same index merely because a newer model exists.
 
 For manual backfill or one-off repair, run:
 

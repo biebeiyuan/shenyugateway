@@ -16,7 +16,9 @@ from ..mem_notes_relevance import (
     CONTEXT_SEMANTIC_MIN_VECTOR_SCORE,
     CONTEXT_WEAK_KEYWORD_HITS,
     _anchor_match,
+    _auto_generate_summary,
     _clean_context_query,
+    _infer_memory_kind,
     _keyword_anchor_is_specific,
     _low_information_semantic_query,
     _overlap,
@@ -64,7 +66,7 @@ class SearchMixin:
         }
         if session_tag:
             params["session_tag"] = f"eq.{session_tag}"
-        rows = await self.supabase.query("shenyu_mem_notes", params)
+        rows = [self._effective_note(row) for row in await self.supabase.query("shenyu_mem_notes", params)]
 
         min_score = (
             self._float_range(min_score, 0.45, 0.0, 1.0)
@@ -113,7 +115,9 @@ class SearchMixin:
 
         target_limit = max(1, min(int(limit or 3), 5))
 
-        active_rows = await self._load_active_rows(session_tag)
+        # session_tag records provenance for normal mem notes; it is not a
+        # visibility boundary. Hisense skips this context path entirely.
+        active_rows = await self._load_active_rows(None)
 
         # --- Layer 0: running_joke serendipity (scene_tag match + random gate) ---
         joke_items = self._running_joke_serendipity_matches(
@@ -148,7 +152,7 @@ class SearchMixin:
             )
             keyword_result = await self.search_notes(
                 clean_query,
-                session_tag=session_tag,
+                session_tag=None,
                 limit=target_limit,
                 mark_triggered=False,
                 min_score=keyword_min_score,
@@ -170,7 +174,7 @@ class SearchMixin:
         if not _low_information_semantic_query(clean_query):
             semantic_items = await self._semantic_search_notes(
                 clean_query,
-                session_tag=session_tag,
+                session_tag=None,
                 limit=1,
                 exclude_ids=selected_ids,
                 recall_service=recall_service,
@@ -494,9 +498,7 @@ class SearchMixin:
                 continue
             if _skip_auto_surface(note):
                 continue
-            if session_tag and (note.get("session_tag") or "").strip() != session_tag:
-                continue
-            if not service._row_visible_for_session(row, session_tag):
+            if not service._row_visible_for_session(row, None):
                 continue
             if self._should_skip_retrigger(
                 note,
@@ -556,7 +558,8 @@ class SearchMixin:
         }
         if session_tag:
             params["session_tag"] = f"eq.{session_tag}"
-        return await self.supabase.query("shenyu_mem_notes", params)
+        rows = await self.supabase.query("shenyu_mem_notes", params)
+        return [self._effective_note(row) for row in rows]
 
     async def _get_notes_by_ids(self, note_ids: list[str]) -> dict[str, dict[str, Any]]:
         if not note_ids or not self.supabase:
@@ -583,8 +586,22 @@ class SearchMixin:
         for row in rows:
             note_id = str(row.get("id") or "").strip()
             if note_id:
-                result[note_id] = row
+                result[note_id] = self._effective_note(row)
         return result
+
+    async def get_notes_by_ids(self, note_ids: list[str]) -> dict[str, dict[str, Any]]:
+        """Return the current read-model rows for explicit note ids."""
+        return await self._get_notes_by_ids(note_ids)
+
+    def _effective_note(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Project legacy mem-note rows into the v2 read model without rewriting them."""
+        note = dict(row)
+        content = str(note.get("content") or "").strip()
+        if not note.get("summary") and content:
+            note["summary"] = _auto_generate_summary(content)
+        if not note.get("memory_kind") and content:
+            note["memory_kind"] = _infer_memory_kind(content, str(note.get("mem_type") or ""))
+        return note
 
     # ------------------------------------------------------------------
     # Cooldown / dedup

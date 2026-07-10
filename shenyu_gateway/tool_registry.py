@@ -31,6 +31,7 @@ DEPRECATED_COMPAT_TOOL_MESSAGES = {
 
 DAILY_GATEWAY_TOOL_NAMES = {
     "shenyu_recall",
+    "shenyu_recall_read",
     "shenyu_create_star",
     "shenyu_search_stars",
     "shenyu_star_review",
@@ -81,7 +82,8 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   merge_stars(source_ids*[], content*, chord?)
 
 回忆
-  recall(query*, source_types?[]: memory|journal|room|board|calendar|notebook)
+  recall(query*, mode?: auto|exact|fuzzy|mood|verbatim, source_types?[])
+  recall_read(source_type*, source_id*)
   read_heartbeat(date?, limit?)
   last_seen()  — 无参数
   recall_main_thread(query?, since?, until?, limit?)
@@ -126,7 +128,8 @@ _BROKER_DAILY_DESCRIPTION = """\
   merge_stars(source_ids*[], content*, chord?)
 
 回忆
-  recall(query*, source_types?[])
+  recall(query*, mode?: auto|exact|fuzzy|mood|verbatim, source_types?[])
+  recall_read(source_type*, source_id*)
   read_heartbeat(date?, limit?)
 
 便签
@@ -440,12 +443,22 @@ async def _handle_recall(ctx: ToolContext) -> dict:
     return await ctx.service.recall(
         query=_query_arg(ctx.arguments),
         source_types=ctx.arguments.get("source_types") or ctx.arguments.get("sources"),
+        mode=ctx.arguments.get("mode", "auto"),
         session_tag=ctx.arguments.get("session_tag") or ctx.session_tag,
         date_from=ctx.arguments.get("date_from") or ctx.arguments.get("since"),
         date_to=ctx.arguments.get("date_to") or ctx.arguments.get("until"),
         include_undated=_bool_arg(ctx.arguments, "include_undated", True),
-        limit=_int_arg(ctx.arguments, "limit", 8),
+        limit=_int_arg(ctx.arguments, "limit", 4),
         auto_sync=bool(getattr(ctx.cfg, "enable_recall_auto_sync", False)),
+    )
+
+
+@_tool_handler("shenyu_recall_read")
+async def _handle_recall_read(ctx: ToolContext) -> dict:
+    return await ctx.service.recall_read(
+        source_type=ctx.arguments.get("source_type") or ctx.arguments.get("type", ""),
+        source_id=ctx.arguments.get("source_id") or ctx.arguments.get("id", ""),
+        session_tag=ctx.session_tag,
     )
 
 
@@ -595,7 +608,7 @@ async def _handle_supabase_guide(ctx: ToolContext) -> dict:
 async def _handle_search_mem_notes(ctx: ToolContext) -> dict:
     kwargs = {
         "query": _query_arg(ctx.arguments),
-        "session_tag": ctx.resolved_session_tag,
+        "session_tag": ctx.arguments.get("session_tag"),
         "limit": _int_arg(ctx.arguments, "limit", 20),
         "status": ctx.arguments.get("status", "all"),
         "mem_type": ctx.arguments.get("mem_type"),
@@ -612,7 +625,7 @@ async def _handle_list_mem_notes(ctx: ToolContext) -> dict:
     kwargs = {
         "status": ctx.arguments.get("status", default_status),
         "limit": _int_arg(ctx.arguments, "limit", 20),
-        "session_tag": ctx.resolved_session_tag,
+        "session_tag": ctx.arguments.get("session_tag"),
         "q": query,
         "mem_type": ctx.arguments.get("mem_type"),
     }

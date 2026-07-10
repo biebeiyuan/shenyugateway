@@ -239,26 +239,43 @@ def _make_upstream_http_client():
 async def _recall_embedding_worker():
     if not supabase_client:
         return
-    interval = max(int(cfg.recall_embedding_worker_interval_seconds or 900), 60)
+    sync_enabled = bool(getattr(cfg, "enable_recall_sync_worker", True))
+    embedding_enabled = bool(cfg.enable_recall_embedding_worker and cfg.enable_recall_embeddings)
+    active_intervals = []
+    if sync_enabled:
+        active_intervals.append(int(getattr(cfg, "recall_sync_worker_interval_seconds", 900) or 900))
+    if embedding_enabled:
+        active_intervals.append(int(cfg.recall_embedding_worker_interval_seconds or 900))
+    if not active_intervals:
+        return
+    interval = max(min(active_intervals), 60)
     batch_size = max(1, min(int(cfg.recall_embedding_worker_batch_size or 50), 1000))
     service = RecallIndexService(supabase_client, cfg=cfg)
-    if not service.embedding_client or not service.embedding_client.enabled:
-        logger.info("[RecallEmbeddingWorker] disabled: embedding API is not configured")
-        return
-    logger.info("[RecallEmbeddingWorker] started interval=%ss batch_size=%s", interval, batch_size)
+    can_embed = bool(embedding_enabled and service.embedding_client and service.embedding_client.enabled)
+    logger.info(
+        "[RecallIndexWorker] started interval=%ss sync=%s embed=%s batch_size=%s",
+        interval,
+        sync_enabled,
+        can_embed,
+        batch_size,
+    )
     try:
         while True:
             try:
-                result = await service.embed_pending(limit=batch_size)
-                if result.get("seen"):
-                    logger.info("[RecallEmbeddingWorker] result=%s", result)
+                if sync_enabled:
+                    sync_result = await service.rebuild(embed=False)
+                    logger.info("[RecallIndexWorker] sync=%s", sync_result)
+                if can_embed:
+                    embedding_result = await service.embed_pending(limit=batch_size)
+                    if embedding_result.get("seen"):
+                        logger.info("[RecallIndexWorker] embedding=%s", embedding_result)
             except asyncio.CancelledError:
                 raise
             except Exception:
-                logger.exception("[RecallEmbeddingWorker] batch failed")
+                logger.exception("[RecallIndexWorker] cycle failed")
             await asyncio.sleep(interval)
     except asyncio.CancelledError:
-        logger.info("[RecallEmbeddingWorker] stopped")
+        logger.info("[RecallIndexWorker] stopped")
         raise
 
 
@@ -267,7 +284,13 @@ async def lifespan(app: FastAPI):
     global recall_embedding_worker_task, heartbeat_archive_worker_task
     _init_supabase()
     _init_store()
-    if cfg.enable_recall_embedding_worker and cfg.enable_recall_embeddings and supabase_client:
+    if (
+        supabase_client
+        and (
+            getattr(cfg, "enable_recall_sync_worker", True)
+            or (cfg.enable_recall_embedding_worker and cfg.enable_recall_embeddings)
+        )
+    ):
         recall_embedding_worker_task = asyncio.create_task(_recall_embedding_worker())
     if cfg.enable_heartbeat_archive and supabase_client and session_store:
         heartbeat_archive_worker_task = asyncio.create_task(

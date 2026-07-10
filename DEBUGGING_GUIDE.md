@@ -108,7 +108,8 @@ Gateway tool descriptions are intentionally short because they enter the model t
 Useful boundary map:
 
 - Broker mode exposes only `shenyu_gateway_tool`; call it with `tool` set to the full gateway tool name, including the `shenyu_` or `supabase_` prefix, and put the selected tool's arguments in the `params` object, not a JSON-encoded string. The old `arguments` field is still accepted for compatibility.
-- `shenyu_recall`: visible unified recall tool; reads `shenyu_recall_index`, covering `memory`, `journal`, `room`, `board`, `calendar`, `mem_note`, and `notebook`.
+- `shenyu_recall`: visible unified recall tool; returns a bounded excerpt and source id. Indexed document sources cover `memory`, `journal`, `windowsill`, settled normal `heartbeat`, `room`, `board`, `calendar`, and `notebook`; stars, active mem notes, and recent live heartbeats are federated through their specialized paths. Full recall traces stay in gateway logs.
+- `shenyu_recall_read`: reads the full original selected by `source_type + source_id`.
 - `shenyu_list_mem_notes`: visible mem-note browse/review tool; reads Supabase `shenyu_mem_notes`.
 - `shenyu_ask_memory`: deprecated compatibility name; direct or broker calls are rejected with `error_kind=validation`. Use `shenyu_recall` with `source_types=["memory"]`.
 - `shenyu_search_primary_texts`: deprecated compatibility name; direct or broker calls are rejected with `error_kind=validation`. Use `shenyu_recall` with the matching source types.

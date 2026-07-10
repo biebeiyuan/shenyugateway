@@ -133,6 +133,11 @@ class RuntimeConfig:
         self.max_internal_tool_rounds: int = _env_int("MAX_INTERNAL_TOOL_ROUNDS", 15, 1)
         self.enable_recall_auto_sync: bool = _env_bool("ENABLE_RECALL_AUTO_SYNC", False)
         self.recall_candidate_limit: int = _env_int("RECALL_CANDIDATE_LIMIT", 160, 20, 1000)
+        self.recall_vector_min_score: float = _env_float("RECALL_VECTOR_MIN_SCORE", 0.42, 0.0, 1.0)
+        self.enable_recall_sync_worker: bool = _env_bool("ENABLE_RECALL_SYNC_WORKER", True)
+        self.recall_sync_worker_interval_seconds: int = _env_int(
+            "RECALL_SYNC_WORKER_INTERVAL_SECONDS", 900, 60, 86400
+        )
         self.enable_recall_embeddings: bool = _env_bool("ENABLE_RECALL_EMBEDDINGS", False)
         self.enable_recall_embedding_worker: bool = _env_bool("ENABLE_RECALL_EMBEDDING_WORKER", True)
         self.recall_embedding_worker_interval_seconds: int = _env_int("RECALL_EMBEDDING_WORKER_INTERVAL_SECONDS", 900, 60, 86400)
@@ -247,6 +252,9 @@ class RuntimeConfig:
             "max_internal_tool_rounds": self.max_internal_tool_rounds,
             "enable_recall_auto_sync": self.enable_recall_auto_sync,
             "recall_candidate_limit": self.recall_candidate_limit,
+            "recall_vector_min_score": self.recall_vector_min_score,
+            "enable_recall_sync_worker": self.enable_recall_sync_worker,
+            "recall_sync_worker_interval_seconds": self.recall_sync_worker_interval_seconds,
             "enable_recall_embeddings": self.enable_recall_embeddings,
             "enable_recall_embedding_worker": self.enable_recall_embedding_worker,
             "recall_embedding_worker_interval_seconds": self.recall_embedding_worker_interval_seconds,

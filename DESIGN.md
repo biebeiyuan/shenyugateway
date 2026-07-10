@@ -351,16 +351,21 @@ Hisense（海信）线程有独立的 heartbeat 池，互不污染。
 
 ### 5.1 它是什么
 
-Recall 是跨所有数据源的**统一搜索入口**。它把 journal、room、message_board、memories、calendar_pages、notebook 的内容索引到一张表里，支持关键词 + 向量混合检索。
+Recall 是跨历史的**统一捞取入口**。普通文档来源包括 journal、windowsill、normal heartbeat archive、room、message_board、memories、calendar_pages、notebook；Stars 与 active Mem Notes 复用各自的专用排序器做联邦召回，原始 Chat Archive 只在找原话时显式下潜。
+
+工具默认只返回匹配片段、`source_type`、`source_id` 和时间。需要全文时再调用 `shenyu_recall_read`。分数、命中原因和候选淘汰过程不进入沈予上下文，只写日志。
+
+普通记忆默认跨 session；`session_tag` 是来源信息，不是可见性硬门。只有明确的 `private/hidden` 记录继续要求 session 完全一致。
 
 ### 5.2 检索方式
 
 ```
-用户文本 → recall_terms() tokenize
+用户文本 + mode(auto/exact/fuzzy/mood/verbatim)
+         → 标题直达候选（书名号归一化）
          → 关键词搜索（token overlap + 短语匹配）
-         → 向量搜索（embedding cosine，如果开启）
-         → 按权重融合
-         → 去重返回
+         → 向量搜索（embedding cosine + 最低阈值，如果开启）
+         → 专用 lane（Star / Mem Note / live Heartbeat）
+         → 按动作控制名额，去重后返回片段
 ```
 
 融合权重：
@@ -370,18 +375,31 @@ Recall 是跨所有数据源的**统一搜索入口**。它把 journal、room、
 - 重要性：8~10%
 - 时效性：5~10%
 
+权重只在同一匹配层内排序。规范化标题完全相等属于最高层，不能被较新但只在正文提到标题的记录反超。
+
+模式配额：
+
+- `auto`：只有明确书名号、日期原件、心情或原话信号才切换；其余按 `fuzzy`。
+- `exact`：1 条原件，可附 1 条超过强阈值的轻记忆，总量最多 2。
+- `fuzzy`：默认总量 4；通常是 3 条主文档 + 最多 1 条轻记忆。
+- `mood`：总量最多 3，宁少勿多。
+- `verbatim`：只查 L0 Chat Archive，不让一万条原始消息进入平时大池。
+
 ### 5.3 谁用它
 
-- `shenyu_recall` 工具：沈予主动搜索记忆时使用
+- `shenyu_recall` 工具：沈予主动捞以前写过的东西
+- `shenyu_recall_read`：拿片段对应的完整原件
 - `MemNoteService`：便签语义召回的第三层通过 Recall 做向量检索
-- **Stars 不用 Recall**——Stars 有自己独立的 RRF 排序管线
+- Stars 不复制进 Recall Index；`all` 通过 Star 的 RRF 排序器联邦取最多一条强相关结果
 
 ### 5.4 Embedding 机制
 
 - 模型：BAAI/bge-m3（1024 维）
 - 提供商：SiliconFlow
-- 后台 worker 定时处理 pending 行（默认每 15 分钟，每批 50 条）
+- 后台 worker 每 15 分钟先对源表做 reconciliation，再处理 pending embedding（默认每批 50 条）
 - 用户请求时不做嵌入回填，只对 query 做实时向量化
+
+模型默认保持 BAAI/bge-m3（1024 维）。换模型必须先用真实查询回归集 A/B，再全量重嵌入；不同模型的向量不能混用。
 
 ### 5.5 改动边界
 

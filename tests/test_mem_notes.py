@@ -375,7 +375,7 @@ class FakeRecallService:
         return merged
 
     def _row_visible_for_session(self, row, session_tag):
-        return row.get("session_tag") == session_tag
+        return row.get("visibility") not in {"private", "hidden"} or row.get("session_tag") == session_tag
 
     def _score_row(self, row, query, tokens):
         return row.get("_score", 0.7), row.get("_reasons", ["semantic"])
@@ -444,6 +444,43 @@ def test_contextual_search_uses_semantic_fallback_without_changing_keyword_searc
     assert contextual_result["count"] == 1
     assert contextual_result["items"][0]["id"] == "note-1"
     assert contextual_result["items"][0]["search_mode"] == "semantic"
+
+
+def test_contextual_search_treats_session_tag_as_provenance_not_visibility():
+    rows = [
+        {
+            "id": "old-window-note",
+            "session_tag": "5.15",
+            "content": "筋膜枪放在卧室抽屉里。",
+            "mem_type": "关于她的事实",
+            "trigger_text": "筋膜枪",
+            "trigger_keywords": ["筋膜枪"],
+            "entities": ["筋膜枪"],
+            "status": "active",
+            "cooldown_hours": 0,
+            "last_triggered_at": None,
+            "trigger_count": 0,
+            "created_at": "2026-05-24T00:00:00+00:00",
+            "updated_at": "2026-05-24T00:00:00+00:00",
+        }
+    ]
+    supabase = FakeSupabase(rows=rows)
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=0), supabase)
+
+    result = asyncio.run(
+        service.search_notes_contextual(
+            "筋膜枪是不是又找不到了",
+            session_tag="6.20",
+            limit=1,
+            mark_triggered=False,
+        )
+    )
+
+    assert result["count"] == 1
+    assert result["items"][0]["id"] == "old-window-note"
+    assert result["items"][0]["summary"].startswith("筋膜枪放在卧室抽屉里")
+    active_queries = [call["params"] for call in supabase.queries if call["table"] == "shenyu_mem_notes"]
+    assert all("session_tag" not in params for params in active_queries)
 
 
 def test_contextual_search_skips_semantic_for_low_information_short_query():

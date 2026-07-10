@@ -97,7 +97,7 @@ def test_ask_memory_returns_standard_ok_field():
     assert result["memories"][0]["title"] == "长隆"
     assert result["memories"][0]["source_type"] == "memory"
     assert result["memories"][0]["source_table"] == "memories"
-    assert "source_id" not in result["memories"][0]
+    assert result["memories"][0]["source_id"] == "mem_1"
     assert result["source"] == "shenyu_recall"
 
 
@@ -176,6 +176,262 @@ def test_search_primary_texts_returns_standard_ok_field():
     assert result["passages"][0]["source_table"] == "journal"
     assert result["passages"][0]["full_text"] == "长隆海洋馆里有企鹅和海獭。"
     assert result["passages"][0]["content_kind"] == "diary"
+
+
+def test_recall_federation_keeps_internal_scores_out_of_tool_output(monkeypatch):
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
+
+    class FakeRecallIndex:
+        async def recall(self, **kwargs):
+            return {
+                "ok": True,
+                "count": 3,
+                "items": [
+                    {
+                        "content": f"片段 {index}",
+                        "source_id": f"journal-{index}",
+                        "source_type": "journal",
+                        "source_table": "journal",
+                        "content_kind": "diary",
+                        "event_date": "2026-07-10",
+                        "has_more": True,
+                    }
+                    for index in range(3)
+                ],
+            }
+
+    class FakeStars:
+        async def search_recall(self, *args, **kwargs):
+            return {"ok": True, "items": [{"id": "star-1", "content": "一颗相关的星", "score": 0.7}]}
+
+    class FakeMemNotes:
+        async def search_notes_contextual(self, *args, **kwargs):
+            return {"ok": True, "items": []}
+
+    async def fake_heartbeats(*args, **kwargs):
+        return {
+            "ok": True,
+            "items": [
+                {
+                    "content": "一条更相关的心跳",
+                    "source_id": "hb-1",
+                    "source_type": "heartbeat",
+                    "source_table": "heartbeat_entries",
+                    "content_kind": "heartbeat",
+                    "event_date": "2026-07-10",
+                    "has_more": False,
+                    "_recall_score": 0.9,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(service, "_recall_index", lambda: FakeRecallIndex())
+    monkeypatch.setattr(service, "_stars", lambda: FakeStars())
+    monkeypatch.setattr(service, "_mem_notes", lambda: FakeMemNotes())
+    monkeypatch.setattr(service, "_recall_live_heartbeats", fake_heartbeats)
+
+    result = asyncio.run(service.recall("那次害怕打开自己", limit=4))
+
+    assert result["count"] == 4
+    assert [item["source_type"] for item in result["items"]] == ["journal", "journal", "journal", "heartbeat"]
+    assert all("score" not in item and "matched_by" not in item for item in result["items"])
+
+
+def test_exact_recall_does_not_add_a_weak_companion(monkeypatch):
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
+
+    class FakeRecallIndex:
+        async def recall(self, **kwargs):
+            return {
+                "ok": True,
+                "items": [
+                    {
+                        "content": "原件片段",
+                        "source_id": "journal-original",
+                        "source_type": "journal",
+                        "source_table": "journal",
+                    }
+                ],
+            }
+
+    class EmptyLane:
+        async def search_recall(self, *args, **kwargs):
+            return {"ok": True, "items": []}
+
+        async def search_notes_contextual(self, *args, **kwargs):
+            return {"ok": True, "items": []}
+
+    async def weak_heartbeat(*args, **kwargs):
+        return {
+            "ok": True,
+            "items": [
+                {
+                    "content": "只有一点点相关",
+                    "source_id": "hb-weak",
+                    "source_type": "heartbeat",
+                    "source_table": "heartbeat_entries",
+                    "_recall_score": 0.5,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(service, "_recall_index", lambda: FakeRecallIndex())
+    monkeypatch.setattr(service, "_stars", lambda: EmptyLane())
+    monkeypatch.setattr(service, "_mem_notes", lambda: EmptyLane())
+    monkeypatch.setattr(service, "_recall_live_heartbeats", weak_heartbeat)
+
+    result = asyncio.run(service.recall("《玻璃瓶》", mode="exact", limit=4))
+
+    assert result["count"] == 1
+    assert result["items"][0]["source_id"] == "journal-original"
+
+
+def test_recall_deduplicates_live_and_archived_heartbeat_by_original_id(monkeypatch):
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
+
+    class FakeRecallIndex:
+        async def recall(self, **kwargs):
+            return {
+                "ok": True,
+                "items": [
+                    {
+                        "content": "已经归档的心跳",
+                        "source_id": "hb-same",
+                        "source_type": "heartbeat",
+                        "source_table": "shenyu_heartbeat_archive",
+                    }
+                ],
+            }
+
+    class EmptyLane:
+        async def search_recall(self, *args, **kwargs):
+            return {"ok": True, "items": []}
+
+        async def search_notes_contextual(self, *args, **kwargs):
+            return {"ok": True, "items": []}
+
+    async def same_live_heartbeat(*args, **kwargs):
+        return {
+            "ok": True,
+            "items": [
+                {
+                    "content": "仍在 live 池的同一条心跳",
+                    "source_id": "hb-same",
+                    "source_type": "heartbeat",
+                    "source_table": "heartbeat_entries",
+                    "_recall_score": 0.9,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(service, "_recall_index", lambda: FakeRecallIndex())
+    monkeypatch.setattr(service, "_stars", lambda: EmptyLane())
+    monkeypatch.setattr(service, "_mem_notes", lambda: EmptyLane())
+    monkeypatch.setattr(service, "_recall_live_heartbeats", same_live_heartbeat)
+
+    result = asyncio.run(service.recall("以前写过的心跳", limit=4))
+
+    assert result["count"] == 1
+    assert result["items"][0]["source_id"] == "hb-same"
+
+
+def test_mem_note_write_indexes_new_active_row_immediately(monkeypatch):
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
+    indexed = []
+
+    class FakeMemNotes:
+        async def create_note(self, **kwargs):
+            return {
+                "ok": True,
+                "note": {
+                    "id": "note-new",
+                    "content": kwargs["content"],
+                    "status": "active",
+                    "created_at": "2026-07-10",
+                    "updated_at": "2026-07-10",
+                },
+            }
+
+    class FakeRecallIndex:
+        async def index_mem_note_row(self, row):
+            indexed.append(row)
+            return {"ok": True, "indexed": 1}
+
+        async def mark_source_row_deleted(self, source_table, source_id):
+            return None
+
+    monkeypatch.setattr(service, "_mem_notes", lambda: FakeMemNotes())
+    monkeypatch.setattr(service, "_recall_index", lambda: FakeRecallIndex())
+
+    result = asyncio.run(service.write_mem_note("刚写下的一条便签"))
+
+    assert result["ok"] is True
+    assert [row["id"] for row in indexed] == ["note-new"]
+
+
+def test_bulk_mem_note_update_reindexes_updated_rows_immediately(monkeypatch):
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
+    indexed = []
+
+    class FakeMemNotes:
+        async def bulk_update_notes(self, **kwargs):
+            return {
+                "ok": True,
+                "updated_count": 2,
+                "updated_ids": ["note-a", "note-b"],
+                "failures": [],
+            }
+
+        async def get_notes_by_ids(self, note_ids):
+            assert note_ids == ["note-a", "note-b"]
+            return {
+                note_id: {"id": note_id, "content": f"updated {note_id}", "status": "active"}
+                for note_id in note_ids
+            }
+
+    class FakeRecallIndex:
+        async def index_mem_note_row(self, row):
+            indexed.append(row)
+            return {"ok": True, "indexed": 1}
+
+    monkeypatch.setattr(service, "_mem_notes", lambda: FakeMemNotes())
+    monkeypatch.setattr(service, "_recall_index", lambda: FakeRecallIndex())
+
+    result = asyncio.run(
+        service.bulk_update_mem_notes(ids=["note-a", "note-b"], patch={"status": "active"})
+    )
+
+    assert result["ok"] is True
+    assert [row["id"] for row in indexed] == ["note-a", "note-b"]
+
+
+def test_bulk_mem_note_reindex_failure_does_not_block_other_updates(monkeypatch):
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
+    indexed = []
+
+    class FakeMemNotes:
+        async def bulk_update_notes(self, **kwargs):
+            return {"ok": True, "updated_ids": ["note-a", "note-b"]}
+
+        async def get_notes_by_ids(self, note_ids):
+            return {
+                note_id: {"id": note_id, "content": note_id, "status": "active"}
+                for note_id in note_ids
+            }
+
+    class PartlyFailingRecallIndex:
+        async def index_mem_note_row(self, row):
+            if row["id"] == "note-a":
+                raise RuntimeError("temporary index failure")
+            indexed.append(row["id"])
+
+    monkeypatch.setattr(service, "_mem_notes", lambda: FakeMemNotes())
+    monkeypatch.setattr(service, "_recall_index", lambda: PartlyFailingRecallIndex())
+
+    result = asyncio.run(service.bulk_update_mem_notes(ids=["note-a", "note-b"], patch={}))
+
+    assert result["ok"] is True
+    assert indexed == ["note-b"]
 
 
 def test_search_primary_texts_keeps_journal_category_filter_after_recall_delegate():

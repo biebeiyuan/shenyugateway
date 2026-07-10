@@ -38,7 +38,11 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_recall",
-                "description": "找以前的事。可以限定来源：memory、journal、room、board、calendar、notebook。",
+                "description": (
+                    "从以前写过的东西里捞相关片段。默认是模糊捞；知道原件时用 exact，"
+                    "想碰类似心情时用 mood，找当时原话时用 verbatim。结果只给片段，"
+                    "需要全文再调用 shenyu_recall_read。"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -47,9 +51,17 @@ def _gateway_core_tools() -> list[dict]:
                             "type": "array",
                             "items": {
                                 "type": "string",
-                                "enum": ["all", "memory", "journal", "room", "board", "calendar", "notebook"],
+                                "enum": [
+                                    "all", "memory", "journal", "windowsill", "heartbeat", "star", "mem_note",
+                                    "room", "board", "calendar", "notebook", "chat",
+                                ],
                             },
                             "default": ["all"],
+                        },
+                        "mode": {
+                            "type": "string",
+                            "enum": ["auto", "exact", "fuzzy", "mood", "verbatim"],
+                            "default": "auto",
                         },
                         "date_from": {"type": "string"},
                         "date_to": {"type": "string"},
@@ -59,9 +71,24 @@ def _gateway_core_tools() -> list[dict]:
                             "description": "按日期过滤时，是否保留没有日期的条目。",
                         },
                         "session_tag": {"type": "string"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 8},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 8, "default": 4},
                     },
                     "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_recall_read",
+                "description": "把 recall 片段对应的原件完整读出来。使用 recall 返回的 source_type 和 source_id。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "source_type": {"type": "string"},
+                        "source_id": {"type": "string"},
+                    },
+                    "required": ["source_type", "source_id"],
                 },
             },
         },

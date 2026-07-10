@@ -193,6 +193,32 @@ class CrudMixin:
             **({"error": result.get("error")} if result.get("error") else {}),
         }
 
+    async def search_recall(
+        self,
+        query: str,
+        *,
+        session_tag: Optional[str] = None,
+        limit: int = 1,
+    ) -> dict[str, Any]:
+        """Search stars with chat relevance gates, without injecting or activating them."""
+        result = await self._rank_for_query(
+            query=query,
+            surface="chat_inject",
+            session_tag=session_tag,
+            session_id=None,
+            limit=max(1, min(int(limit or 1), 3)),
+            shown=False,
+            injected=False,
+            mark_activation=False,
+        )
+        return {
+            "ok": result.get("ok", False),
+            "query": query,
+            "count": len(result.get("items") or []),
+            "items": result.get("items") or [],
+            **({"error": result.get("error")} if result.get("error") else {}),
+        }
+
     async def graph(
         self,
         *,

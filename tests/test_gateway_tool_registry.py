@@ -82,11 +82,12 @@ class FakeToolService:
         self,
         query: str,
         source_types=None,
+        mode="auto",
         session_tag=None,
         date_from=None,
         date_to=None,
         include_undated: bool = True,
-        limit: int = 8,
+        limit: int = 4,
         auto_sync: bool = True,
     ):
         self.calls.append(
@@ -94,6 +95,7 @@ class FakeToolService:
                 "tool": "shenyu_recall",
                 "query": query,
                 "source_types": source_types,
+                "mode": mode,
                 "session_tag": session_tag,
                 "date_from": date_from,
                 "date_to": date_to,
@@ -103,6 +105,17 @@ class FakeToolService:
             }
         )
         return {"ok": True, "query": query, "limit": limit}
+
+    async def recall_read(self, source_type: str, source_id: str, session_tag=None):
+        self.calls.append(
+            {
+                "tool": "shenyu_recall_read",
+                "source_type": source_type,
+                "source_id": source_id,
+                "session_tag": session_tag,
+            }
+        )
+        return {"ok": True, "source_type": source_type, "source_id": source_id}
 
     async def ask_memory(
         self,
@@ -583,6 +596,7 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "include_undated": "false",
             "limit": "4",
         },
+        "shenyu_recall_read": {"source_type": "journal", "source_id": "journal-1"},
         "shenyu_supabase_guide": {},
         "shenyu_search_mem_notes": {
             "query": "note",
@@ -751,12 +765,19 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "tool": "shenyu_recall",
             "query": "企鹅",
             "source_types": ["memory"],
+            "mode": "auto",
             "session_tag": "arg-tag",
             "date_from": "2026-01-01",
             "date_to": "2026-01-31",
             "include_undated": False,
             "limit": 4,
             "auto_sync": False,
+        },
+        "shenyu_recall_read": {
+            "tool": "shenyu_recall_read",
+            "source_type": "journal",
+            "source_id": "journal-1",
+            "session_tag": "default",
         },
         "shenyu_supabase_guide": {"tool": "shenyu_supabase_guide"},
         "shenyu_search_mem_notes": {
@@ -875,7 +896,7 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
         "shenyu_list_mem_notes": {
             "tool": "shenyu_list_mem_notes",
             "q": "list",
-            "session_tag": "default",
+            "session_tag": None,
             "limit": 8,
             "status": "all",
             "mem_type": "memory",
@@ -1131,7 +1152,7 @@ def test_execute_gateway_tool_accepts_broker_params_field():
         {
             "tool": "shenyu_list_mem_notes",
             "q": "home",
-            "session_tag": "default",
+            "session_tag": None,
             "limit": 2,
             "status": "all",
             "mem_type": None,
@@ -1196,7 +1217,7 @@ def test_execute_gateway_tool_reuses_service_for_broker_target():
         {
             "tool": "shenyu_list_mem_notes",
             "q": "home",
-            "session_tag": "default",
+            "session_tag": None,
             "limit": 2,
             "status": "all",
             "mem_type": None,
@@ -1279,7 +1300,7 @@ def test_execute_gateway_tool_routes_hidden_search_mem_notes_for_compat():
         {
             "tool": "shenyu_search_mem_notes",
             "query": "北海道",
-            "session_tag": "default",
+            "session_tag": None,
             "limit": 60,
             "status": "all",
             "mem_type": None,
@@ -1408,6 +1429,7 @@ def test_execute_gateway_tool_accepts_broker_json_string_arguments():
             "tool": "shenyu_recall",
             "query": "长隆海洋馆 海獭 企鹅",
             "source_types": None,
+            "mode": "auto",
             "session_tag": "default",
             "date_from": None,
             "date_to": None,
@@ -1534,6 +1556,7 @@ def test_execute_gateway_tool_routes_shenyu_recall():
             "tool": "shenyu_recall",
             "query": "长隆 海獭",
             "source_types": ["memory", "journal"],
+            "mode": "auto",
             "session_tag": "5.15",
             "date_from": None,
             "date_to": None,
@@ -1970,7 +1993,7 @@ def test_gateway_tools_hide_compat_query_tools_but_keep_recall_and_mem_notes_vis
     assert hidden_query_tools.isdisjoint(full_names)
 
 
-def test_shenyu_recall_source_types_are_public_set_only():
+def test_shenyu_recall_exposes_public_and_federated_source_types():
     cfg = _cfg()
 
     broker_tool = gateway_native_tools(cfg)[0]
@@ -1981,9 +2004,12 @@ def test_shenyu_recall_source_types_are_public_set_only():
     source_types = recall_tool["function"]["parameters"]["properties"]["source_types"]["items"]["enum"]
     include_undated = recall_tool["function"]["parameters"]["properties"]["include_undated"]
 
-    assert source_types == ["all", "memory", "journal", "room", "board", "calendar", "notebook"]
+    assert source_types == [
+        "all", "memory", "journal", "windowsill", "heartbeat", "star", "mem_note",
+        "room", "board", "calendar", "notebook", "chat",
+    ]
     assert include_undated["default"] is True
-    assert "mem_note" not in source_types
+    assert "mem_note" in source_types
     assert "note" not in source_types
     assert "atomic" not in source_types
     assert "meta" not in source_types
