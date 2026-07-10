@@ -20,7 +20,9 @@ from .context_layers import (
 )
 from .context_window import (
     classify_history_event,
+    compact_history_event_messages,
     insert_bridge_messages,
+    normalize_history_event_messages,
     select_chunked_window,
 )
 from .gateway_tools import GatewayToolService
@@ -275,23 +277,25 @@ async def prepare_messages(
     is_first_turn = non_system_count <= 1 or sessions.is_first_turn(session)
 
     raw_messages = [message.model_dump(exclude_none=True) for message in body.messages]
-    raw_messages_for_storage, _ = _trim_client_image_blocks(raw_messages, keep_recent_messages=0)
-    raw_user_text = _latest_user_text(raw_messages_for_storage)
+    raw_messages_for_archive, _ = _trim_client_image_blocks(raw_messages, keep_recent_messages=0)
+    raw_messages_for_lineage = compact_history_event_messages(raw_messages)
+    raw_messages_for_event = normalize_history_event_messages(raw_messages_for_lineage)
+    raw_user_text = _latest_user_text(raw_messages_for_event)
     previous_raw_windows = store.get_recent_raw_request_windows(session["id"], limit=1)
     previous_raw_messages = previous_raw_windows[0].get("messages") if previous_raw_windows else None
-    event_meta = classify_history_event(previous_raw_messages, raw_messages_for_storage)
+    event_meta = classify_history_event(previous_raw_messages, raw_messages_for_lineage)
     store.write_raw_request_window(
         session_id=session["id"],
         session_tag=session_tag,
         client_name=client_name,
-        messages=raw_messages_for_storage,
+        messages=raw_messages_for_lineage,
         latest_user_text=raw_user_text,
     )
     _mark_request_log_phase(
         log_entry,
         "prepare.raw_window_stored",
         now_iso=_iso_now(),
-        detail={"raw_messages": len(raw_messages_for_storage)},
+        detail={"raw_messages": len(raw_messages_for_event)},
     )
     is_hisense = deps.is_hisense_client(client_name)
     raw_message_count = _non_system_message_count(raw_messages)
@@ -351,7 +355,7 @@ async def prepare_messages(
                 archive_service,
                 session_tag=session_tag,
                 client_name=client_name,
-                messages=raw_messages_for_storage,
+                messages=raw_messages_for_archive,
                 is_hisense=is_hisense,
             )
         )

@@ -433,9 +433,9 @@ def test_openai_compatible_cache_control_uses_system_end_and_tail_breakpoints():
         cache_layers={"stable": "stable block", "slow": "calendar block", "format": "format block"},
     )
 
-    assert cache_paths == ["messages[5].system_end", "messages[6]"]
+    assert cache_paths == ["messages[5].system_end", "messages[7]"]
     assert cached_messages[5]["cache_control"] == {"type": "ephemeral"}
-    assert cached_messages[6]["cache_control"] == {"type": "ephemeral"}
+    assert cached_messages[7]["cache_control"] == {"type": "ephemeral"}
     assert "cache_control" not in cached_messages[0]
     assert "cache_control" not in cached_messages[1]
 
@@ -457,7 +457,7 @@ def test_anthropic_cache_control_marks_format_layer_after_reading_order_prefix()
         cache_paths=cache_paths,
     )
 
-    assert cache_paths == ["system.end"]
+    assert cache_paths == ["system.end", "messages[0].content[0]"]
     assert system[5]["cache_control"] == {"type": "ephemeral"}
     assert "cache_control" not in system[0]
     assert "cache_control" not in system[1]
@@ -469,7 +469,18 @@ def test_anthropic_cache_control_marks_format_layer_after_reading_order_prefix()
         "tool policy block",
         "format block",
     ]
-    assert messages == [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
+    assert messages == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "text",
+                    "text": "hello",
+                    "cache_control": {"type": "ephemeral"},
+                }
+            ],
+        }
+    ]
 
 
 def test_cache_control_wraps_memory_island_with_fallback_breakpoints_for_both_protocols():
@@ -497,7 +508,7 @@ def test_cache_control_wraps_memory_island_with_fallback_breakpoints_for_both_pr
         "messages[0].system_end",
         "messages[2].before_island",
         "messages[3].memory_island",
-        "messages[5]",
+        "messages[6]",
     ]
     assert "_shenyu_context_layer" not in cached_messages[3]
 
@@ -511,12 +522,58 @@ def test_cache_control_wraps_memory_island_with_fallback_breakpoints_for_both_pr
         "system.end",
         "messages[1].before_island",
         "messages[2].memory_island",
-        "messages[4].content[0]",
+        "messages[5].content[0]",
     ]
     assert [block["text"] for block in system] == ["format block"]
     assert anthropic_messages[2]["role"] == "user"
     assert "<memory_island" in anthropic_messages[2]["content"][0]["text"]
     assert "memory island" in anthropic_messages[2]["content"][0]["text"]
+
+
+def test_anthropic_cache_control_marks_current_image_with_one_hour_ttl():
+    cache_paths: list[str] = []
+
+    _system, messages = _openai_to_anthropic(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look at this"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                ],
+            }
+        ],
+        cache_paths=cache_paths,
+        cache_ttl="1h",
+    )
+
+    assert cache_paths == ["messages[0].content[1]"]
+    assert messages[0]["content"][1]["cache_control"] == {
+        "type": "ephemeral",
+        "ttl": "1h",
+    }
+
+
+def test_openai_compatible_cache_control_marks_current_image_with_configured_ttl():
+    cached_messages, _tools, cache_paths = _apply_openai_compatible_cache_control(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "look at this"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                ],
+            }
+        ],
+        [],
+        cache_ttl="1h",
+    )
+
+    assert cache_paths == ["messages[0].content[1]"]
+    assert cached_messages[0]["content"][1]["cache_control"] == {
+        "type": "ephemeral",
+        "ttl": "1h",
+    }
 
 
 def _contains_cache_control(value):
@@ -836,7 +893,13 @@ def test_build_upstream_request_adds_extra_body_for_pioneer_auto(monkeypatch):
     assert model_name == "pioneer/auto"
     assert payload["model"] == "pioneer/auto"
     assert payload["models"] == ["claude-opus-4-7"]
-    assert payload["messages"] == [{"role": "user", "content": "hello"}]
+    assert payload["messages"] == [
+        {
+            "role": "user",
+            "content": "hello",
+            "cache_control": {"type": "ephemeral"},
+        }
+    ]
 
 
 def test_build_upstream_request_omits_provider_order_for_anthropic(monkeypatch):

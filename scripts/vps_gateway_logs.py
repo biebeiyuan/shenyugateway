@@ -534,7 +534,8 @@ def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
         if breakpoints:
             print(
                 "  prompt_cache: "
-                + f"protocol={prompt_cache.get('protocol')} breakpoints={', '.join(map(str, breakpoints))}"
+                + f"protocol={prompt_cache.get('protocol')} ttl={prompt_cache.get('ttl') or 'default'} "
+                + f"breakpoints={', '.join(map(str, breakpoints))}"
             )
 
     names = _tool_names(log.get("tool_names_all") or log.get("tool_names"))

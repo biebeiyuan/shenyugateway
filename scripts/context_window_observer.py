@@ -72,6 +72,19 @@ def summarize(events: list[dict[str, Any]]) -> dict[str, Any]:
         int((event.get("detail") or {}).get("raw_tool_protection_turns") or 0)
         for event in events
     ]
+    transient_changes = [
+        event
+        for event in events
+        if bool((event.get("detail") or {}).get("transient_history_changes_ignored"))
+    ]
+    transient_prefix_deltas = [
+        max(
+            0,
+            int((event.get("detail") or {}).get("common_prefix_messages") or 0)
+            - int((event.get("detail") or {}).get("strict_common_prefix_messages") or 0),
+        )
+        for event in transient_changes
+    ]
     epochs = {str(event.get("epoch_id") or "") for event in events if event.get("epoch_id")}
     return {
         "events": len(events),
@@ -80,6 +93,10 @@ def summarize(events: list[dict[str, Any]]) -> dict[str, Any]:
         "event_classes": dict(event_counts.most_common()),
         "epoch_resets": dict(reset_counts.most_common()),
         "memory_island_decisions": dict(island_counts.most_common()),
+        "transient_history_changes_ignored": {
+            "events": len(transient_changes),
+            "max_prefix_messages_recovered": max(transient_prefix_deltas, default=0),
+        },
         "retained_non_system_messages": {
             "min": min(retained, default=0),
             "p50": _percentile(retained, 0.50),

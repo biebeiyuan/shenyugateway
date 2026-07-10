@@ -14,6 +14,9 @@ def test_context_window_observer_summarizes_events_without_message_content():
                 "context_epoch_reset": False,
                 "client_non_system_retained": 170,
                 "raw_tool_protection_turns": 18,
+                "common_prefix_messages": 1970,
+                "strict_common_prefix_messages": 1967,
+                "transient_history_changes_ignored": True,
                 "memory_island_decision": {"decision": "retained"},
             },
         },
@@ -39,3 +42,7 @@ def test_context_window_observer_summarizes_events_without_message_content():
     assert result["event_classes"] == {"new_user": 2}
     assert result["epoch_resets"] == {"message_high_water": 1}
     assert result["memory_island_decisions"] == {"retained": 1, "rewritten": 1}
+    assert result["transient_history_changes_ignored"] == {
+        "events": 1,
+        "max_prefix_messages_recovered": 3,
+    }

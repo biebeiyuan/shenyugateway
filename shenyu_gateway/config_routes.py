@@ -33,6 +33,8 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "upstream_trust_env": cfg.upstream_trust_env,
         "enable_openai_cache_control": cfg.enable_openai_cache_control,
         "enable_anthropic_cache_control": cfg.enable_anthropic_cache_control,
+        "openai_cache_ttl": cfg.openai_cache_ttl,
+        "anthropic_cache_ttl": cfg.anthropic_cache_ttl,
         "enable_anthropic_auto_thinking": cfg.enable_anthropic_auto_thinking,
         "anthropic_default_max_tokens": cfg.anthropic_default_max_tokens,
         "upstream_extra_body": cfg.upstream_extra_body,
@@ -140,6 +142,8 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "upstream_trust_env": "UPSTREAM_TRUST_ENV",
             "enable_openai_cache_control": "ENABLE_OPENAI_CACHE_CONTROL",
             "enable_anthropic_cache_control": "ENABLE_ANTHROPIC_CACHE_CONTROL",
+            "openai_cache_ttl": "OPENAI_CACHE_TTL",
+            "anthropic_cache_ttl": "ANTHROPIC_CACHE_TTL",
             "enable_anthropic_auto_thinking": "ENABLE_ANTHROPIC_AUTO_THINKING",
             "anthropic_default_max_tokens": "ANTHROPIC_DEFAULT_MAX_TOKENS",
             "upstream_extra_body": "UPSTREAM_EXTRA_BODY",
@@ -232,6 +236,8 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "upstream_trust_env",
             "enable_openai_cache_control",
             "enable_anthropic_cache_control",
+            "openai_cache_ttl",
+            "anthropic_cache_ttl",
             "enable_anthropic_auto_thinking",
             "anthropic_default_max_tokens",
             "hisense_upstream_url",
@@ -298,6 +304,10 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                     value = str(value or "").strip().lower()
                     if value not in {"all", "daily", "none"}:
                         raise HTTPException(status_code=400, detail="CLIENT_TOOL_SURFACE must be all, daily, or none.")
+                elif field in {"openai_cache_ttl", "anthropic_cache_ttl"}:
+                    value = str(value or "").strip().lower()
+                    if value not in {"5m", "1h"}:
+                        raise HTTPException(status_code=400, detail=f"{env_names[field]} must be 5m or 1h.")
                 elif isinstance(value, str):
                     value = value.strip()
                 setattr(cfg, field, value)

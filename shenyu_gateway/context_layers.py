@@ -526,26 +526,30 @@ def trim_client_image_blocks(
     keep_recent_messages: int = 2,
     placeholder: str = IMAGE_SEEN_PLACEHOLDER,
 ) -> tuple[list[dict], dict]:
-    """Remove older user image blocks after the model has had a recent chance to see them."""
+    """Keep images only in the newest user turns, then leave a stable text trace."""
     keep_recent_messages = max(int(keep_recent_messages or 0), 0)
+    user_message_indices = [
+        idx for idx, msg in enumerate(messages) if msg.get("role") == "user"
+    ]
     image_message_indices = [
         idx
         for idx, msg in enumerate(messages)
         if msg.get("role") == "user" and _message_image_block_count(msg) > 0
     ]
-    keep_indices = set(image_message_indices[-keep_recent_messages:]) if keep_recent_messages else set()
+    keep_indices = set(user_message_indices[-keep_recent_messages:]) if keep_recent_messages else set()
+    trim_index_set = set(image_message_indices) - keep_indices
     meta = {
         "client_image_keep_messages": keep_recent_messages,
+        "client_image_keep_user_turns": keep_recent_messages,
         "client_image_messages_seen": len(image_message_indices),
         "client_image_messages_trimmed": 0,
         "client_image_blocks_trimmed": 0,
         "client_image_placeholders_added": 0,
     }
-    if len(image_message_indices) <= keep_recent_messages:
+    if not trim_index_set:
         return messages, meta
 
     trimmed: list[dict] = []
-    trim_index_set = set(image_message_indices) - keep_indices
     for idx, msg in enumerate(messages):
         if idx not in trim_index_set:
             trimmed.append(msg)

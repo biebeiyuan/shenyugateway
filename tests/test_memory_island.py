@@ -3,12 +3,19 @@ from __future__ import annotations
 from shenyu_gateway.memory_island import resolve_memory_island
 
 
-def _star(item_id: str, content: str, *, explicit: float = 0.0) -> dict:
+def _star(
+    item_id: str,
+    content: str,
+    *,
+    explicit: float = 0.0,
+    force_island_rewrite: bool = False,
+) -> dict:
     return {
         "id": item_id,
         "content": content,
         "chord": "Am7",
         "scores": {"explicit_score": explicit},
+        "force_island_rewrite": force_island_rewrite,
     }
 
 
@@ -42,7 +49,7 @@ def test_memory_island_reuses_exact_rendered_text_when_proposal_only_reorders_it
     assert meta["decision"] == "retained"
 
 
-def test_memory_island_retains_two_thirds_overlap_but_direct_candidate_forces_rewrite():
+def test_memory_island_retains_two_thirds_overlap_until_candidate_is_explicitly_forced():
     initial, _entering, _meta = resolve_memory_island(
         None,
         [_star("a", "first"), _star("b", "second"), _star("c", "third")],
@@ -57,9 +64,22 @@ def test_memory_island_retains_two_thirds_overlap_but_direct_candidate_forces_re
     assert entering["stars"] == []
     assert meta["star"]["overlap"] == 0.6667
 
-    rewritten, entering, meta = resolve_memory_island(
+    still_retained, entering, meta = resolve_memory_island(
         initial,
         [_star("a", "first"), _star("b", "second"), _star("d", "new", explicit=1.0)],
+        [],
+    )
+    assert [item["id"] for item in still_retained["stars"]] == ["a", "b", "c"]
+    assert entering["stars"] == []
+    assert meta["star"]["reason"] == "retained_overlap"
+
+    rewritten, entering, meta = resolve_memory_island(
+        initial,
+        [
+            _star("a", "first"),
+            _star("b", "second"),
+            _star("d", "new", force_island_rewrite=True),
+        ],
         [],
     )
     assert [item["id"] for item in rewritten["stars"]] == ["a", "b", "d"]

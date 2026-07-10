@@ -74,7 +74,7 @@ def _has_forced_new_item(kind: str, old_items: list[dict[str, Any]], new_items: 
     for item in new_items:
         if _item_id(item) in old_ids:
             continue
-        if kind == "star" and float((item.get("scores") or {}).get("explicit_score") or 0.0) > 0:
+        if kind == "star" and item.get("force_island_rewrite") is True:
             return True
         if kind == "mem" and (
             item.get("search_mode") == "entity" or item.get("memory_kind") == "promise"

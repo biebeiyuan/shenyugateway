@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import uuid
 from typing import Any, Optional
 
@@ -10,6 +11,14 @@ MEMORY_ISLAND_LAYER = "memory_island"
 INTERNAL_LAYER_KEY = "_shenyu_context_layer"
 DEFAULT_ISLAND_TAIL_MESSAGES = 32
 DEFAULT_RAW_TOOL_PROTECTION_TURNS = 18
+_IMAGE_SEEN_PLACEHOLDER = "圆圆发来的照片我已经看过。"
+_IMAGE_LINEAGE_MARKER = "shenyu_history_image"
+_CLIENT_EXTRA_BUNDLE_RE = re.compile(
+    r"\s*<attachment\b"
+    r"(?=[^>]*\bid\s*=\s*['\"]?message_insert_extra_bundle_[^'\"\s>]+['\"]?)"
+    r"[^>]*>.*?</attachment>",
+    re.IGNORECASE | re.DOTALL,
+)
 
 
 def _stable_json(value: Any) -> str:
@@ -23,6 +32,99 @@ def message_fingerprint(message: dict[str, Any]) -> str:
         if message.get(key) is not None
     }
     return hashlib.sha256(_stable_json(payload).encode("utf-8")).hexdigest()
+
+
+def _is_image_block(value: Any) -> bool:
+    if not isinstance(value, dict):
+        return False
+    block_type = str(value.get("type") or "").lower()
+    if block_type in {"image_url", "input_image", "image"}:
+        return True
+    image_url = value.get("image_url")
+    if isinstance(image_url, dict) and image_url.get("url"):
+        return True
+    if isinstance(image_url, str) and image_url:
+        return True
+    source = value.get("source")
+    return bool(
+        isinstance(source, dict)
+        and str(source.get("media_type") or "").lower().startswith("image/")
+    )
+
+
+def _normalize_event_text(value: Any) -> str:
+    text = _CLIENT_EXTRA_BUNDLE_RE.sub("", str(value or "")).strip()
+    return "" if text == _IMAGE_SEEN_PLACEHOLDER else text
+
+
+def _normalize_event_content(content: Any) -> Any:
+    if isinstance(content, str):
+        return _normalize_event_text(content)
+    if not isinstance(content, list):
+        return content
+    blocks: list[Any] = []
+    for item in content:
+        if _is_image_block(item):
+            continue
+        if isinstance(item, str):
+            text = _normalize_event_text(item)
+            if text:
+                blocks.append(text)
+            continue
+        if isinstance(item, dict) and item.get("type") == "text":
+            text = _normalize_event_text(item.get("text"))
+            if text:
+                clean = dict(item)
+                clean["text"] = text
+                blocks.append(clean)
+            continue
+        blocks.append(item)
+    return blocks or ""
+
+
+def _compact_event_content(content: Any) -> Any:
+    if not isinstance(content, list):
+        return content
+    blocks: list[Any] = []
+    for item in content:
+        if _is_image_block(item):
+            fingerprint = hashlib.sha256(_stable_json(item).encode("utf-8")).hexdigest()
+            blocks.append(
+                {
+                    "type": "image",
+                    "source": {
+                        "type": _IMAGE_LINEAGE_MARKER,
+                        "fingerprint": fingerprint,
+                    },
+                }
+            )
+        elif isinstance(item, dict):
+            blocks.append(dict(item))
+        else:
+            blocks.append(item)
+    return blocks
+
+
+def compact_history_event_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Keep compact transient markers for strict lineage logs without storing image bytes."""
+    compacted = []
+    for message in messages:
+        clean = dict(message)
+        if clean.get("role") == "user":
+            clean["content"] = _compact_event_content(clean.get("content"))
+        compacted.append(clean)
+    return compacted
+
+
+def normalize_history_event_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Remove client-managed transient media before comparing history lineage."""
+    normalized = []
+    for message in messages:
+        clean = dict(message)
+        if clean.get("role") == "user":
+            clean["content"] = _normalize_event_content(clean.get("content"))
+        normalized.append(clean)
+    return normalized
 
 
 def non_system_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -81,12 +183,17 @@ def classify_history_event(
     previous_messages: Optional[list[dict[str, Any]]],
     current_messages: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    previous = non_system_messages(previous_messages or [])
-    current = non_system_messages(current_messages)
+    strict_previous = non_system_messages(previous_messages or [])
+    strict_current = non_system_messages(current_messages)
+    strict_prefix = common_prefix_length(strict_previous, strict_current)
+    previous = non_system_messages(normalize_history_event_messages(previous_messages or []))
+    current = non_system_messages(normalize_history_event_messages(current_messages))
     prefix = common_prefix_length(previous, current)
     detail = {
         "event_class": "initial",
         "common_prefix_messages": prefix,
+        "strict_common_prefix_messages": strict_prefix,
+        "transient_history_changes_ignored": prefix > strict_prefix,
         "previous_non_system_messages": len(previous),
         "current_non_system_messages": len(current),
         "new_human_turn": bool(current),

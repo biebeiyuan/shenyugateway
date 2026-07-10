@@ -70,6 +70,8 @@ class RuntimeConfig:
         self.upstream_trust_env: bool = _env_bool("UPSTREAM_TRUST_ENV", False)
         self.enable_openai_cache_control: bool = _env_bool("ENABLE_OPENAI_CACHE_CONTROL", True)
         self.enable_anthropic_cache_control: bool = _env_bool("ENABLE_ANTHROPIC_CACHE_CONTROL", True)
+        self.openai_cache_ttl: str = _env_choice("OPENAI_CACHE_TTL", "5m", {"5m", "1h"})
+        self.anthropic_cache_ttl: str = _env_choice("ANTHROPIC_CACHE_TTL", "1h", {"5m", "1h"})
         self.enable_anthropic_auto_thinking: bool = _env_bool("ENABLE_ANTHROPIC_AUTO_THINKING", False)
         self.anthropic_default_max_tokens: int = _env_int("ANTHROPIC_DEFAULT_MAX_TOKENS", 128000, 1)
         self.upstream_extra_body: dict[str, Any] = self._load_upstream_extra_body()
@@ -197,6 +199,8 @@ class RuntimeConfig:
             "upstream_trust_env": self.upstream_trust_env,
             "enable_openai_cache_control": self.enable_openai_cache_control,
             "enable_anthropic_cache_control": self.enable_anthropic_cache_control,
+            "openai_cache_ttl": self.openai_cache_ttl,
+            "anthropic_cache_ttl": self.anthropic_cache_ttl,
             "enable_anthropic_auto_thinking": self.enable_anthropic_auto_thinking,
             "anthropic_default_max_tokens": self.anthropic_default_max_tokens,
             "upstream_extra_body": self.upstream_extra_body,

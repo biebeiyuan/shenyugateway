@@ -10,6 +10,7 @@ from shenyu_gateway.context_layers import (
 )
 from shenyu_gateway.context_window import (
     classify_history_event,
+    compact_history_event_messages,
     overflow_messages_for_limit,
     select_chunked_window,
 )
@@ -46,6 +47,69 @@ def test_history_event_classifies_retry_new_user_tool_continuation_and_branch():
     previous = base + [{"role": "assistant", "content": "a1"}, {"role": "user", "content": "u2"}]
     branch = [{"role": "user", "content": "changed u1"}, {"role": "assistant", "content": "a1"}]
     assert classify_history_event(previous, branch)["event_class"] == "branch"
+
+
+def test_history_event_ignores_expired_image_and_dynamic_bundle_changes():
+    previous = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                {
+                    "type": "text",
+                    "text": '<attachment id="message_insert_extra_bundle_old">battery 40%</attachment>',
+                },
+            ],
+        },
+        {"role": "assistant", "content": "saw it"},
+    ]
+    current = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "user", "content": ""},
+        {"role": "assistant", "content": "saw it"},
+        {"role": "user", "content": "next"},
+    ]
+
+    stored_previous = compact_history_event_messages(previous)
+    event = classify_history_event(stored_previous, current)
+
+    assert "data:image/png;base64,abc" not in str(stored_previous)
+    assert "shenyu_history_image" in str(stored_previous)
+    assert event["event_class"] == "new_user"
+    assert event["common_prefix_messages"] == len(previous)
+    assert event["strict_common_prefix_messages"] == 2
+    assert event["transient_history_changes_ignored"] is True
+
+
+def test_history_event_accepts_legacy_image_placeholder_after_upgrade():
+    previous = [
+        {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "user", "content": "圆圆发来的照片我已经看过。"},
+        {"role": "assistant", "content": "saw it"},
+    ]
+    current = compact_history_event_messages(
+        [
+            {"role": "user", "content": "first"},
+            {"role": "assistant", "content": "reply"},
+            {
+                "role": "user",
+                "content": [{"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}}],
+            },
+            {"role": "assistant", "content": "saw it"},
+            {"role": "user", "content": "next"},
+        ]
+    )
+
+    event = classify_history_event(previous, current)
+
+    assert event["event_class"] == "new_user"
+    assert event["common_prefix_messages"] == len(previous)
+    assert event["strict_common_prefix_messages"] == 2
+    assert event["transient_history_changes_ignored"] is True
 
 
 def test_chunked_window_keeps_start_until_high_water_then_resets():
@@ -429,6 +493,26 @@ def test_trim_client_image_blocks_preserves_text_from_old_image_message():
     assert meta["client_image_messages_trimmed"] == 1
     assert trimmed[0]["content"] == [{"type": "text", "text": "圆圆说这个小身体很重。"}]
     assert trimmed[1]["content"][0]["image_url"]["url"] == "data:image/jpeg;base64,new"
+
+
+def test_trim_client_image_blocks_expires_single_image_after_two_newer_user_turns():
+    messages = [
+        {
+            "role": "user",
+            "content": [{"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,old"}}],
+        },
+        {"role": "assistant", "content": "seen"},
+        {"role": "user", "content": "next"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "user", "content": "third user turn"},
+    ]
+
+    trimmed, meta = trim_client_image_blocks(messages, keep_recent_messages=2)
+
+    assert meta["client_image_keep_user_turns"] == 2
+    assert meta["client_image_messages_seen"] == 1
+    assert meta["client_image_messages_trimmed"] == 1
+    assert trimmed[0]["content"] == "圆圆发来的照片我已经看过。"
 
 
 def test_trim_client_image_blocks_can_remove_all_images_for_storage():

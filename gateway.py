@@ -731,6 +731,8 @@ async def health():
         "upstream_trust_env": cfg.upstream_trust_env,
         "enable_openai_cache_control": cfg.enable_openai_cache_control,
         "enable_anthropic_cache_control": cfg.enable_anthropic_cache_control,
+        "openai_cache_ttl": cfg.openai_cache_ttl,
+        "anthropic_cache_ttl": cfg.anthropic_cache_ttl,
         "enable_anthropic_auto_thinking": cfg.enable_anthropic_auto_thinking,
         "enable_upstream_tools": cfg.enable_upstream_tools,
         "enable_gateway_tools": cfg.enable_gateway_tools,

@@ -53,6 +53,8 @@ const config = ref<GatewayConfig>({
   upstream_trust_env: false,
   enable_openai_cache_control: true,
   enable_anthropic_cache_control: true,
+  openai_cache_ttl: '5m',
+  anthropic_cache_ttl: '1h',
   enable_anthropic_auto_thinking: false,
   upstream_extra_body: {},
   upstream_passthrough_headers: ['x-api-key'],
@@ -98,6 +100,10 @@ const protocolOptions = [
   { label: 'Anthropic', value: 'anthropic' },
 ]
 const inheritedProtocolOptions = [{ label: 'Inherit global', value: '' }, ...protocolOptions]
+const cacheTtlOptions = [
+  { label: '5 分钟', value: '5m' },
+  { label: '1 小时', value: '1h' },
+]
 const toolModeOptions = [
   { label: 'Full schemas（不用 broker）', value: 'full' },
   { label: 'Compact broker（推荐）', value: 'broker' },
@@ -276,6 +282,8 @@ async function doSave() {
       upstream_trust_env: config.value.upstream_trust_env,
       enable_openai_cache_control: config.value.enable_openai_cache_control,
       enable_anthropic_cache_control: config.value.enable_anthropic_cache_control,
+      openai_cache_ttl: config.value.openai_cache_ttl,
+      anthropic_cache_ttl: config.value.anthropic_cache_ttl,
       enable_anthropic_auto_thinking: config.value.enable_anthropic_auto_thinking,
       upstream_extra_body: upstreamExtraBody,
       upstream_passthrough_headers: config.value.upstream_passthrough_headers || [],
@@ -532,10 +540,26 @@ function removeModel(index: number) {
               <NSwitch v-model:value="config.upstream_trust_env" />
             </NFormItem>
             <NFormItem label="OpenAI 格式缓存断点">
-              <NSwitch v-model:value="config.enable_openai_cache_control" />
+              <div class="switch-row">
+                <NSwitch v-model:value="config.enable_openai_cache_control" />
+                <NSelect
+                  v-model:value="config.openai_cache_ttl"
+                  :options="cacheTtlOptions"
+                  :disabled="!config.enable_openai_cache_control"
+                  style="width: 120px"
+                />
+              </div>
             </NFormItem>
             <NFormItem label="Anthropic 格式缓存断点">
-              <NSwitch v-model:value="config.enable_anthropic_cache_control" />
+              <div class="switch-row">
+                <NSwitch v-model:value="config.enable_anthropic_cache_control" />
+                <NSelect
+                  v-model:value="config.anthropic_cache_ttl"
+                  :options="cacheTtlOptions"
+                  :disabled="!config.enable_anthropic_cache_control"
+                  style="width: 120px"
+                />
+              </div>
             </NFormItem>
             <NFormItem label="Anthropic adaptive thinking">
               <div class="switch-row">

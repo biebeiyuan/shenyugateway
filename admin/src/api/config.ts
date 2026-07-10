@@ -9,6 +9,8 @@ export interface GatewayConfig {
   upstream_trust_env?: boolean
   enable_openai_cache_control?: boolean
   enable_anthropic_cache_control?: boolean
+  openai_cache_ttl?: '5m' | '1h'
+  anthropic_cache_ttl?: '5m' | '1h'
   enable_anthropic_auto_thinking?: boolean
   upstream_extra_body?: Record<string, unknown>
   upstream_passthrough_headers?: string[]
@@ -104,6 +106,8 @@ export interface HealthStatus {
   upstream_trust_env?: boolean
   enable_openai_cache_control?: boolean
   enable_anthropic_cache_control?: boolean
+  openai_cache_ttl?: '5m' | '1h'
+  anthropic_cache_ttl?: '5m' | '1h'
   enable_anthropic_auto_thinking?: boolean
   upstream_extra_body?: Record<string, unknown>
   hisense_upstream?: string

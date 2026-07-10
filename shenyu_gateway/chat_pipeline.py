@@ -273,6 +273,11 @@ class ChatPipeline:
                     else bool(getattr(self.cfg, "enable_openai_cache_control", True))
                 ),
                 "protocol": request_upstream["protocol"],
+                "ttl": (
+                    getattr(self.cfg, "anthropic_cache_ttl", "1h")
+                    if request_upstream["protocol"] == "anthropic"
+                    else getattr(self.cfg, "openai_cache_ttl", "5m")
+                ),
                 "upstream_scope": request_upstream["scope"],
                 "breakpoints": [],
                 "note": "Prompt cache metadata is populated when the upstream payload is built.",

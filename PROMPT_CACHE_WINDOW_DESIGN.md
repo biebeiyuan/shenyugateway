@@ -1,7 +1,7 @@
 # Shenyu Gateway 缓存窗口与记忆岛设计
 
 > 状态：Phase 1–3 已实现；Phase 4–5 暂缓
-> 记录日期：2026-07-10
+> 记录日期：2026-07-10；图片缓存补充：2026-07-11
 > 范围：普通聊天窗口、Prompt Cache、星星/Mem 记忆岛、工具回环、冷启动和聊天分支
 
 ---
@@ -441,22 +441,29 @@ Anthropic 总 prompt 用量校准时应考虑普通 input、cache creation 和 c
 
 ### 11.1 Anthropic 原生
 
-优先实现显式断点：
+已实现最多四个显式断点：
 
 1. 稳定 system/tools 末尾。
 2. 记忆岛之前的固定历史末尾。
 3. 记忆岛末尾。
-4. 近期尾部的滚动延伸点。
+4. 当前 user 消息最后一个可缓存内容块。
 
-TTL 建议在正式实现前用真实价格和写入量复核：稳定/epoch 断点可考虑 1h，频繁滚动的 tail 断点优先短 TTL，避免每轮支付高价长 TTL 写入。
+原生 Anthropic 默认 `ANTHROPIC_CACHE_TTL=1h`。真实聊天相邻请求经常超过 5 分钟，短 TTL 会使稳定前缀在下一轮之前过期。1 小时写入按基础输入价 2 倍计费，5 分钟写入按 1.25 倍计费；命中读取仍显著便宜，因此需要继续用真实日志观察写入/读取比。
+
+图片和文档属于 Anthropic 可缓存的 user content block。当前 user 的最后一块可以是图片，第一次请求写入该前缀，下一轮在 lookback 范围内复用。图片本身只在最近两个 user 轮次中保留；进入第三个 user 轮次后替换为稳定文本痕迹。
 
 ### 11.2 OpenAI 原生或兼容中转
 
 - 不假设所有 OpenAI-compatible relay 都理解 Anthropic `cache_control` 扩展。
+- 当前透传实现默认 `OPENAI_CACHE_TTL=5m`；确认中转接受 `ttl: 1h` 后可在管理端单独切换。
 - 共享相同的 epoch、岛和工具压缩状态机。
 - 对支持自动 Prompt Cache 的上游，依赖字节稳定的前缀和 provider-specific cache key。
 - 对明确支持显式断点的中转，再按能力协商启用。
 - 协议能力必须进入请求日志，不能只记录 `protocol=openai`。
+
+### 11.3 图片过期与历史谱系
+
+前端会在后续轮次移除旧图片和 `message_insert_extra_bundle_*` 动态附件。它们的消失不是编辑、roll 或新分支。raw window 只保存不含图片字节的紧凑图片指纹标记，再生成一份仅供谱系比较的规范化副本，忽略图片标记、图片已读占位和动态附件；真正发往上游的 prompt 仍保留窗口策略允许的原始图片与用户文字。日志同时记录紧凑原始 common prefix 和规范化 common prefix，便于确认本轮是否忽略了瞬时变化。
 
 ---
 
@@ -592,12 +599,15 @@ reset_reason
 - 不设置固定 120k/150k 输入业务硬顶。
 - 只有模型物理上下文可以强制触发紧急处理。
 - 星星/Mem 岛采用纯召回、滞回决策、按岛版本提交副作用。
+- 普通星星关键词命中不再绕过 2/3 滞回阈值；只有显式 `force_island_rewrite` 候选才立即换岛。
+- Anthropic 默认 1 小时缓存，OpenAI-compatible 默认 5 分钟，两者独立开关和配置。
+- 图片按最近两个 user 轮次保留，旧图片/动态附件过期不触发 branch reset。
 
 ### 待真实数据校准
 
 - 不同模型和中转的真实 context limit。
 - `12k token / 24k per turn / 48k chars` 工具压缩候选阈值。
 - 记忆岛近期尾部初始 32 条是否需要按真人组动态调整。
-- Anthropic 各断点使用 1h 还是短 TTL 的成本平衡。
+- Anthropic 1h TTL 的实际写入/读取成本比，以及是否需要按层混合 TTL。
 - compact digest 使用的具体小模型、失败重试和隐私策略。
 - OpenAI-compatible 中转对显式 `cache_control` 的真实支持矩阵。

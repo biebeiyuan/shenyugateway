@@ -205,8 +205,10 @@ Prompt cache breakpoints are controlled independently for each upstream payload 
 
 - `ENABLE_OPENAI_CACHE_CONTROL=true` enables markers on OpenAI-compatible payloads.
 - `ENABLE_ANTHROPIC_CACHE_CONTROL=true` enables markers on native Anthropic payloads.
+- `OPENAI_CACHE_TTL=5m` keeps the compatibility-first default for relays that only accept the basic marker.
+- `ANTHROPIC_CACHE_TTL=1h` keeps native Anthropic cache entries alive across normal chat pauses.
 
-Both default to enabled and can also be changed independently in the admin configuration page. OpenAI-compatible relays still need to support the Anthropic-style `cache_control` extension.
+Both formats default to enabled. Their switches and TTLs can be changed independently in the admin configuration page. OpenAI-compatible relays still need to support the Anthropic-style `cache_control` extension; set their TTL to `1h` only when the relay accepts the `ttl` field. A one-hour write costs more than a five-minute write, but repeated reads are cheaper and the longer lifetime fits conversations whose turns are often more than five minutes apart.
 
 With a memory island and enough history, the gateway uses up to four logical breakpoints:
 
@@ -214,10 +216,10 @@ With a memory island and enough history, the gateway uses up to four logical bre
 system.end
 history.before_island
 memory_island.end
-history.rolling_tail
+current_user.end
 ```
 
-The concrete JSON paths differ between Anthropic and OpenAI-compatible payloads, but both adapters use the same logical boundaries. If the island changes, the island-end breakpoint is rewritten while the prefix before the island can still hit. The rolling-tail breakpoint extends caching into recent conversation history.
+The concrete JSON paths differ between Anthropic and OpenAI-compatible payloads, but both adapters use the same logical boundaries. If the island changes, the island-end breakpoint is rewritten while the prefix before the island can still hit. The final breakpoint is placed on the current user's last content block, including an image block, so the next request can reuse that conversational prefix.
 
 `MAX_CLIENT_MESSAGES` is the base window size `L`. The overflow block is approximately 20% of `L`, rounded to a multiple of four and clamped to 20–40 messages. The window grows to high-water `H = L + overflow`, then trims once at a complete human/tool turn boundary back toward `L`. Between trims, the retained history start and memory-island anchor remain fixed. Active client tool continuations defer a high-water trim so a tool call cannot be separated from its result. Changing `MAX_CLIENT_MESSAGES`, rebuilding a branch, or starting a new window creates a new context epoch. Cold-start bridge history uses the same effective window size.
 
@@ -928,6 +930,8 @@ UPSTREAM_PROXY=
 UPSTREAM_TRUST_ENV=false
 ENABLE_OPENAI_CACHE_CONTROL=true
 ENABLE_ANTHROPIC_CACHE_CONTROL=true
+OPENAI_CACHE_TTL=5m
+ANTHROPIC_CACHE_TTL=1h
 ENABLE_ANTHROPIC_AUTO_THINKING=false
 UPSTREAM_EXTRA_BODY=
 UPSTREAM_PASSTHROUGH_HEADERS=

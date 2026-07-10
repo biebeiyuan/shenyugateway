@@ -292,9 +292,15 @@ async def build_upstream_request(
         if proto == "anthropic"
         else bool(getattr(cfg, "enable_openai_cache_control", True))
     )
+    cache_ttl = (
+        getattr(cfg, "anthropic_cache_ttl", "1h")
+        if proto == "anthropic"
+        else getattr(cfg, "openai_cache_ttl", "5m")
+    )
     cache_meta: dict[str, Any] = {
         "enabled": cache_enabled,
         "protocol": proto,
+        "ttl": cache_ttl,
         "upstream_scope": upstream["scope"],
         "upstream_url": upstream["chat_url"],
         "breakpoints": [],
@@ -323,6 +329,7 @@ async def build_upstream_request(
             cache_layers=(meta or {}).get("cache_layers"),
             cache_paths=cache_paths,
             max_breakpoints=4 if cache_enabled else 0,
+            cache_ttl=cache_ttl,
         )
         payload: dict[str, Any] = {
             "model": model_name,
@@ -362,6 +369,7 @@ async def build_upstream_request(
             raw_messages,
             merged_tools or [],
             cache_layers=(meta or {}).get("cache_layers"),
+            cache_ttl=cache_ttl,
         )
         cache_meta["enabled"] = bool(cache_paths)
         cache_meta["breakpoints"] = cache_paths

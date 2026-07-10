@@ -14,12 +14,25 @@ from .utils import normalize_text as _normalize_text
 _SYSTEM_CACHE_LAYER_PREFERENCE = ("format", "tool_policy", "heartbeat", "slow", "stable")
 
 
-def _add_cache_control(block: dict, cache_paths: list[str], path: str, max_breakpoints: int = 4) -> bool:
+def _cache_control_value(cache_ttl: str) -> dict[str, str]:
+    value = {"type": "ephemeral"}
+    if cache_ttl == "1h":
+        value["ttl"] = "1h"
+    return value
+
+
+def _add_cache_control(
+    block: dict,
+    cache_paths: list[str],
+    path: str,
+    max_breakpoints: int = 4,
+    cache_ttl: str = "5m",
+) -> bool:
     if len(cache_paths) >= max_breakpoints:
         return False
     if block.get("cache_control"):
         return False
-    block["cache_control"] = {"type": "ephemeral"}
+    block["cache_control"] = _cache_control_value(cache_ttl)
     cache_paths.append(path)
     return True
 
@@ -29,6 +42,7 @@ def _add_openai_message_cache_control(
     cache_paths: list[str],
     path: str,
     max_breakpoints: int = 4,
+    cache_ttl: str = "5m",
 ) -> bool:
     content = msg.get("content")
     if isinstance(content, list):
@@ -39,12 +53,13 @@ def _add_openai_message_cache_control(
                 cache_paths,
                 f"{path}.content[{block_index}]",
                 max_breakpoints,
+                cache_ttl,
             ):
                 return True
         return False
     if not _normalize_text(content).strip():
         return False
-    return _add_cache_control(msg, cache_paths, path, max_breakpoints)
+    return _add_cache_control(msg, cache_paths, path, max_breakpoints, cache_ttl)
 
 
 def _sanitize_openai_content_blocks(content: list[Any]) -> list[Any]:
@@ -204,6 +219,7 @@ def _apply_openai_compatible_cache_control(
     tools: list[dict],
     cache_layers: Optional[dict[str, str]] = None,
     max_breakpoints: int = 4,
+    cache_ttl: str = "5m",
 ) -> tuple[list[dict], list[dict], list[str]]:
     layers = cache_layers or {}
     cache_paths: list[str] = []
@@ -217,7 +233,11 @@ def _apply_openai_compatible_cache_control(
         for idx, msg in enumerate(cached_messages):
             if msg.get("role") == "system" and _normalize_text(msg.get("content")) == layer_text:
                 _add_openai_message_cache_control(
-                    msg, cache_paths, f"messages[{idx}].system_end", max_breakpoints
+                    msg,
+                    cache_paths,
+                    f"messages[{idx}].system_end",
+                    max_breakpoints,
+                    cache_ttl,
                 )
                 break
         if cache_paths:
@@ -239,12 +259,14 @@ def _apply_openai_compatible_cache_control(
                 cache_paths,
                 f"messages[{island_idx - 1}].before_island",
                 max_breakpoints,
+                cache_ttl,
             )
         _add_openai_message_cache_control(
             cached_messages[island_idx],
             cache_paths,
             f"messages[{island_idx}].memory_island",
             max_breakpoints,
+            cache_ttl,
         )
 
     last_user_idx = -1
@@ -253,7 +275,7 @@ def _apply_openai_compatible_cache_control(
             last_user_idx = idx
 
     if len(cache_paths) < max_breakpoints:
-        for idx in range(last_user_idx - 1, -1, -1):
+        for idx in range(last_user_idx, -1, -1):
             msg = cached_messages[idx]
             if msg.get("role") not in {"user", "assistant"}:
                 continue
@@ -262,6 +284,7 @@ def _apply_openai_compatible_cache_control(
                 cache_paths,
                 f"messages[{idx}]",
                 max_breakpoints,
+                cache_ttl,
             ):
                 break
 
@@ -450,6 +473,7 @@ def _openai_to_anthropic(
     cache_layers: Optional[dict[str, str]] = None,
     cache_paths: Optional[list[str]] = None,
     max_breakpoints: int = 4,
+    cache_ttl: str = "5m",
 ) -> tuple[Optional[list[dict]], list[dict]]:
     layers = cache_layers or {}
     cache_paths = cache_paths if cache_paths is not None else []
@@ -479,6 +503,7 @@ def _openai_to_anthropic(
                                 cache_paths,
                                 f"messages[{len(anthropic_messages) - 1}].before_island",
                                 max_breakpoints,
+                                cache_ttl,
                             )
                             break
             island_text = _normalize_text(content)
@@ -495,6 +520,7 @@ def _openai_to_anthropic(
                 cache_paths,
                 f"messages[{len(anthropic_messages)}].memory_island",
                 max_breakpoints,
+                cache_ttl,
             )
             anthropic_messages.append({"role": "user", "content": [island_block]})
             continue
@@ -507,7 +533,13 @@ def _openai_to_anthropic(
                     continue
                 block = {"type": "text", "text": text}
                 if system_cache_text and text == system_cache_text:
-                    _add_cache_control(block, cache_paths, "system.end", max_breakpoints)
+                    _add_cache_control(
+                        block,
+                        cache_paths,
+                        "system.end",
+                        max_breakpoints,
+                        cache_ttl,
+                    )
                 system_blocks.append(block)
             continue
 
@@ -561,7 +593,7 @@ def _openai_to_anthropic(
             last_user_idx = i
 
     if len(cache_paths) < max_breakpoints:
-        for msg_index in range(last_user_idx - 1, -1, -1):
+        for msg_index in range(last_user_idx, -1, -1):
             content = anthropic_messages[msg_index].get("content")
             if not isinstance(content, list):
                 continue
@@ -569,7 +601,13 @@ def _openai_to_anthropic(
                 block = content[block_index]
                 if not isinstance(block, dict) or block.get("type") == "thinking":
                     continue
-                if _add_cache_control(block, cache_paths, f"messages[{msg_index}].content[{block_index}]", max_breakpoints):
+                if _add_cache_control(
+                    block,
+                    cache_paths,
+                    f"messages[{msg_index}].content[{block_index}]",
+                    max_breakpoints,
+                    cache_ttl,
+                ):
                     break
             else:
                 continue
