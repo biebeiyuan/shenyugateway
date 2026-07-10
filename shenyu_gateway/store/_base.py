@@ -134,6 +134,39 @@ class BaseStoreMixin:
                 CREATE INDEX IF NOT EXISTS idx_raw_request_windows_tag_created
                     ON raw_request_windows(session_tag, created_at DESC);
 
+                CREATE TABLE IF NOT EXISTS context_window_states (
+                    session_id TEXT PRIMARY KEY,
+                    epoch_id TEXT NOT NULL,
+                    base_limit INTEGER,
+                    overflow_messages INTEGER NOT NULL DEFAULT 0,
+                    high_water INTEGER,
+                    window_start_index INTEGER NOT NULL DEFAULT 0,
+                    island_anchor_offset INTEGER NOT NULL DEFAULT 0,
+                    raw_protected_turns INTEGER NOT NULL DEFAULT 0,
+                    island_state_json TEXT NOT NULL DEFAULT '{}',
+                    last_event_class TEXT NOT NULL DEFAULT '',
+                    reset_reason TEXT NOT NULL DEFAULT '',
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
+                );
+
+                CREATE TABLE IF NOT EXISTS context_window_events (
+                    id TEXT PRIMARY KEY,
+                    session_id TEXT NOT NULL,
+                    session_tag TEXT NOT NULL,
+                    event_class TEXT NOT NULL,
+                    epoch_id TEXT NOT NULL,
+                    detail_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_context_window_events_session_created
+                    ON context_window_events(session_id, created_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_context_window_events_created
+                    ON context_window_events(created_at DESC);
+
                 CREATE TABLE IF NOT EXISTS cold_start_snapshots (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,

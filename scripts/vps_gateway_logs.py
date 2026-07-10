@@ -168,6 +168,24 @@ def _http_json(base_url: str, path: str, token: str = "", timeout: float = 30.0)
 
 
 def _ssh_args(args: argparse.Namespace, config: dict[str, Any], remote: str) -> list[str]:
+    explicit_connection = any(
+        value is not None and str(value).strip()
+        for value in (
+            getattr(args, "host", None),
+            getattr(args, "user", None),
+            getattr(args, "port", None),
+            getattr(args, "identity", None),
+        )
+    )
+    alias = (
+        getattr(args, "ssh_alias", None)
+        or _env_first("SHENYU_VPS_SSH_ALIAS", "VPS_SSH_ALIAS")
+        or _config_first(config, "ssh_alias", "vps_ssh_alias")
+        or ("vps" if os.name == "nt" and not explicit_connection else "")
+    )
+    if alias and not explicit_connection:
+        return ["ssh", str(alias), remote]
+
     target = _ssh_target(args, config)
     port = args.port or _config_int(config, "vps_port", "ssh_port", "port")
     identity = (
@@ -259,6 +277,15 @@ def _remote_container_resolver(args: argparse.Namespace, config: dict[str, Any],
             + " --format '{{.Names}}' | head -n 1); "
             + "fi"
         )
+    steps.append(
+        "if [ -z \"$name\" ]; then "
+        + "for candidate in $(docker ps --format '{{.Names}}'); do "
+        + "if docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' \"$candidate\" "
+        + "| grep -qE '^(GATEWAY_DB_PATH|ENABLE_GATEWAY_TOOLS|SHENYU_CLIENT_NAME)='; then "
+        + "name=\"$candidate\"; break; fi; "
+        + "done; "
+        + "fi"
+    )
     if pattern:
         steps.append(
             "if [ -z \"$name\" ]; then "
@@ -659,6 +686,10 @@ def _print_detail_sections(log: dict[str, Any]) -> None:
     if isinstance(client_window, dict):
         print("  client_message_window: " + _json_dumps(client_window))
 
+    memory_island = log.get("memory_island")
+    if isinstance(memory_island, dict) and memory_island:
+        print("  memory_island: " + _json_dumps(memory_island))
+
     cold_start = log.get("cold_start")
     if isinstance(cold_start, dict):
         print("  cold_start: " + _json_dumps(cold_start))
@@ -882,6 +913,7 @@ def build_parser() -> argparse.ArgumentParser:
     api.add_argument("--user", help="SSH user for --via-ssh. Defaults to local config.")
     api.add_argument("--port", type=int, help="SSH port for --via-ssh. Defaults to local config.")
     api.add_argument("--identity", help="SSH identity file for --via-ssh. Defaults to local config.")
+    api.add_argument("--ssh-alias", help="SSH config alias; on Windows this project defaults to 'vps'.")
     api.set_defaults(func=command_api)
 
     local = subparsers.add_parser("local", help="Read retained gateway log JSON files.")
@@ -898,6 +930,7 @@ def build_parser() -> argparse.ArgumentParser:
     ssh.add_argument("--user", help="SSH user. Env: SHENYU_VPS_USER, VPS_USER.")
     ssh.add_argument("--port", type=int)
     ssh.add_argument("--identity", help="SSH identity file.")
+    ssh.add_argument("--ssh-alias", help="SSH config alias; on Windows this project defaults to 'vps'.")
     ssh.add_argument("--tail", type=int, default=200)
     ssh.add_argument("--follow", "-f", action="store_true")
     ssh.add_argument("--container", help="Docker container name/id candidate to tail. Falls back if it is no longer running.")

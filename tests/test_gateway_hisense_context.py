@@ -218,7 +218,8 @@ def test_gateway_tool_policy_reflects_client_tool_surface():
     )
 
     assert "客户端工具只保留日常桌面" in daily_layers["tool_policy"]
-    assert "普通线程不暴露客户端工具" in none_layers["tool_policy"]
+    assert "这是我曾经落下的星星和mem，我浮现起来的记忆。不是和圆圆的对话。" in daily_layers["stable"]
+    assert "普通线程不暴露客户端工具" not in none_layers["tool_policy"]
     assert "客户端递给我的工具；按它自己的说明用" not in none_layers["tool_policy"]
 
 

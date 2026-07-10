@@ -52,6 +52,7 @@ const config = ref<GatewayConfig>({
   upstream_proxy: '',
   upstream_trust_env: false,
   enable_openai_cache_control: true,
+  enable_anthropic_cache_control: true,
   enable_anthropic_auto_thinking: false,
   upstream_extra_body: {},
   upstream_passthrough_headers: ['x-api-key'],
@@ -274,6 +275,7 @@ async function doSave() {
       upstream_proxy: config.value.upstream_proxy,
       upstream_trust_env: config.value.upstream_trust_env,
       enable_openai_cache_control: config.value.enable_openai_cache_control,
+      enable_anthropic_cache_control: config.value.enable_anthropic_cache_control,
       enable_anthropic_auto_thinking: config.value.enable_anthropic_auto_thinking,
       upstream_extra_body: upstreamExtraBody,
       upstream_passthrough_headers: config.value.upstream_passthrough_headers || [],
@@ -529,8 +531,11 @@ function removeModel(index: number) {
             <NFormItem label="读取环境代理">
               <NSwitch v-model:value="config.upstream_trust_env" />
             </NFormItem>
-            <NFormItem label="OpenAI cache_control">
+            <NFormItem label="OpenAI 格式缓存断点">
               <NSwitch v-model:value="config.enable_openai_cache_control" />
+            </NFormItem>
+            <NFormItem label="Anthropic 格式缓存断点">
+              <NSwitch v-model:value="config.enable_anthropic_cache_control" />
             </NFormItem>
             <NFormItem label="Anthropic adaptive thinking">
               <div class="switch-row">

@@ -10,6 +10,7 @@ from ._sessions import SessionsMixin
 from ._messages import MessagesMixin
 from ._pending import PendingTurnsMixin
 from ._snapshots import SnapshotsMixin
+from ._window_state import WindowStateMixin
 from ._cold_start import ColdStartMixin
 from ._heartbeats import HeartbeatsMixin
 from ._cache import CacheMixin
@@ -22,6 +23,7 @@ class GatewayStore(
     MessagesMixin,
     PendingTurnsMixin,
     SnapshotsMixin,
+    WindowStateMixin,
     ColdStartMixin,
     HeartbeatsMixin,
     CacheMixin,

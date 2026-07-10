@@ -8,10 +8,105 @@ from shenyu_gateway.context_layers import (
     trim_client_messages,
     trim_client_tool_system_messages,
 )
+from shenyu_gateway.context_window import (
+    classify_history_event,
+    overflow_messages_for_limit,
+    select_chunked_window,
+)
 from shenyu_gateway.tool_loop import _latest_user_text
 
 
 _tool_safe_trim_start = tool_safe_trim_start
+
+
+def test_context_overflow_defaults_to_20_percent_with_bounds():
+    assert overflow_messages_for_limit(120) == 24
+    assert overflow_messages_for_limit(168) == 32
+    assert overflow_messages_for_limit(220) == 40
+
+
+def test_history_event_classifies_retry_new_user_tool_continuation_and_branch():
+    base = [{"role": "user", "content": "u1"}]
+    assert classify_history_event(base, base)["event_class"] == "retry"
+    assert classify_history_event(
+        base,
+        base + [{"role": "assistant", "content": "a1"}, {"role": "user", "content": "u2"}],
+    )["event_class"] == "new_user"
+    assert classify_history_event(
+        base,
+        base
+        + [
+            {
+                "role": "assistant",
+                "tool_calls": [{"id": "call_a", "function": {"name": "visit_web", "arguments": "{}"}}],
+            },
+            {"role": "tool", "tool_call_id": "call_a", "content": "page"},
+        ],
+    )["event_class"] == "client_tool_continuation"
+    previous = base + [{"role": "assistant", "content": "a1"}, {"role": "user", "content": "u2"}]
+    branch = [{"role": "user", "content": "changed u1"}, {"role": "assistant", "content": "a1"}]
+    assert classify_history_event(previous, branch)["event_class"] == "branch"
+
+
+def test_chunked_window_keeps_start_until_high_water_then_resets():
+    messages = [{"role": "user", "content": f"m{index}"} for index in range(170)]
+    first, state, meta = select_chunked_window(
+        messages,
+        limit=168,
+        previous_state=None,
+        event_class="initial",
+    )
+    assert len(first) == 168
+    assert state["window_start_index"] == 2
+    assert state["island_anchor_offset"] == 136
+    assert meta["context_high_water"] == 200
+
+    appended = messages + [{"role": "user", "content": f"m{index}"} for index in range(170, 200)]
+    second, same_epoch, second_meta = select_chunked_window(
+        appended,
+        limit=168,
+        previous_state=state,
+        event_class="new_user",
+    )
+    assert len(second) == 198
+    assert same_epoch["epoch_id"] == state["epoch_id"]
+    assert second_meta["context_epoch_reset"] is False
+
+    overflowed = appended + [
+        {"role": "user", "content": "m200"},
+        {"role": "assistant", "content": "a200"},
+        {"role": "user", "content": "m201"},
+    ]
+    third, reset_state, third_meta = select_chunked_window(
+        overflowed,
+        limit=168,
+        previous_state=same_epoch,
+        event_class="new_user",
+    )
+    assert len(third) == 168
+    assert reset_state["epoch_id"] != state["epoch_id"]
+    assert third_meta["context_epoch_reset_reason"] == "message_high_water"
+
+
+def test_chunked_window_never_splits_latest_tool_group():
+    messages = [
+        {"role": "user", "content": "old"},
+        {"role": "assistant", "content": "old reply"},
+        {"role": "user", "content": "read it"},
+        {
+            "role": "assistant",
+            "tool_calls": [{"id": "call_a", "function": {"name": "read_file", "arguments": "{}"}}],
+        },
+        {"role": "tool", "tool_call_id": "call_a", "content": "file"},
+    ]
+    selected, state, _meta = select_chunked_window(
+        messages,
+        limit=2,
+        previous_state=None,
+        event_class="initial",
+    )
+    assert [message["role"] for message in selected] == ["user", "assistant", "tool"]
+    assert state["raw_protected_turns"] == 1
 
 
 def test_tool_safe_trim_start_includes_user_and_assistant_for_retained_tool_result():
@@ -210,7 +305,7 @@ def test_tool_safe_trim_start_drops_incomplete_assistant_tool_turn():
     assert _tool_safe_trim_start(messages, 1) == 3
 
 
-def test_mem_and_heartbeat_layers_sit_after_calendar_before_tools_and_chat_history():
+def test_mem_island_sits_after_system_layers_before_recent_chat_history():
     client_messages = [{"role": "user", "content": "hello"}]
     layers = {
         "stable": "stable block",
@@ -224,16 +319,17 @@ def test_mem_and_heartbeat_layers_sit_after_calendar_before_tools_and_chat_histo
 
     messages, meta = assemble_layered_messages(client_messages, layers)
 
-    assert meta == {}
+    assert meta == {"memory_island_insert_index": 5, "memory_island_anchor_offset": 0}
     assert [msg["content"] for msg in messages] == [
         "stable block",
         "## Calendar Memory\ncalendar block",
-        "## 我之前写下的便签，可能用的到。\n- mem block",
         "## 我之前的心跳\nheartbeat block",
         "## 工具怎么用\ntool block",
         "## Heartbeat\nformat block",
+        "## 我之前写下的便签，可能用的到。\n- mem block",
         "hello",
     ]
+    assert messages[-2]["_shenyu_context_layer"] == "memory_island"
 
 
 def test_trim_client_extra_bundle_attachments_keeps_latest_three_user_bundles():

@@ -318,13 +318,20 @@ def test_active_cold_start_snapshot_survives_one_full_window(tmp_path):
         max_injections=5,
     )
 
-    assert maybe_prepare_cold_start_snapshot(
+    full_window_snapshot = maybe_prepare_cold_start_snapshot(
         target,
         is_first_turn=False,
         current_message_count=5,
         cfg=cfg,
         store=store,
-    ) is None
+    )
+    assert [msg["content"] for source in full_window_snapshot["sources"] for msg in source["messages"]] == [
+        "source 0",
+        "source 1",
+        "source 2",
+        "source 3",
+        "source 4",
+    ]
     assert store.latest_active_cold_start_snapshot(target["id"]) is not None
 
     snapshot = maybe_prepare_cold_start_snapshot(
@@ -336,6 +343,8 @@ def test_active_cold_start_snapshot_survives_one_full_window(tmp_path):
     )
 
     assert [msg["content"] for source in snapshot["sources"] for msg in source["messages"]] == [
+        "source 0",
+        "source 1",
         "source 2",
         "source 3",
         "source 4",
@@ -514,3 +523,41 @@ def test_config_overrides_round_trip(tmp_path):
     result = store.load_config_overrides()
     assert result["WAKE_WELCOME_MESSAGE"] == "updated"
     assert result["UPSTREAM_URL"] == "https://example.com"
+
+
+def test_context_window_state_round_trip(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("window-state", "operit")
+    stored = store.upsert_context_window_state(
+        session["id"],
+        {
+            "epoch_id": "epoch_1",
+            "base_limit": 168,
+            "overflow_messages": 32,
+            "high_water": 200,
+            "window_start_index": 12,
+            "island_anchor_offset": 136,
+            "raw_protected_turns": 18,
+            "island_state": {"rendered_text": "island"},
+            "last_event_class": "new_user",
+            "reset_reason": "",
+        },
+    )
+
+    assert stored["epoch_id"] == "epoch_1"
+    restored = store.get_context_window_state(session["id"])
+    assert restored["window_start_index"] == 12
+    assert restored["island_anchor_offset"] == 136
+    assert restored["island_state"] == {"rendered_text": "island"}
+
+    store.log_context_window_event(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        event_class="new_user",
+        epoch_id="epoch_1",
+        detail={"client_non_system_retained": 170, "context_epoch_reset": False},
+    )
+    events = store.list_context_window_events(session_tag="window-state")
+    assert len(events) == 1
+    assert events[0]["event_class"] == "new_user"
+    assert events[0]["detail"]["client_non_system_retained"] == 170

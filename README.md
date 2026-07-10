@@ -183,14 +183,14 @@ Context is assembled in the order Shenyu should wake into it:
 
 | Layer | Placement | Contents | Cache policy |
 |---|---|---|---|
-| request tools | request tools | client tools + `shenyu_*` / `supabase_*` tools | breakpoint at `tools[-1]` |
-| `stable` | first system message | stable charter and optional wake welcome message | breakpoint |
-| `slow` | second system message when present | calendar memory, Hisense notebook/recap | breakpoint |
-| `mem` | after `slow`, before heartbeat | selected stars, then active mem notes headed by `## 我之前写下的便签，可能用的到。` | no breakpoint |
-| `heartbeat` | after `mem`, before tool/format reminders | `## 我之前的心跳` and optional Hisense heartbeat block | no breakpoint |
-| `tool_policy` | after heartbeat | compact gateway/client tool reminder rendered as `## 工具怎么用` | no breakpoint |
-| `format` | after tool policy | heartbeat and star format instructions | no breakpoint |
-| client history | original messages | trimmed client messages when `MAX_CLIENT_MESSAGES` is set | fallback breakpoint only if one is free |
+| request tools | request tools | client tools + `shenyu_*` / `supabase_*` tools | no dedicated breakpoint |
+| `stable` | start of the system prefix | stable charter, wake welcome message, and the memory-island reading policy | covered by `system.end` |
+| `slow` | system prefix after `stable` | calendar memory, Hisense notebook/recap | covered by `system.end` |
+| `heartbeat` | system prefix after `slow` | `## 我之前的心跳` and optional Hisense heartbeat block | covered by `system.end` |
+| `tool_policy` | system prefix after heartbeat | compact gateway/client tool reminder rendered as `## 工具怎么用` | covered by `system.end` |
+| `format` | end of the system prefix | heartbeat and star format instructions | `system.end` uses the last non-empty system layer |
+| `mem` | between fixed older history and the recent chat tail | stateful star/Mem memory island | breakpoint before and at the end of the island |
+| client history | after the system prefix | chunk-trimmed client messages and an optional cold-start bridge | rolling-tail breakpoint when a slot is free |
 | current user | latest user message | current request | no breakpoint |
 
 The retired rolling and frozen context layers have been removed from the active flow. Their legacy SQLite tables are only cleaned up during session deletion when they exist in an older database.
@@ -201,16 +201,31 @@ The retired rolling and frozen context layers have been removed from the active 
 
 ## Prompt Cache
 
-The gateway adds Anthropic-compatible `cache_control` markers on stable prefixes. With a full set of layers, the intended breakpoints are:
+Prompt cache breakpoints are controlled independently for each upstream payload format:
+
+- `ENABLE_OPENAI_CACHE_CONTROL=true` enables markers on OpenAI-compatible payloads.
+- `ENABLE_ANTHROPIC_CACHE_CONTROL=true` enables markers on native Anthropic payloads.
+
+Both default to enabled and can also be changed independently in the admin configuration page. OpenAI-compatible relays still need to support the Anthropic-style `cache_control` extension.
+
+With a memory island and enough history, the gateway uses up to four logical breakpoints:
 
 ```text
-tools[-1]
-messages[0].stable
-messages[1].slow
-messages[n].format
+system.end
+history.before_island
+memory_island.end
+history.rolling_tail
 ```
 
-The `format` breakpoint follows the current reading order, so it also covers any preceding star, mem, heartbeat, and tool-policy blocks. If a star or mem note appears and changes the prefix, that breakpoint may miss, while the earlier tools/stable/slow breakpoints remain usable. If tools, `slow`, or `format` are empty and a breakpoint slot is still free, the gateway may use the remaining slot on the previous stable conversation message.
+The concrete JSON paths differ between Anthropic and OpenAI-compatible payloads, but both adapters use the same logical boundaries. If the island changes, the island-end breakpoint is rewritten while the prefix before the island can still hit. The rolling-tail breakpoint extends caching into recent conversation history.
+
+`MAX_CLIENT_MESSAGES` is the base window size `L`. The overflow block is approximately 20% of `L`, rounded to a multiple of four and clamped to 20–40 messages. The window grows to high-water `H = L + overflow`, then trims once at a complete human/tool turn boundary back toward `L`. Between trims, the retained history start and memory-island anchor remain fixed. Active client tool continuations defer a high-water trim so a tool call cannot be separated from its result. Changing `MAX_CLIENT_MESSAGES`, rebuilding a branch, or starting a new window creates a new context epoch. Cold-start bridge history uses the same effective window size.
+
+Window and island decisions are written without message content to SQLite. Inspect them with:
+
+```bash
+python scripts/context_window_observer.py --db data/shenyu_gateway.db
+```
 
 Real cache hits still depend on the upstream or OpenAI-compatible relay honoring Anthropic `cache_control`. Check:
 
@@ -912,6 +927,7 @@ UPSTREAM_PROTOCOL=openai
 UPSTREAM_PROXY=
 UPSTREAM_TRUST_ENV=false
 ENABLE_OPENAI_CACHE_CONTROL=true
+ENABLE_ANTHROPIC_CACHE_CONTROL=true
 ENABLE_ANTHROPIC_AUTO_THINKING=false
 UPSTREAM_EXTRA_BODY=
 UPSTREAM_PASSTHROUGH_HEADERS=

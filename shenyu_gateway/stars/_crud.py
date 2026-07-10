@@ -9,7 +9,7 @@ from ._chord import _chord_parts, _split_chord_sequence
 from ._helpers import (
     _cfg_float, _json_dict, _node_id, _id_list, _safe_int, _safe_float,
     _star_search_text, _token_overlap,
-    parse_star_payload, STAR_TABLE, STAR_LINK_TABLE, STAR_SELECT,
+    parse_star_payload, STAR_TABLE, STAR_LINK_TABLE, STAR_SELECT, STAR_CANDIDATE_TABLE,
     STAR_RANKER_VERSION,
 )
 from ._scene import _classify_scene_by_keywords, _classify_scene_by_embedding, _load_scene_config
@@ -290,6 +290,8 @@ class CrudMixin:
         session_tag: Optional[str] = None,
         session_id: Optional[str] = None,
         limit: Optional[int] = None,
+        mark_activation: bool = True,
+        ignore_recent_fatigue: bool = False,
         trace_log: Optional[dict] = None,
     ) -> dict[str, Any]:
         if not getattr(self.cfg, "inject_stars", True):
@@ -305,9 +307,51 @@ class CrudMixin:
             session_tag=session_tag,
             session_id=session_id,
             limit=self._inject_limit(limit),
-            shown=True,
+            shown=mark_activation,
+            injected=mark_activation,
+            mark_activation=mark_activation,
+            ignore_recent_fatigue=ignore_recent_fatigue,
+            trace_log=trace_log,
+        )
+
+    async def activate_context_items(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        trigger_text: str,
+        session_tag: Optional[str],
+        session_id: Optional[str],
+        trace_log: Optional[dict] = None,
+    ) -> None:
+        selected = [
+            {"row": item, "final_score": item.get("score") or 0.0}
+            for item in items
+            if item.get("id")
+        ]
+        if not selected:
+            return
+        candidate_ids = [str(item.get("candidate_id") or "") for item in items if item.get("candidate_id")]
+        if candidate_ids:
+            try:
+                await self.supabase.update(
+                    STAR_CANDIDATE_TABLE,
+                    {"id": "in.(" + ",".join(candidate_ids) + ")"},
+                    {"shown": True, "injected": True},
+                )
+            except Exception as exc:
+                logger.warning(
+                    "[Star] Failed to mark context candidates activated: ids=%s error=%s",
+                    ",".join(candidate_ids),
+                    exc,
+                )
+        await self._mark_activated(
+            selected,
+            run_id=next((item.get("run_id") for item in items if item.get("run_id")), None),
+            surface="chat_inject",
+            trigger_text=trigger_text,
+            session_tag=session_tag,
+            session_id=session_id,
             injected=True,
-            mark_activation=True,
             trace_log=trace_log,
         )
 

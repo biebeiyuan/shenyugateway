@@ -10,6 +10,7 @@ from shenyu_gateway.store import GatewayStore
 
 DEFAULTED_ENV_KEYS = [
     "ENABLE_OPENAI_CACHE_CONTROL",
+    "ENABLE_ANTHROPIC_CACHE_CONTROL",
     "ENABLE_ANTHROPIC_AUTO_THINKING",
     "ANTHROPIC_DEFAULT_MAX_TOKENS",
     "UPSTREAM_PROVIDER_ORDER_ENABLED",
@@ -39,6 +40,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     cfg = RuntimeConfig()
 
     assert cfg.enable_openai_cache_control is True
+    assert cfg.enable_anthropic_cache_control is True
     assert cfg.enable_anthropic_auto_thinking is False
     assert cfg.anthropic_default_max_tokens == 128000
     assert cfg.upstream_extra_body == {}
@@ -236,6 +238,26 @@ def test_config_update_saves_anthropic_auto_thinking(monkeypatch):
     assert "enable_anthropic_auto_thinking" in payload["changed"]
     assert gateway.cfg.enable_anthropic_auto_thinking is True
     assert persisted[-1]["ENABLE_ANTHROPIC_AUTO_THINKING"] == "true"
+
+
+def test_config_update_saves_anthropic_cache_control(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "enable_anthropic_cache_control", True)
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"enable_anthropic_cache_control": False},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["enable_anthropic_cache_control"] is False
+    assert "enable_anthropic_cache_control" in payload["changed"]
+    assert gateway.cfg.enable_anthropic_cache_control is False
+    assert persisted[-1]["ENABLE_ANTHROPIC_CACHE_CONTROL"] == "false"
 
 
 def test_config_update_saves_anthropic_default_max_tokens(monkeypatch):

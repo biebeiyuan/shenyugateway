@@ -28,6 +28,7 @@ class RecallMixin:
         shown: bool,
         injected: bool,
         mark_activation: bool,
+        ignore_recent_fatigue: bool = False,
         trace_log: Optional[dict] = None,
     ) -> dict[str, Any]:
         if not self.supabase:
@@ -48,7 +49,14 @@ class RecallMixin:
         )
         if not rows:
             return {"ok": True, "query": clean_query, "count": 0, "items": []}
-        scored = await self._score_rows(query=clean_query, rows=rows, seed=None, surface=surface, trace_log=trace_log)
+        scored = await self._score_rows(
+            query=clean_query,
+            rows=rows,
+            seed=None,
+            surface=surface,
+            ignore_recent_fatigue=ignore_recent_fatigue,
+            trace_log=trace_log,
+        )
         _mark_request_log_phase(trace_log, "stars.score_done", detail={"scored": len(scored)})
         selected = await self._select_for_surface(scored, limit=max(1, min(int(limit or 3), 30)), surface=surface)
         run_id = await self._log_run_and_candidates(
@@ -259,13 +267,14 @@ class RecallMixin:
         rows: list[dict[str, Any]],
         seed: Optional[dict[str, Any]],
         surface: str = "",
+        ignore_recent_fatigue: bool = False,
         trace_log: Optional[dict] = None,
     ) -> list[dict[str, Any]]:
         star_ids = [_node_id(row.get("id")) for row in rows if row.get("id")]
         _mark_request_log_phase(trace_log, "stars.activity_features_start", detail={"star_ids": len(star_ids)})
         actr_scores, ignored_penalties, negative_set, recent_fatigue = await self._activity_features(
             star_ids,
-            include_recent_fatigue=surface == "chat_inject",
+            include_recent_fatigue=surface == "chat_inject" and not ignore_recent_fatigue,
             trace_log=trace_log,
         )
         _mark_request_log_phase(

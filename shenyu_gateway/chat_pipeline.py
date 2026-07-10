@@ -146,6 +146,7 @@ class ChatPipeline:
             "original_messages_count": len(body.messages),
             "prepared_messages_count": 0,
             "client_message_window": {},
+            "memory_island": {},
             "cold_start": {
                 "injected": False,
                 "snapshot_id": None,
@@ -236,6 +237,7 @@ class ChatPipeline:
             "original_messages_count": len(body.messages),
             "prepared_messages_count": len(prepared_messages),
             "client_message_window": meta.get("client_message_window", {}),
+            "memory_island": (meta.get("package") or {}).get("memory_island_decision") or {},
             "cold_start": {
                 "injected": bool(meta.get("cold_start_snapshot")),
                 "snapshot_id": (meta.get("cold_start_snapshot") or {}).get("id"),
@@ -265,7 +267,11 @@ class ChatPipeline:
                 for key, value in meta.get("cache_layers", {}).items()
             },
             "prompt_cache": {
-                "enabled": request_upstream["protocol"] == "anthropic",
+                "enabled": (
+                    bool(getattr(self.cfg, "enable_anthropic_cache_control", True))
+                    if request_upstream["protocol"] == "anthropic"
+                    else bool(getattr(self.cfg, "enable_openai_cache_control", True))
+                ),
                 "protocol": request_upstream["protocol"],
                 "upstream_scope": request_upstream["scope"],
                 "breakpoints": [],

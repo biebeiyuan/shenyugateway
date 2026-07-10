@@ -10,13 +10,18 @@ from fastapi import Request
 from .chat_archive import ChatArchiveService, archive_window_safely
 from .context_layers import (
     assemble_layered_messages,
+    bridge_messages_from_snapshot,
     non_system_message_count as _non_system_message_count,
     trim_client_extra_bundle_attachments as _trim_client_extra_bundle_attachments,
     trim_client_image_blocks as _trim_client_image_blocks,
-    trim_client_messages as _trim_client_messages,
     trim_client_tool_system_messages as _trim_client_tool_system_messages,
     trim_cold_start_sources as _trim_cold_start_sources,
     trim_package_install_tool_results as _trim_package_install_tool_results,
+)
+from .context_window import (
+    classify_history_event,
+    insert_bridge_messages,
+    select_chunked_window,
 )
 from .gateway_tools import GatewayToolService
 from .private_capture import is_room_mode as _is_room_mode
@@ -62,19 +67,6 @@ def cold_start_idle_minutes(session: dict) -> float:
     return max((_now() - last_active).total_seconds() / 60.0, 0.0)
 
 
-def _trim_cold_start_snapshot(snapshot: dict, fill_count: int) -> Optional[dict]:
-    fill_count = max(int(fill_count or 0), 0)
-    if fill_count <= 0:
-        return None
-    trimmed = dict(snapshot)
-    trimmed["sources"] = _trim_cold_start_sources(trimmed.get("sources") or [], fill_count)
-    trimmed["source_message_count"] = sum(len(source.get("messages") or []) for source in trimmed.get("sources") or [])
-    trimmed["source_session_tags"] = sorted(
-        {source.get("session_tag") for source in trimmed.get("sources") or [] if source.get("session_tag")}
-    )
-    return trimmed if trimmed["source_message_count"] > 0 else None
-
-
 def maybe_prepare_cold_start_snapshot(
     session: dict,
     is_first_turn: bool,
@@ -86,28 +78,29 @@ def maybe_prepare_cold_start_snapshot(
     if not cfg.enable_cold_start:
         return None
 
-    target_messages = cfg.cold_start_message_limit or cfg.max_client_messages or 8
+    target_messages = cfg.max_client_messages or cfg.cold_start_message_limit or 8
     fill_count = max(int(target_messages) - max(int(current_message_count or 0), 0), 0)
 
     active = store.latest_active_cold_start_snapshot(session["id"])
     if active:
-        return _trim_cold_start_snapshot(active, fill_count)
+        return active
 
     if fill_count <= 0:
         return None
 
     pending_next_request = store.latest_next_request_cold_start_snapshot()
     if pending_next_request:
+        pending_sources = _trim_cold_start_sources(pending_next_request.get("sources") or [], fill_count)
         bound = store.write_cold_start_snapshot(
             session_id=session["id"],
             session_tag=session["session_tag"],
             reason=pending_next_request.get("reason") or f"manual_preview:{NEXT_REQUEST_COLD_START_TAG}",
-            sources=pending_next_request.get("sources") or [],
+            sources=pending_sources,
             trigger_last_active_at=session.get("last_active_at"),
             max_injections=max(int(target_messages or 8), 1),
         )
         store.complete_cold_start_snapshot(pending_next_request["id"])
-        return _trim_cold_start_snapshot(bound, fill_count)
+        return bound
 
     reason = ""
     since = None
@@ -132,15 +125,16 @@ def maybe_prepare_cold_start_snapshot(
     if not sources:
         return None
 
+    fixed_sources = _trim_cold_start_sources(sources, fill_count)
     snapshot = store.write_cold_start_snapshot(
         session_id=session["id"],
         session_tag=session["session_tag"],
         reason=reason,
-        sources=sources,
+        sources=fixed_sources,
         trigger_last_active_at=session.get("last_active_at"),
         max_injections=max(cfg.max_client_messages or cfg.cold_start_message_limit or 8, 1),
     )
-    return _trim_cold_start_snapshot(snapshot, fill_count)
+    return snapshot
 
 
 def prune_runtime_state(*, cfg: Any, store: Any, session_id: Optional[str] = None) -> dict[str, int]:
@@ -283,6 +277,9 @@ async def prepare_messages(
     raw_messages = [message.model_dump(exclude_none=True) for message in body.messages]
     raw_messages_for_storage, _ = _trim_client_image_blocks(raw_messages, keep_recent_messages=0)
     raw_user_text = _latest_user_text(raw_messages_for_storage)
+    previous_raw_windows = store.get_recent_raw_request_windows(session["id"], limit=1)
+    previous_raw_messages = previous_raw_windows[0].get("messages") if previous_raw_windows else None
+    event_meta = classify_history_event(previous_raw_messages, raw_messages_for_storage)
     store.write_raw_request_window(
         session_id=session["id"],
         session_tag=session_tag,
@@ -296,7 +293,32 @@ async def prepare_messages(
         now_iso=_iso_now(),
         detail={"raw_messages": len(raw_messages_for_storage)},
     )
-    messages, trim_meta = _trim_client_messages(raw_messages, cfg.max_client_messages)
+    is_hisense = deps.is_hisense_client(client_name)
+    raw_message_count = _non_system_message_count(raw_messages)
+    cold_start_snapshot = None
+    if not is_hisense:
+        cold_start_snapshot = deps.maybe_prepare_cold_start_snapshot(session, is_first_turn, raw_message_count)
+    bridge_messages = bridge_messages_from_snapshot(cold_start_snapshot)
+    window_input = insert_bridge_messages(raw_messages, bridge_messages)
+    previous_window_state = store.get_context_window_state(session["id"])
+    messages, window_state, trim_meta = select_chunked_window(
+        window_input,
+        limit=cfg.max_client_messages,
+        previous_state=previous_window_state,
+        event_class=event_meta["event_class"],
+    )
+    trim_meta.update(event_meta)
+    trim_meta["cold_start_bridge_messages"] = max(
+        0,
+        len(bridge_messages) - int(window_state.get("window_start_index") or 0),
+    )
+    if cold_start_snapshot and bridge_messages and trim_meta["cold_start_bridge_messages"] == 0:
+        store.complete_cold_start_snapshot(cold_start_snapshot["id"])
+        window_state["window_start_index"] = max(
+            0,
+            int(window_state.get("window_start_index") or 0) - len(bridge_messages),
+        )
+        cold_start_snapshot = None
     client_tool_surface = str(getattr(cfg, "client_tool_surface", "all") or "all").strip().lower()
     messages, tool_system_trim_meta = _trim_client_tool_system_messages(
         messages,
@@ -321,7 +343,6 @@ async def prepare_messages(
     )
     user_text = _latest_user_text(messages)
     current_message_count = _non_system_message_count(messages)
-    is_hisense = deps.is_hisense_client(client_name)
     upstream = deps.upstream_for_hisense(is_hisense)
     archive_service = ChatArchiveService(store, deps.supabase_client, cfg)
     if archive_service.enabled():
@@ -334,14 +355,17 @@ async def prepare_messages(
                 is_hisense=is_hisense,
             )
         )
-    cold_start_snapshot = None
-    if not is_hisense:
-        cold_start_snapshot = deps.maybe_prepare_cold_start_snapshot(session, is_first_turn, current_message_count)
     _mark_request_log_phase(
         log_entry,
         "prepare.cold_start_checked",
         now_iso=_iso_now(),
-        detail={"injected": bool(cold_start_snapshot), "is_first_turn": is_first_turn},
+        detail={
+            "injected": bool(cold_start_snapshot),
+            "is_first_turn": is_first_turn,
+            "event_class": event_meta["event_class"],
+            "epoch_id": window_state["epoch_id"],
+            "epoch_reset": window_state["epoch_reset"],
+        },
     )
     snapshot_messages, _ = _trim_client_image_blocks(messages, keep_recent_messages=0)
     store.write_request_context_snapshot(
@@ -389,6 +413,14 @@ async def prepare_messages(
         )
         messages, layer_meta = assemble_layered_messages(messages, layers, cold_start_snapshot=None)
         trim_meta.update(layer_meta)
+        store.upsert_context_window_state(session["id"], window_state)
+        store.log_context_window_event(
+            session_id=session["id"],
+            session_tag=session["session_tag"],
+            event_class=event_meta["event_class"],
+            epoch_id=window_state["epoch_id"],
+            detail={**trim_meta, "is_room": True},
+        )
         _mark_request_log_phase(log_entry, "prepare.done", now_iso=_iso_now(), detail={"prepared_messages": len(messages), "mode": "room"})
         return messages, {
             "session": session,
@@ -400,18 +432,34 @@ async def prepare_messages(
             "client_message_window": trim_meta,
             "pending_gateway_tool_turn_ids": pending_gateway_meta.get("pending_gateway_tool_turn_ids", []),
             "cold_start_snapshot": None,
+            "context_window_state": window_state,
+            "context_event": event_meta,
             "is_hisense": False,
             "is_room": True,
             "upstream": upstream,
         }
 
     # ── Normal / Hisense Path ──────────────────────────────────────
+    previous_island_state = window_state.get("island_state") or {}
+    if not previous_island_state and cold_start_snapshot:
+        for source in reversed(cold_start_snapshot.get("sources") or []):
+            source_session_id = source.get("session_id")
+            if not source_session_id:
+                continue
+            source_window_state = store.get_context_window_state(str(source_session_id)) or {}
+            previous_island_state = source_window_state.get("island_state") or {}
+            if previous_island_state:
+                break
+
     package = await builder.build_context_package(
         session,
         current_user_text=user_text,
         is_first_turn=is_first_turn,
         cold_start_snapshot=cold_start_snapshot,
         client_name=client_name,
+        context_event=event_meta,
+        previous_island_state=previous_island_state,
+        force_island_rewrite=event_meta["event_class"] == "branch",
         trace_log=log_entry,
     )
     _mark_request_log_phase(
@@ -425,6 +473,7 @@ async def prepare_messages(
         },
     )
     layers = builder.render_layered_additions(package)
+    window_state["island_state"] = package.get("memory_island_state") or {}
     _mark_request_log_phase(
         log_entry,
         "prepare.layers_rendered",
@@ -435,9 +484,22 @@ async def prepare_messages(
     messages, layer_meta = assemble_layered_messages(
         messages,
         layers,
-        cold_start_snapshot=cold_start_snapshot,
+        cold_start_snapshot=None,
+        memory_island_anchor_offset=window_state.get("island_anchor_offset"),
     )
     trim_meta.update(layer_meta)
+    store.upsert_context_window_state(session["id"], window_state)
+    store.log_context_window_event(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        event_class=event_meta["event_class"],
+        epoch_id=window_state["epoch_id"],
+        detail={
+            **trim_meta,
+            "memory_island_decision": package.get("memory_island_decision") or {},
+            "memory_island_version": (package.get("memory_island_state") or {}).get("version"),
+        },
+    )
     _mark_request_log_phase(
         log_entry,
         "prepare.done",
@@ -455,6 +517,8 @@ async def prepare_messages(
         "client_message_window": trim_meta,
         "pending_gateway_tool_turn_ids": pending_gateway_meta.get("pending_gateway_tool_turn_ids", []),
         "cold_start_snapshot": cold_start_snapshot,
+        "context_window_state": window_state,
+        "context_event": event_meta,
         "is_hisense": is_hisense,
         "upstream": upstream,
     }

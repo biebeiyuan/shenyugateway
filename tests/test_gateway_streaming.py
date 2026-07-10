@@ -414,7 +414,7 @@ def test_openai_compatible_tool_schema_defaults_are_type_safe():
     assert "default" not in props["bad_expr"]
 
 
-def test_openai_compatible_cache_control_uses_format_layer_as_fourth_breakpoint():
+def test_openai_compatible_cache_control_uses_system_end_and_tail_breakpoints():
     messages = [
         {"role": "system", "content": "stable block"},
         {"role": "system", "content": "calendar block"},
@@ -433,11 +433,11 @@ def test_openai_compatible_cache_control_uses_format_layer_as_fourth_breakpoint(
         cache_layers={"stable": "stable block", "slow": "calendar block", "format": "format block"},
     )
 
-    assert cache_paths == ["tools[-1]", "messages[0].stable", "messages[1].slow", "messages[5].format"]
-    assert cached_messages[0]["cache_control"] == {"type": "ephemeral"}
-    assert cached_messages[1]["cache_control"] == {"type": "ephemeral"}
+    assert cache_paths == ["messages[5].system_end", "messages[6]"]
     assert cached_messages[5]["cache_control"] == {"type": "ephemeral"}
-    assert "cache_control" not in cached_messages[6]
+    assert cached_messages[6]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in cached_messages[0]
+    assert "cache_control" not in cached_messages[1]
 
 
 def test_anthropic_cache_control_marks_format_layer_after_reading_order_prefix():
@@ -457,10 +457,10 @@ def test_anthropic_cache_control_marks_format_layer_after_reading_order_prefix()
         cache_paths=cache_paths,
     )
 
-    assert cache_paths == ["system.stable", "system.slow", "system.format"]
-    assert system[0]["cache_control"] == {"type": "ephemeral"}
-    assert system[1]["cache_control"] == {"type": "ephemeral"}
+    assert cache_paths == ["system.end"]
     assert system[5]["cache_control"] == {"type": "ephemeral"}
+    assert "cache_control" not in system[0]
+    assert "cache_control" not in system[1]
     assert [block["text"] for block in system] == [
         "stable block",
         "calendar block",
@@ -470,6 +470,53 @@ def test_anthropic_cache_control_marks_format_layer_after_reading_order_prefix()
         "format block",
     ]
     assert messages == [{"role": "user", "content": [{"type": "text", "text": "hello"}]}]
+
+
+def test_cache_control_wraps_memory_island_with_fallback_breakpoints_for_both_protocols():
+    source_messages = [
+        {"role": "system", "content": "format block"},
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "old answer"},
+        {
+            "role": "system",
+            "content": "memory island",
+            "_shenyu_context_layer": "memory_island",
+        },
+        {"role": "user", "content": "recent question"},
+        {"role": "assistant", "content": "recent answer"},
+        {"role": "user", "content": "current question"},
+    ]
+    layers = {"format": "format block", "mem": "memory island"}
+
+    cached_messages, _tools, openai_paths = _apply_openai_compatible_cache_control(
+        source_messages,
+        [],
+        cache_layers=layers,
+    )
+    assert openai_paths == [
+        "messages[0].system_end",
+        "messages[2].before_island",
+        "messages[3].memory_island",
+        "messages[5]",
+    ]
+    assert "_shenyu_context_layer" not in cached_messages[3]
+
+    anthropic_paths: list[str] = []
+    system, anthropic_messages = _openai_to_anthropic(
+        source_messages,
+        cache_layers=layers,
+        cache_paths=anthropic_paths,
+    )
+    assert anthropic_paths == [
+        "system.end",
+        "messages[1].before_island",
+        "messages[2].memory_island",
+        "messages[4].content[0]",
+    ]
+    assert [block["text"] for block in system] == ["format block"]
+    assert anthropic_messages[2]["role"] == "user"
+    assert "<memory_island" in anthropic_messages[2]["content"][0]["text"]
+    assert "memory island" in anthropic_messages[2]["content"][0]["text"]
 
 
 def _contains_cache_control(value):
@@ -620,6 +667,55 @@ def test_build_upstream_request_omits_openai_cache_control_when_disabled(monkeyp
 
     assert cache_meta["enabled"] is False
     assert cache_meta["breakpoints"] == []
+    assert _contains_cache_control(payload) is False
+
+
+def test_build_upstream_request_omits_anthropic_cache_control_when_disabled(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "anthropic")
+    monkeypatch.setenv("UPSTREAM_URL", "https://api.anthropic.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_ANTHROPIC_CACHE_CONTROL", "false")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "client_tool",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                }
+            ],
+        )
+
+        payload, _, _, cache_meta, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[
+                    {"role": "system", "content": "stable"},
+                    {"role": "user", "content": "old question"},
+                    {"role": "assistant", "content": "old answer"},
+                    {
+                        "role": "system",
+                        "content": "memory island",
+                        "_shenyu_context_layer": "memory_island",
+                    },
+                    {"role": "user", "content": "hello"},
+                ],
+                meta={"cache_layers": {"stable": "stable", "mem": "memory island"}},
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert cache_meta["enabled"] is False
+    assert cache_meta["breakpoints"] == []
+    assert "ENABLE_ANTHROPIC_CACHE_CONTROL" in cache_meta["note"]
     assert _contains_cache_control(payload) is False
 
 

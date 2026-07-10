@@ -293,7 +293,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 if latest_windows:
                     preview_current_message_count = int(latest_windows[0].get("message_count") or 0)
         sources = []
-        target_messages = cfg.cold_start_message_limit or cfg.max_client_messages or 8
+        target_messages = cfg.max_client_messages or cfg.cold_start_message_limit or 8
         preview_fill_count = (
             max(int(target_messages) - preview_current_message_count, 0)
             if preview_current_message_count is not None

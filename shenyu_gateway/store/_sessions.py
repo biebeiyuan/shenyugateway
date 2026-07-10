@@ -165,6 +165,10 @@ class SessionsMixin:
                 "SELECT COUNT(*) AS count FROM pending_gateway_tool_turns WHERE session_id = ? AND consumed_at IS NULL",
                 (session_id,),
             ).fetchone()
+            window_event_count = conn.execute(
+                "SELECT COUNT(*) AS count FROM context_window_events WHERE session_id = ?",
+                (session_id,),
+            ).fetchone()
             return {
                 "messages": int(message_counts["total"] or 0),
                 "user_messages": int(message_counts["user_count"] or 0),
@@ -176,10 +180,13 @@ class SessionsMixin:
                 "context_snapshots": int(snapshot_count["count"] or 0),
                 "raw_request_windows": int(raw_window_count["count"] or 0),
                 "pending_gateway_tool_turns": int(pending_count["count"] or 0),
+                "context_window_events": int(window_event_count["count"] or 0),
             }
 
     def delete_session(self, session_id: str) -> dict:
         tables = [
+            "context_window_events",
+            "context_window_states",
             "hisense_heartbeat",
             "heartbeat_entries",
             "pending_gateway_tool_turns",

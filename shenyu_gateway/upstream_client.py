@@ -287,8 +287,13 @@ async def build_upstream_request(
     proto = upstream["protocol"]
     raw_messages = messages_override or [message.model_dump(exclude_none=True) for message in body.messages]
     merged_tools = merge_tools(body.tools, cfg, meta=meta)
+    cache_enabled = (
+        bool(getattr(cfg, "enable_anthropic_cache_control", True))
+        if proto == "anthropic"
+        else bool(getattr(cfg, "enable_openai_cache_control", True))
+    )
     cache_meta: dict[str, Any] = {
-        "enabled": proto == "anthropic",
+        "enabled": cache_enabled,
         "protocol": proto,
         "upstream_scope": upstream["scope"],
         "upstream_url": upstream["chat_url"],
@@ -299,7 +304,7 @@ async def build_upstream_request(
     if proto == "anthropic":
         cache_paths: list[str] = []
         anthropic_tools = (
-            _convert_openai_tools_to_anthropic(merged_tools, cache_paths=cache_paths)
+            _convert_openai_tools_to_anthropic(merged_tools)
             if merged_tools
             else []
         )
@@ -317,6 +322,7 @@ async def build_upstream_request(
             raw_messages,
             cache_layers=(meta or {}).get("cache_layers"),
             cache_paths=cache_paths,
+            max_breakpoints=4 if cache_enabled else 0,
         )
         payload: dict[str, Any] = {
             "model": model_name,
@@ -342,8 +348,13 @@ async def build_upstream_request(
             "content-type": "application/json",
         }
         headers.update(forwarded_client_headers(request, cfg))
+        cache_meta["enabled"] = bool(cache_paths)
         cache_meta["breakpoints"] = cache_paths
-        cache_meta["note"] = "cache_control breakpoints added to configured Anthropic layer blocks."
+        cache_meta["note"] = (
+            "cache_control breakpoints added to configured Anthropic layer blocks."
+            if cache_enabled
+            else "Anthropic cache_control is disabled by ENABLE_ANTHROPIC_CACHE_CONTROL."
+        )
         return payload, headers, model_name, cache_meta, upstream
 
     if cfg.enable_openai_cache_control:

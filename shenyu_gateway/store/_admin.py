@@ -36,6 +36,7 @@ class AdminMixin:
             cold_count = conn.execute("SELECT COUNT(*) AS count FROM cold_start_snapshots").fetchone()
             snapshot_count = conn.execute("SELECT COUNT(*) AS count FROM request_context_snapshots").fetchone()
             raw_window_count = conn.execute("SELECT COUNT(*) AS count FROM raw_request_windows").fetchone()
+            window_event_count = conn.execute("SELECT COUNT(*) AS count FROM context_window_events").fetchone()
             heartbeat_count = conn.execute("SELECT COUNT(*) AS count FROM heartbeat_entries").fetchone()
             hisense_heartbeat_count = conn.execute("SELECT COUNT(*) AS count FROM hisense_heartbeat").fetchone()
             pending_count = conn.execute(
@@ -51,6 +52,7 @@ class AdminMixin:
             "cold_start_snapshots": int(cold_count["count"] or 0),
             "context_snapshots": int(snapshot_count["count"] or 0),
             "raw_request_windows": int(raw_window_count["count"] or 0),
+            "context_window_events": int(window_event_count["count"] or 0),
             "heartbeats": int(heartbeat_count["count"] or 0),
             "hisense_heartbeats": int(hisense_heartbeat_count["count"] or 0),
             "pending_gateway_tool_turns": int(pending_count["count"] or 0),
@@ -171,6 +173,7 @@ class AdminMixin:
             "messages": self.get_all_messages(session_id),
             "context_snapshots": self.get_all_context_snapshots(session_id),
             "raw_request_windows": self.get_all_raw_request_windows(session_id),
+            "context_window_events": self.list_context_window_events(limit=50000, session_tag=session_tag),
             "cold_start_snapshots": self.all_cold_start_snapshots(session_id),
             "pending_gateway_tool_turns": self.get_pending_gateway_tool_turns(session_id),
             "heartbeats": self.get_all_heartbeats(session_id),

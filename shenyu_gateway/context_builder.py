@@ -11,6 +11,7 @@ from .context_layers import (
 )
 from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
+from .memory_island import resolve_memory_island
 from .request_logs import _mark_request_log_phase
 from .stars import StarService
 from .tool_registry import gateway_native_tools
@@ -110,6 +111,9 @@ class ContextBuilder:
         cold_start_snapshot: Optional[dict] = None,
         client_name: str = "",
         consume_heartbeat_pending: bool = True,
+        context_event: Optional[dict] = None,
+        previous_island_state: Optional[dict] = None,
+        force_island_rewrite: bool = False,
         trace_log: Optional[dict] = None,
     ) -> dict:
         _mark_request_log_phase(trace_log, "context.start")
@@ -140,6 +144,8 @@ class ContextBuilder:
             "notebook_items": [],
             "last_wake_recap": "",
             "conflict_books": [],
+            "memory_island_state": previous_island_state or {},
+            "memory_island_decision": {},
         }
 
         # Collect all independent context sources concurrently. calendar and the
@@ -148,6 +154,11 @@ class ContextBuilder:
         # today's error semantics (a memory failure propagates; everything else is
         # soft) while removing the serial calendar → conflict → memory awaits.
         want_conflict = (not is_hisense) and getattr(self.cfg, "inject_conflict_shelf", True)
+        event_class = str((context_event or {}).get("event_class") or "new_user")
+        reuse_previous_island = bool(
+            previous_island_state
+            and event_class in {"retry", "roll", "client_tool_continuation", "continuation"}
+        )
         inject_mem_notes = bool(current_user_text.strip() and self.cfg.inject_mem_notes)
         inject_stars = bool(current_user_text.strip() and getattr(self.cfg, "inject_stars", True))
 
@@ -177,23 +188,37 @@ class ContextBuilder:
             notes_result = {"ok": True, "items": []}
             stars_result = {"ok": True, "items": []}
         else:
-            if inject_mem_notes:
+            if reuse_previous_island:
+                notes_task = asyncio.sleep(
+                    0,
+                    result={"ok": True, "items": list((previous_island_state or {}).get("mem_notes") or [])},
+                )
+            elif inject_mem_notes:
                 notes_task = MemNoteService(self.cfg, self.supabase_client).search_notes_contextual(
                     current_user_text,
                     session_tag=session["session_tag"],
                     limit=self.cfg.mem_note_limit,
                     session_id=session.get("id"),
                     store=self.store,
+                    mark_triggered=False,
+                    ignore_retrigger_limits=True,
                 )
             else:
                 notes_task = asyncio.sleep(0, result={"ok": True, "items": []})
 
-            if inject_stars:
+            if reuse_previous_island:
+                stars_task = asyncio.sleep(
+                    0,
+                    result={"ok": True, "items": list((previous_island_state or {}).get("stars") or [])},
+                )
+            elif inject_stars:
                 stars_task = StarService(self.cfg, self.supabase_client).search_context(
                     current_user_text,
                     session_tag=session["session_tag"],
                     session_id=session.get("id"),
                     limit=getattr(self.cfg, "star_inject_limit", 3),
+                    mark_activation=False,
+                    ignore_recent_fatigue=True,
                     trace_log=trace_log,
                 )
             else:
@@ -205,6 +230,41 @@ class ContextBuilder:
             package["calendar_context"] = calendar_context
             package["mem_notes"] = notes_result.get("items") or []
             package["stars"] = stars_result.get("items") or []
+
+            proposed_stars = (
+                package["stars"]
+                if inject_stars and stars_result.get("ok")
+                else list((previous_island_state or {}).get("stars") or []) if inject_stars else []
+            )
+            proposed_mem_notes = (
+                package["mem_notes"]
+                if inject_mem_notes and notes_result.get("ok")
+                else list((previous_island_state or {}).get("mem_notes") or []) if inject_mem_notes else []
+            )
+            island_state, entering, island_meta = resolve_memory_island(
+                previous_island_state,
+                proposed_stars,
+                proposed_mem_notes,
+                force=force_island_rewrite,
+            )
+            island_meta["star_recall_ok"] = bool(stars_result.get("ok"))
+            island_meta["mem_recall_ok"] = bool(notes_result.get("ok"))
+            package["memory_island_state"] = island_state
+            package["memory_island_decision"] = island_meta
+            package["stars"] = island_state.get("stars") or []
+            package["mem_notes"] = island_state.get("mem_notes") or []
+            if entering["stars"]:
+                await StarService(self.cfg, self.supabase_client).activate_context_items(
+                    entering["stars"],
+                    trigger_text=current_user_text,
+                    session_tag=session["session_tag"],
+                    session_id=session.get("id"),
+                    trace_log=trace_log,
+                )
+            if entering["mem_notes"]:
+                await MemNoteService(self.cfg, self.supabase_client).mark_context_items_triggered(
+                    entering["mem_notes"]
+                )
 
         if want_conflict:
             package["conflict_books"] = conflict_books
@@ -220,6 +280,7 @@ class ContextBuilder:
                 "mem_notes": len(notes_result.get("items") or []),
                 "stars": len(stars_result.get("items") or []),
                 "stars_ok": bool(stars_result.get("ok")),
+                "island_decision": (package.get("memory_island_decision") or {}).get("decision"),
                 "notebook_items": len(package.get("notebook_items") or []),
             },
         )

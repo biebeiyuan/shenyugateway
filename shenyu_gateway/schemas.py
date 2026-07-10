@@ -33,6 +33,7 @@ class ConfigUpdate(BaseModel):
     upstream_proxy: Optional[str] = None
     upstream_trust_env: Optional[bool] = None
     enable_openai_cache_control: Optional[bool] = None
+    enable_anthropic_cache_control: Optional[bool] = None
     enable_anthropic_auto_thinking: Optional[bool] = None
     anthropic_default_max_tokens: Optional[int] = Field(default=None, ge=1)
     upstream_extra_body: Optional[dict[str, Any] | str] = None

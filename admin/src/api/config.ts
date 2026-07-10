@@ -8,6 +8,7 @@ export interface GatewayConfig {
   upstream_proxy?: string
   upstream_trust_env?: boolean
   enable_openai_cache_control?: boolean
+  enable_anthropic_cache_control?: boolean
   enable_anthropic_auto_thinking?: boolean
   upstream_extra_body?: Record<string, unknown>
   upstream_passthrough_headers?: string[]
@@ -102,6 +103,7 @@ export interface HealthStatus {
   upstream_proxy_configured?: boolean
   upstream_trust_env?: boolean
   enable_openai_cache_control?: boolean
+  enable_anthropic_cache_control?: boolean
   enable_anthropic_auto_thinking?: boolean
   upstream_extra_body?: Record<string, unknown>
   hisense_upstream?: string

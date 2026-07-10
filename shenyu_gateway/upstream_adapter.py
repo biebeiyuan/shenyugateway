@@ -5,12 +5,13 @@ import uuid
 from typing import Any, Optional
 
 from .runtime import now_ts as _now_ts
+from .context_window import INTERNAL_LAYER_KEY, MEMORY_ISLAND_LAYER
 from .utils import clean_config_text as _clean_config_text
 from .utils import coerce_json_object as _coerce_json_object
 from .utils import normalize_text as _normalize_text
 
 
-_CACHE_LAYER_BREAKPOINT_ORDER = ("stable", "slow", "format")
+_SYSTEM_CACHE_LAYER_PREFERENCE = ("format", "tool_policy", "heartbeat", "slow", "stable")
 
 
 def _add_cache_control(block: dict, cache_paths: list[str], path: str, max_breakpoints: int = 4) -> bool:
@@ -79,6 +80,7 @@ def _sanitize_openai_compatible_messages(messages: list[dict]) -> list[dict]:
         if not isinstance(msg, dict):
             continue
         clean = {key: value for key, value in msg.items() if value is not None}
+        clean.pop(INTERNAL_LAYER_KEY, None)
         role = clean.get("role")
         content = clean.get("content")
 
@@ -208,22 +210,42 @@ def _apply_openai_compatible_cache_control(
     cached_messages = _sanitize_openai_compatible_messages(messages)
     cached_tools = _sanitize_openai_compatible_tools(tools)
 
-    if cached_tools:
-        _add_cache_control(cached_tools[-1], cache_paths, "tools[-1]", max_breakpoints)
-
-    for layer_name in _CACHE_LAYER_BREAKPOINT_ORDER:
+    for layer_name in _SYSTEM_CACHE_LAYER_PREFERENCE:
         layer_text = layers.get(layer_name) or ""
         if not layer_text:
             continue
         for idx, msg in enumerate(cached_messages):
             if msg.get("role") == "system" and _normalize_text(msg.get("content")) == layer_text:
                 _add_openai_message_cache_control(
-                    msg,
-                    cache_paths,
-                    f"messages[{idx}].{layer_name}",
-                    max_breakpoints,
+                    msg, cache_paths, f"messages[{idx}].system_end", max_breakpoints
                 )
                 break
+        if cache_paths:
+            break
+
+    island_text = layers.get("mem") or ""
+    island_idx = next(
+        (
+            idx
+            for idx, msg in enumerate(cached_messages)
+            if island_text and _normalize_text(msg.get("content")) == island_text
+        ),
+        -1,
+    )
+    if island_idx >= 0:
+        if island_idx > 0:
+            _add_openai_message_cache_control(
+                cached_messages[island_idx - 1],
+                cache_paths,
+                f"messages[{island_idx - 1}].before_island",
+                max_breakpoints,
+            )
+        _add_openai_message_cache_control(
+            cached_messages[island_idx],
+            cache_paths,
+            f"messages[{island_idx}].memory_island",
+            max_breakpoints,
+        )
 
     last_user_idx = -1
     for idx, msg in enumerate(cached_messages):
@@ -369,8 +391,6 @@ def _convert_openai_tools_to_anthropic(
                 "input_schema": function.get("parameters", {"type": "object", "properties": {}}),
             }
         )
-    if converted and cache_paths is not None:
-        _add_cache_control(converted[-1], cache_paths, "tools[-1]", max_breakpoints)
     return converted
 
 
@@ -437,10 +457,47 @@ def _openai_to_anthropic(
     system_blocks: list[dict] = []
     anthropic_messages: list[dict] = []
     pending_volatile = ""
+    system_cache_text = next(
+        (layers.get(name) for name in _SYSTEM_CACHE_LAYER_PREFERENCE if layers.get(name)),
+        "",
+    )
 
     for msg in messages:
         role = msg.get("role", "")
         content = msg.get("content")
+        layer_name = msg.get(INTERNAL_LAYER_KEY)
+
+        if layer_name == MEMORY_ISLAND_LAYER:
+            if anthropic_messages:
+                previous_content = anthropic_messages[-1].get("content")
+                if isinstance(previous_content, list):
+                    for block_index in range(len(previous_content) - 1, -1, -1):
+                        block = previous_content[block_index]
+                        if isinstance(block, dict) and block.get("type") != "thinking":
+                            _add_cache_control(
+                                block,
+                                cache_paths,
+                                f"messages[{len(anthropic_messages) - 1}].before_island",
+                                max_breakpoints,
+                            )
+                            break
+            island_text = _normalize_text(content)
+            island_block = {
+                "type": "text",
+                "text": (
+                    '<memory_island source="gateway_background">\n'
+                    + island_text
+                    + "\n</memory_island>"
+                ),
+            }
+            _add_cache_control(
+                island_block,
+                cache_paths,
+                f"messages[{len(anthropic_messages)}].memory_island",
+                max_breakpoints,
+            )
+            anthropic_messages.append({"role": "user", "content": [island_block]})
+            continue
 
         if role == "system":
             text = _normalize_text(content)
@@ -449,10 +506,8 @@ def _openai_to_anthropic(
                     pending_volatile = text
                     continue
                 block = {"type": "text", "text": text}
-                for layer_name in _CACHE_LAYER_BREAKPOINT_ORDER:
-                    if text == layers.get(layer_name):
-                        _add_cache_control(block, cache_paths, f"system.{layer_name}", max_breakpoints)
-                        break
+                if system_cache_text and text == system_cache_text:
+                    _add_cache_control(block, cache_paths, "system.end", max_breakpoints)
                 system_blocks.append(block)
             continue
 

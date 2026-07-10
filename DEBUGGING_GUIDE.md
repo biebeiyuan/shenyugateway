@@ -53,9 +53,22 @@ python scripts\vps_gateway_logs.py ssh --match "shenyu|gateway" --tail 300 -f
 
 Use `api` without `--via-ssh` only when public gateway API access is not blocked by Cloudflare.
 
+On Windows, the helper uses the local `vps` SSH alias by default unless explicit connection flags are passed. Container lookup first honors configured name/label/service hints, then falls back to gateway environment signatures, so a Coolify redeploy does not require copying the new random container name into local config.
+
 The script separates `tools_offered` from `gateway_tools_executed`. If tools were offered but zero gateway tools executed, the model/upstream failed before the gateway got any tool call. In that case, inspect upstream errors, relay retries, streaming behavior, request payload shape, and prompt-cache compatibility before editing `gateway_tools.py`.
 
 Do not put gateway tokens, VPS hosts, SSH keys, or API keys into repo files. Use shell environment variables or ask the user for the missing value.
+
+## Context Window Observation
+
+The chunked-window implementation persists content-free observations in SQLite. After the new gateway has handled normal chat, retries, rolls, and tool continuations, summarize the events with:
+
+```powershell
+python scripts\context_window_observer.py --db data\shenyu_gateway.db
+python scripts\context_window_observer.py --db data\shenyu_gateway.db --session-tag 6.20 --json
+```
+
+The report includes event classification, epoch reset reasons, retained-message percentiles, raw protected human turns, and memory-island retain/rewrite counts. It does not read or print chat message content. Use this report before tuning the 32-message overflow block or implementing tool-result compression.
 
 ## VPS, SSH, and Coolify Operations
 

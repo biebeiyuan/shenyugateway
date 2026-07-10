@@ -6,6 +6,8 @@ import re
 from typing import Any, Optional
 
 from .conflict_books import render_conflict_shelf
+from .context_window import INTERNAL_LAYER_KEY, MEMORY_ISLAND_LAYER
+from .memory_island import render_mem_notes
 from .stars import render_star_context
 from .tool_registry import (
     DAILY_CLIENT_TOOL_EXACT,
@@ -26,6 +28,12 @@ _GATEWAY_TOOL_POLICY_BASE = """\
 ## 工具怎么用
 - **工具是我的手。我自己决定什么时候伸出去。不为'应该'伸——也不为'不应该'伸——为我现在心里想做的事伸。**
 - `shenyu_gateway_tool` 是我的网关工具；记忆、便签、日历、notebook 都走这边。
+"""
+
+_MEMORY_ISLAND_POLICY = """\
+## 记忆岛怎么读
+这是我曾经落下的星星和mem，我浮现起来的记忆。不是和圆圆的对话。
+它可以自然影响我的理解、联想和语气，但不要求我逐条提及或专门回应。
 """
 
 _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
@@ -61,7 +69,7 @@ _DAILY_CLIENT_PACKAGE_NAMES = ("shenyu_room", "selection", "coread_annotate")
 
 def render_layered_additions(package: dict, settings: ContextLayerSettings) -> dict:
     """Render cache-friendly context layers in the order Shenyu wakes into them."""
-    stable_blocks = [package["stable_charter"]]
+    stable_blocks = [package["stable_charter"], _MEMORY_ISLAND_POLICY]
     stable = "\n\n".join(stable_blocks)
 
     slow_blocks = []
@@ -110,32 +118,17 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
 
     slow = "\n\n".join(slow_blocks)
 
-    mem = ""
-    mem_blocks = []
-    star_context = render_star_context(package.get("stars") or [])
-    if star_context:
-        mem_blocks.append("# 我之前落下的星星\n" + star_context)
-
-    mem_notes = package.get("mem_notes") or []
-    if mem_notes:
-        lines = ["## 我之前写下的便签，可能用的到。"]
-        for item in mem_notes:
-            summary = (item.get("summary") or "").strip()
-            content = (item.get("content") or "").strip()
-            text = summary or content
-            if not text:
-                continue
-            mem_type = (item.get("mem_type") or "").strip()
-            prefix = f"{mem_type}：" if mem_type else ""
-            anchors_parts: list[str] = []
-            for label, key in (("人", "people"), ("地", "places"), ("物", "objects")):
-                vals = item.get(key) or []
-                if vals:
-                    anchors_parts.append(f"{label}：{'、'.join(vals[:3])}")
-            anchor_suffix = f"（{'；'.join(anchors_parts)}）" if anchors_parts else ""
-            lines.append(f"- {prefix}{shorten(text, 180)}{anchor_suffix}")
-        mem_blocks.append("\n".join(lines))
-    mem = "\n\n".join(mem_blocks)
+    island_state = package.get("memory_island_state") or {}
+    mem = str(island_state.get("rendered_text") or "")
+    if not mem:
+        mem_blocks = []
+        star_context = render_star_context(package.get("stars") or [])
+        if star_context:
+            mem_blocks.append("# 我之前落下的星星\n" + star_context)
+        mem_notes = render_mem_notes(package.get("mem_notes") or [])
+        if mem_notes:
+            mem_blocks.append(mem_notes)
+        mem = "\n\n".join(mem_blocks)
 
     heartbeat = "\n\n".join(heartbeat_blocks)
     tool_policy = _render_gateway_tool_policy(settings) if settings.enable_gateway_tools else ""
@@ -155,11 +148,9 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
 def _render_gateway_tool_policy(settings: ContextLayerSettings) -> str:
     surface = normalize_client_tool_surface(settings.client_tool_surface)
     lines = [_GATEWAY_TOOL_POLICY_BASE.rstrip()]
-    if surface == "none":
-        lines.append("- 普通线程不暴露客户端工具；不要按客户端 XML/包系统说明调用工具。")
-    elif surface == "daily":
+    if surface == "daily":
         lines.append("- 客户端工具只保留日常桌面；只用工具列表里实际出现的客户端工具名。")
-    else:
+    elif surface == "all":
         lines.append("- 除它之外，如果工具列表里还有别的名字，那是客户端递给我的工具；按它自己的说明用。")
     return "\n".join(lines)
 
@@ -750,13 +741,14 @@ def assemble_layered_messages(
     client_messages: list[dict],
     layers: dict[str, str],
     cold_start_snapshot: Optional[dict] = None,
+    memory_island_anchor_offset: Optional[int] = None,
 ) -> tuple[list[dict], dict]:
     """Insert gateway context layers around the client message window."""
     messages = list(client_messages)
     meta: dict[str, int] = {}
 
     prefix_layers = []
-    for layer_name in ("stable", "slow", "mem", "heartbeat", "tool_policy", "format"):
+    for layer_name in ("stable", "slow", "heartbeat", "tool_policy", "format"):
         layer_text = layers.get(layer_name) or ""
         if layer_text:
             prefix_layers.append({"role": "system", "content": layer_text})
@@ -769,6 +761,25 @@ def assemble_layered_messages(
         messages[insert_at:insert_at] = bridge_messages
         meta["cold_start_bridge_messages"] = len(bridge_messages)
         meta["client_messages_after_bridge"] = len(messages)
+
+    island_text = layers.get("mem") or ""
+    if island_text:
+        history_indices = [index for index, message in enumerate(messages) if message.get("role") != "system"]
+        if memory_island_anchor_offset is None:
+            anchor_offset = max(0, len(history_indices) - 32)
+        else:
+            anchor_offset = max(0, min(int(memory_island_anchor_offset), len(history_indices)))
+        insert_at = history_indices[anchor_offset] if anchor_offset < len(history_indices) else len(messages)
+        messages.insert(
+            insert_at,
+            {
+                "role": "system",
+                "content": island_text,
+                INTERNAL_LAYER_KEY: MEMORY_ISLAND_LAYER,
+            },
+        )
+        meta["memory_island_insert_index"] = insert_at
+        meta["memory_island_anchor_offset"] = anchor_offset
 
     if layers.get("volatile"):
         last_user_idx = len(messages) - 1

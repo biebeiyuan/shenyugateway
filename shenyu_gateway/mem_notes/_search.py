@@ -105,6 +105,7 @@ class SearchMixin:
         recall_service: Optional[RecallIndexService] = None,
         session_id: Optional[str] = None,
         store: Any = None,
+        ignore_retrigger_limits: bool = False,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "query": query, "count": 0, "items": [], "note": "Supabase is not configured."}
@@ -121,7 +122,11 @@ class SearchMixin:
 
         # --- Layer 0: running_joke serendipity (scene_tag match + random gate) ---
         joke_items = self._running_joke_serendipity_matches(
-            clean_query, active_rows, session_id=session_id, store=store
+            clean_query,
+            active_rows,
+            session_id=session_id,
+            store=store,
+            ignore_retrigger_limits=ignore_retrigger_limits,
         )
         items = joke_items[:1]
         selected_ids = {str(item.get("id") or "") for item in items if item.get("id")}
@@ -133,6 +138,7 @@ class SearchMixin:
             session_id=session_id,
             store=store,
             exclude_ids=selected_ids,
+            ignore_retrigger_limits=ignore_retrigger_limits,
         )
         for ent_item in entity_items:
             ent_id = str(ent_item.get("id") or "")
@@ -158,8 +164,8 @@ class SearchMixin:
                 min_score=keyword_min_score,
                 session_id=session_id,
                 store=store,
-                cooldown_hours=self._context_cooldown_hours(),
-                dedupe_turns=self._context_dedupe_turns(),
+                cooldown_hours=0 if ignore_retrigger_limits else self._context_cooldown_hours(),
+                dedupe_turns=0 if ignore_retrigger_limits else self._context_dedupe_turns(),
                 specific_content_only=True,
             )
             for kw_item in keyword_result.get("items") or []:
@@ -180,6 +186,7 @@ class SearchMixin:
                 recall_service=recall_service,
                 session_id=session_id,
                 store=store,
+                ignore_retrigger_limits=ignore_retrigger_limits,
             )
             for sem_item in semantic_items:
                 sem_id = str(sem_item.get("id") or "")
@@ -194,6 +201,11 @@ class SearchMixin:
             await self._mark_triggered([rows_by_id[note_id] for note_id in note_ids if note_id in rows_by_id])
 
         return {"ok": True, "query": clean_query, "count": len(items), "items": items}
+
+    async def mark_context_items_triggered(self, items: list[dict[str, Any]]) -> None:
+        note_ids = [str(item.get("id") or "") for item in items if item.get("id")]
+        rows_by_id = await self._get_notes_by_ids(note_ids)
+        await self._mark_triggered([rows_by_id[note_id] for note_id in note_ids if note_id in rows_by_id])
 
     # ------------------------------------------------------------------
     # Rendering
@@ -319,6 +331,7 @@ class SearchMixin:
         *,
         session_id: Optional[str] = None,
         store: Any = None,
+        ignore_retrigger_limits: bool = False,
     ) -> list[dict[str, Any]]:
         query_lower = query.lower()
         query_tokens = set(query_lower.split())
@@ -342,7 +355,7 @@ class SearchMixin:
             rate = running_joke_serendipity_rate(row.get("last_used_at"))
             if rate <= 0 or random.random() > rate:
                 continue
-            if self._should_skip_retrigger(
+            if not ignore_retrigger_limits and self._should_skip_retrigger(
                 row,
                 session_id=session_id,
                 store=store,
@@ -363,6 +376,7 @@ class SearchMixin:
         session_id: Optional[str] = None,
         store: Any = None,
         exclude_ids: Optional[set[str]] = None,
+        ignore_retrigger_limits: bool = False,
     ) -> list[dict[str, Any]]:
         exclude_ids = exclude_ids or set()
         query_lower = query.lower()
@@ -406,7 +420,7 @@ class SearchMixin:
                     break
             if not matched_anchor:
                 continue
-            if self._should_skip_retrigger(
+            if not ignore_retrigger_limits and self._should_skip_retrigger(
                 row,
                 session_id=session_id,
                 store=store,
@@ -429,6 +443,7 @@ class SearchMixin:
         recall_service: Optional[RecallIndexService] = None,
         session_id: Optional[str] = None,
         store: Any = None,
+        ignore_retrigger_limits: bool = False,
     ) -> list[dict[str, Any]]:
         if not query.strip() or not self.supabase:
             return []
@@ -500,7 +515,7 @@ class SearchMixin:
                 continue
             if not service._row_visible_for_session(row, None):
                 continue
-            if self._should_skip_retrigger(
+            if not ignore_retrigger_limits and self._should_skip_retrigger(
                 note,
                 session_id=session_id,
                 store=store,
