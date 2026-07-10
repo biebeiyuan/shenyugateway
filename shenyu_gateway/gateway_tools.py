@@ -22,6 +22,7 @@ from shenyu_gateway.stars import StarService
 from shenyu_gateway.utils import shorten as _shorten
 
 _UNSET = object()
+WINDOWSILL_TABLE = "windowsill"
 
 
 @dataclass
@@ -175,6 +176,7 @@ insert / update / delete 会尽量返回写入或影响到的行。
 整理 captured 便签时先列出来，只改明确选中的 id；不要按状态一口气全量改。
 星星记忆用 `shenyu_create_star` / `shenyu_star_review` / `shenyu_star_feedback` / `shenyu_connect_constellation`。missed 反馈也走 `shenyu_star_feedback`。
 notebook 是共享手边事项；海信那边或跨窗口要留事用 `shenyu_notebook_write` / `shenyu_notebook_list`。
+随笔和当下心情放窗台，用 `shenyu_windowsill_write`；想回去翻一翻用 `shenyu_windowsill_list`。
 翻某天心跳用 `shenyu_read_heartbeat`，一般只填 date，比如 2026-05-11。
 
 ### journal（日记 / 信件 / 纸）
@@ -945,6 +947,48 @@ class GatewayToolService:
         msgs = msgs[-limit:]
         data = [{"role": m["role"], "content": (m.get("content") or "")[:500], "at": m.get("created_at")} for m in msgs]
         return {"ok": True, "session_tag": target.get("session_tag"), "count": len(data), "data": data}
+
+    async def windowsill_write(self, content: Any, title: Any = "", mood: Any = "") -> dict:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured.", "error_kind": "config"}
+        body = str(content or "").strip()
+        if not body:
+            return {"ok": False, "error": "content is required.", "error_kind": "validation"}
+        payload = {
+            "content": body,
+            "title": str(title or "").strip(),
+            "mood": str(mood or "").strip(),
+        }
+        try:
+            row = await self.supabase.insert(WINDOWSILL_TABLE, payload)
+            return {"ok": True, "data": row}
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": self._friendly_supabase_error(WINDOWSILL_TABLE, exc),
+                "error_kind": "exception",
+            }
+
+    async def windowsill_list(self, mood: Any = "", limit: int = 10) -> dict:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured.", "error_kind": "config"}
+        params = {
+            "select": "id,content,title,mood,created_at",
+            "order": "created_at.desc",
+            "limit": str(max(1, min(int(limit or 10), 50))),
+        }
+        mood_key = str(mood or "").strip()
+        if mood_key:
+            params["mood"] = f"eq.{mood_key}"
+        try:
+            rows = await self.supabase.query(WINDOWSILL_TABLE, params)
+            return {"ok": True, "count": len(rows or []), "data": rows or []}
+        except Exception as exc:
+            return {
+                "ok": False,
+                "error": self._friendly_supabase_error(WINDOWSILL_TABLE, exc),
+                "error_kind": "exception",
+            }
 
     def _notebook_scope(self, scope: Optional[str]) -> str:
         raw = str(scope or "shared").strip().lower()

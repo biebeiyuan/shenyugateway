@@ -476,6 +476,27 @@ class FakeToolService:
         )
         return {"ok": True, "query": query, "limit": limit}
 
+    async def windowsill_write(self, content="", title="", mood=""):
+        self.calls.append(
+            {
+                "tool": "shenyu_windowsill_write",
+                "content": content,
+                "title": title,
+                "mood": mood,
+            }
+        )
+        return {"ok": True, "content": content}
+
+    async def windowsill_list(self, mood="", limit: int = 10):
+        self.calls.append(
+            {
+                "tool": "shenyu_windowsill_list",
+                "mood": mood,
+                "limit": limit,
+            }
+        )
+        return {"ok": True, "limit": limit}
+
     async def notebook_list(self, type_filter=None, status="active", limit: int = 10, tag=None, scope=None):
         self.calls.append(
             {
@@ -630,6 +651,12 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "title": "标题",
             "author": "圆圆",
         },
+        "shenyu_windowsill_write": {
+            "content": "风从窗边过了一下。",
+            "title": "窗边",
+            "mood": "安静",
+        },
+        "shenyu_windowsill_list": {"mood": "安静", "limit": 6},
         "shenyu_list_mem_notes": {"query": "list", "status": "all", "mem_type": "memory", "limit": 8},
         "shenyu_write_mem_note": {
             "content": "一条便签",
@@ -834,6 +861,17 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "author": "圆圆",
             "mode": "append",
         },
+        "shenyu_windowsill_write": {
+            "tool": "shenyu_windowsill_write",
+            "content": "风从窗边过了一下。",
+            "title": "窗边",
+            "mood": "安静",
+        },
+        "shenyu_windowsill_list": {
+            "tool": "shenyu_windowsill_list",
+            "mood": "安静",
+            "limit": 6,
+        },
         "shenyu_list_mem_notes": {
             "tool": "shenyu_list_mem_notes",
             "q": "list",
@@ -1029,6 +1067,8 @@ def test_gateway_broker_description_matches_scan_friendly_sample():
     assert "write_mem_note" in description
     assert "update_mem_note" in description
     assert "add_calendar" in description
+    assert "windowsill_write" in description
+    assert "windowsill_list" in description
     assert "shenyu_get_meta_summaries" not in description
     assert properties["params"]["description"] == "选中工具的参数对象。"
     assert "arguments" not in properties
@@ -1052,6 +1092,24 @@ def test_add_calendar_tool_schema_exposes_only_body_and_period_fields():
     assert set(properties) == {"content", "date", "period_key", "period_type", "mode", "title", "author"}
     assert "summary" not in properties
     assert "digest" not in properties
+
+
+def test_windowsill_tool_schema_leaves_created_at_to_database():
+    cfg = _cfg()
+    cfg.gateway_tool_mode = "full"
+    tools = {
+        tool["function"]["name"]: tool["function"]
+        for tool in gateway_native_tools(cfg)
+    }
+
+    write = tools["shenyu_windowsill_write"]
+    list_ = tools["shenyu_windowsill_list"]
+
+    assert write["parameters"]["required"] == ["content"]
+    assert set(write["parameters"]["properties"]) == {"content", "title", "mood"}
+    assert "created_at" not in write["parameters"]["properties"]
+    assert "不用填写 created_at" in write["description"]
+    assert set(list_["parameters"]["properties"]) == {"mood", "limit"}
 
 
 def test_execute_gateway_tool_accepts_broker_params_field():
@@ -1957,6 +2015,8 @@ def test_daily_gateway_surface_hides_maintenance_tools():
     assert "shenyu_write_mem_note" in broker_names
     assert "shenyu_notebook_list" in broker_names
     assert "shenyu_conflict_read" in broker_names
+    assert "shenyu_windowsill_write" in broker_names
+    assert "shenyu_windowsill_list" in broker_names
 
     assert "shenyu_supabase_guide" not in broker_names
     assert "shenyu_list_mem_notes" not in broker_names

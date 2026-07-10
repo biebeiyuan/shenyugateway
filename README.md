@@ -345,6 +345,7 @@ Supabase remains the durable fact and content source:
 - `calendar_prompt_configs`
 - `calendar_pages`
 - `calendar_generation_runs`
+- `windowsill`
 - `shenyu_mem_notes`
 - `shenyu_stars`
 - `shenyu_star_links`
@@ -357,6 +358,14 @@ Supabase remains the durable fact and content source:
 The short-lived notes table is no longer used by gateway code.
 
 The mem review UI reads and updates Supabase `shenyu_mem_notes`. The star review UI reads and updates the `shenyu_stars` family of tables. The old `atomic_memories` table is only exposed through a read-only lookup for manual migration. SQLite only provides local request/session context.
+
+## Windowsill
+
+`windowsill` stores short essays and passing moods that do not need to become structured memories. Apply `supabase/migrations/20260710_create_windowsill.sql` before enabling the tools.
+
+- `shenyu_windowsill_write(content, title?, mood?)` leaves a new entry. PostgreSQL generates `id` and `created_at`; neither is supplied by the model.
+- `shenyu_windowsill_list(mood?, limit?)` returns recent entries, newest first, with optional exact mood filtering.
+- The table is intentionally reached through these dedicated tools. Raw Supabase tools remain an explicit maintenance/debug surface rather than a daily Shenyu surface.
 
 ## Recall Index
 

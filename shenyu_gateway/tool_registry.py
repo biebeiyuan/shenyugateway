@@ -38,6 +38,8 @@ DAILY_GATEWAY_TOOL_NAMES = {
     "shenyu_connect_constellation",
     "shenyu_merge_stars",
     "shenyu_add_calendar",
+    "shenyu_windowsill_write",
+    "shenyu_windowsill_list",
     "shenyu_read_heartbeat",
     "shenyu_write_mem_note",
     "shenyu_search_mem_notes",
@@ -95,6 +97,10 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
 日记
   add_calendar(content*, date?: YYYY-MM-DD, period_type?: day|week|month, mode?: append|replace)
 
+窗台
+  windowsill_write(content*, title?, mood?)
+  windowsill_list(mood?, limit?)
+
 手边
   notebook_write(content*, scope?: shared|hisense|handoff)
   notebook_list(scope?: shared|hisense|handoff, limit?)
@@ -129,6 +135,10 @@ _BROKER_DAILY_DESCRIPTION = """\
 
 日记
   add_calendar(content*, date?: YYYY-MM-DD, period_type?: day|week|month, mode?: append|replace)
+
+窗台
+  windowsill_write(content*, title?, mood?)
+  windowsill_list(mood?, limit?)
 
 手边
   notebook_write(content*, scope?: shared|hisense|handoff)
@@ -783,6 +793,23 @@ async def _handle_notebook_list(ctx: ToolContext) -> dict:
         limit=_int_arg(ctx.arguments, "limit", 10),
         tag=ctx.arguments.get("tag"),
         scope=ctx.arguments.get("scope"),
+    )
+
+
+@_tool_handler("shenyu_windowsill_write")
+async def _handle_windowsill_write(ctx: ToolContext) -> dict:
+    return await ctx.service.windowsill_write(
+        content=ctx.arguments.get("content", ""),
+        title=ctx.arguments.get("title", ""),
+        mood=ctx.arguments.get("mood", ""),
+    )
+
+
+@_tool_handler("shenyu_windowsill_list")
+async def _handle_windowsill_list(ctx: ToolContext) -> dict:
+    return await ctx.service.windowsill_list(
+        mood=ctx.arguments.get("mood", ""),
+        limit=_int_arg(ctx.arguments, "limit", 10),
     )
 
 

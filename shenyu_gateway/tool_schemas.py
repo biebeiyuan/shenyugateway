@@ -323,6 +323,40 @@ def _gateway_core_tools() -> list[dict]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_windowsill_write",
+                "description": (
+                    "窗台是一块不用整理成便签或星星的地方。"
+                    "想留下一段随笔、一个当下心情，就放在这里。"
+                    "落下来的时间会自己记，不用填写 created_at。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "content": {"type": "string", "description": "想留在窗台上的正文。"},
+                        "title": {"type": "string", "description": "可选标题；没有也可以。"},
+                        "mood": {"type": "string", "description": "此刻的心情，用自己的词写。"},
+                    },
+                    "required": ["content"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_windowsill_list",
+                "description": "回窗台翻一翻。默认从最近落下的开始，也可以只看某一种 mood。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "mood": {"type": "string", "description": "可选；只看这个心情。"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 10},
+                    },
+                },
+            },
+        },
         _gateway_list_mem_notes_tool(),
         {
             "type": "function",
