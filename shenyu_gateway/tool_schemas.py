@@ -327,11 +327,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_windowsill_write",
-                "description": (
-                    "窗台是一块不用整理成便签或星星的地方。"
-                    "想留下一段随笔、一个当下心情，就放在这里。"
-                    "落下来的时间会自己记，不用填写 created_at。"
-                ),
+                "description": "窗台。这里是我自己的写作地方，随笔、日记、心情和感触，都可以落在这里。",
                 "parameters": {
                     "type": "object",
                     "properties": {

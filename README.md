@@ -361,7 +361,7 @@ The mem review UI reads and updates Supabase `shenyu_mem_notes`. The star review
 
 ## Windowsill
 
-`windowsill` stores short essays and passing moods that do not need to become structured memories. Apply `supabase/migrations/20260710_create_windowsill.sql` before enabling the tools.
+`windowsill` is Shenyu's own writing place for essays, journal entries, moods, and reflections, without the category structure of `journal`. Apply `supabase/migrations/20260710_create_windowsill.sql` before enabling the tools.
 
 - `shenyu_windowsill_write(content, title?, mood?)` leaves a new entry. PostgreSQL generates `id` and `created_at`; neither is supplied by the model.
 - `shenyu_windowsill_list(mood?, limit?)` returns recent entries, newest first, with optional exact mood filtering.

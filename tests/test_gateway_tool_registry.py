@@ -1094,7 +1094,7 @@ def test_add_calendar_tool_schema_exposes_only_body_and_period_fields():
     assert "digest" not in properties
 
 
-def test_windowsill_tool_schema_leaves_created_at_to_database():
+def test_windowsill_tool_schema_hides_created_at_input():
     cfg = _cfg()
     cfg.gateway_tool_mode = "full"
     tools = {
@@ -1108,7 +1108,8 @@ def test_windowsill_tool_schema_leaves_created_at_to_database():
     assert write["parameters"]["required"] == ["content"]
     assert set(write["parameters"]["properties"]) == {"content", "title", "mood"}
     assert "created_at" not in write["parameters"]["properties"]
-    assert "不用填写 created_at" in write["description"]
+    assert "created_at" not in write["description"]
+    assert "自己的写作地方" in write["description"]
     assert set(list_["parameters"]["properties"]) == {"mood", "limit"}
 
 

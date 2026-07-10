@@ -1,5 +1,4 @@
--- Windowsill: short essays and passing moods that do not need to become
--- structured memories.
+-- Windowsill: personal essays, journal entries, moods, and reflections.
 
 create extension if not exists pgcrypto;
 
