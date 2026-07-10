@@ -861,6 +861,24 @@ def test_create_note_with_v2_fields():
     assert inserted["event_time"] == "2026-06-15"
 
 
+def test_create_note_accepts_memory_kind_sent_as_mem_type():
+    supabase = FakeSupabase()
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), supabase)
+
+    result = asyncio.run(
+        service.create_note(
+            content="圆圆喜欢绿色，也会留意绿色的东西。",
+            session_tag="6.28",
+            mem_type="person_fact",
+        )
+    )
+
+    assert result["ok"] is True
+    inserted = supabase.inserts[-1]["data"]
+    assert inserted["memory_kind"] == "person_fact"
+    assert inserted["mem_type"] == "关于她的事实"
+
+
 def test_contextual_search_matches_cjk_structured_anchors_without_spaces():
     note = {
         "id": "note-cjk-anchor",

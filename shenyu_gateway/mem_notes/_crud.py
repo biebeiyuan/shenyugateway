@@ -87,7 +87,16 @@ class CrudMixin:
             "source_model": source_model,
         }
 
-        resolved_type = self._mem_type(mem_type, allow_empty=True)
+        normalized_mem_type = _normalize_text(mem_type).strip()
+        kind_from_mem_type = (
+            self._memory_kind(normalized_mem_type)
+            if normalized_mem_type and normalized_mem_type not in MEM_NOTE_TYPES
+            else None
+        )
+        resolved_type = self._mem_type(
+            None if kind_from_mem_type else normalized_mem_type,
+            allow_empty=True,
+        )
         if not resolved_type:
             suggested_type, _ = self._suggest_mem_type(normalized_content)
             resolved_type = suggested_type
@@ -123,7 +132,7 @@ class CrudMixin:
             auto_summary = _auto_generate_summary(normalized_content)
             if auto_summary:
                 payload["summary"] = auto_summary
-        resolved_kind = self._memory_kind(memory_kind)
+        resolved_kind = self._memory_kind(memory_kind) or kind_from_mem_type
         if not resolved_kind:
             resolved_kind = _infer_memory_kind(normalized_content, resolved_type or "")
         payload["memory_kind"] = resolved_kind
