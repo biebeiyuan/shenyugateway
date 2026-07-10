@@ -237,6 +237,30 @@ def test_feedback_accepts_legacy_label_reason_batch():
     assert candidates[0]["action_status"] == "skipped"
 
 
+def test_feedback_accepts_action_star_id_and_value_comment_aliases():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        return await service.feedback(
+            feedback=[
+                {"star_id": "star-1", "action": "positive", "comment": "第一颗"},
+                {"candidate_id": "candidate-1", "action": "good"},
+                {"candidate_node_id": "star-2", "value": "bad", "reason": "第二颗"},
+            ]
+        )
+
+    result = asyncio.run(run())
+    rows = supabase.tables["shenyu_star_feedback"]
+
+    assert result["ok"] is True
+    assert result["count"] == 3
+    assert [row["feedback"] for row in rows] == ["positive", "positive", "negative"]
+    assert [row["candidate_node_id"] for row in rows] == ["star-1", None, "star-2"]
+    assert rows[1]["candidate_id"] == "candidate-1"
+    assert [row["note"] for row in rows] == ["第一颗", "", "第二颗"]
+
+
 def test_admin_review_does_not_mark_shenyu_reviewed_until_feedback_complete():
     supabase = FakeSupabase()
     service = StarService(_cfg(), supabase)

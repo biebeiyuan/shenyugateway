@@ -333,6 +333,17 @@ def _query_arg(arguments: dict) -> str:
     return arguments.get("query") or arguments.get("q") or ""
 
 
+def _first_nonempty_arg(arguments: dict, *keys: str) -> Any:
+    for key in keys:
+        value = arguments.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return None
+
+
 def _coerce_broker_arguments(value: Any) -> Optional[dict]:
     target_args = _coerce_json_object(value)
     if target_args is None:
@@ -487,18 +498,24 @@ async def _handle_star_review(ctx: ToolContext) -> dict:
 
 @_tool_handler("shenyu_star_feedback")
 async def _handle_star_feedback(ctx: ToolContext) -> dict:
-    feedback = ctx.arguments.get("feedback", ctx.arguments.get("label", ""))
-    note = ctx.arguments.get("note", ctx.arguments.get("reason", ""))
+    feedback = _first_nonempty_arg(ctx.arguments, "feedback", "label", "action", "value")
+    note = _first_nonempty_arg(ctx.arguments, "note", "reason", "comment")
+    items = ctx.arguments.get("items")
     return await ctx.service.star_feedback(
-        feedback=feedback,
+        feedback=feedback if feedback is not None else "",
         run_id=ctx.arguments.get("run_id"),
         candidate_id=ctx.arguments.get("candidate_id"),
-        candidate_star_id=ctx.arguments.get("candidate_star_id"),
+        candidate_star_id=_first_nonempty_arg(
+            ctx.arguments,
+            "candidate_star_id",
+            "candidate_node_id",
+            "star_id",
+        ),
         expected_star_id=ctx.arguments.get("expected_star_id"),
         scored_by=ctx.arguments.get("scored_by", "沈予"),
-        note=note,
+        note=str(note or ""),
         metadata=ctx.arguments.get("metadata") if isinstance(ctx.arguments.get("metadata"), dict) else None,
-        items=ctx.arguments.get("items") if isinstance(ctx.arguments.get("items"), list) else None,
+        items=items if isinstance(items, (dict, list)) else None,
     )
 
 

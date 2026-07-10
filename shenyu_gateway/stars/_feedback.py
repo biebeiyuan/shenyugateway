@@ -12,6 +12,17 @@ from ._helpers import (
 )
 
 
+def _first_nonempty(data: dict[str, Any], *keys: str) -> Any:
+    for key in keys:
+        value = data.get(key)
+        if value is None:
+            continue
+        if isinstance(value, str) and not value.strip():
+            continue
+        return value
+    return None
+
+
 class FeedbackMixin:
 
     async def feedback(
@@ -98,7 +109,9 @@ class FeedbackMixin:
             else:
                 return [], f"feedback[{index}] must be an object."
 
-            feedback_key = _feedback_value(raw_dict.get("feedback") or raw_dict.get("label") or default_feedback)
+            feedback_key = _feedback_value(
+                _first_nonempty(raw_dict, "feedback", "label", "action", "value") or default_feedback
+            )
             if feedback_key not in FEEDBACK_VALUES:
                 return [], f"feedback[{index}] must be one of {sorted(FEEDBACK_VALUES)}."
 
@@ -107,8 +120,7 @@ class FeedbackMixin:
             item_run_id = _node_id(raw_dict.get("run_id")) or default_run_id or None
             item_candidate_id = _node_id(raw_dict.get("candidate_id")) or default_candidate_id or None
             item_candidate_node_id = (
-                _node_id(raw_dict.get("candidate_star_id"))
-                or _node_id(raw_dict.get("candidate_node_id"))
+                _node_id(_first_nonempty(raw_dict, "candidate_star_id", "candidate_node_id", "star_id"))
                 or default_candidate_node_id
                 or None
             )
@@ -136,7 +148,9 @@ class FeedbackMixin:
                     "expected_node_id": item_expected_node_id,
                     "feedback": feedback_key,
                     "scored_by": str(raw_dict.get("scored_by") or default_scored_by).strip() or "沈予",
-                    "note": str(raw_dict.get("note") or raw_dict.get("reason") or default_note).strip(),
+                    "note": str(
+                        _first_nonempty(raw_dict, "note", "reason", "comment") or default_note
+                    ).strip(),
                     "metadata": item_metadata,
                 }
             )

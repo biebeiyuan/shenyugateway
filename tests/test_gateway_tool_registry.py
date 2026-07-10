@@ -1523,6 +1523,61 @@ def test_execute_gateway_tool_accepts_star_feedback_label_reason_aliases():
     ]
 
 
+def test_execute_gateway_tool_accepts_star_feedback_action_star_id_aliases():
+    service = FakeToolService()
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_star_feedback",
+                "params": {
+                    "star_id": "star-1",
+                    "action": "positive",
+                    "comment": "同一条线索。",
+                },
+            },
+            session_tag="default",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "feedback": "positive"}
+    assert service.calls == [
+        {
+            "tool": "shenyu_star_feedback",
+            "feedback": "positive",
+            "run_id": None,
+            "candidate_id": None,
+            "candidate_star_id": "star-1",
+            "expected_star_id": None,
+            "scored_by": "沈予",
+            "note": "同一条线索。",
+            "metadata": None,
+            "items": None,
+        }
+    ]
+
+
+def test_execute_gateway_tool_preserves_single_star_feedback_item_for_compat():
+    service = FakeToolService()
+    item = {"star_id": "star-1", "action": "positive"}
+
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {"tool": "shenyu_star_feedback", "params": {"items": item}},
+            session_tag="default",
+            cfg=_cfg(),
+            service=service,
+        )
+    )
+
+    assert result == {"ok": True, "feedback": ""}
+    assert service.calls[0]["items"] == item
+
+
 def test_execute_gateway_tool_accepts_calendar_anchor_date_alias():
     service = FakeToolService()
 
