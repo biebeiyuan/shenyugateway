@@ -57,6 +57,65 @@ The script separates `tools_offered` from `gateway_tools_executed`. If tools wer
 
 Do not put gateway tokens, VPS hosts, SSH keys, or API keys into repo files. Use shell environment variables or ask the user for the missing value.
 
+## VPS, SSH, and Coolify Operations
+
+Use the configured `vps` SSH alias. Start with a cheap command and a bounded connection timeout before running Docker or database operations:
+
+```powershell
+ssh -o BatchMode=yes -o ConnectTimeout=10 vps date
+```
+
+### When WSL SSH stalls
+
+WSL SSH can occasionally connect but stall during key exchange, commonly after printing `expecting SSH2_MSG_KEX_ECDH_REPLY` under `ssh -vv`. This is a transport-path problem, not evidence that Docker, Coolify, or the target command is broken. Native Windows `ssh.exe` from PowerShell may remain healthy through the same alias and key configuration, so retry the cheap probe there before touching the VPS:
+
+```powershell
+Get-Command ssh
+ssh -o BatchMode=yes -o ConnectTimeout=10 vps date
+```
+
+Repeated timed-out probes may leave local `ssh ... vps` processes alive. Inspect local processes before opening more sessions. Terminate only PIDs created by the current debugging attempt; do not use a blanket `pkill ssh`, because another task may be following production logs through a legitimate long-lived connection.
+
+```bash
+ps -eo pid,ppid,etime,args | grep '[s]sh .*vps'
+kill 12345  # replace with a stuck PID from this debugging attempt
+```
+
+Do not diagnose the Docker daemon from a hanging `docker ps` until a plain `ssh vps date` succeeds reliably. This separates SSH transport trouble from a real remote Docker problem.
+
+### Avoid nested shell quoting
+
+PowerShell, WSL Bash, the remote shell, `docker exec`, SQL, Python, and PHP each have different quoting rules. Pipes, `$()`, `$variables`, regex `|`, and nested quotes can be consumed by the wrong shell. For a multiline read-only script or SQL statement, encode the payload locally, decode it on the VPS, and pass it through stdin:
+
+```powershell
+$payload = @'
+select status from application_deployment_queues where deployment_uuid = 'example';
+'@
+$encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
+ssh vps "echo $encoded | base64 -d | docker exec -i coolify-db psql -U coolify -d coolify -At"
+```
+
+Base64 here is only a quoting transport, not secret protection. Never print or commit an encoded API key, and keep secret-bearing payloads out of retained shell history and logs.
+
+### Persist Coolify environment changes correctly
+
+Coolify stores `environment_variables.value` using Laravel encryption. A plaintext `INSERT` or `UPDATE` against `coolify-db` creates an unreadable configuration even if the row looks valid. Use the Coolify UI/API or boot Coolify's Laravel application and write through `App\Models\EnvironmentVariable`, which applies the encrypted cast and creates the expected preview row.
+
+After changing environment variables, `docker restart` is insufficient because it reuses the existing container environment. Queue a Coolify deployment with `restart_only: true`, or use the equivalent Coolify UI/API action, so Compose recreates the application container without unnecessarily rebuilding the image.
+
+Verify in this order:
+
+1. Coolify deployment queue reaches `finished` rather than merely `queued`.
+2. The new container is `healthy` and still uses the intended image/commit.
+3. Runtime config reports only safe facts such as `key_configured=true`, model, dimensions, worker flags, interval, and batch size. Never print the key.
+4. Worker logs show startup and successful source/index requests.
+5. Database status counts move from `pending` or `failed` to `ready`.
+6. Run one end-to-end application query and print only bounded identifiers, source types, and titles.
+
+### Validate external API keys from the production path
+
+A local WSL proxy or TLS path can return a misleading authentication error even when the key works from the VPS. Validate an embedding or upstream key from the production container/network path with the same base URL, model, and proxy policy used by the gateway. Treat local and VPS disagreement as a network-path signal; do not persist a key until the VPS request succeeds, and do not reject a key solely because the local proxy path failed.
+
 ## First Rule
 
 Preserve behavior before cleanup. This gateway has browser-facing contracts outside this repo, and code can look unused from the admin UI while still being used by `home-frontend`.
