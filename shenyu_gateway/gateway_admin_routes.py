@@ -698,6 +698,8 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 "original_messages_count": item["original_messages_count"],
                 "prepared_messages_count": item["prepared_messages_count"],
                 "client_message_window": item.get("client_message_window"),
+                "memory_island": item.get("memory_island"),
+                "memory_island_version": item.get("memory_island_version"),
                 "cold_start": item.get("cold_start"),
                 "system_additions_preview": item["system_additions_preview"],
                 "system_additions_chars": item.get("system_additions_chars"),

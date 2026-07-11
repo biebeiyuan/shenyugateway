@@ -5,6 +5,14 @@ export interface CacheUsage {
   cache_creation_input_tokens: number
   hit: boolean
   write: boolean
+  rounds?: number
+}
+
+export interface PromptCache {
+  enabled?: boolean
+  protocol?: string | null
+  ttl?: string | null
+  breakpoints?: string[]
 }
 
 export interface LogEntry {
@@ -35,6 +43,7 @@ export interface LogEntry {
   system_additions_chars?: number | null
   usage?: Record<string, any> | null
   cache_usage?: CacheUsage | null
+  prompt_cache?: PromptCache | null
 }
 
 export interface ToolRoundEntry {

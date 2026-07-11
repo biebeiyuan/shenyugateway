@@ -238,6 +238,9 @@ class ChatPipeline:
             "prepared_messages_count": len(prepared_messages),
             "client_message_window": meta.get("client_message_window", {}),
             "memory_island": (meta.get("package") or {}).get("memory_island_decision") or {},
+            "memory_island_version": (
+                ((meta.get("package") or {}).get("memory_island_state") or {}).get("version")
+            ),
             "cold_start": {
                 "injected": bool(meta.get("cold_start_snapshot")),
                 "snapshot_id": (meta.get("cold_start_snapshot") or {}).get("id"),

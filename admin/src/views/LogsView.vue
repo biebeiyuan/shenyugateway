@@ -140,12 +140,49 @@ function tokenLabel(log: LogEntry): string {
   return t === null ? '' : `${fmtNum(t)} tok`
 }
 
-// 命中缓存时返回 "⚡缓存 1.2k"，否则空串
+function cacheRate(log: LogEntry): number | null {
+  const c = log.cache_usage
+  const u = log.usage
+  if (!c?.hit || !u || typeof u !== 'object') return null
+
+  const read = Number(c.cache_read_input_tokens) || 0
+  const write = Number(c.cache_creation_input_tokens) || 0
+  const prompt = Number(u.prompt_tokens ?? u.input_tokens) || 0
+  if (read <= 0) return null
+
+  // Anthropic 的 input_tokens 不含 cache read/write；OpenAI 的 prompt_tokens
+  // 通常已经包含 cached_tokens。按上游协议区分，避免比例超过 100%。
+  const protocol = String(log.prompt_cache?.protocol || '').toLowerCase()
+  const totalInput = protocol === 'anthropic'
+    ? read + write + prompt
+    : (prompt >= read ? prompt : read + write + prompt)
+  if (totalInput <= 0) return null
+  return Math.min(1, read / totalInput)
+}
+
+function fmtRate(rate: number): string {
+  const percent = rate * 100
+  return percent >= 99.95 ? '100%' : `${percent.toFixed(1)}%`
+}
+
+// 命中缓存时返回紧凑的 "⚡ 1.2k · 98.5%"，否则空串
 function cacheLabel(log: LogEntry): string {
   const c = log.cache_usage
   if (!c || !c.hit) return ''
   const read = c.cache_read_input_tokens || 0
-  return read > 0 ? `⚡缓存 ${fmtNum(read)}` : '⚡缓存'
+  if (read <= 0) return '⚡'
+  const rate = cacheRate(log)
+  return rate === null ? `⚡ ${fmtNum(read)}` : `⚡ ${fmtNum(read)} · ${fmtRate(rate)}`
+}
+
+function cacheTitle(log: LogEntry): string {
+  const c = log.cache_usage
+  if (!c?.hit) return ''
+  const read = c.cache_read_input_tokens || 0
+  const rate = cacheRate(log)
+  const parts = [`命中缓存 ${read.toLocaleString()} tokens`]
+  if (rate !== null) parts.push(`缓存覆盖率 ${fmtRate(rate)}（按上游上报的输入 token 计算）`)
+  return parts.join(' · ')
 }
 
 async function toggleDetail(id: string) {
@@ -368,7 +405,13 @@ function renderContent(detail: LogDetail, tab: string): string {
         <NTag v-if="log.tools_count" size="tiny" :bordered="false" class="tag-t">{{ log.tools_count }} tools</NTag>
         <NTag size="tiny" :bordered="false" class="tag-d">{{ log.duration_ms }}ms</NTag>
         <NTag v-if="tokenLabel(log)" size="tiny" :bordered="false" class="tag-tok">{{ tokenLabel(log) }}</NTag>
-        <NTag v-if="cacheLabel(log)" size="tiny" :bordered="false" class="tag-cache">{{ cacheLabel(log) }}</NTag>
+        <NTag
+          v-if="cacheLabel(log)"
+          size="tiny"
+          :bordered="false"
+          class="tag-cache"
+          :title="cacheTitle(log)"
+        >{{ cacheLabel(log) }}</NTag>
         <span class="msg-count">{{ log.original_messages_count }}→{{ log.prepared_messages_count }}</span>
         <span class="arrow" :class="{ open: expIds.has(log.id) }">▶</span>
       </div>
