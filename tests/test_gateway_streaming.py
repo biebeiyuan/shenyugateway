@@ -60,6 +60,19 @@ from shenyu_gateway.upstream_adapter import (
 )
 
 
+def test_aggregate_cache_usage_keeps_multi_round_input_denominator():
+    result = gateway._aggregate_cache_usage(
+        [
+            {"prompt_tokens": 2, "prompt_tokens_details": {"cached_tokens": 100548}},
+            {"prompt_tokens": 90808, "prompt_tokens_details": {"cached_tokens": 21296}},
+        ]
+    )
+
+    assert result["cache_read_input_tokens"] == 121844
+    assert result["reported_input_tokens"] == 90810
+    assert result["rounds"] == 2
+
+
 class _FakeStore:
     def __init__(self) -> None:
         self.messages: list[dict] = []

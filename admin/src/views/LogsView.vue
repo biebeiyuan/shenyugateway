@@ -66,10 +66,10 @@ function toolHint(name: string): string {
   return GATEWAY_TOOL_HINTS[name] || ''
 }
 
-const TAB_NAMES = ['system', 'messages', 'upstream', 'tools', 'response', 'meta', 'raw'] as const
+const TAB_NAMES = ['overview', 'rounds', 'tools', 'messages', 'response', 'system', 'upstream', 'meta', 'raw'] as const
 const TAB_LABELS: Record<string, string> = {
-  system: 'System', messages: 'Messages', upstream: 'Upstream',
-  tools: 'Tools', response: 'Response', meta: 'Meta', raw: 'Raw JSON',
+  overview: '概览', rounds: '上游轮次', tools: '工具执行', messages: 'Messages',
+  response: 'Response', system: 'System', upstream: 'Upstream', meta: 'Meta', raw: 'Raw JSON',
 }
 
 onMounted(async () => {
@@ -147,8 +147,15 @@ function cacheRate(log: LogEntry): number | null {
 
   const read = Number(c.cache_read_input_tokens) || 0
   const write = Number(c.cache_creation_input_tokens) || 0
-  const prompt = Number(u.prompt_tokens ?? u.input_tokens) || 0
+  const aggregatePrompt = Number(c.reported_input_tokens)
+  const hasAggregatePrompt = Number.isFinite(aggregatePrompt) && aggregatePrompt >= 0
+  const prompt = hasAggregatePrompt
+    ? aggregatePrompt
+    : Number(u.prompt_tokens ?? u.input_tokens) || 0
   if (read <= 0) return null
+
+  // 旧版多轮日志只累计了 cache read，却只保留最后一轮 usage，二者不能混算。
+  if ((c.rounds || 0) > 1 && !hasAggregatePrompt) return null
 
   // Anthropic 的 input_tokens 不含 cache read/write；OpenAI 的 prompt_tokens
   // 通常已经包含 cached_tokens。按上游协议区分，避免比例超过 100%。
@@ -191,7 +198,7 @@ async function toggleDetail(id: string) {
     delete detCache.value[id]
   } else {
     expIds.value.add(id)
-    aTabs.value[id] = aTabs.value[id] || 'system'
+    aTabs.value[id] = aTabs.value[id] || 'overview'
     loadDetailTab(id)
   }
 }
@@ -223,7 +230,121 @@ function collapseAll() {
   detCache.value = {}
 }
 
+function usageInput(usage: Record<string, any> | null | undefined): number {
+  return Number(usage?.prompt_tokens ?? usage?.input_tokens) || 0
+}
+
+function usageOutput(usage: Record<string, any> | null | undefined): number {
+  return Number(usage?.completion_tokens ?? usage?.output_tokens) || 0
+}
+
+function usageCacheRead(usage: Record<string, any> | null | undefined): number {
+  return Number(
+    usage?.cache_read_input_tokens
+    ?? usage?.prompt_tokens_details?.cached_tokens
+    ?? usage?.input_tokens_details?.cached_tokens,
+  ) || 0
+}
+
+function roundCacheRate(detail: LogDetail, usage: Record<string, any> | null | undefined): number | null {
+  const read = usageCacheRead(usage)
+  if (read <= 0) return null
+  const input = usageInput(usage)
+  const protocol = String(detail.prompt_cache?.protocol || '').toLowerCase()
+  const total = protocol === 'anthropic' ? read + input : Math.max(read, input)
+  return total > 0 ? read / total : null
+}
+
+function messageText(message: any): string {
+  if (typeof message?.content === 'string') return message.content
+  if (Array.isArray(message?.content)) {
+    return message.content.map((block: any) => typeof block === 'string' ? block : block?.text || '').join('\n')
+  }
+  return ''
+}
+
+function suspiciousMarkers(detail: LogDetail): Array<{ index: number; role: string; marker: string }> {
+  const messages = detail.prepared_messages || []
+  const patterns = [
+    /(?:end)?_of_conversation_from_api|end_of_conversation/gi,
+  ]
+  const found: Array<{ index: number; role: string; marker: string }> = []
+  messages.forEach((message: any, index: number) => {
+    const text = messageText(message)
+    for (const pattern of patterns) {
+      pattern.lastIndex = 0
+      const match = pattern.exec(text)
+      if (match && !found.some((item) => item.index === index && item.marker === match[0])) {
+        found.push({ index, role: message.role || '?', marker: match[0] })
+      }
+    }
+  })
+  return found
+}
+
+function renderOverview(detail: LogDetail): string {
+  const window = detail.client_message_window || {}
+  const cache = detail.cache_usage
+  const markers = suspiciousMarkers(detail)
+  const rounds = Array.isArray(detail.internal_tool_rounds) ? detail.internal_tool_rounds : []
+  const executed = rounds.reduce((sum, round) => sum + (round.tools?.length || 0), 0)
+  const requested = rounds.reduce((sum, round) => sum + (round.gateway_tool_calls?.length || 0), 0)
+  const cards = [
+    ['请求结果', `${detail.status}${detail.finish_reason ? ` · ${detail.finish_reason}` : ''}`, detail.error ? 'bad' : 'good'],
+    ['消息窗口', `${detail.original_messages_count} → ${detail.prepared_messages_count}`, detail.original_messages_count > detail.prepared_messages_count ? 'warn' : ''],
+    ['上游轮次', `${rounds.length || Number(detail.internal_tool_rounds || 0) || 1} 轮`, ''],
+    ['工具链路', `提供 ${detail.tools_count || 0} · 请求 ${requested} · 执行 ${executed}`, requested > executed ? 'warn' : 'good'],
+  ]
+  let html = `<div class="diag-grid">${cards.map(([label, value, tone]) => `<div class="diag-card ${tone}"><div class="diag-label">${esc(label)}</div><div class="diag-value">${esc(value)}</div></div>`).join('')}</div>`
+
+  html += '<div class="diag-section"><div class="diag-title">裁剪与上下文</div><div class="diag-lines">'
+  html += `<div>原始客户端消息：${detail.original_messages_count}；发送上游：${detail.prepared_messages_count}</div>`
+  html += `<div>近期非 system 保留：${window.client_non_system_retained ?? '未知'} / ${window.client_non_system_original ?? '未知'}；人类轮次：${window.human_turn_groups_retained ?? '未知'}</div>`
+  html += `<div>事件：${esc(window.event_class || '未知')}；公共前缀：${window.common_prefix_messages ?? '未知'}；工具保护轮次：${window.raw_tool_protection_turns ?? 0}</div>`
+  html += `<div>Epoch：${esc(window.context_epoch_id || '未知')}；重置：${window.context_epoch_reset ? `是（${esc(window.context_epoch_reset_reason || '未注明')}）` : '否'}</div>`
+  html += '</div></div>'
+
+  html += '<div class="diag-section"><div class="diag-title">缓存诊断</div><div class="diag-lines">'
+  if (!detail.prompt_cache?.enabled) {
+    html += '<div class="diag-warn">本次未启用 prompt cache。</div>'
+  } else if (cache?.hit) {
+    const rate = cacheRate(detail)
+    html += `<div>协议：${esc(detail.prompt_cache.protocol || '未知')}；TTL：${esc(detail.prompt_cache.ttl || '未知')}</div>`
+    html += `<div>上游报告读取：${Number(cache.cache_read_input_tokens || 0).toLocaleString()}；写入：${Number(cache.cache_creation_input_tokens || 0).toLocaleString()}；轮次：${cache.rounds || 1}</div>`
+    html += `<div>${rate === null ? '多轮旧日志口径不完整，不展示覆盖率。' : `上游报告覆盖率：${fmtRate(rate)}`}</div>`
+  } else {
+    html += `<div class="diag-warn">本次未命中缓存；上游报告输入 ${usageInput(detail.usage).toLocaleString()} tokens。</div>`
+  }
+  html += '</div></div>'
+
+  html += '<div class="diag-section"><div class="diag-title">异常检查</div>'
+  if (markers.length) {
+    html += `<div class="diag-alert">发现疑似会话控制标记：${markers.map((item) => `messages[${item.index}] ${item.role}: ${item.marker}`).join('；')}。该标记已存在于发送上游的历史消息中，请对比上一请求 response_full 判断来自模型输出还是客户端追加。</div>`
+  } else {
+    html += '<div class="diag-ok">未在保留消息中发现已知会话结束标记。</div>'
+  }
+  if (detail.error) html += `<div class="diag-alert">失败信息：${esc(detail.error)}</div>`
+  html += '</div>'
+  return html
+}
+
+function renderRounds(detail: LogDetail): string {
+  const rounds = Array.isArray(detail.internal_tool_rounds) ? detail.internal_tool_rounds : []
+  if (!rounds.length) return '<div class="tool-empty">该日志没有保留逐轮详情；普通单轮请求请查看 Upstream 与 Response。</div>'
+  return rounds.map((round) => {
+    const usage = round.usage || {}
+    const read = usageCacheRead(usage)
+    const rate = roundCacheRate(detail, usage)
+    const calls = Number(round.tool_calls_count || 0)
+    const executed = round.tools?.length || 0
+    const status = round.finish_reason || (calls ? 'tool_calls' : '未知')
+    return `<div class="round-card"><div class="round-head"><span>第 ${round.round} 轮</span><span>${round.messages_count} messages</span><span>${round.stream ? '流式' : '非流式'}</span><span>结束：${esc(status)}</span></div><div class="round-metrics"><div>输入 ${usageInput(usage).toLocaleString()}</div><div>输出 ${usageOutput(usage).toLocaleString()}</div><div>缓存读取 ${read.toLocaleString()}</div><div>${rate === null ? '缓存未命中/未知' : `覆盖 ${fmtRate(rate)}`}</div><div>模型工具请求 ${calls}</div><div>网关实际执行 ${executed}</div></div>${round.gateway_tool_calls?.length ? `<div class="round-calls">${round.gateway_tool_calls.map((call) => `🔧 ${esc(call.name || 'unknown')} ${esc(call.arguments_preview || '')}`).join('\n')}</div>` : ''}</div>`
+  }).join('')
+}
+
 function renderContent(detail: LogDetail, tab: string): string {
+  if (tab === 'overview') return renderOverview(detail)
+  if (tab === 'rounds') return renderRounds(detail)
   if (tab === 'system') {
     const full = detail.system_additions_full || detail.system_additions_preview || '(无)'
     return esc(full)
@@ -430,7 +551,7 @@ function renderContent(detail: LogDetail, tab: string): string {
         </div>
         <div class="dcont">
           <div v-if="loadingDet.has(log.id)" style="color:#484f58;font-size:11px">加载中...</div>
-          <pre v-else-if="detCache[log.id]" v-html="renderContent(detCache[log.id], aTabs[log.id] || 'system')"></pre>
+          <pre v-else-if="detCache[log.id]" v-html="renderContent(detCache[log.id], aTabs[log.id] || 'overview')"></pre>
           <div v-else style="color:#484f58;font-size:11px">点击标签加载</div>
         </div>
       </div>
@@ -666,6 +787,116 @@ function renderContent(detail: LogDetail, tab: string): string {
   font-family: 'SF Mono', monospace;
   white-space: pre-wrap;
   word-break: break-all;
+}
+
+.diag-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.diag-card {
+  padding: 9px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.diag-card.good { border-left: 3px solid #22c55e; }
+.diag-card.warn { border-left: 3px solid #f59e0b; }
+.diag-card.bad { border-left: 3px solid #ef4444; }
+
+.diag-label {
+  color: #9ca3af;
+  font-size: 10px;
+  margin-bottom: 3px;
+}
+
+.diag-value {
+  color: #1f2937;
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.diag-section {
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.diag-title {
+  color: #8b7082;
+  font-size: 11px;
+  font-weight: 700;
+  margin-bottom: 6px;
+}
+
+.diag-lines > div {
+  padding: 2px 0;
+  color: #4b5563;
+}
+
+.diag-alert,
+.diag-warn,
+.diag-ok {
+  padding: 7px 9px;
+  border-radius: 6px;
+  white-space: pre-wrap;
+}
+
+.diag-alert {
+  color: #991b1b;
+  background: #fef2f2;
+  border: 1px solid #fecaca;
+}
+
+.diag-warn {
+  color: #92400e;
+  background: #fffbeb;
+  border: 1px solid #fde68a;
+}
+
+.diag-ok {
+  color: #166534;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+}
+
+.round-card {
+  padding: 10px;
+  margin-bottom: 8px;
+  border: 1px solid #e5e7eb;
+  border-radius: 7px;
+  background: #fff;
+}
+
+.round-head,
+.round-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 14px;
+}
+
+.round-head {
+  color: #374151;
+  font-weight: 600;
+  margin-bottom: 7px;
+}
+
+.round-metrics {
+  color: #6b7280;
+}
+
+.round-calls {
+  margin-top: 8px;
+  padding: 7px 9px;
+  border-radius: 6px;
+  color: #155e75;
+  background: #ecfeff;
+  white-space: pre-wrap;
 }
 
 /* tools tab: 工具名清单 + 调用记录 + 客户端工具 */
