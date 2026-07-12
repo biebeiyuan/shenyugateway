@@ -571,6 +571,25 @@ def test_backfill_returns_classifier_error_detail():
     assert result["items"][0]["response_preview"] == "我认为这颗星是暖和裂。"
 
 
+def test_scene_response_unwraps_data_envelope_and_reasoning_blocks():
+    service = StarService(_cfg(), FakeSupabase())
+    payload = service._scene_response_payload({
+        "success": True,
+        "data": {
+            "choices": [{
+                "message": {
+                    "content": '[{"star_id":"a","scenes":["warm"]}]',
+                    "reasoning": [{"type": "reasoning.text", "text": "认真判断了暖。"}],
+                }
+            }]
+        },
+    })
+    message = payload["choices"][0]["message"]
+
+    assert message["content"].startswith("[")
+    assert service._scene_response_text(message["reasoning"]) == "认真判断了暖。"
+
+
 def test_set_scenes_preserves_content_and_other_metadata():
     supabase = FakeSupabase()
     service = StarService(_cfg(), supabase)

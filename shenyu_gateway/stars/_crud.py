@@ -155,6 +155,20 @@ class CrudMixin:
             return str(value.get("text") or value.get("content") or "")
         return ""
 
+    @staticmethod
+    def _scene_response_payload(value: Any) -> dict[str, Any]:
+        if not isinstance(value, dict):
+            return {}
+        if isinstance(value.get("choices"), list) or isinstance(value.get("content"), list):
+            return value
+        for key in ("data", "result", "response"):
+            nested = value.get(key)
+            if isinstance(nested, dict) and (
+                isinstance(nested.get("choices"), list) or isinstance(nested.get("content"), list)
+            ):
+                return nested
+        return value
+
     async def _classify_star_scenes(self, stars: list[dict[str, str]], http_client: Any) -> dict[str, Any]:
         from ..upstream_adapter import _openai_to_anthropic
         from ..upstream_client import chat_url_for, detect_protocol_for
@@ -200,7 +214,7 @@ class CrudMixin:
         try:
             response = await http_client.post(chat_url_for(base_url, protocol), json=payload, headers=headers)
             response.raise_for_status()
-            data = response.json()
+            data = self._scene_response_payload(response.json())
             if protocol == "anthropic":
                 text = "".join(
                     str(block.get("text") or "")
@@ -218,7 +232,11 @@ class CrudMixin:
                 text = self._scene_response_text(message.get("content")) if isinstance(message, dict) else ""
                 if not text and choices and isinstance(choices[0], dict):
                     text = self._scene_response_text(choices[0].get("text"))
-                thinking = self._scene_response_text(message.get("reasoning_content")) if isinstance(message, dict) else ""
+                thinking = ""
+                if isinstance(message, dict):
+                    thinking = self._scene_response_text(message.get("reasoning_content"))
+                    if not thinking:
+                        thinking = self._scene_response_text(message.get("reasoning"))
             labels = _parse_scene_batch(text, {star["star_id"] for star in stars})
             if labels is None:
                 preview = " ".join(str(text or "").split())[:240]
