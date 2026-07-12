@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+import json
 from typing import Any, Optional
+
+import httpx
 
 from ..recall import recall_terms
 from ..request_logs import _mark_request_log_phase
@@ -12,7 +15,15 @@ from ._helpers import (
     parse_star_payload, STAR_TABLE, STAR_LINK_TABLE, STAR_SELECT, STAR_CANDIDATE_TABLE,
     STAR_RANKER_VERSION,
 )
-from ._scene import _classify_scene_by_keywords, _classify_scene_by_embedding, _load_scene_config
+from ._scene import (
+    SCENE_KEYS,
+    _classify_scene_by_keywords,
+    _classify_scene_by_embedding,
+    _load_scene_config,
+    _normalize_scenes,
+    _parse_scene_labels,
+    _scene_label_prompt,
+)
 from ._weights import StarWeights
 
 
@@ -129,6 +140,130 @@ class CrudMixin:
             row = dict(row)
             row.setdefault("chord_sequence", chord_sequence if len(chord_sequence) > 1 else [])
         return {"ok": True, "star_id": row.get("id") if isinstance(row, dict) else None, "star": row}
+
+    async def _classify_star_scenes(self, content: str, http_client: Any) -> Optional[list[str]]:
+        from ..upstream_adapter import _openai_to_anthropic
+        from ..upstream_client import chat_url_for, detect_protocol_for
+
+        model = str(getattr(self.cfg, "star_scene_llm_model", "") or "").strip()
+        base_url = str(getattr(self.cfg, "star_scene_llm_url", "") or getattr(self.cfg, "upstream_url", "") or "").strip()
+        api_key = str(getattr(self.cfg, "star_scene_llm_api_key", "") or getattr(self.cfg, "upstream_api_key", "") or "").strip()
+        protocol = detect_protocol_for(
+            base_url,
+            str(getattr(self.cfg, "star_scene_llm_protocol", "") or getattr(self.cfg, "upstream_protocol", "auto") or "auto"),
+        )
+        if not model or not base_url or not api_key:
+            return None
+        _, descriptions, _ = self._scene_config()
+        messages = [{"role": "user", "content": _scene_label_prompt(content, descriptions)}]
+        headers = {"content-type": "application/json"}
+        if protocol == "anthropic":
+            system, anthropic_messages = _openai_to_anthropic(messages)
+            payload: dict[str, Any] = {
+                "model": model,
+                "messages": anthropic_messages,
+                "max_tokens": 80,
+                "temperature": 0,
+            }
+            if system:
+                payload["system"] = system
+            headers["x-api-key"] = api_key
+            headers["anthropic-version"] = str(getattr(self.cfg, "upstream_version", "2023-06-01"))
+        else:
+            payload = {
+                "model": model,
+                "messages": messages,
+                "stream": False,
+                "temperature": 0,
+                "max_tokens": 80,
+            }
+            headers["authorization"] = f"Bearer {api_key}"
+        try:
+            response = await http_client.post(chat_url_for(base_url, protocol), json=payload, headers=headers)
+            response.raise_for_status()
+            data = response.json()
+            if protocol == "anthropic":
+                text = "".join(
+                    str(block.get("text") or "")
+                    for block in data.get("content") or []
+                    if isinstance(block, dict) and block.get("type") == "text"
+                )
+            else:
+                choices = data.get("choices") or []
+                message = choices[0].get("message") if choices and isinstance(choices[0], dict) else {}
+                text = message.get("content") if isinstance(message, dict) else ""
+            return _parse_scene_labels(text)
+        except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            logger.warning("[Star] Scene label classification failed: %s", exc)
+            return None
+
+    @staticmethod
+    def _has_scene_labels(metadata: dict[str, Any]) -> bool:
+        return "scenes" in metadata or bool(str(metadata.get("scene") or "").strip())
+
+    async def backfill_scenes(self, *, limit: int, http_client: Any) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+        batch_limit = _safe_int(limit, 10, 1, 100)
+        rows = await self.supabase.query(STAR_TABLE, {
+            "select": STAR_SELECT,
+            "status": "eq.active",
+            "order": "created_at.asc",
+            "limit": "500",
+        })
+        pending = [row for row in rows if not self._has_scene_labels(_json_dict(row.get("metadata")))]
+        selected = pending[:batch_limit]
+        items: list[dict[str, Any]] = []
+        updated = 0
+        failed = 0
+        by_scene = {scene: 0 for scene in sorted(SCENE_KEYS)}
+        for row in selected:
+            scenes = await self._classify_star_scenes(str(row.get("content") or ""), http_client)
+            if scenes is None:
+                failed += 1
+                items.append({"star": self._public_star(row), "ok": False, "error": "classification failed"})
+                continue
+            metadata = _json_dict(row.get("metadata"))
+            if self._has_scene_labels(metadata):
+                items.append({"star": self._public_star(row), "ok": True, "skipped": True})
+                continue
+            metadata["scenes"] = scenes
+            await self.supabase.update(STAR_TABLE, {"id": _node_id(row.get("id"))}, {"metadata": metadata})
+            updated += 1
+            for scene in scenes:
+                by_scene[scene] += 1
+            public_row = dict(row)
+            public_row["metadata"] = metadata
+            items.append({"star": self._public_star(public_row), "ok": True, "scenes": scenes})
+        return {
+            "ok": True,
+            "requested": batch_limit,
+            "selected": len(selected),
+            "updated": updated,
+            "failed": failed,
+            "remaining_unlabeled": max(0, len(pending) - updated),
+            "by_scene": by_scene,
+            "items": items,
+        }
+
+    async def set_scenes(self, star_id: str, scenes: Any) -> dict[str, Any]:
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+        normalized = _normalize_scenes(scenes)
+        invalid = [str(item) for item in (scenes or []) if str(item or "").strip().lower() not in SCENE_KEYS]
+        if invalid:
+            return {"ok": False, "error": f"invalid scenes: {', '.join(invalid)}"}
+        rows = await self.supabase.query(STAR_TABLE, {"select": STAR_SELECT, "id": f"eq.{star_id}", "limit": "1"})
+        if not rows:
+            return {"ok": False, "error": "star not found"}
+        row = rows[0]
+        metadata = _json_dict(row.get("metadata"))
+        metadata["scenes"] = normalized
+        metadata.pop("scene", None)
+        await self.supabase.update(STAR_TABLE, {"id": star_id}, {"metadata": metadata})
+        updated_row = dict(row)
+        updated_row["metadata"] = metadata
+        return {"ok": True, "star": self._public_star(updated_row)}
 
     async def list_stars(
         self,

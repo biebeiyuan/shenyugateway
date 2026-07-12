@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { NButton, NFormItem, NInputNumber, NSwitch } from 'naive-ui'
+import { NButton, NFormItem, NInput, NInputNumber, NSelect, NSwitch } from 'naive-ui'
 import type { GatewayConfig } from '@/api/config'
 
 defineProps<{
@@ -12,6 +12,13 @@ const emit = defineEmits<{
   (event: 'quietTools'): void
   (event: 'reset'): void
 }>()
+
+const protocolOptions = [
+  { label: '继承主上游', value: '' },
+  { label: 'OpenAI compatible', value: 'openai' },
+  { label: 'Anthropic', value: 'anthropic' },
+  { label: '自动识别', value: 'auto' },
+]
 </script>
 
 <template>
@@ -66,6 +73,33 @@ const emit = defineEmits<{
         <NFormItem label="shadow"><NInputNumber v-model:value="config.star_shadow_candidate_limit" :min="3" :max="100" /></NFormItem>
       </div>
     </details>
+
+    <section class="scene-model-card">
+      <div class="scene-model-copy">
+        <span>Scene Labeler</span>
+        <h3>场景标注模型</h3>
+        <p>只在你点击“帮我补标签”时调用。URL、Key、协议留空会继承主上游；模型名可单独指定更轻的小模型。</p>
+      </div>
+      <div class="scene-model-grid">
+        <NFormItem label="模型">
+          <NInput v-model:value="config.star_scene_llm_model" placeholder="例如 gpt-4.1-mini" />
+        </NFormItem>
+        <NFormItem label="协议">
+          <NSelect v-model:value="config.star_scene_llm_protocol" :options="protocolOptions" />
+        </NFormItem>
+        <NFormItem label="模型 URL">
+          <NInput v-model:value="config.star_scene_llm_url" placeholder="留空继承主上游 URL" />
+        </NFormItem>
+        <NFormItem label="API Key">
+          <NInput
+            v-model:value="config.star_scene_llm_api_key"
+            type="password"
+            show-password-on="click"
+            :placeholder="config.star_scene_llm_api_key_configured ? '已配置；留空保持不变' : '留空继承主上游 Key'"
+          />
+        </NFormItem>
+      </div>
+    </section>
 
     <div class="setting-actions">
       <NButton type="primary" :loading="saving" @click="emit('save')">保存</NButton>
@@ -130,11 +164,29 @@ const emit = defineEmits<{
   margin-top: 12px;
 }
 
+.scene-model-card {
+  display: grid;
+  grid-template-columns: minmax(220px, .8fr) minmax(420px, 1.6fr);
+  gap: 24px;
+  margin-top: 14px;
+  padding: 20px;
+  border: 1px solid rgba(111, 95, 154, .18);
+  border-radius: 15px;
+  background: linear-gradient(135deg, #fffdfc, #f8f5fb);
+}
+
+.scene-model-copy span { color: #8e83b7; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; }
+.scene-model-copy h3 { margin: 4px 0 7px; color: #594d67; font-size: 17px; }
+.scene-model-copy p { margin: 0; color: #8b7d8c; font-size: 12px; line-height: 1.65; }
+.scene-model-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 0 12px; }
+
 @media (max-width: 980px) {
   .toggle-grid,
   .number-grid,
   .weight-grid {
     grid-template-columns: 1fr;
   }
+  .scene-model-card { grid-template-columns: 1fr; }
+  .scene-model-grid { grid-template-columns: 1fr; }
 }
 </style>

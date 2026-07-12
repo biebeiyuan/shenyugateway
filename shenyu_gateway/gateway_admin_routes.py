@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from typing import Any, Callable, Optional
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .gateway_tools import GatewayToolService
@@ -23,6 +23,8 @@ from .schemas import (
     StarConstantRequest,
     StarCreateRequest,
     StarFeedbackRequest,
+    StarSceneBackfillRequest,
+    StarScenesRequest,
     SessionDeleteRequest,
 )
 from .sessions import SessionManager
@@ -567,6 +569,16 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             raise HTTPException(status_code=400, detail=result.get("error") or "star review failed")
         return result
 
+    @router.post("/api/gateway/stars/backfill-scenes")
+    async def backfill_star_scenes(body: StarSceneBackfillRequest, request: Request):
+        result = await StarService(cfg, deps.get_supabase_client()).backfill_scenes(
+            limit=body.limit,
+            http_client=request.app.state.http,
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error") or "star scene backfill failed")
+        return result
+
     @router.post("/api/gateway/stars/feedback")
     async def star_feedback(body: StarFeedbackRequest):
         result = await StarService(cfg, deps.get_supabase_client()).feedback(
@@ -602,6 +614,13 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         result = await StarService(cfg, deps.get_supabase_client()).mark_constant(star_id, body.is_constant)
         if not result.get("ok"):
             raise HTTPException(status_code=400, detail=result.get("error") or "star constant update failed")
+        return result
+
+    @router.patch("/api/gateway/stars/{star_id}/scenes")
+    async def set_star_scenes(star_id: str, body: StarScenesRequest):
+        result = await StarService(cfg, deps.get_supabase_client()).set_scenes(star_id, body.scenes)
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error") or "star scenes update failed")
         return result
 
     @router.get("/api/gateway/legacy-atomic-memories")

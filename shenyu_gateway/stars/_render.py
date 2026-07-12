@@ -25,6 +25,10 @@ class RenderMixin:
         from ._chord import _split_chord_sequence
 
         metadata = _json_dict(row.get("metadata"))
+        scenes = metadata.get("scenes")
+        if not isinstance(scenes, list):
+            legacy_scene = _node_id(metadata.get("scene"))
+            scenes = [legacy_scene] if legacy_scene else []
         chord_sequence = metadata.get("chord_sequence")
         if not isinstance(chord_sequence, list):
             chord_sequence = []
@@ -41,6 +45,7 @@ class RenderMixin:
             "chord_sequence": chord_sequence,
             "chord_root": row.get("chord_root") or "",
             "chord_quality": row.get("chord_quality") or "",
+            "scenes": scenes,
             "status": row.get("status") or "active",
             "is_constant": bool(row.get("is_constant")),
             "reviewed_at": row.get("reviewed_at"),

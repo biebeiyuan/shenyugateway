@@ -488,3 +488,74 @@ def test_review_returns_remaining_unreviewed():
     assert result["ok"] is True
     assert result["count"] == 2
     assert result["remaining_unreviewed"] == 4
+
+
+def test_backfill_scenes_only_updates_unlabeled_stars():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+    classified_contents = []
+
+    async def classify(content, http_client):
+        classified_contents.append(content)
+        return ["warm", "rift"]
+
+    service._classify_star_scenes = classify
+
+    async def run():
+        await service.create_star("沈予已经标过", metadata={"scenes": ["deep"]})
+        await service.create_star("旧格式也不能覆盖", metadata={"scene": "anchor"})
+        await service.create_star("等待补标签")
+        return await service.backfill_scenes(limit=10, http_client=object())
+
+    result = asyncio.run(run())
+    rows = supabase.tables["shenyu_stars"]
+
+    assert result["updated"] == 1
+    assert classified_contents == ["等待补标签"]
+    assert rows[0]["metadata"]["scenes"] == ["deep"]
+    assert rows[1]["metadata"]["scene"] == "anchor"
+    assert rows[2]["metadata"]["scenes"] == ["warm", "rift"]
+
+
+def test_backfill_empty_scene_list_counts_as_processed():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+    calls = 0
+
+    async def classify(content, http_client):
+        nonlocal calls
+        calls += 1
+        return []
+
+    service._classify_star_scenes = classify
+
+    async def run():
+        await service.create_star("暂时无法判断")
+        first = await service.backfill_scenes(limit=10, http_client=object())
+        second = await service.backfill_scenes(limit=10, http_client=object())
+        return first, second
+
+    first, second = asyncio.run(run())
+
+    assert first["updated"] == 1
+    assert second["selected"] == 0
+    assert calls == 1
+    assert supabase.tables["shenyu_stars"][0]["metadata"]["scenes"] == []
+
+
+def test_set_scenes_preserves_content_and_other_metadata():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        created = await service.create_star("正文绝对不能动", metadata={"note": "保留", "scene": "warm"})
+        return await service.set_scenes(created["star_id"], ["rift", "warm"])
+
+    result = asyncio.run(run())
+    row = supabase.tables["shenyu_stars"][0]
+
+    assert result["ok"] is True
+    assert row["content"] == "正文绝对不能动"
+    assert row["metadata"]["note"] == "保留"
+    assert row["metadata"]["scenes"] == ["warm", "rift"]
+    assert "scene" not in row["metadata"]

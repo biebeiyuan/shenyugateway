@@ -145,7 +145,14 @@ STAR_RRF_K=60
 STAR_RRF_ACTR_FLOOR=0.5
 STAR_RRF_CONSTANT_BOOST=1.3
 STAR_RRF_DATE_BOOST_MAX=0.3
+
+STAR_SCENE_LLM_MODEL=
+STAR_SCENE_LLM_URL=
+STAR_SCENE_LLM_API_KEY=
+STAR_SCENE_LLM_PROTOCOL=
 ```
+
+Scene labels are manually backfilled from the admin API; star creation does not call the classifier. The classifier reads the six descriptions from `star_scene_rules.json`, returns zero or more fixed labels, and only writes `metadata.scenes`. Rows that already contain `metadata.scenes` (including an empty list) or legacy `metadata.scene` are skipped and never overwritten by batch backfill. The dedicated per-star patch route is the explicit manual correction path.
 
 Tools:
 
@@ -165,9 +172,11 @@ Admin API:
 - `GET /api/gateway/stars/search`
 - `POST /api/gateway/stars`
 - `POST /api/gateway/stars/review`
+- `POST /api/gateway/stars/backfill-scenes`
 - `POST /api/gateway/stars/feedback`
 - `POST /api/gateway/stars/connect`
 - `PATCH /api/gateway/stars/{star_id}/constant`
+- `PATCH /api/gateway/stars/{star_id}/scenes`
 - `GET /api/gateway/stars/graph`: returns active stars plus `shenyu_star_links` edges for the admin memory star map.
 
 Admin UI:

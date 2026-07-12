@@ -74,6 +74,11 @@ export interface GatewayConfig {
   star_constant_bonus?: number
   star_novelty_bonus?: number
   star_ignored_penalty?: number
+  star_scene_llm_model?: string
+  star_scene_llm_url?: string
+  star_scene_llm_api_key?: string
+  star_scene_llm_api_key_configured?: boolean
+  star_scene_llm_protocol?: string
   // feature toggles
   enable_upstream_tools?: boolean
   calendar_inject_day?: boolean

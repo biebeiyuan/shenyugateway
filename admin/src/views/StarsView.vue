@@ -14,6 +14,7 @@ import {
   type StarReviewItem,
 } from '@/api/stars'
 import StarsListPanel from '@/views/stars/StarsListPanel.vue'
+import StarsLabelsPanel from '@/views/stars/StarsLabelsPanel.vue'
 import StarsReviewPanel from '@/views/stars/StarsReviewPanel.vue'
 import StarsSettingsPanel from '@/views/stars/StarsSettingsPanel.vue'
 import StarsWritePanel from '@/views/stars/StarsWritePanel.vue'
@@ -52,7 +53,7 @@ const STAR_DEFAULTS: Partial<GatewayConfig> = {
   star_ignored_penalty: 0.18,
 }
 
-type WorkMode = 'score' | 'settings' | 'write' | 'list'
+type WorkMode = 'score' | 'labels' | 'settings' | 'write' | 'list'
 type FeedbackCandidatePayload = {
   seed: StarItem
   candidate: StarCandidate
@@ -108,7 +109,7 @@ async function loadConfig() {
 async function saveSettings() {
   savingConfig.value = true
   try {
-    const result = await saveConfig({
+    const settingsPatch: Partial<GatewayConfig> = {
       inject_star_prompt: config.value.inject_star_prompt,
       enable_inline_star_capture: config.value.enable_inline_star_capture,
       inject_stars: config.value.inject_stars,
@@ -133,7 +134,14 @@ async function saveSettings() {
       star_constant_bonus: config.value.star_constant_bonus,
       star_novelty_bonus: config.value.star_novelty_bonus,
       star_ignored_penalty: config.value.star_ignored_penalty,
-    })
+      star_scene_llm_model: config.value.star_scene_llm_model,
+      star_scene_llm_url: config.value.star_scene_llm_url,
+      star_scene_llm_protocol: config.value.star_scene_llm_protocol,
+    }
+    if (config.value.star_scene_llm_api_key?.trim()) {
+      settingsPatch.star_scene_llm_api_key = config.value.star_scene_llm_api_key.trim()
+    }
+    const result = await saveConfig(settingsPatch)
     config.value = { ...config.value, ...result.config }
     message.success('Star 设置已保存')
   } catch {
@@ -348,6 +356,7 @@ function clearSeedIfEmpty(seedId: string) {
           评分
           <span v-if="unscoredCount">{{ unscoredCount }}</span>
         </button>
+        <button type="button" :class="{ active: mode === 'labels' }" @click="mode = 'labels'">标签</button>
         <button type="button" :class="{ active: mode === 'settings' }" @click="mode = 'settings'">配置</button>
         <button type="button" :class="{ active: mode === 'write' }" @click="mode = 'write'">写星</button>
         <button type="button" :class="{ active: mode === 'list' }" @click="mode = 'list'">星列</button>
@@ -373,6 +382,7 @@ function clearSeedIfEmpty(seedId: string) {
         @quiet-tools="setStarQuietTools"
         @reset="resetStarDefaults"
       />
+      <StarsLabelsPanel v-else-if="mode === 'labels'" />
       <StarsListPanel
         v-else-if="mode === 'list'"
         @select-star="selectStar"

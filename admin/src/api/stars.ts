@@ -12,6 +12,7 @@ export interface StarItem {
   chord_sequence?: string[]
   chord_root?: string | null
   chord_quality?: string | null
+  scenes?: string[]
   status: StarStatus | string
   is_constant: boolean
   reviewed_at?: string | null
@@ -189,5 +190,26 @@ export async function markConstantStar(starId: string, isConstant: boolean): Pro
   const { data } = await api.patch(`/api/gateway/stars/${encodeURIComponent(starId)}/constant`, {
     is_constant: isConstant,
   })
+  return data
+}
+
+export interface StarSceneBackfillResult {
+  ok: boolean
+  requested: number
+  selected: number
+  updated: number
+  failed: number
+  remaining_unlabeled: number
+  by_scene: Record<string, number>
+  items: Array<{ star: StarItem; ok: boolean; scenes?: string[]; skipped?: boolean; error?: string }>
+}
+
+export async function backfillStarScenes(limit: number): Promise<StarSceneBackfillResult> {
+  const { data } = await api.post('/api/gateway/stars/backfill-scenes', { limit })
+  return data
+}
+
+export async function setStarScenes(starId: string, scenes: string[]): Promise<{ ok: boolean; star: StarItem }> {
+  const { data } = await api.patch(`/api/gateway/stars/${encodeURIComponent(starId)}/scenes`, { scenes })
   return data
 }

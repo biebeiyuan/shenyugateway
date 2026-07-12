@@ -83,6 +83,10 @@ class ConfigUpdate(BaseModel):
     star_rrf_actr_floor: Optional[float] = None
     star_rrf_constant_boost: Optional[float] = None
     star_rrf_date_boost_max: Optional[float] = None
+    star_scene_llm_model: Optional[str] = None
+    star_scene_llm_url: Optional[str] = None
+    star_scene_llm_api_key: Optional[str] = None
+    star_scene_llm_protocol: Optional[str] = None
     enable_cold_start: Optional[bool] = None
     enable_upstream_tools: Optional[bool] = None
     enable_gateway_tools: Optional[bool] = None
@@ -263,3 +267,11 @@ class StarConnectRequest(BaseModel):
 
 class StarConstantRequest(BaseModel):
     is_constant: bool = True
+
+
+class StarSceneBackfillRequest(BaseModel):
+    limit: int = Field(default=10, ge=1, le=100)
+
+
+class StarScenesRequest(BaseModel):
+    scenes: list[str] = Field(default_factory=list)

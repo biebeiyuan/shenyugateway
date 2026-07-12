@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from datetime import datetime
 from typing import Any, Optional
 
@@ -28,14 +29,69 @@ _DEFAULT_SCENE_DESCRIPTIONS: dict[str, str] = {
 }
 
 SCENE_KEYS = {"anchor", "deep", "warm", "rift", "create", "daily"}
+SCENE_ORDER = ("anchor", "deep", "warm", "rift", "create", "daily")
+
+
+def _normalize_scenes(value: Any) -> list[str]:
+    if isinstance(value, str):
+        values = re.split(r"[,，、\s]+", value.strip())
+    elif isinstance(value, (list, tuple, set)):
+        values = list(value)
+    else:
+        values = []
+    normalized = {str(item or "").strip().lower() for item in values}
+    return [scene for scene in SCENE_ORDER if scene in normalized]
+
+
+def _parse_scene_labels(text: Any) -> Optional[list[str]]:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", raw, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        raw = fenced.group(1).strip()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        match = re.search(r"\[[\s\S]*?\]", raw)
+        if not match:
+            return None
+        try:
+            parsed = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+    if isinstance(parsed, dict):
+        parsed = parsed.get("scenes")
+    if not isinstance(parsed, list):
+        return None
+    if any(str(item or "").strip().lower() not in SCENE_KEYS for item in parsed):
+        return None
+    return _normalize_scenes(parsed)
+
+
+def _scene_label_prompt(content: str, descriptions: dict[str, str]) -> str:
+    scene_lines = "\n".join(
+        f"- {scene}: {descriptions.get(scene, '')}"
+        for scene in SCENE_ORDER
+    )
+    return (
+        "你是星星场景标签分类器。只负责选择场景标签，不得改写、总结或补充星星正文。\n\n"
+        "请根据下面六个场景的释义，判断这颗星属于哪些场景。\n"
+        "规则：\n"
+        "- 只能从 anchor、deep、warm、rift、create、daily 中选择。\n"
+        "- 可以多选，也可以一个都不选。\n"
+        "- 只返回 JSON 字符串数组，不要解释。\n"
+        "- 无法明确判断时返回 []。\n\n"
+        f"场景释义：\n{scene_lines}\n\n"
+        f"星星正文：\n{content[:4000]}"
+    )
 
 
 def _load_scene_config(path: str) -> tuple[list[dict[str, Any]], dict[str, str], float]:
-    if not path:
-        return _DEFAULT_SCENE_RULES, _DEFAULT_SCENE_DESCRIPTIONS, 0.45
     try:
         import pathlib
-        data = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+        config_path = pathlib.Path(path) if path else pathlib.Path(__file__).resolve().parent.parent / "star_scene_rules.json"
+        data = json.loads(config_path.read_text(encoding="utf-8"))
         rules = data.get("rules") or _DEFAULT_SCENE_RULES
         descriptions = data.get("scene_descriptions") or _DEFAULT_SCENE_DESCRIPTIONS
         threshold = float(data.get("scene_embedding_threshold", 0.45))

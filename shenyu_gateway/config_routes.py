@@ -88,6 +88,11 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "star_rrf_actr_floor": cfg.star_rrf_actr_floor,
         "star_rrf_constant_boost": cfg.star_rrf_constant_boost,
         "star_rrf_date_boost_max": cfg.star_rrf_date_boost_max,
+        "star_scene_llm_model": cfg.star_scene_llm_model,
+        "star_scene_llm_url": cfg.star_scene_llm_url,
+        "star_scene_llm_api_key": "",
+        "star_scene_llm_api_key_configured": bool(cfg.star_scene_llm_api_key),
+        "star_scene_llm_protocol": cfg.star_scene_llm_protocol,
         "enable_cold_start": cfg.enable_cold_start,
         "enable_upstream_tools": cfg.enable_upstream_tools,
         "enable_gateway_tools": cfg.enable_gateway_tools,
@@ -198,6 +203,10 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "star_rrf_actr_floor": "STAR_RRF_ACTR_FLOOR",
             "star_rrf_constant_boost": "STAR_RRF_CONSTANT_BOOST",
             "star_rrf_date_boost_max": "STAR_RRF_DATE_BOOST_MAX",
+            "star_scene_llm_model": "STAR_SCENE_LLM_MODEL",
+            "star_scene_llm_url": "STAR_SCENE_LLM_URL",
+            "star_scene_llm_api_key": "STAR_SCENE_LLM_API_KEY",
+            "star_scene_llm_protocol": "STAR_SCENE_LLM_PROTOCOL",
             "enable_cold_start": "ENABLE_COLD_START",
             "enable_upstream_tools": "ENABLE_UPSTREAM_TOOLS",
             "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
@@ -268,6 +277,10 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "inject_star_prompt",
             "enable_inline_star_capture",
             "enable_star_embeddings",
+            "star_scene_llm_model",
+            "star_scene_llm_url",
+            "star_scene_llm_api_key",
+            "star_scene_llm_protocol",
             "enable_cold_start",
             "enable_upstream_tools",
             "enable_gateway_tools",
@@ -294,12 +307,12 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                     value = value.strip() if isinstance(value, str) else value
                     if not value:
                         continue
-                if field in {"upstream_url", "hisense_upstream_url", "calendar_upstream_url"}:
+                if field in {"upstream_url", "hisense_upstream_url", "calendar_upstream_url", "star_scene_llm_url"}:
                     value = deps.validate_http_url(env_names[field], value, allow_empty=(field != "upstream_url"))
                 elif field == "upstream_proxy":
                     value = deps.validate_http_url(env_names[field], value, allow_empty=True)
-                elif field in {"upstream_protocol", "hisense_protocol", "calendar_protocol"}:
-                    value = deps.validate_protocol(env_names[field], value, allow_empty=(field == "hisense_protocol"))
+                elif field in {"upstream_protocol", "hisense_protocol", "calendar_protocol", "star_scene_llm_protocol"}:
+                    value = deps.validate_protocol(env_names[field], value, allow_empty=(field in {"hisense_protocol", "star_scene_llm_protocol"}))
                 elif field == "gateway_tool_mode":
                     value = str(value or "").strip().lower()
                     if value not in {"full", "broker"}:
