@@ -7,7 +7,20 @@ from types import SimpleNamespace
 
 from shenyu_gateway.room_context import render_room_layers, visible_room_tool_names
 from shenyu_gateway.room_tools import collect_door_counts, room_tool_definitions
-from shenyu_gateway.tool_registry import execute_gateway_tool, gateway_native_tools, merge_tools
+from shenyu_gateway.tool_registry import (
+    HIDDEN_COMPAT_TOOL_NAMES,
+    _TOOL_HANDLERS,
+    execute_gateway_tool,
+    gateway_native_tools,
+    merge_tools,
+)
+from shenyu_gateway.tool_schemas import (
+    _gateway_core_tools,
+    _gateway_list_mem_notes_tool,
+    _gateway_mem0_management_tools,
+    _gateway_notebook_and_recall_tools,
+    _gateway_supabase_tools,
+)
 from shenyu_gateway.tool_loop import _classify_tool_error, _tool_call_arguments
 
 
@@ -2230,3 +2243,21 @@ def test_upstream_tools_toggle_is_total_forwarding_gate():
 
     assert gateway_native_tools(cfg) == []
     assert merge_tools([client_tool], cfg) == []
+
+
+def test_every_gateway_tool_schema_has_a_handler_and_only_hidden_handlers_are_unlisted():
+    schemas = [
+        *_gateway_core_tools(),
+        _gateway_list_mem_notes_tool(),
+        *_gateway_mem0_management_tools(),
+        *_gateway_notebook_and_recall_tools(),
+        *_gateway_supabase_tools(),
+    ]
+    schema_names = {
+        tool["function"]["name"]
+        for tool in schemas
+    }
+    handler_names = set(_TOOL_HANDLERS)
+
+    assert schema_names - handler_names == set()
+    assert handler_names - schema_names == HIDDEN_COMPAT_TOOL_NAMES
