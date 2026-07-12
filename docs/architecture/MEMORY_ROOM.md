@@ -61,6 +61,8 @@ The design goal is not "store everything and always inject more." It is:
 4. Treat explicit feedback as training data for later weight/threshold changes.
 5. Avoid learning from noisy silence: one skipped candidate is not a negative sample; repeated ignored candidates create only a weak penalty.
 
+Admin scene-label backfill asks the configured LLM to classify each star by its central event and its place in Shenyu and Yuanyuan's relationship, rather than by isolated words such as tears, code, or dates. Automatic results may contain zero to three labels from `anchor`, `deep`, `warm`, `rift`, `create`, and `daily`; manual admin edits remain unrestricted.
+
 Core tables:
 
 - `shenyu_stars`: the star itself: content, chord, parsed root/quality, status, constant flag, review timestamp, activation counters, optional embedding, and search tokens.
