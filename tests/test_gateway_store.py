@@ -6,9 +6,52 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from shenyu_gateway.context_snapshots import write_completion_context_snapshot
-from shenyu_gateway.gateway_admin_routes import GatewayAdminRouteDeps, build_gateway_admin_router
+from shenyu_gateway.gateway_admin_routes import (
+    GatewayAdminRouteDeps,
+    _public_log_detail,
+    build_gateway_admin_router,
+)
 from shenyu_gateway.prepare_messages import maybe_prepare_cold_start_snapshot
 from shenyu_gateway.store import GatewayStore, NEXT_REQUEST_COLD_START_TAG
+
+
+def test_public_log_detail_recursively_redacts_credentials_without_hiding_messages():
+    source = {
+        "upstream_payload": {
+            "messages": [{"role": "user", "content": "keep this private conversation visible to admin"}],
+            "provider": {
+                "api_key": "provider-secret",
+                "routing": "preferred",
+            },
+            "callback_url": "https://example.test/callback?token=url-secret&mode=debug",
+        },
+        "tool_args": {
+            "authorization": "Bearer tool-secret",
+            "openai_api_key": "nested-api-secret",
+            "webhook_secret": "nested-webhook-secret",
+            "token_count": 123,
+            "max_tokens": 4096,
+            "query": "ordinary tool input",
+        },
+        "_started_monotonic": 123.0,
+    }
+
+    detail = _public_log_detail(source)
+
+    assert detail["upstream_payload"]["provider"]["api_key"] == "<redacted>"
+    assert detail["upstream_payload"]["provider"]["routing"] == "preferred"
+    assert detail["upstream_payload"]["callback_url"] == (
+        "https://example.test/callback?token=%3Credacted%3E&mode=debug"
+    )
+    assert detail["tool_args"]["authorization"] == "<redacted>"
+    assert detail["tool_args"]["openai_api_key"] == "<redacted>"
+    assert detail["tool_args"]["webhook_secret"] == "<redacted>"
+    assert detail["tool_args"]["token_count"] == 123
+    assert detail["tool_args"]["max_tokens"] == 4096
+    assert detail["tool_args"]["query"] == "ordinary tool input"
+    assert detail["upstream_payload"]["messages"][0]["content"].startswith("keep this")
+    assert "_started_monotonic" not in detail
+    assert source["upstream_payload"]["provider"]["api_key"] == "provider-secret"
 
 
 def test_hisense_heartbeats_are_stored_separately(tmp_path):

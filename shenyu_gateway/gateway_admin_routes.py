@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
@@ -45,8 +46,80 @@ class GatewayAdminRouteDeps:
     request_logs: Any
 
 
+_LOG_SECRET_KEYS = {
+    "authorization",
+    "proxy_authorization",
+    "x_api_key",
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "token",
+    "secret",
+    "client_secret",
+    "webhook_secret",
+    "password",
+    "private_key",
+}
+_LOG_SECRET_KEY_SUFFIXES = (
+    "_api_key",
+    "_access_token",
+    "_refresh_token",
+    "_auth_token",
+    "_client_secret",
+    "_webhook_secret",
+    "_private_key",
+    "_password",
+)
+
+
+def _normalized_secret_key(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _is_log_secret_key(value: Any) -> bool:
+    normalized = _normalized_secret_key(value)
+    return normalized in _LOG_SECRET_KEYS or normalized.endswith(_LOG_SECRET_KEY_SUFFIXES)
+
+
+def _redact_log_url(value: str) -> str:
+    if not value.startswith(("http://", "https://")):
+        return value
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return value
+    if not parts.query:
+        return value
+    query = [
+        (key, "<redacted>" if _is_log_secret_key(key) else item_value)
+        for key, item_value in parse_qsl(parts.query, keep_blank_values=True)
+    ]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def _redact_log_secrets(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: (
+                "<redacted>"
+                if _is_log_secret_key(key)
+                else _redact_log_secrets(item_value)
+            )
+            for key, item_value in value.items()
+            if not str(key).startswith("_")
+        }
+    if isinstance(value, list):
+        return [_redact_log_secrets(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_log_secrets(item) for item in value]
+    if isinstance(value, str):
+        return _redact_log_url(value)
+    return value
+
+
 def _public_log_detail(item: dict[str, Any]) -> dict[str, Any]:
-    return {key: value for key, value in item.items() if not str(key).startswith("_")}
+    return _redact_log_secrets(item)
 
 
 def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
