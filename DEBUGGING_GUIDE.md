@@ -2,6 +2,8 @@
 
 This guide is the quick entrypoint for future debugging windows. Read it together with `README.md` before changing gateway logic.
 
+For the admin log page itself—round colors, tabs, memory-island content, raw cache values, and assistant lineage—see `LOGS_GUIDE.md`.
+
 ## Error Log Quickstart
 
 For live triage, start with the helper script before changing code:

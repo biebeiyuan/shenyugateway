@@ -8,6 +8,7 @@ from shenyu_gateway.context_layers import (
     trim_client_messages,
     trim_client_tool_system_messages,
 )
+from shenyu_gateway.prepare_messages import _assistant_lineage
 from shenyu_gateway.context_window import (
     classify_history_event,
     compact_history_event_messages,
@@ -18,6 +19,31 @@ from shenyu_gateway.tool_loop import _latest_user_text
 
 
 _tool_safe_trim_start = tool_safe_trim_start
+
+
+def test_assistant_lineage_records_only_hashes_and_lengths():
+    result = _assistant_lineage(
+        [{"role": "assistant", "content": "same reply"}],
+        [{"role": "assistant", "content": "same reply"}],
+    )
+
+    assert result["available"] is True
+    assert result["match"] is True
+    assert result["client_chars"] == 10
+    assert result["stored_chars"] == 10
+    assert len(result["client_sha256"]) == 16
+    assert "content" not in result
+
+
+def test_assistant_lineage_detects_client_history_rewrite():
+    result = _assistant_lineage(
+        [{"role": "assistant", "content": "client copy changed"}],
+        [{"role": "assistant", "content": "gateway original"}],
+    )
+
+    assert result["available"] is True
+    assert result["match"] is False
+    assert result["client_sha256"] != result["stored_sha256"]
 
 
 def test_context_overflow_defaults_to_20_percent_with_bounds():

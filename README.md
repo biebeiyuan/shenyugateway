@@ -12,6 +12,7 @@ The gateway is not a persona layer or roleplay wrapper. It is a context and memo
 | 2 | 本文件 `README.md` § Maintenance Map | 文件地图、API 清单、配置参考 |
 | 3 | `AGENTS.md` | Agent/Claude 编码规则（UTF-8、排错优先等） |
 | 按需 | `DEBUGGING_GUIDE.md` | 排错时的日志命令和验证清单 |
+| 忘记日志页怎么看时 | `LOGS_GUIDE.md` | 粉色/绿色轮次、小岛、缓存原始值和来源指纹速查 |
 | 按需 | `STAR_RECALL_V2_DESIGN.md` | 改 star 排序算法时的历史设计稿 |
 | 按需 | `MEM0_LIGHT_MEMORY_V2_DESIGN.md` | 改 mem notes 时的历史设计稿 |
 | 按需 | `REFACTOR_PLAN.md` | 做文件拆分重构时的执行方案 |

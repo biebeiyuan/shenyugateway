@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
@@ -40,6 +41,42 @@ from .tool_registry import is_gateway_native_tool
 # can be garbage-collected mid-run and silently lose the archive write. Hold a strong
 # reference here and drop it on completion — same pattern the lifespan workers use.
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
+
+
+def _assistant_lineage(messages: list[dict], stored_messages: list[dict]) -> dict[str, Any]:
+    client_text = next(
+        (
+            str(message.get("content") or "")
+            for message in reversed(messages)
+            if message.get("role") == "assistant" and isinstance(message.get("content"), str)
+        ),
+        "",
+    )
+    stored_text = next(
+        (
+            str(message.get("content") or "")
+            for message in reversed(stored_messages)
+            if message.get("role") == "assistant"
+        ),
+        "",
+    )
+    if not client_text or not stored_text:
+        return {
+            "available": False,
+            "match": None,
+            "client_chars": len(client_text),
+            "stored_chars": len(stored_text),
+        }
+    client_hash = hashlib.sha256(client_text.encode("utf-8")).hexdigest()
+    stored_hash = hashlib.sha256(stored_text.encode("utf-8")).hexdigest()
+    return {
+        "available": True,
+        "match": client_hash == stored_hash,
+        "client_chars": len(client_text),
+        "stored_chars": len(stored_text),
+        "client_sha256": client_hash[:16],
+        "stored_sha256": stored_hash[:16],
+    }
 
 
 def _spawn_background_task(coro) -> None:
@@ -284,6 +321,10 @@ async def prepare_messages(
     previous_raw_windows = store.get_recent_raw_request_windows(session["id"], limit=1)
     previous_raw_messages = previous_raw_windows[0].get("messages") if previous_raw_windows else None
     event_meta = classify_history_event(previous_raw_messages, raw_messages_for_lineage)
+    lineage_meta = _assistant_lineage(
+        raw_messages_for_lineage,
+        store.get_recent_dialogue_messages(session["id"], limit=8),
+    )
     store.write_raw_request_window(
         session_id=session["id"],
         session_tag=session_tag,
@@ -312,6 +353,7 @@ async def prepare_messages(
         event_class=event_meta["event_class"],
     )
     trim_meta.update(event_meta)
+    trim_meta["assistant_lineage"] = lineage_meta
     trim_meta["cold_start_bridge_messages"] = max(
         0,
         len(bridge_messages) - int(window_state.get("window_start_index") or 0),
