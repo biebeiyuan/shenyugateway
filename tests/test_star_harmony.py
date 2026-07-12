@@ -34,6 +34,22 @@ class LinkFakeSupabase:
         return rows[:limit]
 
 
+class ConcurrentLinkFakeSupabase(LinkFakeSupabase):
+    def __init__(self, links: list[dict]):
+        super().__init__(links)
+        self.active_queries = 0
+        self.max_active_queries = 0
+
+    async def query(self, table, params=None):
+        self.active_queries += 1
+        self.max_active_queries = max(self.max_active_queries, self.active_queries)
+        try:
+            await asyncio.sleep(0.01)
+            return await super().query(table, params)
+        finally:
+            self.active_queries -= 1
+
+
 def _cfg():
     return SimpleNamespace(enable_star_embeddings=False)
 
@@ -107,3 +123,45 @@ def test_clamp_caps_at_one():
 
 def test_empty_anchors_returns_empty():
     assert _harmony([_link("A", "B")], []) == {}
+
+
+def test_harmony_forward_and_reverse_queries_run_concurrently():
+    supabase = ConcurrentLinkFakeSupabase([_link("A", "B"), _link("X", "A", bidirectional=True)])
+    service = StarService(_cfg(), supabase)
+
+    scores = asyncio.run(service._harmony_scores(["A"]))
+
+    assert scores == {"B": 1.0, "X": 1.0}
+    assert supabase.max_active_queries == 2
+
+
+def test_star_activity_feature_queries_run_concurrently():
+    class ConcurrentActivityService(StarService):
+        def __init__(self):
+            super().__init__(_cfg(), None)
+            self.active = 0
+            self.max_active = 0
+
+        async def _tracked(self, result):
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            try:
+                await asyncio.sleep(0.01)
+                return result
+            finally:
+                self.active -= 1
+
+        async def _recent_fatigue_scores(self, star_ids):
+            return await self._tracked({"A": 0.2})
+
+        async def _actr_scores(self, star_ids):
+            return await self._tracked({"A": 0.8})
+
+        async def _ignored_penalties(self, star_ids):
+            return await self._tracked(({"A": 0.1}, set()))
+
+    service = ConcurrentActivityService()
+    result = asyncio.run(service._activity_features(["A"], include_recent_fatigue=True))
+
+    assert result == ({"A": 0.8}, {"A": 0.1}, set(), {"A": 0.2})
+    assert service.max_active == 3

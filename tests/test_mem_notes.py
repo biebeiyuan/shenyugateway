@@ -384,6 +384,30 @@ class FakeRecallService:
         return any(reason.startswith("keyword:") or reason in {"title", "tag/entity", "phrase"} for reason in reasons)
 
 
+class ConcurrentRecallService(FakeRecallService):
+    def __init__(self, rows):
+        super().__init__(rows)
+        self.active_calls = 0
+        self.max_active_calls = 0
+
+    async def _run(self, result):
+        self.active_calls += 1
+        self.max_active_calls = max(self.max_active_calls, self.active_calls)
+        try:
+            await asyncio.sleep(0.01)
+            return result
+        finally:
+            self.active_calls -= 1
+
+    async def _query_index(self, source_types=None, query_text="", tokens=None, allow_mem_note=False):
+        self.query_calls += 1
+        return await self._run([])
+
+    async def _vector_rows(self, query, source_types=None, allow_mem_note=False):
+        self.vector_calls += 1
+        return await self._run((self.rows, {"enabled": True, "used": True, "count": len(self.rows)}))
+
+
 def test_contextual_search_uses_semantic_fallback_without_changing_keyword_search():
     note = {
         "id": "note-1",
@@ -444,6 +468,84 @@ def test_contextual_search_uses_semantic_fallback_without_changing_keyword_searc
     assert contextual_result["count"] == 1
     assert contextual_result["items"][0]["id"] == "note-1"
     assert contextual_result["items"][0]["search_mode"] == "semantic"
+
+
+def test_mem_semantic_keyword_and_vector_candidates_run_concurrently():
+    note = {
+        "id": "note-concurrent",
+        "content": "白噪音是她留下的锚点。",
+        "status": "active",
+        "memory_kind": "fact",
+        "trigger_count": 0,
+    }
+    supabase = FakeSupabase(rows=[note])
+    recall = ConcurrentRecallService(
+        [
+            {
+                "source_table": "shenyu_mem_notes",
+                "source_id": "note-concurrent",
+                "source_type": "mem_note",
+                "chunk_index": 0,
+                "search_text": "白噪音是她留下的锚点",
+                "search_tokens": ["白噪音"],
+                "tags_json": [],
+                "entities_json": [],
+                "importance": 0.8,
+                "status": "active",
+                "_vector_score": 0.9,
+                "_score": 0.8,
+                "_reasons": ["keyword:白噪音", "semantic"],
+            }
+        ]
+    )
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=0), supabase)
+
+    result = asyncio.run(
+        service._semantic_search_notes(
+            "白噪音锚点",
+            session_tag="main",
+            limit=1,
+            recall_service=recall,
+            ignore_retrigger_limits=True,
+        )
+    )
+
+    assert result[0]["id"] == "note-concurrent"
+    assert recall.max_active_calls == 2
+
+
+def test_contextual_search_reuses_active_rows_across_keyword_and_semantic_layers():
+    note = {
+        "id": "note-reused",
+        "session_tag": "main",
+        "content": "筋膜枪放在卧室抽屉里。",
+        "mem_type": "关于她的事实",
+        "trigger_text": "筋膜枪",
+        "trigger_keywords": ["筋膜枪"],
+        "entities": ["筋膜枪"],
+        "status": "active",
+        "cooldown_hours": 0,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "created_at": "2026-05-24T00:00:00+00:00",
+        "updated_at": "2026-05-24T00:00:00+00:00",
+    }
+    supabase = FakeSupabase(rows=[note])
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=0), supabase)
+
+    result = asyncio.run(
+        service.search_notes_contextual(
+            "筋膜枪是不是在抽屉",
+            session_tag="main",
+            limit=1,
+            mark_triggered=False,
+            ignore_retrigger_limits=True,
+        )
+    )
+
+    assert result["items"][0]["id"] == "note-reused"
+    mem_queries = [call for call in supabase.queries if call["table"] == "shenyu_mem_notes"]
+    assert len(mem_queries) == 1
 
 
 def test_contextual_search_treats_session_tag_as_provenance_not_visibility():

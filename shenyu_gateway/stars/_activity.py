@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import math
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -20,43 +21,38 @@ class ActivityMixin:
         if not anchor_ids:
             return {}
         id_filter = "in.(" + ",".join(anchor_ids) + ")"
-        rows: list[dict[str, Any]] = []
-        try:
-            _mark_request_log_phase(trace_log, "stars.harmony_from_query_start", detail={"anchors": len(anchor_ids)})
-            from_rows = await self.supabase.query(
-                STAR_LINK_TABLE,
-                {
-                    "select": "from_node_id,to_node_id,relation_type,confidence,weight,bidirectional,status",
-                    "from_node_type": "eq.star",
-                    "to_node_type": "eq.star",
-                    "from_node_id": id_filter,
-                    "status": "eq.active",
-                    "limit": "500",
-                },
+        async def query_links(direction: str) -> list[dict[str, Any]]:
+            filter_key = "from_node_id" if direction == "from" else "to_node_id"
+            _mark_request_log_phase(
+                trace_log,
+                f"stars.harmony_{direction}_query_start",
+                detail={"anchors": len(anchor_ids)},
             )
-            rows.extend(from_rows)
-            _mark_request_log_phase(trace_log, "stars.harmony_from_query_done", detail={"rows": len(from_rows)})
-        except Exception:
-            _mark_request_log_phase(trace_log, "stars.harmony_from_query_failed")
-            pass
-        try:
-            _mark_request_log_phase(trace_log, "stars.harmony_to_query_start", detail={"anchors": len(anchor_ids)})
-            to_rows = await self.supabase.query(
-                STAR_LINK_TABLE,
-                {
-                    "select": "from_node_id,to_node_id,relation_type,confidence,weight,bidirectional,status",
-                    "from_node_type": "eq.star",
-                    "to_node_type": "eq.star",
-                    "to_node_id": id_filter,
-                    "status": "eq.active",
-                    "limit": "500",
-                },
+            try:
+                result = await self.supabase.query(
+                    STAR_LINK_TABLE,
+                    {
+                        "select": "from_node_id,to_node_id,relation_type,confidence,weight,bidirectional,status",
+                        "from_node_type": "eq.star",
+                        "to_node_type": "eq.star",
+                        filter_key: id_filter,
+                        "status": "eq.active",
+                        "limit": "500",
+                    },
+                )
+            except Exception:
+                _mark_request_log_phase(trace_log, f"stars.harmony_{direction}_query_failed")
+                return []
+            _mark_request_log_phase(
+                trace_log,
+                f"stars.harmony_{direction}_query_done",
+                detail={"rows": len(result)},
             )
-            rows.extend([row for row in to_rows if row.get("bidirectional")])
-            _mark_request_log_phase(trace_log, "stars.harmony_to_query_done", detail={"rows": len(to_rows)})
-        except Exception:
-            _mark_request_log_phase(trace_log, "stars.harmony_to_query_failed")
-            pass
+            return result
+
+        from_rows, to_rows = await asyncio.gather(query_links("from"), query_links("to"))
+        rows = list(from_rows)
+        rows.extend([row for row in to_rows if row.get("bidirectional")])
         anchors = set(anchor_ids)
         scores: dict[str, float] = {}
         for row in rows:
@@ -79,18 +75,32 @@ class ActivityMixin:
     ) -> tuple[dict[str, float], dict[str, float], set[str], dict[str, float]]:
         if not star_ids:
             return {}, {}, set(), {}
-        if include_recent_fatigue:
+        async def load_recent_fatigue() -> dict[str, float]:
+            if not include_recent_fatigue:
+                return {}
             _mark_request_log_phase(trace_log, "stars.recent_fatigue_start", detail={"star_ids": len(star_ids)})
-            recent_fatigue = await self._recent_fatigue_scores(star_ids)
-            _mark_request_log_phase(trace_log, "stars.recent_fatigue_done", detail={"scores": len(recent_fatigue)})
-        else:
-            recent_fatigue = {}
-        _mark_request_log_phase(trace_log, "stars.actr_start", detail={"star_ids": len(star_ids)})
-        actr_scores = await self._actr_scores(star_ids)
-        _mark_request_log_phase(trace_log, "stars.actr_done", detail={"scores": len(actr_scores)})
-        _mark_request_log_phase(trace_log, "stars.ignored_penalties_start", detail={"star_ids": len(star_ids)})
-        ignored_penalties, negative_set = await self._ignored_penalties(star_ids)
-        _mark_request_log_phase(trace_log, "stars.ignored_penalties_done", detail={"scores": len(ignored_penalties)})
+            result = await self._recent_fatigue_scores(star_ids)
+            _mark_request_log_phase(trace_log, "stars.recent_fatigue_done", detail={"scores": len(result)})
+            return result
+
+        async def load_actr() -> dict[str, float]:
+            _mark_request_log_phase(trace_log, "stars.actr_start", detail={"star_ids": len(star_ids)})
+            result = await self._actr_scores(star_ids)
+            _mark_request_log_phase(trace_log, "stars.actr_done", detail={"scores": len(result)})
+            return result
+
+        async def load_ignored() -> tuple[dict[str, float], set[str]]:
+            _mark_request_log_phase(trace_log, "stars.ignored_penalties_start", detail={"star_ids": len(star_ids)})
+            result = await self._ignored_penalties(star_ids)
+            _mark_request_log_phase(trace_log, "stars.ignored_penalties_done", detail={"scores": len(result[0])})
+            return result
+
+        recent_fatigue, actr_scores, ignored_result = await asyncio.gather(
+            load_recent_fatigue(),
+            load_actr(),
+            load_ignored(),
+        )
+        ignored_penalties, negative_set = ignored_result
         return actr_scores, ignored_penalties, negative_set, recent_fatigue
 
     async def _actr_scores(self, star_ids: list[str]) -> dict[str, float]:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import random
 from datetime import timedelta
 from typing import Any, Optional
@@ -51,6 +52,7 @@ class SearchMixin:
         cooldown_hours: Optional[int] = None,
         dedupe_turns: Optional[int] = None,
         specific_content_only: bool = False,
+        rows_override: Optional[list[dict[str, Any]]] = None,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "query": query, "count": 0, "items": [], "note": "Supabase is not configured."}
@@ -66,7 +68,11 @@ class SearchMixin:
         }
         if session_tag:
             params["session_tag"] = f"eq.{session_tag}"
-        rows = [self._effective_note(row) for row in await self.supabase.query("shenyu_mem_notes", params)]
+        rows = (
+            [self._effective_note(row) for row in rows_override]
+            if rows_override is not None
+            else [self._effective_note(row) for row in await self.supabase.query("shenyu_mem_notes", params)]
+        )
 
         min_score = (
             self._float_range(min_score, 0.45, 0.0, 1.0)
@@ -167,6 +173,7 @@ class SearchMixin:
                 cooldown_hours=0 if ignore_retrigger_limits else self._context_cooldown_hours(),
                 dedupe_turns=0 if ignore_retrigger_limits else self._context_dedupe_turns(),
                 specific_content_only=True,
+                rows_override=active_rows,
             )
             for kw_item in keyword_result.get("items") or []:
                 kw_id = str(kw_item.get("id") or "")
@@ -187,6 +194,7 @@ class SearchMixin:
                 session_id=session_id,
                 store=store,
                 ignore_retrigger_limits=ignore_retrigger_limits,
+                rows_by_id_override={str(row.get("id") or ""): row for row in active_rows if row.get("id")},
             )
             for sem_item in semantic_items:
                 sem_id = str(sem_item.get("id") or "")
@@ -444,25 +452,32 @@ class SearchMixin:
         session_id: Optional[str] = None,
         store: Any = None,
         ignore_retrigger_limits: bool = False,
+        rows_by_id_override: Optional[dict[str, dict[str, Any]]] = None,
     ) -> list[dict[str, Any]]:
         if not query.strip() or not self.supabase:
             return []
         exclude_ids = exclude_ids or set()
         service = recall_service or RecallIndexService(self.supabase, cfg=self.cfg)
         tokens = recall_terms(query)
-        try:
-            keyword_rows = await service._query_index(
-                source_types=["mem_note"],
-                query_text=query,
-                tokens=tokens,
-                allow_mem_note=True,
-            )
-        except Exception:
-            keyword_rows = []
-        try:
-            vector_rows, _ = await service._vector_rows(query, source_types=["mem_note"], allow_mem_note=True)
-        except Exception:
-            vector_rows = []
+        async def keyword_candidates() -> list[dict[str, Any]]:
+            try:
+                return await service._query_index(
+                    source_types=["mem_note"],
+                    query_text=query,
+                    tokens=tokens,
+                    allow_mem_note=True,
+                )
+            except Exception:
+                return []
+
+        async def vector_candidates() -> list[dict[str, Any]]:
+            try:
+                rows, _ = await service._vector_rows(query, source_types=["mem_note"], allow_mem_note=True)
+                return rows
+            except Exception:
+                return []
+
+        keyword_rows, vector_rows = await asyncio.gather(keyword_candidates(), vector_candidates())
         rows = service._merge_candidate_rows(keyword_rows, vector_rows)
         if not rows:
             return []
@@ -473,7 +488,10 @@ class SearchMixin:
             if note_id and note_id not in exclude_ids and note_id not in candidate_ids:
                 candidate_ids.append(note_id)
 
-        note_rows = await self._get_notes_by_ids(candidate_ids)
+        note_rows = dict(rows_by_id_override or {})
+        missing_ids = [note_id for note_id in candidate_ids if note_id not in note_rows]
+        if missing_ids:
+            note_rows.update(await self._get_notes_by_ids(missing_ids))
         candidates: list[tuple[float, list[str], dict[str, Any], dict[str, Any]]] = []
         seen_ids: set[str] = set()
         semantic_min_score = self._float_range(
