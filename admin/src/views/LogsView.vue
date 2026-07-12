@@ -66,7 +66,7 @@ function toolHint(name: string): string {
   return GATEWAY_TOOL_HINTS[name] || ''
 }
 
-const TAB_NAMES = ['overview', 'rounds', 'tools', 'messages', 'response', 'system', 'upstream', 'meta', 'raw'] as const
+const TAB_NAMES = ['overview', 'rounds', 'tools', 'messages', 'system', 'response', 'upstream', 'meta', 'raw'] as const
 const TAB_LABELS: Record<string, string> = {
   overview: '概览', rounds: '上游轮次', tools: '工具执行', messages: 'Messages',
   response: 'Response', system: 'System', upstream: 'Upstream', meta: 'Meta', raw: 'Raw JSON',
@@ -140,56 +140,19 @@ function tokenLabel(log: LogEntry): string {
   return t === null ? '' : `${fmtNum(t)} tok`
 }
 
-function cacheRate(log: LogEntry): number | null {
-  const c = log.cache_usage
-  const u = log.usage
-  if (!c?.hit || !u || typeof u !== 'object') return null
-
-  const read = Number(c.cache_read_input_tokens) || 0
-  const write = Number(c.cache_creation_input_tokens) || 0
-  const aggregatePrompt = Number(c.reported_input_tokens)
-  const hasAggregatePrompt = Number.isFinite(aggregatePrompt) && aggregatePrompt >= 0
-  const prompt = hasAggregatePrompt
-    ? aggregatePrompt
-    : Number(u.prompt_tokens ?? u.input_tokens) || 0
-  if (read <= 0) return null
-
-  // 旧版多轮日志只累计了 cache read，却只保留最后一轮 usage，二者不能混算。
-  if ((c.rounds || 0) > 1 && !hasAggregatePrompt) return null
-
-  // Anthropic 的 input_tokens 不含 cache read/write；OpenAI 的 prompt_tokens
-  // 通常已经包含 cached_tokens。按上游协议区分，避免比例超过 100%。
-  const protocol = String(log.prompt_cache?.protocol || '').toLowerCase()
-  const totalInput = protocol === 'anthropic'
-    ? read + write + prompt
-    : (prompt >= read ? prompt : read + write + prompt)
-  if (totalInput <= 0) return null
-  return Math.min(1, read / totalInput)
-}
-
-function fmtRate(rate: number): string {
-  const percent = rate * 100
-  return percent >= 99.95 ? '100%' : `${percent.toFixed(1)}%`
-}
-
-// 命中缓存时返回紧凑的 "⚡ 1.2k · 98.5%"，否则空串
 function cacheLabel(log: LogEntry): string {
-  const c = log.cache_usage
-  if (!c || !c.hit) return ''
-  const read = c.cache_read_input_tokens || 0
-  if (read <= 0) return '⚡'
-  const rate = cacheRate(log)
-  return rate === null ? `⚡ ${fmtNum(read)}` : `⚡ ${fmtNum(read)} · ${fmtRate(rate)}`
+  const cache = log.cache_usage
+  if (!cache?.hit) return ''
+  const read = Number(cache.cache_read_input_tokens) || 0
+  return read > 0 ? `⚡ ${fmtNum(read)} cached` : '⚡ cached'
 }
 
 function cacheTitle(log: LogEntry): string {
-  const c = log.cache_usage
-  if (!c?.hit) return ''
-  const read = c.cache_read_input_tokens || 0
-  const rate = cacheRate(log)
-  const parts = [`命中缓存 ${read.toLocaleString()} tokens`]
-  if (rate !== null) parts.push(`缓存覆盖率 ${fmtRate(rate)}（按上游上报的输入 token 计算）`)
-  return parts.join(' · ')
+  const cache = log.cache_usage
+  if (!cache?.hit) return ''
+  const read = Number(cache.cache_read_input_tokens) || 0
+  const write = Number(cache.cache_creation_input_tokens) || 0
+  return `供应商上报缓存读取 ${read.toLocaleString()} tokens · 写入 ${write.toLocaleString()} tokens。这里只保留原始数值，不推算费用。`
 }
 
 async function toggleDetail(id: string) {
@@ -246,99 +209,101 @@ function usageCacheRead(usage: Record<string, any> | null | undefined): number {
   ) || 0
 }
 
-function roundCacheRate(detail: LogDetail, usage: Record<string, any> | null | undefined): number | null {
-  const read = usageCacheRead(usage)
-  if (read <= 0) return null
-  const input = usageInput(usage)
-  const protocol = String(detail.prompt_cache?.protocol || '').toLowerCase()
-  const total = protocol === 'anthropic' ? read + input : Math.max(read, input)
-  return total > 0 ? read / total : null
+function decisionText(value: unknown): string {
+  const key = String(value || '')
+  if (key === 'retained') return '安稳地留在原位'
+  if (key === 'rewritten') return '这次换了一些内容'
+  return '状态还没有记录下来'
 }
 
-function messageText(message: any): string {
-  if (typeof message?.content === 'string') return message.content
-  if (Array.isArray(message?.content)) {
-    return message.content.map((block: any) => typeof block === 'string' ? block : block?.text || '').join('\n')
+function reasonText(value: unknown): string {
+  const key = String(value || '')
+  const labels: Record<string, string> = {
+    retained_overlap: '和上次足够接近，所以没有打扰它',
+    overlap_below_threshold: '这次想起的内容变化比较大',
+    content_changed: '同一条记忆的内容有更新',
+    direct_candidate: '出现了需要直接带上的新内容',
+    empty_transition: '内容从有到无，或从无到有',
+    forced: '这次被明确要求重新整理',
+    proposal_applied: '采用了本次召回结果',
   }
-  return ''
+  return labels[key] || key || '没有额外原因'
 }
 
-function suspiciousMarkers(detail: LogDetail): Array<{ index: number; role: string; marker: string }> {
-  const messages = detail.prepared_messages || []
-  const patterns = [
-    /(?:end)?_of_conversation_from_api|end_of_conversation/gi,
-  ]
-  const found: Array<{ index: number; role: string; marker: string }> = []
-  messages.forEach((message: any, index: number) => {
-    const text = messageText(message)
-    for (const pattern of patterns) {
-      pattern.lastIndex = 0
-      const match = pattern.exec(text)
-      if (match && !found.some((item) => item.index === index && item.marker === match[0])) {
-        found.push({ index, role: message.role || '?', marker: match[0] })
-      }
-    }
-  })
-  return found
+function islandRenderedText(detail: LogDetail): string {
+  return String(detail.memory_island_content?.rendered_text || '').trim()
 }
 
 function renderOverview(detail: LogDetail): string {
-  const window = detail.client_message_window || {}
+  const island = detail.memory_island || {}
+  const content = detail.memory_island_content
+  const star = island.star || {}
+  const mem = island.mem || {}
   const cache = detail.cache_usage
-  const markers = suspiciousMarkers(detail)
-  const rounds = Array.isArray(detail.internal_tool_rounds) ? detail.internal_tool_rounds : []
-  const executed = rounds.reduce((sum, round) => sum + (round.tools?.length || 0), 0)
-  const requested = rounds.reduce((sum, round) => sum + (round.gateway_tool_calls?.length || 0), 0)
-  const cards = [
-    ['请求结果', `${detail.status}${detail.finish_reason ? ` · ${detail.finish_reason}` : ''}`, detail.error ? 'bad' : 'good'],
-    ['消息窗口', `${detail.original_messages_count} → ${detail.prepared_messages_count}`, detail.original_messages_count > detail.prepared_messages_count ? 'warn' : ''],
-    ['上游轮次', `${rounds.length || Number(detail.internal_tool_rounds || 0) || 1} 轮`, ''],
-    ['工具链路', `提供 ${detail.tools_count || 0} · 请求 ${requested} · 执行 ${executed}`, requested > executed ? 'warn' : 'good'],
-  ]
-  let html = `<div class="diag-grid">${cards.map(([label, value, tone]) => `<div class="diag-card ${tone}"><div class="diag-label">${esc(label)}</div><div class="diag-value">${esc(value)}</div></div>`).join('')}</div>`
+  const changed = Boolean(island.changed)
+  const islandTone = changed ? 'island-changed' : 'island-calm'
+  const islandTitle = changed ? '小岛这次轻轻换了位置' : '小岛还在原来的地方'
+  const islandSubtitle = changed
+    ? '实际送给模型的记忆内容有变化，下面可以直接看到。'
+    : '这次沿用了上一轮的小岛，没有重新搬动。'
 
-  html += '<div class="diag-section"><div class="diag-title">裁剪与上下文</div><div class="diag-lines">'
-  html += `<div>原始客户端消息：${detail.original_messages_count}；发送上游：${detail.prepared_messages_count}</div>`
-  html += `<div>近期非 system 保留：${window.client_non_system_retained ?? '未知'} / ${window.client_non_system_original ?? '未知'}；人类轮次：${window.human_turn_groups_retained ?? '未知'}</div>`
-  html += `<div>事件：${esc(window.event_class || '未知')}；公共前缀：${window.common_prefix_messages ?? '未知'}；工具保护轮次：${window.raw_tool_protection_turns ?? 0}</div>`
-  html += `<div>Epoch：${esc(window.context_epoch_id || '未知')}；重置：${window.context_epoch_reset ? `是（${esc(window.context_epoch_reset_reason || '未注明')}）` : '否'}</div>`
-  html += '</div></div>'
+  let html = `<div class="island-hero ${islandTone}"><div class="island-orb">${changed ? '✦' : '◌'}</div><div><div class="island-hero-title">${islandTitle}</div><div class="island-hero-sub">${islandSubtitle}</div></div></div>`
+  html += '<div class="soft-grid">'
+  html += `<div class="soft-card"><div class="soft-label">星星</div><div class="soft-value">${decisionText(star.decision)}</div><div class="soft-note">${reasonText(star.reason)}${typeof star.overlap === 'number' ? ` · 重合 ${(star.overlap * 100).toFixed(0)}%` : ''}</div></div>`
+  html += `<div class="soft-card"><div class="soft-label">Mem</div><div class="soft-value">${decisionText(mem.decision)}</div><div class="soft-note">${reasonText(mem.reason)}${typeof mem.overlap === 'number' ? ` · 重合 ${(mem.overlap * 100).toFixed(0)}%` : ''}</div></div>`
+  html += `<div class="soft-card"><div class="soft-label">这座小岛</div><div class="soft-value">${content?.star_count ?? star.chosen_count ?? 0} 颗星 · ${content?.mem_count ?? mem.chosen_count ?? 0} 条 Mem</div><div class="soft-note">${esc(content?.version || detail.memory_island_version || '版本未记录')}</div></div>`
+  html += '</div>'
 
-  html += '<div class="diag-section"><div class="diag-title">缓存诊断</div><div class="diag-lines">'
+  const rendered = islandRenderedText(detail)
+  html += '<div class="island-section"><div class="island-section-title">这次真正送过去的小岛</div>'
+  html += rendered
+    ? `<div class="island-content">${esc(rendered)}</div>`
+    : '<div class="empty-soft">这条旧日志没有单独保存小岛正文，可以去 System 里看完整上下文。</div>'
+  html += '</div>'
+
+  html += '<div class="island-section"><div class="island-section-title">缓存留下的原始回声</div>'
   if (!detail.prompt_cache?.enabled) {
-    html += '<div class="diag-warn">本次未启用 prompt cache。</div>'
+    html += '<div class="empty-soft">这次没有启用 prompt cache。</div>'
   } else if (cache?.hit) {
-    const rate = cacheRate(detail)
-    html += `<div>协议：${esc(detail.prompt_cache.protocol || '未知')}；TTL：${esc(detail.prompt_cache.ttl || '未知')}</div>`
-    html += `<div>上游报告读取：${Number(cache.cache_read_input_tokens || 0).toLocaleString()}；写入：${Number(cache.cache_creation_input_tokens || 0).toLocaleString()}；轮次：${cache.rounds || 1}</div>`
-    html += `<div>${rate === null ? '多轮旧日志口径不完整，不展示覆盖率。' : `上游报告覆盖率：${fmtRate(rate)}`}</div>`
+    html += `<div class="cache-raw"><span>读取 ${Number(cache.cache_read_input_tokens || 0).toLocaleString()}</span><span>写入 ${Number(cache.cache_creation_input_tokens || 0).toLocaleString()}</span><span>${cache.rounds || 1} 轮</span></div>`
+    html += '<div class="soft-footnote">这些是供应商原样返回的 token 数。它们可以帮助对照，但这里不再猜测缓存比例或实际账单。</div>'
   } else {
-    html += `<div class="diag-warn">本次未命中缓存；上游报告输入 ${usageInput(detail.usage).toLocaleString()} tokens。</div>`
+    html += '<div class="empty-soft">供应商没有报告缓存命中。这不一定等于没有任何内部缓存，只代表这次 API usage 没有给出 cached tokens。</div>'
   }
-  html += '</div></div>'
-
-  html += '<div class="diag-section"><div class="diag-title">异常检查</div>'
-  if (markers.length) {
-    html += `<div class="diag-alert">发现疑似会话控制标记：${markers.map((item) => `messages[${item.index}] ${item.role}: ${item.marker}`).join('；')}。该标记已存在于发送上游的历史消息中，请对比上一请求 response_full 判断来自模型输出还是客户端追加。</div>`
-  } else {
-    html += '<div class="diag-ok">未在保留消息中发现已知会话结束标记。</div>'
-  }
-  if (detail.error) html += `<div class="diag-alert">失败信息：${esc(detail.error)}</div>`
   html += '</div>'
   return html
 }
 
+function finishText(reason: unknown, final: boolean): string {
+  if (final) return '这一轮把话好好说完了'
+  if (reason === 'tool_calls') return '说到这里，先去做一件事'
+  if (reason === 'length') return '这一轮碰到了长度边界'
+  return '这一轮结束，故事还会继续'
+}
+
+function renderRoundTools(round: any): string {
+  const tools = round.tools || []
+  if (!tools.length) return ''
+  const items = tools.map((tool: any) => {
+    const hint = toolHint(tool.target_tool || tool.name)
+    const result = tool.ok === false ? '没有成功' : tool.cached_duplicate ? '沿用了刚才的结果' : '已经做好了'
+    return `<div class="round-tool"><div><span class="round-tool-icon">⌁</span><strong>${esc(tool.target_tool || tool.name)}</strong>${hint ? `<span class="round-tool-hint">${esc(hint)}</span>` : ''}</div><span class="round-tool-result ${tool.ok === false ? 'failed' : ''}">${result}${typeof tool.duration_ms === 'number' ? ` · ${tool.duration_ms}ms` : ''}</span></div>`
+  }).join('')
+  return `<div class="round-tool-list"><div class="round-small-title">这一轮做了什么</div>${items}</div>`
+}
+
 function renderRounds(detail: LogDetail): string {
   const rounds = Array.isArray(detail.internal_tool_rounds) ? detail.internal_tool_rounds : []
-  if (!rounds.length) return '<div class="tool-empty">该日志没有保留逐轮详情；普通单轮请求请查看 Upstream 与 Response。</div>'
-  return rounds.map((round) => {
+  if (!rounds.length) return '<div class="empty-soft">这是一条普通的单轮回复，没有额外的工具往返。最终内容可以直接去 Response 看。</div>'
+  return rounds.map((round, index) => {
+    const isFinal = round.final === true || index === rounds.length - 1
     const usage = round.usage || {}
-    const read = usageCacheRead(usage)
-    const rate = roundCacheRate(detail, usage)
-    const calls = Number(round.tool_calls_count || 0)
-    const executed = round.tools?.length || 0
-    const status = round.finish_reason || (calls ? 'tool_calls' : '未知')
-    return `<div class="round-card"><div class="round-head"><span>第 ${round.round} 轮</span><span>${round.messages_count} messages</span><span>${round.stream ? '流式' : '非流式'}</span><span>结束：${esc(status)}</span></div><div class="round-metrics"><div>输入 ${usageInput(usage).toLocaleString()}</div><div>输出 ${usageOutput(usage).toLocaleString()}</div><div>缓存读取 ${read.toLocaleString()}</div><div>${rate === null ? '缓存未命中/未知' : `覆盖 ${fmtRate(rate)}`}</div><div>模型工具请求 ${calls}</div><div>网关实际执行 ${executed}</div></div>${round.gateway_tool_calls?.length ? `<div class="round-calls">${round.gateway_tool_calls.map((call) => `🔧 ${esc(call.name || 'unknown')} ${esc(call.arguments_preview || '')}`).join('\n')}</div>` : ''}</div>`
+    const cached = usageCacheRead(usage)
+    const response = String(round.response_full || round.response_preview || '').trim()
+    const tone = isFinal ? 'round-final' : 'round-middle'
+    const label = isFinal ? '最后一轮' : `中间第 ${round.round} 轮`
+    const cacheText = cached > 0 ? `供应商报了 ${cached.toLocaleString()} cached` : '没有 cached 数值'
+    return `<div class="story-round ${tone}"><div class="story-round-head"><div><span class="story-round-kicker">${label}</span><div class="story-round-title">${finishText(round.finish_reason, isFinal)}</div></div><div class="story-round-time">${typeof round.upstream_duration_ms === 'number' ? `${(round.upstream_duration_ms / 1000).toFixed(1)}s` : ''}</div></div><div class="story-round-response">${response ? esc(response) : '<span class="muted">这条旧日志没有保存这一轮的正文。</span>'}</div>${renderRoundTools(round)}<div class="story-round-foot"><span>${cacheText}</span><span>输入 ${usageInput(usage).toLocaleString()} · 输出 ${usageOutput(usage).toLocaleString()}</span></div></div>`
   }).join('')
 }
 
@@ -551,7 +516,7 @@ function renderContent(detail: LogDetail, tab: string): string {
         </div>
         <div class="dcont">
           <div v-if="loadingDet.has(log.id)" style="color:#484f58;font-size:11px">加载中...</div>
-          <pre v-else-if="detCache[log.id]" v-html="renderContent(detCache[log.id], aTabs[log.id] || 'overview')"></pre>
+          <div v-else-if="detCache[log.id]" class="rendered-detail" v-html="renderContent(detCache[log.id], aTabs[log.id] || 'overview')"></div>
           <div v-else style="color:#484f58;font-size:11px">点击标签加载</div>
         </div>
       </div>
@@ -693,7 +658,7 @@ function renderContent(detail: LogDetail, tab: string): string {
   overflow-y: auto;
 }
 
-.dcont pre {
+.rendered-detail {
   background: #fafafa;
   border: 1px solid #e8e8e8;
   border-radius: 6px;
@@ -789,115 +754,41 @@ function renderContent(detail: LogDetail, tab: string): string {
   word-break: break-all;
 }
 
-.diag-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
-  gap: 8px;
-  margin-bottom: 12px;
-}
-
-.diag-card {
-  padding: 9px 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 7px;
-  background: #fff;
-}
-
-.diag-card.good { border-left: 3px solid #22c55e; }
-.diag-card.warn { border-left: 3px solid #f59e0b; }
-.diag-card.bad { border-left: 3px solid #ef4444; }
-
-.diag-label {
-  color: #9ca3af;
-  font-size: 10px;
-  margin-bottom: 3px;
-}
-
-.diag-value {
-  color: #1f2937;
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.diag-section {
-  margin-top: 10px;
-  padding: 10px;
-  border: 1px solid #e5e7eb;
-  border-radius: 7px;
-  background: #fff;
-}
-
-.diag-title {
-  color: #8b7082;
-  font-size: 11px;
-  font-weight: 700;
-  margin-bottom: 6px;
-}
-
-.diag-lines > div {
-  padding: 2px 0;
-  color: #4b5563;
-}
-
-.diag-alert,
-.diag-warn,
-.diag-ok {
-  padding: 7px 9px;
-  border-radius: 6px;
-  white-space: pre-wrap;
-}
-
-.diag-alert {
-  color: #991b1b;
-  background: #fef2f2;
-  border: 1px solid #fecaca;
-}
-
-.diag-warn {
-  color: #92400e;
-  background: #fffbeb;
-  border: 1px solid #fde68a;
-}
-
-.diag-ok {
-  color: #166534;
-  background: #f0fdf4;
-  border: 1px solid #bbf7d0;
-}
-
-.round-card {
-  padding: 10px;
-  margin-bottom: 8px;
-  border: 1px solid #e5e7eb;
-  border-radius: 7px;
-  background: #fff;
-}
-
-.round-head,
-.round-metrics {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 14px;
-}
-
-.round-head {
-  color: #374151;
-  font-weight: 600;
-  margin-bottom: 7px;
-}
-
-.round-metrics {
-  color: #6b7280;
-}
-
-.round-calls {
-  margin-top: 8px;
-  padding: 7px 9px;
-  border-radius: 6px;
-  color: #155e75;
-  background: #ecfeff;
-  white-space: pre-wrap;
-}
+.island-hero { display:flex; align-items:center; gap:13px; padding:15px 16px; border-radius:12px; margin-bottom:10px; }
+.island-calm { background:linear-gradient(135deg,#f7fbf8,#f3f8f5); border:1px solid #dcebe1; }
+.island-changed { background:linear-gradient(135deg,#fff7fa,#faf2f6); border:1px solid #efdce5; }
+.island-orb { width:38px; height:38px; display:grid; place-items:center; flex:0 0 auto; border-radius:50%; color:#8b7082; background:rgba(255,255,255,.78); box-shadow:0 4px 14px rgba(91,68,82,.08); font-size:18px; }
+.island-hero-title { color:#493e45; font-family:Georgia,'Noto Serif SC',serif; font-size:15px; font-weight:700; }
+.island-hero-sub { margin-top:3px; color:#8d8188; font-size:11px; }
+.soft-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; }
+.soft-card { padding:11px 12px; border:1px solid #ece7ea; border-radius:10px; background:#fffdfd; }
+.soft-label,.round-small-title { color:#aa929f; font-size:10px; font-weight:700; letter-spacing:.04em; }
+.soft-value { margin-top:4px; color:#4f444b; font-size:12px; font-weight:650; }
+.soft-note,.soft-footnote { margin-top:3px; color:#948990; font-size:10px; line-height:1.55; }
+.island-section { margin-top:10px; padding:12px; border:1px solid #eee9ec; border-radius:11px; background:#fff; }
+.island-section-title { margin-bottom:8px; color:#725e69; font-family:Georgia,'Noto Serif SC',serif; font-size:12px; font-weight:700; }
+.island-content { max-height:380px; overflow-y:auto; padding:12px 13px; border-radius:8px; color:#51484d; background:#fcfaf8; box-shadow:inset 0 0 0 1px #f0ebe6; font-family:'Noto Serif SC',Georgia,serif; font-size:11px; line-height:1.75; white-space:pre-wrap; word-break:break-word; }
+.cache-raw { display:flex; flex-wrap:wrap; gap:7px; }
+.cache-raw span { padding:5px 9px; border-radius:999px; color:#49705a; background:#edf7f0; font-size:10px; }
+.empty-soft,.muted { color:#a1999e; font-size:11px; line-height:1.65; }
+.story-round { position:relative; padding:14px; border-radius:12px; margin-bottom:10px; overflow:hidden; }
+.story-round::before { content:''; position:absolute; inset:0 auto 0 0; width:4px; }
+.round-middle { background:linear-gradient(145deg,#fff8fb,#fffdfd); border:1px solid #efdde6; }
+.round-middle::before { background:#d9a8bd; }
+.round-final { background:linear-gradient(145deg,#f7fcf8,#fff); border:1px solid #d8eadc; }
+.round-final::before { background:#85b794; }
+.story-round-head { display:flex; justify-content:space-between; gap:12px; align-items:flex-start; margin-bottom:10px; }
+.story-round-kicker { color:#a88c9a; font-size:10px; font-weight:700; }
+.story-round-title { margin-top:2px; color:#50444b; font-family:Georgia,'Noto Serif SC',serif; font-size:13px; font-weight:700; }
+.story-round-time { color:#aaa0a5; font-family:'SF Mono',monospace; font-size:10px; }
+.story-round-response { max-height:360px; overflow-y:auto; padding:11px 12px; border-radius:8px; color:#40383c; background:rgba(255,255,255,.75); font-size:11px; line-height:1.7; white-space:pre-wrap; word-break:break-word; }
+.round-tool-list { margin-top:9px; padding:9px 10px; border-radius:8px; background:rgba(255,255,255,.62); }
+.round-tool { display:flex; justify-content:space-between; align-items:baseline; gap:10px; padding-top:6px; color:#5f5058; font-size:10px; }
+.round-tool-icon { color:#bc8ea4; margin-right:5px; }
+.round-tool-hint { color:#9f9299; margin-left:7px; }
+.round-tool-result { color:#558267; white-space:nowrap; }
+.round-tool-result.failed { color:#b65f65; }
+.story-round-foot { display:flex; flex-wrap:wrap; justify-content:space-between; gap:6px 12px; margin-top:9px; color:#a0979c; font-size:9px; }
 
 /* tools tab: 工具名清单 + 调用记录 + 客户端工具 */
 .tools-list {

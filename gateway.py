@@ -425,19 +425,16 @@ def _prune_runtime_state(session_id: Optional[str] = None) -> dict[str, int]:
 def _aggregate_cache_usage(usages: list[dict]) -> dict:
     total_read = 0
     total_write = 0
-    total_reported_input = 0
     creation_totals: dict[str, int] = {}
     for usage in usages:
         summary = _cache_usage_summary(usage)
         total_read += summary["cache_read_input_tokens"]
         total_write += summary["cache_creation_input_tokens"]
-        total_reported_input += int(usage.get("prompt_tokens", usage.get("input_tokens")) or 0)
         for key, value in (summary.get("cache_creation") or {}).items():
             creation_totals[key] = creation_totals.get(key, 0) + int(value or 0)
     return {
         "cache_read_input_tokens": total_read,
         "cache_creation_input_tokens": total_write,
-        "reported_input_tokens": total_reported_input,
         "cache_creation": creation_totals,
         "hit": total_read > 0,
         "write": total_write > 0,

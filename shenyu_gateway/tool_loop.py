@@ -295,6 +295,7 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
         )
         tool_calls = _extract_tool_calls(completion)
         _record_completion_finish_reason(ctx.log_entry, completion, round_log=round_log)
+        _record_round_response(round_log, completion)
         if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
             await _finalize_non_gateway_tool_reply(
                 ctx,
@@ -376,6 +377,12 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                 if read_result.kind == "exhausted":
                     _mark_request_log_phase(ctx.log_entry, "upstream.stream_exhausted", detail={"round": round_index + 1})
                     if not first_upstream_chunk_seen:
+                        if round_log is not None:
+                            started = round_log.pop("_started_monotonic", None)
+                            if started is not None:
+                                round_log["upstream_duration_ms"] = max(
+                                    0, int((time.monotonic() - float(started)) * 1000)
+                                )
                         raise HTTPException(status_code=502, detail="上游返回空流，未收到任何有效响应事件。")
                     break
 
@@ -420,6 +427,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
 
         tool_calls = _extract_tool_calls(completion)
         _record_completion_finish_reason(ctx.log_entry, completion, round_log=round_log)
+        _record_round_response(round_log, completion)
         if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
             if not tool_calls:
                 remaining = tag_filter.flush()
@@ -504,6 +512,7 @@ def _start_round_log(
         "round": round_index + 1,
         "messages_count": len(working_messages),
         "tools": [],
+        "_started_monotonic": time.monotonic(),
     }
     if stream:
         round_log["stream"] = True
@@ -522,6 +531,18 @@ def _record_round_usage(
         ctx.log_entry["cache_usage"] = ctx.aggregate_cache_usage(upstream_usages)
     if round_log is not None:
         round_log["usage"] = usage
+
+
+def _record_round_response(round_log: Optional[dict], completion: dict) -> None:
+    if round_log is None:
+        return
+    assistant_message = completion.get("choices", [{}])[0].get("message", {})
+    clean_content, _ = split_private_assistant_tags(_content_text_only(assistant_message.get("content")))
+    round_log["response_full"] = clean_content
+    round_log["response_preview"] = _shorten(clean_content, 1200)
+    started = round_log.pop("_started_monotonic", None)
+    if started is not None:
+        round_log["upstream_duration_ms"] = max(0, int((time.monotonic() - float(started)) * 1000))
 
 
 async def _finalize_non_gateway_tool_reply(

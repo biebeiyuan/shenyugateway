@@ -60,19 +60,6 @@ from shenyu_gateway.upstream_adapter import (
 )
 
 
-def test_aggregate_cache_usage_keeps_multi_round_input_denominator():
-    result = gateway._aggregate_cache_usage(
-        [
-            {"prompt_tokens": 2, "prompt_tokens_details": {"cached_tokens": 100548}},
-            {"prompt_tokens": 90808, "prompt_tokens_details": {"cached_tokens": 21296}},
-        ]
-    )
-
-    assert result["cache_read_input_tokens"] == 121844
-    assert result["reported_input_tokens"] == 90810
-    assert result["rounds"] == 2
-
-
 class _FakeStore:
     def __init__(self) -> None:
         self.messages: list[dict] = []
@@ -1667,6 +1654,13 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
         ]
         assert len(payload_messages_counts) == 2
         assert ctx.log_entry["response_text"] == "done"
+        rounds = ctx.log_entry["internal_tool_rounds"]
+        assert rounds[0]["response_full"] == "."
+        assert rounds[0].get("final") is not True
+        assert rounds[1]["response_full"] == "done"
+        assert rounds[1]["final"] is True
+        assert "upstream_duration_ms" in rounds[0]
+        assert "upstream_duration_ms" in rounds[1]
         assert any('"content": "done"' in event for event in events)
         assert not any('"function": {"name": ""' in event for event in events)
 

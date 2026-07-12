@@ -3,7 +3,6 @@ import { api } from './http'
 export interface CacheUsage {
   cache_read_input_tokens: number
   cache_creation_input_tokens: number
-  reported_input_tokens?: number
   hit: boolean
   write: boolean
   rounds?: number
@@ -38,6 +37,7 @@ export interface LogEntry {
   prepared_messages_count: number
   client_message_window?: Record<string, any> | null
   memory_island?: Record<string, any> | null
+  memory_island_version?: string | null
   cold_start?: Record<string, any> | null
   finish_reason?: string | null
   internal_tool_rounds?: number | ToolRoundEntry[] | null
@@ -60,6 +60,10 @@ export interface ToolRoundEntry {
   stream?: boolean
   usage?: Record<string, any>
   finish_reason?: string | null
+  final?: boolean
+  response_full?: string
+  response_preview?: string
+  upstream_duration_ms?: number
   tool_calls_count?: number
   gateway_tool_calls?: Array<{
     id?: string
@@ -84,6 +88,12 @@ export interface LogDetail extends LogEntry {
   prepared_messages_preview?: any[] | null
   upstream_payload: Record<string, any> | null
   tool_names_all?: string[] | null
+  memory_island_content?: {
+    version?: string | null
+    star_count?: number
+    mem_count?: number
+    rendered_text?: string
+  } | null
   internal_tool_rounds?: ToolRoundEntry[] | null
 }
 
