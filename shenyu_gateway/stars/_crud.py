@@ -141,7 +141,21 @@ class CrudMixin:
             row.setdefault("chord_sequence", chord_sequence if len(chord_sequence) > 1 else [])
         return {"ok": True, "star_id": row.get("id") if isinstance(row, dict) else None, "star": row}
 
-    async def _classify_star_scenes(self, content: str, http_client: Any) -> Optional[list[str]]:
+    @staticmethod
+    def _scene_response_text(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):
+            return "".join(
+                str(item.get("text") or item.get("content") or "")
+                for item in value
+                if isinstance(item, dict)
+            )
+        if isinstance(value, dict):
+            return str(value.get("text") or value.get("content") or "")
+        return ""
+
+    async def _classify_star_scenes(self, content: str, http_client: Any) -> dict[str, Any]:
         from ..upstream_adapter import _openai_to_anthropic
         from ..upstream_client import chat_url_for, detect_protocol_for
 
@@ -152,8 +166,13 @@ class CrudMixin:
             base_url,
             str(getattr(self.cfg, "star_scene_llm_protocol", "") or getattr(self.cfg, "upstream_protocol", "auto") or "auto"),
         )
-        if not model or not base_url or not api_key:
-            return None
+        missing = [
+            name
+            for name, value in (("模型", model), ("URL", base_url), ("API Key", api_key))
+            if not value
+        ]
+        if missing:
+            return {"ok": False, "error_code": "config_missing", "error": f"场景模型配置缺少：{'、'.join(missing)}"}
         _, descriptions, _ = self._scene_config()
         messages = [{"role": "user", "content": _scene_label_prompt(content, descriptions)}]
         headers = {"content-type": "application/json"}
@@ -162,7 +181,7 @@ class CrudMixin:
             payload: dict[str, Any] = {
                 "model": model,
                 "messages": anthropic_messages,
-                "max_tokens": 80,
+                "max_tokens": 256,
                 "temperature": 0,
             }
             if system:
@@ -175,7 +194,7 @@ class CrudMixin:
                 "messages": messages,
                 "stream": False,
                 "temperature": 0,
-                "max_tokens": 80,
+                "max_tokens": 256,
             }
             headers["authorization"] = f"Bearer {api_key}"
         try:
@@ -191,11 +210,33 @@ class CrudMixin:
             else:
                 choices = data.get("choices") or []
                 message = choices[0].get("message") if choices and isinstance(choices[0], dict) else {}
-                text = message.get("content") if isinstance(message, dict) else ""
-            return _parse_scene_labels(text)
+                text = self._scene_response_text(message.get("content")) if isinstance(message, dict) else ""
+                if not text and isinstance(message, dict):
+                    text = self._scene_response_text(message.get("reasoning_content"))
+                if not text and choices and isinstance(choices[0], dict):
+                    text = self._scene_response_text(choices[0].get("text"))
+            scenes = _parse_scene_labels(text)
+            if scenes is None:
+                preview = " ".join(str(text or "").split())[:240]
+                if not preview:
+                    return {"ok": False, "error_code": "empty_response", "error": "上游返回 200，但没有可读取的模型文本"}
+                return {
+                    "ok": False,
+                    "error_code": "invalid_output",
+                    "error": "模型已响应，但没有返回可识别的场景数组",
+                    "response_preview": preview,
+                }
+            return {"ok": True, "scenes": scenes}
+        except httpx.HTTPStatusError as exc:
+            detail = " ".join((exc.response.text or "").split())[:300]
+            error = f"上游 HTTP {exc.response.status_code}"
+            if detail:
+                error += f"：{detail}"
+            logger.warning("[Star] Scene label request failed: %s", error)
+            return {"ok": False, "error_code": "upstream_http", "error": error}
         except (httpx.HTTPError, ValueError, TypeError, json.JSONDecodeError) as exc:
             logger.warning("[Star] Scene label classification failed: %s", exc)
-            return None
+            return {"ok": False, "error_code": "request_failed", "error": f"场景模型请求失败：{exc}"}
 
     @staticmethod
     def _has_scene_labels(metadata: dict[str, Any]) -> bool:
@@ -218,11 +259,12 @@ class CrudMixin:
         failed = 0
         by_scene = {scene: 0 for scene in sorted(SCENE_KEYS)}
         for row in selected:
-            scenes = await self._classify_star_scenes(str(row.get("content") or ""), http_client)
-            if scenes is None:
+            classification = await self._classify_star_scenes(str(row.get("content") or ""), http_client)
+            if not classification.get("ok"):
                 failed += 1
-                items.append({"star": self._public_star(row), "ok": False, "error": "classification failed"})
+                items.append({"star": self._public_star(row), **classification})
                 continue
+            scenes = classification.get("scenes") or []
             metadata = _json_dict(row.get("metadata"))
             if self._has_scene_labels(metadata):
                 items.append({"star": self._public_star(row), "ok": True, "skipped": True})

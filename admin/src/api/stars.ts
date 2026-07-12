@@ -201,7 +201,15 @@ export interface StarSceneBackfillResult {
   failed: number
   remaining_unlabeled: number
   by_scene: Record<string, number>
-  items: Array<{ star: StarItem; ok: boolean; scenes?: string[]; skipped?: boolean; error?: string }>
+  items: Array<{
+    star: StarItem
+    ok: boolean
+    scenes?: string[]
+    skipped?: boolean
+    error_code?: string
+    error?: string
+    response_preview?: string
+  }>
 }
 
 export async function backfillStarScenes(limit: number): Promise<StarSceneBackfillResult> {

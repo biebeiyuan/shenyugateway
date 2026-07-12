@@ -497,7 +497,7 @@ def test_backfill_scenes_only_updates_unlabeled_stars():
 
     async def classify(content, http_client):
         classified_contents.append(content)
-        return ["warm", "rift"]
+        return {"ok": True, "scenes": ["warm", "rift"]}
 
     service._classify_star_scenes = classify
 
@@ -525,7 +525,7 @@ def test_backfill_empty_scene_list_counts_as_processed():
     async def classify(content, http_client):
         nonlocal calls
         calls += 1
-        return []
+        return {"ok": True, "scenes": []}
 
     service._classify_star_scenes = classify
 
@@ -541,6 +541,32 @@ def test_backfill_empty_scene_list_counts_as_processed():
     assert second["selected"] == 0
     assert calls == 1
     assert supabase.tables["shenyu_stars"][0]["metadata"]["scenes"] == []
+
+
+def test_backfill_returns_classifier_error_detail():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def classify(content, http_client):
+        return {
+            "ok": False,
+            "error_code": "invalid_output",
+            "error": "模型已响应，但没有返回可识别的场景数组",
+            "response_preview": "我认为这颗星是暖和裂。",
+        }
+
+    service._classify_star_scenes = classify
+
+    async def run():
+        await service.create_star("等待诊断")
+        return await service.backfill_scenes(limit=1, http_client=object())
+
+    result = asyncio.run(run())
+
+    assert result["updated"] == 0
+    assert result["failed"] == 1
+    assert result["items"][0]["error_code"] == "invalid_output"
+    assert result["items"][0]["response_preview"] == "我认为这颗星是暖和裂。"
 
 
 def test_set_scenes_preserves_content_and_other_metadata():

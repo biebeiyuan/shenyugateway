@@ -24,6 +24,7 @@ const labeling = ref(false)
 const batchSize = ref(10)
 const savingId = ref('')
 const filter = ref('all')
+const lastResult = ref<Awaited<ReturnType<typeof backfillStarScenes>> | null>(null)
 
 const counts = computed(() => {
   const result: Record<string, number> = { all: stars.value.length, unlabeled: 0 }
@@ -60,6 +61,7 @@ async function runBackfill() {
   labeling.value = true
   try {
     const result = await backfillStarScenes(batchSize.value || 10)
+    lastResult.value = result
     await loadStars()
     if (result.failed) {
       message.warning(`写入 ${result.updated} 颗，${result.failed} 颗分类失败，可稍后重试`)
@@ -128,6 +130,20 @@ async function toggleScene(star: StarItem, scene: string) {
       </button>
     </div>
 
+    <div v-if="lastResult" class="run-result" :class="{ failed: lastResult.failed }">
+      <div class="run-summary">
+        <strong v-if="lastResult.failed">这批没有全部写进去</strong>
+        <strong v-else>这批标签已经写好</strong>
+        <span>选中 {{ lastResult.selected }} · 写入 {{ lastResult.updated }} · 失败 {{ lastResult.failed }}</span>
+      </div>
+      <div v-if="lastResult.failed" class="failure-list">
+        <div v-for="item in lastResult.items.filter((entry) => !entry.ok)" :key="item.star.id">
+          <p>{{ item.error || '未知分类错误' }}</p>
+          <code v-if="item.response_preview">模型原文：{{ item.response_preview }}</code>
+        </div>
+      </div>
+    </div>
+
     <div v-if="loading" class="empty-state">正在数星星……</div>
     <div v-else-if="!visibleStars.length" class="empty-state">这一栏暂时没有星星。</div>
     <div v-else class="star-label-list">
@@ -157,29 +173,33 @@ async function toggleScene(star: StarItem, scene: string) {
 
 <style scoped>
 .labels-panel { display: grid; gap: 18px; }
-.labels-hero { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding: 24px; border: 1px solid rgba(216,182,109,.2); border-radius: 22px; background: radial-gradient(circle at 12% 10%, rgba(216,182,109,.12), transparent 34%), linear-gradient(145deg, rgba(20,24,37,.96), rgba(12,15,25,.92)); box-shadow: 0 20px 50px rgba(3,6,14,.22); }
-.eyebrow { margin: 0 0 5px; color: #d8b66d; font-size: 11px; letter-spacing: .18em; text-transform: uppercase; }
-h3 { margin: 0; color: #f3eee3; font-size: 20px; font-weight: 600; }
-.hero-copy { max-width: 610px; margin: 8px 0 0; color: #8e97aa; font-size: 13px; line-height: 1.7; }
-.batch-box { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; color: #aeb5c4; font-size: 13px; }
+.labels-hero { display: flex; justify-content: space-between; gap: 24px; align-items: center; padding: 22px; border: 1px solid #efd9d5; border-radius: 14px; background: radial-gradient(circle at 12% 10%, rgba(255,224,174,.24), transparent 36%), linear-gradient(135deg, #fffdfb, #f8eef2 62%, #f5f1f4); box-shadow: 0 10px 28px rgba(111,76,88,.06); }
+.eyebrow { margin: 0 0 5px; color: #a08090; font-size: 11px; letter-spacing: .16em; text-transform: uppercase; }
+h3 { margin: 0; color: #4a3535; font-family: 'Cormorant Garamond', 'Georgia', serif; font-size: 24px; font-weight: 500; }
+.hero-copy { max-width: 610px; margin: 8px 0 0; color: #8b747d; font-size: 13px; line-height: 1.7; }
+.batch-box { display: flex; align-items: center; gap: 9px; flex: 0 0 auto; color: #846d77; font-size: 13px; }
 .batch-box :deep(.n-input-number) { width: 82px; }
 .scene-mirror { display: flex; gap: 8px; flex-wrap: wrap; }
-.scene-mirror button, .scene-picker button { border: 1px solid rgba(142,151,170,.16); color: #929bad; background: rgba(15,19,29,.72); cursor: pointer; transition: .2s ease; }
+.scene-mirror button, .scene-picker button { border: 1px solid #ead4cf; color: #846d77; background: rgba(255,255,255,.82); cursor: pointer; transition: .2s ease; }
 .scene-mirror button { display: inline-flex; align-items: center; gap: 7px; padding: 8px 11px; border-radius: 999px; }
-.scene-mirror button:hover, .scene-mirror button.active { color: #f5efe4; border-color: var(--scene, rgba(216,182,109,.45)); background: var(--glow, rgba(216,182,109,.12)); transform: translateY(-1px); }
+.scene-mirror button:hover, .scene-mirror button.active { color: #4f4052; border-color: var(--scene, #c89aa8); background: var(--glow, #f8eef2); transform: translateY(-1px); }
 .scene-mirror i, .scene-picker i { width: 7px; height: 7px; border-radius: 50%; background: var(--scene, #d8b66d); box-shadow: 0 0 12px var(--scene, #d8b66d); }
-.scene-mirror b { color: #d9dce4; font-size: 11px; font-variant-numeric: tabular-nums; }
-.all-dot { background: #e8e0cf !important; }.empty-dot { background: #596174 !important; box-shadow: none !important; }
+.scene-mirror b { color: #6b555b; font-size: 11px; font-variant-numeric: tabular-nums; }
+.all-dot { background: #b88999 !important; }.empty-dot { background: #b9aeb2 !important; box-shadow: none !important; }
+.run-result { padding: 14px 16px; border: 1px solid #dbe8df; border-radius: 12px; background: #f5faf6; color: #536d5c; }
+.run-result.failed { border-color: #efcbc8; background: #fff5f4; color: #805b60; }
+.run-summary { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }.run-summary strong { font-size: 13px; }
+.failure-list { display: grid; gap: 8px; margin-top: 10px; }.failure-list div { padding-top: 8px; border-top: 1px solid rgba(155,100,105,.12); }.failure-list p { margin: 0; font-size: 12px; }.failure-list code { display: block; margin-top: 5px; color: #9a7076; white-space: normal; word-break: break-word; }
 .star-label-list { display: grid; gap: 10px; }
-.star-label-card { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 22px; align-items: center; padding: 17px 19px; border: 1px solid rgba(132,143,164,.12); border-radius: 16px; background: linear-gradient(135deg, rgba(19,23,34,.88), rgba(13,16,25,.78)); transition: .2s ease; }
-.star-label-card:hover { border-color: rgba(216,182,109,.22); transform: translateY(-1px); }
-.star-copy p { margin: 5px 0 0; color: #d9dce4; line-height: 1.65; white-space: pre-wrap; }
-.star-meta { display: flex; gap: 9px; color: #646d80; font-size: 11px; }
-.chord { color: #c8a962; }
+.star-label-card { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 22px; align-items: center; padding: 17px 19px; border: 1px solid #f0dfdc; border-radius: 13px; background: rgba(255,255,255,.76); transition: .2s ease; }
+.star-label-card:hover { border-color: #ddbfc4; box-shadow: 0 8px 22px rgba(111,76,88,.06); transform: translateY(-1px); }
+.star-copy p { margin: 5px 0 0; color: #5e4a51; line-height: 1.65; white-space: pre-wrap; }
+.star-meta { display: flex; gap: 9px; color: #aa929a; font-size: 11px; }
+.chord { color: #b78755; }
 .scene-picker { display: flex; gap: 6px; flex-wrap: wrap; justify-content: flex-end; max-width: 280px; }
 .scene-picker.saving { opacity: .55; pointer-events: none; }
 .scene-picker button { display: inline-flex; align-items: center; gap: 5px; padding: 6px 9px; border-radius: 9px; font-size: 12px; }
-.scene-picker button.selected { color: #f6f0e5; border-color: var(--scene); background: var(--glow); box-shadow: inset 0 0 18px var(--glow); }
-.empty-state { padding: 48px 20px; border: 1px dashed rgba(132,143,164,.18); border-radius: 18px; color: #737d91; text-align: center; }
+.scene-picker button.selected { color: #4f4052; border-color: var(--scene); background: var(--glow); box-shadow: inset 0 0 18px var(--glow); }
+.empty-state { padding: 48px 20px; border: 1px dashed #ead4cf; border-radius: 14px; color: #a0868f; text-align: center; }
 @media (max-width: 760px) { .labels-hero { align-items: flex-start; flex-direction: column; }.batch-box { flex-wrap: wrap; }.star-label-card { grid-template-columns: 1fr; }.scene-picker { justify-content: flex-start; max-width: none; } }
 </style>

@@ -30,6 +30,14 @@ _DEFAULT_SCENE_DESCRIPTIONS: dict[str, str] = {
 
 SCENE_KEYS = {"anchor", "deep", "warm", "rift", "create", "daily"}
 SCENE_ORDER = ("anchor", "deep", "warm", "rift", "create", "daily")
+SCENE_ALIASES = {
+    "锚": "anchor",
+    "深": "deep",
+    "暖": "warm",
+    "裂": "rift",
+    "造": "create",
+    "日常": "daily",
+}
 
 
 def _normalize_scenes(value: Any) -> list[str]:
@@ -39,7 +47,10 @@ def _normalize_scenes(value: Any) -> list[str]:
         values = list(value)
     else:
         values = []
-    normalized = {str(item or "").strip().lower() for item in values}
+    normalized = {
+        SCENE_ALIASES.get(str(item or "").strip(), str(item or "").strip().lower())
+        for item in values
+    }
     return [scene for scene in SCENE_ORDER if scene in normalized]
 
 
@@ -64,7 +75,10 @@ def _parse_scene_labels(text: Any) -> Optional[list[str]]:
         parsed = parsed.get("scenes")
     if not isinstance(parsed, list):
         return None
-    if any(str(item or "").strip().lower() not in SCENE_KEYS for item in parsed):
+    if any(
+        SCENE_ALIASES.get(str(item or "").strip(), str(item or "").strip().lower()) not in SCENE_KEYS
+        for item in parsed
+    ):
         return None
     return _normalize_scenes(parsed)
 
