@@ -1,5 +1,7 @@
 # Shenyu Gateway System Inventory
 
+> **历史文档：** 本文件记录旧 Windows 工作区时期的项目边界，不再作为当前系统地图。当前入口请看 `DOCS_MAP.md`，当前模块地图请看 `README.md` 的 Maintenance Map。保留本文只是为了避免丢失旧环境迁移背景。
+
 ## Scope
 
 This folder is the current chat gateway project:

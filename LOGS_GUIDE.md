@@ -19,6 +19,8 @@
 - **Upstream**：看这一轮完整上游 payload；只在需要核对协议、工具或缓存断点时打开。
 - **Meta / Raw JSON**：工程排障备用，平时可以不看。
 
+默认只保留摘要、预览和计数，不在 request log 中保存完整 Messages、Upstream payload 或 Response。需要短期排查协议问题时，可以显式设置 `GATEWAY_LOG_FULL_PAYLOADS=true`；这些完整内容只存在于进程内最近 30 条日志，重启即消失，但仍可能包含敏感对话，排查结束后应关闭。
+
 ## 小岛与缓存
 
 - 小岛显示的是**实际渲染并发送给模型**的星星和 Mem，不是候选列表。

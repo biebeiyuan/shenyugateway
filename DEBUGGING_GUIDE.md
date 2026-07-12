@@ -12,6 +12,15 @@ For live triage, start with the helper script before changing code:
 python scripts\vps_gateway_logs.py api --via-ssh --errors --detail
 ```
 
+For prompt-cache, image, epoch, or memory-island questions, start with the compact timeline report. It defaults to `ssh vps`, does not print message content, and follows a stale Coolify container name to the current deployment:
+
+```powershell
+python scripts\vps_gateway_logs.py cache
+python scripts\vps_gateway_logs.py cache --session 6.20 --limit 12
+```
+
+The report flags gaps longer than the declared TTL, long-gap hits that suggest relay-side automatic caching, island rewrites, history-branch resets, image retention, and cache misses where the relay omitted cache-creation usage.
+
 Set these in the shell when checking the deployed gateway:
 
 ```powershell
@@ -55,7 +64,7 @@ python scripts\vps_gateway_logs.py ssh --match "shenyu|gateway" --tail 300 -f
 
 Use `api` without `--via-ssh` only when public gateway API access is not blocked by Cloudflare.
 
-On Windows, the helper uses the local `vps` SSH alias by default unless explicit connection flags are passed. Container lookup first honors configured name/label/service hints, then falls back to gateway environment signatures, so a Coolify redeploy does not require copying the new random container name into local config.
+On Windows, the helper uses the local `vps` SSH alias by default unless explicit connection flags are passed. Container lookup first honors configured name/label/service hints, then tries the stable Coolify application prefix and regex match before the slower environment inspection, so a redeploy does not require copying the new random container name into local config.
 
 The script separates `tools_offered` from `gateway_tools_executed`. If tools were offered but zero gateway tools executed, the model/upstream failed before the gateway got any tool call. In that case, inspect upstream errors, relay retries, streaming behavior, request payload shape, and prompt-cache compatibility before editing `gateway_tools.py`.
 
