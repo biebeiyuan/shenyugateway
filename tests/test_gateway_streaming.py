@@ -32,6 +32,7 @@ from shenyu_gateway.request_logs import (
 from shenyu_gateway.schemas import ChatRequest
 from shenyu_gateway.sessions import SessionManager
 from shenyu_gateway.store import GatewayStore
+from shenyu_gateway.stream_proxy import stream_chat
 from shenyu_gateway.streaming import (
     StreamReplayAccumulator,
     _apply_openai_stream_chunk,
@@ -286,6 +287,80 @@ def test_chat_pipeline_writes_completion_context_snapshot_after_assistant_reply(
     meta, content = snapshots[0]
     assert meta["snapshot_messages"] == [{"role": "user", "content": "最新一问"}]
     assert content == "最新一答"
+
+
+def test_chat_pipeline_does_not_commit_context_for_interrupted_plain_stream(monkeypatch):
+    from shenyu_gateway import chat_pipeline
+
+    request_logs = deque(maxlen=30)
+    monkeypatch.setattr(chat_pipeline, "_request_logs", request_logs)
+    session = {"id": "session-1", "session_tag": "stream-test", "message_count": 1}
+    consumed: list[dict] = []
+    snapshots: list[tuple] = []
+
+    async def prepare_messages(_request, _body):
+        return (
+            [{"role": "user", "content": "hello"}],
+            {
+                "session": session,
+                "is_first_turn": False,
+                "snapshot_messages": [{"role": "user", "content": "hello"}],
+                "client_message_window": {},
+                "cache_layers": {},
+                "pending_gateway_tool_turn_ids": ["pending-1"],
+                "is_hisense": False,
+                "upstream": {
+                    "chat_url": "https://example.test/v1/chat/completions",
+                    "scope": "default",
+                    "protocol": "openai",
+                    "api_key": "test",
+                },
+            },
+        )
+
+    async def build_upstream_request(*_args, **_kwargs):
+        return (
+            {"model": "test-model", "messages": [{"role": "user", "content": "hello"}]},
+            {},
+            "test-model",
+            {"enabled": False, "protocol": "openai", "breakpoints": []},
+            {
+                "chat_url": "https://example.test/v1/chat/completions",
+                "scope": "default",
+                "protocol": "openai",
+                "api_key": "test",
+            },
+        )
+
+    async def interrupted_stream(*_args, on_complete=None, **_kwargs):
+        on_complete(
+            "partial answer",
+            "",
+            False,
+            None,
+            None,
+            "error",
+            "Upstream stream interrupted: reset",
+        )
+        return StreamingResponse(iter([b""]))
+
+    pipeline = _test_pipeline(prepare_messages=prepare_messages)
+    pipeline.build_upstream_request = build_upstream_request
+    pipeline.stream_chat = interrupted_stream
+    pipeline.mark_context_consumed = lambda meta: consumed.append(meta)
+    pipeline.write_completion_context_snapshot = lambda *args: snapshots.append(args)
+    body = ChatRequest(model="test-model", messages=[{"role": "user", "content": "hello"}], stream=True)
+
+    asyncio.run(pipeline.run(_fake_request({"X-Shenyu-Session-Tag": "stream-test"}), body))
+
+    entry = request_logs[0]
+    assert entry["status"] == "error"
+    assert entry["error"] == "Upstream stream interrupted: reset"
+    assert entry["response_preview"] == "partial answer"
+    assert [item["role"] for item in pipeline.store.messages] == ["user"]
+    assert all(item["content"] != "partial answer" for item in pipeline.store.messages)
+    assert snapshots == []
+    assert consumed == []
 
 
 def test_http_request_diagnostics_track_active_and_recent_events():
@@ -1475,6 +1550,194 @@ class _ClosableAsyncIterator:
 
     async def aclose(self):
         self.closed = True
+
+
+class _PlainStreamResponse:
+    status_code = 200
+
+    def __init__(self, lines):
+        self.lines = list(lines)
+        self.closed = False
+
+    async def aiter_lines(self):
+        for line in self.lines:
+            yield line
+
+    async def aclose(self):
+        self.closed = True
+
+
+class _InterruptedPlainStreamResponse(_PlainStreamResponse):
+    def __init__(self, lines, interruption):
+        super().__init__(lines)
+        self.interruption = interruption
+
+    async def aiter_lines(self):
+        for line in self.lines:
+            yield line
+        raise self.interruption
+
+
+class _PlainStreamClient:
+    def __init__(self, response):
+        self.response = response
+
+    def build_request(self, method, url, json, headers):
+        return {"method": method, "url": url, "json": json, "headers": headers}
+
+    async def send(self, request, stream=False):
+        assert stream is True
+        return self.response
+
+
+def test_openai_plain_stream_adds_done_when_upstream_ends_without_sentinel():
+    async def run_case():
+        upstream_response = _PlainStreamResponse(
+            [
+                'data: {"id":"chatcmpl-upstream","created":123,"choices":[{"delta":{"content":"hello"},"finish_reason":"stop"}]}'
+            ]
+        )
+        request = _fake_request()
+        request.scope["app"] = SimpleNamespace(
+            state=SimpleNamespace(http=_PlainStreamClient(upstream_response))
+        )
+        completed: list[tuple] = []
+
+        response = await stream_chat(
+            request,
+            {"model": "test-model", "messages": []},
+            {},
+            "test-model",
+            {"protocol": "openai", "chat_url": "https://upstream.test/v1/chat/completions"},
+            connect_error_detail=lambda _url, exc: str(exc),
+            private_capture_fallback_text=lambda *_args, **_kwargs: ("fallback", ""),
+            private_capture_kinds=lambda **_kwargs: [],
+            on_complete=lambda *args: completed.append(args),
+        )
+
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+        assert chunks[-1] == "data: [DONE]\n\n"
+        assert upstream_response.closed is True
+        assert completed and completed[0][0] == "hello"
+
+    asyncio.run(run_case())
+
+
+@pytest.mark.parametrize(
+    ("interruption", "expected_status"),
+    [
+        (asyncio.CancelledError(), "client_disconnected"),
+        (RuntimeError("upstream stream broke"), "error"),
+    ],
+)
+def test_openai_plain_stream_reports_incomplete_terminal_status(interruption, expected_status):
+    async def run_case():
+        upstream_response = _InterruptedPlainStreamResponse(
+            [
+                'data: {"id":"chatcmpl-upstream","created":123,"choices":[{"delta":{"content":"partial"},"finish_reason":null}]}'
+            ],
+            interruption,
+        )
+        request = _fake_request()
+        request.scope["app"] = SimpleNamespace(
+            state=SimpleNamespace(http=_PlainStreamClient(upstream_response))
+        )
+        completed: list[tuple] = []
+        response = await stream_chat(
+            request,
+            {"model": "test-model", "messages": []},
+            {},
+            "test-model",
+            {"protocol": "openai", "chat_url": "https://upstream.test/v1/chat/completions"},
+            connect_error_detail=lambda _url, exc: str(exc),
+            private_capture_fallback_text=lambda *_args, **_kwargs: ("fallback", ""),
+            private_capture_kinds=lambda **_kwargs: [],
+            on_complete=lambda *args: completed.append(args),
+        )
+
+        with pytest.raises(type(interruption), match=None if isinstance(interruption, asyncio.CancelledError) else "upstream stream broke"):
+            async for _chunk in response.body_iterator:
+                pass
+
+        assert upstream_response.closed is True
+        assert completed and completed[0][0] == "partial"
+        assert completed[0][5] == expected_status
+
+    asyncio.run(run_case())
+
+
+def test_anthropic_plain_stream_reports_interrupted_status():
+    async def run_case():
+        upstream_response = _InterruptedPlainStreamResponse(
+            [
+                'data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"partial"}}'
+            ],
+            RuntimeError("anthropic stream broke"),
+        )
+        request = _fake_request()
+        request.scope["app"] = SimpleNamespace(
+            state=SimpleNamespace(http=_PlainStreamClient(upstream_response))
+        )
+        completed: list[tuple] = []
+        response = await stream_chat(
+            request,
+            {"model": "test-model", "messages": []},
+            {},
+            "test-model",
+            {"protocol": "anthropic", "chat_url": "https://upstream.test/v1/messages"},
+            connect_error_detail=lambda _url, exc: str(exc),
+            private_capture_fallback_text=lambda *_args, **_kwargs: ("fallback", ""),
+            private_capture_kinds=lambda **_kwargs: [],
+            on_complete=lambda *args: completed.append(args),
+        )
+
+        with pytest.raises(RuntimeError, match="anthropic stream broke"):
+            async for _chunk in response.body_iterator:
+                pass
+
+        assert upstream_response.closed is True
+        assert completed and completed[0][0] == "partial"
+        assert completed[0][5] == "error"
+
+    asyncio.run(run_case())
+
+
+@pytest.mark.parametrize("protocol", ["openai", "anthropic"])
+def test_plain_empty_stream_reports_error_terminal_status(protocol):
+    async def run_case():
+        upstream_response = _PlainStreamResponse([])
+        request = _fake_request()
+        request.scope["app"] = SimpleNamespace(
+            state=SimpleNamespace(http=_PlainStreamClient(upstream_response))
+        )
+        completed: list[tuple] = []
+        response = await stream_chat(
+            request,
+            {"model": "test-model", "messages": []},
+            {},
+            "test-model",
+            {
+                "protocol": protocol,
+                "chat_url": "https://upstream.test/v1/messages" if protocol == "anthropic" else "https://upstream.test/v1/chat/completions",
+            },
+            connect_error_detail=lambda _url, exc: str(exc),
+            private_capture_fallback_text=lambda *_args, **_kwargs: ("fallback", ""),
+            private_capture_kinds=lambda **_kwargs: [],
+            on_complete=lambda *args: completed.append(args),
+        )
+
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+        assert chunks[-1] == "data: [DONE]\n\n"
+        assert completed and completed[0][5] == "error"
+        assert "without a valid data event" in completed[0][6]
+
+    asyncio.run(run_case())
 
 
 def test_read_next_stream_chunk_returns_chunk_when_upstream_task_finishes():

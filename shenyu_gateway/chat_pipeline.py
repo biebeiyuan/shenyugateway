@@ -419,7 +419,14 @@ class ChatPipeline:
                 fallback_applied: bool = False,
                 usage: Optional[dict] = None,
                 finish_reason: Optional[str] = None,
+                terminal_status: str = "ok",
+                terminal_error: Optional[str] = None,
             ):
+                if terminal_status != "ok":
+                    log_entry["status"] = terminal_status
+                    log_entry["error"] = terminal_error or "Upstream stream did not complete normally."
+                    _record_response_text(log_entry, collected_text)
+                    return
                 log_entry["status"] = "ok"
                 _record_finish_reason(log_entry, finish_reason)
                 if usage:

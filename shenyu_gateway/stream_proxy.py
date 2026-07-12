@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from typing import Any, Callable, Optional
@@ -70,10 +71,14 @@ async def stream_chat(
             visible_output_sent = False
             tool_call_seen = False
             fallback_applied = False
+            done_sent = False
             stream_usage: dict[str, Any] = {}
             stream_finish_reason: str = ""
             stream_chunk_id = _new_stream_chunk_id()
             stream_created = _now_ts()
+            terminal_status = "ok"
+            terminal_error = ""
+            upstream_event_seen = False
             try:
                 async for raw_line in resp.aiter_lines():
                     line = raw_line.strip()
@@ -109,10 +114,12 @@ async def stream_chat(
                                 created=stream_created,
                             )
                         yield "data: [DONE]\n\n"
+                        done_sent = True
                         continue
                     if line.startswith("data: "):
                         try:
                             data = json.loads(line[6:])
+                            upstream_event_seen = True
                             stream_chunk_id = data.get("id") or stream_chunk_id
                             stream_created = data.get("created") or stream_created
                             if isinstance(data.get("usage"), dict):
@@ -161,6 +168,43 @@ async def stream_chat(
                         except (json.JSONDecodeError, IndexError, KeyError, TypeError):
                             pass
                     yield line + "\n\n"
+                if not done_sent:
+                    remaining = tag_filter.flush()
+                    if remaining:
+                        yield _stream_content_event(
+                            model,
+                            remaining,
+                            finish_reason=None,
+                            chunk_id=stream_chunk_id,
+                            created=stream_created,
+                        )
+                        visible_output_sent = visible_output_sent or bool(remaining.strip())
+                    heartbeat_content = tag_filter.get_heartbeat()
+                    if not visible_output_sent and not tool_call_seen and heartbeat_content:
+                        fallback_applied = True
+                        fallback_text, _ = private_capture_fallback_text(
+                            latest_user_text,
+                            private_capture_kinds(heartbeat_content=heartbeat_content),
+                        )
+                        yield _stream_content_event(
+                            model,
+                            fallback_text,
+                            finish_reason=None,
+                            chunk_id=stream_chunk_id,
+                            created=stream_created,
+                        )
+                    yield "data: [DONE]\n\n"
+                if not upstream_event_seen:
+                    terminal_status = "error"
+                    terminal_error = "Upstream OpenAI-compatible stream ended without a valid data event."
+            except asyncio.CancelledError:
+                terminal_status = "client_disconnected"
+                terminal_error = "Client disconnected before the upstream stream completed."
+                raise
+            except Exception as exc:
+                terminal_status = "error"
+                terminal_error = f"Upstream stream interrupted: {exc}"
+                raise
             finally:
                 await resp.aclose()
                 if on_complete:
@@ -180,6 +224,8 @@ async def stream_chat(
                             fallback_applied,
                             stream_usage or None,
                             stream_finish_reason or None,
+                            terminal_status,
+                            terminal_error or None,
                         )
                     except Exception:
                         logger.exception("流式回调执行失败")
@@ -196,6 +242,9 @@ async def stream_chat(
         stream_chunk_id = _new_stream_chunk_id()
         stream_created = _now_ts()
         tool_index_by_block: dict[int, int] = {}
+        terminal_status = "ok"
+        terminal_error = ""
+        upstream_event_seen = False
         try:
             async for line in resp.aiter_lines():
                 line = line.strip()
@@ -209,6 +258,7 @@ async def stream_chat(
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                upstream_event_seen = True
                 if data.get("type") == "message_start":
                     usage = (data.get("message") or {}).get("usage")
                     if isinstance(usage, dict):
@@ -306,6 +356,17 @@ async def stream_chat(
                     created=stream_created,
                 )
             yield "data: [DONE]\n\n"
+            if not upstream_event_seen:
+                terminal_status = "error"
+                terminal_error = "Upstream Anthropic stream ended without a valid data event."
+        except asyncio.CancelledError:
+            terminal_status = "client_disconnected"
+            terminal_error = "Client disconnected before the upstream stream completed."
+            raise
+        except Exception as exc:
+            terminal_status = "error"
+            terminal_error = f"Upstream stream interrupted: {exc}"
+            raise
         finally:
             await resp.aclose()
             if on_complete:
@@ -325,6 +386,8 @@ async def stream_chat(
                         fallback_applied,
                         _anthropic_usage_to_openai(anthropic_usage) or None,
                         _anthropic_stop_reason_to_openai(anthropic_stop_reason),
+                        terminal_status,
+                        terminal_error or None,
                     )
                 except Exception:
                     logger.exception("流式回调执行失败")
