@@ -15,6 +15,8 @@ from starlette.types import Scope
 
 from shenyu_gateway.chat_pipeline import ChatPipeline
 from shenyu_gateway.config import RuntimeConfig
+from shenyu_gateway.context_window import select_chunked_window
+from shenyu_gateway.prepare_messages import inject_pending_gateway_tool_turns
 from shenyu_gateway.request_logs import (
     _active_http_requests,
     _finalize_stale_tool_stream_log,
@@ -2149,6 +2151,78 @@ def test_pending_gateway_tool_turn_rebuilds_mixed_transcript_before_upstream():
         assert store.find_pending_gateway_tool_turn(session["id"], ["call_client"]) is None
 
 
+def test_long_window_trim_then_pending_injection_keeps_complete_mixed_tool_turn():
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        store = GatewayStore(f"{tmp}/gateway.db")
+        session = store.get_or_create_session("test-session", "test-client")
+        original_assistant = {
+            "role": "assistant",
+            "content": "I will check both.",
+            "tool_calls": [
+                {
+                    "id": "call_gateway",
+                    "type": "function",
+                    "function": {"name": "shenyu_recall", "arguments": "{}"},
+                },
+                {
+                    "id": "call_client",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"},
+                },
+            ],
+        }
+        gateway_result = {
+            "role": "tool",
+            "tool_call_id": "call_gateway",
+            "name": "shenyu_recall",
+            "content": "{\"ok\":true}",
+        }
+        store.create_pending_gateway_tool_turn(
+            session_id=session["id"],
+            session_tag=session["session_tag"],
+            client_tool_call_ids=["call_client"],
+            original_assistant_message=original_assistant,
+            gateway_tool_messages=[gateway_result],
+        )
+        old_history = [
+            {"role": "user" if index % 2 == 0 else "assistant", "content": f"old {index}"}
+            for index in range(12)
+        ]
+        client_assistant = {
+            "role": "assistant",
+            "content": "I will check both.",
+            "tool_calls": [original_assistant["tool_calls"][1]],
+        }
+        client_result = {
+            "role": "tool",
+            "tool_call_id": "call_client",
+            "name": "read_file",
+            "content": "file body",
+        }
+        client_messages = [
+            *old_history,
+            {"role": "user", "content": "check"},
+            client_assistant,
+            client_result,
+        ]
+
+        trimmed, _state, _meta = select_chunked_window(
+            client_messages,
+            limit=4,
+            previous_state=None,
+            event_class="client_tool_continuation",
+        )
+        rebuilt, pending_meta = inject_pending_gateway_tool_turns(
+            trimmed,
+            store,
+            session_id=session["id"],
+        )
+
+        assert trimmed[-2:] == [client_assistant, client_result]
+        assert rebuilt[-3:] == [original_assistant, gateway_result, client_result]
+        assert pending_meta["pending_gateway_tool_turns_injected"] == 1
+
+
 def test_pending_gateway_tool_turn_is_not_injected_without_complete_client_result():
     with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
         store = GatewayStore(f"{tmp}/gateway.db")
@@ -2346,6 +2420,74 @@ def test_execute_mixed_gateway_tool_calls_stores_hidden_result_and_returns_only_
             assert "hidden gateway result" in pending["gateway_tool_messages"][0]["content"]
             assert "hidden gateway result" not in response_text
             assert "<gateway_tool_results>" not in response_text
+
+    asyncio.run(run_case())
+
+
+def test_execute_mixed_gateway_tool_calls_keeps_client_call_when_gateway_call_fails():
+    async def run_case():
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            store = GatewayStore(f"{tmp}/gateway.db")
+            session = store.get_or_create_session("test-session", "test-client")
+            sessions = SessionManager(store, gateway.cfg)
+            old_store = gateway.session_store
+            old_execute = gateway.execute_gateway_tool
+
+            async def fake_execute(name, args, session_tag=None, cfg=None):
+                return {"ok": False, "error": "recall unavailable", "error_kind": "upstream"}
+
+            gateway.session_store = store
+            gateway.execute_gateway_tool = fake_execute
+            try:
+                completion = {
+                    "choices": [
+                        {
+                            "finish_reason": "tool_calls",
+                            "message": {
+                                "role": "assistant",
+                                "content": "I will still check the file.",
+                                "tool_calls": [
+                                    {
+                                        "id": "call_gateway",
+                                        "type": "function",
+                                        "function": {"name": "shenyu_recall", "arguments": "{}"},
+                                    },
+                                    {
+                                        "id": "call_client",
+                                        "type": "function",
+                                        "function": {"name": "read_file", "arguments": "{}"},
+                                    },
+                                ],
+                            },
+                        }
+                    ]
+                }
+                ctx = gateway._make_internal_tool_loop_context(
+                    request=None,
+                    body=None,
+                    prepared_messages=[],
+                    meta={"session": {"id": session["id"], "session_tag": session["session_tag"]}},
+                    sessions=sessions,
+                )
+
+                result, gateway_calls, client_calls = await _execute_mixed_gateway_tool_calls(
+                    ctx,
+                    completion,
+                    completion["choices"][0]["message"]["tool_calls"],
+                )
+            finally:
+                gateway.session_store = old_store
+                gateway.execute_gateway_tool = old_execute
+
+            message = result["choices"][0]["message"]
+            pending = store.find_pending_gateway_tool_turn(session["id"], ["call_client"])
+            assert result["choices"][0]["finish_reason"] == "tool_calls"
+            assert message["content"] == "I will still check the file."
+            assert [_tool_call_name(call) for call in gateway_calls] == ["shenyu_recall"]
+            assert [_tool_call_name(call) for call in client_calls] == ["read_file"]
+            assert [_tool_call_name(call) for call in message["tool_calls"]] == ["read_file"]
+            assert pending is not None
+            assert json.loads(pending["gateway_tool_messages"][0]["content"])["ok"] is False
 
     asyncio.run(run_case())
 

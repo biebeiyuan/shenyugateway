@@ -716,3 +716,43 @@ def test_context_window_state_round_trip(tmp_path):
     assert len(events) == 1
     assert events[0]["event_class"] == "new_user"
     assert events[0]["detail"]["client_non_system_retained"] == 170
+
+
+def test_runtime_prune_keeps_active_pending_tool_turns_and_removes_terminal_ones(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("pending-prune", "operit")
+
+    active = store.create_pending_gateway_tool_turn(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        client_tool_call_ids=["call_active"],
+        original_assistant_message={"role": "assistant", "tool_calls": []},
+        gateway_tool_messages=[],
+    )
+    consumed = store.create_pending_gateway_tool_turn(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        client_tool_call_ids=["call_consumed"],
+        original_assistant_message={"role": "assistant", "tool_calls": []},
+        gateway_tool_messages=[],
+    )
+    expired = store.create_pending_gateway_tool_turn(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        client_tool_call_ids=["call_expired"],
+        original_assistant_message={"role": "assistant", "tool_calls": []},
+        gateway_tool_messages=[],
+        ttl_minutes=-1,
+    )
+    store.mark_pending_gateway_tool_turns_consumed([consumed["id"]])
+
+    deleted = store.prune_runtime_state(session_id=session["id"], message_retention=1)
+
+    remaining_ids = {
+        item["id"]
+        for item in store.get_pending_gateway_tool_turns(session["id"])
+    }
+    assert deleted["pending_gateway_tool_turns"] == 2
+    assert remaining_ids == {active["id"]}
+    assert consumed["id"] not in remaining_ids
+    assert expired["id"] not in remaining_ids
