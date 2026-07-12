@@ -11,6 +11,7 @@ import time
 import urllib.error
 import urllib.parse
 import urllib.request
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -152,7 +153,10 @@ def _redact_url(url: str) -> str:
 
 def _http_json(base_url: str, path: str, token: str = "", timeout: float = 30.0) -> Any:
     target = _with_token(_normalize_base_url(base_url) + path, token)
-    headers = {"Accept": "application/json"}
+    headers = {
+        "Accept": "application/json",
+        "User-Agent": "shenyu-gateway-debug/1.0",
+    }
     if token:
         headers["Authorization"] = "Bearer " + token
     request = urllib.request.Request(target, headers=headers)
@@ -183,8 +187,19 @@ def _ssh_args(args: argparse.Namespace, config: dict[str, Any], remote: str) -> 
         or _config_first(config, "ssh_alias", "vps_ssh_alias")
         or ("vps" if os.name == "nt" and not explicit_connection else "")
     )
+    ssh_args = [
+        "ssh",
+        "-o",
+        "BatchMode=yes",
+        "-o",
+        "ConnectTimeout=10",
+        "-o",
+        "ServerAliveInterval=5",
+        "-o",
+        "ServerAliveCountMax=2",
+    ]
     if alias and not explicit_connection:
-        return ["ssh", str(alias), remote]
+        return [*ssh_args, str(alias), remote]
 
     target = _ssh_target(args, config)
     port = args.port or _config_int(config, "vps_port", "ssh_port", "port")
@@ -193,7 +208,6 @@ def _ssh_args(args: argparse.Namespace, config: dict[str, Any], remote: str) -> 
         or _env_first("SHENYU_VPS_IDENTITY", "VPS_IDENTITY")
         or _config_first(config, "vps_identity", "ssh_identity", "identity", "key_path")
     )
-    ssh_args = ["ssh"]
     if port:
         ssh_args.extend(["-p", str(port)])
     if identity:
@@ -216,6 +230,13 @@ def _configured_container(config: dict[str, Any]) -> str:
         "container_id",
         "docker_container_id",
     )
+
+
+def _container_family_prefix(target: str) -> str:
+    if _looks_like_container_id(target):
+        return ""
+    match = re.fullmatch(r"(.+)-\d{6,}", target.strip())
+    return match.group(1) if match else ""
 
 
 def _container_match(args: argparse.Namespace, config: dict[str, Any]) -> str:
@@ -261,6 +282,15 @@ def _remote_container_resolver(args: argparse.Namespace, config: dict[str, Any],
             + " is not running; falling back to label/service/match resolution' >&2; "
             + "fi"
         )
+        family = _container_family_prefix(target)
+        if family:
+            steps.append(
+                "if [ -z \"$name\" ]; then "
+                + "name=$(docker ps --format '{{.Names}}' | awk -v prefix="
+                + sh_quote(family + "-")
+                + " 'index($1, prefix) == 1 {print $1; exit}'); "
+                + "fi"
+            )
     if label:
         steps.append(
             "if [ -z \"$name\" ]; then "
@@ -277,6 +307,14 @@ def _remote_container_resolver(args: argparse.Namespace, config: dict[str, Any],
             + " --format '{{.Names}}' | head -n 1); "
             + "fi"
         )
+    if pattern:
+        steps.append(
+            "if [ -z \"$name\" ]; then "
+            + "name=$(docker ps --format '{{.Names}} {{.Image}} {{.Labels}}' | grep -Ei "
+            + sh_quote(pattern)
+            + " | awk '{print $1; exit}'); "
+            + "fi"
+        )
     steps.append(
         "if [ -z \"$name\" ]; then "
         + "for candidate in $(docker ps --format '{{.Names}}'); do "
@@ -286,14 +324,6 @@ def _remote_container_resolver(args: argparse.Namespace, config: dict[str, Any],
         + "done; "
         + "fi"
     )
-    if pattern:
-        steps.append(
-            "if [ -z \"$name\" ]; then "
-            + "name=$(docker ps --format '{{.Names}} {{.Image}} {{.Labels}}' | grep -Ei "
-            + sh_quote(pattern)
-            + " | awk '{print $1; exit}'); "
-            + "fi"
-        )
 
     steps.append(
         "if [ -z \"$name\" ]; then "
@@ -317,7 +347,7 @@ def _remote_gateway_api_command(args: argparse.Namespace, config: dict[str, Any]
         "if token:\n"
         "    sep = '&' if '?' in url else '?'\n"
         "    url += sep + urllib.parse.urlencode({'token': token})\n"
-        "request = urllib.request.Request(url, headers={'Accept': 'application/json'})\n"
+        "request = urllib.request.Request(url, headers={'Accept': 'application/json', 'User-Agent': 'shenyu-gateway-debug/1.0'})\n"
         "with urllib.request.urlopen(request, timeout=timeout) as response:\n"
         "    sys.stdout.write(response.read().decode('utf-8'))\n"
     )
@@ -368,6 +398,215 @@ def _find_log(data: Any, log_id: str) -> dict[str, Any] | None:
         if str(item.get("id") or "") == log_id or str(item.get("request_id") or "") == log_id:
             return item
     return None
+
+
+def _parse_timestamp(value: Any) -> datetime | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        return datetime.fromisoformat(text)
+    except ValueError:
+        return None
+
+
+def _timestamp_sort_key(item: dict[str, Any]) -> float:
+    parsed = _parse_timestamp(item.get("timestamp"))
+    return parsed.timestamp() if parsed is not None else float("-inf")
+
+
+def _format_gap(seconds: int | None) -> str:
+    if seconds is None:
+        return "-"
+    minutes, remainder = divmod(max(0, seconds), 60)
+    hours, minutes = divmod(minutes, 60)
+    if hours:
+        return f"{hours}h{minutes:02d}m"
+    return f"{minutes}m{remainder:02d}s"
+
+
+def _cache_ttl_seconds(value: Any) -> int | None:
+    ttl = str(value or "").strip().lower()
+    if ttl in {"", "default", "5m"}:
+        return 5 * 60
+    if ttl == "1h":
+        return 60 * 60
+    return None
+
+
+def _build_cache_report(logs: list[dict[str, Any]], session_tag: str = "") -> dict[str, Any]:
+    selected = [
+        item
+        for item in logs
+        if isinstance(item, dict) and (not session_tag or str(item.get("session_tag") or "") == session_tag)
+    ]
+    selected.sort(key=_timestamp_sort_key)
+
+    rows: list[dict[str, Any]] = []
+    previous_at: datetime | None = None
+    for item in selected:
+        at = _parse_timestamp(item.get("timestamp"))
+        gap_seconds = None
+        if at is not None and previous_at is not None:
+            try:
+                gap_seconds = max(0, int((at - previous_at).total_seconds()))
+            except TypeError:
+                gap_seconds = None
+        if at is not None:
+            previous_at = at
+
+        prompt_cache = item.get("prompt_cache") if isinstance(item.get("prompt_cache"), dict) else {}
+        cache_usage = item.get("cache_usage") if isinstance(item.get("cache_usage"), dict) else {}
+        window = (
+            item.get("client_message_window")
+            if isinstance(item.get("client_message_window"), dict)
+            else {}
+        )
+        island = item.get("memory_island") if isinstance(item.get("memory_island"), dict) else {}
+        star = island.get("star") if isinstance(island.get("star"), dict) else {}
+        mem = island.get("mem") if isinstance(island.get("mem"), dict) else {}
+        read_tokens = int(cache_usage.get("cache_read_input_tokens") or 0)
+        write_tokens = int(cache_usage.get("cache_creation_input_tokens") or 0)
+        breakpoints = prompt_cache.get("breakpoints") if isinstance(prompt_cache.get("breakpoints"), list) else []
+        attempted = bool(prompt_cache.get("enabled") and breakpoints)
+        ttl = str(prompt_cache.get("ttl") or "default")
+        ttl_seconds = _cache_ttl_seconds(ttl)
+        hit = read_tokens > 0
+        miss = attempted and not hit and str(item.get("status") or "").lower() == "ok"
+        rows.append(
+            {
+                "timestamp": item.get("timestamp"),
+                "local_time": at.astimezone().strftime("%m-%d %H:%M:%S") if at else "?",
+                "gap_seconds": gap_seconds,
+                "gap": _format_gap(gap_seconds),
+                "id": item.get("id"),
+                "status": item.get("status"),
+                "session_tag": item.get("session_tag"),
+                "protocol": prompt_cache.get("protocol"),
+                "ttl": ttl,
+                "ttl_seconds": ttl_seconds,
+                "breakpoints": breakpoints,
+                "cache_attempted": attempted,
+                "cache_hit": hit,
+                "cache_miss": miss,
+                "cache_read_input_tokens": read_tokens,
+                "cache_creation_input_tokens": write_tokens,
+                "gap_exceeds_ttl": bool(
+                    gap_seconds is not None and ttl_seconds is not None and gap_seconds > ttl_seconds
+                ),
+                "event_class": window.get("event_class"),
+                "epoch_id": window.get("context_epoch_id"),
+                "epoch_reset": bool(window.get("context_epoch_reset")),
+                "epoch_reset_reason": window.get("context_epoch_reset_reason"),
+                "common_prefix_messages": window.get("common_prefix_messages"),
+                "strict_common_prefix_messages": window.get("strict_common_prefix_messages"),
+                "transient_history_changes_ignored": bool(
+                    window.get("transient_history_changes_ignored")
+                ),
+                "images_seen": int(window.get("client_image_messages_seen") or 0),
+                "images_trimmed": int(window.get("client_image_messages_trimmed") or 0),
+                "island_decision": island.get("decision"),
+                "island_changed": bool(island.get("changed")),
+                "island_version": item.get("memory_island_version"),
+                "star_overlap": star.get("overlap"),
+                "mem_overlap": mem.get("overlap"),
+            }
+        )
+
+    misses = [row for row in rows if row["cache_miss"]]
+    hits = [row for row in rows if row["cache_hit"]]
+    attempts = len(hits) + len(misses)
+    summary = {
+        "logs": len(rows),
+        "hits": len(hits),
+        "misses": len(misses),
+        "hit_rate": round(len(hits) / attempts, 4) if attempts else 0.0,
+        "read_tokens": sum(int(row["cache_read_input_tokens"]) for row in rows),
+        "write_tokens": sum(int(row["cache_creation_input_tokens"]) for row in rows),
+        "misses_after_ttl": sum(1 for row in misses if row["gap_exceeds_ttl"]),
+        "hits_after_ttl": sum(1 for row in hits if row["gap_exceeds_ttl"]),
+        "misses_without_reported_write": sum(
+            1 for row in misses if int(row["cache_creation_input_tokens"]) == 0
+        ),
+        "island_rewrites": sum(1 for row in rows if row["island_changed"]),
+        "epoch_resets": sum(1 for row in rows if row["epoch_reset"]),
+        "branch_resets": sum(
+            1 for row in rows if row["epoch_reset_reason"] == "history_branch"
+        ),
+        "image_requests": sum(1 for row in rows if row["images_seen"] > 0),
+    }
+    return {"session_tag": session_tag or None, "rows": rows, "summary": summary}
+
+
+def _print_cache_report(report: dict[str, Any]) -> None:
+    rows = report.get("rows") if isinstance(report.get("rows"), list) else []
+    summary = report.get("summary") if isinstance(report.get("summary"), dict) else {}
+    print("# gateway cache report")
+    print(f"logs={summary.get('logs', 0)} session={report.get('session_tag') or 'all'}")
+    if not rows:
+        print("(no request logs in the current gateway process; a recent deploy may have cleared the in-memory log ring)")
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        cache_status = "HIT" if row.get("cache_hit") else ("MISS" if row.get("cache_miss") else "OFF")
+        print(
+            f"{row.get('local_time')} gap={row.get('gap')} id={row.get('id')} "
+            f"cache={cache_status} read={row.get('cache_read_input_tokens')} "
+            f"write={row.get('cache_creation_input_tokens')} ttl={row.get('ttl')}"
+        )
+        print(
+            "  "
+            + " ".join(
+                [
+                    f"event={row.get('event_class')}",
+                    f"reset={row.get('epoch_reset_reason') or '-'}",
+                    f"island={row.get('island_decision') or '?'}",
+                    f"star_overlap={row.get('star_overlap')}",
+                    f"images={row.get('images_seen')}/{row.get('images_trimmed')}",
+                    f"prefix={row.get('common_prefix_messages')}/{row.get('strict_common_prefix_messages')}",
+                    f"breakpoints={len(row.get('breakpoints') or [])}",
+                ]
+            )
+        )
+
+    print(
+        "summary: "
+        + " | ".join(
+            [
+                f"hits={summary.get('hits', 0)}",
+                f"misses={summary.get('misses', 0)}",
+                f"read_tokens={summary.get('read_tokens', 0)}",
+                f"write_tokens={summary.get('write_tokens', 0)}",
+                f"island_rewrites={summary.get('island_rewrites', 0)}",
+                f"epoch_resets={summary.get('epoch_resets', 0)}",
+            ]
+        )
+    )
+    findings = []
+    if summary.get("misses_after_ttl"):
+        findings.append(
+            f"{summary['misses_after_ttl']} miss(es) followed gaps longer than the declared TTL."
+        )
+    if summary.get("hits_after_ttl"):
+        findings.append(
+            f"{summary['hits_after_ttl']} hit(s) followed gaps longer than the declared TTL; relay/automatic caching is likely involved."
+        )
+    if summary.get("island_rewrites"):
+        findings.append(
+            f"Memory island changed on {summary['island_rewrites']} request(s), invalidating island-end prefixes."
+        )
+    if summary.get("branch_resets"):
+        findings.append(f"History branch reset occurred on {summary['branch_resets']} request(s).")
+    if summary.get("misses_without_reported_write"):
+        findings.append(
+            f"{summary['misses_without_reported_write']} miss(es) reported no cache creation tokens; the relay may hide write metadata."
+        )
+    if findings:
+        print("analysis:")
+        for finding in findings:
+            print("  - " + finding)
 
 
 def _tool_execution_count(log: dict[str, Any]) -> int:
@@ -793,6 +1032,31 @@ def command_api(args: argparse.Namespace) -> int:
     return 0
 
 
+def command_cache(args: argparse.Namespace) -> int:
+    config = _load_local_config(args.config)
+    base_url = (
+        args.url
+        or _env_first("SHENYU_GATEWAY_URL", "GATEWAY_BASE_URL", "GATEWAY_URL")
+        or _config_first(config, "gateway_url", "base_url", "url")
+    )
+    token = (
+        args.token
+        or _env_first("SHENYU_GATEWAY_TOKEN", "GATEWAY_API_KEY", "GATEWAY_TOKEN")
+        or _config_first(config, "gateway_token", "token", "gateway_api_key")
+    )
+    path = f"/api/gateway/logs?limit={max(1, min(int(args.limit or 12), 30))}"
+    if args.via_ssh:
+        data = _http_json_via_ssh(args, config, path, timeout=args.timeout)
+    else:
+        data = _http_json(base_url, path, token=token, timeout=args.timeout)
+    report = _build_cache_report(_iter_log_objects(data), session_tag=args.session or "")
+    if args.json_output:
+        print(_json_dumps(report))
+    else:
+        _print_cache_report(report)
+    return 0
+
+
 def _save_log(data: dict[str, Any], directory: str) -> None:
     target_dir = Path(directory)
     target_dir.mkdir(parents=True, exist_ok=True)
@@ -916,6 +1180,37 @@ def build_parser() -> argparse.ArgumentParser:
     api.add_argument("--identity", help="SSH identity file for --via-ssh. Defaults to local config.")
     api.add_argument("--ssh-alias", help="SSH config alias; on Windows this project defaults to 'vps'.")
     api.set_defaults(func=command_api)
+
+    cache = subparsers.add_parser("cache", help="Pull recent logs and print a cache/epoch/image timeline.")
+    cache.add_argument("--config", help=f"Local JSON config. Env: {LOCAL_CONFIG_ENV}.")
+    cache.add_argument("--url", help="Gateway base URL for --direct mode.")
+    cache.add_argument("--token", help="Gateway token for --direct mode.")
+    cache.add_argument("--limit", type=int, default=12)
+    cache.add_argument("--session", help="Only analyze one session_tag.")
+    cache.add_argument("--timeout", type=float, default=20.0)
+    cache.add_argument(
+        "--direct",
+        dest="via_ssh",
+        action="store_false",
+        help="Use the public gateway API instead of SSH.",
+    )
+    cache.add_argument(
+        "--container",
+        help="Container name/id candidate. Stale Coolify names fall back by app prefix.",
+    )
+    cache.add_argument("--match", help="Regex used to auto-pick a running container.")
+    cache.add_argument("--label", help="Docker label used to auto-pick a running container.")
+    cache.add_argument("--service", help="Docker compose service used to auto-pick a running container.")
+    cache.add_argument("--host", help="SSH host. Defaults to local config.")
+    cache.add_argument("--user", help="SSH user. Defaults to local config.")
+    cache.add_argument("--port", type=int, help="SSH port. Defaults to local config.")
+    cache.add_argument("--identity", help="SSH identity file. Defaults to local config.")
+    cache.add_argument(
+        "--ssh-alias",
+        help="SSH config alias; on Windows this project defaults to 'vps'.",
+    )
+    cache.add_argument("--json", dest="json_output", action="store_true", help="Print structured JSON.")
+    cache.set_defaults(func=command_cache, via_ssh=True)
 
     local = subparsers.add_parser("local", help="Read retained gateway log JSON files.")
     local.add_argument("paths", nargs="+", help="JSON files, for example tmp_gateway_log_84f8b85a.json.")

@@ -46,6 +46,20 @@ def test_gateway_api_via_ssh_resolves_container_name_each_time():
     assert "docker exec 'shenyu-gateway-1'" not in remote
 
 
+def test_stale_coolify_container_uses_app_prefix_before_slow_inspection():
+    remote = logs._remote_gateway_api_command(
+        _args(),
+        {"container_name": "gyed0diy0bxr2w4lts73f1tb-165346192694"},
+        "/api/gateway/logs?limit=1",
+        20.0,
+    )
+
+    family_lookup = "awk -v prefix='gyed0diy0bxr2w4lts73f1tb-'"
+    env_inspection = "for candidate in $(docker ps --format '{{.Names}}')"
+    assert family_lookup in remote
+    assert remote.index(family_lookup) < remote.index(env_inspection)
+
+
 def test_container_label_takes_priority_before_regex_match():
     remote = logs._remote_command(
         _args(label="com.docker.compose.project=shenyu"),
@@ -84,6 +98,92 @@ def test_log_summary_prints_stage_and_last_activity(capsys):
     assert "last_activity_at=2026-06-17T00:00:01+00:00" in output
     assert "slow_phases:" in output
     assert "prepare.client_messages_trimmed" in output
+
+
+def test_cache_report_identifies_ttl_and_relay_anomalies(capsys):
+    report = logs._build_cache_report(
+        [
+            {
+                "id": "one",
+                "timestamp": "2026-07-10T16:00:00+00:00",
+                "status": "ok",
+                "session_tag": "6.20",
+                "prompt_cache": {
+                    "enabled": True,
+                    "protocol": "anthropic",
+                    "ttl": "5m",
+                    "breakpoints": ["system.end"],
+                },
+                "cache_usage": {
+                    "cache_read_input_tokens": 1000,
+                    "cache_creation_input_tokens": 0,
+                },
+                "client_message_window": {"event_class": "new_user"},
+                "memory_island": {"changed": False, "decision": "retained"},
+            },
+            {
+                "id": "two",
+                "timestamp": "2026-07-10T16:08:00+00:00",
+                "status": "ok",
+                "session_tag": "6.20",
+                "prompt_cache": {
+                    "enabled": True,
+                    "protocol": "anthropic",
+                    "ttl": "5m",
+                    "breakpoints": ["system.end"],
+                },
+                "cache_usage": {
+                    "cache_read_input_tokens": 0,
+                    "cache_creation_input_tokens": 0,
+                },
+                "client_message_window": {
+                    "event_class": "new_user",
+                    "client_image_messages_seen": 1,
+                },
+                "memory_island": {
+                    "changed": True,
+                    "decision": "rewritten",
+                    "star": {"overlap": 0.6667},
+                },
+            },
+            {
+                "id": "three",
+                "timestamp": "2026-07-10T17:18:00+00:00",
+                "status": "ok",
+                "session_tag": "6.20",
+                "prompt_cache": {
+                    "enabled": True,
+                    "protocol": "anthropic",
+                    "ttl": "5m",
+                    "breakpoints": ["system.end"],
+                },
+                "cache_usage": {
+                    "cache_read_input_tokens": 900,
+                    "cache_creation_input_tokens": 0,
+                },
+                "client_message_window": {"event_class": "new_user"},
+                "memory_island": {"changed": False, "decision": "retained"},
+            },
+        ],
+        session_tag="6.20",
+    )
+
+    assert report["summary"]["misses_after_ttl"] == 1
+    assert report["summary"]["hits_after_ttl"] == 1
+    assert report["summary"]["misses_without_reported_write"] == 1
+    assert report["summary"]["island_rewrites"] == 1
+
+    logs._print_cache_report(report)
+    output = capsys.readouterr().out
+    assert "cache=MISS" in output
+    assert "relay/automatic caching is likely involved" in output
+
+
+def test_cache_parser_defaults_to_ssh():
+    args = logs.build_parser().parse_args(["cache"])
+
+    assert args.via_ssh is True
+    assert args.limit == 12
 
 
 def test_debug_summary_prints_active_http_requests(capsys):
