@@ -81,17 +81,17 @@ def test_aggregate_cache_usage_preserves_multi_round_reported_state():
     }
 
 
-def test_full_config_does_not_return_secret_values(monkeypatch):
+def test_full_config_only_hides_supabase_key(monkeypatch):
     client, _persisted = _config_client(monkeypatch)
-    secrets = {
+    visible_secrets = {
         "gateway_key": "gateway-secret",
         "upstream_api_key": "upstream-secret",
         "hisense_api_key": "hisense-secret",
         "calendar_api_key": "calendar-secret",
-        "supabase_key": "supabase-secret",
     }
-    for field, value in secrets.items():
+    for field, value in visible_secrets.items():
         monkeypatch.setattr(gateway.cfg, field, value)
+    monkeypatch.setattr(gateway.cfg, "supabase_key", "supabase-secret")
     monkeypatch.setattr(gateway.cfg, "sqlite_override_keys", {"UPSTREAM_URL", "ANTHROPIC_API_KEY"})
 
     try:
@@ -104,15 +104,17 @@ def test_full_config_does_not_return_secret_values(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
-    for field in secrets:
-        assert payload[field] == ""
+    for field, value in visible_secrets.items():
+        assert payload[field] == value
         assert payload[f"{field}_configured"] is True
+    assert payload["supabase_key"] == ""
+    assert payload["supabase_key_configured"] is True
     assert payload["config_precedence"] == ["defaults", ".env", "sqlite_overrides", "runtime_updates"]
     assert payload["sqlite_override_keys"] == ["ANTHROPIC_API_KEY", "UPSTREAM_URL"]
-    assert not any(secret in response.text for secret in secrets.values())
+    assert "supabase-secret" not in response.text
 
 
-def test_config_update_response_does_not_echo_new_secret(monkeypatch):
+def test_config_update_response_returns_new_upstream_key(monkeypatch):
     client, persisted = _config_client(monkeypatch)
     monkeypatch.setattr(gateway.cfg, "upstream_api_key", "old-secret")
 
@@ -123,9 +125,8 @@ def test_config_update_response_does_not_echo_new_secret(monkeypatch):
 
     assert response.status_code == 200
     payload = response.json()
-    assert payload["config"]["upstream_api_key"] == ""
+    assert payload["config"]["upstream_api_key"] == "new-secret"
     assert payload["config"]["upstream_api_key_configured"] is True
-    assert "new-secret" not in response.text
     assert persisted[-1]["ANTHROPIC_API_KEY"] == "new-secret"
 
 

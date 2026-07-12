@@ -25,10 +25,10 @@ class ConfigRouteDeps:
 
 def _full_config(cfg: Any) -> dict[str, Any]:
     result = {
-        "gateway_key": "",
+        "gateway_key": cfg.gateway_key,
         "gateway_key_configured": bool(cfg.gateway_key),
         "upstream_url": cfg.upstream_url,
-        "upstream_api_key": "",
+        "upstream_api_key": cfg.upstream_api_key,
         "upstream_api_key_configured": bool(cfg.upstream_api_key),
         "upstream_protocol": cfg.upstream_protocol,
         "upstream_proxy": cfg.upstream_proxy,
@@ -42,11 +42,11 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "upstream_extra_body": cfg.upstream_extra_body,
         "upstream_passthrough_headers": cfg.upstream_passthrough_headers,
         "hisense_upstream_url": cfg.hisense_upstream_url,
-        "hisense_api_key": "",
+        "hisense_api_key": cfg.hisense_api_key,
         "hisense_api_key_configured": bool(cfg.hisense_api_key),
         "hisense_protocol": cfg.hisense_protocol,
         "calendar_upstream_url": cfg.calendar_upstream_url,
-        "calendar_api_key": "",
+        "calendar_api_key": cfg.calendar_api_key,
         "calendar_api_key_configured": bool(cfg.calendar_api_key),
         "calendar_protocol": cfg.calendar_protocol,
         "calendar_model": cfg.calendar_model,

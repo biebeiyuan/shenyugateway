@@ -32,6 +32,7 @@ import { fetchGatewaySessions, type GatewaySession } from '@/api/sessions'
 interface UpstreamPreset {
   name: string
   url: string
+  key: string
   protocol: string
   proto?: string
   extra_body?: string
@@ -143,6 +144,7 @@ const activePresetName = computed(() => {
   const match = presets.value.find(
     (preset) =>
       preset.url === config.value.upstream_url &&
+      preset.key === config.value.upstream_api_key &&
       preset.protocol === config.value.upstream_protocol,
   )
   return match?.name || null
@@ -171,12 +173,12 @@ function loadPresets() {
       return {
         name,
         url: preset.url || '',
+        key: preset.key || '',
         protocol: preset.protocol || preset.proto || 'auto',
         extra_body: preset.extra_body || '',
         passthrough_headers: preset.passthrough_headers || [],
       }
     })
-    persistPresets()
   } catch {
     presets.value = []
   }
@@ -188,6 +190,7 @@ function persistPresets() {
       preset.name,
       {
         url: preset.url,
+        key: preset.key,
         protocol: preset.protocol,
         extra_body: preset.extra_body || '',
         passthrough_headers: preset.passthrough_headers || [],
@@ -269,7 +272,9 @@ async function doSave() {
   try {
     const upstreamExtraBody = parseExtraBody()
     const body: Partial<GatewayConfig> = {
+      gateway_key: config.value.gateway_key,
       upstream_url: config.value.upstream_url,
+      upstream_api_key: config.value.upstream_api_key,
       upstream_protocol: config.value.upstream_protocol,
       enable_openai_cache_control: config.value.enable_openai_cache_control,
       enable_anthropic_cache_control: config.value.enable_anthropic_cache_control,
@@ -279,7 +284,9 @@ async function doSave() {
       upstream_extra_body: upstreamExtraBody,
       upstream_passthrough_headers: config.value.upstream_passthrough_headers || [],
       hisense_upstream_url: config.value.hisense_upstream_url,
+      hisense_api_key: config.value.hisense_api_key,
       hisense_protocol: config.value.hisense_protocol,
+      calendar_api_key: config.value.calendar_api_key,
       supabase_url: config.value.supabase_url,
       max_client_messages: config.value.max_client_messages || null,
       enable_cold_start: config.value.enable_cold_start,
@@ -292,11 +299,7 @@ async function doSave() {
       client_tool_surface: config.value.client_tool_surface,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
     }
-    if (config.value.gateway_key?.trim()) body.gateway_key = config.value.gateway_key.trim()
-    if (config.value.upstream_api_key?.trim()) body.upstream_api_key = config.value.upstream_api_key.trim()
-    if (config.value.hisense_api_key?.trim()) body.hisense_api_key = config.value.hisense_api_key.trim()
     if (config.value.supabase_key?.trim()) body.supabase_key = config.value.supabase_key.trim()
-    if (config.value.calendar_api_key?.trim()) body.calendar_api_key = config.value.calendar_api_key.trim()
     const wakeWelcomeMessage = config.value.wake_welcome_message?.trim()
     if (wakeWelcomeMessage) {
       body.wake_welcome_message = wakeWelcomeMessage
@@ -337,6 +340,7 @@ function saveCurrentPreset() {
   const nextPreset: UpstreamPreset = {
     name,
     url: config.value.upstream_url,
+    key: config.value.upstream_api_key,
     protocol: config.value.upstream_protocol || 'auto',
     extra_body: upstreamExtraBodyText.value,
     passthrough_headers: [...(config.value.upstream_passthrough_headers || [])],
@@ -356,8 +360,10 @@ async function applyPreset(name: string | null) {
   if (!name) return
   const preset = presets.value.find((item) => item.name === name)
   if (!preset) return
+  const upstreamApiKey = preset.key || config.value.upstream_api_key
 
   config.value.upstream_url = preset.url
+  config.value.upstream_api_key = upstreamApiKey
   config.value.upstream_protocol = preset.protocol
   const presetHeaders = [...(preset.passthrough_headers || [])]
   config.value.upstream_passthrough_headers = presetHeaders
@@ -378,6 +384,7 @@ async function applyPreset(name: string | null) {
   try {
     const result = await saveConfig({
       upstream_url: preset.url,
+      upstream_api_key: upstreamApiKey,
       upstream_protocol: preset.protocol,
       upstream_extra_body: presetExtraBody,
       upstream_passthrough_headers: presetHeaders,
@@ -385,6 +392,9 @@ async function applyPreset(name: string | null) {
     config.value = result.config
     upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
     showSaveWarnings(result.warnings)
+    if (!preset.key) {
+      message.warning(`预设 ${name} 的旧密钥已丢失，本次保留当前上游 Key；请重新输入正确 Key 后覆盖保存该预设`)
+    }
     message.success(`Switched to ${name}`)
     notification.success({
       title: 'Upstream preset switched',
@@ -538,7 +548,7 @@ async function copyColdHeader(sessionTag: string) {
               <NInput v-model:value="config.upstream_url" placeholder="https://api.anthropic.com" />
             </NFormItem>
             <NFormItem label="API Key">
-              <NInput v-model:value="config.upstream_api_key" type="password" show-password-on="click" :placeholder="config.upstream_api_key_configured ? '已配置；留空保持不变' : '输入 API Key'" />
+              <NInput v-model:value="config.upstream_api_key" type="password" show-password-on="click" />
             </NFormItem>
             <NFormItem label="协议">
               <NSelect v-model:value="config.upstream_protocol" :options="protocolOptions" />
@@ -633,7 +643,7 @@ async function copyColdHeader(sessionTag: string) {
               <NInput v-model:value="config.hisense_upstream_url" placeholder="留空继承全局上游" />
             </NFormItem>
             <NFormItem label="海信专用 API Key">
-              <NInput v-model:value="config.hisense_api_key" type="password" show-password-on="click" :placeholder="config.hisense_api_key_configured ? '已配置；留空保持不变' : '留空继承全局 Key'" />
+              <NInput v-model:value="config.hisense_api_key" type="password" show-password-on="click" placeholder="留空继承全局 Key" />
             </NFormItem>
             <NFormItem label="海信专用协议">
               <NSelect v-model:value="config.hisense_protocol" :options="inheritedProtocolOptions" />
@@ -648,7 +658,7 @@ async function copyColdHeader(sessionTag: string) {
             SQLite 正在覆盖 {{ config.sqlite_override_keys.length }} 个部署配置：{{ config.sqlite_override_keys.join(', ') }}。优先级为 defaults → .env → SQLite → 当前运行时更新。
           </div>
           <NFormItem label="网关 API Key（留空不校验）">
-            <NInput v-model:value="config.gateway_key" type="password" show-password-on="click" :placeholder="config.gateway_key_configured ? '已配置；留空保持不变' : '留空不校验'" />
+            <NInput v-model:value="config.gateway_key" type="password" show-password-on="click" placeholder="留空不校验" />
           </NFormItem>
           <NFormItem label="Supabase Project URL">
             <NInput v-model:value="config.supabase_url" placeholder="https://xxx.supabase.co" />
