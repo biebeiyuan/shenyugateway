@@ -493,11 +493,11 @@ def test_review_returns_remaining_unreviewed():
 def test_backfill_scenes_only_updates_unlabeled_stars():
     supabase = FakeSupabase()
     service = StarService(_cfg(), supabase)
-    classified_contents = []
+    classified_batches = []
 
-    async def classify(content, http_client):
-        classified_contents.append(content)
-        return {"ok": True, "scenes": ["warm", "rift"]}
+    async def classify(stars, http_client):
+        classified_batches.append(stars)
+        return {"ok": True, "labels": {stars[0]["star_id"]: ["warm", "rift"]}, "thinking": "认真看过了"}
 
     service._classify_star_scenes = classify
 
@@ -511,7 +511,9 @@ def test_backfill_scenes_only_updates_unlabeled_stars():
     rows = supabase.tables["shenyu_stars"]
 
     assert result["updated"] == 1
-    assert classified_contents == ["等待补标签"]
+    assert len(classified_batches) == 1
+    assert classified_batches[0][0]["content"] == "等待补标签"
+    assert result["thinking"] == "认真看过了"
     assert rows[0]["metadata"]["scenes"] == ["deep"]
     assert rows[1]["metadata"]["scene"] == "anchor"
     assert rows[2]["metadata"]["scenes"] == ["warm", "rift"]
@@ -522,10 +524,10 @@ def test_backfill_empty_scene_list_counts_as_processed():
     service = StarService(_cfg(), supabase)
     calls = 0
 
-    async def classify(content, http_client):
+    async def classify(stars, http_client):
         nonlocal calls
         calls += 1
-        return {"ok": True, "scenes": []}
+        return {"ok": True, "labels": {stars[0]["star_id"]: []}, "thinking": ""}
 
     service._classify_star_scenes = classify
 
@@ -547,7 +549,7 @@ def test_backfill_returns_classifier_error_detail():
     supabase = FakeSupabase()
     service = StarService(_cfg(), supabase)
 
-    async def classify(content, http_client):
+    async def classify(stars, http_client):
         return {
             "ok": False,
             "error_code": "invalid_output",

@@ -201,6 +201,7 @@ export interface StarSceneBackfillResult {
   failed: number
   remaining_unlabeled: number
   by_scene: Record<string, number>
+  thinking?: string
   items: Array<{
     star: StarItem
     ok: boolean

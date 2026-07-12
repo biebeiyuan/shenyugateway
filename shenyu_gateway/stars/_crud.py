@@ -21,8 +21,8 @@ from ._scene import (
     _classify_scene_by_embedding,
     _load_scene_config,
     _normalize_scenes,
-    _parse_scene_labels,
-    _scene_label_prompt,
+    _parse_scene_batch,
+    _scene_batch_prompt,
 )
 from ._weights import StarWeights
 
@@ -155,7 +155,7 @@ class CrudMixin:
             return str(value.get("text") or value.get("content") or "")
         return ""
 
-    async def _classify_star_scenes(self, content: str, http_client: Any) -> dict[str, Any]:
+    async def _classify_star_scenes(self, stars: list[dict[str, str]], http_client: Any) -> dict[str, Any]:
         from ..upstream_adapter import _openai_to_anthropic
         from ..upstream_client import chat_url_for, detect_protocol_for
 
@@ -174,14 +174,14 @@ class CrudMixin:
         if missing:
             return {"ok": False, "error_code": "config_missing", "error": f"场景模型配置缺少：{'、'.join(missing)}"}
         _, descriptions, _ = self._scene_config()
-        messages = [{"role": "user", "content": _scene_label_prompt(content, descriptions)}]
+        messages = [{"role": "user", "content": _scene_batch_prompt(stars, descriptions)}]
         headers = {"content-type": "application/json"}
         if protocol == "anthropic":
             system, anthropic_messages = _openai_to_anthropic(messages)
             payload: dict[str, Any] = {
                 "model": model,
                 "messages": anthropic_messages,
-                "max_tokens": 256,
+                "max_tokens": 8192,
                 "temperature": 0,
             }
             if system:
@@ -194,7 +194,7 @@ class CrudMixin:
                 "messages": messages,
                 "stream": False,
                 "temperature": 0,
-                "max_tokens": 256,
+                "max_tokens": 8192,
             }
             headers["authorization"] = f"Bearer {api_key}"
         try:
@@ -207,26 +207,36 @@ class CrudMixin:
                     for block in data.get("content") or []
                     if isinstance(block, dict) and block.get("type") == "text"
                 )
+                thinking = "\n".join(
+                    str(block.get("thinking") or block.get("text") or "")
+                    for block in data.get("content") or []
+                    if isinstance(block, dict) and block.get("type") == "thinking"
+                )
             else:
                 choices = data.get("choices") or []
                 message = choices[0].get("message") if choices and isinstance(choices[0], dict) else {}
                 text = self._scene_response_text(message.get("content")) if isinstance(message, dict) else ""
-                if not text and isinstance(message, dict):
-                    text = self._scene_response_text(message.get("reasoning_content"))
                 if not text and choices and isinstance(choices[0], dict):
                     text = self._scene_response_text(choices[0].get("text"))
-            scenes = _parse_scene_labels(text)
-            if scenes is None:
+                thinking = self._scene_response_text(message.get("reasoning_content")) if isinstance(message, dict) else ""
+            labels = _parse_scene_batch(text, {star["star_id"] for star in stars})
+            if labels is None:
                 preview = " ".join(str(text or "").split())[:240]
                 if not preview:
-                    return {"ok": False, "error_code": "empty_response", "error": "上游返回 200，但没有可读取的模型文本"}
+                    return {
+                        "ok": False,
+                        "error_code": "empty_response",
+                        "error": "上游返回 200，但没有最终答案；可以展开 Thinking 查看是否仍在思考",
+                        "thinking": thinking[:24000],
+                    }
                 return {
                     "ok": False,
                     "error_code": "invalid_output",
                     "error": "模型已响应，但没有返回可识别的场景数组",
                     "response_preview": preview,
+                    "thinking": thinking[:24000],
                 }
-            return {"ok": True, "scenes": scenes}
+            return {"ok": True, "labels": labels, "thinking": thinking[:24000]}
         except httpx.HTTPStatusError as exc:
             detail = " ".join((exc.response.text or "").split())[:300]
             error = f"上游 HTTP {exc.response.status_code}"
@@ -258,13 +268,15 @@ class CrudMixin:
         updated = 0
         failed = 0
         by_scene = {scene: 0 for scene in sorted(SCENE_KEYS)}
-        for row in selected:
-            classification = await self._classify_star_scenes(str(row.get("content") or ""), http_client)
-            if not classification.get("ok"):
-                failed += 1
-                items.append({"star": self._public_star(row), **classification})
-                continue
-            scenes = classification.get("scenes") or []
+        classification = await self._classify_star_scenes([
+            {"star_id": _node_id(row.get("id")), "content": str(row.get("content") or "")}
+            for row in selected
+        ], http_client) if selected else {"ok": True, "labels": {}, "thinking": ""}
+        if not classification.get("ok"):
+            failed = len(selected)
+            items = [{"star": self._public_star(row), **classification} for row in selected]
+        for row in selected if classification.get("ok") else []:
+            scenes = (classification.get("labels") or {}).get(_node_id(row.get("id")), [])
             metadata = _json_dict(row.get("metadata"))
             if self._has_scene_labels(metadata):
                 items.append({"star": self._public_star(row), "ok": True, "skipped": True})
@@ -285,6 +297,7 @@ class CrudMixin:
             "failed": failed,
             "remaining_unlabeled": max(0, len(pending) - updated),
             "by_scene": by_scene,
+            "thinking": classification.get("thinking") or "",
             "items": items,
         }
 

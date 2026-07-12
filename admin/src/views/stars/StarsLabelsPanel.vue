@@ -102,7 +102,6 @@ async function toggleScene(star: StarItem, scene: string) {
       <div>
         <p class="eyebrow">Scene Labels</p>
         <h3>给屯下来的星星补一层光</h3>
-        <p class="hero-copy">只处理还没标过的星。模型只选场景，不碰正文；已有标签永远跳过。</p>
       </div>
       <div class="batch-box">
         <span>这次捞</span>
@@ -142,6 +141,10 @@ async function toggleScene(star: StarItem, scene: string) {
           <code v-if="item.response_preview">模型原文：{{ item.response_preview }}</code>
         </div>
       </div>
+      <details v-if="lastResult.thinking" class="thinking-box">
+        <summary>看看它怎么想的</summary>
+        <pre>{{ lastResult.thinking }}</pre>
+      </details>
     </div>
 
     <div v-if="loading" class="empty-state">正在数星星……</div>
@@ -190,6 +193,7 @@ h3 { margin: 0; color: #4a3535; font-family: 'Cormorant Garamond', 'Georgia', se
 .run-result.failed { border-color: #efcbc8; background: #fff5f4; color: #805b60; }
 .run-summary { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }.run-summary strong { font-size: 13px; }
 .failure-list { display: grid; gap: 8px; margin-top: 10px; }.failure-list div { padding-top: 8px; border-top: 1px solid rgba(155,100,105,.12); }.failure-list p { margin: 0; font-size: 12px; }.failure-list code { display: block; margin-top: 5px; color: #9a7076; white-space: normal; word-break: break-word; }
+.thinking-box { margin-top: 10px; padding-top: 9px; border-top: 1px solid rgba(121,91,105,.12); }.thinking-box summary { cursor: pointer; color: #876f79; font-size: 12px; }.thinking-box pre { max-height: 320px; overflow: auto; margin: 9px 0 0; padding: 12px; border-radius: 10px; background: rgba(255,255,255,.68); color: #705d65; font: 12px/1.65 ui-monospace, SFMono-Regular, Menlo, monospace; white-space: pre-wrap; word-break: break-word; }
 .star-label-list { display: grid; gap: 10px; }
 .star-label-card { display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 22px; align-items: center; padding: 17px 19px; border: 1px solid #f0dfdc; border-radius: 13px; background: rgba(255,255,255,.76); transition: .2s ease; }
 .star-label-card:hover { border-color: #ddbfc4; box-shadow: 0 8px 22px rgba(111,76,88,.06); transform: translateY(-1px); }

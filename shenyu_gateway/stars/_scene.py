@@ -83,22 +83,63 @@ def _parse_scene_labels(text: Any) -> Optional[list[str]]:
     return _normalize_scenes(parsed)
 
 
-def _scene_label_prompt(content: str, descriptions: dict[str, str]) -> str:
-    scene_lines = "\n".join(
-        f"- {scene}: {descriptions.get(scene, '')}"
-        for scene in SCENE_ORDER
+def _scene_batch_prompt(stars: list[dict[str, str]], descriptions: dict[str, str]) -> str:
+    scene_lines = "\n".join(f"- {scene}: {descriptions.get(scene, '')}" for scene in SCENE_ORDER)
+    star_lines = "\n\n".join(
+        f"star_id: {star['star_id']}\n正文：{star['content'][:4000]}"
+        for star in stars
     )
     return (
         "你是星星场景标签分类器。只负责选择场景标签，不得改写、总结或补充星星正文。\n\n"
-        "请根据下面六个场景的释义，判断这颗星属于哪些场景。\n"
+        "请分别判断下面每颗星属于哪些场景。\n"
         "规则：\n"
         "- 只能从 anchor、deep、warm、rift、create、daily 中选择。\n"
-        "- 可以多选，也可以一个都不选。\n"
-        "- 只返回 JSON 字符串数组，不要解释。\n"
-        "- 无法明确判断时返回 []。\n\n"
+        "- 每颗星可以多选，也可以一个都不选。\n"
+        "- 必须为每个输入 star_id 返回一项，不得遗漏或增加。\n"
+        "- 最终答案只返回 JSON 数组，不要在最终答案中解释。\n"
+        '- 格式：[{' + '"star_id":"原 id","scenes":["warm","rift"]' + '}]\n\n'
         f"场景释义：\n{scene_lines}\n\n"
-        f"星星正文：\n{content[:4000]}"
+        f"待分类星星：\n{star_lines}"
     )
+
+
+def _parse_scene_batch(text: Any, expected_ids: set[str]) -> Optional[dict[str, list[str]]]:
+    raw = str(text or "").strip()
+    if not raw:
+        return None
+    fenced = re.fullmatch(r"```(?:json)?\s*(.*?)\s*```", raw, flags=re.IGNORECASE | re.DOTALL)
+    if fenced:
+        raw = fenced.group(1).strip()
+    try:
+        parsed = json.loads(raw)
+    except json.JSONDecodeError:
+        start = raw.find("[")
+        end = raw.rfind("]")
+        if start < 0 or end <= start:
+            return None
+        try:
+            parsed = json.loads(raw[start:end + 1])
+        except json.JSONDecodeError:
+            return None
+    if isinstance(parsed, dict):
+        parsed = parsed.get("items") or parsed.get("stars") or parsed.get("results")
+    if not isinstance(parsed, list):
+        return None
+    result: dict[str, list[str]] = {}
+    for item in parsed:
+        if not isinstance(item, dict):
+            return None
+        star_id = str(item.get("star_id") or item.get("id") or "").strip()
+        scenes = item.get("scenes")
+        if star_id not in expected_ids or star_id in result or not isinstance(scenes, list):
+            return None
+        normalized = _normalize_scenes(scenes)
+        if len(normalized) != len({str(scene or "").strip().lower() for scene in scenes}):
+            aliases = {SCENE_ALIASES.get(str(scene or "").strip(), str(scene or "").strip().lower()) for scene in scenes}
+            if any(scene not in SCENE_KEYS for scene in aliases):
+                return None
+        result[star_id] = normalized
+    return result if set(result) == expected_ids else None
 
 
 def _load_scene_config(path: str) -> tuple[list[dict[str, Any]], dict[str, str], float]:
