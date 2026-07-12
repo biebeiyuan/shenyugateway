@@ -26,6 +26,7 @@ from shenyu_gateway.request_logs import (
     _mark_request_log_phase,
     _record_completion_finish_reason,
     _record_response_text,
+    _retain_request_log_payloads,
     _start_http_request_event,
     _upstream_payload_summary,
 )
@@ -70,6 +71,17 @@ class _FakeStore:
 
     def touch_session(self, *args, **kwargs):
         return None
+
+
+def test_full_request_log_payloads_are_opt_in(monkeypatch):
+    monkeypatch.delenv("GATEWAY_LOG_FULL_PAYLOADS", raising=False)
+    assert _retain_request_log_payloads() is False
+
+    monkeypatch.setenv("GATEWAY_LOG_FULL_PAYLOADS", "true")
+    assert _retain_request_log_payloads() is True
+
+    monkeypatch.setenv("GATEWAY_LOG_FULL_PAYLOADS", "false")
+    assert _retain_request_log_payloads() is False
 
 
 def _fake_request(headers: dict[str, str] | None = None) -> Request:

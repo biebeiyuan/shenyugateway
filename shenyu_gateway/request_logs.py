@@ -95,8 +95,8 @@ def _mark_request_log_phase(
 
 
 def _retain_request_log_payloads() -> bool:
-    raw = os.getenv("GATEWAY_LOG_FULL_PAYLOADS", "true").strip().lower()
-    return raw not in {"0", "false", "no", "off"}
+    raw = os.getenv("GATEWAY_LOG_FULL_PAYLOADS", "false").strip().lower()
+    return raw in {"1", "true", "yes", "on"}
 
 
 def _tool_stream_stale_seconds() -> float:
