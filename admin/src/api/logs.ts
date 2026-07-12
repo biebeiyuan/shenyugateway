@@ -5,6 +5,9 @@ export interface CacheUsage {
   cache_creation_input_tokens: number
   hit: boolean
   write: boolean
+  read_reported?: boolean
+  write_reported?: boolean
+  reported?: boolean
   rounds?: number
 }
 

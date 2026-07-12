@@ -296,18 +296,23 @@ def _cache_usage_summary(usage: Optional[dict]) -> dict:
     creation = usage.get("cache_creation") or {}
     prompt_details = usage.get("prompt_tokens_details") or {}
     input_details = usage.get("input_tokens_details") or {}
+    read_reported = (
+        "cache_read_input_tokens" in usage
+        or "cached_tokens" in prompt_details
+        or "cached_tokens" in input_details
+    )
+    write_reported = (
+        "cache_creation_input_tokens" in usage
+        or "cached_creation_tokens" in prompt_details
+        or "cached_creation_tokens" in input_details
+        or "cache_creation" in usage
+        or "claude_cache_creation_5_m_tokens" in usage
+        or "claude_cache_creation_1_h_tokens" in usage
+    )
     read_tokens = int(
         usage.get("cache_read_input_tokens")
         or prompt_details.get("cached_tokens")
         or input_details.get("cached_tokens")
-        or 0
-    )
-    write_tokens = int(
-        usage.get("cache_creation_input_tokens")
-        or prompt_details.get("cached_creation_tokens")
-        or input_details.get("cached_creation_tokens")
-        or usage.get("claude_cache_creation_5_m_tokens")
-        or usage.get("claude_cache_creation_1_h_tokens")
         or 0
     )
     if not creation:
@@ -319,12 +324,22 @@ def _cache_usage_summary(usage: Optional[dict]) -> dict:
             }.items()
             if v
         }
+    write_tokens = int(
+        usage.get("cache_creation_input_tokens")
+        or prompt_details.get("cached_creation_tokens")
+        or input_details.get("cached_creation_tokens")
+        or sum(int(value or 0) for value in creation.values())
+        or 0
+    )
     return {
         "cache_read_input_tokens": read_tokens,
         "cache_creation_input_tokens": write_tokens,
         "cache_creation": creation,
         "hit": read_tokens > 0,
         "write": write_tokens > 0,
+        "read_reported": read_reported,
+        "write_reported": write_reported,
+        "reported": read_reported or write_reported,
     }
 
 
@@ -364,6 +379,15 @@ def _anthropic_usage_to_openai(usage: Optional[dict]) -> dict:
     )
     if cached_tokens:
         result["prompt_tokens_details"] = {"cached_tokens": cached_tokens}
+    if "cache_read_input_tokens" in usage:
+        result["cache_read_input_tokens"] = _usage_int(usage.get("cache_read_input_tokens"))
+    if "cache_creation_input_tokens" in usage:
+        result["cache_creation_input_tokens"] = _usage_int(usage.get("cache_creation_input_tokens"))
+    if isinstance(usage.get("cache_creation"), dict):
+        result["cache_creation"] = {
+            str(key): _usage_int(value)
+            for key, value in usage["cache_creation"].items()
+        }
     return result
 
 

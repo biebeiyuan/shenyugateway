@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 
 from shenyu_gateway.upstream_adapter import (
+    _cache_usage_summary,
     _anthropic_tool_index_override,
     _anthropic_to_openai_chunk,
     _anthropic_to_openai_completion,
@@ -188,6 +189,77 @@ def test_anthropic_completion_maps_max_tokens_to_length():
         "completion_tokens": 2,
         "total_tokens": 3,
     }
+
+
+def test_anthropic_completion_preserves_reported_cache_usage():
+    completion = _anthropic_to_openai_completion(
+        "test-model",
+        {
+            "stop_reason": "end_turn",
+            "content": [{"type": "text", "text": "done"}],
+            "usage": {
+                "input_tokens": 10,
+                "output_tokens": 2,
+                "cache_read_input_tokens": 700,
+                "cache_creation_input_tokens": 300,
+                "cache_creation": {
+                    "ephemeral_5m_input_tokens": 100,
+                    "ephemeral_1h_input_tokens": 200,
+                },
+            },
+        },
+    )
+
+    assert completion["usage"] == {
+        "prompt_tokens": 10,
+        "completion_tokens": 2,
+        "total_tokens": 12,
+        "prompt_tokens_details": {"cached_tokens": 700},
+        "cache_read_input_tokens": 700,
+        "cache_creation_input_tokens": 300,
+        "cache_creation": {
+            "ephemeral_5m_input_tokens": 100,
+            "ephemeral_1h_input_tokens": 200,
+        },
+    }
+
+
+def test_cache_usage_summary_sums_split_creation_ttls_without_total():
+    summary = _cache_usage_summary(
+        {
+            "claude_cache_creation_5_m_tokens": 100,
+            "claude_cache_creation_1_h_tokens": 200,
+        }
+    )
+
+    assert summary["cache_creation_input_tokens"] == 300
+    assert summary["cache_creation"] == {
+        "ephemeral_5m_input_tokens": 100,
+        "ephemeral_1h_input_tokens": 200,
+    }
+    assert summary["write"] is True
+    assert summary["read_reported"] is False
+    assert summary["write_reported"] is True
+    assert summary["reported"] is True
+
+
+def test_cache_usage_summary_distinguishes_reported_zero_from_unknown():
+    reported_zero = _cache_usage_summary(
+        {
+            "cache_read_input_tokens": 0,
+            "cache_creation_input_tokens": 0,
+        }
+    )
+    unknown = _cache_usage_summary({"prompt_tokens": 12})
+
+    assert reported_zero["hit"] is False
+    assert reported_zero["write"] is False
+    assert reported_zero["read_reported"] is True
+    assert reported_zero["write_reported"] is True
+    assert reported_zero["reported"] is True
+    assert unknown["read_reported"] is False
+    assert unknown["write_reported"] is False
+    assert unknown["reported"] is False
 
 
 def test_openai_to_anthropic_unwraps_double_encoded_tool_arguments():

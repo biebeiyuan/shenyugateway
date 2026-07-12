@@ -305,11 +305,11 @@ function renderOverview(detail: LogDetail): string {
   html += '<div class="island-section"><div class="island-section-title">缓存留下的原始回声</div>'
   if (!detail.prompt_cache?.enabled) {
     html += '<div class="empty-soft">这次没有启用 prompt cache。</div>'
-  } else if (cache?.hit) {
+  } else if (cache?.reported) {
     html += `<div class="cache-raw"><span>读取 ${Number(cache.cache_read_input_tokens || 0).toLocaleString()}</span><span>写入 ${Number(cache.cache_creation_input_tokens || 0).toLocaleString()}</span><span>${cache.rounds || 1} 轮</span></div>`
     html += '<div class="soft-footnote">这些是供应商原样返回的 token 数。它们可以帮助对照，但这里不再猜测缓存比例或实际账单。</div>'
   } else {
-    html += '<div class="empty-soft">供应商没有报告缓存命中。这不一定等于没有任何内部缓存，只代表这次 API usage 没有给出 cached tokens。</div>'
+    html += '<div class="empty-soft">这次 API usage 没有提供可识别的缓存读写字段，因此缓存状态未知；不能据此判断供应商内部是否命中缓存。</div>'
   }
   html += '</div>'
   return html

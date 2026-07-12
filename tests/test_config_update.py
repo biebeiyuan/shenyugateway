@@ -56,6 +56,31 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.max_client_messages == 75
 
 
+def test_aggregate_cache_usage_preserves_multi_round_reported_state():
+    summary = gateway._aggregate_cache_usage(
+        [
+            {"prompt_tokens_details": {"cached_tokens": 120}},
+            {
+                "cache_creation_input_tokens": 80,
+                "cache_creation": {"ephemeral_1h_input_tokens": 80},
+            },
+            {"prompt_tokens": 10},
+        ]
+    )
+
+    assert summary == {
+        "cache_read_input_tokens": 120,
+        "cache_creation_input_tokens": 80,
+        "cache_creation": {"ephemeral_1h_input_tokens": 80},
+        "hit": True,
+        "write": True,
+        "read_reported": True,
+        "write_reported": True,
+        "reported": True,
+        "rounds": 3,
+    }
+
+
 def test_blank_max_client_messages_still_means_unlimited(monkeypatch):
     monkeypatch.setenv("MAX_CLIENT_MESSAGES", "")
 
