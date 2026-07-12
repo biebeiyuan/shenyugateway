@@ -22,6 +22,7 @@ from .context_layers import (
 from .context_window import (
     classify_history_event,
     compact_history_event_messages,
+    deduplicate_bridge_messages,
     insert_bridge_messages,
     normalize_history_event_messages,
     select_chunked_window,
@@ -336,6 +337,10 @@ async def prepare_messages(
     if not is_hisense:
         cold_start_snapshot = deps.maybe_prepare_cold_start_snapshot(session, is_first_turn, raw_message_count)
     bridge_messages = bridge_messages_from_snapshot(cold_start_snapshot)
+    deduplicated_bridge_messages, bridge_overlap_messages = deduplicate_bridge_messages(
+        raw_messages,
+        bridge_messages,
+    )
     window_input = insert_bridge_messages(raw_messages, bridge_messages)
     previous_window_state = store.get_context_window_state(session["id"])
     messages, window_state, trim_meta = select_chunked_window(
@@ -348,8 +353,9 @@ async def prepare_messages(
     trim_meta["assistant_lineage"] = lineage_meta
     trim_meta["cold_start_bridge_messages"] = max(
         0,
-        len(bridge_messages) - int(window_state.get("window_start_index") or 0),
+        len(deduplicated_bridge_messages) - int(window_state.get("window_start_index") or 0),
     )
+    trim_meta["cold_start_bridge_overlap_messages"] = bridge_overlap_messages
     if cold_start_snapshot and bridge_messages and trim_meta["cold_start_bridge_messages"] == 0:
         store.complete_cold_start_snapshot(cold_start_snapshot["id"])
         window_state["window_start_index"] = max(

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from shenyu_gateway.context_layers import (
     assemble_layered_messages,
     tool_safe_trim_start,
@@ -12,6 +14,7 @@ from shenyu_gateway.prepare_messages import _assistant_lineage
 from shenyu_gateway.context_window import (
     classify_history_event,
     compact_history_event_messages,
+    insert_bridge_messages,
     overflow_messages_for_limit,
     select_chunked_window,
 )
@@ -73,6 +76,147 @@ def test_history_event_classifies_retry_new_user_tool_continuation_and_branch():
     previous = base + [{"role": "assistant", "content": "a1"}, {"role": "user", "content": "u2"}]
     branch = [{"role": "user", "content": "changed u1"}, {"role": "assistant", "content": "a1"}]
     assert classify_history_event(previous, branch)["event_class"] == "branch"
+
+
+@pytest.mark.parametrize(
+    ("previous", "current", "expected_class", "new_human_turn"),
+    [
+        (
+            [{"role": "user", "content": "u1"}, {"role": "assistant", "content": "a1"}],
+            [{"role": "user", "content": "u1"}, {"role": "assistant", "content": "a1"}],
+            "retry",
+            False,
+        ),
+        (
+            [
+                {"role": "user", "content": "u1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "u2"},
+                {"role": "assistant", "content": "a2"},
+            ],
+            [{"role": "user", "content": "u1"}, {"role": "assistant", "content": "a1"}],
+            "roll",
+            False,
+        ),
+        (
+            [
+                {"role": "user", "content": "u1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "u2"},
+            ],
+            [
+                {"role": "user", "content": "u1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "u2 edited"},
+            ],
+            "edit_tail",
+            True,
+        ),
+        (
+            [
+                {"role": "user", "content": "u1"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "u2"},
+            ],
+            [
+                {"role": "user", "content": "u1 changed"},
+                {"role": "assistant", "content": "a1"},
+                {"role": "user", "content": "u2"},
+            ],
+            "branch",
+            True,
+        ),
+    ],
+)
+def test_history_event_table(previous, current, expected_class, new_human_turn):
+    event = classify_history_event(previous, current)
+
+    assert event["event_class"] == expected_class
+    assert event["new_human_turn"] is new_human_turn
+
+
+@pytest.mark.parametrize(
+    ("event_class", "keeps_epoch"),
+    [
+        ("retry", True),
+        ("roll", True),
+        ("edit_tail", True),
+        ("client_tool_continuation", True),
+        ("continuation", True),
+        ("branch", False),
+    ],
+)
+def test_history_event_epoch_contract(event_class, keeps_epoch):
+    messages = [{"role": "user", "content": f"m{index}"} for index in range(8)]
+    previous_state = {
+        "epoch_id": "epoch_existing",
+        "base_limit": 6,
+        "window_start_index": 2,
+        "island_anchor_offset": 2,
+        "island_state": {"rendered_text": "old island"},
+    }
+
+    _retained, state, meta = select_chunked_window(
+        messages,
+        limit=6,
+        previous_state=previous_state,
+        event_class=event_class,
+    )
+
+    assert (state["epoch_id"] == "epoch_existing") is keeps_epoch
+    assert meta["context_epoch_reset"] is (not keeps_epoch)
+    if event_class == "branch":
+        assert meta["context_epoch_reset_reason"] == "history_branch"
+
+
+def test_cold_start_bridge_deduplicates_exact_tail_against_client_history_prefix():
+    bridge = [
+        {"role": "user", "content": "older"},
+        {"role": "assistant", "content": "old answer"},
+        {"role": "user", "content": "shared question"},
+        {"role": "assistant", "content": "shared answer"},
+    ]
+    client = [
+        {"role": "system", "content": "client system"},
+        {"role": "user", "content": "shared question"},
+        {"role": "assistant", "content": "shared answer"},
+        {"role": "user", "content": "new question"},
+    ]
+
+    merged = insert_bridge_messages(client, bridge)
+
+    assert merged == [
+        client[0],
+        bridge[0],
+        bridge[1],
+        client[1],
+        client[2],
+        client[3],
+    ]
+
+
+def test_cold_start_bridge_does_not_deduplicate_noncontiguous_or_role_changed_text():
+    bridge = [
+        {"role": "user", "content": "same text"},
+        {"role": "assistant", "content": "bridge answer"},
+    ]
+    client = [
+        {"role": "assistant", "content": "same text"},
+        {"role": "user", "content": "new question"},
+    ]
+
+    assert insert_bridge_messages(client, bridge) == [*bridge, *client]
+
+
+def test_cold_start_bridge_removes_only_one_longest_exact_overlap():
+    repeated = [
+        {"role": "user", "content": "shared question"},
+        {"role": "assistant", "content": "shared answer"},
+    ]
+    bridge = [*repeated, *repeated]
+    client = [*repeated, {"role": "user", "content": "new question"}]
+
+    assert insert_bridge_messages(client, bridge) == [*repeated, *client]
 
 
 def test_history_event_ignores_expired_image_and_dynamic_bundle_changes():

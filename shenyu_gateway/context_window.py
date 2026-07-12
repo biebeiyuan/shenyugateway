@@ -339,16 +339,42 @@ def select_chunked_window(
     return system_prefix + retained, state, meta
 
 
+def deduplicate_bridge_messages(
+    client_messages: list[dict[str, Any]],
+    bridge_messages: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    if not bridge_messages:
+        return [], 0
+    insert_at = next(
+        (index for index, message in enumerate(client_messages) if message.get("role") != "system"),
+        len(client_messages),
+    )
+    client_history = client_messages[insert_at:]
+    overlap = 0
+    max_overlap = min(len(bridge_messages), len(client_history))
+    for size in range(max_overlap, 0, -1):
+        bridge_tail = bridge_messages[-size:]
+        client_head = client_history[:size]
+        if all(
+            message_fingerprint(bridge_message) == message_fingerprint(client_message)
+            for bridge_message, client_message in zip(bridge_tail, client_head)
+        ):
+            overlap = size
+            break
+    return list(bridge_messages[:-overlap] if overlap else bridge_messages), overlap
+
+
 def insert_bridge_messages(
     client_messages: list[dict[str, Any]],
     bridge_messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
-    if not bridge_messages:
+    deduplicated_bridge, _overlap = deduplicate_bridge_messages(client_messages, bridge_messages)
+    if not deduplicated_bridge:
         return list(client_messages)
     insert_at = next(
         (index for index, message in enumerate(client_messages) if message.get("role") != "system"),
         len(client_messages),
     )
     merged = list(client_messages)
-    merged[insert_at:insert_at] = list(bridge_messages)
+    merged[insert_at:insert_at] = deduplicated_bridge
     return merged
