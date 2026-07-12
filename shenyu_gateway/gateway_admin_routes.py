@@ -714,7 +714,18 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 "usage": item.get("usage"),
                 "cache_usage": item.get("cache_usage"),
                 "finish_reason": item.get("finish_reason"),
-                "internal_tool_rounds": len(item.get("internal_tool_rounds") or []),
+                "internal_tool_rounds": [
+                    {
+                        key: value
+                        for key, value in round_item.items()
+                        if key in {
+                            "round", "messages_count", "stream", "usage", "finish_reason", "final",
+                            "response_preview", "upstream_duration_ms", "tool_calls_count",
+                            "gateway_tool_calls", "tools", "upstream_payload_summary",
+                        }
+                    }
+                    for round_item in (item.get("internal_tool_rounds") or [])
+                ],
                 "timeline_tail": item.get("timeline_tail") or (item.get("timeline") or [])[-8:],
                 "slow_phases": item.get("slow_phases") or [],
                 "empty_visible_response_fallback": item.get("empty_visible_response_fallback", False),

@@ -66,9 +66,9 @@ function toolHint(name: string): string {
   return GATEWAY_TOOL_HINTS[name] || ''
 }
 
-const TAB_NAMES = ['overview', 'rounds', 'tools', 'messages', 'system', 'response', 'upstream', 'meta', 'raw'] as const
+const TAB_NAMES = ['overview', 'tools', 'messages', 'system', 'response', 'upstream', 'meta', 'raw'] as const
 const TAB_LABELS: Record<string, string> = {
-  overview: '概览', rounds: '上游轮次', tools: '工具执行', messages: 'Messages',
+  overview: '概览', tools: '工具执行', messages: 'Messages',
   response: 'Response', system: 'System', upstream: 'Upstream', meta: 'Meta', raw: 'Raw JSON',
 }
 
@@ -124,8 +124,8 @@ function fmtNum(n: number): string {
 }
 
 // 从 usage 里取总 token 数，兼容 OpenAI / Anthropic 两种字段
-function totalTokens(log: LogEntry): number | null {
-  const u = log.usage
+function totalTokens(log: LogEntry, round?: any): number | null {
+  const u = round?.usage || log.usage
   if (!u || typeof u !== 'object') return null
   const total = u.total_tokens
   if (typeof total === 'number' && total > 0) return total
@@ -135,19 +135,27 @@ function totalTokens(log: LogEntry): number | null {
   return sum > 0 ? sum : null
 }
 
-function tokenLabel(log: LogEntry): string {
-  const t = totalTokens(log)
+function tokenLabel(log: LogEntry, round?: any): string {
+  const t = totalTokens(log, round)
   return t === null ? '' : `${fmtNum(t)} tok`
 }
 
-function cacheLabel(log: LogEntry): string {
+function cacheLabel(log: LogEntry, round?: any): string {
+  if (round) {
+    const read = usageCacheRead(round.usage)
+    return read > 0 ? `⚡ ${fmtNum(read)} cached` : ''
+  }
   const cache = log.cache_usage
   if (!cache?.hit) return ''
   const read = Number(cache.cache_read_input_tokens) || 0
   return read > 0 ? `⚡ ${fmtNum(read)} cached` : '⚡ cached'
 }
 
-function cacheTitle(log: LogEntry): string {
+function cacheTitle(log: LogEntry, round?: any): string {
+  if (round) {
+    const read = usageCacheRead(round.usage)
+    return `供应商为这一轮上报了 ${read.toLocaleString()} cached tokens。这里只保留原始数值，不推算费用。`
+  }
   const cache = log.cache_usage
   if (!cache?.hit) return ''
   const read = Number(cache.cache_read_input_tokens) || 0
@@ -155,13 +163,17 @@ function cacheTitle(log: LogEntry): string {
   return `供应商上报缓存读取 ${read.toLocaleString()} tokens · 写入 ${write.toLocaleString()} tokens。这里只保留原始数值，不推算费用。`
 }
 
-async function toggleDetail(id: string) {
-  if (expIds.value.has(id)) {
-    expIds.value.delete(id)
-    delete detCache.value[id]
+function roundKey(id: string, round?: any): string {
+  return round ? `${id}:round:${round.round}` : `${id}:request`
+}
+
+async function toggleDetail(id: string, round?: any) {
+  const key = roundKey(id, round)
+  if (expIds.value.has(key)) {
+    expIds.value.delete(key)
   } else {
-    expIds.value.add(id)
-    aTabs.value[id] = aTabs.value[id] || 'overview'
+    expIds.value.add(key)
+    aTabs.value[key] = aTabs.value[key] || (round ? 'response' : 'overview')
     loadDetailTab(id)
   }
 }
@@ -181,8 +193,9 @@ async function loadDetailTab(id: string) {
   }
 }
 
-function switchTab(id: string, tab: string) {
-  aTabs.value[id] = tab
+function switchTab(id: string, tab: string, round?: any) {
+  const key = roundKey(id, round)
+  aTabs.value[key] = tab
   if (!detCache.value[id]) {
     loadDetailTab(id)
   }
@@ -191,6 +204,34 @@ function switchTab(id: string, tab: string) {
 function collapseAll() {
   expIds.value.clear()
   detCache.value = {}
+}
+
+function displayRounds(log: LogEntry): any[] {
+  const rounds = Array.isArray(log.internal_tool_rounds) ? log.internal_tool_rounds : []
+  if (rounds.length) return rounds
+  return [{
+    round: 1,
+    final: true,
+    usage: log.usage,
+    finish_reason: log.finish_reason,
+    response_preview: log.response_preview,
+    upstream_duration_ms: log.duration_ms,
+    tools: [],
+  }]
+}
+
+function roundTone(log: LogEntry, round: any, index: number, rounds: any[]): string {
+  if (log.status === 'error') return 'error'
+  return round.final === true || index === rounds.length - 1 ? 'ok' : 'intermediate'
+}
+
+function roundTime(log: LogEntry, round: any): string {
+  if (!round || round.round <= 1) return timeStr(log.timestamp)
+  return `${timeStr(log.timestamp)} +${round.round - 1}`
+}
+
+function roundDuration(log: LogEntry, round: any): number {
+  return Number(round?.upstream_duration_ms ?? log.duration_ms) || 0
 }
 
 function usageInput(usage: Record<string, any> | null | undefined): number {
@@ -292,32 +333,22 @@ function renderRoundTools(round: any): string {
   return `<div class="round-tool-list"><div class="round-small-title">这一轮做了什么</div>${items}</div>`
 }
 
-function renderRounds(detail: LogDetail): string {
-  const rounds = Array.isArray(detail.internal_tool_rounds) ? detail.internal_tool_rounds : []
-  if (!rounds.length) return '<div class="empty-soft">这是一条普通的单轮回复，没有额外的工具往返。最终内容可以直接去 Response 看。</div>'
-  return rounds.map((round, index) => {
-    const isFinal = round.final === true || index === rounds.length - 1
-    const usage = round.usage || {}
-    const cached = usageCacheRead(usage)
-    const response = String(round.response_full || round.response_preview || '').trim()
-    const tone = isFinal ? 'round-final' : 'round-middle'
-    const label = isFinal ? '最后一轮' : `中间第 ${round.round} 轮`
-    const cacheText = cached > 0 ? `供应商报了 ${cached.toLocaleString()} cached` : '没有 cached 数值'
-    return `<div class="story-round ${tone}"><div class="story-round-head"><div><span class="story-round-kicker">${label}</span><div class="story-round-title">${finishText(round.finish_reason, isFinal)}</div></div><div class="story-round-time">${typeof round.upstream_duration_ms === 'number' ? `${(round.upstream_duration_ms / 1000).toFixed(1)}s` : ''}</div></div><div class="story-round-response">${response ? esc(response) : '<span class="muted">这条旧日志没有保存这一轮的正文。</span>'}</div>${renderRoundTools(round)}<div class="story-round-foot"><span>${cacheText}</span><span>输入 ${usageInput(usage).toLocaleString()} · 输出 ${usageOutput(usage).toLocaleString()}</span></div></div>`
-  }).join('')
+function selectedRound(detail: LogDetail, roundNumber?: number): any | null {
+  if (!roundNumber || !Array.isArray(detail.internal_tool_rounds)) return null
+  return detail.internal_tool_rounds.find((round) => round.round === roundNumber) || null
 }
 
-function renderContent(detail: LogDetail, tab: string): string {
+function renderContent(detail: LogDetail, tab: string, roundNumber?: number): string {
+  const round = selectedRound(detail, roundNumber)
   if (tab === 'overview') return renderOverview(detail)
-  if (tab === 'rounds') return renderRounds(detail)
   if (tab === 'system') {
     const full = detail.system_additions_full || detail.system_additions_preview || '(无)'
     return esc(full)
   }
 
   if (tab === 'messages') {
-    const msgs = detail.prepared_messages || []
-    const previews = detail.prepared_messages_preview || []
+    const msgs = round?.messages || detail.prepared_messages || []
+    const previews = round?.messages_preview || detail.prepared_messages_preview || []
     if (!msgs.length && previews.length) {
       return previews.map((m: any) => {
         const roleLabel = m.name ? `${m.role} (${m.name})` : m.role
@@ -351,6 +382,14 @@ function renderContent(detail: LogDetail, tab: string): string {
   }
 
   if (tab === 'tools') {
+    if (round) {
+      const tools = round.tools || []
+      if (!tools.length) return '<div class="empty-soft">这一轮没有执行网关工具。</div>'
+      return `<div class="tool-section"><div class="tool-section-title">这一轮做了 ${tools.length} 件事</div>${tools.map((tool: any) => {
+        const hint = toolHint(tool.target_tool || tool.name)
+        return `<div class="tool-call-item"><div class="tool-call-row"><span class="tc-call-name">🔧 ${esc(tool.target_tool || tool.name)}</span>${hint ? `<span class="tc-call-hint">${esc(hint)}</span>` : ''}<span class="tool-timing">${tool.duration_ms || 0}ms</span></div>${tool.args_preview ? `<div class="tool-detail-block">${esc(tool.args_preview)}</div>` : ''}${tool.result_preview ? `<div class="tool-detail-block ${tool.ok === false ? 'tool-fail' : 'tool-ok'}">${esc(tool.result_preview)}</div>` : ''}</div>`
+      }).join('')}</div>`
+    }
     const names = detail.tool_names_all || detail.tool_names || []
     if (!names.length) return '(无工具)'
 
@@ -409,7 +448,7 @@ function renderContent(detail: LogDetail, tab: string): string {
   }
 
   if (tab === 'upstream') {
-    const payload = detail.upstream_payload || detail.upstream_payload_summary || {
+    const payload = round?.upstream_payload || round?.upstream_payload_summary || detail.upstream_payload || detail.upstream_payload_summary || {
       note: 'Full upstream payload is not retained. Set GATEWAY_LOG_FULL_PAYLOADS=true to keep full debug payloads in memory.',
     }
     return esc(JSON.stringify(payload, null, 2))
@@ -418,12 +457,14 @@ function renderContent(detail: LogDetail, tab: string): string {
   if (tab === 'response') {
     let parts: string[] = []
     parts.push(`状态: ${detail.status}`)
-    parts.push(`耗时: ${detail.duration_ms}ms`)
+    parts.push(`耗时: ${round ? roundDuration(detail, round) : detail.duration_ms}ms`)
     parts.push(`模型: ${detail.model}`)
     parts.push(`上游: ${detail.upstream_url}`)
     if (detail.stream) parts.push('流式')
     let html = parts.join(' · ') + '\n\n'
-    const responseText = detail.response_full ?? detail.response_preview
+    const responseText = round
+      ? (round.response_full ?? round.response_preview)
+      : (detail.response_full ?? detail.response_preview)
     if (detail.error) {
       html += esc(detail.error)
     } else if (responseText) {
@@ -458,7 +499,7 @@ function renderContent(detail: LogDetail, tab: string): string {
   }
 
   if (tab === 'raw') {
-    return esc(JSON.stringify(detail, null, 2))
+    return esc(JSON.stringify(round || detail, null, 2))
   }
 
   return ''
@@ -481,45 +522,66 @@ function renderContent(detail: LogDetail, tab: string): string {
       <NEmpty description="等待请求..." />
     </div>
 
-    <div v-for="log in logs" :key="log.id" class="log-card" :class="clsName(log.status)">
-      <div class="log-sum" @click="toggleDetail(log.id)">
-        <span class="lt">{{ timeStr(log.timestamp) }}</span>
-        <NTag size="tiny" :bordered="false" class="tag-m">{{ log.client_model || log.model || '?' }}</NTag>
-        <NTag v-if="log.model_mapped" size="tiny" :bordered="false" class="tag-d">→ {{ log.upstream_model || '?' }}</NTag>
-        <NTag v-if="log.is_first_turn" size="tiny" :bordered="false" class="tag-f">首轮</NTag>
-        <NTag v-if="log.stream" size="tiny" :bordered="false" class="tag-s">流式</NTag>
-        <NTag v-if="log.tools_count" size="tiny" :bordered="false" class="tag-t">{{ log.tools_count }} tools</NTag>
-        <NTag size="tiny" :bordered="false" class="tag-d">{{ log.duration_ms }}ms</NTag>
-        <NTag v-if="tokenLabel(log)" size="tiny" :bordered="false" class="tag-tok">{{ tokenLabel(log) }}</NTag>
-        <NTag
-          v-if="cacheLabel(log)"
-          size="tiny"
-          :bordered="false"
-          class="tag-cache"
-          :title="cacheTitle(log)"
-        >{{ cacheLabel(log) }}</NTag>
-        <span class="msg-count">{{ log.original_messages_count }}→{{ log.prepared_messages_count }}</span>
-        <span class="arrow" :class="{ open: expIds.has(log.id) }">▶</span>
+    <div v-for="log in logs" :key="log.id" class="request-group" :class="{ 'has-rounds': displayRounds(log).length > 1 }">
+      <div v-if="displayRounds(log).length > 1" class="request-group-label">
+        <span>一次工具往返</span>
+        <span>{{ displayRounds(log).length }} 轮慢慢接上</span>
       </div>
 
-      <div v-if="expIds.has(log.id)" class="det open">
-        <div class="dtabs">
-          <div
-            v-for="tab in TAB_NAMES"
-            :key="tab"
-            class="dtab"
-            :class="{ active: aTabs[log.id] === tab }"
-            @click="switchTab(log.id, tab)"
-          >
-            {{ TAB_LABELS[tab] }}
+      <template v-for="(round, roundIndex) in displayRounds(log)" :key="roundKey(log.id, round)">
+        <div class="log-card" :class="roundTone(log, round, roundIndex, displayRounds(log))">
+          <div class="log-sum" @click="toggleDetail(log.id, round)">
+            <span class="lt">{{ roundTime(log, round) }}</span>
+            <NTag size="tiny" :bordered="false" class="tag-m">{{ log.client_model || log.model || '?' }}</NTag>
+            <NTag v-if="displayRounds(log).length > 1" size="tiny" :bordered="false" class="tag-round">
+              {{ round.final === true || roundIndex === displayRounds(log).length - 1 ? '最后一轮' : `中间第 ${round.round} 轮` }}
+            </NTag>
+            <NTag v-if="log.model_mapped" size="tiny" :bordered="false" class="tag-d">→ {{ log.upstream_model || '?' }}</NTag>
+            <NTag v-if="log.is_first_turn && roundIndex === 0" size="tiny" :bordered="false" class="tag-f">首轮</NTag>
+            <NTag v-if="log.stream" size="tiny" :bordered="false" class="tag-s">流式</NTag>
+            <NTag v-if="round.tools?.length" size="tiny" :bordered="false" class="tag-t">{{ round.tools.length }} 次工具</NTag>
+            <NTag size="tiny" :bordered="false" class="tag-d">{{ roundDuration(log, round) }}ms</NTag>
+            <NTag v-if="tokenLabel(log, round)" size="tiny" :bordered="false" class="tag-tok">{{ tokenLabel(log, round) }}</NTag>
+            <NTag
+              v-if="cacheLabel(log, round)"
+              size="tiny"
+              :bordered="false"
+              class="tag-cache"
+              :title="cacheTitle(log, round)"
+            >{{ cacheLabel(log, round) }}</NTag>
+            <span v-if="roundIndex === 0" class="msg-count">{{ log.original_messages_count }}→{{ log.prepared_messages_count }}</span>
+            <span class="arrow" :class="{ open: expIds.has(roundKey(log.id, round)) }">▶</span>
+          </div>
+
+          <div v-if="expIds.has(roundKey(log.id, round))" class="det open">
+            <div class="dtabs">
+              <div
+                v-for="tab in TAB_NAMES"
+                :key="tab"
+                class="dtab"
+                :class="{ active: aTabs[roundKey(log.id, round)] === tab }"
+                @click="switchTab(log.id, tab, round)"
+              >
+                {{ TAB_LABELS[tab] }}
+              </div>
+            </div>
+            <div class="dcont">
+              <div v-if="loadingDet.has(log.id)" class="loading-soft">正在把这一轮的细节找回来…</div>
+              <div
+                v-else-if="detCache[log.id]"
+                class="rendered-detail"
+                v-html="renderContent(detCache[log.id], aTabs[roundKey(log.id, round)] || 'response', round.round)"
+              ></div>
+              <div v-else class="loading-soft">点开后就能看到这一轮。</div>
+            </div>
           </div>
         </div>
-        <div class="dcont">
-          <div v-if="loadingDet.has(log.id)" style="color:#484f58;font-size:11px">加载中...</div>
-          <div v-else-if="detCache[log.id]" class="rendered-detail" v-html="renderContent(detCache[log.id], aTabs[log.id] || 'overview')"></div>
-          <div v-else style="color:#484f58;font-size:11px">点击标签加载</div>
+
+        <div v-if="roundIndex < displayRounds(log).length - 1" class="round-bridge">
+          <span class="round-bridge-dot">⌁</span>
+          <span>{{ round.tools?.length ? '工具已经做好，带着结果继续往下说' : '这一轮还没说完，继续往下走' }}</span>
         </div>
-      </div>
+      </template>
     </div>
   </div>
 </template>
@@ -567,6 +629,31 @@ function renderContent(detail: LogDetail, tab: string): string {
   overflow: hidden;
 }
 
+.request-group {
+  margin-bottom: 10px;
+}
+
+.request-group.has-rounds {
+  padding: 8px;
+  border: 1px solid #eee5e9;
+  border-radius: 13px;
+  background: linear-gradient(180deg, #fffafb 0%, #fff 100%);
+}
+
+.request-group-label {
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 1px 5px 8px;
+  color: #a28f99;
+  font-size: 10px;
+}
+
+.log-card.intermediate {
+  border-left: 3px solid #d7a5ba;
+  background: #fffafb;
+}
+
 .log-card.error {
   border-left: 3px solid #e53e3e;
 }
@@ -591,6 +678,17 @@ function renderContent(detail: LogDetail, tab: string): string {
   cursor: pointer;
   font-size: 12px;
   flex-wrap: wrap;
+}
+
+.log-sum :deep(.n-tag) {
+  flex: 0 0 auto;
+  white-space: nowrap;
+  word-break: keep-all;
+}
+
+:deep(.tag-round) {
+  color: #956d80;
+  background: #f9eaf1;
 }
 
 .log-sum:hover {
@@ -635,16 +733,26 @@ function renderContent(detail: LogDetail, tab: string): string {
 
 .dtabs {
   display: flex;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: thin;
+  -webkit-overflow-scrolling: touch;
   border-bottom: 1px solid #e8e8e8;
   background: #fafafa;
 }
 
 .dtab {
-  padding: 6px 14px;
+  flex: 0 0 auto;
+  min-width: max-content;
+  padding: 7px 12px;
   font-size: 11px;
   color: #999;
   cursor: pointer;
   border-bottom: 2px solid transparent;
+  white-space: nowrap;
+  word-break: keep-all;
+  writing-mode: horizontal-tb;
 }
 
 .dtab.active {
@@ -664,11 +772,58 @@ function renderContent(detail: LogDetail, tab: string): string {
   border-radius: 6px;
   padding: 10px;
   font-size: 11px;
-  font-family: 'SF Mono', monospace;
+  font-family: system-ui, -apple-system, 'Segoe UI', 'Noto Sans SC', sans-serif;
   line-height: 1.5;
   white-space: pre-wrap;
-  word-break: break-all;
+  overflow-wrap: anywhere;
+  word-break: normal;
   color: #1f1f1f;
+}
+
+.round-bridge {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 30px;
+  color: #a48f9a;
+  font-size: 10px;
+}
+
+.round-bridge::before,
+.round-bridge::after {
+  content: '';
+  width: 42px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, #ead7e0);
+}
+
+.round-bridge::after {
+  background: linear-gradient(90deg, #ead7e0, transparent);
+}
+
+.round-bridge-dot {
+  color: #c294a9;
+  font-size: 15px;
+}
+
+.loading-soft {
+  padding: 14px;
+  color: #9d9298;
+  font-size: 11px;
+}
+
+@media (max-width: 680px) {
+  .logs-page { padding: 0 2px; }
+  .request-group.has-rounds { padding: 6px; }
+  .log-sum { gap: 6px; padding: 9px 10px; }
+  .msg-count { order: 20; }
+  .arrow { order: 30; }
+  .dtab { padding: 7px 10px; }
+  .dcont { padding: 9px; }
+  .rendered-detail { padding: 8px; }
+  .round-bridge::before, .round-bridge::after { width: 18px; }
 }
 </style>
 

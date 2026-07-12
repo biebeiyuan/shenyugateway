@@ -64,6 +64,10 @@ export interface ToolRoundEntry {
   response_full?: string
   response_preview?: string
   upstream_duration_ms?: number
+  messages?: any[]
+  messages_preview?: any[]
+  upstream_payload?: Record<string, any> | null
+  upstream_payload_summary?: Record<string, any> | null
   tool_calls_count?: number
   gateway_tool_calls?: Array<{
     id?: string

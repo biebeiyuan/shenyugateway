@@ -9,7 +9,13 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from fastapi import HTTPException
 
-from .request_logs import _mark_request_log_phase, _record_completion_finish_reason
+from .request_logs import (
+    _mark_request_log_phase,
+    _message_log_preview,
+    _payload_without_image_blocks,
+    _record_completion_finish_reason,
+    _upstream_payload_summary,
+)
 from .response_capture import AssistantTagFilter, split_private_assistant_tags
 from .runtime import json_dumps as _json_dumps
 from .runtime import logger, now_ts as _now_ts
@@ -271,6 +277,7 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
         )
         ctx.record_upstream_payload(ctx.log_entry, payload)
         round_log = _start_round_log(ctx, round_index, working_messages)
+        _record_round_request(ctx, round_log, payload, working_messages)
         if ctx.log_entry is not None and round_index == 0:
             ctx.log_entry["prompt_cache"] = cache_meta
 
@@ -348,6 +355,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
         payload["stream"] = True
         ctx.record_upstream_payload(ctx.log_entry, payload)
         round_log = _start_round_log(ctx, round_index, working_messages, stream=True)
+        _record_round_request(ctx, round_log, payload, working_messages)
         if ctx.log_entry is not None and round_index == 0:
             ctx.log_entry["prompt_cache"] = cache_meta
 
@@ -531,6 +539,21 @@ def _record_round_usage(
         ctx.log_entry["cache_usage"] = ctx.aggregate_cache_usage(upstream_usages)
     if round_log is not None:
         round_log["usage"] = usage
+
+
+def _record_round_request(
+    ctx: InternalToolLoopContext,
+    round_log: Optional[dict],
+    payload: dict,
+    working_messages: list[dict],
+) -> None:
+    if round_log is None:
+        return
+    round_log["messages_preview"] = [_message_log_preview(message) for message in working_messages]
+    round_log["upstream_payload_summary"] = _upstream_payload_summary(payload)
+    if ctx.log_entry is not None and ctx.log_entry.get("request_payloads_retained"):
+        round_log["messages"] = _payload_without_image_blocks({"messages": working_messages})["messages"]
+        round_log["upstream_payload"] = _payload_without_image_blocks(payload)
 
 
 def _record_round_response(round_log: Optional[dict], completion: dict) -> None:
