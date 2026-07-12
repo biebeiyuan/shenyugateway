@@ -6,6 +6,9 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Optional
 
+import pytest
+
+from shenyu_gateway import context_builder as context_builder_module
 from shenyu_gateway import context_layers
 from shenyu_gateway import upstream_adapter
 from shenyu_gateway.context_builder import ContextBuilder
@@ -138,6 +141,52 @@ class _FakeCalendarSupabase:
         rows.sort(key=lambda row: row.get("period_start") or "", reverse=True)
         limit = int(params.get("limit") or len(rows))
         return rows[:limit]
+
+
+def test_context_recall_failure_preserves_previous_island(monkeypatch, tmp_path):
+    class FailingMemService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def search_notes_contextual(self, *_args, **_kwargs):
+            raise RuntimeError("mem unavailable")
+
+    class FailingStarService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def search_context(self, *_args, **_kwargs):
+            raise RuntimeError("stars unavailable")
+
+    monkeypatch.setattr(context_builder_module, "MemNoteService", FailingMemService)
+    monkeypatch.setattr(context_builder_module, "StarService", FailingStarService)
+    monkeypatch.setattr(cfg, "inject_mem_notes", True)
+    monkeypatch.setattr(cfg, "inject_stars", True, raising=False)
+    monkeypatch.setattr(cfg, "mem_note_limit", 3, raising=False)
+    monkeypatch.setattr(cfg, "star_inject_limit", 3, raising=False)
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("recall-failure", "operit")
+    previous = {
+        "version": "island-previous",
+        "stars": [{"id": "star-old", "content": "old star"}],
+        "mem_notes": [{"id": "mem-old", "content": "old mem"}],
+        "rendered_text": "old island",
+    }
+
+    package = asyncio.run(
+        _context_builder(store, supabase=object()).build_context_package(
+            session,
+            current_user_text="新的问题",
+            is_first_turn=False,
+            client_name="operit",
+            previous_island_state=previous,
+        )
+    )
+
+    assert package["stars"] == previous["stars"]
+    assert package["mem_notes"] == previous["mem_notes"]
+    assert package["memory_island_decision"]["star_recall_ok"] is False
+    assert package["memory_island_decision"]["mem_recall_ok"] is False
 
 
 def test_hisense_context_can_see_both_heartbeat_pools(tmp_path):

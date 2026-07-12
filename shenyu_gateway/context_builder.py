@@ -13,6 +13,7 @@ from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
 from .memory_island import resolve_memory_island
 from .request_logs import _mark_request_log_phase
+from .runtime import logger
 from .stars import StarService
 from .tool_registry import gateway_native_tools
 
@@ -148,11 +149,9 @@ class ContextBuilder:
             "memory_island_decision": {},
         }
 
-        # Collect all independent context sources concurrently. calendar and the
-        # conflict shelf are internally fail-soft (return [] on error), so only the
-        # mem_notes/stars coroutines can raise — a bare gather therefore preserves
-        # today's error semantics (a memory failure propagates; everything else is
-        # soft) while removing the serial calendar → conflict → memory awaits.
+        # Collect independent context sources concurrently. Each source is normalized
+        # to a fail-soft result below so a recall outage does not discard the previous
+        # memory island or block an otherwise valid chat request.
         want_conflict = (not is_hisense) and getattr(self.cfg, "inject_conflict_shelf", True)
         event_class = str((context_event or {}).get("event_class") or "new_user")
         reuse_previous_island = bool(
@@ -188,20 +187,30 @@ class ContextBuilder:
             notes_result = {"ok": True, "items": []}
             stars_result = {"ok": True, "items": []}
         else:
+            async def fail_soft_recall(coro, source: str) -> dict[str, Any]:
+                try:
+                    return await coro
+                except Exception as exc:
+                    logger.warning("[Context] %s recall failed: %s", source, exc)
+                    return {"ok": False, "items": [], "error": str(exc)}
+
             if reuse_previous_island:
                 notes_task = asyncio.sleep(
                     0,
                     result={"ok": True, "items": list((previous_island_state or {}).get("mem_notes") or [])},
                 )
             elif inject_mem_notes:
-                notes_task = MemNoteService(self.cfg, self.supabase_client).search_notes_contextual(
-                    current_user_text,
-                    session_tag=session["session_tag"],
-                    limit=self.cfg.mem_note_limit,
-                    session_id=session.get("id"),
-                    store=self.store,
-                    mark_triggered=False,
-                    ignore_retrigger_limits=True,
+                notes_task = fail_soft_recall(
+                    MemNoteService(self.cfg, self.supabase_client).search_notes_contextual(
+                        current_user_text,
+                        session_tag=session["session_tag"],
+                        limit=self.cfg.mem_note_limit,
+                        session_id=session.get("id"),
+                        store=self.store,
+                        mark_triggered=False,
+                        ignore_retrigger_limits=True,
+                    ),
+                    "mem note",
                 )
             else:
                 notes_task = asyncio.sleep(0, result={"ok": True, "items": []})
@@ -212,14 +221,17 @@ class ContextBuilder:
                     result={"ok": True, "items": list((previous_island_state or {}).get("stars") or [])},
                 )
             elif inject_stars:
-                stars_task = StarService(self.cfg, self.supabase_client).search_context(
-                    current_user_text,
-                    session_tag=session["session_tag"],
-                    session_id=session.get("id"),
-                    limit=getattr(self.cfg, "star_inject_limit", 3),
-                    mark_activation=False,
-                    ignore_recent_fatigue=True,
-                    trace_log=trace_log,
+                stars_task = fail_soft_recall(
+                    StarService(self.cfg, self.supabase_client).search_context(
+                        current_user_text,
+                        session_tag=session["session_tag"],
+                        session_id=session.get("id"),
+                        limit=getattr(self.cfg, "star_inject_limit", 3),
+                        mark_activation=False,
+                        ignore_recent_fatigue=True,
+                        trace_log=trace_log,
+                    ),
+                    "star",
                 )
             else:
                 stars_task = asyncio.sleep(0, result={"ok": True, "items": []})
