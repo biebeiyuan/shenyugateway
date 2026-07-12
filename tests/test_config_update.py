@@ -92,8 +92,6 @@ def test_full_config_only_hides_supabase_key(monkeypatch):
     for field, value in visible_secrets.items():
         monkeypatch.setattr(gateway.cfg, field, value)
     monkeypatch.setattr(gateway.cfg, "supabase_key", "supabase-secret")
-    monkeypatch.setattr(gateway.cfg, "sqlite_override_keys", {"UPSTREAM_URL", "ANTHROPIC_API_KEY"})
-
     try:
         response = client.get(
             "/api/config/full",
@@ -109,8 +107,6 @@ def test_full_config_only_hides_supabase_key(monkeypatch):
         assert payload[f"{field}_configured"] is True
     assert payload["supabase_key"] == ""
     assert payload["supabase_key_configured"] is True
-    assert payload["config_precedence"] == ["defaults", ".env", "sqlite_overrides", "runtime_updates"]
-    assert payload["sqlite_override_keys"] == ["ANTHROPIC_API_KEY", "UPSTREAM_URL"]
     assert "supabase-secret" not in response.text
 
 

@@ -23,8 +23,6 @@ export interface GatewayConfig {
   supabase_url: string
   supabase_key: string
   supabase_key_configured?: boolean
-  config_precedence?: string[]
-  sqlite_override_keys?: string[]
   max_client_messages: number | null
   enable_cold_start: boolean
   cold_start_message_limit: number | null

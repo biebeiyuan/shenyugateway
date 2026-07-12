@@ -654,9 +654,6 @@ async function copyColdHeader(sessionTag: string) {
 
       <NCard title="安全与数据库" size="small">
         <NForm label-placement="top">
-          <div v-if="config.sqlite_override_keys?.length" class="provider-order-hint">
-            SQLite 正在覆盖 {{ config.sqlite_override_keys.length }} 个部署配置：{{ config.sqlite_override_keys.join(', ') }}。优先级为 defaults → .env → SQLite → 当前运行时更新。
-          </div>
           <NFormItem label="网关 API Key（留空不校验）">
             <NInput v-model:value="config.gateway_key" type="password" show-password-on="click" placeholder="留空不校验" />
           </NFormItem>

@@ -126,7 +126,7 @@ from shenyu_gateway.private_capture import (
 )
 
 
-def _restore_config_overrides_from_db(db_path: str) -> set[str]:
+def _restore_config_overrides_from_db(db_path: str) -> None:
     def load_if_present(path_text: str) -> dict[str, str]:
         path = Path(path_text)
         if not path.exists():
@@ -147,18 +147,13 @@ def _restore_config_overrides_from_db(db_path: str) -> set[str]:
                 len(overrides),
                 ", ".join(sorted(overrides)),
             )
-        return set(overrides)
     except Exception:
         logger.warning("Failed to restore config overrides from SQLite", exc_info=True)
-        return set()
 
 
-_restored_config_override_keys = _restore_config_overrides_from_db(
-    os.getenv("GATEWAY_DB_PATH") or "./data/shenyu_gateway.db"
-)
+_restore_config_overrides_from_db(os.getenv("GATEWAY_DB_PATH") or "./data/shenyu_gateway.db")
 
 cfg = RuntimeConfig()
-cfg.sqlite_override_keys = set(_restored_config_override_keys)
 supabase_client: Optional["SupabaseClient"] = None
 session_store: Optional["GatewayStore"] = None
 recall_embedding_worker_task: Optional[asyncio.Task] = None
@@ -183,7 +178,6 @@ def _init_store():
 
 def _persist_env_with_store(updates: dict[str, Any]) -> None:
     _persist_env(updates, store=session_store)
-    cfg.sqlite_override_keys.update(str(key) for key in updates)
 
 
 def _require_session_store() -> GatewayStore:

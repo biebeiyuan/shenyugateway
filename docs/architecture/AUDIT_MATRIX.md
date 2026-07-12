@@ -443,7 +443,7 @@
 ### SQLite override 来源可见性
 
 - 文件：`gateway.py`、`shenyu_gateway/config_routes.py`、`admin/src/api/config.ts`、`admin/src/views/ConfigView.vue`
-- 行为：配置 API 返回固定 precedence 和仅含键名的 `sqlite_override_keys`；Admin 页面明确提示哪些部署配置正被 SQLite 覆盖。
+- 行为：Admin 保存的配置仍持久化到 SQLite 并在启动时恢复；页面不再把这些正常持久化项渲染成“覆盖部署配置”的告警清单。
 - 安全：不返回 override 值；运行时通过 Admin 保存的新键会同步进入提示集合。
 - 测试：配置 API 来源与密钥不回显测试通过，Admin 生产构建通过。
 

@@ -57,8 +57,6 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "supabase_url": cfg.supabase_url,
         "supabase_key": "",
         "supabase_key_configured": bool(cfg.supabase_key),
-        "config_precedence": ["defaults", ".env", "sqlite_overrides", "runtime_updates"],
-        "sqlite_override_keys": sorted(getattr(cfg, "sqlite_override_keys", set()) or []),
         "calendar_inject_day": cfg.calendar_inject_day,
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
