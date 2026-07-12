@@ -187,6 +187,8 @@ class SessionsMixin:
         tables = [
             "context_window_events",
             "context_window_states",
+            "tool_error_log",
+            "room_trace",
             "hisense_heartbeat",
             "heartbeat_entries",
             "pending_gateway_tool_turns",

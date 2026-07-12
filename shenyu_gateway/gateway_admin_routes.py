@@ -743,7 +743,13 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         if not session:
             raise HTTPException(status_code=404, detail="Session not found.")
         deleted = store.delete_session(session["id"])
-        return {"ok": True, "session_tag": session_tag, "deleted": deleted}
+        return {
+            "ok": True,
+            "session_tag": session_tag,
+            "scope": "local_sqlite_session",
+            "external_archives_deleted": False,
+            "deleted": deleted,
+        }
 
     @router.get("/api/gateway/logs")
     async def gateway_logs(limit: int = 30):

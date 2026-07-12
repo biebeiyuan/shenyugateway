@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import sqlite3
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -125,6 +126,48 @@ def test_tool_error_log_records_error_kind_and_filters(tmp_path):
     assert {item["error_kind"] for item in all_errors} == {"validation", "config"}
     assert len(validation_errors) == 1
     assert validation_errors[0]["target_tool"] == "shenyu_write_mem_note"
+
+
+def test_delete_session_removes_all_session_scoped_sqlite_diagnostics(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("delete-me", "operit")
+    store.append_message(session["id"], "user", "sensitive message")
+    store.log_tool_error(
+        session_id=session["id"],
+        session_tag=session["session_tag"],
+        tool_name="shenyu_gateway_tool",
+        target_tool="shenyu_recall",
+        args={"query": "sensitive tool args"},
+        error_text="sensitive tool error",
+    )
+    store.add_room_trace(
+        session["id"],
+        "window",
+        detail={"private": "sensitive room detail"},
+        scribble="sensitive scribble",
+    )
+
+    deleted = store.delete_session(session["id"])
+
+    assert deleted["gateway_sessions"] == 1
+    assert deleted["gateway_messages"] == 1
+    assert deleted["tool_error_log"] == 1
+    assert deleted["room_trace"] == 1
+    assert store.get_session_by_tag("delete-me") is None
+    assert store.list_tool_errors(limit=10) == []
+    assert store.recent_room_traces(limit=10) == []
+
+    with sqlite3.connect(store.db_path) as connection:
+        session_tables = {
+            row[0]
+            for row in connection.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
+            )
+            if "session_id" in {
+                column[1] for column in connection.execute(f"PRAGMA table_info({row[0]})")
+            }
+        }
+    assert session_tables <= set(deleted)
 
 
 def test_latest_cross_session_context_accumulates_multiple_snapshots(tmp_path):
