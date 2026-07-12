@@ -147,6 +147,7 @@ class ColdStartPreviewRequest(BaseModel):
     target_session_tag: Optional[str] = None
     source_session_tag: Optional[str] = None
     current_message_count: Optional[int] = None
+    message_limit: Optional[int] = Field(default=None, ge=1, le=500)
     persist: bool = True
 
 

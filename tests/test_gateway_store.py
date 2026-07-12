@@ -288,6 +288,75 @@ def test_cold_start_uses_active_preview_snapshot_before_auto_source(tmp_path):
     ]
 
 
+def test_new_session_automatically_uses_latest_context_source(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    source = store.get_or_create_session("7.11", "operit")
+    target = store.get_or_create_session("7.12", "operit")
+    cfg = SimpleNamespace(enable_cold_start=True, cold_start_message_limit=None, max_client_messages=5)
+    store.write_request_context_snapshot(
+        session_id=source["id"],
+        session_tag=source["session_tag"],
+        client_name=source["client_name"],
+        latest_user_text="继续",
+        messages=[
+            {"role": "user", "content": "上一问"},
+            {"role": "assistant", "content": "上一答"},
+        ],
+    )
+
+    snapshot = maybe_prepare_cold_start_snapshot(
+        target,
+        is_first_turn=True,
+        current_message_count=1,
+        cfg=cfg,
+        store=store,
+    )
+
+    assert snapshot["reason"] == "new_window"
+    assert snapshot["source_session_tags"] == ["7.11"]
+
+
+def test_existing_session_never_auto_cold_starts(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    source = store.get_or_create_session("7.11", "operit")
+    target = store.get_or_create_session("7.12", "operit")
+    cfg = SimpleNamespace(enable_cold_start=True, cold_start_message_limit=None, max_client_messages=5)
+    store.write_request_context_snapshot(
+        session_id=source["id"],
+        session_tag=source["session_tag"],
+        client_name=source["client_name"],
+        latest_user_text="不应注入",
+        messages=[{"role": "user", "content": "别的线程"}],
+    )
+
+    snapshot = maybe_prepare_cold_start_snapshot(
+        target,
+        is_first_turn=False,
+        current_message_count=1,
+        cfg=cfg,
+        store=store,
+    )
+
+    assert snapshot is None
+
+
+def test_one_shot_cold_start_snapshot_deactivates_after_injection(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    target = store.get_or_create_session("7.12", "operit")
+    snapshot = store.write_cold_start_snapshot(
+        session_id=target["id"],
+        session_tag=target["session_tag"],
+        reason="manual_preview:new_window",
+        sources=[{"session_tag": "7.11", "messages": [{"role": "user", "content": "接续"}]}],
+        trigger_last_active_at=target.get("last_active_at"),
+        max_injections=1,
+    )
+
+    store.mark_cold_start_injected(snapshot["id"])
+
+    assert store.latest_active_cold_start_snapshot(target["id"]) is None
+
+
 def test_active_cold_start_snapshot_survives_one_full_window(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     target = store.get_or_create_session("6.20", "operit")
@@ -370,7 +439,7 @@ def test_active_cold_start_snapshot_survives_store_restart_after_old_max_count(t
             }
         ],
         trigger_last_active_at=target.get("last_active_at"),
-        max_injections=1,
+        max_injections=5,
     )
     store.mark_cold_start_injected(snapshot["id"])
 

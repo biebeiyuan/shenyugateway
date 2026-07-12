@@ -461,31 +461,26 @@ Cold start bridges context across windows without reintroducing the retired froz
 the normal client window at the start of a new thread: a bounded snapshot from one selected source thread is inserted
 as ordinary user/assistant history before the new thread's messages, then it shrinks as the new thread grows.
 
-Admin preview is a freezing step, not just a dry render. `POST /api/gateway/cold-start/preview` selects a source
-thread and a target mode; when it finds source messages it writes a `cold_start_snapshot`. The source defaults to the
-latest thread with a request context snapshot. The target defaults to `__next_request__`, an armed handoff mode: the
-next chat request that needs a bridge binds the frozen source snapshot to that request's real session header, such as
-`6.20`. The admin UI can still choose or type an explicit target thread. `default` only means the fixed gateway session
-used when a chat request has no session header; it is not the same thing as the next new request header.
-If no preview snapshot exists, automatic cold start also chooses the latest source thread that has a request context
-snapshot, excluding the target when appropriate, then reads only that thread.
+`POST /api/gateway/cold-start/preview` is also the freezing endpoint used by the admin UI. The daily cold-start form
+binds the latest source thread's effective window to an explicit new session tag. The lightweight form additionally
+accepts an explicit source thread and message limit. Both forms return a header such as
+`X-Shenyu-Session-Tag: 7.12`; the first request using that tag consumes the frozen bridge once. If no frozen snapshot
+was prepared, a previously unseen session tag still automatically chooses the latest source thread with a request
+context snapshot. Existing sessions never trigger cross-thread cold start merely because they were idle.
 
 Flow:
 
 1. `_prepare_messages()` opens the session and stores a `request_context_snapshot`.
-2. `_maybe_prepare_cold_start_snapshot()` checks whether the request is a new window or a stale window.
+2. `_maybe_prepare_cold_start_snapshot()` first reuses a frozen snapshot bound to the target session.
 3. It calculates the gap between the target window and the real current client message count.
-4. It first reuses an active snapshot for this target session, trimming the frozen source tail to the live gap.
-5. If no target snapshot exists, it binds an armed `__next_request__` snapshot to this real request session when present.
-6. Otherwise it chooses one latest source thread and freezes up to the target window size from its newest snapshot.
-7. It inserts only the number needed to fill the current live gap. A single full client window merely skips injection
-   for that request; it does not complete the active bridge.
+4. If the session is new and has no frozen snapshot, it chooses the latest source thread automatically.
+5. It inserts only the number needed to fill the current live gap.
+6. After a successful bridge injection, the one-shot snapshot becomes inactive.
 
 Config:
 
 - `ENABLE_COLD_START`
 - `COLD_START_MESSAGE_LIMIT` (optional; blank follows `MAX_CLIENT_MESSAGES`)
-- `COLD_START_IDLE_MINUTES`
 - `MAX_CLIENT_MESSAGES`
 
 Inspection endpoints:
@@ -947,7 +942,6 @@ CALENDAR_MODEL=claude-opus-4-7
 
 ENABLE_COLD_START=true
 COLD_START_MESSAGE_LIMIT=
-COLD_START_IDLE_MINUTES=120
 MAX_CLIENT_MESSAGES=75
 
 INJECT_MEM_NOTES=true

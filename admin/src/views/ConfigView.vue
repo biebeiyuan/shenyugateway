@@ -85,14 +85,17 @@ const clearingWelcome = ref(false)
 const switchingPreset = ref('')
 const presetName = ref('')
 const presets = ref<UpstreamPreset[]>([])
-const modelEntries = ref<[string, string][]>([])
 const upstreamExtraBodyText = ref('')
 const overview = ref<GatewayOverview | null>(null)
-const coldPreview = ref<ColdStartPreview | null>(null)
+const dailyColdResult = ref<ColdStartPreview | null>(null)
+const lightColdResult = ref<ColdStartPreview | null>(null)
 const sessions = ref<GatewaySession[]>([])
-const selectedColdSource = ref('__auto__')
-const selectedColdTarget = ref('__next_request__')
-const coldPreviewLoading = ref(false)
+const dailyColdTag = ref('')
+const lightColdTag = ref('')
+const lightColdSource = ref('__auto__')
+const lightColdLimit = ref(8)
+const dailyColdLoading = ref(false)
+const lightColdLoading = ref(false)
 
 const protocolOptions = [
   { label: 'Auto detect', value: 'auto' },
@@ -135,11 +138,7 @@ const sourceSessionOptions = computed(() => [
   { label: '最新老线程', value: '__auto__' },
   ...sessionOptions.value,
 ])
-const targetSessionOptions = computed(() => [
-  { label: '下一条请求的实际线程头', value: '__next_request__' },
-  { label: '无请求头时的 default 会话', value: 'default' },
-  ...sessionOptions.value.filter((item) => item.value !== 'default'),
-])
+const coldHeader = (sessionTag: string) => `X-Shenyu-Session-Tag: ${sessionTag}`
 
 const activePresetName = computed(() => {
   const match = presets.value.find(
@@ -262,7 +261,6 @@ async function loadConfig() {
   try {
     const data = await fetchConfig()
     config.value = data
-    modelEntries.value = Object.entries(data.model_mapping || {})
     upstreamExtraBodyText.value = formatExtraBody(data.upstream_extra_body)
   } catch {
     message.error('Failed to load config')
@@ -278,8 +276,6 @@ async function doSave() {
       upstream_url: config.value.upstream_url,
       upstream_api_key: config.value.upstream_api_key,
       upstream_protocol: config.value.upstream_protocol,
-      upstream_proxy: config.value.upstream_proxy,
-      upstream_trust_env: config.value.upstream_trust_env,
       enable_openai_cache_control: config.value.enable_openai_cache_control,
       enable_anthropic_cache_control: config.value.enable_anthropic_cache_control,
       openai_cache_ttl: config.value.openai_cache_ttl,
@@ -294,9 +290,6 @@ async function doSave() {
       supabase_key: config.value.supabase_key,
       max_client_messages: config.value.max_client_messages || null,
       enable_cold_start: config.value.enable_cold_start,
-      cold_start_message_limit: config.value.cold_start_message_limit || null,
-      cold_start_idle_minutes: config.value.cold_start_idle_minutes,
-      model_mapping: Object.fromEntries(modelEntries.value.filter(([key, value]) => key && value)),
       enable_upstream_tools: config.value.enable_upstream_tools,
       enable_gateway_tools: config.value.enable_gateway_tools,
       enable_mem0_management_tools: config.value.enable_mem0_management_tools,
@@ -305,7 +298,6 @@ async function doSave() {
       gateway_tool_surface: config.value.gateway_tool_surface,
       client_tool_surface: config.value.client_tool_surface,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
-      default_surface_limit: config.value.default_surface_limit,
     }
     const wakeWelcomeMessage = config.value.wake_welcome_message?.trim()
     if (wakeWelcomeMessage) {
@@ -313,7 +305,6 @@ async function doSave() {
     }
     const result = await saveConfig(body)
     config.value = result.config
-    modelEntries.value = Object.entries(result.config.model_mapping || {})
     upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
     message.success(`Saved ${result.changed.length} field${result.changed.length === 1 ? '' : 's'}`)
     showSaveWarnings(result.warnings)
@@ -330,7 +321,6 @@ async function clearWakeWelcomeMessage() {
   try {
     const result = await saveConfig({ clear_wake_welcome_message: true })
     config.value = result.config
-    modelEntries.value = Object.entries(result.config.model_mapping || {})
     upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
     message.success('已清空醒来欢迎词')
   } catch {
@@ -398,7 +388,6 @@ async function applyPreset(name: string | null) {
       upstream_passthrough_headers: presetHeaders,
     })
     config.value = result.config
-    modelEntries.value = Object.entries(result.config.model_mapping || {})
     upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
     showSaveWarnings(result.warnings)
     message.success(`Switched to ${name}`)
@@ -451,36 +440,62 @@ async function loadSessions() {
   }
 }
 
-async function loadColdPreview() {
-  coldPreviewLoading.value = true
+async function generateDailyColdStart() {
+  const target = dailyColdTag.value.trim()
+  if (!target) {
+    message.warning('请先填写新线程名称')
+    return
+  }
+  dailyColdLoading.value = true
   try {
     await Promise.all([loadOverview(), loadSessions()])
-    const target = (selectedColdTarget.value || '__next_request__').trim() || '__next_request__'
-    const source = selectedColdSource.value || '__auto__'
-    selectedColdTarget.value = target
-    coldPreview.value = await fetchColdStartPreview({
+    dailyColdResult.value = await fetchColdStartPreview({
       target_session_tag: target,
-      source_session_tag: source === '__auto__' ? undefined : source,
+      message_limit: config.value.max_client_messages || undefined,
       persist: true,
     })
-    if (coldPreview.value.persisted) {
-      message.success('已启用下一次冷启动接续')
+    if (dailyColdResult.value.persisted) {
+      message.success('日常冷启动已固定，可以复制请求头')
     }
   } catch {
-    coldPreview.value = null
-    message.error('Cold start preview failed')
+    dailyColdResult.value = null
+    message.error('生成日常冷启动失败')
   } finally {
-    coldPreviewLoading.value = false
+    dailyColdLoading.value = false
   }
 }
 
-function addModel() {
-  modelEntries.value.push(['', ''])
+async function generateLightColdStart() {
+  const target = lightColdTag.value.trim()
+  if (!target) {
+    message.warning('请先填写新线程名称')
+    return
+  }
+  lightColdLoading.value = true
+  try {
+    await loadSessions()
+    lightColdResult.value = await fetchColdStartPreview({
+      target_session_tag: target,
+      source_session_tag: lightColdSource.value === '__auto__' ? undefined : lightColdSource.value,
+      message_limit: lightColdLimit.value || 1,
+      persist: true,
+    })
+    if (lightColdResult.value.persisted) {
+      message.success('轻量冷启动已固定，可以复制请求头')
+    }
+  } catch {
+    lightColdResult.value = null
+    message.error('生成轻量冷启动失败')
+  } finally {
+    lightColdLoading.value = false
+  }
 }
 
-function removeModel(index: number) {
-  modelEntries.value.splice(index, 1)
+async function copyColdHeader(sessionTag: string) {
+  await navigator.clipboard.writeText(coldHeader(sessionTag))
+  message.success('请求头已复制')
 }
+
 </script>
 
 <template>
@@ -532,12 +547,6 @@ function removeModel(index: number) {
             </NFormItem>
             <NFormItem label="协议">
               <NSelect v-model:value="config.upstream_protocol" :options="protocolOptions" />
-            </NFormItem>
-            <NFormItem label="上游代理">
-              <NInput v-model:value="config.upstream_proxy" placeholder="可选，例如 http://127.0.0.1:7897" />
-            </NFormItem>
-            <NFormItem label="读取环境代理">
-              <NSwitch v-model:value="config.upstream_trust_env" />
             </NFormItem>
             <NFormItem label="OpenAI 格式缓存断点">
               <div class="switch-row">
@@ -705,97 +714,81 @@ function removeModel(index: number) {
 
       <NCard title="节奏与窗口" size="small">
         <NForm label-placement="top">
-          <div class="cfg-inline">
-            <NFormItem label="工具回环轮数">
-              <NInputNumber v-model:value="config.max_internal_tool_rounds" :min="1" style="width:100%" />
-            </NFormItem>
-            <NFormItem label="浮现数量">
-              <NInputNumber v-model:value="config.default_surface_limit" :min="1" :max="8" style="width:100%" />
-            </NFormItem>
-          </div>
+          <NFormItem label="工具回环轮数">
+            <NInputNumber v-model:value="config.max_internal_tool_rounds" :min="1" style="width:100%" />
+          </NFormItem>
           <NFormItem label="客户端上下文保留">
             <NInputNumber v-model:value="config.max_client_messages" :min="1" :max="500" style="width:100%" clearable placeholder="全部" />
           </NFormItem>
           <NFormItem label="启用冷启动注入">
             <NSwitch v-model:value="config.enable_cold_start" />
           </NFormItem>
-          <div class="cfg-inline">
-            <NFormItem label="冷启动补足总上限">
-              <NInputNumber v-model:value="config.cold_start_message_limit" :min="1" :max="500" style="width:100%" clearable placeholder="跟随客户端上下文保留" />
-            </NFormItem>
-            <NFormItem label="旧窗口沉寂多久触发（分钟）">
-              <NInputNumber v-model:value="config.cold_start_idle_minutes" :min="1" :max="10080" style="width:100%" />
-            </NFormItem>
-          </div>
+          <div class="provider-order-hint">陌生的新请求头会自动接续最新线程；已有旧线程恢复时不会自动跨线程注入。</div>
         </NForm>
-        <NForm label-placement="top" class="cold-preview-form">
-          <div class="cold-preview-grid">
-            <NFormItem label="来源线程">
-              <NSelect
-                v-model:value="selectedColdSource"
-                filterable
-                tag
-                :options="sourceSessionOptions"
-                size="small"
-                placeholder="最新老线程"
-              />
+        <div class="cold-generator">
+          <h3>日常冷启动</h3>
+          <div class="provider-order-hint">固定最新线程当前有效窗口，带入数量与“客户端上下文保留”一致。</div>
+          <NForm label-placement="top">
+            <NFormItem label="新线程名称">
+              <NInput v-model:value="dailyColdTag" placeholder="例如 7.12" />
             </NFormItem>
-            <NFormItem label="接入目标线程">
-              <NSelect
-                v-model:value="selectedColdTarget"
-                filterable
-                tag
-                :options="targetSessionOptions"
-                size="small"
-                placeholder="下一条请求的实际线程头"
-              />
-            </NFormItem>
+          </NForm>
+          <NButton size="small" type="primary" :loading="dailyColdLoading" @click="generateDailyColdStart">生成并固定</NButton>
+          <div v-if="dailyColdResult" class="cold-preview">
+            <div v-if="!dailyColdResult.would_inject" class="rev-empty">{{ dailyColdResult.skip_reason || '没有可固定的聊天记录' }}</div>
+            <template v-else>
+              <div class="header-output">
+                <code>{{ coldHeader(dailyColdResult.target_session_tag || dailyColdTag.trim()) }}</code>
+                <NButton size="tiny" @click="copyColdHeader(dailyColdResult.target_session_tag || dailyColdTag.trim())">复制</NButton>
+              </div>
+              <div class="rev-meta">
+                <span class="rev-pill">来源 {{ dailyColdResult.source_session_tag || '-' }}</span>
+                <span class="rev-pill">已固定 {{ dailyColdResult.snapshot?.source_message_count || 0 }} 条</span>
+              </div>
+            </template>
           </div>
-        </NForm>
-        <div class="rev-toolbar">
-          <NButton size="tiny" :loading="coldPreviewLoading" @click="loadColdPreview">启用冷启动接续</NButton>
-          <NButton size="tiny" @click="loadOverview">刷新统计</NButton>
         </div>
+
+        <div class="cold-generator">
+          <h3>轻量冷启动</h3>
+          <div class="provider-order-hint">为 debug 或分支线程指定来源，只固定少量聊天记录。</div>
+          <NForm label-placement="top" class="cold-preview-form">
+            <div class="cold-preview-grid">
+              <NFormItem label="新线程名称">
+                <NInput v-model:value="lightColdTag" placeholder="例如 7.12-debug" />
+              </NFormItem>
+              <NFormItem label="来源线程">
+                <NSelect v-model:value="lightColdSource" filterable :options="sourceSessionOptions" />
+              </NFormItem>
+              <NFormItem label="带入消息数">
+                <NInputNumber v-model:value="lightColdLimit" :min="1" :max="500" style="width:100%" />
+              </NFormItem>
+            </div>
+          </NForm>
+          <NButton size="small" type="primary" :loading="lightColdLoading" @click="generateLightColdStart">生成并固定</NButton>
+          <div v-if="lightColdResult" class="cold-preview">
+            <div v-if="!lightColdResult.would_inject" class="rev-empty">{{ lightColdResult.skip_reason || '没有可固定的聊天记录' }}</div>
+            <template v-else>
+              <div class="header-output">
+                <code>{{ coldHeader(lightColdResult.target_session_tag || lightColdTag.trim()) }}</code>
+                <NButton size="tiny" @click="copyColdHeader(lightColdResult.target_session_tag || lightColdTag.trim())">复制</NButton>
+              </div>
+              <div class="rev-meta">
+                <span class="rev-pill">来源 {{ lightColdResult.source_session_tag || '-' }}</span>
+                <span class="rev-pill">已固定 {{ lightColdResult.snapshot?.source_message_count || 0 }} 条</span>
+              </div>
+            </template>
+          </div>
+        </div>
+        <div class="rev-toolbar"><NButton size="tiny" @click="loadOverview">刷新统计</NButton></div>
         <div v-if="overview" class="overview-text">
           消息 {{ overview.messages_total }} 条 · 今日 {{ overview.messages_today }} 条 · 窗口 {{ overview.sessions_total }} 个 · 冷启动快照 {{ overview.cold_start_snapshots }} 条
           <br>
           最早：{{ overview.earliest_message_at || '-' }} · 最新：{{ overview.latest_message_at || '-' }}
         </div>
         <div v-else class="rev-empty">尚未加载统计</div>
-        <div v-if="coldPreview" class="cold-preview">
-          <div v-if="!coldPreview.would_inject" class="rev-empty">{{ coldPreview.skip_reason || '没有需要补足的冷启动内容' }}</div>
-          <template v-else>
-            <div class="rev-meta">
-              <span class="rev-pill">目标 {{ coldPreview.target_session_tag || '-' }}</span>
-              <span class="rev-pill">来源 {{ coldPreview.source_session_tag || '-' }}</span>
-              <span class="rev-pill">运行时自动识别已有窗口</span>
-              <span class="rev-pill">最多补 {{ coldPreview.config?.source_snapshot_limit || coldPreview.config?.effective_message_limit || 0 }} 条</span>
-              <span class="rev-pill">来源 {{ coldPreview.snapshot?.source_message_count || 0 }} 条</span>
-              <span class="rev-pill">{{ coldPreview.persisted ? '快照已冻结' : '仅预览' }}</span>
-            </div>
-            <div v-for="source in coldPreview.sources" :key="source.session_tag" class="rev-card">
-              <h4>{{ source.session_tag }} · {{ source.client_name }}</h4>
-              <div class="rev-meta">
-                <span class="rev-pill">{{ coldPreview.reason }}</span>
-                <span class="rev-pill">{{ source.snapshot_at }}</span>
-                <span v-if="coldPreview.snapshot?.id" class="rev-pill">{{ coldPreview.snapshot.id }}</span>
-              </div>
-              <div class="rev-body">{{ (source.messages || []).map((m) => `- ${m.role}: ${m.content}`).join('\n') }}</div>
-            </div>
-          </template>
-        </div>
       </NCard>
 
-      <NCard title="模型映射" size="small">
-        <NSpace vertical size="small">
-          <div v-for="(_, index) in modelEntries" :key="index" class="model-row">
-            <NInput v-model:value="modelEntries[index][0]" placeholder="Display name" style="flex:2" />
-            <NInput v-model:value="modelEntries[index][1]" placeholder="Upstream model" style="flex:3" />
-            <NButton size="tiny" @click="removeModel(index)">Remove</NButton>
-          </div>
-        </NSpace>
-        <NButton size="tiny" style="margin-top:8px" @click="addModel">Add Row</NButton>
-      </NCard>
     </div>
 
     <div class="actions">
@@ -977,6 +970,32 @@ function removeModel(index: number) {
   align-items: center;
   flex-wrap: wrap;
   margin-bottom: 10px;
+}
+
+.cold-generator {
+  border-top: 1px solid #eceff3;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.cold-generator h3 {
+  font-size: 14px;
+  margin: 0 0 6px;
+}
+
+.header-output {
+  align-items: center;
+  background: #f6f8fa;
+  border: 1px solid #d8dee4;
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  justify-content: space-between;
+  padding: 8px 10px;
+}
+
+.header-output code {
+  overflow-wrap: anywhere;
 }
 
 .cold-preview-form {

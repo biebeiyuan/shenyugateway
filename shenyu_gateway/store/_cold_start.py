@@ -104,7 +104,11 @@ class ColdStartMixin:
             conn.execute(
                 """
                 UPDATE cold_start_snapshots
-                SET injected_count = injected_count + 1
+                SET injected_count = injected_count + 1,
+                    active = CASE
+                        WHEN injected_count + 1 >= max_injections THEN 0
+                        ELSE active
+                    END
                 WHERE id = ? AND active = 1
                 """,
                 (snapshot_id,),

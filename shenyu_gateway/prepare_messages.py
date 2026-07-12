@@ -136,30 +136,22 @@ def maybe_prepare_cold_start_snapshot(
             reason=pending_next_request.get("reason") or f"manual_preview:{NEXT_REQUEST_COLD_START_TAG}",
             sources=pending_sources,
             trigger_last_active_at=session.get("last_active_at"),
-            max_injections=max(int(target_messages or 8), 1),
+            max_injections=1,
         )
         store.complete_cold_start_snapshot(pending_next_request["id"])
         return bound
 
-    reason = ""
-    since = None
-    idle_minutes = cold_start_idle_minutes(session)
-    if is_first_turn:
-        reason = "new_window"
-    elif idle_minutes >= max(cfg.cold_start_idle_minutes, 1):
-        reason = "stale_window_cross_activity"
-        since = session.get("last_active_at")
-    else:
+    if not is_first_turn:
         return None
 
     source_session = store.latest_context_source_session(
-        exclude_session_id=None if is_first_turn else session["id"],
-        since=since,
+        exclude_session_id=session["id"],
+        since=None,
     )
     sources = store.latest_session_context(
         source_session["session_tag"],
         limit_messages=target_messages,
-        since=since,
+        since=None,
     ) if source_session else []
     if not sources:
         return None
@@ -168,10 +160,10 @@ def maybe_prepare_cold_start_snapshot(
     snapshot = store.write_cold_start_snapshot(
         session_id=session["id"],
         session_tag=session["session_tag"],
-        reason=reason,
+        reason="new_window",
         sources=fixed_sources,
         trigger_last_active_at=session.get("last_active_at"),
-        max_injections=max(cfg.max_client_messages or cfg.cold_start_message_limit or 8, 1),
+        max_injections=1,
     )
     return snapshot
 

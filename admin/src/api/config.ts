@@ -309,8 +309,7 @@ export interface ColdStartPreview {
     current_message_count?: number | null
     preview_fill_count?: number
     source_snapshot_limit?: number
-    idle_minutes?: number
-    target_idle_minutes?: number | null
+    requested_message_limit?: number | null
   }
   sources: Array<{
     session_tag: string
@@ -344,6 +343,7 @@ export async function fetchColdStartPreview(params: {
   target_session_tag?: string
   source_session_tag?: string
   current_message_count?: number
+  message_limit?: number
   persist?: boolean
 } = {}): Promise<ColdStartPreview> {
   const { data } = await api.post('/api/gateway/cold-start/preview', params)

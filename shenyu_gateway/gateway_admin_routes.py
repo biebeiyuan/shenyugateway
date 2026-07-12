@@ -258,6 +258,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             target_session_tag=body.target_session_tag,
             source_session_tag=body.source_session_tag,
             current_message_count=body.current_message_count,
+            message_limit=body.message_limit,
             persist=body.persist,
         )
 
@@ -266,6 +267,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         target_session_tag: Optional[str],
         source_session_tag: Optional[str],
         current_message_count: Optional[int],
+        message_limit: Optional[int] = None,
         persist: bool,
     ):
         store = deps.require_session_store()
@@ -278,22 +280,18 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         source_tag = target_tag if same_source else ("" if auto_source else explicit_source_tag)
         target_session = None if target_is_next_request else store.get_session_by_tag(target_tag)
         exclude_session_id = None
-        since = None
         reason = "next_request" if target_is_next_request else "new_window"
-        idle_minutes = None
         skip_reason = None
         if target_session:
             exclude_session_id = target_session["id"]
-            idle_minutes = deps.cold_start_idle_minutes(target_session)
-            if idle_minutes >= max(cfg.cold_start_idle_minutes, 1):
-                since = target_session.get("last_active_at")
-                reason = "stale_window_cross_activity"
             if preview_current_message_count is None:
                 latest_windows = store.get_recent_raw_request_windows(target_session["id"], limit=1)
                 if latest_windows:
                     preview_current_message_count = int(latest_windows[0].get("message_count") or 0)
         sources = []
-        target_messages = cfg.max_client_messages or cfg.cold_start_message_limit or 8
+        target_messages = max(1, min(int(message_limit), 500)) if message_limit else (
+            cfg.max_client_messages or cfg.cold_start_message_limit or 8
+        )
         preview_fill_count = (
             max(int(target_messages) - preview_current_message_count, 0)
             if preview_current_message_count is not None
@@ -320,13 +318,13 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             elif auto_source:
                 resolved_source = store.latest_context_source_session(
                     exclude_session_id=exclude_session_id,
-                    since=since,
+                    since=None,
                 )
                 if resolved_source:
                     sources = store.latest_session_context(
                         resolved_source["session_tag"],
                         limit_messages=target_messages,
-                        since=since,
+                        since=None,
                     )
             if not sources:
                 source_label = "最新老线程" if auto_source else source_tag
@@ -344,7 +342,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 reason=f"manual_preview:{reason}",
                 sources=sources,
                 trigger_last_active_at=(target_session or {}).get("last_active_at"),
-                max_injections=max(int(target_messages or 8), 1),
+                max_injections=1,
             )
         return {
             "enabled": cfg.enable_cold_start,
@@ -364,8 +362,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 "current_message_count": preview_current_message_count,
                 "preview_fill_count": preview_fill_count,
                 "source_snapshot_limit": int(target_messages),
-                "idle_minutes": cfg.cold_start_idle_minutes,
-                "target_idle_minutes": idle_minutes,
+                "requested_message_limit": message_limit,
             },
         }
 
