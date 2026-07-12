@@ -2,8 +2,10 @@ import { api } from './http'
 
 export interface GatewayConfig {
   gateway_key: string
+  gateway_key_configured?: boolean
   upstream_url: string
   upstream_api_key: string
+  upstream_api_key_configured?: boolean
   upstream_protocol: string
   upstream_proxy?: string
   upstream_trust_env?: boolean
@@ -16,9 +18,13 @@ export interface GatewayConfig {
   upstream_passthrough_headers?: string[]
   hisense_upstream_url?: string
   hisense_api_key?: string
+  hisense_api_key_configured?: boolean
   hisense_protocol?: string
   supabase_url: string
   supabase_key: string
+  supabase_key_configured?: boolean
+  config_precedence?: string[]
+  sqlite_override_keys?: string[]
   max_client_messages: number | null
   enable_cold_start: boolean
   cold_start_message_limit: number | null
@@ -26,6 +32,7 @@ export interface GatewayConfig {
   model_mapping: Record<string, string>
   calendar_upstream_url?: string
   calendar_api_key?: string
+  calendar_api_key_configured?: boolean
   calendar_protocol?: string
   calendar_model?: string
   wake_welcome_message?: string

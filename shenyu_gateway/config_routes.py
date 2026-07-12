@@ -24,10 +24,12 @@ class ConfigRouteDeps:
 
 
 def _full_config(cfg: Any) -> dict[str, Any]:
-    return {
-        "gateway_key": cfg.gateway_key,
+    result = {
+        "gateway_key": "",
+        "gateway_key_configured": bool(cfg.gateway_key),
         "upstream_url": cfg.upstream_url,
-        "upstream_api_key": cfg.upstream_api_key,
+        "upstream_api_key": "",
+        "upstream_api_key_configured": bool(cfg.upstream_api_key),
         "upstream_protocol": cfg.upstream_protocol,
         "upstream_proxy": cfg.upstream_proxy,
         "upstream_trust_env": cfg.upstream_trust_env,
@@ -40,10 +42,12 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "upstream_extra_body": cfg.upstream_extra_body,
         "upstream_passthrough_headers": cfg.upstream_passthrough_headers,
         "hisense_upstream_url": cfg.hisense_upstream_url,
-        "hisense_api_key": cfg.hisense_api_key,
+        "hisense_api_key": "",
+        "hisense_api_key_configured": bool(cfg.hisense_api_key),
         "hisense_protocol": cfg.hisense_protocol,
         "calendar_upstream_url": cfg.calendar_upstream_url,
-        "calendar_api_key": cfg.calendar_api_key,
+        "calendar_api_key": "",
+        "calendar_api_key_configured": bool(cfg.calendar_api_key),
         "calendar_protocol": cfg.calendar_protocol,
         "calendar_model": cfg.calendar_model,
         "wake_welcome_message": cfg.wake_welcome_message,
@@ -51,7 +55,10 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
         "model_mapping": cfg.model_mapping,
         "supabase_url": cfg.supabase_url,
-        "supabase_key": cfg.supabase_key,
+        "supabase_key": "",
+        "supabase_key_configured": bool(cfg.supabase_key),
+        "config_precedence": ["defaults", ".env", "sqlite_overrides", "runtime_updates"],
+        "sqlite_override_keys": sorted(getattr(cfg, "sqlite_override_keys", set()) or []),
         "calendar_inject_day": cfg.calendar_inject_day,
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
@@ -113,6 +120,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "hisense_heartbeat_limit": cfg.hisense_heartbeat_limit,
         "hisense_notebook_limit": cfg.hisense_notebook_limit,
     }
+    return result
 
 
 def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
