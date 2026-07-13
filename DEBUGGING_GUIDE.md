@@ -182,6 +182,19 @@ Main chat flow is centered in `gateway.py`:
 7. `shenyu_gateway.upstream_adapter` converts OpenAI-compatible messages/tools to Anthropic when needed, adds cache markers, and converts responses/chunks back.
 8. Tool loop may call gateway tools, then `shenyu_gateway.response_capture` filters private `<heartbeat>` and `[mem]...[/mem]` blocks before visible output is logged or sent.
 
+For native Anthropic tool turns, the gateway temporarily preserves the upstream Thinking/redacted blocks and their opaque signatures so the next tool-result request can continue the same provider transcript. The first request's Thinking configuration and effort are pinned only for that unfinished tool turn; changing the admin effort setting affects the next new turn, not a tool turn already in progress.
+
+Pending tool context is restored only when the returned history still matches the original session, tool-call ids, visible assistant text, tool names, and arguments. If the user rolls a reply, edits the assistant text, changes tool arguments, or continues from another branch, the gateway leaves the client history unchanged and does not reattach the original hidden blocks.
+
+When Anthropic Thinking or tool continuation looks wrong, inspect one request in this order:
+
+1. `upstream_payload_summary.thinking`: proves what Thinking mode the gateway requested, not what the model returned. To confirm the exact `output_config.effort` sent for that round, temporarily enable `GATEWAY_LOG_FULL_PAYLOADS=true` and inspect `upstream_payload.output_config.effort`.
+2. `internal_tool_rounds[].anthropic_thinking`: `preserved=true` proves native Thinking/redacted blocks were captured; `signature_present` and `redacted_present` are safe boolean evidence only.
+3. `pending_gateway_tool_turns_injected`: confirms whether a matching pending transcript was restored into the continuation.
+4. `pending_gateway_tool_lineage_mismatches`: a non-zero value means the saved transcript was deliberately rejected because the returned client history no longer matched.
+
+Never treat opaque signature or redacted Thinking data as readable chain-of-thought, and never add it to request logs. A sent `thinking` parameter without `anthropic_thinking.preserved=true` usually means the request asked for Thinking but the gateway did not receive native blocks that needed preservation.
+
 Tool schemas and name dispatch live in `shenyu_gateway/tool_registry.py`; implementation methods live in `shenyu_gateway/gateway_tools.py`. If a tool is visible but behaves wrong, check `tool_registry.py` dispatch first, then the matching method in `gateway_tools.py`.
 
 For quick live triage, call `GET /api/gateway/debug` from the admin session. It returns masked config, upstream routing, tool mode, store overview, and latest request/error IDs without dumping the full prompt payload.

@@ -95,5 +95,8 @@ Do not store gateway tokens, SSH host secrets, or API keys in repo files. Ask th
 - If `tools_offered > 0` but `gateway_tools_executed = 0`, the failure happened before gateway tool execution. Check upstream, relay, payload shape, streaming, and prompt-cache compatibility first.
 - `Max retries reached` from the upstream relay usually means the relay failed before the gateway received a usable model response.
 - For OpenAI-compatible relays, `prompt_cache.protocol=openai` with `cache_control` breakpoints is a compatibility suspect if errors only appear with tools/streaming/cache together.
+- An outbound `thinking=...` field proves only that Thinking was requested. It does not prove that the upstream returned native Thinking blocks.
+- `internal_tool_rounds[].anthropic_thinking.preserved=true` proves that native Thinking or redacted Thinking blocks were captured for an unfinished Anthropic tool turn. `signature_present` and `redacted_present` are booleans only; never log or attempt to decode their opaque content.
+- Pending Anthropic tool context may be restored only when the session, tool-call ids, visible assistant content, tool names, and arguments still match. A rolled, edited, or branched reply must not recover the original hidden blocks.
 
 Read `DOCS_MAP.md` for document status and `DEBUGGING_GUIDE.md` for the full request flow and deeper triage notes.

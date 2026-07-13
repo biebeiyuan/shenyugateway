@@ -21,6 +21,18 @@
 
 默认只保留摘要、预览和计数，不在 request log 中保存完整 Messages、Upstream payload 或 Response。需要短期排查协议问题时，可以显式设置 `GATEWAY_LOG_FULL_PAYLOADS=true`；这些完整内容只存在于进程内最近 30 条日志，重启即消失，但仍可能包含敏感对话，排查结束后应关闭。
 
+## Anthropic Thinking 标签
+
+工具中间轮的 Response 标题可能显示：
+
+- `Thinking 已保留 N 块`：网关收到了 Anthropic 原生 Thinking 或 redacted Thinking 内容块，并只为尚未结束的工具续轮临时保留。
+- `signature ✓`：返回内容里带有不可读的签名字段，续轮时按原样交还上游。
+- `redacted ✓`：返回内容里包含 Anthropic 已隐藏的 Thinking 块。
+
+这些标签不是可阅读的 raw 思维链，也不表示网关能够解码隐藏内容。日志只保存块数量和真假标记；即使临时开启完整 payload，Thinking、signature 和 redacted 内容也会被脱敏。
+
+没有显示“Thinking 已保留”也不等于请求没有开启 Thinking。先去 Upstream 摘要查看发出的 `thinking`；如果还要核对这一轮的实际 `output_config.effort`，需临时开启 `GATEWAY_LOG_FULL_PAYLOADS=true` 后查看完整 Upstream payload。然后再判断上游是否真的返回了可续接的原生内容块。
+
 ## 小岛与缓存
 
 - 小岛显示的是**实际渲染并发送给模型**的星星和 Mem，不是候选列表。
