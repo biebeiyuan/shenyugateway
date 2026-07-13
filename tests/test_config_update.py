@@ -80,6 +80,9 @@ def test_aggregate_cache_usage_preserves_multi_round_reported_state():
         "write_reported": True,
         "reported": True,
         "rounds": 3,
+        "input_tokens": 10,
+        "input_reported": False,
+        "cache_read_percent": None,
     }
 
 

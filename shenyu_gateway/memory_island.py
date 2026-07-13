@@ -62,6 +62,91 @@ def _fingerprints(kind: str, items: list[dict[str, Any]]) -> dict[str, str]:
     return result
 
 
+def _log_item(kind: str, item: dict[str, Any]) -> dict[str, str]:
+    content = str(item.get("content") or "").strip()
+    if kind == "star":
+        return {
+            "id": _item_id(item),
+            "text": content,
+            "label": str(item.get("chord") or "").strip(),
+        }
+    return {
+        "id": _item_id(item),
+        "text": str(item.get("summary") or content).strip(),
+        "label": str(item.get("mem_type") or "").strip(),
+    }
+
+
+def _lane_log_content(
+    kind: str,
+    old_items: list[dict[str, Any]],
+    current_items: list[dict[str, Any]],
+) -> dict[str, Any]:
+    old_by_id = {_item_id(item): item for item in old_items if _item_id(item)}
+    current_by_id = {_item_id(item): item for item in current_items if _item_id(item)}
+    old_fingerprints = _fingerprints(kind, old_items)
+    current_fingerprints = _fingerprints(kind, current_items)
+    added_ids = set(current_by_id) - set(old_by_id)
+    removed_ids = set(old_by_id) - set(current_by_id)
+    updated_ids = {
+        item_id
+        for item_id in set(old_by_id) & set(current_by_id)
+        if old_fingerprints.get(item_id) != current_fingerprints.get(item_id)
+    }
+    return {
+        "current": [
+            {
+                **_log_item(kind, item),
+                "change": (
+                    "added"
+                    if _item_id(item) in added_ids
+                    else "updated"
+                    if _item_id(item) in updated_ids
+                    else "retained"
+                ),
+            }
+            for item in current_items
+        ],
+        "removed": [_log_item(kind, item) for item in old_items if _item_id(item) in removed_ids],
+        "updated": [
+            {
+                "id": item_id,
+                "before": _log_item(kind, old_by_id[item_id]),
+                "after": _log_item(kind, current_by_id[item_id]),
+            }
+            for item_id in current_by_id
+            if item_id in updated_ids
+        ],
+        "added_count": len(added_ids),
+        "removed_count": len(removed_ids),
+        "updated_count": len(updated_ids),
+    }
+
+
+def memory_island_log_content(
+    previous_state: dict[str, Any] | None,
+    current_state: dict[str, Any] | None,
+) -> dict[str, Any]:
+    previous_state = previous_state or {}
+    current_state = current_state or {}
+    return {
+        "version": current_state.get("version"),
+        "star_count": len(current_state.get("stars") or []),
+        "mem_count": len(current_state.get("mem_notes") or []),
+        "rendered_text": current_state.get("rendered_text") or "",
+        "stars": _lane_log_content(
+            "star",
+            list(previous_state.get("stars") or []),
+            list(current_state.get("stars") or []),
+        ),
+        "mem_notes": _lane_log_content(
+            "mem",
+            list(previous_state.get("mem_notes") or []),
+            list(current_state.get("mem_notes") or []),
+        ),
+    }
+
+
 def _overlap(old_items: list[dict[str, Any]], new_items: list[dict[str, Any]]) -> float:
     old_ids = {_item_id(item) for item in old_items if _item_id(item)}
     new_ids = {_item_id(item) for item in new_items if _item_id(item)}

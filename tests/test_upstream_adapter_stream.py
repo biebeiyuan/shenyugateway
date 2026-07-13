@@ -284,6 +284,8 @@ def test_anthropic_completion_preserves_reported_cache_usage():
             "ephemeral_5m_input_tokens": 100,
             "ephemeral_1h_input_tokens": 200,
         },
+        "uncached_input_tokens": 10,
+        "cache_input_tokens": 1010,
     }
 
 
@@ -320,9 +322,40 @@ def test_cache_usage_summary_distinguishes_reported_zero_from_unknown():
     assert reported_zero["read_reported"] is True
     assert reported_zero["write_reported"] is True
     assert reported_zero["reported"] is True
+    assert reported_zero["input_tokens"] == 0
+    assert reported_zero["input_reported"] is False
+    assert reported_zero["cache_read_percent"] is None
     assert unknown["read_reported"] is False
     assert unknown["write_reported"] is False
     assert unknown["reported"] is False
+
+
+def test_cache_usage_summary_calculates_read_share_only_with_reliable_input_total():
+    anthropic = _cache_usage_summary(
+        {
+            "prompt_tokens": 10,
+            "cache_read_input_tokens": 700,
+            "cache_creation_input_tokens": 300,
+            "cache_input_tokens": 1010,
+        }
+    )
+    openai = _cache_usage_summary(
+        {
+            "prompt_tokens": 1000,
+            "prompt_tokens_details": {"cached_tokens": 700},
+        }
+    )
+    ambiguous = _cache_usage_summary(
+        {
+            "input_tokens": 10,
+            "cache_read_input_tokens": 700,
+            "cache_creation_input_tokens": 300,
+        }
+    )
+
+    assert anthropic["cache_read_percent"] == 69.3
+    assert openai["cache_read_percent"] == 70.0
+    assert ambiguous["cache_read_percent"] is None
 
 
 def test_openai_to_anthropic_unwraps_double_encoded_tool_arguments():

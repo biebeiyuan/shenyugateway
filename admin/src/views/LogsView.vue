@@ -143,24 +143,30 @@ function tokenLabel(log: LogEntry, round?: any): string {
 function cacheLabel(log: LogEntry, round?: any): string {
   if (round) {
     const read = usageCacheRead(round.usage)
-    return read > 0 ? `⚡ ${fmtNum(read)} cached` : ''
+    const percent = usageCachePercent(round.usage)
+    return read > 0 ? `⚡ ${fmtNum(read)} cached${percent === null ? '' : ` · ${percent}%`}` : ''
   }
   const cache = log.cache_usage
   if (!cache?.hit) return ''
   const read = Number(cache.cache_read_input_tokens) || 0
-  return read > 0 ? `⚡ ${fmtNum(read)} cached` : '⚡ cached'
+  const percent = typeof cache.cache_read_percent === 'number' ? cache.cache_read_percent : null
+  const percentLabel = percent === null ? '' : ` · ${percent}%`
+  return read > 0 ? `⚡ ${fmtNum(read)} cached${percentLabel}` : '⚡ cached'
 }
 
 function cacheTitle(log: LogEntry, round?: any): string {
   if (round) {
     const read = usageCacheRead(round.usage)
-    return `供应商为这一轮上报了 ${read.toLocaleString()} cached tokens。这里只保留原始数值，不推算费用。`
+    const percent = usageCachePercent(round.usage)
+    return `供应商为这一轮上报了 ${read.toLocaleString()} cached tokens${percent === null ? '' : `，约占本轮输入的 ${percent}%`}。这是缓存读取占比，不是省钱比例。`
   }
   const cache = log.cache_usage
   if (!cache?.hit) return ''
   const read = Number(cache.cache_read_input_tokens) || 0
   const write = Number(cache.cache_creation_input_tokens) || 0
-  return `供应商上报缓存读取 ${read.toLocaleString()} tokens · 写入 ${write.toLocaleString()} tokens。这里只保留原始数值，不推算费用。`
+  const percent = typeof cache.cache_read_percent === 'number' ? cache.cache_read_percent : null
+  const percentText = percent === null ? '' : ` · 读取占本次输入 ${percent}%`
+  return `供应商上报缓存读取 ${read.toLocaleString()} tokens · 写入 ${write.toLocaleString()} tokens${percentText}。这是缓存读取占比，不是省钱比例。`
 }
 
 function roundKey(id: string, round?: any): string {
@@ -250,6 +256,16 @@ function usageCacheRead(usage: Record<string, any> | null | undefined): number {
   ) || 0
 }
 
+function usageCachePercent(usage: Record<string, any> | null | undefined): number | null {
+  const read = usageCacheRead(usage)
+  const explicitInput = Number(usage?.cache_input_tokens)
+  const input = explicitInput > 0
+    ? explicitInput
+    : Number(usage?.prompt_tokens ?? usage?.input_tokens) || 0
+  if (read <= 0 || input <= 0 || read > input) return null
+  return Math.round(read * 1000 / input) / 10
+}
+
 function decisionText(value: unknown): string {
   const key = String(value || '')
   if (key === 'retained') return '安稳地留在原位'
@@ -275,6 +291,41 @@ function islandRenderedText(detail: LogDetail): string {
   return String(detail.memory_island_content?.rendered_text || '').trim()
 }
 
+function islandItemHtml(item: any, status?: string): string {
+  const text = String(item?.text || '').trim() || '内容未记录'
+  const label = String(item?.label || '').trim()
+  const statusLabel: Record<string, string> = {
+    added: '新增',
+    updated: '更新',
+    before: '原来',
+    removed: '移除',
+  }
+  return `<div class="island-memory-item ${status ? `memory-${status}` : ''}"><div class="memory-item-top">${label ? `<span class="memory-item-label">${esc(label)}</span>` : ''}${statusLabel[status || ''] ? `<span class="memory-change-label">${statusLabel[status || '']}</span>` : ''}</div><div class="memory-item-text">${esc(text)}</div></div>`
+}
+
+function islandLaneHtml(title: string, icon: string, lane: any): string {
+  if (!lane) return ''
+  const current = Array.isArray(lane.current) ? lane.current : []
+  const removed = Array.isArray(lane.removed) ? lane.removed : []
+  const updated = Array.isArray(lane.updated) ? lane.updated : []
+  const addedCount = Number(lane.added_count) || 0
+  const removedCount = Number(lane.removed_count) || 0
+  const updatedCount = Number(lane.updated_count) || 0
+  let html = `<div class="island-lane"><div class="island-lane-head"><div class="island-lane-title"><span>${icon}</span>${esc(title)}</div><div class="island-lane-count">现在 ${current.length} · <b class="count-added">+${addedCount}</b> <b class="count-updated">~${updatedCount}</b> <b class="count-removed">−${removedCount}</b></div></div>`
+  html += '<div class="island-current-title">现在岛上是这些</div>'
+  html += current.length
+    ? `<div class="island-memory-list">${current.map((item: any) => islandItemHtml(item, item.change === 'retained' ? '' : item.change)).join('')}</div>`
+    : '<div class="empty-soft">现在这里是空的。</div>'
+  if (updated.length) {
+    html += `<div class="island-change-group"><div class="island-change-title change-updated">这次更新</div>${updated.map((item: any) => `<div class="memory-update-pair">${islandItemHtml(item.before, 'before')}<span class="memory-update-arrow">→</span>${islandItemHtml(item.after, 'updated')}</div>`).join('')}</div>`
+  }
+  if (removed.length) {
+    html += `<div class="island-change-group"><div class="island-change-title change-removed">这次离开小岛</div><div class="island-memory-list">${removed.map((item: any) => islandItemHtml(item, 'removed')).join('')}</div></div>`
+  }
+  html += '</div>'
+  return html
+}
+
 function renderOverview(detail: LogDetail): string {
   const island = detail.memory_island || {}
   const content = detail.memory_island_content
@@ -295,8 +346,15 @@ function renderOverview(detail: LogDetail): string {
   html += `<div class="soft-card"><div class="soft-label">这座小岛</div><div class="soft-value">${content?.star_count ?? star.chosen_count ?? 0} 颗星 · ${content?.mem_count ?? mem.chosen_count ?? 0} 条 Mem</div><div class="soft-note">${esc(content?.version || detail.memory_island_version || '版本未记录')}</div></div>`
   html += '</div>'
 
+  if (content?.stars || content?.mem_notes) {
+    html += '<div class="island-section"><div class="island-section-title">现在的小岛，以及这次变了什么</div><div class="island-lanes">'
+    html += islandLaneHtml('星星', '✦', content.stars)
+    html += islandLaneHtml('Mem', '▤', content.mem_notes)
+    html += '</div></div>'
+  }
+
   const rendered = islandRenderedText(detail)
-  html += '<div class="island-section"><div class="island-section-title">这次真正送过去的小岛</div>'
+  html += `<div class="island-section"><div class="island-section-title">${content?.stars || content?.mem_notes ? '送给模型的完整原文' : '这次真正送过去的小岛'}</div>`
   html += rendered
     ? `<div class="island-content">${esc(rendered)}</div>`
     : '<div class="empty-soft">这条旧日志没有单独保存小岛正文，可以去 System 里看完整上下文。</div>'
@@ -307,7 +365,9 @@ function renderOverview(detail: LogDetail): string {
     html += '<div class="empty-soft">这次没有启用 prompt cache。</div>'
   } else if (cache?.reported) {
     html += `<div class="cache-raw"><span>读取 ${Number(cache.cache_read_input_tokens || 0).toLocaleString()}</span><span>写入 ${Number(cache.cache_creation_input_tokens || 0).toLocaleString()}</span><span>${cache.rounds || 1} 轮</span></div>`
-    html += '<div class="soft-footnote">这些是供应商原样返回的 token 数。它们可以帮助对照，但这里不再猜测缓存比例或实际账单。</div>'
+    const percent = typeof cache.cache_read_percent === 'number' ? cache.cache_read_percent : null
+    if (percent !== null) html += `<div class="cache-read-share"><strong>${percent}%</strong><span>供应商上报的缓存读取占本次输入比例</span></div>`
+    html += '<div class="soft-footnote">比例只描述输入 token 里有多少来自缓存读取，不等于费用节省比例。</div>'
   } else {
     html += '<div class="empty-soft">这次 API usage 没有提供可识别的缓存读写字段，因此缓存状态未知；不能据此判断供应商内部是否命中缓存。</div>'
   }
@@ -927,8 +987,29 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 .island-section { margin-top:10px; padding:12px; border:1px solid #eee9ec; border-radius:11px; background:#fff; }
 .island-section-title { margin-bottom:8px; color:#725e69; font-family:Georgia,'Noto Serif SC',serif; font-size:12px; font-weight:700; }
 .island-content { max-height:380px; overflow-y:auto; padding:12px 13px; border-radius:8px; color:#51484d; background:#fcfaf8; box-shadow:inset 0 0 0 1px #f0ebe6; font-family:'Noto Serif SC',Georgia,serif; font-size:11px; line-height:1.75; white-space:pre-wrap; word-break:break-word; }
+.island-lanes { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:10px; }
+.island-lane { min-width:0; padding:12px; border:1px solid #eee7eb; border-radius:10px; background:#fffdfd; }
+.island-lane-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+.island-lane-title { display:flex; align-items:center; gap:6px; color:#5e4d56; font-family:Georgia,'Noto Serif SC',serif; font-size:13px; font-weight:700; }
+.island-lane-count { color:#9a8e94; font-size:9px; white-space:nowrap; }
+.count-added { color:#2f8a58; }.count-updated { color:#9b6b9e; }.count-removed { color:#bc6268; }
+.island-current-title,.island-change-title { margin:11px 0 6px; color:#a18e98; font-size:9px; font-weight:700; letter-spacing:.04em; }
+.change-updated { color:#946c99; }.change-removed { color:#b86b70; }
+.island-memory-list { display:grid; gap:6px; }
+.island-memory-item { padding:8px 9px; border:1px solid #eee9eb; border-radius:8px; background:#fff; }
+.memory-item-top { display:flex; justify-content:space-between; gap:6px; min-height:14px; }
+.memory-item-label { color:#9a7e8c; font-size:9px; font-weight:700; }
+.memory-change-label { font-size:9px; font-weight:700; }
+.memory-item-text { color:#51474c; font-family:'Noto Serif SC',Georgia,serif; font-size:10px; line-height:1.6; word-break:break-word; }
+.memory-added { border-color:#cfe8d7; background:#f4fbf6; }.memory-added .memory-change-label { color:#2e8b57; }
+.memory-updated { border-color:#e4d4e7; background:#fbf6fc; }.memory-updated .memory-change-label { color:#94659a; }
+.memory-before { border-color:#e6e0e3; background:#faf8f9; opacity:.86; }.memory-before .memory-change-label { color:#907f87; }
+.memory-removed { border-color:#eed5d7; background:#fff7f7; opacity:.82; }.memory-removed .memory-change-label { color:#b7555d; }.memory-removed .memory-item-text { color:#9d7074; text-decoration:line-through; }
+.memory-update-pair { display:grid; grid-template-columns:minmax(0,1fr) auto minmax(0,1fr); align-items:center; gap:6px; }
+.memory-update-arrow { color:#b69aaa; font-size:12px; }
 .cache-raw { display:flex; flex-wrap:wrap; gap:7px; }
 .cache-raw span { padding:5px 9px; border-radius:999px; color:#49705a; background:#edf7f0; font-size:10px; }
+.cache-read-share { display:flex; align-items:baseline; gap:8px; margin-top:8px; color:#47725a; }.cache-read-share strong { font-size:18px; }.cache-read-share span { font-size:10px; }
 .empty-soft,.muted { color:#a1999e; font-size:11px; line-height:1.65; }
 .story-round { position:relative; padding:14px; border-radius:12px; margin-bottom:10px; overflow:hidden; }
 .story-round::before { content:''; position:absolute; inset:0 auto 0 0; width:4px; }

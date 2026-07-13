@@ -11,7 +11,7 @@ from .context_layers import (
 )
 from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
-from .memory_island import resolve_memory_island
+from .memory_island import memory_island_log_content, resolve_memory_island
 from .request_logs import _mark_request_log_phase
 from .runtime import logger
 from .stars import StarService
@@ -263,6 +263,10 @@ class ContextBuilder:
             island_meta["mem_recall_ok"] = bool(notes_result.get("ok"))
             package["memory_island_state"] = island_state
             package["memory_island_decision"] = island_meta
+            package["memory_island_log_content"] = memory_island_log_content(
+                previous_island_state,
+                island_state,
+            )
             package["stars"] = island_state.get("stars") or []
             package["mem_notes"] = island_state.get("mem_notes") or []
             if entering["stars"]:

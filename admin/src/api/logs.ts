@@ -9,6 +9,29 @@ export interface CacheUsage {
   write_reported?: boolean
   reported?: boolean
   rounds?: number
+  input_tokens?: number
+  input_reported?: boolean
+  cache_read_percent?: number | null
+}
+
+export interface MemoryIslandItem {
+  id?: string
+  text?: string
+  label?: string
+  change?: 'retained' | 'added' | 'updated'
+}
+
+export interface MemoryIslandLane {
+  current?: MemoryIslandItem[]
+  removed?: MemoryIslandItem[]
+  updated?: Array<{
+    id?: string
+    before?: MemoryIslandItem
+    after?: MemoryIslandItem
+  }>
+  added_count?: number
+  removed_count?: number
+  updated_count?: number
 }
 
 export interface PromptCache {
@@ -106,6 +129,8 @@ export interface LogDetail extends LogEntry {
     star_count?: number
     mem_count?: number
     rendered_text?: string
+    stars?: MemoryIslandLane
+    mem_notes?: MemoryIslandLane
   } | null
   internal_tool_rounds?: ToolRoundEntry[] | null
 }

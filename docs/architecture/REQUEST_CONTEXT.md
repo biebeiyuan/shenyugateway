@@ -68,7 +68,7 @@ or the normalized gateway log field:
 cache_usage.cache_read_input_tokens > 0
 ```
 
-`prompt_cache.enabled` only means the gateway inserted configured breakpoints. A missing cache usage field is provider unknown, not proof of a cache miss. `cache_usage` aggregates provider-reported read/write values and must not be used to infer an exact cross-provider hit rate or bill savings.
+`prompt_cache.enabled` only means the gateway inserted configured breakpoints. A missing cache usage field is provider unknown, not proof of a cache miss. `cache_usage` aggregates provider-reported read/write values. When every round also exposes a reliable total input denominator, `cache_read_percent` records the token-weighted share of input served by cache reads. It is not a cross-request hit rate and must not be interpreted as bill savings.
 
 ## Streaming And Tool Calls
 

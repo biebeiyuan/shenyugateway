@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from shenyu_gateway.memory_island import resolve_memory_island
+from shenyu_gateway.memory_island import memory_island_log_content, resolve_memory_island
 
 
 def _star(
@@ -98,3 +98,28 @@ def test_memory_island_rewrites_when_existing_item_content_changes():
     assert rewritten["stars"][0]["content"] == "new"
     assert entering["stars"] == []
     assert meta["star"]["reason"] == "content_changed"
+
+
+def test_memory_island_log_content_treats_stars_and_mem_notes_symmetrically():
+    previous, _entering, _meta = resolve_memory_island(
+        None,
+        [_star("s-old", "old star"), _star("s-update", "before")],
+        [_mem("m-old", "old mem"), _mem("m-update", "before memo")],
+    )
+    current, _entering, _meta = resolve_memory_island(
+        previous,
+        [_star("s-update", "after"), _star("s-new", "new star", force_island_rewrite=True)],
+        [_mem("m-update", "after memo"), _mem("m-new", "new mem", mode="entity")],
+        force=True,
+    )
+
+    content = memory_island_log_content(previous, current)
+
+    for lane_name in ("stars", "mem_notes"):
+        lane = content[lane_name]
+        assert lane["added_count"] == 1
+        assert lane["removed_count"] == 1
+        assert lane["updated_count"] == 1
+        assert [item["change"] for item in lane["current"]] == ["updated", "added"]
+        assert len(lane["removed"]) == 1
+        assert len(lane["updated"]) == 1

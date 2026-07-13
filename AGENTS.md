@@ -19,6 +19,8 @@
 - Clearly separate facts proven by logs or code, likely explanations, and items that still need verification. Do not present an upstream guess as a gateway fact.
 - Prefer provider-independent behavior and standard protocol semantics. Do not permanently specialize core logic around one relay's unusual reporting without explicit agreement.
 - Treat wording, layout, and daily readability of the admin UI and logs as product behavior. The owner uses these views directly; engineering-only labels are not automatically useful.
+- In user-facing cache logs, distinguish provider-reported cache-read coverage from cross-request hit rate and bill savings. Show a percentage only when its input-token denominator is reliable, and label the meaning plainly.
+- In Memory Island logs, Stars and Mem are peer lanes. When showing current contents or changes, apply the same current/added/updated/removed semantics to both; do not make one lane less inspectable than the other.
 - If a command, dependency, environment detail, missing document, or repeated manual step makes work slower or less reliable, tell the owner promptly and suggest a concrete improvement. Improving the agent workflow is part of maintaining the project.
 - Before pushing or handing off a meaningful change, consider whether `README.md`, `DESIGN.md`, `DEBUGGING_GUIDE.md`, `LOGS_GUIDE.md`, or `DOCS_MAP.md` must be updated. Update only documentation whose current truth changed; do not create a new design document by default.
 - Preserve unrelated working-tree changes. Never stage or commit the whole tree without reviewing the exact diff.

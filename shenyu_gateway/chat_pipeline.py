@@ -242,12 +242,15 @@ class ChatPipeline:
             "memory_island_version": (
                 island_state.get("version")
             ),
-            "memory_island_content": {
-                "version": island_state.get("version"),
-                "star_count": len(island_state.get("stars") or []),
-                "mem_count": len(island_state.get("mem_notes") or []),
-                "rendered_text": island_state.get("rendered_text") or "",
-            } if retain_payloads else None,
+            "memory_island_content": (
+                (meta.get("package") or {}).get("memory_island_log_content")
+                or {
+                    "version": island_state.get("version"),
+                    "star_count": len(island_state.get("stars") or []),
+                    "mem_count": len(island_state.get("mem_notes") or []),
+                    "rendered_text": island_state.get("rendered_text") or "",
+                }
+            ) if retain_payloads else None,
             "cold_start": {
                 "injected": bool(meta.get("cold_start_snapshot")),
                 "snapshot_id": (meta.get("cold_start_snapshot") or {}).get("id"),

@@ -364,6 +364,19 @@ def _cache_usage_summary(usage: Optional[dict]) -> dict:
         or sum(int(value or 0) for value in creation.values())
         or 0
     )
+    explicit_input_tokens = _usage_int(usage.get("cache_input_tokens"))
+    if "cache_input_tokens" in usage:
+        input_tokens = explicit_input_tokens
+        input_reported = True
+    elif "prompt_tokens" in usage:
+        input_tokens = _usage_int(usage.get("prompt_tokens"))
+        input_reported = True
+    elif "cached_tokens" in input_details:
+        input_tokens = _usage_int(usage.get("input_tokens"))
+        input_reported = "input_tokens" in usage
+    else:
+        input_tokens = _usage_int(usage.get("input_tokens"))
+        input_reported = not read_reported and not write_reported and "input_tokens" in usage
     return {
         "cache_read_input_tokens": read_tokens,
         "cache_creation_input_tokens": write_tokens,
@@ -373,6 +386,13 @@ def _cache_usage_summary(usage: Optional[dict]) -> dict:
         "read_reported": read_reported,
         "write_reported": write_reported,
         "reported": read_reported or write_reported,
+        "input_tokens": input_tokens,
+        "input_reported": input_reported,
+        "cache_read_percent": (
+            round(read_tokens * 100 / input_tokens, 1)
+            if input_tokens > 0 and read_tokens <= input_tokens
+            else None
+        ),
     }
 
 
@@ -421,6 +441,11 @@ def _anthropic_usage_to_openai(usage: Optional[dict]) -> dict:
             str(key): _usage_int(value)
             for key, value in usage["cache_creation"].items()
         }
+    if "cache_read_input_tokens" in usage or "cache_creation_input_tokens" in usage:
+        cache_read_tokens = _usage_int(usage.get("cache_read_input_tokens"))
+        cache_creation_tokens = _usage_int(usage.get("cache_creation_input_tokens"))
+        result["uncached_input_tokens"] = prompt_tokens
+        result["cache_input_tokens"] = prompt_tokens + cache_read_tokens + cache_creation_tokens
     return result
 
 
