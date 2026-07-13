@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from typing import Any, AsyncIterator, Optional
 from urllib.parse import urlsplit
 
@@ -38,6 +40,68 @@ _DNS_ERROR_MARKERS = (
     "could not resolve",
     "无法解析",
 )
+
+
+def _cache_fingerprint_value(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: _cache_fingerprint_value(item)
+            for key, item in value.items()
+            if key != "cache_control" and not str(key).startswith("_shenyu")
+        }
+    if isinstance(value, list):
+        return [_cache_fingerprint_value(item) for item in value]
+    return value
+
+
+def _cache_prefix_sha256(value: Any) -> str:
+    canonical = json.dumps(
+        _cache_fingerprint_value(value),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
+
+
+def _cache_prefix_fingerprints(payload: dict, cache_paths: list[str], protocol: str) -> list[dict[str, str]]:
+    tools = payload.get("tools") or []
+    system = payload.get("system") or []
+    messages = payload.get("messages") or []
+    fingerprints: list[dict[str, str]] = []
+    for path in cache_paths:
+        if protocol == "anthropic" and path == "system.end":
+            marked_index = next(
+                (
+                    index
+                    for index, block in enumerate(system if isinstance(system, list) else [])
+                    if isinstance(block, dict) and block.get("cache_control")
+                ),
+                -1,
+            )
+            if marked_index >= 0:
+                prefix = {"tools": tools, "system": system[: marked_index + 1]}
+                fingerprints.append({"path": path, "sha256": _cache_prefix_sha256(prefix)})
+            continue
+
+        match = re.match(r"messages\[(\d+)\](?:\.[^.]+)?(?:\.content\[(\d+)\])?$", path)
+        if not match:
+            continue
+        message_index = int(match.group(1))
+        if message_index >= len(messages):
+            continue
+        prefix_messages = list(messages[:message_index])
+        message = messages[message_index]
+        block_index = int(match.group(2)) if match.group(2) is not None else None
+        if block_index is not None and isinstance(message, dict) and isinstance(message.get("content"), list):
+            message = {**message, "content": message["content"][: block_index + 1]}
+        prefix_messages.append(message)
+        prefix: dict[str, Any] = {"tools": tools}
+        if protocol == "anthropic":
+            prefix["system"] = system
+        prefix["messages"] = prefix_messages
+        fingerprints.append({"path": path, "sha256": _cache_prefix_sha256(prefix)})
+    return fingerprints
 
 
 def validate_http_url(field_name: str, value: Any, *, allow_empty: bool = True) -> str:
@@ -464,6 +528,7 @@ async def build_upstream_request(
         headers.update(forwarded_client_headers(request, cfg))
         cache_meta["enabled"] = bool(cache_paths)
         cache_meta["breakpoints"] = cache_paths
+        cache_meta["prefix_fingerprints"] = _cache_prefix_fingerprints(payload, cache_paths, proto)
         cache_meta["note"] = (
             "cache_control breakpoints added to configured Anthropic layer blocks."
             if cache_enabled
@@ -497,6 +562,7 @@ async def build_upstream_request(
     if cache_tools:
         payload["tools"] = cache_tools
     apply_upstream_extra_body(payload, cfg)
+    cache_meta["prefix_fingerprints"] = _cache_prefix_fingerprints(payload, cache_meta["breakpoints"], proto)
     headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
     headers.update(forwarded_client_headers(request, cfg))
     return payload, headers, model_name, cache_meta, upstream

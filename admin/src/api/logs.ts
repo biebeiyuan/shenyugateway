@@ -39,6 +39,7 @@ export interface PromptCache {
   protocol?: string | null
   ttl?: string | null
   breakpoints?: string[]
+  prefix_fingerprints?: Array<{ path?: string, sha256?: string }>
 }
 
 export interface LogEntry {

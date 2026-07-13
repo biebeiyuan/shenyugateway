@@ -223,6 +223,15 @@ class ChatPipeline:
         system_additions = "\n\n---\n\n".join(sys_parts)
         retain_payloads = bool(log_entry.get("request_payloads_retained"))
         island_state = (meta.get("package") or {}).get("memory_island_state") or {}
+        island_log_content = dict(
+            (meta.get("package") or {}).get("memory_island_log_content")
+            or {
+                "version": island_state.get("version"),
+                "star_count": len(island_state.get("stars") or []),
+                "mem_count": len(island_state.get("mem_notes") or []),
+            }
+        )
+        island_log_content["rendered_text"] = island_state.get("rendered_text") or "" if retain_payloads else ""
         upstream_model = self.mapped_model_name(body.model)
         log_entry.update({
             "stage": "prepared",
@@ -242,15 +251,7 @@ class ChatPipeline:
             "memory_island_version": (
                 island_state.get("version")
             ),
-            "memory_island_content": (
-                (meta.get("package") or {}).get("memory_island_log_content")
-                or {
-                    "version": island_state.get("version"),
-                    "star_count": len(island_state.get("stars") or []),
-                    "mem_count": len(island_state.get("mem_notes") or []),
-                    "rendered_text": island_state.get("rendered_text") or "",
-                }
-            ) if retain_payloads else None,
+            "memory_island_content": island_log_content,
             "cold_start": {
                 "injected": bool(meta.get("cold_start_snapshot")),
                 "snapshot_id": (meta.get("cold_start_snapshot") or {}).get("id"),

@@ -67,12 +67,12 @@ def _log_item(kind: str, item: dict[str, Any]) -> dict[str, str]:
     if kind == "star":
         return {
             "id": _item_id(item),
-            "text": content,
+            "text": shorten(content, 220),
             "label": str(item.get("chord") or "").strip(),
         }
     return {
         "id": _item_id(item),
-        "text": str(item.get("summary") or content).strip(),
+        "text": shorten(str(item.get("summary") or content).strip(), 180),
         "label": str(item.get("mem_type") or "").strip(),
     }
 

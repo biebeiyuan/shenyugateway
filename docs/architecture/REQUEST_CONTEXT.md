@@ -48,6 +48,8 @@ The concrete JSON paths differ between Anthropic and OpenAI-compatible payloads,
 
 Use `python scripts\vps_gateway_logs.py cache` for a content-free timeline of cache hits, request gaps, configured TTLs, image retention, epoch resets, and memory-island rewrites. It defaults to the local `vps` SSH alias on Windows and automatically follows Coolify container-name changes after a deployment.
 
+Each logged breakpoint also carries a truncated SHA-256 fingerprint of the exact cacheable prefix after removing `cache_control` metadata. The fingerprint contains no recoverable message text. Identical path/fingerprint pairs across adjacent requests prove that the gateway sent the same prefix; a provider-reported miss in that case points toward upstream cache retention or routing rather than a gateway boundary move.
+
 `MAX_CLIENT_MESSAGES` is the base window size `L`. The overflow block is approximately 20% of `L`, rounded to a multiple of four and clamped to 20–40 messages. The window grows to high-water `H = L + overflow`, then trims once at a complete human/tool turn boundary back toward `L`. Between trims, the retained history start and memory-island anchor remain fixed. Active client tool continuations defer a high-water trim so a tool call cannot be separated from its result. Changing `MAX_CLIENT_MESSAGES`, rebuilding a branch, or starting a new window creates a new context epoch. Cold-start bridge history uses the same effective window size.
 
 Window and island decisions are written without message content to SQLite. Inspect them with:
@@ -55,6 +57,8 @@ Window and island decisions are written without message content to SQLite. Inspe
 ```bash
 python scripts/context_window_observer.py --db data/shenyu_gateway.db
 ```
+
+The in-memory admin request log keeps a bounded display snapshot of the Memory Island selected for each request so Stars and Mem changes remain inspectable without enabling full payload retention. Star text is capped at 220 characters and Mem text at 180 characters per item. This snapshot follows the existing recent-log capacity and disappears on process restart; SQLite window/island decision records remain content-free.
 
 Real cache reporting still depends on the upstream or OpenAI-compatible relay honoring and reporting `cache_control`. A positive value in either field is evidence of a provider-reported read:
 

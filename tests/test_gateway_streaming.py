@@ -63,7 +63,7 @@ from shenyu_gateway.upstream_adapter import (
     _completion_to_stream_events,
     _openai_to_anthropic,
 )
-from shenyu_gateway.upstream_client import _cache_tail_guard_user_turns
+from shenyu_gateway.upstream_client import _cache_prefix_fingerprints, _cache_tail_guard_user_turns
 
 
 class _FakeStore:
@@ -87,6 +87,26 @@ def test_full_request_log_payloads_are_opt_in(monkeypatch):
     monkeypatch.setenv("GATEWAY_LOG_FULL_PAYLOADS", "false")
     assert _retain_request_log_payloads() is False
 
+
+def test_cache_prefix_fingerprints_ignore_cache_control_metadata():
+    payload = {
+        "tools": [{"name": "tool"}],
+        "system": [{"type": "text", "text": "stable", "cache_control": {"type": "ephemeral"}}],
+        "messages": [
+            {
+                "role": "user",
+                "content": [{"type": "text", "text": "hello", "cache_control": {"type": "ephemeral"}}],
+            }
+        ],
+    }
+
+    first = _cache_prefix_fingerprints(payload, ["system.end", "messages[0].content[0]"], "anthropic")
+    payload["system"][0]["cache_control"]["ttl"] = "1h"
+    payload["messages"][0]["content"][0]["cache_control"]["ttl"] = "1h"
+    second = _cache_prefix_fingerprints(payload, ["system.end", "messages[0].content[0]"], "anthropic")
+
+    assert first == second
+    assert [item["path"] for item in first] == ["system.end", "messages[0].content[0]"]
 
 def _fake_request(headers: dict[str, str] | None = None) -> Request:
     raw_headers = [
@@ -933,6 +953,7 @@ def test_build_upstream_request_passes_attachment_tail_guard(monkeypatch, protoc
 
     assert cache_meta["tail_guard_user_turns"] == 3
     assert any("stable_tail" in path for path in cache_meta["breakpoints"])
+    assert len(cache_meta["prefix_fingerprints"]) == len(cache_meta["breakpoints"])
 
 
 def test_build_upstream_request_omits_openai_cache_control_when_disabled(monkeypatch):

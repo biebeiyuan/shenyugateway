@@ -123,3 +123,16 @@ def test_memory_island_log_content_treats_stars_and_mem_notes_symmetrically():
         assert [item["change"] for item in lane["current"]] == ["updated", "added"]
         assert len(lane["removed"]) == 1
         assert len(lane["updated"]) == 1
+
+
+def test_memory_island_log_content_bounds_display_text():
+    state, _entering, _meta = resolve_memory_island(
+        None,
+        [_star("s-long", "s" * 400)],
+        [_mem("m-long", "m" * 400)],
+    )
+
+    content = memory_island_log_content(None, state)
+
+    assert len(content["stars"]["current"][0]["text"]) <= 220
+    assert len(content["mem_notes"]["current"][0]["text"]) <= 180

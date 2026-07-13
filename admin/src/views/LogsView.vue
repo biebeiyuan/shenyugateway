@@ -354,11 +354,13 @@ function renderOverview(detail: LogDetail): string {
   }
 
   const rendered = islandRenderedText(detail)
-  html += `<div class="island-section"><div class="island-section-title">${content?.stars || content?.mem_notes ? '送给模型的完整原文' : '这次真正送过去的小岛'}</div>`
-  html += rendered
-    ? `<div class="island-content">${esc(rendered)}</div>`
-    : '<div class="empty-soft">这条旧日志没有单独保存小岛正文，可以去 System 里看完整上下文。</div>'
-  html += '</div>'
+  if (rendered || (!content?.stars && !content?.mem_notes)) {
+    html += `<div class="island-section"><div class="island-section-title">${content?.stars || content?.mem_notes ? '送给模型的完整原文' : '这次真正送过去的小岛'}</div>`
+    html += rendered
+      ? `<div class="island-content">${esc(rendered)}</div>`
+      : '<div class="empty-soft">这条旧日志没有单独保存小岛正文，可以去 System 里看完整上下文。</div>'
+    html += '</div>'
+  }
 
   html += '<div class="island-section"><div class="island-section-title">缓存留下的原始回声</div>'
   if (!detail.prompt_cache?.enabled) {

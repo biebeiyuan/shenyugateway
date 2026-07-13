@@ -114,6 +114,7 @@ def test_cache_report_identifies_ttl_and_relay_anomalies(capsys):
                     "ttl": "5m",
                     "breakpoints": ["system.end"],
                     "tail_guard_user_turns": 3,
+                    "prefix_fingerprints": [{"path": "system.end", "sha256": "same"}],
                 },
                 "cache_usage": {
                     "cache_read_input_tokens": 1000,
@@ -136,6 +137,7 @@ def test_cache_report_identifies_ttl_and_relay_anomalies(capsys):
                     "protocol": "anthropic",
                     "ttl": "5m",
                     "breakpoints": ["system.end"],
+                    "prefix_fingerprints": [{"path": "system.end", "sha256": "same"}],
                 },
                 "cache_usage": {
                     "cache_read_input_tokens": 0,
@@ -177,12 +179,15 @@ def test_cache_report_identifies_ttl_and_relay_anomalies(capsys):
     assert report["summary"]["hits_after_ttl"] == 1
     assert report["summary"]["misses_without_reported_write"] == 1
     assert report["summary"]["island_rewrites"] == 1
+    assert report["summary"]["misses_with_unchanged_prefix"] == 1
 
     logs._print_cache_report(report)
     output = capsys.readouterr().out
     assert "cache=MISS" in output
     assert "tail_guard=3" in output
     assert "attachments=4/1" in output
+    assert "cache_prefixes=system.end:same" in output
+    assert "identical cache-prefix fingerprint" in output
     assert "relay/automatic caching is likely involved" in output
 
 

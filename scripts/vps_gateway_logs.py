@@ -446,6 +446,7 @@ def _build_cache_report(logs: list[dict[str, Any]], session_tag: str = "") -> di
 
     rows: list[dict[str, Any]] = []
     previous_at: datetime | None = None
+    previous_fingerprints: dict[str, str] = {}
     for item in selected:
         at = _parse_timestamp(item.get("timestamp"))
         gap_seconds = None
@@ -470,6 +471,21 @@ def _build_cache_report(logs: list[dict[str, Any]], session_tag: str = "") -> di
         read_tokens = int(cache_usage.get("cache_read_input_tokens") or 0)
         write_tokens = int(cache_usage.get("cache_creation_input_tokens") or 0)
         breakpoints = prompt_cache.get("breakpoints") if isinstance(prompt_cache.get("breakpoints"), list) else []
+        fingerprint_items = (
+            prompt_cache.get("prefix_fingerprints")
+            if isinstance(prompt_cache.get("prefix_fingerprints"), list)
+            else []
+        )
+        prefix_fingerprints = {
+            str(entry.get("path")): str(entry.get("sha256"))
+            for entry in fingerprint_items
+            if isinstance(entry, dict) and entry.get("path") and entry.get("sha256")
+        }
+        unchanged_prefixes = sorted(
+            path
+            for path, sha256 in prefix_fingerprints.items()
+            if previous_fingerprints.get(path) == sha256
+        )
         attempted = bool(prompt_cache.get("enabled") and breakpoints)
         ttl = str(prompt_cache.get("ttl") or "default")
         ttl_seconds = _cache_ttl_seconds(ttl)
@@ -488,6 +504,8 @@ def _build_cache_report(logs: list[dict[str, Any]], session_tag: str = "") -> di
                 "ttl": ttl,
                 "ttl_seconds": ttl_seconds,
                 "breakpoints": breakpoints,
+                "prefix_fingerprints": prefix_fingerprints,
+                "unchanged_prefixes": unchanged_prefixes,
                 "tail_guard_user_turns": int(prompt_cache.get("tail_guard_user_turns") or 0),
                 "cache_attempted": attempted,
                 "cache_hit": hit,
@@ -517,6 +535,7 @@ def _build_cache_report(logs: list[dict[str, Any]], session_tag: str = "") -> di
                 "mem_overlap": mem.get("overlap"),
             }
         )
+        previous_fingerprints = prefix_fingerprints
 
     misses = [row for row in rows if row["cache_miss"]]
     hits = [row for row in rows if row["cache_hit"]]
@@ -535,6 +554,9 @@ def _build_cache_report(logs: list[dict[str, Any]], session_tag: str = "") -> di
         ),
         "island_rewrites": sum(1 for row in rows if row["island_changed"]),
         "epoch_resets": sum(1 for row in rows if row["epoch_reset"]),
+        "misses_with_unchanged_prefix": sum(
+            1 for row in misses if row.get("unchanged_prefixes")
+        ),
         "branch_resets": sum(
             1 for row in rows if row["epoch_reset_reason"] == "history_branch"
         ),
@@ -559,6 +581,14 @@ def _print_cache_report(report: dict[str, Any]) -> None:
             f"cache={cache_status} read={row.get('cache_read_input_tokens')} "
             f"write={row.get('cache_creation_input_tokens')} ttl={row.get('ttl')}"
         )
+        if row.get("prefix_fingerprints"):
+            print(
+                "  cache_prefixes="
+                + " ".join(
+                    f"{path}:{sha256[:8]}"
+                    for path, sha256 in row["prefix_fingerprints"].items()
+                )
+            )
         print(
             "  "
             + " ".join(
@@ -607,6 +637,10 @@ def _print_cache_report(report: dict[str, Any]) -> None:
     if summary.get("misses_without_reported_write"):
         findings.append(
             f"{summary['misses_without_reported_write']} miss(es) reported no cache creation tokens; the relay may hide write metadata."
+        )
+    if summary.get("misses_with_unchanged_prefix"):
+        findings.append(
+            f"{summary['misses_with_unchanged_prefix']} miss(es) kept at least one identical cache-prefix fingerprint from the previous request; upstream cache routing or retention is suspect."
         )
     if findings:
         print("analysis:")
@@ -780,6 +814,16 @@ def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
                 "  prompt_cache: "
                 + f"protocol={prompt_cache.get('protocol')} ttl={prompt_cache.get('ttl') or 'default'} "
                 + f"breakpoints={', '.join(map(str, breakpoints))}"
+            )
+        fingerprints = prompt_cache.get("prefix_fingerprints") or []
+        if fingerprints:
+            print(
+                "  cache_prefixes: "
+                + ", ".join(
+                    f"{item.get('path')}={item.get('sha256')}"
+                    for item in fingerprints
+                    if isinstance(item, dict)
+                )
             )
 
     names = _tool_names(log.get("tool_names_all") or log.get("tool_names"))
