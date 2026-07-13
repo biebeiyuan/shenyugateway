@@ -19,7 +19,9 @@ python scripts\vps_gateway_logs.py cache
 python scripts\vps_gateway_logs.py cache --session 6.20 --limit 12
 ```
 
-The report flags gaps longer than the declared TTL, long-gap hits that suggest relay-side automatic caching, island rewrites, history-branch resets, attachment/image retention, the active tail user-turn guard, and cache misses where the relay omitted cache-creation usage.
+The report flags gaps longer than the declared TTL, long-gap hits that suggest relay-side automatic caching, island rewrites, history-branch resets, attachment/image retention, the active tail user-turn guard, cache misses where the relay omitted cache-creation usage, and adjacent requests whose cache-prefix fingerprints stayed identical despite a reported miss.
+
+Cache-prefix fingerprints are protocol-level diagnostics for both Anthropic and OpenAI-compatible payloads. An identical path and fingerprint proves that the gateway emitted the same cacheable prefix after excluding `cache_control` metadata. It does not reveal which upstream node handled the request and is not, by itself, permission to add relay-specific routing, retries, or cache semantics.
 
 Set these in the shell when checking the deployed gateway:
 
