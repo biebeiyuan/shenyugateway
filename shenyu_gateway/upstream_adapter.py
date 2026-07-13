@@ -62,6 +62,21 @@ def _add_openai_message_cache_control(
     return _add_cache_control(msg, cache_paths, path, max_breakpoints, cache_ttl)
 
 
+def _guarded_user_message_index(messages: list[dict], guard_user_turns: int) -> int:
+    guard = max(int(guard_user_turns or 0), 0)
+    if guard <= 0:
+        return -1
+    user_indices = [
+        index
+        for index, message in enumerate(messages)
+        if message.get("role") == "user"
+        and message.get(INTERNAL_LAYER_KEY) != MEMORY_ISLAND_LAYER
+    ]
+    if not user_indices:
+        return -1
+    return user_indices[max(0, len(user_indices) - guard - 1)]
+
+
 def _sanitize_openai_content_blocks(content: list[Any]) -> list[Any]:
     blocks: list[Any] = []
     for item in content:
@@ -220,6 +235,7 @@ def _apply_openai_compatible_cache_control(
     cache_layers: Optional[dict[str, str]] = None,
     max_breakpoints: int = 4,
     cache_ttl: str = "5m",
+    tail_guard_user_turns: int = 0,
 ) -> tuple[list[dict], list[dict], list[str]]:
     layers = cache_layers or {}
     cache_paths: list[str] = []
@@ -269,20 +285,29 @@ def _apply_openai_compatible_cache_control(
             cache_ttl,
         )
 
-    last_user_idx = -1
-    for idx, msg in enumerate(cached_messages):
-        if msg.get("role") == "user":
-            last_user_idx = idx
+    guarded_user_idx = _guarded_user_message_index(cached_messages, tail_guard_user_turns)
+    if guarded_user_idx <= island_idx:
+        guarded_user_idx = -1
+    last_user_idx = max(
+        (idx for idx, msg in enumerate(cached_messages) if msg.get("role") == "user"),
+        default=-1,
+    )
 
     if len(cache_paths) < max_breakpoints:
-        for idx in range(last_user_idx, -1, -1):
+        start_idx = guarded_user_idx if guarded_user_idx >= 0 else last_user_idx
+        for idx in range(start_idx, -1, -1):
             msg = cached_messages[idx]
             if msg.get("role") not in {"user", "assistant"}:
                 continue
+            path = (
+                f"messages[{idx}].stable_tail"
+                if guarded_user_idx >= 0 and idx == guarded_user_idx
+                else f"messages[{idx}]"
+            )
             if _add_openai_message_cache_control(
                 msg,
                 cache_paths,
-                f"messages[{idx}]",
+                path,
                 max_breakpoints,
                 cache_ttl,
             ):
@@ -498,19 +523,22 @@ def _openai_to_anthropic(
     cache_paths: Optional[list[str]] = None,
     max_breakpoints: int = 4,
     cache_ttl: str = "5m",
+    tail_guard_user_turns: int = 0,
 ) -> tuple[Optional[list[dict]], list[dict]]:
     layers = cache_layers or {}
     cache_paths = cache_paths if cache_paths is not None else []
     volatile_text = layers.get("volatile") or ""
     system_blocks: list[dict] = []
     anthropic_messages: list[dict] = []
+    source_user_to_anthropic: dict[int, int] = {}
+    island_anthropic_idx = -1
     pending_volatile = ""
     system_cache_text = next(
         (layers.get(name) for name in _SYSTEM_CACHE_LAYER_PREFERENCE if layers.get(name)),
         "",
     )
 
-    for msg in messages:
+    for source_index, msg in enumerate(messages):
         role = msg.get("role", "")
         content = msg.get("content")
         layer_name = msg.get(INTERNAL_LAYER_KEY)
@@ -546,6 +574,7 @@ def _openai_to_anthropic(
                 max_breakpoints,
                 cache_ttl,
             )
+            island_anthropic_idx = len(anthropic_messages)
             anthropic_messages.append({"role": "user", "content": [island_block]})
             continue
 
@@ -572,6 +601,7 @@ def _openai_to_anthropic(
             if pending_volatile:
                 blocks.insert(0, {"type": "text", "text": pending_volatile})
                 pending_volatile = ""
+            source_user_to_anthropic[source_index] = len(anthropic_messages)
             anthropic_messages.append({"role": "user", "content": blocks or ""})
             continue
 
@@ -611,13 +641,19 @@ def _openai_to_anthropic(
                 }
             )
 
+    guarded_source_idx = _guarded_user_message_index(messages, tail_guard_user_turns)
+    guarded_anthropic_idx = source_user_to_anthropic.get(guarded_source_idx, -1)
+    if guarded_anthropic_idx <= island_anthropic_idx:
+        guarded_anthropic_idx = -1
+
     last_user_idx = -1
     for i, msg in enumerate(anthropic_messages):
         if msg.get("role") == "user":
             last_user_idx = i
 
     if len(cache_paths) < max_breakpoints:
-        for msg_index in range(last_user_idx, -1, -1):
+        start_idx = guarded_anthropic_idx if guarded_anthropic_idx >= 0 else last_user_idx
+        for msg_index in range(start_idx, -1, -1):
             content = anthropic_messages[msg_index].get("content")
             if not isinstance(content, list):
                 continue
@@ -628,7 +664,11 @@ def _openai_to_anthropic(
                 if _add_cache_control(
                     block,
                     cache_paths,
-                    f"messages[{msg_index}].content[{block_index}]",
+                    (
+                        f"messages[{msg_index}].stable_tail.content[{block_index}]"
+                        if guarded_anthropic_idx >= 0 and msg_index == guarded_anthropic_idx
+                        else f"messages[{msg_index}].content[{block_index}]"
+                    ),
                     max_breakpoints,
                     cache_ttl,
                 ):

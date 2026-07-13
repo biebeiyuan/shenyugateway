@@ -19,7 +19,7 @@ python scripts\vps_gateway_logs.py cache
 python scripts\vps_gateway_logs.py cache --session 6.20 --limit 12
 ```
 
-The report flags gaps longer than the declared TTL, long-gap hits that suggest relay-side automatic caching, island rewrites, history-branch resets, image retention, and cache misses where the relay omitted cache-creation usage.
+The report flags gaps longer than the declared TTL, long-gap hits that suggest relay-side automatic caching, island rewrites, history-branch resets, attachment/image retention, the active tail user-turn guard, and cache misses where the relay omitted cache-creation usage.
 
 Set these in the shell when checking the deployed gateway:
 

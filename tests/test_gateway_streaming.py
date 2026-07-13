@@ -62,6 +62,7 @@ from shenyu_gateway.upstream_adapter import (
     _completion_to_stream_events,
     _openai_to_anthropic,
 )
+from shenyu_gateway.upstream_client import _cache_tail_guard_user_turns
 
 
 class _FakeStore:
@@ -619,6 +620,111 @@ def test_cache_control_wraps_memory_island_with_fallback_breakpoints_for_both_pr
     assert "memory island" in anthropic_messages[2]["content"][0]["text"]
 
 
+def test_cache_control_uses_stable_tail_before_three_guarded_user_turns():
+    source_messages = [
+        {"role": "system", "content": "format block"},
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "old answer"},
+        {
+            "role": "system",
+            "content": "memory island",
+            "_shenyu_context_layer": "memory_island",
+        },
+        {"role": "user", "content": "stable question"},
+        {"role": "assistant", "content": "stable answer"},
+        {"role": "user", "content": "recent question one"},
+        {"role": "assistant", "content": "recent answer one"},
+        {"role": "user", "content": "recent question two"},
+        {"role": "assistant", "content": "recent answer two"},
+        {"role": "user", "content": "edited current question"},
+    ]
+    layers = {"format": "format block", "mem": "memory island"}
+
+    cached_messages, _tools, openai_paths = _apply_openai_compatible_cache_control(
+        source_messages,
+        [],
+        cache_layers=layers,
+        tail_guard_user_turns=3,
+    )
+    assert openai_paths == [
+        "messages[0].system_end",
+        "messages[2].before_island",
+        "messages[3].memory_island",
+        "messages[4].stable_tail",
+    ]
+    assert "cache_control" not in cached_messages[-1]
+
+    anthropic_paths: list[str] = []
+    _system, anthropic_messages = _openai_to_anthropic(
+        source_messages,
+        cache_layers=layers,
+        cache_paths=anthropic_paths,
+        tail_guard_user_turns=3,
+    )
+    assert anthropic_paths == [
+        "system.end",
+        "messages[1].before_island",
+        "messages[2].memory_island",
+        "messages[3].stable_tail.content[0]",
+    ]
+    assert "cache_control" not in anthropic_messages[-1]["content"][0]
+
+
+def test_stable_tail_prefix_ignores_roll_or_latest_user_edit():
+    layers = {"format": "format block", "mem": "memory island"}
+    common = [
+        {"role": "system", "content": "format block"},
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "old answer"},
+        {
+            "role": "system",
+            "content": "memory island",
+            "_shenyu_context_layer": "memory_island",
+        },
+        {"role": "user", "content": "stable question"},
+        {"role": "assistant", "content": "stable answer"},
+        {"role": "user", "content": "recent one"},
+        {"role": "assistant", "content": "recent answer one"},
+        {"role": "user", "content": "recent two"},
+        {"role": "assistant", "content": "recent answer two"},
+    ]
+    first_paths: list[str] = []
+    _first_system, first_messages = _openai_to_anthropic(
+        [*common, {"role": "user", "content": "current before edit"}],
+        cache_layers=layers,
+        cache_paths=first_paths,
+        tail_guard_user_turns=3,
+    )
+    second_paths: list[str] = []
+    _second_system, second_messages = _openai_to_anthropic(
+        [*common, {"role": "user", "content": "current after roll or edit"}],
+        cache_layers=layers,
+        cache_paths=second_paths,
+        tail_guard_user_turns=3,
+    )
+
+    assert first_paths == second_paths
+    assert first_messages[3] == second_messages[3]
+    assert first_messages[-1] != second_messages[-1]
+
+
+def test_cache_tail_guard_uses_existing_attachment_and_image_metadata():
+    user_messages = [{"role": "user", "content": "hello"}]
+    assert _cache_tail_guard_user_turns(
+        user_messages,
+        {"client_attachment_messages_seen": 1, "client_image_messages_seen": 1},
+    ) == 3
+    assert _cache_tail_guard_user_turns(
+        user_messages,
+        {"client_attachment_messages_seen": 0, "client_image_messages_seen": 1},
+    ) == 2
+    assert _cache_tail_guard_user_turns(user_messages, {}) == 0
+    assert _cache_tail_guard_user_turns(
+        [{"role": "user", "content": "hello"}, {"role": "tool", "content": "result"}],
+        {"client_attachment_messages_seen": 1},
+    ) == 0
+
+
 def test_anthropic_cache_control_marks_current_image_with_one_hour_ttl():
     cache_paths: list[str] = []
 
@@ -773,6 +879,59 @@ def test_build_upstream_request_forwards_requested_max_tokens(monkeypatch, proto
         gateway.cfg = old_cfg
 
     assert payload["max_tokens"] == 200000
+
+
+@pytest.mark.parametrize(
+    ("protocol", "url"),
+    [
+        ("openai", "https://example.com"),
+        ("anthropic", "https://api.anthropic.com"),
+    ],
+)
+def test_build_upstream_request_passes_attachment_tail_guard(monkeypatch, protocol, url):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", protocol)
+    monkeypatch.setenv("UPSTREAM_URL", url)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    messages = [
+        {"role": "system", "content": "format block"},
+        {"role": "user", "content": "old question"},
+        {"role": "assistant", "content": "old answer"},
+        {
+            "role": "system",
+            "content": "memory island",
+            "_shenyu_context_layer": "memory_island",
+        },
+        {"role": "user", "content": "stable question"},
+        {"role": "assistant", "content": "stable answer"},
+        {"role": "user", "content": "recent one"},
+        {"role": "assistant", "content": "recent answer one"},
+        {"role": "user", "content": "recent two"},
+        {"role": "assistant", "content": "recent answer two"},
+        {"role": "user", "content": "current question"},
+    ]
+    try:
+        body = ChatRequest(model="test-model", messages=[{"role": "user", "content": "hello"}])
+        _payload, _, _, cache_meta, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=messages,
+                meta={
+                    "cache_layers": {"format": "format block", "mem": "memory island"},
+                    "client_message_window": {
+                        "client_attachment_messages_seen": 4,
+                        "client_image_messages_seen": 2,
+                    },
+                },
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert cache_meta["tail_guard_user_turns"] == 3
+    assert any("stable_tail" in path for path in cache_meta["breakpoints"])
 
 
 def test_build_upstream_request_omits_openai_cache_control_when_disabled(monkeypatch):

@@ -53,6 +53,19 @@ def validate_http_url(field_name: str, value: Any, *, allow_empty: bool = True) 
     return url
 
 
+def _cache_tail_guard_user_turns(
+    raw_messages: list[dict],
+    window_meta: dict[str, Any],
+) -> int:
+    if not raw_messages or raw_messages[-1].get("role") != "user":
+        return 0
+    if int(window_meta.get("client_attachment_messages_seen") or 0) > 0:
+        return 3
+    if int(window_meta.get("client_image_messages_seen") or 0) > 0:
+        return 2
+    return 0
+
+
 def validate_protocol(field_name: str, value: Any, *, allow_empty: bool = False) -> str:
     protocol = _clean_config_text(value).lower()
     if not protocol:
@@ -287,6 +300,8 @@ async def build_upstream_request(
     proto = upstream["protocol"]
     raw_messages = messages_override or [message.model_dump(exclude_none=True) for message in body.messages]
     merged_tools = merge_tools(body.tools, cfg, meta=meta)
+    window_meta = (meta or {}).get("client_message_window") or {}
+    tail_guard_user_turns = _cache_tail_guard_user_turns(raw_messages, window_meta)
     cache_enabled = (
         bool(getattr(cfg, "enable_anthropic_cache_control", True))
         if proto == "anthropic"
@@ -304,6 +319,7 @@ async def build_upstream_request(
         "upstream_scope": upstream["scope"],
         "upstream_url": upstream["chat_url"],
         "breakpoints": [],
+        "tail_guard_user_turns": tail_guard_user_turns,
         "note": "Prompt cache breakpoints are added when the upstream protocol can carry cache_control.",
     }
 
@@ -330,6 +346,7 @@ async def build_upstream_request(
             cache_paths=cache_paths,
             max_breakpoints=4 if cache_enabled else 0,
             cache_ttl=cache_ttl,
+            tail_guard_user_turns=tail_guard_user_turns,
         )
         payload: dict[str, Any] = {
             "model": model_name,
@@ -370,6 +387,7 @@ async def build_upstream_request(
             merged_tools or [],
             cache_layers=(meta or {}).get("cache_layers"),
             cache_ttl=cache_ttl,
+            tail_guard_user_turns=tail_guard_user_turns,
         )
         cache_meta["enabled"] = bool(cache_paths)
         cache_meta["breakpoints"] = cache_paths

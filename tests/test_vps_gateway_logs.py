@@ -113,12 +113,17 @@ def test_cache_report_identifies_ttl_and_relay_anomalies(capsys):
                     "protocol": "anthropic",
                     "ttl": "5m",
                     "breakpoints": ["system.end"],
+                    "tail_guard_user_turns": 3,
                 },
                 "cache_usage": {
                     "cache_read_input_tokens": 1000,
                     "cache_creation_input_tokens": 0,
                 },
-                "client_message_window": {"event_class": "new_user"},
+                "client_message_window": {
+                    "event_class": "new_user",
+                    "client_attachment_messages_seen": 4,
+                    "client_attachment_messages_trimmed": 1,
+                },
                 "memory_island": {"changed": False, "decision": "retained"},
             },
             {
@@ -176,6 +181,8 @@ def test_cache_report_identifies_ttl_and_relay_anomalies(capsys):
     logs._print_cache_report(report)
     output = capsys.readouterr().out
     assert "cache=MISS" in output
+    assert "tail_guard=3" in output
+    assert "attachments=4/1" in output
     assert "relay/automatic caching is likely involved" in output
 
 

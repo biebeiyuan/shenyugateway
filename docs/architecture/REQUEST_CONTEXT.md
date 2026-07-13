@@ -44,7 +44,7 @@ memory_island.end
 current_user.end
 ```
 
-The concrete JSON paths differ between Anthropic and OpenAI-compatible payloads, but both adapters use the same logical boundaries. If the island changes, the island-end breakpoint is rewritten while the prefix before the island can still hit. The final breakpoint is placed on the current user's last content block, including an image block, so the next request can reuse that conversational prefix.
+The concrete JSON paths differ between Anthropic and OpenAI-compatible payloads, but both adapters use the same logical boundaries. If the island changes, the island-end breakpoint is rewritten while the prefix before the island can still hit. For pure text, the final breakpoint stays on the current user's last content block. When the retained client window contains Operit extra-bundle attachments, it moves to the user turn immediately before the newest three user turns; image-only windows use the turn before the newest two. Those recent turns remain fully visible to the model but stay outside the stable cached prefix because attachment and image retention can rewrite them on later requests. Gateway tool-loop continuations still mark the latest tool result instead of applying the user-turn guard.
 
 Use `python scripts\vps_gateway_logs.py cache` for a content-free timeline of cache hits, request gaps, configured TTLs, image retention, epoch resets, and memory-island rewrites. It defaults to the local `vps` SSH alias on Windows and automatically follows Coolify container-name changes after a deployment.
 
