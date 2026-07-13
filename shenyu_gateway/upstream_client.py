@@ -10,6 +10,8 @@ from fastapi import HTTPException, Request
 from .runtime import logger, now_ts as _now_ts
 from .streaming import _new_stream_chunk_id
 from .upstream_adapter import (
+    ANTHROPIC_CONTENT_BLOCKS_KEY,
+    ANTHROPIC_THINKING_CONFIG_KEY,
     _anthropic_stop_reason_to_openai,
     _anthropic_tool_index_override,
     _anthropic_to_openai_chunk,
@@ -158,6 +160,74 @@ def apply_upstream_extra_body(payload: dict[str, Any], cfg: Any) -> dict[str, An
     if isinstance(extra_body, dict):
         payload.update(extra_body)
     return payload
+
+
+def _pinned_anthropic_thinking_config(messages: list[dict]) -> dict[str, Any]:
+    tool_continuation_seen = False
+    for message in reversed(messages):
+        role = message.get("role")
+        if role == "tool":
+            tool_continuation_seen = True
+            continue
+        if role == "assistant":
+            if not tool_continuation_seen:
+                return {}
+            config = message.get(ANTHROPIC_THINKING_CONFIG_KEY)
+            return dict(config) if isinstance(config, dict) else {}
+        if role == "user":
+            content = message.get("content")
+            if isinstance(content, list) and any(
+                isinstance(block, dict) and block.get("type") == "tool_result" for block in content
+            ):
+                tool_continuation_seen = True
+                continue
+            return {}
+    return {}
+
+
+def _anthropic_content_block_index(data: dict) -> int:
+    try:
+        return int(data.get("index") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
+def _update_anthropic_content_blocks(blocks: dict[int, dict[str, Any]], data: dict) -> None:
+    event_type = data.get("type")
+    block_index = _anthropic_content_block_index(data)
+    if event_type == "content_block_start":
+        block = data.get("content_block") or {}
+        if isinstance(block, dict):
+            blocks[block_index] = json.loads(json.dumps(block, ensure_ascii=False))
+        return
+    if event_type == "content_block_delta":
+        block = blocks.setdefault(block_index, {})
+        delta = data.get("delta") or {}
+        delta_type = delta.get("type")
+        if delta_type == "thinking_delta":
+            block["thinking"] = str(block.get("thinking") or "") + str(delta.get("thinking") or "")
+        elif delta_type == "signature_delta":
+            block["signature"] = str(block.get("signature") or "") + str(delta.get("signature") or "")
+        elif delta_type == "text_delta":
+            block["text"] = str(block.get("text") or "") + str(delta.get("text") or "")
+        elif delta_type == "input_json_delta":
+            block["_partial_json"] = str(block.get("_partial_json") or "") + str(delta.get("partial_json") or "")
+        return
+    if event_type == "content_block_stop":
+        block = blocks.get(block_index) or {}
+        partial_json = block.pop("_partial_json", "")
+        if partial_json and block.get("type") == "tool_use":
+            try:
+                block["input"] = json.loads(partial_json)
+            except json.JSONDecodeError:
+                block["input"] = {"raw_arguments": partial_json}
+
+
+def _anthropic_content_blocks_snapshot(blocks: dict[int, dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        json.loads(json.dumps(blocks[index], ensure_ascii=False))
+        for index in sorted(blocks)
+    ]
 
 
 # Headers the gateway must always own. Even if a name is mistakenly added to
@@ -334,12 +404,32 @@ async def build_upstream_request(
         anthropic_thinking = _normalize_anthropic_thinking(getattr(body, "thinking", None))
         if not explicit_thinking and not anthropic_thinking and getattr(cfg, "enable_anthropic_auto_thinking", False):
             anthropic_thinking = _normalize_anthropic_thinking({"type": "adaptive"})
+        pinned_thinking_config = _pinned_anthropic_thinking_config(raw_messages)
+        if pinned_thinking_config and not explicit_thinking:
+            pinned_thinking = _normalize_anthropic_thinking(pinned_thinking_config.get("thinking"))
+            if pinned_thinking:
+                anthropic_thinking = pinned_thinking
         output_config = getattr(body, "output_config", None)
         if not isinstance(output_config, dict):
             output_config = {}
+        else:
+            output_config = dict(output_config)
         reasoning_effort = str(getattr(body, "reasoning_effort", "") or "").strip().lower()
         if reasoning_effort and "effort" not in output_config:
             output_config["effort"] = reasoning_effort
+        pinned_output_config = pinned_thinking_config.get("output_config")
+        if isinstance(pinned_output_config, dict) and "effort" not in output_config:
+            pinned_effort = str(pinned_output_config.get("effort") or "").strip().lower()
+            if pinned_effort:
+                output_config["effort"] = pinned_effort
+        configured_effort = str(getattr(cfg, "anthropic_auto_thinking_effort", "") or "").strip().lower()
+        if (
+            anthropic_thinking
+            and not pinned_thinking_config
+            and configured_effort in {"max", "xhigh"}
+            and "effort" not in output_config
+        ):
+            output_config["effort"] = configured_effort
         system, messages = _openai_to_anthropic(
             raw_messages,
             cache_layers=(meta or {}).get("cache_layers"),
@@ -468,6 +558,7 @@ async def stream_upstream_openai_chunks(
 
         anthropic_stop_reason = ""
         anthropic_usage: dict[str, Any] = {}
+        anthropic_blocks: dict[int, dict[str, Any]] = {}
         chunk_id = _new_stream_chunk_id()
         created = _now_ts()
         tool_call_seen = False
@@ -482,12 +573,14 @@ async def stream_upstream_openai_chunks(
                 data = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            _update_anthropic_content_blocks(anthropic_blocks, data)
             if data.get("type") == "message_start":
                 usage = (data.get("message") or {}).get("usage")
                 if isinstance(usage, dict):
                     anthropic_usage.update(usage)
             elif data.get("type") == "content_block_start":
-                if (data.get("content_block") or {}).get("type") == "tool_use":
+                block = data.get("content_block") or {}
+                if block.get("type") == "tool_use":
                     tool_call_seen = True
             elif data.get("type") == "message_delta":
                 anthropic_stop_reason = data.get("delta", {}).get("stop_reason") or anthropic_stop_reason
@@ -505,17 +598,21 @@ async def stream_upstream_openai_chunks(
                 chunk_id=chunk_id,
                 created=created,
             )
-            if not chunk:
-                continue
-            try:
-                converted = json.loads(chunk)
-            except json.JSONDecodeError:
-                continue
+            if chunk:
+                try:
+                    converted = json.loads(chunk)
+                except json.JSONDecodeError:
+                    continue
+            else:
+                converted = {"choices": []}
+            if anthropic_blocks:
+                converted[ANTHROPIC_CONTENT_BLOCKS_KEY] = _anthropic_content_blocks_snapshot(anthropic_blocks)
             usage = data.get("usage") or (data.get("message") or {}).get("usage")
             if isinstance(usage, dict):
                 converted["usage"] = _anthropic_usage_to_openai(usage)
             elif data.get("type") == "message_stop" and anthropic_usage:
                 converted["usage"] = _anthropic_usage_to_openai(anthropic_usage)
-            yield converted
+            if chunk or anthropic_blocks:
+                yield converted
     finally:
         await resp.aclose()

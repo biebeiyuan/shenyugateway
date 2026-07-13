@@ -38,6 +38,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "openai_cache_ttl": cfg.openai_cache_ttl,
         "anthropic_cache_ttl": cfg.anthropic_cache_ttl,
         "enable_anthropic_auto_thinking": cfg.enable_anthropic_auto_thinking,
+        "anthropic_auto_thinking_effort": cfg.anthropic_auto_thinking_effort,
         "anthropic_default_max_tokens": cfg.anthropic_default_max_tokens,
         "upstream_extra_body": cfg.upstream_extra_body,
         "upstream_passthrough_headers": cfg.upstream_passthrough_headers,
@@ -156,6 +157,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "openai_cache_ttl": "OPENAI_CACHE_TTL",
             "anthropic_cache_ttl": "ANTHROPIC_CACHE_TTL",
             "enable_anthropic_auto_thinking": "ENABLE_ANTHROPIC_AUTO_THINKING",
+            "anthropic_auto_thinking_effort": "ANTHROPIC_AUTO_THINKING_EFFORT",
             "anthropic_default_max_tokens": "ANTHROPIC_DEFAULT_MAX_TOKENS",
             "upstream_extra_body": "UPSTREAM_EXTRA_BODY",
             "upstream_passthrough_headers": "UPSTREAM_PASSTHROUGH_HEADERS",
@@ -254,6 +256,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "openai_cache_ttl",
             "anthropic_cache_ttl",
             "enable_anthropic_auto_thinking",
+            "anthropic_auto_thinking_effort",
             "anthropic_default_max_tokens",
             "hisense_upstream_url",
             "hisense_api_key",
@@ -327,6 +330,13 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                     value = str(value or "").strip().lower()
                     if value not in {"5m", "1h"}:
                         raise HTTPException(status_code=400, detail=f"{env_names[field]} must be 5m or 1h.")
+                elif field == "anthropic_auto_thinking_effort":
+                    value = str(value or "").strip().lower()
+                    if value not in {"", "max", "xhigh"}:
+                        raise HTTPException(
+                            status_code=400,
+                            detail="ANTHROPIC_AUTO_THINKING_EFFORT must be empty, max, or xhigh.",
+                        )
                 elif isinstance(value, str):
                     value = value.strip()
                 setattr(cfg, field, value)

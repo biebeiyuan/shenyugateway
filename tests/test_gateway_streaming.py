@@ -26,6 +26,7 @@ from shenyu_gateway.request_logs import (
     _http_request_events,
     _mark_http_request_event,
     _mark_request_log_phase,
+    _payload_without_image_blocks,
     _record_completion_finish_reason,
     _record_response_text,
     _retain_request_log_payloads,
@@ -1261,6 +1262,63 @@ def test_build_upstream_request_auto_adds_anthropic_adaptive_thinking(monkeypatc
         gateway.cfg = old_cfg
 
     assert payload["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert "output_config" not in payload
+
+
+@pytest.mark.parametrize("effort", ["max", "xhigh"])
+def test_build_upstream_request_adds_configured_anthropic_effort(monkeypatch, effort):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "anthropic")
+    monkeypatch.setenv("UPSTREAM_URL", "https://api.anthropic.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_ANTHROPIC_AUTO_THINKING", "true")
+    monkeypatch.setenv("ANTHROPIC_AUTO_THINKING_EFFORT", effort)
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(model="test-model", messages=[{"role": "user", "content": "hello"}])
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert payload["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert payload["output_config"] == {"effort": effort}
+
+
+def test_build_upstream_request_pins_default_effort_for_tool_continuation(monkeypatch):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", "anthropic")
+    monkeypatch.setenv("UPSTREAM_URL", "https://api.anthropic.com")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    monkeypatch.setenv("ENABLE_ANTHROPIC_AUTO_THINKING", "true")
+    monkeypatch.setenv("ANTHROPIC_AUTO_THINKING_EFFORT", "max")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(model="test-model", messages=[{"role": "user", "content": "hello"}])
+        messages = [
+            {
+                "role": "assistant",
+                "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "read", "arguments": "{}"}}],
+                "_shenyu_anthropic_thinking_config": {
+                    "thinking": {"type": "adaptive", "display": "summarized"},
+                    "output_config": {},
+                },
+            },
+            {"role": "tool", "tool_call_id": "call_1", "content": "done"},
+        ]
+        payload, _, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(None, body, messages_override=messages)
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert payload["thinking"] == {"type": "adaptive", "display": "summarized"}
+    assert "output_config" not in payload
 
 
 def test_build_upstream_request_explicit_false_disables_auto_thinking(monkeypatch):
@@ -2308,6 +2366,67 @@ def test_pending_gateway_tool_turn_rebuilds_mixed_transcript_before_upstream():
         assert store.find_pending_gateway_tool_turn(session["id"], ["call_client"]) is not None
         assert store.mark_pending_gateway_tool_turns_consumed(meta["pending_gateway_tool_turn_ids"]) == 1
         assert store.find_pending_gateway_tool_turn(session["id"], ["call_client"]) is None
+
+
+def test_pending_gateway_tool_turn_does_not_restore_after_assistant_edit():
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        store = GatewayStore(f"{tmp}/gateway.db")
+        session = store.get_or_create_session("test-session", "test-client")
+        original_assistant = {
+            "role": "assistant",
+            "content": "Original reply",
+            "tool_calls": [
+                {
+                    "id": "call_client",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{\"path\":\"a.txt\"}"},
+                }
+            ],
+        }
+        store.create_pending_gateway_tool_turn(
+            session_id=session["id"],
+            session_tag=session["session_tag"],
+            client_tool_call_ids=["call_client"],
+            original_assistant_message=original_assistant,
+            gateway_tool_messages=[],
+        )
+        edited_assistant = {
+            **original_assistant,
+            "content": "Edited reply",
+        }
+        client_messages = [
+            {"role": "user", "content": "check"},
+            edited_assistant,
+            {"role": "tool", "tool_call_id": "call_client", "content": "file body"},
+        ]
+
+        rebuilt, meta = inject_pending_gateway_tool_turns(client_messages, store, session["id"])
+
+        assert rebuilt == client_messages
+        assert meta["pending_gateway_tool_turns_injected"] == 0
+        assert meta["pending_gateway_tool_lineage_mismatches"] == 1
+
+
+def test_request_log_payload_redacts_anthropic_opaque_thinking():
+    payload = {
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "private summary", "signature": "opaque-signature"},
+                    {"type": "redacted_thinking", "data": "encrypted-data"},
+                    {"type": "tool_use", "id": "toolu_1", "name": "read", "input": {}},
+                ],
+            }
+        ]
+    }
+
+    clean = _payload_without_image_blocks(payload)
+    blocks = clean["messages"][0]["content"]
+
+    assert blocks[0]["thinking"] == "<redacted:15 chars>"
+    assert blocks[0]["signature"] == "<opaque:16 chars>"
+    assert blocks[1]["data"] == "<opaque:14 chars>"
 
 
 def test_long_window_trim_then_pending_injection_keeps_complete_mixed_tool_turn():

@@ -71,6 +71,12 @@ export interface ToolRoundEntry {
   messages_preview?: any[]
   upstream_payload?: Record<string, any> | null
   upstream_payload_summary?: Record<string, any> | null
+  anthropic_thinking?: {
+    preserved?: boolean
+    blocks?: number
+    signature_present?: boolean
+    redacted_present?: boolean
+  } | null
   tool_calls_count?: number
   gateway_tool_calls?: Array<{
     id?: string

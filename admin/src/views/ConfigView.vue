@@ -56,6 +56,7 @@ const config = ref<GatewayConfig>({
   openai_cache_ttl: '5m',
   anthropic_cache_ttl: '1h',
   enable_anthropic_auto_thinking: false,
+  anthropic_auto_thinking_effort: '',
   upstream_extra_body: {},
   upstream_passthrough_headers: ['x-api-key'],
   hisense_upstream_url: '',
@@ -106,6 +107,11 @@ const inheritedProtocolOptions = [{ label: 'Inherit global', value: '' }, ...pro
 const cacheTtlOptions = [
   { label: '5 分钟', value: '5m' },
   { label: '1 小时', value: '1h' },
+]
+const anthropicThinkingEffortOptions = [
+  { label: '默认（不发送 effort）', value: '' },
+  { label: 'XHigh（Opus 4.6 不兼容）', value: 'xhigh' },
+  { label: 'Max', value: 'max' },
 ]
 const toolModeOptions = [
   { label: 'Full schemas（不用 broker）', value: 'full' },
@@ -281,6 +287,7 @@ async function doSave() {
       openai_cache_ttl: config.value.openai_cache_ttl,
       anthropic_cache_ttl: config.value.anthropic_cache_ttl,
       enable_anthropic_auto_thinking: config.value.enable_anthropic_auto_thinking,
+      anthropic_auto_thinking_effort: config.value.anthropic_auto_thinking_effort || '',
       upstream_extra_body: upstreamExtraBody,
       upstream_passthrough_headers: config.value.upstream_passthrough_headers || [],
       hisense_upstream_url: config.value.hisense_upstream_url,
@@ -581,7 +588,13 @@ async function copyColdHeader(sessionTag: string) {
                   v-model:value="config.enable_anthropic_auto_thinking"
                   :disabled="config.upstream_protocol !== 'anthropic'"
                 />
-                <span class="switch-hint">Anthropic 协议且请求未显式传 thinking 时，自动补 type=adaptive。</span>
+                <NSelect
+                  v-model:value="config.anthropic_auto_thinking_effort"
+                  :options="anthropicThinkingEffortOptions"
+                  :disabled="config.upstream_protocol !== 'anthropic' || !config.enable_anthropic_auto_thinking"
+                  style="width: 220px"
+                />
+                <span class="switch-hint">默认档不添加 effort；Max 与 XHigh 只影响新回合，工具续轮沿用开始时的档位。</span>
               </div>
             </NFormItem>
             <div class="upstream-custom-box">

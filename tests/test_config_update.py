@@ -14,6 +14,7 @@ DEFAULTED_ENV_KEYS = [
     "OPENAI_CACHE_TTL",
     "ANTHROPIC_CACHE_TTL",
     "ENABLE_ANTHROPIC_AUTO_THINKING",
+    "ANTHROPIC_AUTO_THINKING_EFFORT",
     "ANTHROPIC_DEFAULT_MAX_TOKENS",
     "UPSTREAM_PROVIDER_ORDER_ENABLED",
     "UPSTREAM_PROVIDER_FORMAT",
@@ -46,6 +47,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.openai_cache_ttl == "5m"
     assert cfg.anthropic_cache_ttl == "1h"
     assert cfg.enable_anthropic_auto_thinking is False
+    assert cfg.anthropic_auto_thinking_effort == ""
     assert cfg.anthropic_default_max_tokens == 128000
     assert cfg.upstream_extra_body == {}
     assert cfg.inject_inline_memory_prompt is True
@@ -312,6 +314,39 @@ def test_config_update_saves_anthropic_auto_thinking(monkeypatch):
     assert "enable_anthropic_auto_thinking" in payload["changed"]
     assert gateway.cfg.enable_anthropic_auto_thinking is True
     assert persisted[-1]["ENABLE_ANTHROPIC_AUTO_THINKING"] == "true"
+
+
+def test_config_update_saves_anthropic_auto_thinking_effort(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "anthropic_auto_thinking_effort", "")
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"anthropic_auto_thinking_effort": "xhigh"},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["anthropic_auto_thinking_effort"] == "xhigh"
+    assert gateway.cfg.anthropic_auto_thinking_effort == "xhigh"
+    assert persisted[-1]["ANTHROPIC_AUTO_THINKING_EFFORT"] == "xhigh"
+
+
+def test_config_update_rejects_unknown_anthropic_auto_thinking_effort(monkeypatch):
+    client, _ = _config_client(monkeypatch)
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"anthropic_auto_thinking_effort": "high"},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 400
 
 
 def test_config_update_saves_anthropic_cache_control(monkeypatch):

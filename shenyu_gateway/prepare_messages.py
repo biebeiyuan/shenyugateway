@@ -193,6 +193,39 @@ def message_tool_call_ids(message: dict) -> list[str]:
     return ids
 
 
+def _tool_call_arguments_for_match(tool_call: dict) -> Any:
+    function = tool_call.get("function") or {}
+    arguments = function.get("arguments") if isinstance(function, dict) else None
+    if isinstance(arguments, str):
+        try:
+            return json.loads(arguments)
+        except json.JSONDecodeError:
+            return arguments
+    return arguments
+
+
+def _client_visible_assistant_fingerprint(message: dict, tool_call_ids: set[str]) -> str:
+    visible_calls = []
+    for tool_call in message.get("tool_calls") or []:
+        if not isinstance(tool_call, dict) or str(tool_call.get("id") or "") not in tool_call_ids:
+            continue
+        function = tool_call.get("function") or {}
+        visible_calls.append(
+            {
+                "id": str(tool_call.get("id") or ""),
+                "type": str(tool_call.get("type") or "function"),
+                "name": str(function.get("name") or "") if isinstance(function, dict) else "",
+                "arguments": _tool_call_arguments_for_match(tool_call),
+            }
+        )
+    visible_calls.sort(key=lambda item: item["id"])
+    payload = {
+        "content": message.get("content") or "",
+        "tool_calls": visible_calls,
+    }
+    return hashlib.sha256(_json_dumps(payload).encode("utf-8")).hexdigest()
+
+
 def trailing_client_tool_results(
     messages: list[dict],
     assistant_idx: int,
@@ -223,6 +256,7 @@ def inject_pending_gateway_tool_turns(
     rebuilt: list[dict] = []
     pending_ids: list[str] = []
     gateway_tool_messages_count = 0
+    pending_lineage_mismatches = 0
     idx = 0
 
     while idx < len(messages):
@@ -261,6 +295,19 @@ def inject_pending_gateway_tool_turns(
             continue
 
         original_assistant_message = pending.get("original_assistant_message") or message
+        visible_ids = set(client_tool_call_ids)
+        if _client_visible_assistant_fingerprint(message, visible_ids) != _client_visible_assistant_fingerprint(
+            original_assistant_message,
+            visible_ids,
+        ):
+            pending_lineage_mismatches += 1
+            logger.info(
+                "[GatewayTool] Pending transcript lineage mismatch for client tool ids: %s",
+                ",".join(client_tool_call_ids),
+            )
+            rebuilt.append(message)
+            idx += 1
+            continue
         gateway_tool_messages = pending.get("gateway_tool_messages") or []
         rebuilt.append(json_clone(original_assistant_message))
         rebuilt.extend(json_clone(gateway_tool_messages))
@@ -269,11 +316,14 @@ def inject_pending_gateway_tool_turns(
         gateway_tool_messages_count += len(gateway_tool_messages)
         idx = next_idx
 
-    return rebuilt, {
+    meta = {
         "pending_gateway_tool_turns_injected": len(pending_ids),
         "pending_gateway_tool_turn_ids": pending_ids,
         "pending_gateway_tool_messages": gateway_tool_messages_count,
     }
+    if pending_lineage_mismatches:
+        meta["pending_gateway_tool_lineage_mismatches"] = pending_lineage_mismatches
+    return rebuilt, meta
 
 
 async def prepare_messages(

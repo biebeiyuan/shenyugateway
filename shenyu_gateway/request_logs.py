@@ -306,7 +306,27 @@ def _record_upstream_payload(log_entry: Optional[dict], payload: dict) -> None:
 def _payload_without_image_blocks(payload: dict) -> dict:
     from shenyu_gateway.context_layers import trim_client_image_blocks
 
-    clean = dict(payload)
+    def redact_anthropic_thinking(value: Any) -> Any:
+        if isinstance(value, list):
+            return [redact_anthropic_thinking(item) for item in value]
+        if not isinstance(value, dict):
+            return value
+        clean_value = {key: redact_anthropic_thinking(item) for key, item in value.items()}
+        block_type = clean_value.get("type")
+        if block_type == "thinking":
+            thinking = str(value.get("thinking") or "")
+            signature = str(value.get("signature") or "")
+            clean_value["thinking"] = f"<redacted:{len(thinking)} chars>"
+            if "signature" in clean_value:
+                clean_value["signature"] = f"<opaque:{len(signature)} chars>"
+        elif block_type == "redacted_thinking":
+            opaque = str(value.get("data") or "")
+            clean_value["data"] = f"<opaque:{len(opaque)} chars>"
+        clean_value.pop("_partial_json", None)
+        clean_value.pop("_shenyu_anthropic_content_blocks", None)
+        return clean_value
+
+    clean = redact_anthropic_thinking(payload)
     messages = clean.get("messages")
     if isinstance(messages, list):
         clean["messages"] = trim_client_image_blocks(messages, keep_recent_messages=0)[0]

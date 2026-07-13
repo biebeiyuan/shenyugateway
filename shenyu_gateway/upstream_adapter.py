@@ -12,6 +12,8 @@ from .utils import normalize_text as _normalize_text
 
 
 _SYSTEM_CACHE_LAYER_PREFERENCE = ("format", "tool_policy", "heartbeat", "slow", "stable")
+ANTHROPIC_CONTENT_BLOCKS_KEY = "_shenyu_anthropic_content_blocks"
+ANTHROPIC_THINKING_CONFIG_KEY = "_shenyu_anthropic_thinking_config"
 
 
 def _cache_control_value(cache_ttl: str) -> dict[str, str]:
@@ -217,6 +219,12 @@ def _sanitize_openai_compatible_tools(tools: list[dict]) -> list[dict]:
 
 def _assistant_tool_call_message(assistant_message: dict, tool_calls: list[dict]) -> dict:
     message: dict[str, Any] = {"role": "assistant", "tool_calls": tool_calls}
+    anthropic_blocks = assistant_message.get(ANTHROPIC_CONTENT_BLOCKS_KEY)
+    if isinstance(anthropic_blocks, list) and anthropic_blocks:
+        message[ANTHROPIC_CONTENT_BLOCKS_KEY] = json.loads(json.dumps(anthropic_blocks, ensure_ascii=False))
+    thinking_config = assistant_message.get(ANTHROPIC_THINKING_CONFIG_KEY)
+    if isinstance(thinking_config, dict) and thinking_config:
+        message[ANTHROPIC_THINKING_CONFIG_KEY] = json.loads(json.dumps(thinking_config, ensure_ascii=False))
     content = assistant_message.get("content")
     if isinstance(content, list):
         blocks = _sanitize_openai_content_blocks(content)
@@ -606,6 +614,15 @@ def _openai_to_anthropic(
             continue
 
         if role == "assistant":
+            anthropic_blocks = msg.get(ANTHROPIC_CONTENT_BLOCKS_KEY)
+            if isinstance(anthropic_blocks, list) and anthropic_blocks:
+                anthropic_messages.append(
+                    {
+                        "role": "assistant",
+                        "content": json.loads(json.dumps(anthropic_blocks, ensure_ascii=False)),
+                    }
+                )
+                continue
             blocks: list[dict] = []
             text = _normalize_text(content)
             if text:
@@ -709,6 +726,12 @@ def _anthropic_to_openai_completion(model: str, response: dict) -> dict:
     message = {"role": "assistant", "content": "".join(text_parts)}
     if thinking_parts:
         message["reasoning_content"] = "".join(thinking_parts)
+    content_blocks = response.get("content")
+    if tool_calls and isinstance(content_blocks, list) and any(
+        isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"}
+        for block in content_blocks
+    ):
+        message[ANTHROPIC_CONTENT_BLOCKS_KEY] = json.loads(json.dumps(content_blocks, ensure_ascii=False))
     finish_reason = _anthropic_stop_reason_to_openai(response.get("stop_reason")) or "stop"
     if tool_calls:
         message["tool_calls"] = tool_calls

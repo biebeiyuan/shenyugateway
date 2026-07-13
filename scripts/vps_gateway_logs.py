@@ -911,6 +911,14 @@ def _print_detail_sections(log: dict[str, Any]) -> None:
                 + f"stream={item.get('stream')} final={item.get('final')} "
                 + f"finish_reason={item.get('finish_reason')}"
             )
+            thinking = item.get("anthropic_thinking")
+            if isinstance(thinking, dict) and thinking.get("preserved"):
+                print(
+                    "      "
+                    + f"anthropic_thinking blocks={thinking.get('blocks')} "
+                    + f"signature={thinking.get('signature_present')} "
+                    + f"redacted={thinking.get('redacted_present')}"
+                )
             for call in item.get("tools") or []:
                 if isinstance(call, dict):
                     print(

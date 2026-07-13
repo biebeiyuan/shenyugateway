@@ -741,6 +741,7 @@ async def health():
         "openai_cache_ttl": cfg.openai_cache_ttl,
         "anthropic_cache_ttl": cfg.anthropic_cache_ttl,
         "enable_anthropic_auto_thinking": cfg.enable_anthropic_auto_thinking,
+        "anthropic_auto_thinking_effort": cfg.anthropic_auto_thinking_effort,
         "enable_upstream_tools": cfg.enable_upstream_tools,
         "enable_gateway_tools": cfg.enable_gateway_tools,
         "enable_mem0_management_tools": cfg.enable_mem0_management_tools,

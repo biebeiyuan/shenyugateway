@@ -35,6 +35,8 @@ from .streaming import (
 )
 from .tool_registry import is_gateway_native_tool
 from .upstream_adapter import (
+    ANTHROPIC_CONTENT_BLOCKS_KEY,
+    ANTHROPIC_THINKING_CONFIG_KEY,
     _anthropic_to_openai_completion,
     _assistant_tool_call_message,
     _completion_to_stream_events,
@@ -94,6 +96,44 @@ def _content_text_only(content: Any) -> str:
                     parts.append(text)
         return "\n".join(parts)
     return _normalize_text(content)
+
+
+def _anthropic_thinking_block_meta(assistant_message: dict) -> dict[str, Any]:
+    blocks = assistant_message.get(ANTHROPIC_CONTENT_BLOCKS_KEY)
+    if not isinstance(blocks, list):
+        return {"preserved": False, "blocks": 0, "signature_present": False, "redacted_present": False}
+    thinking_blocks = [
+        block
+        for block in blocks
+        if isinstance(block, dict) and block.get("type") in {"thinking", "redacted_thinking"}
+    ]
+    return {
+        "preserved": bool(thinking_blocks),
+        "blocks": len(thinking_blocks),
+        "signature_present": any(bool(block.get("signature")) for block in thinking_blocks),
+        "redacted_present": any(block.get("type") == "redacted_thinking" for block in thinking_blocks),
+    }
+
+
+def _strip_anthropic_private_blocks(assistant_message: dict) -> None:
+    assistant_message.pop(ANTHROPIC_CONTENT_BLOCKS_KEY, None)
+    assistant_message.pop(ANTHROPIC_THINKING_CONFIG_KEY, None)
+
+
+def _attach_anthropic_thinking_config(completion: dict, payload: dict, upstream: dict) -> None:
+    if upstream.get("protocol") != "anthropic":
+        return
+    assistant_message = completion.get("choices", [{}])[0].get("message", {})
+    if not assistant_message.get(ANTHROPIC_CONTENT_BLOCKS_KEY):
+        return
+    config: dict[str, Any] = {}
+    if isinstance(payload.get("thinking"), dict):
+        config["thinking"] = json.loads(json.dumps(payload["thinking"], ensure_ascii=False))
+        config["output_config"] = json.loads(
+            json.dumps(payload.get("output_config") or {}, ensure_ascii=False)
+        )
+    if config:
+        assistant_message[ANTHROPIC_THINKING_CONFIG_KEY] = config
 
 
 def _unpack_private_capture_result(result: tuple) -> tuple[str, str, dict[str, Any]]:
@@ -300,6 +340,7 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
                 "usage": raw.get("usage", {}),
             }
         )
+        _attach_anthropic_thinking_config(completion, payload, upstream)
         tool_calls = _extract_tool_calls(completion)
         _record_completion_finish_reason(ctx.log_entry, completion, round_log=round_log)
         _record_round_response(round_log, completion)
@@ -429,6 +470,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
             await close_stream_reader(upstream_chunks=upstream_chunks, next_chunk=next_chunk)
 
         usage = completion.get("usage") or {}
+        _attach_anthropic_thinking_config(completion, payload, upstream)
         upstream_usages.append(usage)
         _record_round_usage(ctx, round_log, usage, upstream_usages)
         _mark_request_log_phase(ctx.log_entry, "upstream.stream_round_done", detail={"round": round_index + 1})
@@ -591,6 +633,17 @@ async def _finalize_non_gateway_tool_reply(
             round_log["returned_tool_calls"] = _tool_call_log_preview(client_tool_calls)
 
     assistant_message = completion.get("choices", [{}])[0].get("message", {})
+    thinking_meta = _anthropic_thinking_block_meta(assistant_message)
+    if round_log is not None:
+        round_log["anthropic_thinking"] = thinking_meta
+    if tool_calls and not mixed_gateway_calls and thinking_meta["preserved"]:
+        ctx.store.create_pending_gateway_tool_turn(
+            session_id=ctx.session_id,
+            session_tag=ctx.session_tag or "",
+            client_tool_call_ids=[str(call.get("id")) for call in tool_calls if call.get("id")],
+            original_assistant_message=_pending_assistant_tool_call_message(assistant_message, tool_calls),
+            gateway_tool_messages=[],
+        )
     clean_content, heartbeat_content, fallback_meta = _unpack_private_capture_result(
         ctx.finalize_assistant_private_content(
             assistant_message,
@@ -603,6 +656,7 @@ async def _finalize_non_gateway_tool_reply(
     if fallback_meta["applied"] and ctx.log_entry is not None:
         ctx.log_entry["empty_visible_response_fallback"] = True
         ctx.log_entry["empty_visible_response_fallback_detail"] = fallback_meta
+    _strip_anthropic_private_blocks(assistant_message)
     ctx.sessions.log_assistant_output(ctx.session_id, assistant_message)
     ctx.write_completion_context_snapshot(ctx.meta, clean_content)
 

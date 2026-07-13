@@ -461,6 +461,10 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
     parts.push(`模型: ${detail.model}`)
     parts.push(`上游: ${detail.upstream_url}`)
     if (detail.stream) parts.push('流式')
+    if (round?.anthropic_thinking?.preserved) {
+      const thinking = round.anthropic_thinking
+      parts.push(`Thinking 已保留 ${thinking.blocks || 0} 块${thinking.signature_present ? ' · signature ✓' : ''}${thinking.redacted_present ? ' · redacted ✓' : ''}`)
+    }
     let html = parts.join(' · ') + '\n\n'
     const responseText = round
       ? (round.response_full ?? round.response_preview)

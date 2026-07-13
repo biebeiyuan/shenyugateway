@@ -98,6 +98,8 @@ Mixed gateway/client transcript rules:
 - When one assistant turn contains both gateway-native and client-executable tool calls, the gateway executes its native calls, logs the tool audit rows, and stores a hidden pending transcript in SQLite.
 - The response sent back to the client keeps only the client-executable `tool_calls`. The client then runs those tools using normal OpenAI tool protocol.
 - On the next request, before calling the upstream model, the gateway matches the client's returned tool-call ids against `pending_gateway_tool_turns`. If matched, it rebuilds the upstream transcript as: original mixed assistant message, hidden gateway tool result messages, then the client's tool result messages.
+- Native Anthropic thinking/signature blocks are retained only inside an unfinished tool turn. The gateway restores them only when the session, client tool-call ids, visible assistant text, tool names, and tool arguments still match; roll/edit/branch mismatches keep the client history unchanged. Opaque signature and redacted-thinking data are never written into readable request logs.
+- `ANTHROPIC_AUTO_THINKING_EFFORT` accepts empty, `max`, or `xhigh`. Empty sends no `output_config.effort`; a tool continuation pins the effort used by its first round so an admin change applies only to the next new turn. `xhigh` is not compatible with Claude Opus 4.6.
 - Pending mixed transcripts are marked consumed only after the upstream request succeeds. If a match is not found, the gateway logs the miss and forwards the client history unchanged.
 - Existing old history that already contains `<gateway_tool_results>` is not migrated or filtered. The fix is forward-only: new code should not create that block again.
 

@@ -13,6 +13,7 @@ from fastapi.responses import StreamingResponse
 from .runtime import json_dumps as _json_dumps
 from .runtime import now_ts as _now_ts
 from .utils import normalize_text as _normalize_text
+from .upstream_adapter import ANTHROPIC_CONTENT_BLOCKS_KEY
 
 
 def _new_stream_chunk_id() -> str:
@@ -165,6 +166,11 @@ def _compact_stream_tool_calls(completion: dict) -> None:
 
 
 def _apply_openai_stream_chunk(completion: dict, data: dict) -> None:
+    anthropic_blocks = data.get(ANTHROPIC_CONTENT_BLOCKS_KEY)
+    if isinstance(anthropic_blocks, list) and anthropic_blocks:
+        completion["choices"][0]["message"][ANTHROPIC_CONTENT_BLOCKS_KEY] = json.loads(
+            json.dumps(anthropic_blocks, ensure_ascii=False)
+        )
     choices = data.get("choices") or []
     if not choices:
         if data.get("usage"):

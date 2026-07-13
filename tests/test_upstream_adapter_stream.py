@@ -3,12 +3,18 @@ from __future__ import annotations
 import json
 
 from shenyu_gateway.upstream_adapter import (
+    ANTHROPIC_CONTENT_BLOCKS_KEY,
+    _assistant_tool_call_message,
     _cache_usage_summary,
     _anthropic_tool_index_override,
     _anthropic_to_openai_chunk,
     _anthropic_to_openai_completion,
     _completion_to_stream_events,
     _openai_to_anthropic,
+)
+from shenyu_gateway.upstream_client import (
+    _anthropic_content_blocks_snapshot,
+    _update_anthropic_content_blocks,
 )
 
 
@@ -21,6 +27,63 @@ def _stream_payloads(completion: dict):
             data = line.removeprefix("data: ")
             payloads.append("[DONE]" if data == "[DONE]" else json.loads(data))
     return payloads
+
+
+def test_anthropic_tool_completion_preserves_opaque_thinking_for_tool_continuation():
+    response = {
+        "content": [
+            {"type": "thinking", "thinking": "summary", "signature": "opaque-signature"},
+            {"type": "text", "text": "I will check."},
+            {"type": "tool_use", "id": "toolu_1", "name": "read_file", "input": {"path": "a.txt"}},
+        ],
+        "stop_reason": "tool_use",
+        "usage": {},
+    }
+
+    completion = _anthropic_to_openai_completion("test-model", response)
+    assistant_message = completion["choices"][0]["message"]
+    tool_calls = assistant_message["tool_calls"]
+    continuation_message = _assistant_tool_call_message(assistant_message, tool_calls)
+    _, anthropic_messages = _openai_to_anthropic(
+        [
+            continuation_message,
+            {"role": "tool", "tool_call_id": "toolu_1", "content": "file body"},
+        ]
+    )
+
+    assert assistant_message["reasoning_content"] == "summary"
+    assert assistant_message[ANTHROPIC_CONTENT_BLOCKS_KEY] == response["content"]
+    assert anthropic_messages[0]["content"] == response["content"]
+    assert anthropic_messages[1]["content"][0]["type"] == "tool_result"
+
+
+def test_anthropic_stream_reconstructs_signature_and_tool_input_blocks():
+    blocks = {}
+    events = [
+        {"type": "content_block_start", "index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "thinking_delta", "thinking": "summary"}},
+        {"type": "content_block_delta", "index": 0, "delta": {"type": "signature_delta", "signature": "opaque"}},
+        {
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "tool_use", "id": "toolu_1", "name": "read_file", "input": {}},
+        },
+        {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "input_json_delta", "partial_json": "{\"path\":\"a.txt\"}"},
+        },
+        {"type": "content_block_stop", "index": 1},
+    ]
+
+    for event in events:
+        _update_anthropic_content_blocks(blocks, event)
+
+    snapshot = _anthropic_content_blocks_snapshot(blocks)
+    assert snapshot == [
+        {"type": "thinking", "thinking": "summary", "signature": "opaque"},
+        {"type": "tool_use", "id": "toolu_1", "name": "read_file", "input": {"path": "a.txt"}},
+    ]
 
 
 def test_completion_stream_events_forward_tool_calls():

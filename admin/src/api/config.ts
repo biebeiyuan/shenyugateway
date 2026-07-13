@@ -14,6 +14,7 @@ export interface GatewayConfig {
   openai_cache_ttl?: '5m' | '1h'
   anthropic_cache_ttl?: '5m' | '1h'
   enable_anthropic_auto_thinking?: boolean
+  anthropic_auto_thinking_effort?: '' | 'max' | 'xhigh'
   upstream_extra_body?: Record<string, unknown>
   upstream_passthrough_headers?: string[]
   hisense_upstream_url?: string
@@ -119,6 +120,7 @@ export interface HealthStatus {
   openai_cache_ttl?: '5m' | '1h'
   anthropic_cache_ttl?: '5m' | '1h'
   enable_anthropic_auto_thinking?: boolean
+  anthropic_auto_thinking_effort?: '' | 'max' | 'xhigh'
   upstream_extra_body?: Record<string, unknown>
   hisense_upstream?: string
   hisense_upstream_chat_url?: string

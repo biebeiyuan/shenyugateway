@@ -37,6 +37,7 @@ class ConfigUpdate(BaseModel):
     openai_cache_ttl: Optional[str] = None
     anthropic_cache_ttl: Optional[str] = None
     enable_anthropic_auto_thinking: Optional[bool] = None
+    anthropic_auto_thinking_effort: Optional[str] = None
     anthropic_default_max_tokens: Optional[int] = Field(default=None, ge=1)
     upstream_extra_body: Optional[dict[str, Any] | str] = None
     upstream_passthrough_headers: Optional[list[str] | str] = None
