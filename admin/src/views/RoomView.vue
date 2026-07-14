@@ -221,7 +221,7 @@ function chargeLabel(c?: number) {
 </script>
 
 <template>
-  <div class="room-page">
+  <div class="room-page" data-testid="page-room">
     <header class="room-header">
       <div>
         <div class="eyebrow">Shenyu Room</div>

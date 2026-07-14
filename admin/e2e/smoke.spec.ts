@@ -63,18 +63,19 @@ async function openAdminRoute(
 
 test('home navigation is alive', async ({ page }) => {
   await openAdminRoute(page, '/', async () => {
-    const memButton = page.getByRole('button', { name: /便签/ })
+    await expect(page.getByTestId('page-home')).toBeVisible()
+    const memButton = page.getByTestId('home-module-mem0')
     await expect(memButton).toBeVisible()
     await memButton.click()
     await expect(page).toHaveURL(/#\/mem0$/)
-    await expect(page.getByRole('heading', { name: '便签', exact: true })).toBeVisible()
+    await expect(page.getByTestId('page-mem')).toBeVisible()
   })
 })
 
 test('config page loads and accepts input without saving', async ({ page }) => {
   await openAdminRoute(page, '/config', async () => {
-    await expect(page.getByText('Running', { exact: true })).toBeVisible()
-    const upstreamInput = page.getByPlaceholder('https://api.anthropic.com')
+    await expect(page.getByTestId('page-config')).toBeVisible()
+    const upstreamInput = page.getByTestId('config-upstream-url').locator('input')
     await upstreamInput.fill('https://example.test/v1')
     await expect(upstreamInput).toHaveValue('https://example.test/v1')
   })
@@ -82,7 +83,8 @@ test('config page loads and accepts input without saving', async ({ page }) => {
 
 test('sessions page loads and its search field accepts input', async ({ page }) => {
   await openAdminRoute(page, '/sessions', async () => {
-    const search = page.getByPlaceholder('搜索线程标识或客户端名称')
+    await expect(page.getByTestId('page-sessions')).toBeVisible()
+    const search = page.getByTestId('sessions-search').locator('input')
     await search.fill('smoke-session')
     await expect(search).toHaveValue('smoke-session')
   })
@@ -90,14 +92,14 @@ test('sessions page loads and its search field accepts input', async ({ page }) 
 
 test('calendar page loads', async ({ page }) => {
   await openAdminRoute(page, '/calendar', async () => {
-    await expect(page.getByText('日历写作', { exact: true })).toBeVisible()
+    await expect(page.getByTestId('page-calendar')).toBeVisible()
   })
 })
 
 test('Mem page loads and its search field accepts input', async ({ page }) => {
   await openAdminRoute(page, '/mem0', async () => {
-    await expect(page.getByRole('heading', { name: '便签', exact: true })).toBeVisible()
-    const search = page.getByPlaceholder('搜索内容…')
+    await expect(page.getByTestId('page-mem')).toBeVisible()
+    const search = page.getByTestId('mem-search')
     await search.fill('smoke')
     await expect(search).toHaveValue('smoke')
   })
@@ -105,8 +107,8 @@ test('Mem page loads and its search field accepts input', async ({ page }) => {
 
 test('Stars page loads and switches modes', async ({ page }) => {
   await openAdminRoute(page, '/stars', async () => {
-    await expect(page.getByRole('heading', { name: '星星', exact: true })).toBeVisible()
-    const labels = page.getByRole('button', { name: '标签', exact: true })
+    await expect(page.getByTestId('page-stars')).toBeVisible()
+    const labels = page.getByTestId('stars-mode-labels')
     await labels.click()
     await expect(labels).toHaveClass(/active/)
   })
@@ -114,46 +116,45 @@ test('Stars page loads and switches modes', async ({ page }) => {
 
 test('star map route loads its canvas', async ({ page }) => {
   await openAdminRoute(page, '/stars/map', async () => {
-    await expect(page.getByRole('heading', { name: '记忆星图', exact: true })).toBeVisible()
-    await expect(page.locator('canvas.star-canvas')).toBeVisible()
+    await expect(page.getByTestId('page-star-map')).toBeVisible()
+    await expect(page.getByTestId('star-map-canvas')).toBeVisible()
   })
 })
 
 test('logs page loads', async ({ page }) => {
   await openAdminRoute(page, '/logs', async () => {
-    await expect(page.getByText('自动刷新', { exact: true })).toBeVisible()
+    await expect(page.getByTestId('page-logs')).toBeVisible()
   })
 })
 
 test('Hisense page loads', async ({ page }) => {
   await openAdminRoute(page, '/hisense', async () => {
-    await expect(page.getByRole('heading', { name: '沈予的空间', exact: true })).toBeVisible()
+    await expect(page.getByTestId('page-hisense')).toBeVisible()
   })
 })
 
 test('archive page loads', async ({ page }) => {
   await openAdminRoute(page, '/archive', async () => {
-    await expect(page.locator('.archive-view .cal-toggle')).toBeVisible()
+    await expect(page.getByTestId('page-archive')).toBeVisible()
   })
 })
 
 test('conflict page loads', async ({ page }) => {
   await openAdminRoute(page, '/conflict', async () => {
-    await expect(page.locator('.conflict-view')).toBeVisible()
-    await expect(page.getByRole('button', { name: '刷新', exact: true })).toBeVisible()
+    await expect(page.getByTestId('page-conflict')).toBeVisible()
   })
 })
 
 test('Room page keeps the in-place newspaper panel alive', async ({ page }) => {
   await openAdminRoute(page, '/room', async () => {
-    await expect(page.getByRole('heading', { name: '房间', exact: true })).toBeVisible()
-    await expect(page.getByRole('heading', { name: '订阅报纸', exact: true })).toBeVisible()
-    await expect(page.getByRole('button', { name: /做一期/ })).toBeVisible()
+    await expect(page.getByTestId('page-room')).toBeVisible()
+    await expect(page.getByTestId('room-newspaper-panel')).toBeVisible()
+    await expect(page.getByTestId('room-newspaper-generate')).toBeEnabled()
   })
 })
 
 test('tool errors page loads', async ({ page }) => {
   await openAdminRoute(page, '/tool-errors', async () => {
-    await expect(page.getByRole('heading', { name: '工具报错', exact: true })).toBeVisible()
+    await expect(page.getByTestId('page-tool-errors')).toBeVisible()
   })
 })

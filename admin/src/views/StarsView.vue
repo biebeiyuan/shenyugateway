@@ -336,7 +336,7 @@ function clearSeedIfEmpty(seedId: string) {
 </script>
 
 <template>
-  <div class="stars-page" :class="{ 'map-page': isMapRoute }">
+  <div class="stars-page" data-testid="page-stars" :class="{ 'map-page': isMapRoute }">
     <StarMapView v-if="isMapRoute" :initial-star-id="mapInitialStarId" />
 
     <section v-else class="workbench">
@@ -356,7 +356,7 @@ function clearSeedIfEmpty(seedId: string) {
           评分
           <span v-if="unscoredCount">{{ unscoredCount }}</span>
         </button>
-        <button type="button" :class="{ active: mode === 'labels' }" @click="mode = 'labels'">标签</button>
+        <button data-testid="stars-mode-labels" type="button" :class="{ active: mode === 'labels' }" @click="mode = 'labels'">标签</button>
         <button type="button" :class="{ active: mode === 'settings' }" @click="mode = 'settings'">配置</button>
         <button type="button" :class="{ active: mode === 'write' }" @click="mode = 'write'">写星</button>
         <button type="button" :class="{ active: mode === 'list' }" @click="mode = 'list'">星列</button>

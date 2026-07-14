@@ -583,7 +583,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 </script>
 
 <template>
-  <div class="logs-page">
+  <div class="logs-page" data-testid="page-logs">
     <div class="controls">
       <label class="auto-label">
         <input v-model="autoRefresh" type="checkbox" style="accent-color:#8b5cf6" @change="toggleAuto">

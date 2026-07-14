@@ -244,10 +244,11 @@ function showMoreHeartbeats() {
 </script>
 
 <template>
-  <main class="sessions-page">
+  <main class="sessions-page" data-testid="page-sessions">
     <NSpace vertical size="medium">
       <div class="toolbar">
         <NInput
+          data-testid="sessions-search"
           v-model:value="query"
           placeholder="搜索线程标识或客户端名称"
           clearable

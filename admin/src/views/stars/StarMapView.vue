@@ -534,9 +534,9 @@ function updateHighlights(autoFocus = false) {
 </script>
 
 <template>
-  <section class="sky-section">
+  <section class="sky-section" data-testid="page-star-map">
     <div class="sky-shell">
-      <canvas ref="canvasRef" class="star-canvas" />
+      <canvas ref="canvasRef" class="star-canvas" data-testid="star-map-canvas" />
       <div class="sky-vignette"></div>
       <div class="sky-head">
         <div>

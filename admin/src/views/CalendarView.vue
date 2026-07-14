@@ -299,7 +299,7 @@ function previewText() {
 </script>
 
 <template>
-    <div class="calendar-layout">
+    <div class="calendar-layout" data-testid="page-calendar">
       <NCard title="日历写作" size="small">
         <NSpace vertical size="medium">
           <NSelect :value="periodType" :options="periodOptions" @update:value="setPeriodType" />

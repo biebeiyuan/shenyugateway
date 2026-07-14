@@ -44,7 +44,7 @@ For every new runtime configuration field that is editable in Admin, inspect and
 
 Also update the owning README or architecture document when the field changes user-visible behavior or deployment requirements. If any checklist item is genuinely not applicable, state why in the handoff. If this checklist itself is outdated or incomplete, propose the change and discuss it before silently skipping or expanding the rule.
 
-After Admin routes, page loading, or core interactions change, run `cd admin && npm run test:e2e`. The Playwright suite is an alive/not-alive smoke layer: keep it read-only, use behavioral locators, fail on browser runtime or same-origin asset errors, and do not turn it into screenshot or visual-polish testing.
+After Admin routes, page loading, or core interactions change, run `cd admin && npm run test:e2e`. The Playwright suite is an alive/not-alive smoke layer: keep it read-only, prefer stable `data-testid` hooks over mutable display copy, fail on browser runtime or same-origin asset errors, and do not turn it into screenshot or visual-polish testing. Add, remove, or update the corresponding smoke case in the same change when an Admin route or core workflow changes; ordinary copy and styling edits should not require smoke-test rewrites.
 
 ## Encoding Rules
 

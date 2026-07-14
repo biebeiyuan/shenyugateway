@@ -135,7 +135,7 @@ function shortTime(iso: string) {
 </script>
 
 <template>
-  <div class="hisense-page">
+  <div class="hisense-page" data-testid="page-hisense">
     <!-- Header -->
     <header class="page-header">
       <div class="header-left">

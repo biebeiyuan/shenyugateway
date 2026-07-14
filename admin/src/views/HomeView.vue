@@ -31,7 +31,7 @@ function go(path: string) {
 </script>
 
 <template>
-  <div class="home-wrapper">
+  <div class="home-wrapper" data-testid="page-home">
     <div class="hero">
       <div class="hero-mascots">
         <span class="mascot">🐙</span>
@@ -51,6 +51,7 @@ function go(path: string) {
         :key="m.path"
         class="cell"
         :class="m.size"
+        :data-testid="`home-module-${m.path.slice(1).replace('/', '-')}`"
         @click="go(m.path)"
       >
         <span class="cell-icon">{{ m.icon }}</span>

@@ -103,7 +103,7 @@ function tryParseJson(s: string | null) {
 </script>
 
 <template>
-  <div class="te-page">
+  <div class="te-page" data-testid="page-tool-errors">
     <header class="page-header">
       <div class="header-left">
         <h1 class="page-title">工具报错</h1>

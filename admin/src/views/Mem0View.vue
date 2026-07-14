@@ -552,7 +552,7 @@ function formatTime(value?: string | null) {
 </script>
 
 <template>
-  <div class="memo-page">
+  <div class="memo-page" data-testid="page-mem">
     <!-- ─── header ─── -->
     <div class="memo-header">
       <div>
@@ -582,7 +582,7 @@ function formatTime(value?: string | null) {
     <div class="memo-filters">
       <NSelect v-model:value="noteType" :options="memTypeOptions" placeholder="分类" style="width:150px" size="small" @update:value="loadNotes" />
       <NSelect v-model:value="noteMemoryKind" :options="memoryKindOptions" placeholder="种类" style="width:130px" size="small" @update:value="loadNotes" />
-      <input v-model="noteQuery" class="filter-input" placeholder="搜索内容…" @keyup.enter="loadNotes()">
+      <input data-testid="mem-search" v-model="noteQuery" class="filter-input" placeholder="搜索内容…" @keyup.enter="loadNotes()">
       <NButton size="small" :loading="loadingNotes" @click="loadNotes">刷新</NButton>
       <template v-if="selectedNoteIds.length">
         <span class="sel-badge">已选 {{ selectedNoteIds.length }}</span>

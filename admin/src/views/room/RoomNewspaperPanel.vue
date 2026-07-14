@@ -86,14 +86,14 @@ defineExpose({ reload })
 </script>
 
 <template>
-  <section class="newspaper-band">
+  <section class="newspaper-band" data-testid="room-newspaper-panel">
     <div class="section-head newspaper-head">
       <div>
         <span class="panel-kicker">窗台</span>
         <h2>订阅报纸</h2>
       </div>
       <div class="newspaper-actions">
-        <NButton size="small" :loading="generating" @click="makeNewspaper">
+        <NButton data-testid="room-newspaper-generate" size="small" :loading="generating" @click="makeNewspaper">
           {{ draftNewspaper ? '重新做一期' : '做一期新的' }}
         </NButton>
         <NButton

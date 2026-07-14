@@ -107,7 +107,7 @@ function threadLabel(key: string | null): string {
 </script>
 
 <template>
-  <div class="conflict-view">
+  <div class="conflict-view" data-testid="page-conflict">
     <div class="header-row">
       <span class="hint">原文在截取那一刻冻结，谁都改不了。批注是沈予的，追加式，不可删。</span>
       <NButton size="small" @click="loadBooks">刷新</NButton>

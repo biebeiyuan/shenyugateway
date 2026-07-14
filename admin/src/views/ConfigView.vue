@@ -523,7 +523,7 @@ async function copyColdHeader(sessionTag: string) {
 </script>
 
 <template>
-  <div class="config-page">
+  <div class="config-page" data-testid="page-config">
     <NSpace class="status-bar" align="center">
       <template v-if="health">
         <NTag size="small" round class="tag-ok">Running</NTag>
@@ -564,7 +564,7 @@ async function copyColdHeader(sessionTag: string) {
 
           <NForm label-placement="top">
             <NFormItem label="接口地址">
-              <NInput v-model:value="config.upstream_url" placeholder="https://api.anthropic.com" />
+              <NInput data-testid="config-upstream-url" v-model:value="config.upstream_url" placeholder="https://api.anthropic.com" />
             </NFormItem>
             <NFormItem label="API Key">
               <NInput v-model:value="config.upstream_api_key" type="password" show-password-on="click" />

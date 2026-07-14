@@ -26,7 +26,17 @@ jobs:
       - run: pip install -e .
       - run: npm ci
         working-directory: admin
-      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e:install
         working-directory: admin
       - run: npm run test:e2e
         working-directory: admin
+      - name: Upload Playwright failure report
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: playwright-report-${{ github.run_attempt }}
+          path: |
+            admin/playwright-report/
+            admin/test-results/
+          if-no-files-found: ignore
+          retention-days: 7

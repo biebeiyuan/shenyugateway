@@ -373,7 +373,7 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 - Run `python -c "import test_gateway_streaming as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after streaming/tool-loop edits when `pytest` is unavailable.
 - Run `python -c "import test_upstream_adapter_stream as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after upstream stream adapter edits when `pytest` is unavailable.
 - Run `cd admin && npm run build` after admin UI edits.
-- Run `cd admin && npm run test:e2e` after Admin routes, page loading, or core interactions change. Install Chromium once with `npm run test:e2e:install`; the suite checks that pages are alive and interactive, not that they are visually identical.
+- Run `cd admin && npm run test:e2e` after Admin routes, page loading, or core interactions change. Install Chromium and its system libraries once with `npm run test:e2e:install`; if the official browser CDN stalls on the current WSL network, use `npm run test:e2e:install:mirror`. The suite checks that pages are alive and interactive, not that they are visually identical.
 - Run `python -m py_compile gateway.py shenyu_gateway/*.py` after edits.
 
 ## Active Review Plan

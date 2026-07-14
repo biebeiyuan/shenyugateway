@@ -233,7 +233,7 @@ async function saveClip() {
 </script>
 
 <template>
-  <div class="archive-view">
+  <div class="archive-view" data-testid="page-archive">
     <!-- Control Panel (calendar + thread + tools) -->
     <div class="control-panel" :class="{ collapsed: !calendarOpen }">
       <!-- Collapsed bar -->
