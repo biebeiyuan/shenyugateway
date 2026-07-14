@@ -275,6 +275,42 @@ class BaseStoreMixin:
                     read_at TEXT,
                     created_at TEXT NOT NULL
                 );
+
+                CREATE TABLE IF NOT EXISTS room_newspaper_issues (
+                    id TEXT PRIMARY KEY,
+                    status TEXT NOT NULL DEFAULT 'draft',
+                    item_count INTEGER NOT NULL DEFAULT 0,
+                    interest_count INTEGER NOT NULL DEFAULT 0,
+                    random_count INTEGER NOT NULL DEFAULT 0,
+                    source_status_json TEXT NOT NULL DEFAULT '[]',
+                    qa_detail_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    published_at TEXT,
+                    delivered_at TEXT,
+                    CHECK(status IN ('draft', 'published', 'archived', 'discarded'))
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_room_newspaper_issues_status_created
+                    ON room_newspaper_issues(status, created_at DESC);
+
+                CREATE TABLE IF NOT EXISTS room_newspaper_items (
+                    id TEXT PRIMARY KEY,
+                    issue_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    source_id TEXT NOT NULL,
+                    source_name TEXT NOT NULL,
+                    bucket TEXT NOT NULL,
+                    title TEXT NOT NULL,
+                    summary TEXT NOT NULL DEFAULT '',
+                    url TEXT NOT NULL UNIQUE,
+                    guid TEXT NOT NULL DEFAULT '',
+                    published_at TEXT,
+                    FOREIGN KEY(issue_id) REFERENCES room_newspaper_issues(id) ON DELETE CASCADE,
+                    UNIQUE(issue_id, position)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_room_newspaper_items_issue_position
+                    ON room_newspaper_items(issue_id, position);
                 """
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")

@@ -266,7 +266,7 @@ Charge affects door visibility:
 
 | Tool | Zone | What it does |
 |------|------|-------------|
-| `room_sit_by_window` | window | Sit by the window. Records trace, nothing else. |
+| `room_sit_by_window` | window | Sit by the window. Records trace and returns the latest published window newspaper when one exists. |
 | `room_scribble` | desk | Write something on the windowsill notebook. |
 | `room_notebook` | desk | Browse the messy notebook (connects to shenyu_notebook). |
 | `room_wooden_box` | drawers | Open the wooden box of heartbeats. |
@@ -281,6 +281,37 @@ Room mode exposes visible `room_*` tools directly instead of routing them throug
 
 Dynamic door text: some doors show different text when there's activity (e.g., "好像多了几张" when new notes exist).
 
+### Window Newspaper
+
+The window newspaper is a manual, non-personalized RSS subscription. It is deliberately separate from Stars, Mem, drawer notes, and normal context injection.
+
+Workflow:
+
+1. Yuan clicks `做一期新的` on the Room admin page.
+2. The backend fetches the fixed RSS/Atom allowlist concurrently, parses the feed itself, removes HTML chrome and tracking query parameters, and skips URLs already stored in any earlier issue.
+3. The script rolls 5-10 entries. Roughly 80% come from the interest bucket and 20% from the random bucket; one source normally contributes at most two entries.
+4. If optional quality checking is enabled, the configured small model may return only candidate ids to drop as broken, duplicate, or advertising. It cannot rewrite, translate, summarize, rank from Shenyu's personal context, or crawl article pages. A missing or failed quality model does not block the deterministic draft.
+5. The draft is visible in admin. It reaches Shenyu only after Yuan clicks `放到窗台`.
+6. Before first delivery, the window door leaks only `窗台上压着一份新报纸。` Calling `room_sit_by_window` returns the complete published issue and marks its first delivery time. The issue remains available on later sits until a newer issue is published.
+
+Each stored item contains the source title, up to the first three sentences supplied by the feed, URL, source name, and normalized publication date. A short or missing feed summary stays short or empty; the model never fills it in. In particular, Hacker News and many Lobsters entries expose no article summary, and NASA APOD's RSS often exposes only a title-like image description. APOD is text-only in this version.
+
+Fixed sources, live-checked on 2026-07-14:
+
+| Bucket | Source | Feed | Note |
+|--------|--------|------|------|
+| interest | Hacker News | `https://hnrss.org/frontpage` | Front page; metadata may not include an article summary. |
+| interest | Lobsters | `https://lobste.rs/rss` | Some entries contain only a Comments link as description. |
+| interest | arXiv cs.AI | `https://rss.arxiv.org/rss/cs.AI` | Title and abstract. |
+| interest | arXiv cs.CL | `https://rss.arxiv.org/rss/cs.CL` | Title and abstract. |
+| interest | Quanta Magazine | `https://www.quantamagazine.org/feed/` | Active RSS. |
+| interest | Aeon | `https://aeon.co/feed.rss` | Active RSS. |
+| interest | Nautilus | `https://nautil.us/feed/` | Active RSS. |
+| interest | The Marginalian | `https://www.themarginalian.org/feed/` | Active RSS. |
+| random | Hakai Magazine | `https://hakaimagazine.com/feed/` | Accessible archive; last feed update was 2024-12-27. |
+| random | ScienceDaily Animals | `https://www.sciencedaily.com/rss/plants_animals/animals.xml` | Active official URL; do not use the obsolete `feeds.sciencedaily.com` endpoint. |
+| random | NASA APOD | `https://apod.nasa.gov/apod.rss` | Text metadata and page URL only; no image is sent to the model. |
+
 ### SQLite Tables
 
 | Table | Purpose |
@@ -290,6 +321,8 @@ Dynamic door text: some doors show different text when there's activity (e.g., "
 | `room_scribbles` | Windowsill notebook entries |
 | `room_pins` | Wall pin reminders (done/undone) |
 | `room_drawer_notes` | Yuan's notes in the middle drawer |
+| `room_newspaper_issues` | Draft, published, archived, and discarded issue metadata plus source/QA status |
+| `room_newspaper_items` | Immutable feed items in issue order; URL is globally unique to prevent repeats |
 
 ### Admin API
 
@@ -299,6 +332,10 @@ Dynamic door text: some doors show different text when there's activity (e.g., "
 - `POST /api/gateway/room/drawer-notes/read` — mark drawer notes read
 - `GET /api/gateway/room/scribbles` — recent windowsill notebook entries
 - `GET /api/gateway/room/pins` — wall pin reminders
+- `GET /api/gateway/room/newspapers` — current drafts, published issue, and recent history
+- `POST /api/gateway/room/newspapers/generate` — fetch feeds and create one visible draft
+- `POST /api/gateway/room/newspapers/{issue_id}/publish` — put a draft on the windowsill
+- `POST /api/gateway/room/newspapers/{issue_id}/discard` — discard a draft without changing the current published issue
 
 ### Config
 
@@ -306,7 +343,14 @@ Dynamic door text: some doors show different text when there's activity (e.g., "
 ENABLE_ROOM_MODE=true
 ROOM_CHARGE_REFRACTORY_HOURS=4
 ROOM_TRACE_LIMIT=5
+ROOM_NEWSPAPER_QA_ENABLED=false
+ROOM_NEWSPAPER_LLM_MODEL=
+ROOM_NEWSPAPER_LLM_URL=
+ROOM_NEWSPAPER_LLM_API_KEY=
+ROOM_NEWSPAPER_LLM_PROTOCOL=
 ```
+
+The newspaper model URL, key, and protocol inherit the main upstream when left empty; the model name is explicit. These controls live on the general Config page so the Room page stays focused on making, reviewing, and publishing the paper.
 
 ### Design Principles
 
@@ -314,6 +358,7 @@ ROOM_TRACE_LIMIT=5
 - Direct `room_*` tool descriptions are spatial ("想碰就碰"), not menu-like permission text ("选一扇门"). The format hint ("窗开着。东西都在。") affirms presence without directing action.
 - The trigger message is not rewritten; room layers carry the spatial framing.
 - Passive spatial hints leak active door state (new notes, unreviewed stars, pending pins) into the slow layer as observations ("抽屉缝里漏出一角纸"), reducing the friction gap between the always-visible window and tools that require active calling.
+- Newspaper content is pull-only: room context leaks the presence of a fresh issue, never its articles. Fetching and optional model work happen only from the admin button, never while Shenyu is sitting down.
 - The charter is Shenyu's original text — never modified. Spatial details are fused into door descriptions and atmosphere sentences.
 - Text and logic are separated: change copy in `room_text.py`, change rendering in `room_context.py`, change tool behavior in `room_tools.py`.
 

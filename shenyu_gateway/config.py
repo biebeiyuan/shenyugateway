@@ -195,6 +195,11 @@ class RuntimeConfig:
         self.enable_room_mode: bool = _env_bool("ENABLE_ROOM_MODE", True)
         self.room_charge_refractory_hours: int = _env_int("ROOM_CHARGE_REFRACTORY_HOURS", 4, 1, 48)
         self.room_trace_limit: int = _env_int("ROOM_TRACE_LIMIT", 5, 1, 20)
+        self.room_newspaper_qa_enabled: bool = _env_bool("ROOM_NEWSPAPER_QA_ENABLED", False)
+        self.room_newspaper_llm_model: str = os.getenv("ROOM_NEWSPAPER_LLM_MODEL", "").strip()
+        self.room_newspaper_llm_url: str = os.getenv("ROOM_NEWSPAPER_LLM_URL", "").strip()
+        self.room_newspaper_llm_api_key: str = os.getenv("ROOM_NEWSPAPER_LLM_API_KEY", "").strip()
+        self.room_newspaper_llm_protocol: str = os.getenv("ROOM_NEWSPAPER_LLM_PROTOCOL", "").strip().lower()
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -313,6 +318,11 @@ class RuntimeConfig:
             "enable_room_mode": self.enable_room_mode,
             "room_charge_refractory_hours": self.room_charge_refractory_hours,
             "room_trace_limit": self.room_trace_limit,
+            "room_newspaper_qa_enabled": self.room_newspaper_qa_enabled,
+            "room_newspaper_llm_model": self.room_newspaper_llm_model,
+            "room_newspaper_llm_url": self.room_newspaper_llm_url,
+            "room_newspaper_llm_api_key": mask(self.room_newspaper_llm_api_key) if self.room_newspaper_llm_api_key else "",
+            "room_newspaper_llm_protocol": self.room_newspaper_llm_protocol,
         }
 
     def _load_model_mapping(self) -> dict[str, str]:

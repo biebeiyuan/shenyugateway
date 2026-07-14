@@ -26,6 +26,11 @@ DEFAULTED_ENV_KEYS = [
     "ENABLE_MEM0_MANAGEMENT_TOOLS",
     "MAX_INTERNAL_TOOL_ROUNDS",
     "MAX_CLIENT_MESSAGES",
+    "ROOM_NEWSPAPER_QA_ENABLED",
+    "ROOM_NEWSPAPER_LLM_MODEL",
+    "ROOM_NEWSPAPER_LLM_URL",
+    "ROOM_NEWSPAPER_LLM_API_KEY",
+    "ROOM_NEWSPAPER_LLM_PROTOCOL",
 ]
 
 
@@ -56,6 +61,8 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.enable_mem0_management_tools is True
     assert cfg.max_internal_tool_rounds == 15
     assert cfg.max_client_messages == 75
+    assert cfg.room_newspaper_qa_enabled is False
+    assert cfg.room_newspaper_llm_model == ""
 
 
 def test_aggregate_cache_usage_preserves_multi_round_reported_state():

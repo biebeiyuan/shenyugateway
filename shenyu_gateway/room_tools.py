@@ -262,8 +262,33 @@ async def execute_room_tool(
         return await _handle_conflict_shelf(arguments, cfg=cfg, supabase_client=supabase_client)
 
     elif name == "room_sit_by_window":
-        store.add_room_trace(session_id, "sit")
-        return {"ok": True, "message": "你坐下来了。海在窗外。风从缝里进来一点点。"}
+        issue = store.latest_published_room_newspaper() if store else None
+        detail = {"newspaper_issue_id": issue["id"]} if issue else None
+        store.add_room_trace(session_id, "sit", detail=detail)
+        result: dict[str, Any] = {
+            "ok": True,
+            "message": "你坐下来了。海在窗外。风从缝里进来一点点。",
+        }
+        if issue:
+            delivered = store.mark_room_newspaper_delivered(issue["id"]) or issue
+            result["message"] = "你坐下来了。窗台上的报纸还压在这里。"
+            result["newspaper"] = {
+                "issue_id": delivered["id"],
+                "published_at": delivered.get("published_at"),
+                "item_count": delivered.get("item_count", 0),
+                "items": [
+                    {
+                        "position": item.get("position"),
+                        "title": item.get("title"),
+                        "summary": item.get("summary"),
+                        "url": item.get("url"),
+                        "source": item.get("source_name"),
+                        "date": str(item.get("published_at") or "")[:10],
+                    }
+                    for item in delivered.get("items") or []
+                ],
+            }
+        return result
 
     elif name == "room_octopus_pillow":
         return _handle_octopus_pillow(store)
@@ -577,8 +602,14 @@ async def collect_door_counts(
     except Exception:
         counts["conflict_shelf"] = 0
 
-    # Sit / pillow / locked_drawer: always available, no count
-    counts["sit"] = 0
+    # Sit / pillow / locked_drawer: always available. A fresh newspaper only
+    # changes the window-side hint; it never changes door visibility.
+    has_newspaper = False
+    try:
+        has_newspaper = bool(store and store.has_undelivered_room_newspaper())
+    except Exception:
+        pass
+    counts["sit"] = 1 if has_newspaper else 0
     counts["pillow"] = 0
     counts["locked_drawer"] = 0
 
@@ -590,7 +621,7 @@ async def collect_door_counts(
         {"key": "scribble", "name": "窗台涂鸦本", "count": counts["scribble"]},
         {"key": "wall_pins", "name": "墙上便签", "count": counts["wall_pins"]},
         {"key": "conflict_shelf", "name": "矛盾书架", "count": counts["conflict_shelf"]},
-        {"key": "sit", "name": "窗边椅子", "count": 0},
+        {"key": "sit", "name": "窗边椅子", "count": counts["sit"]},
         {"key": "pillow", "name": "章鱼抱枕", "count": 0},
         {"key": "locked_drawer", "name": "上锁的抽屉", "count": 0},
     ]

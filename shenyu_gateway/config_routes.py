@@ -92,6 +92,12 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "star_scene_llm_api_key": "",
         "star_scene_llm_api_key_configured": bool(cfg.star_scene_llm_api_key),
         "star_scene_llm_protocol": cfg.star_scene_llm_protocol,
+        "room_newspaper_qa_enabled": cfg.room_newspaper_qa_enabled,
+        "room_newspaper_llm_model": cfg.room_newspaper_llm_model,
+        "room_newspaper_llm_url": cfg.room_newspaper_llm_url,
+        "room_newspaper_llm_api_key": "",
+        "room_newspaper_llm_api_key_configured": bool(cfg.room_newspaper_llm_api_key),
+        "room_newspaper_llm_protocol": cfg.room_newspaper_llm_protocol,
         "enable_cold_start": cfg.enable_cold_start,
         "enable_upstream_tools": cfg.enable_upstream_tools,
         "enable_gateway_tools": cfg.enable_gateway_tools,
@@ -207,6 +213,11 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "star_scene_llm_url": "STAR_SCENE_LLM_URL",
             "star_scene_llm_api_key": "STAR_SCENE_LLM_API_KEY",
             "star_scene_llm_protocol": "STAR_SCENE_LLM_PROTOCOL",
+            "room_newspaper_qa_enabled": "ROOM_NEWSPAPER_QA_ENABLED",
+            "room_newspaper_llm_model": "ROOM_NEWSPAPER_LLM_MODEL",
+            "room_newspaper_llm_url": "ROOM_NEWSPAPER_LLM_URL",
+            "room_newspaper_llm_api_key": "ROOM_NEWSPAPER_LLM_API_KEY",
+            "room_newspaper_llm_protocol": "ROOM_NEWSPAPER_LLM_PROTOCOL",
             "enable_cold_start": "ENABLE_COLD_START",
             "enable_upstream_tools": "ENABLE_UPSTREAM_TOOLS",
             "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
@@ -282,6 +293,11 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "star_scene_llm_url",
             "star_scene_llm_api_key",
             "star_scene_llm_protocol",
+            "room_newspaper_qa_enabled",
+            "room_newspaper_llm_model",
+            "room_newspaper_llm_url",
+            "room_newspaper_llm_api_key",
+            "room_newspaper_llm_protocol",
             "enable_cold_start",
             "enable_upstream_tools",
             "enable_gateway_tools",
@@ -308,12 +324,28 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                     value = value.strip() if isinstance(value, str) else value
                     if not value:
                         continue
-                if field in {"upstream_url", "hisense_upstream_url", "calendar_upstream_url", "star_scene_llm_url"}:
+                if field in {
+                    "upstream_url",
+                    "hisense_upstream_url",
+                    "calendar_upstream_url",
+                    "star_scene_llm_url",
+                    "room_newspaper_llm_url",
+                }:
                     value = deps.validate_http_url(env_names[field], value, allow_empty=(field != "upstream_url"))
                 elif field == "upstream_proxy":
                     value = deps.validate_http_url(env_names[field], value, allow_empty=True)
-                elif field in {"upstream_protocol", "hisense_protocol", "calendar_protocol", "star_scene_llm_protocol"}:
-                    value = deps.validate_protocol(env_names[field], value, allow_empty=(field in {"hisense_protocol", "star_scene_llm_protocol"}))
+                elif field in {
+                    "upstream_protocol",
+                    "hisense_protocol",
+                    "calendar_protocol",
+                    "star_scene_llm_protocol",
+                    "room_newspaper_llm_protocol",
+                }:
+                    value = deps.validate_protocol(
+                        env_names[field],
+                        value,
+                        allow_empty=(field in {"hisense_protocol", "star_scene_llm_protocol", "room_newspaper_llm_protocol"}),
+                    )
                 elif field == "gateway_tool_mode":
                     value = str(value or "").strip().lower()
                     if value not in {"full", "broker"}:

@@ -78,6 +78,11 @@ const config = ref<GatewayConfig>({
   gateway_tool_surface: 'full',
   client_tool_surface: 'all',
   max_internal_tool_rounds: 15,
+  room_newspaper_qa_enabled: false,
+  room_newspaper_llm_model: '',
+  room_newspaper_llm_url: '',
+  room_newspaper_llm_api_key: '',
+  room_newspaper_llm_protocol: '',
 })
 
 const health = ref<HealthStatus | null>(null)
@@ -305,8 +310,15 @@ async function doSave() {
       gateway_tool_surface: config.value.gateway_tool_surface,
       client_tool_surface: config.value.client_tool_surface,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
+      room_newspaper_qa_enabled: config.value.room_newspaper_qa_enabled,
+      room_newspaper_llm_model: config.value.room_newspaper_llm_model,
+      room_newspaper_llm_url: config.value.room_newspaper_llm_url,
+      room_newspaper_llm_protocol: config.value.room_newspaper_llm_protocol,
     }
     if (config.value.supabase_key?.trim()) body.supabase_key = config.value.supabase_key.trim()
+    if (config.value.room_newspaper_llm_api_key?.trim()) {
+      body.room_newspaper_llm_api_key = config.value.room_newspaper_llm_api_key.trim()
+    }
     const wakeWelcomeMessage = config.value.wake_welcome_message?.trim()
     if (wakeWelcomeMessage) {
       body.wake_welcome_message = wakeWelcomeMessage
@@ -726,6 +738,47 @@ async function copyColdHeader(sessionTag: string) {
           </NFormItem>
           <NFormItem label="普通线程客户端工具桌面">
             <NSelect v-model:value="config.client_tool_surface" :options="clientToolSurfaceOptions" />
+          </NFormItem>
+        </NForm>
+      </NCard>
+
+      <NCard title="窗边报纸质检" size="small">
+        <NForm label-placement="top">
+          <NFormItem label="启用小模型质检">
+            <div class="switch-row">
+              <NSwitch v-model:value="config.room_newspaper_qa_enabled" />
+              <span class="switch-hint">关闭时由脚本按八二比例随机组刊；开启后模型只能剔除坏条目，不能改写原文。</span>
+            </div>
+          </NFormItem>
+          <NFormItem label="模型">
+            <NInput
+              v-model:value="config.room_newspaper_llm_model"
+              :disabled="!config.room_newspaper_qa_enabled"
+              placeholder="例如 gpt-4.1-mini"
+            />
+          </NFormItem>
+          <NFormItem label="协议">
+            <NSelect
+              v-model:value="config.room_newspaper_llm_protocol"
+              :disabled="!config.room_newspaper_qa_enabled"
+              :options="inheritedProtocolOptions"
+            />
+          </NFormItem>
+          <NFormItem label="模型 URL">
+            <NInput
+              v-model:value="config.room_newspaper_llm_url"
+              :disabled="!config.room_newspaper_qa_enabled"
+              placeholder="留空继承全局上游 URL"
+            />
+          </NFormItem>
+          <NFormItem label="API Key">
+            <NInput
+              v-model:value="config.room_newspaper_llm_api_key"
+              type="password"
+              show-password-on="click"
+              :disabled="!config.room_newspaper_qa_enabled"
+              :placeholder="config.room_newspaper_llm_api_key_configured ? '已配置；留空保持不变' : '留空继承全局 Key'"
+            />
           </NFormItem>
         </NForm>
       </NCard>

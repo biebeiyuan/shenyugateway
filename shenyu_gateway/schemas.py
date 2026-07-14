@@ -88,6 +88,11 @@ class ConfigUpdate(BaseModel):
     star_scene_llm_url: Optional[str] = None
     star_scene_llm_api_key: Optional[str] = None
     star_scene_llm_protocol: Optional[str] = None
+    room_newspaper_qa_enabled: Optional[bool] = None
+    room_newspaper_llm_model: Optional[str] = None
+    room_newspaper_llm_url: Optional[str] = None
+    room_newspaper_llm_api_key: Optional[str] = None
+    room_newspaper_llm_protocol: Optional[str] = None
     enable_cold_start: Optional[bool] = None
     enable_upstream_tools: Optional[bool] = None
     enable_gateway_tools: Optional[bool] = None

@@ -10,6 +10,7 @@ from fastapi.responses import JSONResponse
 from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
 from .request_logs import _finalize_stale_tool_stream_logs, _http_request_diagnostics, _retain_request_log_payloads
+from .room_newspaper import RoomNewspaperService, source_catalog
 from .runtime import iso_now as _iso_now
 from .schemas import (
     ColdStartPreviewRequest,
@@ -208,6 +209,37 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         store = deps.require_session_store()
         pins = store.list_room_pins(include_done=include_done)
         return {"pins": pins, "count": len(pins)}
+
+    @router.get("/api/gateway/room/newspapers")
+    async def list_room_newspapers(limit: int = 8):
+        store = deps.require_session_store()
+        issues = store.list_room_newspaper_issues(limit=min(max(limit, 1), 30))
+        return {"issues": issues, "count": len(issues), "sources": source_catalog()}
+
+    @router.post("/api/gateway/room/newspapers/generate")
+    async def generate_room_newspaper():
+        store = deps.require_session_store()
+        service = RoomNewspaperService(cfg, store)
+        try:
+            issue = await service.generate_draft()
+        except ValueError as exc:
+            raise HTTPException(status_code=503, detail=str(exc)) from exc
+        return {"ok": True, "issue": issue}
+
+    @router.post("/api/gateway/room/newspapers/{issue_id}/publish")
+    async def publish_room_newspaper(issue_id: str):
+        store = deps.require_session_store()
+        issue = store.publish_room_newspaper_issue(issue_id)
+        if not issue:
+            raise HTTPException(status_code=404, detail="Draft newspaper issue not found.")
+        return {"ok": True, "issue": issue}
+
+    @router.post("/api/gateway/room/newspapers/{issue_id}/discard")
+    async def discard_room_newspaper(issue_id: str):
+        store = deps.require_session_store()
+        if not store.discard_room_newspaper_issue(issue_id):
+            raise HTTPException(status_code=404, detail="Draft newspaper issue not found.")
+        return {"ok": True}
 
     @router.get("/api/gateway/overview")
     async def gateway_overview():

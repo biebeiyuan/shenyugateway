@@ -430,6 +430,7 @@ class ContextBuilder:
         session: dict,
         trace_log: Optional[dict] = None,
         messages: Optional[list[dict]] = None,
+        record_window_scene: bool = True,
     ) -> dict:
         """Build context for room mode — completely replaces normal context."""
         from .room_context import collect_charge_signals, compute_charge, render_room_layers, visible_room_tool_names
@@ -495,10 +496,11 @@ class ContextBuilder:
         visible_tool_names = visible_room_tool_names(door_specs, charge)
         room_tools = room_tool_definitions(visible_tool_names)
 
-        try:
-            self.store.save_window_scene(session.get("id", "room"), scene_tag)
-        except Exception:
-            pass
+        if record_window_scene:
+            try:
+                self.store.save_window_scene(session.get("id", "room"), scene_tag)
+            except Exception:
+                pass
 
         # Append profile (stable_charter_block) after room charter
         profile = self.stable_charter_block()
@@ -531,7 +533,7 @@ class ContextBuilder:
             "client_name": "preview",
             "message_count": 0,
         }
-        package = await self.build_room_context_package(fake_session)
+        package = await self.build_room_context_package(fake_session, record_window_scene=False)
         return {
             "session_tag": fake_session["session_tag"],
             "mode": "room",

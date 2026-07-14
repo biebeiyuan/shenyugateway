@@ -78,6 +78,13 @@ export interface GatewayConfig {
   star_scene_llm_api_key?: string
   star_scene_llm_api_key_configured?: boolean
   star_scene_llm_protocol?: string
+  // room newspaper optional quality check
+  room_newspaper_qa_enabled?: boolean
+  room_newspaper_llm_model?: string
+  room_newspaper_llm_url?: string
+  room_newspaper_llm_api_key?: string
+  room_newspaper_llm_api_key_configured?: boolean
+  room_newspaper_llm_protocol?: string
   // feature toggles
   enable_upstream_tools?: boolean
   calendar_inject_day?: boolean

@@ -6,6 +6,15 @@ from ..runtime import iso_now, json_dumps
 
 
 class RoomMixin:
+    @staticmethod
+    def _decode_json(value: Any, fallback: Any) -> Any:
+        if not value:
+            return fallback
+        try:
+            return json.loads(value)
+        except (TypeError, json.JSONDecodeError):
+            return fallback
+
     def add_room_trace(
         self,
         session_id: str,
@@ -180,3 +189,149 @@ class RoomMixin:
                 return None
             import random
             return dict(random.choice(rows))
+
+    def _room_newspaper_issue(self, conn: Any, issue_id: str) -> Optional[dict]:
+        row = conn.execute(
+            "SELECT * FROM room_newspaper_issues WHERE id = ?",
+            (issue_id,),
+        ).fetchone()
+        if not row:
+            return None
+        issue = dict(row)
+        issue["source_status"] = self._decode_json(issue.pop("source_status_json", "[]"), [])
+        issue["qa_detail"] = self._decode_json(issue.pop("qa_detail_json", "{}"), {})
+        item_rows = conn.execute(
+            "SELECT * FROM room_newspaper_items WHERE issue_id = ? ORDER BY position ASC",
+            (issue_id,),
+        ).fetchall()
+        issue["items"] = [dict(item) for item in item_rows]
+        return issue
+
+    def create_room_newspaper_issue(
+        self,
+        items: list[dict[str, Any]],
+        *,
+        source_status: Optional[list[dict[str, Any]]] = None,
+        qa_detail: Optional[dict[str, Any]] = None,
+    ) -> dict:
+        if not items:
+            raise ValueError("A newspaper issue needs at least one item.")
+        issue_id = f"rmppr_{uuid.uuid4().hex[:12]}"
+        created_at = iso_now()
+        interest_count = sum(1 for item in items if item.get("bucket") == "interest")
+        random_count = sum(1 for item in items if item.get("bucket") == "random")
+        with self._connect() as conn:
+            conn.execute("UPDATE room_newspaper_issues SET status = 'discarded' WHERE status = 'draft'")
+            conn.execute(
+                """
+                INSERT INTO room_newspaper_issues (
+                    id, status, item_count, interest_count, random_count,
+                    source_status_json, qa_detail_json, created_at
+                ) VALUES (?, 'draft', ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    issue_id,
+                    len(items),
+                    interest_count,
+                    random_count,
+                    json_dumps(source_status or []),
+                    json_dumps(qa_detail or {}),
+                    created_at,
+                ),
+            )
+            for position, item in enumerate(items, start=1):
+                conn.execute(
+                    """
+                    INSERT INTO room_newspaper_items (
+                        id, issue_id, position, source_id, source_name, bucket,
+                        title, summary, url, guid, published_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        f"rmpit_{uuid.uuid4().hex[:12]}",
+                        issue_id,
+                        position,
+                        str(item.get("source_id") or ""),
+                        str(item.get("source_name") or ""),
+                        str(item.get("bucket") or "interest"),
+                        str(item.get("title") or "").strip(),
+                        str(item.get("summary") or "").strip(),
+                        str(item.get("url") or "").strip(),
+                        str(item.get("guid") or "").strip(),
+                        str(item.get("published_at") or "").strip() or None,
+                    ),
+                )
+            issue = self._room_newspaper_issue(conn, issue_id)
+        if not issue:
+            raise RuntimeError("Newspaper issue was not stored.")
+        return issue
+
+    def get_room_newspaper_issue(self, issue_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            return self._room_newspaper_issue(conn, issue_id)
+
+    def list_room_newspaper_issues(self, limit: int = 10) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id FROM room_newspaper_issues ORDER BY created_at DESC LIMIT ?",
+                (max(1, min(int(limit), 50)),),
+            ).fetchall()
+            return [issue for row in rows if (issue := self._room_newspaper_issue(conn, row["id"]))]
+
+    def latest_published_room_newspaper(self) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT id FROM room_newspaper_issues WHERE status = 'published' "
+                "ORDER BY published_at DESC, created_at DESC LIMIT 1"
+            ).fetchone()
+            return self._room_newspaper_issue(conn, row["id"]) if row else None
+
+    def publish_room_newspaper_issue(self, issue_id: str) -> Optional[dict]:
+        published_at = iso_now()
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM room_newspaper_issues WHERE id = ?",
+                (issue_id,),
+            ).fetchone()
+            if not row or row["status"] not in {"draft", "published"}:
+                return None
+            conn.execute(
+                "UPDATE room_newspaper_issues SET status = 'archived' WHERE status = 'published' AND id != ?",
+                (issue_id,),
+            )
+            conn.execute(
+                "UPDATE room_newspaper_issues SET status = 'published', published_at = ?, delivered_at = NULL "
+                "WHERE id = ?",
+                (published_at, issue_id),
+            )
+            return self._room_newspaper_issue(conn, issue_id)
+
+    def discard_room_newspaper_issue(self, issue_id: str) -> bool:
+        with self._connect() as conn:
+            cursor = conn.execute(
+                "UPDATE room_newspaper_issues SET status = 'discarded' WHERE id = ? AND status = 'draft'",
+                (issue_id,),
+            )
+            return cursor.rowcount > 0
+
+    def mark_room_newspaper_delivered(self, issue_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE room_newspaper_issues SET delivered_at = COALESCE(delivered_at, ?) "
+                "WHERE id = ? AND status = 'published'",
+                (iso_now(), issue_id),
+            )
+            return self._room_newspaper_issue(conn, issue_id)
+
+    def has_undelivered_room_newspaper(self) -> bool:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT 1 FROM room_newspaper_issues "
+                "WHERE status = 'published' AND delivered_at IS NULL LIMIT 1"
+            ).fetchone()
+            return bool(row)
+
+    def used_room_newspaper_urls(self) -> set[str]:
+        with self._connect() as conn:
+            rows = conn.execute("SELECT url FROM room_newspaper_items").fetchall()
+            return {str(row["url"]) for row in rows if row["url"]}
