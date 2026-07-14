@@ -457,6 +457,11 @@ def _aggregate_cache_usage(usages: list[dict]) -> dict:
             if input_reported and total_input > 0 and total_read <= total_input
             else None
         ),
+        "cache_prefix_reuse_percent": (
+            round(total_read * 100 / (total_read + total_write), 1)
+            if total_read + total_write > 0
+            else None
+        ),
     }
 
 

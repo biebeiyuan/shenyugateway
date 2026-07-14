@@ -63,22 +63,27 @@ def _normalize_event_content(content: Any) -> Any:
     if not isinstance(content, list):
         return content
     blocks: list[Any] = []
+    text_parts: list[str] = []
+    has_non_text = False
     for item in content:
         if _is_image_block(item):
             continue
         if isinstance(item, str):
             text = _normalize_event_text(item)
             if text:
-                blocks.append(text)
+                text_parts.append(text)
+                blocks.append({"type": "text", "text": text})
             continue
         if isinstance(item, dict) and item.get("type") == "text":
             text = _normalize_event_text(item.get("text"))
             if text:
-                clean = dict(item)
-                clean["text"] = text
-                blocks.append(clean)
+                text_parts.append(text)
+                blocks.append({"type": "text", "text": text})
             continue
+        has_non_text = True
         blocks.append(item)
+    if not has_non_text:
+        return "\n".join(text_parts)
     return blocks or ""
 
 

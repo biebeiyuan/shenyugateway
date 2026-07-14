@@ -282,6 +282,71 @@ def test_history_event_accepts_legacy_image_placeholder_after_upgrade():
     assert event["transient_history_changes_ignored"] is True
 
 
+def test_history_event_treats_expired_image_text_blocks_as_same_flattened_text():
+    previous = compact_history_event_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "同一段文字"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                    {
+                        "type": "text",
+                        "text": '<attachment id="message_insert_extra_bundle_old">old state</attachment>',
+                    },
+                ],
+            },
+            {"role": "assistant", "content": "same reply"},
+            {"role": "user", "content": "same next user"},
+        ]
+    )
+    current = [
+        {
+            "role": "user",
+            "content": '同一段文字 <attachment id="message_insert_extra_bundle_new">new state</attachment>',
+        },
+        {"role": "assistant", "content": "same reply"},
+        {"role": "user", "content": "same next user"},
+        {"role": "assistant", "content": "new reply"},
+        {"role": "user", "content": "new turn"},
+    ]
+
+    event = classify_history_event(previous, current)
+
+    assert event["event_class"] == "new_user"
+    assert event["common_prefix_messages"] == len(previous)
+    assert event["transient_history_changes_ignored"] is True
+
+
+def test_history_event_keeps_real_earlier_text_edit_as_branch_after_shape_normalization():
+    previous = compact_history_event_messages(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "原来的历史文字"},
+                    {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                ],
+            },
+            {"role": "assistant", "content": "same reply"},
+            {"role": "user", "content": "same next user"},
+        ]
+    )
+    current = [
+        {"role": "user", "content": "被真正修改过的历史文字"},
+        {"role": "assistant", "content": "same reply"},
+        {"role": "user", "content": "same next user"},
+        {"role": "assistant", "content": "new reply"},
+        {"role": "user", "content": "new turn"},
+    ]
+
+    event = classify_history_event(previous, current)
+
+    assert event["event_class"] == "branch"
+    assert event["common_prefix_messages"] == 0
+    assert event["transient_history_changes_ignored"] is False
+
+
 def test_chunked_window_keeps_start_until_high_water_then_resets():
     messages = [{"role": "user", "content": f"m{index}"} for index in range(170)]
     first, state, meta = select_chunked_window(

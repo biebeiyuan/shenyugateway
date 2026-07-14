@@ -393,6 +393,11 @@ def _cache_usage_summary(usage: Optional[dict]) -> dict:
             if input_tokens > 0 and read_tokens <= input_tokens
             else None
         ),
+        "cache_prefix_reuse_percent": (
+            round(read_tokens * 100 / (read_tokens + write_tokens), 1)
+            if read_tokens + write_tokens > 0
+            else None
+        ),
     }
 
 

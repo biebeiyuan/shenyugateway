@@ -23,6 +23,8 @@ The report flags gaps longer than the declared TTL, long-gap hits that suggest r
 
 Cache-prefix fingerprints are protocol-level diagnostics for both Anthropic and OpenAI-compatible payloads. An identical path and fingerprint proves that the gateway emitted the same cacheable prefix after excluding `cache_control` metadata. It does not reveal which upstream node handled the request and is not, by itself, permission to add relay-specific routing, retries, or cache semantics.
 
+If a request reports `event=branch`, verify that the first differing raw-window message changed semantically. Image expiry, dynamic Operit bundles, and equivalent string/text-block representations are transient client rewrites and must remain in the current epoch. A true branch changes earlier conversational text or tool structure.
+
 Set these in the shell when checking the deployed gateway:
 
 ```powershell

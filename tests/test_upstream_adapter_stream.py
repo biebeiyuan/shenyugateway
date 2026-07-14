@@ -354,8 +354,11 @@ def test_cache_usage_summary_calculates_read_share_only_with_reliable_input_tota
     )
 
     assert anthropic["cache_read_percent"] == 69.3
+    assert anthropic["cache_prefix_reuse_percent"] == 70.0
     assert openai["cache_read_percent"] == 70.0
+    assert openai["cache_prefix_reuse_percent"] == 100.0
     assert ambiguous["cache_read_percent"] is None
+    assert ambiguous["cache_prefix_reuse_percent"] == 70.0
 
 
 def test_openai_to_anthropic_unwraps_double_encoded_tool_arguments():

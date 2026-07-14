@@ -72,7 +72,9 @@ or the normalized gateway log field:
 cache_usage.cache_read_input_tokens > 0
 ```
 
-`prompt_cache.enabled` only means the gateway inserted configured breakpoints. A missing cache usage field is provider unknown, not proof of a cache miss. `cache_usage` aggregates provider-reported read/write values. When every round also exposes a reliable total input denominator, `cache_read_percent` records the token-weighted share of input served by cache reads. It is not a cross-request hit rate and must not be interpreted as bill savings.
+`prompt_cache.enabled` only means the gateway inserted configured breakpoints. A missing cache usage field is provider unknown, not proof of a cache miss. `cache_usage` aggregates provider-reported read/write values. `cache_prefix_reuse_percent = read / (read + creation)` is the user-facing cache-prefix reuse ratio. When every round also exposes a reliable total input denominator, `cache_read_percent` retains the provider-reported share of total input served by cache reads for diagnostics only. Neither field is a cross-request hit rate or bill-savings estimate.
+
+History-event classification removes transient images and Operit extra bundles before comparing raw request windows. Text-only content is canonicalized semantically, so a plain string and an equivalent list of text blocks are the same lineage. Image expiry or client content-shape flattening must not create `history_branch`; a branch reset is reserved for a real edit before the active tail turn.
 
 ## Streaming And Tool Calls
 

@@ -143,13 +143,13 @@ function tokenLabel(log: LogEntry, round?: any): string {
 function cacheLabel(log: LogEntry, round?: any): string {
   if (round) {
     const read = usageCacheRead(round.usage)
-    const percent = usageCachePercent(round.usage)
+    const percent = usageCachePrefixReusePercent(round.usage)
     return read > 0 ? `⚡ ${fmtNum(read)} cached${percent === null ? '' : ` · ${percent}%`}` : ''
   }
   const cache = log.cache_usage
   if (!cache?.hit) return ''
   const read = Number(cache.cache_read_input_tokens) || 0
-  const percent = typeof cache.cache_read_percent === 'number' ? cache.cache_read_percent : null
+  const percent = typeof cache.cache_prefix_reuse_percent === 'number' ? cache.cache_prefix_reuse_percent : null
   const percentLabel = percent === null ? '' : ` · ${percent}%`
   return read > 0 ? `⚡ ${fmtNum(read)} cached${percentLabel}` : '⚡ cached'
 }
@@ -157,16 +157,17 @@ function cacheLabel(log: LogEntry, round?: any): string {
 function cacheTitle(log: LogEntry, round?: any): string {
   if (round) {
     const read = usageCacheRead(round.usage)
-    const percent = usageCachePercent(round.usage)
-    return `供应商为这一轮上报了 ${read.toLocaleString()} cached tokens${percent === null ? '' : `，约占本轮输入的 ${percent}%`}。这是缓存读取占比，不是省钱比例。`
+    const write = usageCacheWrite(round.usage)
+    const percent = usageCachePrefixReusePercent(round.usage)
+    return `供应商上报缓存读取 ${read.toLocaleString()} tokens · 新写 ${write.toLocaleString()} tokens${percent === null ? '' : ` · 前缀复用 ${percent}%`}。不是省钱比例。`
   }
   const cache = log.cache_usage
   if (!cache?.hit) return ''
   const read = Number(cache.cache_read_input_tokens) || 0
   const write = Number(cache.cache_creation_input_tokens) || 0
-  const percent = typeof cache.cache_read_percent === 'number' ? cache.cache_read_percent : null
-  const percentText = percent === null ? '' : ` · 读取占本次输入 ${percent}%`
-  return `供应商上报缓存读取 ${read.toLocaleString()} tokens · 写入 ${write.toLocaleString()} tokens${percentText}。这是缓存读取占比，不是省钱比例。`
+  const percent = typeof cache.cache_prefix_reuse_percent === 'number' ? cache.cache_prefix_reuse_percent : null
+  const percentText = percent === null ? '' : ` · 前缀复用 ${percent}%`
+  return `供应商上报缓存读取 ${read.toLocaleString()} tokens · 新写 ${write.toLocaleString()} tokens${percentText}。不是省钱比例。`
 }
 
 function roundKey(id: string, round?: any): string {
@@ -256,14 +257,19 @@ function usageCacheRead(usage: Record<string, any> | null | undefined): number {
   ) || 0
 }
 
-function usageCachePercent(usage: Record<string, any> | null | undefined): number | null {
+function usageCacheWrite(usage: Record<string, any> | null | undefined): number {
+  return Number(
+    usage?.cache_creation_input_tokens
+    ?? usage?.prompt_tokens_details?.cached_creation_tokens
+    ?? usage?.input_tokens_details?.cached_creation_tokens,
+  ) || 0
+}
+
+function usageCachePrefixReusePercent(usage: Record<string, any> | null | undefined): number | null {
   const read = usageCacheRead(usage)
-  const explicitInput = Number(usage?.cache_input_tokens)
-  const input = explicitInput > 0
-    ? explicitInput
-    : Number(usage?.prompt_tokens ?? usage?.input_tokens) || 0
-  if (read <= 0 || input <= 0 || read > input) return null
-  return Math.round(read * 1000 / input) / 10
+  const write = usageCacheWrite(usage)
+  if (read + write <= 0) return null
+  return Math.round(read * 1000 / (read + write)) / 10
 }
 
 function decisionText(value: unknown): string {
@@ -367,9 +373,7 @@ function renderOverview(detail: LogDetail): string {
     html += '<div class="empty-soft">这次没有启用 prompt cache。</div>'
   } else if (cache?.reported) {
     html += `<div class="cache-raw"><span>读取 ${Number(cache.cache_read_input_tokens || 0).toLocaleString()}</span><span>写入 ${Number(cache.cache_creation_input_tokens || 0).toLocaleString()}</span><span>${cache.rounds || 1} 轮</span></div>`
-    const percent = typeof cache.cache_read_percent === 'number' ? cache.cache_read_percent : null
-    if (percent !== null) html += `<div class="cache-read-share"><strong>${percent}%</strong><span>供应商上报的缓存读取占本次输入比例</span></div>`
-    html += '<div class="soft-footnote">比例只描述输入 token 里有多少来自缓存读取，不等于费用节省比例。</div>'
+    html += '<div class="soft-footnote">顶部百分比只比较缓存读取和缓存新写入，不等于费用节省比例。</div>'
   } else {
     html += '<div class="empty-soft">这次 API usage 没有提供可识别的缓存读写字段，因此缓存状态未知；不能据此判断供应商内部是否命中缓存。</div>'
   }
@@ -1011,7 +1015,6 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 .memory-update-arrow { color:#b69aaa; font-size:12px; }
 .cache-raw { display:flex; flex-wrap:wrap; gap:7px; }
 .cache-raw span { padding:5px 9px; border-radius:999px; color:#49705a; background:#edf7f0; font-size:10px; }
-.cache-read-share { display:flex; align-items:baseline; gap:8px; margin-top:8px; color:#47725a; }.cache-read-share strong { font-size:18px; }.cache-read-share span { font-size:10px; }
 .empty-soft,.muted { color:#a1999e; font-size:11px; line-height:1.65; }
 .story-round { position:relative; padding:14px; border-radius:12px; margin-bottom:10px; overflow:hidden; }
 .story-round::before { content:''; position:absolute; inset:0 auto 0 0; width:4px; }

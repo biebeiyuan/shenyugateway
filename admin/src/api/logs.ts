@@ -12,6 +12,7 @@ export interface CacheUsage {
   input_tokens?: number
   input_reported?: boolean
   cache_read_percent?: number | null
+  cache_prefix_reuse_percent?: number | null
 }
 
 export interface MemoryIslandItem {

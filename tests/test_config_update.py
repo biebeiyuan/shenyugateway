@@ -83,6 +83,7 @@ def test_aggregate_cache_usage_preserves_multi_round_reported_state():
         "input_tokens": 10,
         "input_reported": False,
         "cache_read_percent": None,
+        "cache_prefix_reuse_percent": 60.0,
     }
 
 
