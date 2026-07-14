@@ -94,6 +94,7 @@ const draftNewspaper = computed(() => newspaperIssues.value.find((issue) => issu
 const publishedNewspaper = computed(() => newspaperIssues.value.find((issue) => issue.status === 'published') || null)
 const displayedNewspaper = computed(() => draftNewspaper.value || publishedNewspaper.value)
 const newspaperFailures = computed(() => displayedNewspaper.value?.source_status?.filter((source) => !source.ok) || [])
+const newspaperSourceWarnings = computed(() => displayedNewspaper.value?.source_status?.filter((source) => source.warning) || [])
 
 onMounted(() => {
   loadRoom()
@@ -451,7 +452,15 @@ function chargeLabel(c?: number) {
                   <span>{{ source.error || '没有可用条目' }}</span>
                 </div>
               </div>
-              <p v-else class="newspaper-muted">所有来源都成功返回了可用条目。</p>
+              <div v-if="newspaperSourceWarnings.length" class="source-failures">
+                <div v-for="source in newspaperSourceWarnings" :key="source.source_id">
+                  <strong>{{ source.name }}</strong>
+                  <span>抓到 {{ source.count }} 条，但没有任何一条提供真实摘要，本期未采用。</span>
+                </div>
+              </div>
+              <p v-if="!newspaperFailures.length && !newspaperSourceWarnings.length" class="newspaper-muted">
+                所有来源都成功返回了带摘要的可用条目。
+              </p>
             </details>
           </template>
           <NEmpty v-else description="窗台上还没有报纸" class="soft-empty" />

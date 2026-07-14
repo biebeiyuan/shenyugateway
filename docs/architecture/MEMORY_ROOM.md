@@ -294,14 +294,14 @@ Workflow:
 5. The draft is visible in admin. It reaches Shenyu only after Yuan clicks `放到窗台`.
 6. Before first delivery, the window door leaks only `窗台上压着一份新报纸。` Calling `room_sit_by_window` returns the complete published issue and marks its first delivery time. The issue remains available on later sits until a newer issue is published.
 
-Each stored item contains the source title, up to the first three sentences supplied by the feed, URL, source name, and normalized publication date. A short or missing feed summary stays short or empty; the model never fills it in. In particular, Hacker News and many Lobsters entries expose no article summary, and NASA APOD's RSS often exposes only a title-like image description. APOD is text-only in this version.
+Each stored item contains the source title, up to the first three sentences supplied by the feed, URL, source name, and normalized publication date. A short feed summary stays short, but an entry with no real summary is excluded before rolling and the model never fills it in. Hacker News external links and many Lobsters external links therefore do not qualify under the RSS-only rule; HN/Lobsters self-posts can still qualify when their feed carries the post body. NASA APOD's RSS often exposes only a title-like image description, which counts as its complete text metadata. APOD is text-only in this version.
 
 Fixed sources, live-checked on 2026-07-14:
 
 | Bucket | Source | Feed | Note |
 |--------|--------|------|------|
-| interest | Hacker News | `https://hnrss.org/frontpage` | Front page; metadata may not include an article summary. |
-| interest | Lobsters | `https://lobste.rs/rss` | Some entries contain only a Comments link as description. |
+| interest | Hacker News | `https://hnrss.org/frontpage` | Front page; external links provide HN metadata, not article summaries, so only entries with real feed text qualify. |
+| interest | Lobsters | `https://lobste.rs/rss` | External links often contain only Comments; self-posts with feed text can qualify. |
 | interest | arXiv cs.AI | `https://rss.arxiv.org/rss/cs.AI` | Title and abstract. |
 | interest | arXiv cs.CL | `https://rss.arxiv.org/rss/cs.CL` | Title and abstract. |
 | interest | Quanta Magazine | `https://www.quantamagazine.org/feed/` | Active RSS. |

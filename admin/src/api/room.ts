@@ -60,8 +60,10 @@ export interface NewspaperSourceStatus {
   archive: boolean
   ok: boolean
   count: number
+  summary_count?: number
   latest_published_at?: string
   error?: string
+  warning?: string
 }
 
 export interface NewspaperIssue {

@@ -197,6 +197,7 @@ def test_fetch_candidates_reports_each_source_without_scraping_pages(tmp_path):
         "archive": False,
         "ok": True,
         "count": 1,
+        "summary_count": 1,
         "latest_published_at": "2026-07-14T08:00:00+00:00",
     }]
 
@@ -243,3 +244,45 @@ def test_optional_quality_model_can_only_drop_known_candidate_ids(tmp_path):
     assert dropped_ids == {"candidate-1"}
     assert detail["used"] is True
     assert detail["model"] == "small-editor"
+
+
+def test_generate_draft_excludes_entries_without_real_feed_summaries(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    cfg = SimpleNamespace(room_newspaper_qa_enabled=False)
+    service = RoomNewspaperService(cfg, store)
+    candidates = [
+        _item(index, "arxiv_ai", "interest")
+        for index in range(8)
+    ] + [
+        _item(index, "nasa_apod", "random")
+        for index in range(8, 12)
+    ]
+    candidates.append(NewspaperItem(
+        candidate_id="empty-hn",
+        source_id="hacker_news",
+        source_name="Hacker News",
+        bucket="interest",
+        title="Headline without feed summary",
+        summary="",
+        url="https://example.test/empty-hn",
+        guid="empty-hn",
+        published_at="2026-07-14T00:00:00+00:00",
+    ))
+
+    async def fake_fetch(_client):
+        return candidates, []
+
+    service.fetch_candidates = fake_fetch  # type: ignore[method-assign]
+    client = httpx.AsyncClient(transport=httpx.MockTransport(lambda _request: httpx.Response(500)))
+
+    async def run_generate():
+        try:
+            return await service.generate_draft(client=client, rng=random.Random(9), issue_size=5)
+        finally:
+            await client.aclose()
+
+    issue = asyncio.run(run_generate())
+
+    assert issue["item_count"] == 5
+    assert all(item["summary"] for item in issue["items"])
+    assert "https://example.test/empty-hn" not in store.used_room_newspaper_urls()

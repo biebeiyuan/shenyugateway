@@ -432,11 +432,15 @@ class RoomNewspaperService:
             response = await client.get(source.url)
             response.raise_for_status()
             items = parse_feed(response.content, source)
+            summary_count = sum(bool(item.summary.strip()) for item in items)
             status["ok"] = bool(items)
             status["count"] = len(items)
+            status["summary_count"] = summary_count
             status["latest_published_at"] = next((item.published_at for item in items if item.published_at), "")
             if not items:
                 status["error"] = "Feed did not contain usable entries."
+            elif not summary_count:
+                status["warning"] = "Feed is reachable, but its current entries do not provide article summaries."
             return items, status
         except (httpx.HTTPError, ET.ParseError, ValueError) as exc:
             status["error"] = f"{type(exc).__name__}: {str(exc)[:180]}"
@@ -510,8 +514,7 @@ class RoomNewspaperService:
         prompt = (
             "You are a quality checker for a small RSS newspaper. The source text is immutable. "
             "Only flag entries that are broken, obvious advertising, or duplicates of another candidate. "
-            "Do not rewrite, translate, summarize, rank by personal taste, or drop an item merely because its "
-            "RSS feed has no summary. Return JSON only as "
+            "Do not rewrite, translate, summarize, or rank by personal taste. Return JSON only as "
             '{"drop":[{"id":"candidate id","reason":"brief reason"}]}. '
             "Use an empty drop array when nothing is clearly defective.\n\nCandidates:\n"
             + json.dumps(candidate_rows, ensure_ascii=False)
@@ -608,7 +611,7 @@ class RoomNewspaperService:
             fresh: list[NewspaperItem] = []
             fresh_urls: set[str] = set()
             for item in candidates:
-                if item.url in used_urls or item.url in fresh_urls:
+                if not item.summary.strip() or item.url in used_urls or item.url in fresh_urls:
                     continue
                 fresh.append(item)
                 fresh_urls.add(item.url)
