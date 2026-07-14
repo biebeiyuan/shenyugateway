@@ -19,7 +19,9 @@
 - **Upstream**：看这一轮完整上游 payload；只在需要核对协议、工具或缓存断点时打开。
 - **Meta / Raw JSON**：工程排障备用，平时可以不看。
 
-默认只保留摘要、预览和计数，不在 request log 中保存完整 Messages、Upstream payload 或 Response。需要短期排查协议问题时，可以显式设置 `GATEWAY_LOG_FULL_PAYLOADS=true`；这些完整内容只存在于进程内最近 30 条日志，重启即消失，但仍可能包含敏感对话，排查结束后应关闭。
+日志分两层保留：当前进程内有最近 30 条可继续更新的实时日志；SQLite 默认保留最近 200 条安全摘要（由 `GATEWAY_REQUEST_LOG_RETENTION` 调整），所以挂载数据库持久卷后，更新容器不会再清空前端最近日志。普通结构化诊断字段会随安全 JSON 摘要自动保存；完整 Messages、Upstream payload、Response、图片、原始 Thinking 和 signature 会被统一剔除。
+
+需要短期排查协议问题时，可以显式设置 `GATEWAY_LOG_FULL_PAYLOADS=true`。完整内容仍只存在于当前进程最近 30 条日志，重启后旧记录会退回摘要和预览；它们可能包含敏感对话，排查结束后应关闭。
 
 ## Anthropic Thinking 标签
 
@@ -35,10 +37,11 @@
 
 ## 小岛与缓存
 
-- 小岛显示的是**实际渲染并发送给模型**的星星和 Mem，不是候选列表。Stars 和 Mem 会用同一套卡片分别展示当前内容、新增、更新和移除；更新显示为“原来 → 更新后”。这份短文本小岛快照随最近 30 条内存日志保留、重启即消失，不要求开启完整 Messages/Upstream payload 日志；旧日志仍显示完整小岛原文。
+- 小岛显示的是**实际渲染并发送给模型**的星星和 Mem，不是候选列表。Stars 和 Mem 会用同一套卡片分别展示当前内容、新增、更新和移除；更新显示为“原来 → 更新后”。这份短文本小岛摘要随 SQLite 安全日志历史保留，不要求开启完整 Messages/Upstream payload；完整渲染文本仍遵守进程内临时保留规则。
 - 小岛重写可能改变缓存前缀，但是否影响计费仍取决于供应商的缓存实现。
 - `tail_guard_user_turns` 表示第四个断点主动避开的最近 user turn 数：普通纯文本为 `0`，存在设备状态附件时通常为 `3`，仅有图片时为 `2`。这些最近消息仍会完整发给模型，只是不放进稳定尾部缓存前缀。
-- 页面保留供应商原样返回的 `cached/input/output/write` 数值；缓存标签后的百分比使用 `读取 ÷（读取 + 新写入）`，表示缓存前缀复用率。它不依赖供应商可能跳变的未缓存输入分母，也不是账单节省比例。
+- 每轮顶部的 `input` 是该次上游请求的总输入，不含输出：Anthropic 使用未缓存输入 + 缓存读取 + 缓存新写；OpenAI-compatible 使用供应商上报的 `prompt_tokens` / `input_tokens`，因为其中的 cached tokens 已是子集，不能重复相加。
+- 页面保留供应商原样返回的 `cached/input/output/write` 数值；`⚡ cached` 后的百分比仍使用 `读取 ÷（读取 + 新写入）`，表示缓存前缀复用率。它不是 `cached ÷ input`，也不是账单节省比例。
 - 不同供应商、控制台和 API usage 的口径可能不同；需要对账时按 request id 和每一轮分别比较。
 
 ## 来源指纹
@@ -71,6 +74,7 @@
 python scripts/vps_gateway_logs.py api --via-ssh --errors --detail
 python scripts/vps_gateway_logs.py api --via-ssh --id <log-id> --detail
 python scripts/vps_gateway_logs.py cache --session <session-tag> --limit 20
+python scripts/vps_gateway_logs.py cache --session <session-tag> --limit 200
 ```
 
 公网日志 API 正常时也可以去掉 `--via-ssh`；SSH 仍是 Cloudflare 或公网入口异常时的可靠备用路径。

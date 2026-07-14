@@ -11,6 +11,8 @@ export interface CacheUsage {
   rounds?: number
   input_tokens?: number
   input_reported?: boolean
+  total_input_tokens?: number
+  total_input_reported?: boolean
   cache_read_percent?: number | null
   cache_prefix_reuse_percent?: number | null
 }
@@ -75,6 +77,9 @@ export interface LogEntry {
   response_preview: string | null
   response_full?: string | null
   request_payloads_retained?: boolean
+  persisted?: boolean
+  persistence_schema_version?: number
+  persistence_truncated?: boolean
   upstream_payload_summary?: Record<string, any> | null
   system_additions_chars?: number | null
   usage?: Record<string, any> | null
@@ -87,6 +92,7 @@ export interface ToolRoundEntry {
   messages_count: number
   stream?: boolean
   usage?: Record<string, any>
+  cache_usage?: CacheUsage | null
   finish_reason?: string | null
   final?: boolean
   response_full?: string

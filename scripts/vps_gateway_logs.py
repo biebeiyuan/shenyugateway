@@ -1101,7 +1101,7 @@ def command_cache(args: argparse.Namespace) -> int:
         or _env_first("SHENYU_GATEWAY_TOKEN", "GATEWAY_API_KEY", "GATEWAY_TOKEN")
         or _config_first(config, "gateway_token", "token", "gateway_api_key")
     )
-    path = f"/api/gateway/logs?limit={max(1, min(int(args.limit or 12), 30))}"
+    path = f"/api/gateway/logs?limit={max(1, min(int(args.limit or 12), 200))}"
     if args.via_ssh:
         data = _http_json_via_ssh(args, config, path, timeout=args.timeout)
     else:

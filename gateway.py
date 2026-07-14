@@ -284,6 +284,13 @@ async def lifespan(app: FastAPI):
     global recall_embedding_worker_task, heartbeat_archive_worker_task
     _init_supabase()
     _init_store()
+    if session_store:
+        try:
+            interrupted_logs = session_store.mark_interrupted_request_logs()
+            if interrupted_logs:
+                logger.info("Marked %d persisted request log(s) as interrupted after restart", interrupted_logs)
+        except Exception:
+            logger.warning("Failed to finalize interrupted request logs", exc_info=True)
     if (
         supabase_client
         and (
@@ -422,22 +429,26 @@ def _prune_runtime_state(session_id: Optional[str] = None) -> dict[str, int]:
     return _prune_runtime_state_impl(cfg=cfg, store=session_store, session_id=session_id)
 
 
-def _aggregate_cache_usage(usages: list[dict]) -> dict:
+def _aggregate_cache_usage(usages: list[dict], protocol: str = "") -> dict:
     total_read = 0
     total_write = 0
-    total_input = 0
+    reported_input_total = 0
     read_reported = False
     write_reported = False
     input_reported = True
+    normalized_input_total = 0
+    total_input_reported = bool(usages)
     creation_totals: dict[str, int] = {}
     for usage in usages:
-        summary = _cache_usage_summary(usage)
+        summary = _cache_usage_summary(usage, protocol=protocol)
         total_read += summary["cache_read_input_tokens"]
         total_write += summary["cache_creation_input_tokens"]
-        total_input += summary["input_tokens"]
+        reported_input_total += summary["input_tokens"]
         read_reported = read_reported or summary["read_reported"]
         write_reported = write_reported or summary["write_reported"]
         input_reported = input_reported and summary["input_reported"]
+        normalized_input_total += summary["total_input_tokens"]
+        total_input_reported = total_input_reported and summary["total_input_reported"]
         for key, value in (summary.get("cache_creation") or {}).items():
             creation_totals[key] = creation_totals.get(key, 0) + int(value or 0)
     return {
@@ -450,11 +461,13 @@ def _aggregate_cache_usage(usages: list[dict]) -> dict:
         "write_reported": write_reported,
         "reported": read_reported or write_reported,
         "rounds": len(usages),
-        "input_tokens": total_input,
+        "input_tokens": reported_input_total,
         "input_reported": input_reported,
+        "total_input_tokens": normalized_input_total,
+        "total_input_reported": total_input_reported,
         "cache_read_percent": (
-            round(total_read * 100 / total_input, 1)
-            if input_reported and total_input > 0 and total_read <= total_input
+            round(total_read * 100 / reported_input_total, 1)
+            if input_reported and reported_input_total > 0 and total_read <= reported_input_total
             else None
         ),
         "cache_prefix_reuse_percent": (

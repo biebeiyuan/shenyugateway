@@ -324,8 +324,9 @@ def _apply_openai_compatible_cache_control(
     return cached_messages, cached_tools, cache_paths
 
 
-def _cache_usage_summary(usage: Optional[dict]) -> dict:
+def _cache_usage_summary(usage: Optional[dict], protocol: str = "") -> dict:
     usage = usage or {}
+    protocol = str(protocol or "").strip().lower()
     creation = usage.get("cache_creation") or {}
     prompt_details = usage.get("prompt_tokens_details") or {}
     input_details = usage.get("input_tokens_details") or {}
@@ -377,6 +378,21 @@ def _cache_usage_summary(usage: Optional[dict]) -> dict:
     else:
         input_tokens = _usage_int(usage.get("input_tokens"))
         input_reported = not read_reported and not write_reported and "input_tokens" in usage
+    if "cache_input_tokens" in usage:
+        total_input_tokens = explicit_input_tokens
+        total_input_reported = True
+    elif protocol == "anthropic" and "input_tokens" in usage:
+        total_input_tokens = _usage_int(usage.get("input_tokens")) + read_tokens + write_tokens
+        total_input_reported = True
+    elif "prompt_tokens" in usage:
+        total_input_tokens = _usage_int(usage.get("prompt_tokens"))
+        total_input_reported = True
+    elif "input_tokens" in usage:
+        total_input_tokens = _usage_int(usage.get("input_tokens"))
+        total_input_reported = True
+    else:
+        total_input_tokens = 0
+        total_input_reported = False
     return {
         "cache_read_input_tokens": read_tokens,
         "cache_creation_input_tokens": write_tokens,
@@ -388,6 +404,8 @@ def _cache_usage_summary(usage: Optional[dict]) -> dict:
         "reported": read_reported or write_reported,
         "input_tokens": input_tokens,
         "input_reported": input_reported,
+        "total_input_tokens": total_input_tokens,
+        "total_input_reported": total_input_reported,
         "cache_read_percent": (
             round(read_tokens * 100 / input_tokens, 1)
             if input_tokens > 0 and read_tokens <= input_tokens

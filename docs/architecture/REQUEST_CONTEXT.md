@@ -72,7 +72,7 @@ or the normalized gateway log field:
 cache_usage.cache_read_input_tokens > 0
 ```
 
-`prompt_cache.enabled` only means the gateway inserted configured breakpoints. A missing cache usage field is provider unknown, not proof of a cache miss. `cache_usage` aggregates provider-reported read/write values. `cache_prefix_reuse_percent = read / (read + creation)` is the user-facing cache-prefix reuse ratio. When every round also exposes a reliable total input denominator, `cache_read_percent` retains the provider-reported share of total input served by cache reads for diagnostics only. Neither field is a cross-request hit rate or bill-savings estimate.
+`prompt_cache.enabled` only means the gateway inserted configured breakpoints. A missing cache usage field is provider unknown, not proof of a cache miss. `cache_usage` aggregates provider-reported read/write values. Each round also exposes `cache_usage.total_input_tokens` for the Admin `input` badge: Anthropic totals uncached `input_tokens + cache_read_input_tokens + cache_creation_input_tokens`, while OpenAI-compatible `prompt_tokens` / Responses `input_tokens` already include the cached subset and are used without adding it again. Output tokens are excluded. `cache_prefix_reuse_percent = read / (read + creation)` remains the user-facing cache-prefix reuse ratio. When a reliable provider total-input denominator exists, `cache_read_percent` retains the share served by cache reads for diagnostics only. Neither percentage is a cross-request hit rate or bill-savings estimate.
 
 History-event classification removes transient images and Operit extra bundles before comparing raw request windows. Text-only content is canonicalized semantically, so a plain string and an equivalent list of text blocks are the same lineage. Image expiry or client content-shape flattening must not create `history_branch`; a branch reset is reserved for a real edit before the active tail turn.
 
@@ -144,6 +144,7 @@ SQLite stores only gateway runtime state:
 - `cold_start_snapshots`: bounded bridge packages created from recent context snapshots.
 - `pending_gateway_tool_turns`: short-lived hidden mixed tool transcripts. It stores the original mixed assistant tool-call message, gateway tool result messages, client tool-call ids, and consumed/expiry timestamps.
 - `cache_entries`: short-lived gateway cache.
+- `request_log_history`: bounded, versioned safe request summaries used by the Admin log page and helper across process/container replacement. Full request/response payload fields are excluded before storage.
 - `heartbeat_entries`: global private heartbeat notes captured from `<heartbeat>...</heartbeat>` or written manually in admin. `session_id` is retained as the source session, but runtime injection reads the shared global pool.
 - `hisense_heartbeat`: private heartbeat notes captured from Hisense sessions. These use the same parser as normal heartbeats but are stored and injected separately.
 
@@ -168,6 +169,7 @@ Admin configuration updates currently store secret values in both `.env` and SQL
 | `pending_gateway_tool_turns` | original mixed assistant call and gateway tool result messages | active until consumed or 24h expiry | reconstruct gateway/client mixed turns | deleted |
 | `tool_error_log` / `room_trace` | tool args/errors or Room diagnostic text | explicit table-specific limits/cleanup | diagnostics | deleted |
 | request-log deque | summaries by default; full messages/payload/response only with `GATEWAY_LOG_FULL_PAYLOADS=true` | 30 requests, process memory | live debugging | process restart clears it |
+| `request_log_history` | versioned safe summaries/previews; full messages/payload/response, images, raw Thinking/signatures excluded | newest 200 by default, SQLite | cross-deploy Admin/API/helper debugging | independent of session delete |
 | helper `--save` JSON | one explicitly exported redacted log detail | operator-managed file | offline debugging | independent local file |
 | Supabase `shenyu_chat_archive` | deduplicated visible user/assistant text | durable; no automatic session-delete coupling | long-term recall/archive | not deleted |
 
@@ -178,6 +180,7 @@ Default online retention:
 - `GATEWAY_MESSAGE_RETENTION=1500`: keep the newest local message rows per session. These rows are for admin inspection and export, not for cold-start injection.
 - `GATEWAY_CONTEXT_SNAPSHOT_RETENTION=3`: keep the newest context snapshots per session. Do not set this to `0`; cold-start and calendar source collection need recent snapshots.
 - `GATEWAY_COLD_START_RETENTION=20`: keep recent cold-start snapshots per session. Cleanup only removes old snapshots whose `injected_count >= max_injections`, so active cold-start bridges are preserved.
+- `GATEWAY_REQUEST_LOG_RETENTION=200`: keep the newest safe request-log summaries globally. The Admin/API list merges them with the live 30-entry deque and prefers the live copy when both exist. A startup pass marks rows left in `preparing`, `pending`, or streaming states as `interrupted`.
 - Consumed or expired `pending_gateway_tool_turns` are removed during cleanup. Unconsumed pending rows are kept until expiry so a client can return its tool result in the next request.
 - `heartbeat_entries` and `hisense_heartbeat` are not removed by automatic cleanup. They can be manually written/deleted from the admin session page, and those actions affect their respective heartbeat pools.
 - expired `cache_entries` are removed during cleanup.

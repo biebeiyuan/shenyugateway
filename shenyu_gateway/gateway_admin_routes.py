@@ -2,16 +2,20 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
 from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
-from .request_logs import _finalize_stale_tool_stream_logs, _http_request_diagnostics, _retain_request_log_payloads
+from .request_logs import (
+    _finalize_stale_tool_stream_logs,
+    _http_request_diagnostics,
+    _public_log_detail,
+    _retain_request_log_payloads,
+)
 from .room_newspaper import RoomNewspaperService, source_catalog
-from .runtime import iso_now as _iso_now
+from .runtime import iso_now as _iso_now, logger
 from .schemas import (
     ColdStartPreviewRequest,
     DrawerNoteCreateRequest,
@@ -47,82 +51,6 @@ class GatewayAdminRouteDeps:
     is_hisense_session: Callable[[Optional[dict]], bool]
     now: Callable[[], Any]
     request_logs: Any
-
-
-_LOG_SECRET_KEYS = {
-    "authorization",
-    "proxy_authorization",
-    "x_api_key",
-    "api_key",
-    "apikey",
-    "access_token",
-    "refresh_token",
-    "token",
-    "secret",
-    "client_secret",
-    "webhook_secret",
-    "password",
-    "private_key",
-}
-_LOG_SECRET_KEY_SUFFIXES = (
-    "_api_key",
-    "_access_token",
-    "_refresh_token",
-    "_auth_token",
-    "_client_secret",
-    "_webhook_secret",
-    "_private_key",
-    "_password",
-)
-
-
-def _normalized_secret_key(value: Any) -> str:
-    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
-
-
-def _is_log_secret_key(value: Any) -> bool:
-    normalized = _normalized_secret_key(value)
-    return normalized in _LOG_SECRET_KEYS or normalized.endswith(_LOG_SECRET_KEY_SUFFIXES)
-
-
-def _redact_log_url(value: str) -> str:
-    if not value.startswith(("http://", "https://")):
-        return value
-    try:
-        parts = urlsplit(value)
-    except ValueError:
-        return value
-    if not parts.query:
-        return value
-    query = [
-        (key, "<redacted>" if _is_log_secret_key(key) else item_value)
-        for key, item_value in parse_qsl(parts.query, keep_blank_values=True)
-    ]
-    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
-
-
-def _redact_log_secrets(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {
-            key: (
-                "<redacted>"
-                if _is_log_secret_key(key)
-                else _redact_log_secrets(item_value)
-            )
-            for key, item_value in value.items()
-            if not str(key).startswith("_")
-        }
-    if isinstance(value, list):
-        return [_redact_log_secrets(item) for item in value]
-    if isinstance(value, tuple):
-        return [_redact_log_secrets(item) for item in value]
-    if isinstance(value, str):
-        return _redact_log_url(value)
-    return value
-
-
-def _public_log_detail(item: dict[str, Any]) -> dict[str, Any]:
-    return _redact_log_secrets(item)
 
 
 def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
@@ -250,6 +178,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 "message_retention": cfg.gateway_message_retention,
                 "context_snapshot_retention": cfg.gateway_context_snapshot_retention,
                 "cold_start_retention": cfg.gateway_cold_start_retention,
+                "request_log_retention": getattr(cfg, "gateway_request_log_retention", 200),
                 "heartbeat_retention": "keep",
             },
             "cold_start": {
@@ -312,6 +241,8 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             "logs": {
                 "count": len(logs),
                 "capacity": getattr(deps.request_logs, "maxlen", None),
+                "persistent_count": store.request_log_count(),
+                "persistent_capacity": getattr(cfg, "gateway_request_log_retention", 200),
                 "http_requests": _http_request_diagnostics(),
                 "latest": {
                     "id": latest_log.get("id"),
@@ -805,35 +736,56 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
     @router.get("/api/gateway/logs")
     async def gateway_logs(limit: int = 30):
         _finalize_stale_tool_stream_logs()
-        logs = list(deps.request_logs)[:limit]
+        retention = getattr(cfg, "gateway_request_log_retention", 200)
+        limit = max(1, min(int(limit or 30), retention))
+        live_logs = list(deps.request_logs)
+        try:
+            persisted_logs = deps.require_session_store().list_request_logs(limit=limit)
+        except Exception:
+            logger.warning("Failed to read persisted request logs", exc_info=True)
+            persisted_logs = []
+        merged_logs = {
+            str(item.get("id") or item.get("request_id")): item
+            for item in persisted_logs
+            if item.get("id") or item.get("request_id")
+        }
+        for item in live_logs:
+            key = str(item.get("id") or item.get("request_id") or "")
+            if key:
+                merged_logs[key] = item
+        logs = sorted(
+            merged_logs.values(),
+            key=lambda item: str(item.get("timestamp") or ""),
+            reverse=True,
+        )[:limit]
         return {"logs": [
             {
-                "id": item["id"],
+                "id": item.get("id") or item.get("request_id") or "unknown",
                 "request_id": item.get("request_id"),
-                "timestamp": item["timestamp"],
+                "timestamp": item.get("timestamp") or "",
                 "last_activity_at": item.get("last_activity_at"),
                 "stage": item.get("stage"),
-                "model": item["model"],
-                "client_model": item.get("client_model", item["model"]),
-                "upstream_model": item.get("upstream_model", item["model"]),
+                "model": item.get("model") or "unknown",
+                "client_model": item.get("client_model") or item.get("model") or "unknown",
+                "upstream_model": item.get("upstream_model") or item.get("model") or "unknown",
                 "model_mapped": item.get("model_mapped", False),
-                "stream": item["stream"],
-                "session_tag": item["session_tag"],
-                "is_first_turn": item["is_first_turn"],
+                "stream": item.get("stream", False),
+                "session_tag": item.get("session_tag"),
+                "is_first_turn": item.get("is_first_turn", False),
                 "is_room": item.get("is_room", False),
                 "room_charge": item.get("room_charge"),
-                "original_messages_count": item["original_messages_count"],
-                "prepared_messages_count": item["prepared_messages_count"],
+                "original_messages_count": item.get("original_messages_count", 0),
+                "prepared_messages_count": item.get("prepared_messages_count", 0),
                 "client_message_window": item.get("client_message_window"),
                 "memory_island": item.get("memory_island"),
                 "memory_island_version": item.get("memory_island_version"),
                 "cold_start": item.get("cold_start"),
-                "system_additions_preview": item["system_additions_preview"],
+                "system_additions_preview": item.get("system_additions_preview", ""),
                 "system_additions_chars": item.get("system_additions_chars"),
-                "tools_count": item["tools_count"],
-                "tool_names": item["tool_names"],
-                "has_internal_tools": item["has_internal_tools"],
-                "upstream_url": item["upstream_url"],
+                "tools_count": item.get("tools_count", 0),
+                "tool_names": item.get("tool_names") or [],
+                "has_internal_tools": item.get("has_internal_tools", False),
+                "upstream_url": item.get("upstream_url", ""),
                 "upstream_scope": item.get("upstream_scope", "default"),
                 "prompt_cache": item.get("prompt_cache"),
                 "request_payloads_retained": item.get("request_payloads_retained", False),
@@ -847,7 +799,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                         for key, value in round_item.items()
                         if key in {
                             "round", "messages_count", "stream", "usage", "finish_reason", "final",
-                            "response_preview", "upstream_duration_ms", "tool_calls_count",
+                            "response_preview", "upstream_duration_ms", "cache_usage", "tool_calls_count",
                             "gateway_tool_calls", "tools", "upstream_payload_summary", "anthropic_thinking",
                         }
                     }
@@ -857,10 +809,10 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 "slow_phases": item.get("slow_phases") or [],
                 "empty_visible_response_fallback": item.get("empty_visible_response_fallback", False),
                 "empty_visible_response_fallback_detail": item.get("empty_visible_response_fallback_detail"),
-                "status": item["status"],
-                "duration_ms": item["duration_ms"],
-                "error": item["error"],
-                "response_preview": item["response_preview"],
+                "status": item.get("status", "unknown"),
+                "duration_ms": item.get("duration_ms", 0),
+                "error": item.get("error"),
+                "response_preview": item.get("response_preview"),
             }
             for item in logs
         ]}
@@ -871,6 +823,13 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         for item in deps.request_logs:
             if item["id"] == log_id or item.get("request_id") == log_id:
                 return _public_log_detail(item)
+        try:
+            persisted = deps.require_session_store().get_request_log(log_id)
+        except Exception:
+            logger.warning("Failed to read persisted request log id=%s", log_id, exc_info=True)
+            persisted = None
+        if persisted:
+            return _public_log_detail(persisted)
         raise HTTPException(status_code=404, detail="Log not found")
 
     return router

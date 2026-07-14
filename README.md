@@ -130,7 +130,8 @@ The codebase is partly layered already:
 
 ### Request logging
 
-- `shenyu_gateway/request_logs.py`: in-memory request log ring buffer, phase markers, HTTP event tracking.
+- `shenyu_gateway/request_logs.py`: live request log ring buffer, phase markers, HTTP event tracking, and the safe serializer used for persistent summaries.
+- `shenyu_gateway/store/_request_log_history.py`: bounded SQLite request-log history used by Admin/API/helper after process or container replacement.
 
 ### Shared utilities
 
@@ -161,7 +162,7 @@ The codebase is partly layered already:
 - `admin/src/views/stars/starMelody.ts`: constellation → Web Audio melody.
 - `admin/src/views/stars/starUi.ts`: shared Star UI formatting and link-order helpers.
 - `admin/src/views/SessionsView.vue`: session inspection page.
-- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs.
+- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs and per-round normalized input/cache badges.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
 - `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
 - `admin/src/views/ArchiveView.vue`: chat archive reader and conflict book clip flow.
@@ -335,7 +336,7 @@ http://localhost:8010/admin
 - `admin/src/views/Mem0View.vue`: Mem prompt/capture/injection/tool controls, mem-note attribute workflow, and old atomic read-only lookup. The "静音但保留工具" preset turns off mem prompt/capture/injection while leaving gateway tools available.
 - `admin/src/views/StarsView.vue`: standalone Star entry shell at `/stars`, with split Star panels under `admin/src/views/stars/` and a lazy-loaded memory star map at `/stars/map`.
 - `admin/src/views/SessionsView.vue`: session inspection page.
-- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs.
+- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs and per-round normalized input/cache badges.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
 - `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.
@@ -389,7 +390,7 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 5. Port mapping: `8010:8010`.
 6. Coolify auto-deploys on every git push.
 
-If local sessions, context snapshots, pending tool turns, or Admin configuration overrides must survive container replacement, mount a persistent volume at `/app/data` (or the parent directory configured by `GATEWAY_DB_PATH`). The Dockerfile does not declare a volume, so the default `/app/data/shenyu_gateway.db` otherwise belongs to the disposable container filesystem. Supabase archives are independent of this local volume.
+If local sessions, context snapshots, pending tool turns, persisted request-log summaries, or Admin configuration overrides must survive container replacement, mount a persistent volume at `/app/data` (or the parent directory configured by `GATEWAY_DB_PATH`). The Dockerfile does not declare a volume, so the default `/app/data/shenyu_gateway.db` otherwise belongs to the disposable container filesystem. Supabase archives are independent of this local volume. `GATEWAY_REQUEST_LOG_RETENTION` controls the bounded history size and defaults to `200`; full debug payloads are never written to this history.
 
 ### Frontend workflow
 

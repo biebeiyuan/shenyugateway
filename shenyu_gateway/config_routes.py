@@ -109,6 +109,10 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "client_tool_surface": cfg.client_tool_surface,
         "max_internal_tool_rounds": cfg.max_internal_tool_rounds,
         "gateway_db_path": cfg.gateway_db_path,
+        "gateway_message_retention": cfg.gateway_message_retention,
+        "gateway_context_snapshot_retention": cfg.gateway_context_snapshot_retention,
+        "gateway_cold_start_retention": cfg.gateway_cold_start_retention,
+        "gateway_request_log_retention": cfg.gateway_request_log_retention,
         "calendar_context_day_limit": cfg.calendar_context_day_limit,
         "calendar_context_week_limit": cfg.calendar_context_week_limit,
         "calendar_context_month_limit": cfg.calendar_context_month_limit,
@@ -236,6 +240,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "gateway_message_retention": "GATEWAY_MESSAGE_RETENTION",
             "gateway_context_snapshot_retention": "GATEWAY_CONTEXT_SNAPSHOT_RETENTION",
             "gateway_cold_start_retention": "GATEWAY_COLD_START_RETENTION",
+            "gateway_request_log_retention": "GATEWAY_REQUEST_LOG_RETENTION",
             "max_client_messages": "MAX_CLIENT_MESSAGES",
             "cold_start_message_limit": "COLD_START_MESSAGE_LIMIT",
             "cold_start_idle_minutes": "COLD_START_IDLE_MINUTES",
@@ -464,6 +469,10 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.gateway_cold_start_retention = max(1, min(body.gateway_cold_start_retention, 1000))
             changed.append("gateway_cold_start_retention")
             env_updates[env_names["gateway_cold_start_retention"]] = cfg.gateway_cold_start_retention
+        if body.gateway_request_log_retention is not None:
+            cfg.gateway_request_log_retention = max(30, min(body.gateway_request_log_retention, 5000))
+            changed.append("gateway_request_log_retention")
+            env_updates[env_names["gateway_request_log_retention"]] = cfg.gateway_request_log_retention
         if "max_client_messages" in body.model_fields_set:
             value = body.max_client_messages
             cfg.max_client_messages = max(1, min(int(value), 500)) if value and int(value) > 0 else None

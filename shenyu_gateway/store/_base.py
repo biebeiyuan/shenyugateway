@@ -215,6 +215,21 @@ class BaseStoreMixin:
                 CREATE INDEX IF NOT EXISTS idx_chat_archive_seen_tag_created
                     ON chat_archive_seen(session_tag, created_at);
 
+                CREATE TABLE IF NOT EXISTS request_log_history (
+                    id TEXT PRIMARY KEY,
+                    request_id TEXT,
+                    timestamp TEXT NOT NULL,
+                    session_tag TEXT,
+                    status TEXT NOT NULL DEFAULT 'unknown',
+                    detail_json TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_request_log_history_timestamp
+                    ON request_log_history(timestamp DESC, updated_at DESC);
+                CREATE INDEX IF NOT EXISTS idx_request_log_history_request_id
+                    ON request_log_history(request_id);
+
                 CREATE TABLE IF NOT EXISTS config_overrides (
                     env_key TEXT PRIMARY KEY,
                     env_value TEXT NOT NULL,

@@ -198,6 +198,22 @@ def test_cache_parser_defaults_to_ssh():
     assert args.limit == 12
 
 
+def test_cache_command_can_read_persisted_history_up_to_two_hundred(monkeypatch):
+    args = logs.build_parser().parse_args(["cache", "--limit", "500"])
+    captured = {}
+    monkeypatch.setattr(logs, "_load_local_config", lambda _path: {})
+
+    def fake_read(_args, _config, path, timeout):
+        captured["path"] = path
+        captured["timeout"] = timeout
+        return {"logs": []}
+
+    monkeypatch.setattr(logs, "_http_json_via_ssh", fake_read)
+
+    assert logs.command_cache(args) == 0
+    assert captured["path"] == "/api/gateway/logs?limit=200"
+
+
 def test_debug_summary_prints_active_http_requests(capsys):
     logs._print_debug_summary(
         {

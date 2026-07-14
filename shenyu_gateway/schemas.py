@@ -125,6 +125,7 @@ class ConfigUpdate(BaseModel):
     gateway_message_retention: Optional[int] = None
     gateway_context_snapshot_retention: Optional[int] = None
     gateway_cold_start_retention: Optional[int] = None
+    gateway_request_log_retention: Optional[int] = None
     hisense_client_name: Optional[str] = None
     hisense_heartbeat_limit: Optional[int] = None
     hisense_notebook_limit: Optional[int] = None

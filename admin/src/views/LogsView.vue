@@ -108,7 +108,7 @@ function esc(s: unknown): string {
 }
 
 function clsName(status: string): string {
-  if (status === 'error') return 'error'
+  if (status === 'error' || status === 'client_disconnected' || status === 'interrupted') return 'error'
   if (status === 'ok' || status === 'success') return 'ok'
   if (status === 'streaming') return 'streaming'
   return 'pending'
@@ -123,21 +123,26 @@ function fmtNum(n: number): string {
   return String(n)
 }
 
-// 从 usage 里取总 token 数，兼容 OpenAI / Anthropic 两种字段
-function totalTokens(log: LogEntry, round?: any): number | null {
+// Prefer the backend-normalized total input; keep a protocol-aware fallback for old logs.
+function totalInputTokens(log: LogEntry, round?: any): number | null {
+  const cache = round?.cache_usage
+  if (cache?.total_input_reported && typeof cache.total_input_tokens === 'number') {
+    return cache.total_input_tokens > 0 ? cache.total_input_tokens : null
+  }
   const u = round?.usage || log.usage
   if (!u || typeof u !== 'object') return null
-  const total = u.total_tokens
-  if (typeof total === 'number' && total > 0) return total
-  const inTok = u.prompt_tokens ?? u.input_tokens
-  const outTok = u.completion_tokens ?? u.output_tokens
-  const sum = (typeof inTok === 'number' ? inTok : 0) + (typeof outTok === 'number' ? outTok : 0)
-  return sum > 0 ? sum : null
+  if (typeof u.cache_input_tokens === 'number' && u.cache_input_tokens > 0) return u.cache_input_tokens
+  if (typeof u.prompt_tokens === 'number' && u.prompt_tokens > 0) return u.prompt_tokens
+  if (typeof u.input_tokens !== 'number') return null
+  const total = log.prompt_cache?.protocol === 'anthropic'
+    ? u.input_tokens + usageCacheRead(u) + usageCacheWrite(u)
+    : u.input_tokens
+  return total > 0 ? total : null
 }
 
-function tokenLabel(log: LogEntry, round?: any): string {
-  const t = totalTokens(log, round)
-  return t === null ? '' : `${fmtNum(t)} tok`
+function totalInputLabel(log: LogEntry, round?: any): string {
+  const t = totalInputTokens(log, round)
+  return t === null ? '' : `${fmtNum(t)} input`
 }
 
 function cacheLabel(log: LogEntry, round?: any): string {
@@ -220,6 +225,7 @@ function displayRounds(log: LogEntry): any[] {
     round: 1,
     final: true,
     usage: log.usage,
+    cache_usage: log.cache_usage,
     finish_reason: log.finish_reason,
     response_preview: log.response_preview,
     upstream_duration_ms: log.duration_ms,
@@ -611,7 +617,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
             <NTag v-if="log.stream" size="tiny" :bordered="false" class="tag-s">流式</NTag>
             <NTag v-if="round.tools?.length" size="tiny" :bordered="false" class="tag-t">{{ round.tools.length }} 次工具</NTag>
             <NTag size="tiny" :bordered="false" class="tag-d">{{ roundDuration(log, round) }}ms</NTag>
-            <NTag v-if="tokenLabel(log, round)" size="tiny" :bordered="false" class="tag-tok">{{ tokenLabel(log, round) }}</NTag>
+            <NTag v-if="totalInputLabel(log, round)" size="tiny" :bordered="false" class="tag-tok">{{ totalInputLabel(log, round) }}</NTag>
             <NTag
               v-if="cacheLabel(log, round)"
               size="tiny"

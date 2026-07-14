@@ -54,6 +54,7 @@ from shenyu_gateway.tool_loop import (
     InternalToolLoopContext,
     _execute_mixed_gateway_tool_calls,
     _extract_tool_calls,
+    _record_round_usage,
     _tool_call_name,
     run_internal_tool_loop_stream,
 )
@@ -69,12 +70,25 @@ from shenyu_gateway.upstream_client import _cache_prefix_fingerprints, _cache_ta
 class _FakeStore:
     def __init__(self) -> None:
         self.messages: list[dict] = []
+        self.request_log_updates: list[dict] = []
 
     def append_message(self, **kwargs):
         self.messages.append(kwargs)
 
     def touch_session(self, *args, **kwargs):
         return None
+
+    def upsert_request_log(self, item, retention=200):
+        self.request_log_updates.append(
+            {
+                "id": item.get("id"),
+                "status": item.get("status"),
+                "stage": item.get("stage"),
+                "error": item.get("error"),
+                "response_preview": item.get("response_preview"),
+                "retention": retention,
+            }
+        )
 
 
 def test_full_request_log_payloads_are_opt_in(monkeypatch):
@@ -86,6 +100,23 @@ def test_full_request_log_payloads_are_opt_in(monkeypatch):
 
     monkeypatch.setenv("GATEWAY_LOG_FULL_PAYLOADS", "false")
     assert _retain_request_log_payloads() is False
+
+
+def test_round_usage_records_protocol_normalized_total_input():
+    ctx = SimpleNamespace(log_entry={}, aggregate_cache_usage=gateway._aggregate_cache_usage)
+    round_log = {}
+    usage = {
+        "input_tokens": 10,
+        "output_tokens": 2,
+        "cache_read_input_tokens": 700,
+        "cache_creation_input_tokens": 300,
+    }
+
+    _record_round_usage(ctx, round_log, usage, [usage], protocol="anthropic")
+
+    assert round_log["cache_usage"]["total_input_tokens"] == 1010
+    assert round_log["cache_usage"]["cache_read_input_tokens"] == 700
+    assert ctx.log_entry["cache_usage"]["total_input_tokens"] == 1010
 
 
 def test_cache_prefix_fingerprints_ignore_cache_control_metadata():
@@ -193,6 +224,7 @@ def test_chat_pipeline_logs_request_before_prepare_messages_fails(monkeypatch):
     assert entry["session_tag"] == "new-test-thread"
     assert entry["original_messages_count"] == 1
     assert entry["error"] == "context store stalled"
+    assert pipeline.store.request_log_updates[-1]["status"] == "error"
     phases = [item["phase"] for item in entry["timeline"]]
     assert "pipeline.received" in phases
     assert "stage.prepare_messages" in phases
@@ -258,6 +290,8 @@ def test_chat_pipeline_updates_single_early_log_on_success(monkeypatch):
     assert entry["session_tag"] == "new-test-thread"
     assert entry["upstream_url"] == "https://example.test/v1/chat/completions"
     assert entry["response_preview"] == "ok"
+    assert pipeline.store.request_log_updates[-1]["status"] == "ok"
+    assert pipeline.store.request_log_updates[-1]["retention"] == 200
     phases = [item["phase"] for item in entry["timeline"]]
     assert "pipeline.received" in phases
     assert "stage.plain_upstream_path" in phases
@@ -397,6 +431,8 @@ def test_chat_pipeline_does_not_commit_context_for_interrupted_plain_stream(monk
     assert all(item["content"] != "partial answer" for item in pipeline.store.messages)
     assert snapshots == []
     assert consumed == []
+    assert pipeline.store.request_log_updates[-1]["status"] == "error"
+    assert pipeline.store.request_log_updates[-1]["response_preview"] == "partial answer"
 
 
 def test_http_request_diagnostics_track_active_and_recent_events():
@@ -2146,7 +2182,7 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
             stream_upstream_openai_chunks=stream_upstream_openai_chunks,
             execute_gateway_tool=execute_gateway_tool,
             record_upstream_payload=lambda log_entry, payload: None,
-            aggregate_cache_usage=lambda usages: {},
+            aggregate_cache_usage=lambda usages, protocol="": {},
             finalize_assistant_private_content=lambda assistant_message, **kwargs: (
                 assistant_message.get("content", ""),
                 "",
@@ -2221,7 +2257,7 @@ def test_internal_stream_loop_treats_empty_upstream_stream_as_502():
             stream_upstream_openai_chunks=stream_upstream_openai_chunks,
             execute_gateway_tool=lambda *args, **kwargs: None,
             record_upstream_payload=lambda log_entry, payload: None,
-            aggregate_cache_usage=lambda usages: {},
+            aggregate_cache_usage=lambda usages, protocol="": {},
             finalize_assistant_private_content=lambda assistant_message, **kwargs: (
                 assistant_message.get("content", ""),
                 "",

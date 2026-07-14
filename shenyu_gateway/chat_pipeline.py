@@ -67,6 +67,7 @@ class ChatPipeline:
         _request_logs.appendleft(log_entry)
         request.state.shenyu_log_entry = log_entry
         _mark_request_log_phase(log_entry, "pipeline.received", now_iso=log_entry["timestamp"])
+        self._persist_log_entry(log_entry)
 
         try:
             self._mark_log_stage(log_entry, "prepare_messages")
@@ -123,6 +124,7 @@ class ChatPipeline:
             log_entry["duration_ms"] = int((_time.monotonic() - t0) * 1000)
             log_entry["last_activity_at"] = _iso_now()
             _mark_request_log_phase(log_entry, "pipeline.returned", now_iso=log_entry["last_activity_at"])
+            self._persist_log_entry(log_entry)
 
     def _build_initial_log_entry(self, *, request: Request, body: Any) -> dict:
         log_id = uuid.uuid4().hex[:8]
@@ -202,6 +204,23 @@ class ChatPipeline:
         now_value = _iso_now()
         log_entry["last_activity_at"] = now_value
         _mark_request_log_phase(log_entry, f"stage.{stage}", now_iso=now_value)
+        self._persist_log_entry(log_entry)
+
+    def _persist_log_entry(self, log_entry: dict) -> None:
+        persist = getattr(self.store, "upsert_request_log", None)
+        if not callable(persist):
+            return
+        try:
+            persist(
+                log_entry,
+                retention=getattr(self.cfg, "gateway_request_log_retention", 200),
+            )
+        except Exception:
+            logger.warning(
+                "Failed to persist request log id=%s",
+                log_entry.get("id"),
+                exc_info=True,
+            )
 
     def _update_log_entry(
         self,
@@ -356,6 +375,7 @@ class ChatPipeline:
                         log_entry,
                         int((_time.monotonic() - t0) * 1000),
                     )
+                    self._persist_log_entry(log_entry)
 
             return _sse_response(_tool_loop_stream())
 
@@ -426,42 +446,48 @@ class ChatPipeline:
                 terminal_status: str = "ok",
                 terminal_error: Optional[str] = None,
             ):
-                if terminal_status != "ok":
-                    log_entry["status"] = terminal_status
-                    log_entry["error"] = terminal_error or "Upstream stream did not complete normally."
-                    _record_response_text(log_entry, collected_text)
-                    return
-                log_entry["status"] = "ok"
-                _record_finish_reason(log_entry, finish_reason)
-                if usage:
-                    log_entry["usage"] = usage
-                    log_entry["cache_usage"] = _cache_usage_summary(usage)
-                if fallback_applied:
-                    log_entry["empty_visible_response_fallback"] = True
-                    fallback_text, fallback_context = self.private_capture_fallback_text(
-                        _latest_user_text(prepared_messages),
-                        self.private_capture_kinds(
-                            heartbeat_content=heartbeat_content,
-                        ),
-                    )
-                    log_entry["empty_visible_response_fallback_detail"] = {
-                        "applied": True,
-                        "text": fallback_text,
-                        "kinds": self.private_capture_kinds(
-                            heartbeat_content=heartbeat_content,
-                        ),
-                        "context": fallback_context,
-                    }
-                if collected_text:
-                    assistant_msg = {"role": "assistant", "content": collected_text}
-                    sessions.log_assistant_output(session_id, assistant_msg)
-                    self.write_completion_context_snapshot(meta, collected_text)
-                    _record_response_text(log_entry, collected_text)
-                else:
-                    _record_response_text(log_entry, "")
-                if heartbeat_content:
-                    self.store_heartbeat(session_id, session, heartbeat_content)
-                self.mark_context_consumed(meta)
+                try:
+                    if terminal_status != "ok":
+                        log_entry["status"] = terminal_status
+                        log_entry["error"] = terminal_error or "Upstream stream did not complete normally."
+                        _record_response_text(log_entry, collected_text)
+                        return
+                    log_entry["status"] = "ok"
+                    _record_finish_reason(log_entry, finish_reason)
+                    if usage:
+                        log_entry["usage"] = usage
+                        log_entry["cache_usage"] = _cache_usage_summary(
+                            usage,
+                            protocol=upstream.get("protocol", ""),
+                        )
+                    if fallback_applied:
+                        log_entry["empty_visible_response_fallback"] = True
+                        fallback_text, fallback_context = self.private_capture_fallback_text(
+                            _latest_user_text(prepared_messages),
+                            self.private_capture_kinds(
+                                heartbeat_content=heartbeat_content,
+                            ),
+                        )
+                        log_entry["empty_visible_response_fallback_detail"] = {
+                            "applied": True,
+                            "text": fallback_text,
+                            "kinds": self.private_capture_kinds(
+                                heartbeat_content=heartbeat_content,
+                            ),
+                            "context": fallback_context,
+                        }
+                    if collected_text:
+                        assistant_msg = {"role": "assistant", "content": collected_text}
+                        sessions.log_assistant_output(session_id, assistant_msg)
+                        self.write_completion_context_snapshot(meta, collected_text)
+                        _record_response_text(log_entry, collected_text)
+                    else:
+                        _record_response_text(log_entry, "")
+                    if heartbeat_content:
+                        self.store_heartbeat(session_id, session, heartbeat_content)
+                    self.mark_context_consumed(meta)
+                finally:
+                    self._persist_log_entry(log_entry)
 
             return await self.stream_chat(
                 request,
@@ -475,7 +501,10 @@ class ChatPipeline:
 
         completion = await self.nonstream_chat(request, payload, headers, body.model, upstream)
         log_entry["usage"] = completion.get("usage", {})
-        log_entry["cache_usage"] = _cache_usage_summary(completion.get("usage", {}))
+        log_entry["cache_usage"] = _cache_usage_summary(
+            completion.get("usage", {}),
+            protocol=upstream.get("protocol", ""),
+        )
         _record_completion_finish_reason(log_entry, completion)
         assistant_message = completion.get("choices", [{}])[0].get("message", {})
         clean_content, heartbeat_content, fallback_meta = _unpack_private_capture_result(

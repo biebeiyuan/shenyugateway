@@ -26,6 +26,7 @@ DEFAULTED_ENV_KEYS = [
     "ENABLE_MEM0_MANAGEMENT_TOOLS",
     "MAX_INTERNAL_TOOL_ROUNDS",
     "MAX_CLIENT_MESSAGES",
+    "GATEWAY_REQUEST_LOG_RETENTION",
     "ROOM_NEWSPAPER_QA_ENABLED",
     "ROOM_NEWSPAPER_LLM_MODEL",
     "ROOM_NEWSPAPER_LLM_URL",
@@ -61,6 +62,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.enable_mem0_management_tools is True
     assert cfg.max_internal_tool_rounds == 15
     assert cfg.max_client_messages == 75
+    assert cfg.gateway_request_log_retention == 200
     assert cfg.room_newspaper_qa_enabled is False
     assert cfg.room_newspaper_llm_model == ""
 
@@ -89,6 +91,8 @@ def test_aggregate_cache_usage_preserves_multi_round_reported_state():
         "rounds": 3,
         "input_tokens": 10,
         "input_reported": False,
+        "total_input_tokens": 10,
+        "total_input_reported": False,
         "cache_read_percent": None,
         "cache_prefix_reuse_percent": 60.0,
     }
@@ -418,6 +422,26 @@ def test_config_update_saves_anthropic_default_max_tokens(monkeypatch):
     assert "anthropic_default_max_tokens" in payload["changed"]
     assert gateway.cfg.anthropic_default_max_tokens == 64000
     assert persisted[-1]["ANTHROPIC_DEFAULT_MAX_TOKENS"] == 64000
+
+
+def test_config_update_saves_request_log_retention(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "gateway_request_log_retention", 200)
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"gateway_request_log_retention": 350},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["gateway_request_log_retention"] == 350
+    assert "gateway_request_log_retention" in payload["changed"]
+    assert gateway.cfg.gateway_request_log_retention == 350
+    assert persisted[-1]["GATEWAY_REQUEST_LOG_RETENTION"] == 350
 
 
 def test_persist_env_saves_config_overrides_to_sqlite(tmp_path, monkeypatch):

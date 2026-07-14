@@ -55,6 +55,192 @@ def test_public_log_detail_recursively_redacts_credentials_without_hiding_messag
     assert source["upstream_payload"]["provider"]["api_key"] == "provider-secret"
 
 
+def test_request_log_history_survives_reopen_prunes_and_excludes_full_payloads(tmp_path):
+    db_path = tmp_path / "gateway.db"
+    store = GatewayStore(str(db_path))
+
+    for index in range(1, 4):
+        store.upsert_request_log(
+            {
+                "id": f"log-{index}",
+                "request_id": f"req-{index}",
+                "timestamp": f"2026-07-14T00:0{index}:00+00:00",
+                "session_tag": "persist-test",
+                "status": "ok",
+                "response_preview": f"preview-{index}",
+                "response_full": f"full response {index}",
+                "prepared_messages": [{"role": "user", "content": "full user message"}],
+                "upstream_payload": {"messages": [{"role": "user", "content": "full payload"}]},
+                "system_additions_full": "full system text",
+                "upstream_payload_summary": {
+                    "thinking": {"type": "adaptive", "display": "summarized"},
+                },
+                "diagnostics": {
+                    "new_counter": index,
+                    "messages": 9,
+                    "api_key": "must-not-persist",
+                    "thinking": "raw thinking must not persist",
+                    "signature": "opaque-signature",
+                },
+                "internal_tool_rounds": [
+                    {
+                        "round": 1,
+                        "response_full": "full round response",
+                        "response_preview": "round preview",
+                        "args_preview": '{"api_key":"preview-secret","query":"safe"}',
+                        "result_preview": '{"token":"truncated-secret",',
+                        "messages": [{"role": "user", "content": "round message"}],
+                        "upstream_payload": {"messages": []},
+                        "anthropic_thinking": {
+                            "preserved": True,
+                            "signature_present": True,
+                        },
+                    }
+                ],
+            },
+            retention=2,
+        )
+
+    reopened = GatewayStore(str(db_path))
+    logs = reopened.list_request_logs(limit=10)
+    assert [item["id"] for item in logs] == ["log-3", "log-2"]
+    assert reopened.request_log_count() == 2
+
+    detail = reopened.get_request_log("req-3")
+    assert detail is not None
+    assert detail["persisted"] is True
+    assert detail["persistence_schema_version"] == 1
+    assert detail["request_payloads_retained"] is False
+    assert detail["response_preview"] == "preview-3"
+    assert detail["response_full"] is None
+    assert detail["prepared_messages"] is None
+    assert detail["upstream_payload"] is None
+    assert detail["system_additions_full"] is None
+    assert detail["diagnostics"]["new_counter"] == 3
+    assert detail["diagnostics"]["messages"] == 9
+    assert detail["diagnostics"]["api_key"] == "<redacted>"
+    assert "thinking" not in detail["diagnostics"]
+    assert "signature" not in detail["diagnostics"]
+    assert detail["upstream_payload_summary"]["thinking"]["type"] == "adaptive"
+    round_log = detail["internal_tool_rounds"][0]
+    assert round_log["response_preview"] == "round preview"
+    assert '"api_key": "<redacted>"' in round_log["args_preview"]
+    assert round_log["result_preview"] == "<omitted:truncated-json-preview>"
+    assert round_log["anthropic_thinking"]["signature_present"] is True
+    assert "response_full" not in round_log
+    assert "messages" not in round_log
+    assert "upstream_payload" not in round_log
+
+
+def test_request_log_history_marks_only_active_rows_interrupted(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    store.upsert_request_log(
+        {
+            "id": "active-log",
+            "timestamp": "2026-07-14T00:01:00+00:00",
+            "status": "streaming",
+            "error": None,
+        }
+    )
+    store.upsert_request_log(
+        {
+            "id": "complete-log",
+            "timestamp": "2026-07-14T00:02:00+00:00",
+            "status": "ok",
+            "error": None,
+        }
+    )
+
+    assert store.mark_interrupted_request_logs() == 1
+    assert store.get_request_log("active-log")["status"] == "interrupted"
+    assert "stopped before" in store.get_request_log("active-log")["error"]
+    assert store.get_request_log("complete-log")["status"] == "ok"
+
+
+def test_gateway_logs_api_reads_persisted_history_after_memory_is_empty(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    store.upsert_request_log(
+        {
+            "id": "persisted-log",
+            "request_id": "persisted-request",
+            "timestamp": "2026-07-14T00:01:00+00:00",
+            "last_activity_at": "2026-07-14T00:01:02+00:00",
+            "stage": "plain_upstream_path",
+            "model": "test-model",
+            "client_model": "test-model",
+            "upstream_model": "test-model",
+            "model_mapped": False,
+            "stream": False,
+            "session_tag": "persist-test",
+            "is_first_turn": False,
+            "original_messages_count": 1,
+            "prepared_messages_count": 1,
+            "client_message_window": {},
+            "memory_island": {},
+            "cold_start": {"injected": False},
+            "system_additions_preview": "",
+            "system_additions_chars": 0,
+            "tools_count": 0,
+            "tool_names": [],
+            "has_internal_tools": False,
+            "upstream_url": "https://example.test/v1/chat/completions",
+            "upstream_scope": "default",
+            "prompt_cache": {"enabled": False},
+            "usage": {},
+            "cache_usage": {},
+            "internal_tool_rounds": [
+                {
+                    "round": 1,
+                    "messages_count": 1,
+                    "usage": {"input_tokens": 10, "output_tokens": 2},
+                    "cache_usage": {
+                        "total_input_tokens": 1010,
+                        "total_input_reported": True,
+                    },
+                    "tools": [],
+                }
+            ],
+            "status": "ok",
+            "duration_ms": 2000,
+            "error": None,
+            "response_preview": "persisted answer",
+            "response_full": "full answer must stay ephemeral",
+            "diagnostics": {"new_counter": 7},
+        }
+    )
+
+    app = FastAPI()
+    app.include_router(
+        build_gateway_admin_router(
+            GatewayAdminRouteDeps(
+                cfg=SimpleNamespace(gateway_request_log_retention=200),
+                get_supabase_client=lambda: None,
+                get_session_store=lambda: store,
+                require_session_store=lambda: store,
+                context_builder=lambda *_args, **_kwargs: None,
+                upstream_for_hisense=lambda _is_hisense: {},
+                prune_runtime_state=lambda **_kwargs: {},
+                cold_start_idle_minutes=lambda _session: 0,
+                is_hisense_session=lambda _session: False,
+                now=lambda: None,
+                request_logs=[],
+            )
+        )
+    )
+
+    with TestClient(app) as client:
+        listing = client.get("/api/gateway/logs?limit=30")
+        detail = client.get("/api/gateway/logs/persisted-request")
+
+    assert listing.status_code == 200
+    assert [item["id"] for item in listing.json()["logs"]] == ["persisted-log"]
+    assert listing.json()["logs"][0]["response_preview"] == "persisted answer"
+    assert listing.json()["logs"][0]["internal_tool_rounds"][0]["cache_usage"]["total_input_tokens"] == 1010
+    assert detail.status_code == 200
+    assert detail.json()["diagnostics"]["new_counter"] == 7
+    assert detail.json()["response_full"] is None
+
+
 def test_hisense_heartbeats_are_stored_separately(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     normal_session = store.get_or_create_session("main", "operit")

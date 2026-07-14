@@ -224,11 +224,12 @@
 
 - SQLite 同时保存 gateway messages、raw windows、context snapshots、pending turns 和多类运行状态。
 - raw window 与 context snapshot 使用同一个 retention 配置值。
-- request logs 是进程内 bounded deque，重启消失。
+- request logs 的实时层是进程内 bounded deque；SQLite 另存有界安全摘要，完整 payload 仍随进程消失。
 - chat archive 将去重后的 user/assistant 正文写入 Supabase。
 - session 删除代码逐表删除 SQLite session 关联数据；长期 Supabase archive 是独立边界。
 - Dockerfile 不声明 volume；默认 `/app/data/shenyu_gateway.db` 和 Admin 写入的 `/app/.env` 只有在 Coolify 显式挂载对应路径时才跨容器替换保留。
 - 完整 request-log payload 已改为 `GATEWAY_LOG_FULL_PAYLOADS=true` 显式 opt-in；默认只保留摘要、预览和计数。
+- request-log 安全摘要已进入 SQLite `request_log_history`，默认全局保留最近 200 条；完整 Messages、Upstream payload、Response、图片、原始 Thinking/signature 在落库前统一剔除。
 
 ### 待验证风险
 
@@ -254,7 +255,7 @@
 ### 已确认事实
 
 - Admin 日志列表返回摘要，详情 API 返回单条完整信息。
-- Admin 与 helper 的 API 模式读取同一个进程内 request-log deque。
+- Admin 与 helper 的 API 模式合并读取进程内 request-log deque 和 SQLite `request_log_history`；同一 id 优先使用当前进程中的实时版本。
 - helper `local` 读取 retained JSON，`ssh` 读取容器 stdout/stderr，它们不是同一底层数据。
 - README 已从 1179 行精简到约 400 行；子系统细节和八区地图已迁入 `docs/architecture/`。
 
@@ -350,11 +351,12 @@
 
 ### 双协议 cache usage 保真
 
-- 文件：`shenyu_gateway/upstream_adapter.py`
+- 文件：`shenyu_gateway/upstream_adapter.py`、`shenyu_gateway/tool_loop.py`、`gateway.py`、`admin/src/views/LogsView.vue`
 - 已确认问题一：Anthropic usage 转换为 OpenAI-compatible completion 时只保留 cache read，丢失 `cache_creation_input_tokens` 和 `cache_creation` TTL 明细，普通流、非流和工具轮日志均无法诊断缓存写入。
 - 修复一：继续提供 `prompt_tokens_details.cached_tokens` 兼容字段，同时保留供应商上报的 cache read、cache write 和 TTL 创建明细；明确上报的 0 也保留。
 - 已确认问题二：部分兼容 relay 同时返回 5m/1h 创建 token 分项且不返回总数时，摘要使用 `or` 只取第一项，导致总写入小于明细之和。
 - 修复二：优先使用供应商明确总数；缺少总数时对已有 TTL 明细求和。
+- 总输入显示：新增每轮 `cache_usage.total_input_tokens`。Anthropic 按未缓存输入 + read + creation 归一化；OpenAI-compatible 直接使用已包含 cached 子集的 `prompt_tokens` / `input_tokens`。前端标签从含输出的 `tok` 改为不含输出的 `input`，`⚡ cached` 口径不变。
 - 边界：没有改变 cache breakpoint、上游 payload、客户端基本 token 字段或费用计算；provider unknown 状态留待日志/API 包统一建模。
 - 测试：`tests/test_upstream_adapter_stream.py` 覆盖 Anthropic 原值保留和双 TTL 求和，13 项通过。
 
@@ -421,10 +423,10 @@
 
 ### 默认 request-log 正文最小化
 
-- 文件：`shenyu_gateway/request_logs.py`、`LOGS_GUIDE.md`、`tests/test_gateway_streaming.py`
+- 文件：`shenyu_gateway/request_logs.py`、`shenyu_gateway/store/_request_log_history.py`、`LOGS_GUIDE.md`、`tests/test_gateway_streaming.py`、`tests/test_gateway_store.py`
 - 已确认问题：UI 文案把完整 payload 描述为显式开启，但后端环境变量缺省值实际为 true，最近 30 条日志默认保存完整 prepared messages、upstream payload 和 response。
 - 修复：`GATEWAY_LOG_FULL_PAYLOADS` 改为显式 true/yes/on/1 才开启；默认仅保留摘要、预览与计数。
-- 边界：完整日志仍只在进程内，重启消失；临时开启时 Admin/API credential redaction 继续生效，但对话正文仍属于敏感调试数据。
+- 边界：完整日志仍只在进程内，重启消失；安全摘要默认在 SQLite 保留最近 200 条并跨容器恢复。临时开启完整日志时 Admin/API credential redaction 继续生效，但完整对话正文、payload、图片和 Thinking/signature 不进入持久历史。
 
 ### 持久化正文副本与部署边界
 

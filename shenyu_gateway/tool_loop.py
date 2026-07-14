@@ -39,6 +39,7 @@ from .upstream_adapter import (
     ANTHROPIC_THINKING_CONFIG_KEY,
     _anthropic_to_openai_completion,
     _assistant_tool_call_message,
+    _cache_usage_summary,
     _completion_to_stream_events,
 )
 from .utils import coerce_json_object as _coerce_json_object
@@ -325,7 +326,13 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
         raw = await ctx.call_upstream_json(ctx.request, upstream["chat_url"], payload, headers)
         _mark_request_log_phase(ctx.log_entry, "upstream.nonstream_done", detail={"round": round_index + 1})
         upstream_usages.append(raw.get("usage", {}))
-        _record_round_usage(ctx, round_log, raw.get("usage", {}), upstream_usages)
+        _record_round_usage(
+            ctx,
+            round_log,
+            raw.get("usage", {}),
+            upstream_usages,
+            protocol=upstream.get("protocol", ""),
+        )
 
         proto = upstream["protocol"]
         completion = (
@@ -472,7 +479,13 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
         usage = completion.get("usage") or {}
         _attach_anthropic_thinking_config(completion, payload, upstream)
         upstream_usages.append(usage)
-        _record_round_usage(ctx, round_log, usage, upstream_usages)
+        _record_round_usage(
+            ctx,
+            round_log,
+            usage,
+            upstream_usages,
+            protocol=upstream.get("protocol", ""),
+        )
         _mark_request_log_phase(ctx.log_entry, "upstream.stream_round_done", detail={"round": round_index + 1})
 
         tool_calls = _extract_tool_calls(completion)
@@ -575,12 +588,15 @@ def _record_round_usage(
     round_log: Optional[dict],
     usage: dict,
     upstream_usages: list[dict],
+    *,
+    protocol: str = "",
 ) -> None:
     if ctx.log_entry is not None:
         ctx.log_entry["usage"] = usage
-        ctx.log_entry["cache_usage"] = ctx.aggregate_cache_usage(upstream_usages)
+        ctx.log_entry["cache_usage"] = ctx.aggregate_cache_usage(upstream_usages, protocol)
     if round_log is not None:
         round_log["usage"] = usage
+        round_log["cache_usage"] = _cache_usage_summary(usage, protocol=protocol)
 
 
 def _record_round_request(

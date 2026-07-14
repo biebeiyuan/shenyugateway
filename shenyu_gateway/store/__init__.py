@@ -16,6 +16,7 @@ from ._heartbeats import HeartbeatsMixin
 from ._cache import CacheMixin
 from ._room import RoomMixin
 from ._admin import AdminMixin
+from ._request_log_history import RequestLogHistoryMixin
 
 
 class GatewayStore(
@@ -29,6 +30,7 @@ class GatewayStore(
     CacheMixin,
     RoomMixin,
     AdminMixin,
+    RequestLogHistoryMixin,
     BaseStoreMixin,
 ):
     pass

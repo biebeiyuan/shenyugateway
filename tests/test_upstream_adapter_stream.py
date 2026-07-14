@@ -352,13 +352,26 @@ def test_cache_usage_summary_calculates_read_share_only_with_reliable_input_tota
             "cache_creation_input_tokens": 300,
         }
     )
+    anthropic_raw = _cache_usage_summary(
+        {
+            "input_tokens": 10,
+            "cache_read_input_tokens": 700,
+            "cache_creation_input_tokens": 300,
+        },
+        protocol="anthropic",
+    )
 
     assert anthropic["cache_read_percent"] == 69.3
     assert anthropic["cache_prefix_reuse_percent"] == 70.0
+    assert anthropic["total_input_tokens"] == 1010
+    assert anthropic["total_input_reported"] is True
     assert openai["cache_read_percent"] == 70.0
     assert openai["cache_prefix_reuse_percent"] == 100.0
+    assert openai["total_input_tokens"] == 1000
     assert ambiguous["cache_read_percent"] is None
     assert ambiguous["cache_prefix_reuse_percent"] == 70.0
+    assert ambiguous["total_input_tokens"] == 10
+    assert anthropic_raw["total_input_tokens"] == 1010
 
 
 def test_openai_to_anthropic_unwraps_double_encoded_tool_arguments():

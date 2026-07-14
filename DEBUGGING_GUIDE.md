@@ -68,6 +68,8 @@ python scripts\vps_gateway_logs.py ssh --match "shenyu|gateway" --tail 300 -f
 
 Use `api` without `--via-ssh` only when public gateway API access is not blocked by Cloudflare.
 
+`api` and `cache` read a merged view of the live 30-entry process buffer and the bounded SQLite request-log history. With the SQLite directory on a persistent volume, completed request summaries remain available after a Coolify container replacement; use `--limit 200` when an incident may predate the current process. Full Messages, upstream payloads, responses, images, and raw Thinking/signature data are not stored in this history. By contrast, `ssh` mode still runs `docker logs` against the current container only, so deleted-container stdout/stderr is not recovered by the request-log history.
+
 On Windows, the helper uses the local `vps` SSH alias by default unless explicit connection flags are passed. Container lookup first honors configured name/label/service hints, then tries the stable Coolify application prefix and regex match before the slower environment inspection, so a redeploy does not require copying the new random container name into local config.
 
 The script separates `tools_offered` from `gateway_tools_executed`. If tools were offered but zero gateway tools executed, the model/upstream failed before the gateway got any tool call. In that case, inspect upstream errors, relay retries, streaming behavior, request payload shape, and prompt-cache compatibility before editing `gateway_tools.py`.

@@ -6,6 +6,7 @@ import time as _time
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Optional
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from shenyu_gateway.utils import normalize_text
 from shenyu_gateway.utils import shorten as _shorten
@@ -15,6 +16,195 @@ _request_logs: deque = deque(maxlen=30)
 _http_request_events: deque = deque(maxlen=60)
 _active_http_requests: dict[str, dict[str, Any]] = {}
 _TOOL_STREAM_STALE_SECONDS = 30.0
+_PERSISTED_REQUEST_LOG_SCHEMA_VERSION = 1
+_PERSISTENT_LOG_MAX_DEPTH = 12
+_PERSISTENT_LOG_MAX_DICT_ITEMS = 200
+_PERSISTENT_LOG_MAX_LIST_ITEMS = 100
+_PERSISTENT_LOG_MAX_STRING_CHARS = 4000
+
+_LOG_SECRET_KEYS = {
+    "authorization",
+    "proxy_authorization",
+    "x_api_key",
+    "api_key",
+    "apikey",
+    "access_token",
+    "refresh_token",
+    "token",
+    "secret",
+    "client_secret",
+    "webhook_secret",
+    "password",
+    "private_key",
+}
+_LOG_SECRET_KEY_SUFFIXES = (
+    "_api_key",
+    "_access_token",
+    "_refresh_token",
+    "_auth_token",
+    "_client_secret",
+    "_webhook_secret",
+    "_private_key",
+    "_password",
+)
+_PERSISTENT_LOG_EXCLUDED_KEYS = {
+    "cookies",
+    "headers",
+    "image",
+    "image_bytes",
+    "image_url",
+    "prepared_messages",
+    "request_headers",
+    "response_full",
+    "signature",
+    "system_additions_full",
+    "upstream_payload",
+}
+_SAFE_THINKING_SUMMARY_KEYS = {"type", "display", "budget_tokens"}
+_PERSISTENT_JSON_PREVIEW_KEYS = {"args_preview", "arguments_preview", "result_preview"}
+
+
+def _normalized_log_key(value: Any) -> str:
+    return str(value or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+
+def _is_log_secret_key(value: Any) -> bool:
+    normalized = _normalized_log_key(value)
+    return normalized in _LOG_SECRET_KEYS or normalized.endswith(_LOG_SECRET_KEY_SUFFIXES)
+
+
+def _redact_log_url(value: str) -> str:
+    if not value.startswith(("http://", "https://")):
+        return value
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return value
+    if not parts.query:
+        return value
+    query = [
+        (key, "<redacted>" if _is_log_secret_key(key) else item_value)
+        for key, item_value in parse_qsl(parts.query, keep_blank_values=True)
+    ]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), parts.fragment))
+
+
+def _redact_log_secrets(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {
+            key: (
+                "<redacted>"
+                if _is_log_secret_key(key)
+                else _redact_log_secrets(item_value)
+            )
+            for key, item_value in value.items()
+            if not str(key).startswith("_")
+        }
+    if isinstance(value, list):
+        return [_redact_log_secrets(item) for item in value]
+    if isinstance(value, tuple):
+        return [_redact_log_secrets(item) for item in value]
+    if isinstance(value, str):
+        return _redact_log_url(value)
+    return value
+
+
+def _public_log_detail(item: dict[str, Any]) -> dict[str, Any]:
+    return _redact_log_secrets(item)
+
+
+def _persistent_log_value(
+    value: Any,
+    *,
+    key: str = "",
+    depth: int = 0,
+    state: Optional[dict[str, bool]] = None,
+) -> Any:
+    state = state if state is not None else {"truncated": False}
+    normalized_key = _normalized_log_key(key)
+    if depth > _PERSISTENT_LOG_MAX_DEPTH:
+        state["truncated"] = True
+        return "<truncated:depth>"
+    if _is_log_secret_key(normalized_key):
+        return "<redacted>"
+    if normalized_key in _PERSISTENT_LOG_EXCLUDED_KEYS:
+        return None
+    if normalized_key == "messages" and not isinstance(value, (int, float)):
+        return None
+    if normalized_key in {"redacted_thinking", "signature"}:
+        return None
+    if normalized_key == "thinking" and not (
+        isinstance(value, dict)
+        and set(_normalized_log_key(item) for item in value).issubset(_SAFE_THINKING_SUMMARY_KEYS)
+    ):
+        return None
+
+    if isinstance(value, dict):
+        result: dict[str, Any] = {}
+        for index, (item_key, item_value) in enumerate(value.items()):
+            if index >= _PERSISTENT_LOG_MAX_DICT_ITEMS:
+                state["truncated"] = True
+                break
+            item_key_text = str(item_key)
+            normalized_item_key = _normalized_log_key(item_key_text)
+            if item_key_text.startswith("_") or normalized_item_key in _PERSISTENT_LOG_EXCLUDED_KEYS:
+                continue
+            clean_value = _persistent_log_value(
+                item_value,
+                key=item_key_text,
+                depth=depth + 1,
+                state=state,
+            )
+            if clean_value is not None:
+                result[item_key_text] = clean_value
+        return result
+    if isinstance(value, (list, tuple)):
+        if len(value) > _PERSISTENT_LOG_MAX_LIST_ITEMS:
+            state["truncated"] = True
+        return [
+            _persistent_log_value(item, depth=depth + 1, state=state)
+            for item in value[:_PERSISTENT_LOG_MAX_LIST_ITEMS]
+        ]
+    if isinstance(value, str):
+        if normalized_key in _PERSISTENT_JSON_PREVIEW_KEYS:
+            try:
+                parsed_preview = json.loads(value)
+            except (TypeError, json.JSONDecodeError):
+                state["truncated"] = True
+                return "<omitted:truncated-json-preview>"
+            else:
+                clean_preview = _persistent_log_value(
+                    parsed_preview,
+                    depth=depth + 1,
+                    state=state,
+                )
+                value = json.dumps(clean_preview, ensure_ascii=False)
+        value = _redact_log_url(value)
+        if len(value) > _PERSISTENT_LOG_MAX_STRING_CHARS:
+            state["truncated"] = True
+            return _shorten(value, _PERSISTENT_LOG_MAX_STRING_CHARS)
+        return value
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    state["truncated"] = True
+    return _shorten(str(value), _PERSISTENT_LOG_MAX_STRING_CHARS)
+
+
+def _persistent_request_log_snapshot(item: dict[str, Any]) -> dict[str, Any]:
+    state = {"truncated": False}
+    snapshot = _persistent_log_value(item, state=state)
+    if not isinstance(snapshot, dict):
+        snapshot = {}
+    snapshot["persistence_schema_version"] = _PERSISTED_REQUEST_LOG_SCHEMA_VERSION
+    snapshot["persisted"] = True
+    snapshot["request_payloads_retained"] = False
+    snapshot["prepared_messages"] = None
+    snapshot["upstream_payload"] = None
+    snapshot["response_full"] = None
+    snapshot["system_additions_full"] = None
+    if state["truncated"]:
+        snapshot["persistence_truncated"] = True
+    return snapshot
 
 
 def _event_elapsed_ms(event: dict[str, Any], now_monotonic: float) -> int:
