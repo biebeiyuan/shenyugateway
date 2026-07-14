@@ -31,6 +31,21 @@
 - When a feature develops a clear, independently maintained boundary, extract the smallest coherent module or frontend component and update the existing code map or owning architecture document in the same change. Structure-only extraction must preserve user-visible behavior, and small features should not each receive a duplicate standalone design document.
 - Preserve unrelated working-tree changes. Never stage or commit the whole tree without reviewing the exact diff.
 
+## Mechanical Change Checklists
+
+For every new runtime configuration field that is editable in Admin, inspect and update all of these locations before handoff:
+
+1. `shenyu_gateway/config.py` — environment/default loading and runtime serialization.
+2. `shenyu_gateway/schemas.py` — `ConfigUpdate` request contract.
+3. `shenyu_gateway/config_routes.py` — Admin read response, validation, environment mapping, and persisted override handling.
+4. `admin/src/api/config.ts` — frontend TypeScript contract.
+5. `admin/src/views/ConfigView.vue` — default state, save payload, and visible control.
+6. `tests/test_config_update.py` — default, save, validation, and restore coverage appropriate to the field.
+
+Also update the owning README or architecture document when the field changes user-visible behavior or deployment requirements. If any checklist item is genuinely not applicable, state why in the handoff. If this checklist itself is outdated or incomplete, propose the change and discuss it before silently skipping or expanding the rule.
+
+After Admin routes, page loading, or core interactions change, run `cd admin && npm run test:e2e`. The Playwright suite is an alive/not-alive smoke layer: keep it read-only, use behavioral locators, fail on browser runtime or same-origin asset errors, and do not turn it into screenshot or visual-polish testing.
+
 ## Encoding Rules
 
 - Treat source, Markdown, and config files as UTF-8.

@@ -6,7 +6,9 @@
   "scripts": {
     "dev": "vite",
     "build": "vue-tsc && vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test:e2e": "npm run build && playwright test",
+    "test:e2e:install": "env PLAYWRIGHT_DOWNLOAD_HOST=https://registry.npmmirror.com/-/binary/playwright playwright install --with-deps chromium"
   },
   "dependencies": {
     "axios": "^1.7.0",
@@ -16,6 +18,7 @@
     "vue-router": "^4.5.0"
   },
   "devDependencies": {
+    "@playwright/test": "1.61.1",
     "@types/three": "^0.184.1",
     "@vitejs/plugin-vue": "^5.2.0",
     "typescript": "~5.6.0",

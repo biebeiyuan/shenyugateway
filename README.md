@@ -171,6 +171,8 @@ The codebase is partly layered already:
 - `admin/src/views/room/RoomNewspaperPanel.vue`: in-place Room newspaper panel (generate, review, publish, discard, and source status).
 - `admin/src/views/ToolErrorsView.vue`: tool error log viewer.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.
+- `admin/e2e/smoke.spec.ts`: read-only Chromium smoke checks for every Admin route and a few core interactions.
+- `admin/playwright.config.ts`: isolated local gateway, temporary SQLite, authentication, and browser settings for Admin smoke tests.
 
 When cleaning or refactoring, preserve behavior first and move code by boundary:
 
@@ -371,6 +373,7 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 - Run `python -c "import test_gateway_streaming as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after streaming/tool-loop edits when `pytest` is unavailable.
 - Run `python -c "import test_upstream_adapter_stream as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after upstream stream adapter edits when `pytest` is unavailable.
 - Run `cd admin && npm run build` after admin UI edits.
+- Run `cd admin && npm run test:e2e` after Admin routes, page loading, or core interactions change. Install Chromium once with `npm run test:e2e:install`; the suite checks that pages are alive and interactive, not that they are visually identical.
 - Run `python -m py_compile gateway.py shenyu_gateway/*.py` after edits.
 
 ## Active Review Plan
