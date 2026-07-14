@@ -221,13 +221,17 @@ Trigger text example: `<proxy_sender name="沈予"/>——窗边` (the `窗边` 
 
 ### Architecture
 
-Three files, separated by concern:
+Core files, separated by concern:
 
 | File | Responsibility |
 |------|---------------|
 | `shenyu_gateway/room_text.py` | All room copy: charter, scenes, doors, trace phrases. Change text here only. |
 | `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |
 | `shenyu_gateway/room_tools.py` | 10 tool handlers, direct tool definitions, compatibility broker, door count collection. |
+| `shenyu_gateway/room_scenes.py` | Weather, atmosphere, and window-scene generation. |
+| `shenyu_gateway/room_newspaper.py` | Fixed RSS catalog, feed parsing, issue rolling, optional quality checks, and draft generation. |
+| `shenyu_gateway/store/_room.py` | Room traces, notes, pins, scribbles, and newspaper issue persistence. |
+| `admin/src/views/room/RoomNewspaperPanel.vue` | Newspaper controls and rendering inside the existing Room page. |
 
 The trigger message stays in the user text. Room context supplies spatial cues through room layers and tool descriptions instead of rewriting the user's message.
 

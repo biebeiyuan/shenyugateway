@@ -112,6 +112,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/room_context.py`: room mode charge calculation, layer rendering, door filtering logic.
 - `shenyu_gateway/room_tools.py`: room mode tool definitions, compatibility broker, execute dispatch, and door count collection.
 - `shenyu_gateway/room_scenes.py`: window scenes (weather, atmosphere, landscape). Change scene copy here only.
+- `shenyu_gateway/room_newspaper.py`: fixed RSS sources, feed parsing, issue rolling, optional quality checks, and draft generation.
 
 ### Auth & sessions
 
@@ -146,7 +147,7 @@ The codebase is partly layered already:
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
 - `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
 - `admin/src/api/archive.ts`: chat archive reader and conflict book APIs.
-- `admin/src/api/room.ts`: room mode APIs (traces, drawer notes, scribbles, pins).
+- `admin/src/api/room.ts`: room mode APIs (traces, drawer notes, scribbles, pins, newspapers).
 - `admin/src/api/toolErrors.ts`: tool error log APIs.
 - `admin/src/views/HomeView.vue`: admin landing/dashboard page.
 - `admin/src/views/ConfigView.vue`: configuration page.
@@ -165,7 +166,8 @@ The codebase is partly layered already:
 - `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
 - `admin/src/views/ArchiveView.vue`: chat archive reader and conflict book clip flow.
 - `admin/src/views/ConflictView.vue`: conflict book management (edit title/notes/epilogue/status, soft delete).
-- `admin/src/views/RoomView.vue`: room mode admin preview (charge, traces, drawer notes, pins).
+- `admin/src/views/RoomView.vue`: room mode admin preview shell (charge, traces, drawer notes, pins, and newspaper placement).
+- `admin/src/views/room/RoomNewspaperPanel.vue`: in-place Room newspaper panel (generate, review, publish, discard, and source status).
 - `admin/src/views/ToolErrorsView.vue`: tool error log viewer.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.
 
