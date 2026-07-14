@@ -26,6 +26,7 @@
 - History branch detection must compare normalized semantic content, not client representation details. Expired images, dynamic extra bundles, and equivalent string versus text-block forms must not reset the context epoch; only a real earlier conversation edit should be classified as `branch`.
 - If a command, dependency, environment detail, missing document, or repeated manual step makes work slower or less reliable, tell the owner promptly and suggest a concrete improvement. Improving the agent workflow is part of maintaining the project.
 - Before pushing or handing off a meaningful change, consider whether `README.md`, `DESIGN.md`, `DEBUGGING_GUIDE.md`, `LOGS_GUIDE.md`, or `DOCS_MAP.md` must be updated. Update only documentation whose current truth changed; do not create a new design document by default.
+- When a feature develops a clear, independently maintained boundary, extract the smallest coherent module or frontend component and update the existing code map or owning architecture document in the same change. Structure-only extraction must preserve user-visible behavior, and small features should not each receive a duplicate standalone design document.
 - Preserve unrelated working-tree changes. Never stage or commit the whole tree without reviewing the exact diff.
 
 ## Encoding Rules
