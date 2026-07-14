@@ -41,10 +41,13 @@ from shenyu_gateway.streaming import (
     StreamReplayAccumulator,
     _apply_openai_stream_chunk,
     _completion_with_unstreamed_deltas,
+    _gateway_error_completion,
+    _gateway_error_text,
     _new_stream_completion,
     _sse_response,
     _stream_content_event,
     _stream_final_event,
+    _stream_gateway_error_events,
     _stream_keepalive_event,
     _stream_role_event,
     close_stream_reader,
@@ -100,6 +103,44 @@ def test_full_request_log_payloads_are_opt_in(monkeypatch):
 
     monkeypatch.setenv("GATEWAY_LOG_FULL_PAYLOADS", "false")
     assert _retain_request_log_payloads() is False
+
+
+def test_gateway_error_text_passes_through_actual_json_reason_and_raw_response():
+    raw_error = (
+        '{"error":{"type":"\\u003cnil\\u003e","message":"sensitive_words_detected '
+        '(request id: upstream-1) [up_server_error] (request id: relay-2)"},"type":"error"}'
+    )
+
+    error_text = _gateway_error_text(HTTPException(status_code=500, detail=raw_error))
+
+    assert error_text.startswith("HTTP 500\n")
+    assert (
+        "原因（原文）：sensitive_words_detected (request id: upstream-1) "
+        "[up_server_error] (request id: relay-2)"
+    ) in error_text
+    assert f"原始返回：{raw_error}" in error_text
+
+
+def test_gateway_error_text_keeps_plain_error_without_inventing_a_category():
+    error_text = _gateway_error_text(
+        HTTPException(status_code=504, detail="连接上游超时 https://upstream.test")
+    )
+
+    assert error_text == "HTTP 504\n原因（原文）：连接上游超时 https://upstream.test"
+    assert "原始返回" not in error_text
+
+
+def test_gateway_error_text_is_shared_by_streaming_and_nonstreaming_replies():
+    error_text = _gateway_error_text(
+        HTTPException(status_code=422, detail={"error": {"message": "tools[0] missing field name"}})
+    )
+
+    completion = _gateway_error_completion("test-model", error_text)
+    stream_events = "".join(_stream_gateway_error_events("test-model", error_text))
+
+    assert completion["choices"][0]["message"]["content"] == f"[网关错误] {error_text}"
+    assert "[网关错误] HTTP 422" in stream_events
+    assert "原因（原文）：tools[0] missing field name" in stream_events
 
 
 def test_round_usage_records_protocol_normalized_total_input():

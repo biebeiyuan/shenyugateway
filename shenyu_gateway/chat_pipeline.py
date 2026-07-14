@@ -359,14 +359,14 @@ class ChatPipeline:
                     raise
                 except HTTPException as exc:
                     log_entry["status"] = "error"
-                    log_entry["error"] = _gateway_error_text(exc)[:500]
+                    log_entry["error"] = _gateway_error_text(exc)
                     for chunk in _stream_gateway_error_events(body.model, log_entry["error"]):
                         _mark_tool_stream_activity(log_entry)
                         yield chunk
                 except Exception as exc:
                     logger.exception("Internal gateway tool stream failed")
                     log_entry["status"] = "error"
-                    log_entry["error"] = str(exc)[:500]
+                    log_entry["error"] = _gateway_error_text(exc)
                     for chunk in _stream_gateway_error_events(body.model, log_entry["error"]):
                         _mark_tool_stream_activity(log_entry)
                         yield chunk
@@ -389,14 +389,14 @@ class ChatPipeline:
             )
         except HTTPException as exc:
             log_entry["status"] = "error"
-            log_entry["error"] = _gateway_error_text(exc)[:500]
+            log_entry["error"] = _gateway_error_text(exc)
             completion = _gateway_error_completion(body.model, log_entry["error"])
             _record_response_text(log_entry, completion["choices"][0]["message"]["content"])
             return completion
         except Exception as exc:
             logger.exception("Internal gateway tool request failed")
             log_entry["status"] = "error"
-            log_entry["error"] = _gateway_error_text(exc)[:500]
+            log_entry["error"] = _gateway_error_text(exc)
             completion = _gateway_error_completion(body.model, log_entry["error"])
             _record_response_text(log_entry, completion["choices"][0]["message"]["content"])
             return completion

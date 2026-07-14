@@ -215,11 +215,62 @@ def _apply_openai_stream_chunk(completion: dict, data: dict) -> None:
         completion["usage"] = data.get("usage") or {}
 
 
+_GATEWAY_ERROR_TEXT_LIMIT = 1200
+
+
+def _error_reason_from_value(value: Any) -> str:
+    if isinstance(value, str):
+        return value.strip()
+    if value is None or isinstance(value, (bool, int, float)):
+        return str(value).strip() if value is not None else ""
+    if not isinstance(value, dict):
+        return ""
+
+    nested_error = value.get("error")
+    if isinstance(nested_error, dict):
+        reason = _error_reason_from_value(nested_error)
+        if reason:
+            return reason
+
+    for key in ("message", "error_description"):
+        reason = _error_reason_from_value(value.get(key))
+        if reason:
+            return reason
+
+    nested_detail = value.get("detail")
+    if isinstance(nested_detail, dict):
+        reason = _error_reason_from_value(nested_detail)
+        if reason:
+            return reason
+
+    for key in ("detail", "error", "code", "type"):
+        reason = _error_reason_from_value(value.get(key))
+        if reason:
+            return reason
+    return ""
+
+
+def _http_error_detail_parts(detail: Any) -> tuple[str, str]:
+    raw_detail = detail.strip() if isinstance(detail, str) else _json_dumps(detail)
+    parsed_detail = detail
+    if isinstance(detail, str):
+        try:
+            parsed_detail = json.loads(detail)
+        except (TypeError, ValueError, json.JSONDecodeError):
+            parsed_detail = detail
+    reason = _error_reason_from_value(parsed_detail) or raw_detail
+    return reason, raw_detail
+
+
 def _gateway_error_text(exc: Exception) -> str:
     if isinstance(exc, HTTPException):
-        detail = exc.detail if isinstance(exc.detail, str) else _json_dumps(exc.detail)
-        return f"{exc.status_code}: {detail}"[:800]
-    return str(exc)[:800]
+        reason, raw_detail = _http_error_detail_parts(exc.detail)
+        parts = [f"HTTP {exc.status_code}", f"原因（原文）：{reason}"]
+        if raw_detail and raw_detail != reason:
+            parts.append(f"原始返回：{raw_detail}")
+        return "\n".join(parts)[:_GATEWAY_ERROR_TEXT_LIMIT]
+    message = str(exc).strip() or type(exc).__name__
+    return f"原因（原文）：{message}"[:_GATEWAY_ERROR_TEXT_LIMIT]
 
 
 def _gateway_error_completion(model: str, error: str) -> dict:
