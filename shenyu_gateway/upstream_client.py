@@ -64,6 +64,18 @@ def _cache_prefix_sha256(value: Any) -> str:
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()[:16]
 
 
+def _cache_control_marker_count(value: Any) -> int:
+    if isinstance(value, dict):
+        return int(isinstance(value.get("cache_control"), dict)) + sum(
+            _cache_control_marker_count(item)
+            for key, item in value.items()
+            if key != "cache_control"
+        )
+    if isinstance(value, list):
+        return sum(_cache_control_marker_count(item) for item in value)
+    return 0
+
+
 def _cache_prefix_fingerprints(payload: dict, cache_paths: list[str], protocol: str) -> list[dict[str, str]]:
     tools = payload.get("tools") or []
     system = payload.get("system") or []
@@ -529,6 +541,7 @@ async def build_upstream_request(
         cache_meta["enabled"] = bool(cache_paths)
         cache_meta["breakpoints"] = cache_paths
         cache_meta["prefix_fingerprints"] = _cache_prefix_fingerprints(payload, cache_paths, proto)
+        cache_meta["cache_control_marker_count"] = _cache_control_marker_count(payload)
         cache_meta["note"] = (
             "cache_control breakpoints added to configured Anthropic layer blocks."
             if cache_enabled
@@ -563,6 +576,7 @@ async def build_upstream_request(
         payload["tools"] = cache_tools
     apply_upstream_extra_body(payload, cfg)
     cache_meta["prefix_fingerprints"] = _cache_prefix_fingerprints(payload, cache_meta["breakpoints"], proto)
+    cache_meta["cache_control_marker_count"] = _cache_control_marker_count(payload)
     headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
     headers.update(forwarded_client_headers(request, cfg))
     return payload, headers, model_name, cache_meta, upstream

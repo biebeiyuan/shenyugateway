@@ -1031,6 +1031,7 @@ def test_build_upstream_request_passes_attachment_tail_guard(monkeypatch, protoc
     assert cache_meta["tail_guard_user_turns"] == 3
     assert any("stable_tail" in path for path in cache_meta["breakpoints"])
     assert len(cache_meta["prefix_fingerprints"]) == len(cache_meta["breakpoints"])
+    assert cache_meta["cache_control_marker_count"] == len(cache_meta["breakpoints"])
 
 
 def test_build_upstream_request_omits_openai_cache_control_when_disabled(monkeypatch):
@@ -1071,6 +1072,7 @@ def test_build_upstream_request_omits_openai_cache_control_when_disabled(monkeyp
 
     assert cache_meta["enabled"] is False
     assert cache_meta["breakpoints"] == []
+    assert cache_meta["cache_control_marker_count"] == 0
     assert _contains_cache_control(payload) is False
 
 
@@ -1119,6 +1121,7 @@ def test_build_upstream_request_omits_anthropic_cache_control_when_disabled(monk
 
     assert cache_meta["enabled"] is False
     assert cache_meta["breakpoints"] == []
+    assert cache_meta["cache_control_marker_count"] == 0
     assert "ENABLE_ANTHROPIC_CACHE_CONTROL" in cache_meta["note"]
     assert _contains_cache_control(payload) is False
 
@@ -2163,11 +2166,21 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
 
         async def build_upstream_request(request, body, messages_override=None, meta=None):
             payload_messages_counts.append(len(messages_override or []))
+            round_number = len(payload_messages_counts)
             return (
                 {"model": body.model, "messages": messages_override or [], "tools": []},
                 {},
                 "",
-                {},
+                {
+                    "enabled": True,
+                    "protocol": "anthropic",
+                    "ttl": "5m",
+                    "breakpoints": [f"messages[{round_number}].content[0]"],
+                    "prefix_fingerprints": [
+                        {"path": f"messages[{round_number}].content[0]", "sha256": f"round-{round_number}"}
+                    ],
+                    "cache_control_marker_count": 1,
+                },
                 {"chat_url": "https://upstream.test/v1/chat/completions", "protocol": "openai"},
             )
 
@@ -2251,6 +2264,9 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
         assert rounds[0].get("final") is not True
         assert rounds[1]["response_full"] == "done"
         assert rounds[1]["final"] is True
+        assert rounds[0]["prompt_cache"]["breakpoints"] == ["messages[1].content[0]"]
+        assert rounds[1]["prompt_cache"]["breakpoints"] == ["messages[2].content[0]"]
+        assert rounds[0]["prompt_cache"]["cache_control_marker_count"] == 1
         assert "upstream_duration_ms" in rounds[0]
         assert "upstream_duration_ms" in rounds[1]
         assert any('"content": "done"' in event for event in events)

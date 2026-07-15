@@ -800,7 +800,8 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                         if key in {
                             "round", "messages_count", "stream", "usage", "finish_reason", "final",
                             "response_preview", "upstream_duration_ms", "cache_usage", "tool_calls_count",
-                            "gateway_tool_calls", "tools", "upstream_payload_summary", "anthropic_thinking",
+                            "gateway_tool_calls", "tools", "upstream_payload_summary", "prompt_cache",
+                            "anthropic_thinking",
                         }
                     }
                     for round_item in (item.get("internal_tool_rounds") or [])

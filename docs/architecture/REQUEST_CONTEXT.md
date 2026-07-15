@@ -50,6 +50,8 @@ Use `python scripts\vps_gateway_logs.py cache` for a content-free timeline of ca
 
 Each logged breakpoint also carries a truncated SHA-256 fingerprint of the exact cacheable prefix after removing `cache_control` metadata. The fingerprint contains no recoverable message text. Identical path/fingerprint pairs across adjacent requests prove that the gateway sent the same prefix; a provider-reported miss in that case points toward upstream cache retention or routing rather than a gateway boundary move.
 
+Every gateway-managed tool round keeps its own content-free `prompt_cache` evidence: breakpoint paths, prefix fingerprints, configured TTL, tail guard, and the number of `cache_control` markers present in the final outbound payload. This structure is safe to retain in SQLite and appears beside the round's provider-reported read/write usage. Full Messages and upstream payloads remain live-process-only and opt-in.
+
 `MAX_CLIENT_MESSAGES` is the base window size `L`. The overflow block is approximately 20% of `L`, rounded to a multiple of four and clamped to 20–40 messages. The window grows to high-water `H = L + overflow`, then trims once at a complete human/tool turn boundary back toward `L`. Between trims, the retained history start and memory-island anchor remain fixed. Active client tool continuations defer a high-water trim so a tool call cannot be separated from its result. Changing `MAX_CLIENT_MESSAGES`, rebuilding a branch, or starting a new window creates a new context epoch. Cold-start bridge history uses the same effective window size.
 
 Window and island decisions are written without message content to SQLite. Inspect them with:

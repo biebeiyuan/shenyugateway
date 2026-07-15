@@ -520,10 +520,14 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
   }
 
   if (tab === 'upstream') {
-    const payload = round?.upstream_payload || round?.upstream_payload_summary || detail.upstream_payload || detail.upstream_payload_summary || {
-      note: 'Full upstream payload is not retained. Set GATEWAY_LOG_FULL_PAYLOADS=true to keep full debug payloads in memory.',
-    }
-    return esc(JSON.stringify(payload, null, 2))
+    const fullPayload = round?.upstream_payload || detail.upstream_payload
+    if (fullPayload) return esc(JSON.stringify(fullPayload, null, 2))
+    const payloadSummary = round?.upstream_payload_summary || detail.upstream_payload_summary || null
+    return esc(JSON.stringify({
+      note: '未保留完整 Upstream payload；下方缓存结构不含消息正文。',
+      prompt_cache: round?.prompt_cache || detail.prompt_cache || null,
+      upstream_payload_summary: payloadSummary,
+    }, null, 2))
   }
 
   if (tab === 'response') {
@@ -605,8 +609,16 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
       </div>
 
       <template v-for="(round, roundIndex) in displayRounds(log)" :key="roundKey(log.id, round)">
-        <div class="log-card" :class="roundTone(log, round, roundIndex, displayRounds(log))">
-          <div class="log-sum" @click="toggleDetail(log.id, round)">
+        <div
+          class="log-card"
+          :class="roundTone(log, round, roundIndex, displayRounds(log))"
+          :data-testid="`log-card-${log.id}-round-${round.round}`"
+        >
+          <div
+            class="log-sum"
+            :data-testid="`log-summary-${log.id}-round-${round.round}`"
+            @click="toggleDetail(log.id, round)"
+          >
             <span class="lt">{{ roundTime(log, round) }}</span>
             <NTag size="tiny" :bordered="false" class="tag-m">{{ log.client_model || log.model || '?' }}</NTag>
             <NTag v-if="displayRounds(log).length > 1" size="tiny" :bordered="false" class="tag-round">
@@ -636,6 +648,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
                 :key="tab"
                 class="dtab"
                 :class="{ active: aTabs[roundKey(log.id, round)] === tab }"
+                :data-testid="`log-tab-${tab}-${log.id}-round-${round.round}`"
                 @click="switchTab(log.id, tab, round)"
               >
                 {{ TAB_LABELS[tab] }}
@@ -646,6 +659,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
               <div
                 v-else-if="detCache[log.id]"
                 class="rendered-detail"
+                :data-testid="`log-detail-${log.id}-round-${round.round}`"
                 v-html="renderContent(detCache[log.id], aTabs[roundKey(log.id, round)] || 'response', round.round)"
               ></div>
               <div v-else class="loading-soft">点开后就能看到这一轮。</div>

@@ -91,6 +91,17 @@ def test_request_log_history_survives_reopen_prunes_and_excludes_full_payloads(t
                         "result_preview": '{"token":"truncated-secret",',
                         "messages": [{"role": "user", "content": "round message"}],
                         "upstream_payload": {"messages": []},
+                        "prompt_cache": {
+                            "enabled": True,
+                            "protocol": "anthropic",
+                            "ttl": "5m",
+                            "breakpoints": ["system.end", "messages[4].content[0]"],
+                            "prefix_fingerprints": [
+                                {"path": "system.end", "sha256": "system-prefix"},
+                                {"path": "messages[4].content[0]", "sha256": "message-prefix"},
+                            ],
+                            "cache_control_marker_count": 2,
+                        },
                         "anthropic_thinking": {
                             "preserved": True,
                             "signature_present": True,
@@ -127,6 +138,8 @@ def test_request_log_history_survives_reopen_prunes_and_excludes_full_payloads(t
     assert '"api_key": "<redacted>"' in round_log["args_preview"]
     assert round_log["result_preview"] == "<omitted:truncated-json-preview>"
     assert round_log["anthropic_thinking"]["signature_present"] is True
+    assert round_log["prompt_cache"]["breakpoints"] == ["system.end", "messages[4].content[0]"]
+    assert round_log["prompt_cache"]["cache_control_marker_count"] == 2
     assert "response_full" not in round_log
     assert "messages" not in round_log
     assert "upstream_payload" not in round_log
@@ -197,6 +210,14 @@ def test_gateway_logs_api_reads_persisted_history_after_memory_is_empty(tmp_path
                         "total_input_tokens": 1010,
                         "total_input_reported": True,
                     },
+                    "prompt_cache": {
+                        "enabled": True,
+                        "protocol": "anthropic",
+                        "ttl": "5m",
+                        "breakpoints": ["system.end"],
+                        "prefix_fingerprints": [{"path": "system.end", "sha256": "safe-prefix"}],
+                        "cache_control_marker_count": 1,
+                    },
                     "tools": [],
                 }
             ],
@@ -236,6 +257,9 @@ def test_gateway_logs_api_reads_persisted_history_after_memory_is_empty(tmp_path
     assert [item["id"] for item in listing.json()["logs"]] == ["persisted-log"]
     assert listing.json()["logs"][0]["response_preview"] == "persisted answer"
     assert listing.json()["logs"][0]["internal_tool_rounds"][0]["cache_usage"]["total_input_tokens"] == 1010
+    assert listing.json()["logs"][0]["internal_tool_rounds"][0]["prompt_cache"]["breakpoints"] == [
+        "system.end"
+    ]
     assert detail.status_code == 200
     assert detail.json()["diagnostics"]["new_counter"] == 7
     assert detail.json()["response_full"] is None

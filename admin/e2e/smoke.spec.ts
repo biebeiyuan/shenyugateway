@@ -121,9 +121,68 @@ test('star map route loads its canvas', async ({ page }) => {
   })
 })
 
-test('logs page loads', async ({ page }) => {
+test('logs page exposes per-round cache structure', async ({ page }) => {
+  const promptCache = {
+    enabled: true,
+    protocol: 'anthropic',
+    ttl: '5m',
+    breakpoints: ['system.end', 'messages[190].stable_tail.content[0]'],
+    prefix_fingerprints: [
+      { path: 'system.end', sha256: 'system-prefix' },
+      { path: 'messages[190].stable_tail.content[0]', sha256: 'history-prefix' },
+    ],
+    cache_control_marker_count: 2,
+    tail_guard_user_turns: 3,
+  }
+  const round = {
+    round: 1,
+    messages_count: 201,
+    stream: true,
+    final: true,
+    usage: { input_tokens: 83433, cache_creation_input_tokens: 5983 },
+    cache_usage: { total_input_tokens: 89416, cache_creation_input_tokens: 5983, reported: true },
+    prompt_cache: promptCache,
+    upstream_payload_summary: { model: 'test-model', messages_count: 197, tools_count: 6 },
+    tools: [],
+  }
+  const log = {
+    id: 'cache-structure',
+    request_id: 'cache-request',
+    timestamp: '2026-07-15T14:43:52+00:00',
+    session_tag: 'smoke',
+    model: 'test-model',
+    client_model: 'test-model',
+    upstream_model: 'test-model',
+    model_mapped: false,
+    upstream_url: 'https://example.test/v1/messages',
+    upstream_scope: 'default',
+    status: 'ok',
+    duration_ms: 1200,
+    stream: true,
+    tools_count: 6,
+    tool_names: [],
+    has_internal_tools: true,
+    is_first_turn: false,
+    original_messages_count: 2295,
+    prepared_messages_count: 201,
+    internal_tool_rounds: [round],
+    prompt_cache: promptCache,
+    error: null,
+    response_preview: 'done',
+  }
+  await page.route('**/api/gateway/logs/cache-structure', async (route) => {
+    await route.fulfill({ json: log })
+  })
+  await page.route('**/api/gateway/logs?*', async (route) => {
+    await route.fulfill({ json: { logs: [log] } })
+  })
   await openAdminRoute(page, '/logs', async () => {
     await expect(page.getByTestId('page-logs')).toBeVisible()
+    await page.getByTestId('log-summary-cache-structure-round-1').click()
+    await page.getByTestId('log-tab-upstream-cache-structure-round-1').click()
+    const detail = page.getByTestId('log-detail-cache-structure-round-1')
+    await expect(detail).toContainText('messages[190].stable_tail.content[0]')
+    await expect(detail).toContainText('cache_control_marker_count')
   })
 })
 

@@ -16,10 +16,12 @@
 - **Messages**：看这一轮实际发送给上游的消息序列。后续轮会比前一轮多出 assistant tool call 和 tool result。
 - **System**：看本次客户端请求共享的系统上下文。
 - **Response**：看这一轮模型实际返回的正文。粉色框里是调用工具前的正文，绿色框里是最终正文。请求出错时，`HTTP NNN` 是实际状态码；`原因（原文）` 直接取自返回 JSON 的 `error.message`、顶层 `message` 等原始字段，下面的 `原始返回` 保留原错误正文。它们不是网关根据关键词统计或自行归类出的结论；无法解析结构时会直接显示原文。
-- **Upstream**：看这一轮完整上游 payload；只在需要核对协议、工具或缓存断点时打开。
-- **Meta / Raw JSON**：工程排障备用，平时可以不看。
+- **Upstream**：默认看这一轮不含正文的 payload 摘要和缓存结构证据；临时开启完整 payload 保留后，才显示实际上游 payload。只在需要核对协议、工具或缓存断点时打开。
+- **Meta / Raw JSON**：工程排障备用。Raw JSON 是原始日志对象，不等于实际发给上游的请求 JSON；没有开启完整 payload 保留时，它只含预览、摘要和结构化证据。
 
 日志分两层保留：当前进程内有最近 30 条可继续更新的实时日志；SQLite 默认保留最近 200 条安全摘要（由 `GATEWAY_REQUEST_LOG_RETENTION` 调整），所以挂载数据库持久卷后，更新容器不会再清空前端最近日志。普通结构化诊断字段会随安全 JSON 摘要自动保存；完整 Messages、Upstream payload、Response、图片、原始 Thinking 和 signature 会被统一剔除。
+
+工具链的每个上游轮次都会单独保存 `prompt_cache` 结构证据：断点路径、前缀指纹、TTL、tail guard，以及最终 payload 中实际存在的 `cache_control` 数量。它们不含消息正文，可以随 SQLite 安全摘要保留；结合该轮的缓存 read/write，可以判断网关是否发出断点以及上游是否兑现。
 
 需要短期排查协议问题时，可以显式设置 `GATEWAY_LOG_FULL_PAYLOADS=true`。完整内容仍只存在于当前进程最近 30 条日志，重启后旧记录会退回摘要和预览；它们可能包含敏感对话，排查结束后应关闭。
 

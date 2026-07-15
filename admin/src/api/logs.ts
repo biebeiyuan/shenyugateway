@@ -43,6 +43,8 @@ export interface PromptCache {
   ttl?: string | null
   breakpoints?: string[]
   prefix_fingerprints?: Array<{ path?: string, sha256?: string }>
+  cache_control_marker_count?: number
+  tail_guard_user_turns?: number
 }
 
 export interface LogEntry {
@@ -102,6 +104,7 @@ export interface ToolRoundEntry {
   messages_preview?: any[]
   upstream_payload?: Record<string, any> | null
   upstream_payload_summary?: Record<string, any> | null
+  prompt_cache?: PromptCache | null
   anthropic_thinking?: {
     preserved?: boolean
     blocks?: number
