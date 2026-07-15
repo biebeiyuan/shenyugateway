@@ -1,8 +1,31 @@
 from __future__ import annotations
+
 import json
 import uuid
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Optional
+
 from ..runtime import iso_now, json_dumps
+
+
+_ROOM_READER_TIMEZONE = timezone(timedelta(hours=8))
+
+
+def _room_newspaper_reader_date(value: Any) -> str:
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return raw[:10]
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(_ROOM_READER_TIMEZONE).date().isoformat()
+
+
+def _validated_reader_date(value: str) -> str:
+    return date.fromisoformat(str(value or "").strip()).isoformat()
 
 
 class RoomMixin:
@@ -286,6 +309,89 @@ class RoomMixin:
             ).fetchone()
             return self._room_newspaper_issue(conn, row["id"]) if row else None
 
+    def room_newspaper_archive_count(self) -> int:
+        with self._connect() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS cnt FROM room_newspaper_issues WHERE status = 'archived'"
+            ).fetchone()
+            return int(row["cnt"] if row else 0)
+
+    def list_archived_room_newspaper_issues(self, limit: int = 30) -> list[dict]:
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, item_count, published_at, delivered_at "
+                "FROM room_newspaper_issues WHERE status = 'archived' "
+                "ORDER BY published_at DESC, created_at DESC LIMIT ?",
+                (max(1, min(int(limit), 50)),),
+            ).fetchall()
+        return [
+            {
+                "id": row["id"],
+                "date": _room_newspaper_reader_date(row["published_at"]),
+                "item_count": int(row["item_count"] or 0),
+                "read": bool(row["delivered_at"]),
+                "published_at": row["published_at"],
+            }
+            for row in rows
+        ]
+
+    def archived_room_newspaper_issues_for_date(self, reader_date: str) -> list[dict]:
+        normalized_date = _validated_reader_date(reader_date)
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT id, published_at FROM room_newspaper_issues "
+                "WHERE status = 'archived' ORDER BY published_at DESC, created_at DESC"
+            ).fetchall()
+            issue_ids = [
+                row["id"]
+                for row in rows
+                if _room_newspaper_reader_date(row["published_at"]) == normalized_date
+            ]
+            return [
+                issue
+                for issue_id in issue_ids
+                if (issue := self._room_newspaper_issue(conn, issue_id))
+            ]
+
+    def search_archived_room_newspaper_items(
+        self,
+        query: str,
+        *,
+        reader_date: Optional[str] = None,
+        limit: int = 30,
+    ) -> list[dict]:
+        needle = str(query or "").strip().casefold()
+        if not needle:
+            return []
+        normalized_date = _validated_reader_date(reader_date) if reader_date else None
+        with self._connect() as conn:
+            rows = conn.execute(
+                "SELECT item.*, issue.published_at AS issue_published_at, "
+                "issue.delivered_at AS issue_delivered_at "
+                "FROM room_newspaper_items AS item "
+                "JOIN room_newspaper_issues AS issue ON issue.id = item.issue_id "
+                "WHERE issue.status = 'archived' "
+                "ORDER BY issue.published_at DESC, issue.created_at DESC, item.position ASC"
+            ).fetchall()
+
+        matches: list[dict] = []
+        max_results = max(1, min(int(limit), 50))
+        for row in rows:
+            issue_date = _room_newspaper_reader_date(row["issue_published_at"])
+            if normalized_date and issue_date != normalized_date:
+                continue
+            haystack = f"{row['title']}\n{row['summary']}".casefold()
+            if needle not in haystack:
+                continue
+            item = dict(row)
+            item["issue_date"] = issue_date
+            item["read"] = bool(item.pop("issue_delivered_at", None))
+            item.pop("issue_published_at", None)
+            matches.append(item)
+            if len(matches) >= max_results:
+                break
+        return matches
+
     def publish_room_newspaper_issue(self, issue_id: str) -> Optional[dict]:
         published_at = iso_now()
         with self._connect() as conn:
@@ -318,7 +424,7 @@ class RoomMixin:
         with self._connect() as conn:
             conn.execute(
                 "UPDATE room_newspaper_issues SET delivered_at = COALESCE(delivered_at, ?) "
-                "WHERE id = ? AND status = 'published'",
+                "WHERE id = ? AND status IN ('published', 'archived')",
                 (iso_now(), issue_id),
             )
             return self._room_newspaper_issue(conn, issue_id)

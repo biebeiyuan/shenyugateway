@@ -156,6 +156,28 @@ def room_tool_definitions(tool_names: Optional[Iterable[str]] = None) -> list[di
         {
             "type": "function",
             "function": {
+                "name": "room_newspaper_basket",
+                "description": (
+                    "翻窗边报纸篓里的旧报纸。无参数时按日期倒序列出；"
+                    "传 date 打开那天整期；传 query 在标题和摘要里做普通关键词查找。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "date": {
+                            "type": "string",
+                            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
+                            "description": "旧报日期，格式 YYYY-MM-DD",
+                        },
+                        "query": {"type": "string", "description": "标题和摘要中的关键词"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 30},
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
                 "name": "room_octopus_pillow",
                 "description": "抱章鱼抱枕；想要一点柔软或随机翻到一张旧纸条时用。",
                 "parameters": {"type": "object", "properties": {}},
@@ -193,6 +215,7 @@ def room_broker_tool() -> dict:
     """A single broker tool for room mode, like shenyu_gateway_tool but for room_* tools."""
     hints = {
         "room_sit_by_window": "窗边椅子（无参数）",
+        "room_newspaper_basket": "旧报纸篓（date?=YYYY-MM-DD, query?, limit?）",
         "room_scribble": "窗台涂鸦本（action: write|read, content?）",
         "room_notebook": "笔记本（status?: captured|active|all, limit?）",
         "room_wooden_box": "木盒子/心跳（limit?）",
@@ -261,6 +284,9 @@ async def execute_room_tool(
     elif name == "room_conflict_shelf":
         return await _handle_conflict_shelf(arguments, cfg=cfg, supabase_client=supabase_client)
 
+    elif name == "room_newspaper_basket":
+        return _handle_newspaper_basket(store, arguments, session_id=session_id)
+
     elif name == "room_sit_by_window":
         issue = store.latest_published_room_newspaper() if store else None
         detail = {"newspaper_issue_id": issue["id"]} if issue else None
@@ -272,22 +298,7 @@ async def execute_room_tool(
         if issue:
             delivered = store.mark_room_newspaper_delivered(issue["id"]) or issue
             result["message"] = "你坐下来了。窗台上的报纸还压在这里。"
-            result["newspaper"] = {
-                "issue_id": delivered["id"],
-                "published_at": delivered.get("published_at"),
-                "item_count": delivered.get("item_count", 0),
-                "items": [
-                    {
-                        "position": item.get("position"),
-                        "title": item.get("title"),
-                        "summary": item.get("summary"),
-                        "url": item.get("url"),
-                        "source": item.get("source_name"),
-                        "date": str(item.get("published_at") or "")[:10],
-                    }
-                    for item in delivered.get("items") or []
-                ],
-            }
+            result["newspaper"] = _room_newspaper_payload(delivered)
         return result
 
     elif name == "room_octopus_pillow":
@@ -301,6 +312,134 @@ async def execute_room_tool(
 
 
 # ── Individual Handlers ────────────────────────────────────────────────
+
+
+def _room_newspaper_payload(issue: dict, *, reader_date: Optional[str] = None) -> dict:
+    payload: dict[str, Any] = {
+        "issue_id": issue["id"],
+        "published_at": issue.get("published_at"),
+        "item_count": issue.get("item_count", 0),
+        "items": [
+            {
+                "position": item.get("position"),
+                "title": item.get("title"),
+                "summary": item.get("summary"),
+                "url": item.get("url"),
+                "source": item.get("source_name"),
+                "date": str(item.get("published_at") or "")[:10],
+            }
+            for item in issue.get("items") or []
+        ],
+    }
+    if reader_date:
+        payload["date"] = reader_date
+        payload["read"] = bool(issue.get("delivered_at"))
+    return payload
+
+
+def _newspaper_date_label(reader_date: str) -> str:
+    try:
+        _year, month, day = (int(part) for part in reader_date.split("-"))
+    except (TypeError, ValueError):
+        return reader_date
+    return f"{month}月{day}日"
+
+
+def _handle_newspaper_basket(store: Any, arguments: dict, *, session_id: str) -> dict:
+    if not store:
+        return {"ok": False, "error": "报纸篓现在打不开。"}
+
+    reader_date = str(arguments.get("date") or "").strip()
+    query = str(arguments.get("query") or "").strip()
+    try:
+        limit = max(1, min(int(arguments.get("limit", 30)), 50))
+    except (TypeError, ValueError):
+        limit = 30
+
+    if query:
+        try:
+            matches = store.search_archived_room_newspaper_items(
+                query,
+                reader_date=reader_date or None,
+                limit=limit,
+            )
+        except ValueError:
+            return {"ok": False, "error": "date 要用 YYYY-MM-DD 格式。"}
+        store.add_room_trace(
+            session_id,
+            "newspaper_basket",
+            detail={"mode": "search", "date": reader_date or None, "match_count": len(matches)},
+        )
+        return {
+            "ok": True,
+            "mode": "search",
+            "query": query,
+            "date": reader_date or None,
+            "count": len(matches),
+            "matches": [
+                {
+                    "date": item["issue_date"],
+                    "date_label": _newspaper_date_label(item["issue_date"]),
+                    "read": item["read"],
+                    "position": item.get("position"),
+                    "title": item.get("title"),
+                    "summary": item.get("summary"),
+                    "url": item.get("url"),
+                    "source": item.get("source_name"),
+                }
+                for item in matches
+            ],
+            "message": "没有照到相关旧报。" if not matches else f"在旧报里找到 {len(matches)} 条。",
+        }
+
+    if reader_date:
+        try:
+            issues = store.archived_room_newspaper_issues_for_date(reader_date)
+        except ValueError:
+            return {"ok": False, "error": "date 要用 YYYY-MM-DD 格式。"}
+        delivered = [store.mark_room_newspaper_delivered(issue["id"]) or issue for issue in issues]
+        store.add_room_trace(
+            session_id,
+            "newspaper_basket",
+            detail={"mode": "read", "date": reader_date, "issue_count": len(delivered)},
+        )
+        return {
+            "ok": True,
+            "mode": "read",
+            "date": reader_date,
+            "count": len(delivered),
+            "issues": [_room_newspaper_payload(issue, reader_date=reader_date) for issue in delivered],
+            "message": "这一天的旧报不在篓里。" if not delivered else f"翻开了{_newspaper_date_label(reader_date)}的旧报。",
+        }
+
+    issues = store.list_archived_room_newspaper_issues(limit=limit)
+    total = store.room_newspaper_archive_count()
+    store.add_room_trace(
+        session_id,
+        "newspaper_basket",
+        detail={"mode": "list", "visible_count": len(issues), "total": total},
+    )
+    return {
+        "ok": True,
+        "mode": "list",
+        "count": len(issues),
+        "total": total,
+        "has_more": total > len(issues),
+        "issues": [
+            {
+                "date": issue["date"],
+                "item_count": issue["item_count"],
+                "read": issue["read"],
+                "label": (
+                    f"{_newspaper_date_label(issue['date'])} · "
+                    f"{issue['item_count']}条 · {'已读' if issue['read'] else '未读'}"
+                ),
+            }
+            for issue in issues
+        ],
+        "message": "报纸篓还是空的。" if not issues else f"报纸篓里有 {total} 期旧报。",
+    }
+
 
 def _handle_drawer_notes(store: Any, arguments: dict) -> dict:
     limit = min(int(arguments.get("limit", 5)), 20)
@@ -602,14 +741,18 @@ async def collect_door_counts(
     except Exception:
         counts["conflict_shelf"] = 0
 
-    # Sit / pillow / locked_drawer: always available. A fresh newspaper only
-    # changes the window-side hint; it never changes door visibility.
+    # Window-side doors stay visible. A fresh newspaper only changes the chair
+    # hint; archived issues warm the always-visible newspaper basket.
     has_newspaper = False
     try:
         has_newspaper = bool(store and store.has_undelivered_room_newspaper())
     except Exception:
         pass
     counts["sit"] = 1 if has_newspaper else 0
+    try:
+        counts["newspaper_basket"] = store.room_newspaper_archive_count() if store else 0
+    except Exception:
+        counts["newspaper_basket"] = 0
     counts["pillow"] = 0
     counts["locked_drawer"] = 0
 
@@ -622,6 +765,7 @@ async def collect_door_counts(
         {"key": "wall_pins", "name": "墙上便签", "count": counts["wall_pins"]},
         {"key": "conflict_shelf", "name": "矛盾书架", "count": counts["conflict_shelf"]},
         {"key": "sit", "name": "窗边椅子", "count": counts["sit"]},
+        {"key": "newspaper_basket", "name": "旧报纸篓", "count": counts["newspaper_basket"]},
         {"key": "pillow", "name": "章鱼抱枕", "count": 0},
         {"key": "locked_drawer", "name": "上锁的抽屉", "count": 0},
     ]

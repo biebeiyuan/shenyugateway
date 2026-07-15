@@ -164,6 +164,126 @@ def test_sit_by_window_returns_published_issue_and_marks_it_delivered(tmp_path):
     assert store.recent_room_traces(1)[0]["action"] == "sit"
 
 
+def test_newspaper_basket_lists_searches_and_reads_archived_issues_by_reader_date(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("room", "operit")
+
+    first_items = _stored_items()
+    first_items[2]["summary"] = "这条讲一条生活在无光海沟里的深海鱼。"
+    first = store.create_room_newspaper_issue(first_items)
+    store.publish_room_newspaper_issue(first["id"])
+
+    second = store.create_room_newspaper_issue(_stored_items(10))
+    store.publish_room_newspaper_issue(second["id"])
+
+    current = store.create_room_newspaper_issue(_stored_items(20))
+    store.publish_room_newspaper_issue(current["id"])
+
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE room_newspaper_issues SET published_at = ?, delivered_at = NULL WHERE id = ?",
+            ("2026-07-14T18:00:00+00:00", first["id"]),
+        )
+        conn.execute(
+            "UPDATE room_newspaper_issues SET published_at = ?, delivered_at = NULL WHERE id = ?",
+            ("2026-07-13T20:00:00+00:00", second["id"]),
+        )
+
+    listed = asyncio.run(
+        execute_room_tool(
+            "room_newspaper_basket",
+            {},
+            store=store,
+            cfg=SimpleNamespace(),
+            session_id=session["id"],
+            session_tag="room",
+        )
+    )
+
+    assert listed["mode"] == "list"
+    assert listed["total"] == 2
+    assert [issue["label"] for issue in listed["issues"]] == [
+        "7月15日 · 5条 · 未读",
+        "7月14日 · 5条 · 未读",
+    ]
+    assert store.latest_published_room_newspaper()["id"] == current["id"]
+
+    summary_search = asyncio.run(
+        execute_room_tool(
+            "room_newspaper_basket",
+            {"query": "深海鱼"},
+            store=store,
+            cfg=SimpleNamespace(),
+            session_id=session["id"],
+            session_tag="room",
+        )
+    )
+    title_search = asyncio.run(
+        execute_room_tool(
+            "room_newspaper_basket",
+            {"query": "title 0"},
+            store=store,
+            cfg=SimpleNamespace(),
+            session_id=session["id"],
+            session_tag="room",
+        )
+    )
+
+    assert summary_search["count"] == 1
+    assert summary_search["matches"][0]["date"] == "2026-07-15"
+    assert title_search["count"] == 1
+    assert store.get_room_newspaper_issue(first["id"])["delivered_at"] is None
+
+    opened = asyncio.run(
+        execute_room_tool(
+            "room_newspaper_basket",
+            {"date": "2026-07-15"},
+            store=store,
+            cfg=SimpleNamespace(),
+            session_id=session["id"],
+            session_tag="room",
+        )
+    )
+
+    assert opened["mode"] == "read"
+    assert opened["count"] == 1
+    assert opened["issues"][0]["date"] == "2026-07-15"
+    assert opened["issues"][0]["read"] is True
+    assert opened["issues"][0]["items"][2]["summary"].endswith("深海鱼。")
+    assert store.get_room_newspaper_issue(first["id"])["delivered_at"]
+    assert store.latest_published_room_newspaper()["id"] == current["id"]
+    assert store.latest_published_room_newspaper()["delivered_at"] is None
+
+    relisted = asyncio.run(
+        execute_room_tool(
+            "room_newspaper_basket",
+            {},
+            store=store,
+            cfg=SimpleNamespace(),
+            session_id=session["id"],
+            session_tag="room",
+        )
+    )
+    assert relisted["issues"][0]["label"] == "7月15日 · 5条 · 已读"
+    assert store.recent_room_traces(1)[0]["action"] == "newspaper_basket"
+
+
+def test_newspaper_basket_rejects_invalid_reader_date(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+
+    result = asyncio.run(
+        execute_room_tool(
+            "room_newspaper_basket",
+            {"date": "7月14日"},
+            store=store,
+            cfg=SimpleNamespace(),
+            session_id="room-session",
+        )
+    )
+
+    assert result == {"ok": False, "error": "date 要用 YYYY-MM-DD 格式。"}
+
+
 def test_fetch_candidates_reports_each_source_without_scraping_pages(tmp_path):
     feed = b"""<rss><channel><item>
       <title>Feed title</title><link>https://example.test/feed-title</link>

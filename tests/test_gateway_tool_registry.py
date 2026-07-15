@@ -2125,6 +2125,7 @@ def test_room_mode_exposes_room_tools_directly_without_broker():
 
     assert "client_tool" in names
     assert "room_sit_by_window" in names
+    assert "room_newspaper_basket" in names
     assert "room_star_map" in names
     assert "shenyu_gateway_tool" not in names
 
@@ -2156,12 +2157,14 @@ def test_visible_room_tools_follow_visible_low_charge_doors():
     layers, _scene_tag = render_room_layers(0.1, [], door_specs)
 
     assert "room_sit_by_window" in tool_names
+    assert "room_newspaper_basket" in tool_names
     assert "room_scribble" in tool_names
     assert "room_octopus_pillow" in tool_names
     assert "room_drawer_notes" in tool_names
     assert "room_notebook" in tool_names
     assert "room_wall_pins" not in tool_names
     assert "`room_drawer_notes`" in layers["tool_policy"]
+    assert "`room_newspaper_basket`" in layers["tool_policy"]
     assert "`room_wall_pins`" not in layers["tool_policy"]
 
 

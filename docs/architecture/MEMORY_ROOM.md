@@ -227,7 +227,7 @@ Core files, separated by concern:
 |------|---------------|
 | `shenyu_gateway/room_text.py` | All room copy: charter, scenes, doors, trace phrases. Change text here only. |
 | `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |
-| `shenyu_gateway/room_tools.py` | 10 tool handlers, direct tool definitions, compatibility broker, door count collection. |
+| `shenyu_gateway/room_tools.py` | 11 tool handlers, direct tool definitions, compatibility broker, door count collection. |
 | `shenyu_gateway/room_scenes.py` | Weather, atmosphere, and window-scene generation. |
 | `shenyu_gateway/room_newspaper.py` | Fixed RSS catalog, feed parsing, issue rolling, optional quality checks, and draft generation. |
 | `shenyu_gateway/store/_room.py` | Room traces, notes, pins, scribbles, and newspaper issue persistence. |
@@ -263,14 +263,15 @@ Charge is a 0-1 scalar computed per visit from 5 signals (not stored):
 Refractory period: if visited within `ROOM_CHARGE_REFRACTORY_HOURS` (default 4h), charge is dampened.
 
 Charge affects door visibility:
-- **Low (< 0.3)**: only "always" doors (sit, scribble, pillow) + top 2 active doors
+- **Low (< 0.3)**: only "always" doors (sit, newspaper basket, scribble, pillow) + top 2 active doors
 - **Mid/High (≥ 0.3)**: all doors visible
 
-### Doors (10 tools)
+### Doors (11 tools)
 
 | Tool | Zone | What it does |
 |------|------|-------------|
 | `room_sit_by_window` | window | Sit by the window. Records trace and returns the latest published window newspaper when one exists. |
+| `room_newspaper_basket` | window | Browse archived newspapers by reader-local publication date, open one date, or grep titles and feed summaries. |
 | `room_scribble` | desk | Write something on the windowsill notebook. |
 | `room_notebook` | desk | Browse the messy notebook (connects to shenyu_notebook). |
 | `room_wooden_box` | drawers | Open the wooden box of heartbeats. |
@@ -297,6 +298,7 @@ Workflow:
 4. If optional quality checking is enabled, the configured small model may return only candidate ids to drop as broken, duplicate, or advertising. It cannot rewrite, translate, summarize, rank from Shenyu's personal context, or crawl article pages. A missing or failed quality model does not block the deterministic draft.
 5. The draft is visible in admin. It reaches Shenyu only after Yuan clicks `放到窗台`.
 6. Before first delivery, the window door leaks only `窗台上压着一份新报纸。` Calling `room_sit_by_window` returns the complete published issue and marks its first delivery time. The issue remains available on later sits until a newer issue is published.
+7. Publishing a newer issue moves the previous one into the old-newspaper basket. `room_newspaper_basket` with no arguments returns a compact reverse-date list such as `7月14日 · 7条 · 已读`; `date=YYYY-MM-DD` opens the complete archived issue for that Asia/Shanghai calendar date, while `query` performs a literal case-insensitive substring search over stored titles and RSS summaries only. Listing and searching do not mark an issue read; opening the full date does. Drafts, discarded issues, and the current windowsill issue never appear in the basket.
 
 Each stored item contains the source title, up to the first three sentences supplied by the feed, URL, source name, and normalized publication date. A short feed summary stays short, but an entry with no real summary is excluded before rolling and the model never fills it in. Hacker News external links and many Lobsters external links therefore do not qualify under the RSS-only rule; HN/Lobsters self-posts can still qualify when their feed carries the post body. NASA APOD's RSS often exposes only a title-like image description, which counts as its complete text metadata. APOD is text-only in this version.
 

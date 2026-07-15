@@ -43,6 +43,7 @@ TRACE_PHRASES: dict[str, str] = {
     "pillow":         "上次来的时候，抱了一会儿章鱼抱枕。",
     "locked_drawer":  "上次来的时候，打开过最下面那层抽屉。",
     "drawer_notes":   "上次来的时候，翻了翻圆儿塞的纸条。",
+    "newspaper_basket": "上次来的时候，翻了翻报纸篓里的旧报。",
 }
 
 
@@ -97,6 +98,20 @@ DOORS = [
             "靠窗的椅子，粉色的靠垫皱着，被我坐出了一个形状。窗外面是海。"
             "窗台上压着一份新报纸。\n"
             "坐下来。`room_sit_by_window`"
+        ),
+        priority="always",
+    ),
+    _door(
+        key="newspaper_basket",
+        tool="room_newspaper_basket",
+        zone="window",
+        base=(
+            "椅子旁边放着一个旧报纸篓。现在还是空的。\n"
+            "翻翻。`room_newspaper_basket`"
+        ),
+        dynamic=(
+            "椅子旁边放着一个旧报纸篓。旧报按日期叠在里面。\n"
+            "翻翻。`room_newspaper_basket`"
         ),
         priority="always",
     ),
