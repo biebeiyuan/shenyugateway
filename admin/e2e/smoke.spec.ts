@@ -145,11 +145,43 @@ test('conflict page loads', async ({ page }) => {
   })
 })
 
-test('Room page keeps the in-place newspaper panel alive', async ({ page }) => {
+test('Room page keeps its mapped labels, dates, and fold sections alive', async ({ page }) => {
+  await page.route('**/api/gateway/room/traces?*', async (route) => {
+    await route.fulfill({
+      json: {
+        traces: [{
+          id: 'trace-newspaper-basket',
+          session_id: 'room-smoke',
+          action: 'newspaper_basket',
+          detail: { mode: 'list' },
+          scribble: null,
+          created_at: '2024-07-15T10:30:00+00:00',
+        }],
+        count: 1,
+      },
+    })
+  })
+
   await openAdminRoute(page, '/room', async () => {
     await expect(page.getByTestId('page-room')).toBeVisible()
     await expect(page.getByTestId('room-newspaper-panel')).toBeVisible()
     await expect(page.getByTestId('room-newspaper-generate')).toBeEnabled()
+    await expect(page.getByText('旧报纸篓', { exact: true })).toBeVisible()
+    await expect(page.getByText('翻了旧报纸', { exact: true })).toBeVisible()
+    await expect(page.locator('body')).not.toContainText('NaN')
+
+    const windowsill = page.getByTestId('room-fold-windowsill')
+    const hand = page.getByTestId('room-fold-hand')
+    const drawer = page.getByTestId('room-fold-drawer')
+    await expect(windowsill).toHaveAttribute('open', '')
+    await expect(hand).not.toHaveAttribute('open', '')
+    await expect(drawer).not.toHaveAttribute('open', '')
+
+    await hand.locator('summary').click()
+    await expect(hand).toHaveAttribute('open', '')
+    await drawer.locator('summary').click()
+    await expect(drawer).toHaveAttribute('open', '')
+    await expect(drawer.locator('textarea')).toBeVisible()
   })
 })
 

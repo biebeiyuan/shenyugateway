@@ -36,6 +36,7 @@ const TRACE_LABELS: Record<string, string> = {
   octopus_pillow: '抱了章鱼',
   locked_drawer: '开了抽屉',
   drawer_notes: '看了纸条',
+  newspaper_basket: '翻了旧报纸',
   window: '看了窗外',
 }
 
@@ -48,6 +49,7 @@ const TOOL_LABELS: Record<string, string> = {
   room_wall_pins: '墙上便签',
   room_conflict_shelf: '矛盾书架',
   room_sit_by_window: '窗边椅子',
+  room_newspaper_basket: '旧报纸篓',
   room_octopus_pillow: '章鱼抱枕',
   room_locked_drawer: '上锁抽屉',
 }
@@ -175,9 +177,17 @@ async function refreshEverything() {
   await loadRoom()
 }
 
+function parseRoomTime(iso: string) {
+  const value = String(iso || '').trim()
+  if (!value) return null
+  const hasTimezone = /(?:Z|[+-]\d{2}:\d{2})$/i.test(value)
+  const parsed = new Date(hasTimezone ? value : `${value}Z`)
+  return Number.isNaN(parsed.getTime()) ? null : parsed
+}
+
 function relativeTime(iso: string) {
-  if (!iso) return ''
-  const d = new Date(iso + (iso.endsWith('Z') ? '' : 'Z'))
+  const d = parseRoomTime(iso)
+  if (!d) return '时间未知'
   const now = Date.now()
   const diff = now - d.getTime()
   const mins = Math.floor(diff / 60000)
@@ -191,8 +201,8 @@ function relativeTime(iso: string) {
 }
 
 function shortDate(iso: string) {
-  if (!iso) return ''
-  const d = new Date(iso + (iso.endsWith('Z') ? '' : 'Z'))
+  const d = parseRoomTime(iso)
+  if (!d) return '时间未知'
   const mm = (d.getMonth() + 1).toString().padStart(2, '0')
   const dd = d.getDate().toString().padStart(2, '0')
   const hh = d.getHours().toString().padStart(2, '0')
@@ -274,50 +284,99 @@ function chargeLabel(c?: number) {
           </div>
         </div>
 
-        <aside class="drawer-panel">
-          <div class="panel-topline compact">
+      </section>
+
+      <div class="room-fold-stack">
+        <details class="room-fold" open data-testid="room-fold-windowsill">
+          <summary class="room-fold-summary">
+            <div>
+              <span class="panel-kicker">窗台</span>
+              <h2>订阅报纸</h2>
+            </div>
+          </summary>
+          <div class="room-fold-body newspaper-fold-body">
+            <RoomNewspaperPanel ref="newspaperPanel" embedded @published="loadPreview" />
+          </div>
+        </details>
+
+        <details class="room-fold" data-testid="room-fold-hand">
+          <summary class="room-fold-summary">
+            <div>
+              <span class="panel-kicker">手边</span>
+              <h2>窗台本子和便签</h2>
+            </div>
+            <span class="fold-meta">本子 {{ recentScribbles.length }} · 便签 {{ activePins.length }}</span>
+          </summary>
+          <div class="room-fold-body hand-lanes">
+            <section class="hand-lane">
+              <h3>窗台本子</h3>
+              <div v-if="recentScribbles.length" class="mini-list">
+                <article v-for="item in recentScribbles" :key="item.id">
+                  <p>{{ item.content }}</p>
+                  <span>{{ relativeTime(item.created_at) }}</span>
+                </article>
+              </div>
+              <NEmpty v-else description="还没写过" class="soft-empty small" />
+            </section>
+
+            <section class="hand-lane">
+              <h3>墙上便签</h3>
+              <div v-if="activePins.length" class="mini-list">
+                <article v-for="pin in activePins" :key="pin.id">
+                  <p>{{ pin.content }}</p>
+                  <span>{{ relativeTime(pin.created_at) }}</span>
+                </article>
+              </div>
+              <NEmpty v-else description="没有未完成便签" class="soft-empty small" />
+            </section>
+          </div>
+        </details>
+
+        <details class="room-fold" data-testid="room-fold-drawer">
+          <summary class="room-fold-summary">
             <div>
               <span class="panel-kicker">中层抽屉</span>
               <h2>纸条</h2>
             </div>
-            <NTag v-if="notesUnread" size="small" :bordered="false" type="warning">{{ notesUnread }} 未读</NTag>
-          </div>
-
-          <div class="note-compose">
-            <NInput
-              v-model:value="noteDraft"
-              type="textarea"
-              placeholder="写一张纸条塞进抽屉..."
-              :autosize="{ minRows: 3, maxRows: 6 }"
-              :disabled="noteSending"
-            />
-            <NButton
-              size="small"
-              type="primary"
-              @click="sendNote"
-              :loading="noteSending"
-              :disabled="!noteDraft.trim()"
-            >
-              塞进去
-            </NButton>
-          </div>
-
-          <NSpin :show="notesLoading">
-            <div v-if="recentNotes.length" class="paper-stack">
-              <article v-for="note in recentNotes" :key="note.id" class="paper-note" :class="{ unread: !note.read_at }">
-                <p>{{ note.content }}</p>
-                <span>{{ relativeTime(note.created_at) }}</span>
-              </article>
+            <div class="fold-meta-group">
+              <span class="fold-meta">{{ recentNotes.length }} 张</span>
+              <NTag v-if="notesUnread" size="small" :bordered="false" type="warning">{{ notesUnread }} 未读</NTag>
             </div>
-            <NEmpty v-else description="抽屉里还没有纸条" class="soft-empty" />
-          </NSpin>
-        </aside>
-      </section>
+          </summary>
+          <div class="room-fold-body drawer-content">
+            <div class="note-compose">
+              <NInput
+                v-model:value="noteDraft"
+                type="textarea"
+                placeholder="写一张纸条塞进抽屉..."
+                :autosize="{ minRows: 3, maxRows: 6 }"
+                :disabled="noteSending"
+              />
+              <NButton
+                size="small"
+                type="primary"
+                @click="sendNote"
+                :loading="noteSending"
+                :disabled="!noteDraft.trim()"
+              >
+                塞进去
+              </NButton>
+            </div>
 
-      <RoomNewspaperPanel ref="newspaperPanel" @published="loadPreview" />
+            <NSpin :show="notesLoading">
+              <div v-if="recentNotes.length" class="paper-stack">
+                <article v-for="note in recentNotes" :key="note.id" class="paper-note" :class="{ unread: !note.read_at }">
+                  <p>{{ note.content }}</p>
+                  <span>{{ relativeTime(note.created_at) }}</span>
+                </article>
+              </div>
+              <NEmpty v-else description="抽屉里还没有纸条" class="soft-empty" />
+            </NSpin>
+          </div>
+        </details>
+      </div>
 
-      <section class="room-grid">
-        <section class="room-section traces-section">
+      <section class="room-section traces-section">
           <div class="section-head">
             <div>
               <span class="panel-kicker">最近</span>
@@ -342,40 +401,6 @@ function chargeLabel(c?: number) {
             </div>
             <NEmpty v-else description="还没有足迹" class="soft-empty" />
           </NSpin>
-        </section>
-
-        <section class="room-section hand-section">
-          <div class="section-head">
-            <div>
-              <span class="panel-kicker">手边</span>
-              <h2>窗台本子和便签</h2>
-            </div>
-          </div>
-
-          <div class="side-columns">
-            <div class="mini-panel">
-              <h3>窗台本子</h3>
-              <div v-if="recentScribbles.length" class="mini-list">
-                <article v-for="item in recentScribbles" :key="item.id">
-                  <p>{{ item.content }}</p>
-                  <span>{{ relativeTime(item.created_at) }}</span>
-                </article>
-              </div>
-              <NEmpty v-else description="还没写过" class="soft-empty small" />
-            </div>
-
-            <div class="mini-panel">
-              <h3>墙上便签</h3>
-              <div v-if="activePins.length" class="mini-list">
-                <article v-for="pin in activePins" :key="pin.id">
-                  <p>{{ pin.content }}</p>
-                  <span>{{ relativeTime(pin.created_at) }}</span>
-                </article>
-              </div>
-              <NEmpty v-else description="没有未完成便签" class="soft-empty small" />
-            </div>
-          </div>
-        </section>
       </section>
 
       <details v-if="preview?.layers?.tool_policy || preview?.layers?.stable" class="debug-drawer">
@@ -442,16 +467,11 @@ function chargeLabel(c?: number) {
 }
 
 .room-hero {
-  display: grid;
-  grid-template-columns: minmax(0, 1.55fr) minmax(300px, 0.85fr);
-  gap: 16px;
-  align-items: stretch;
+  display: block;
 }
 
 .window-panel,
-.drawer-panel,
 .room-section,
-.mini-panel,
 .debug-drawer {
   border: 1px solid var(--room-line);
   background: var(--room-paper);
@@ -459,13 +479,8 @@ function chargeLabel(c?: number) {
 }
 
 .window-panel,
-.drawer-panel,
 .room-section {
   padding: 18px;
-}
-
-.drawer-panel {
-  background: #f7fbfb;
 }
 
 .panel-topline,
@@ -533,6 +548,101 @@ h2 {
   border-top: 1px solid var(--room-line);
 }
 
+.room-fold-stack {
+  margin-top: 18px;
+  border-top: 1px solid var(--room-line);
+}
+
+.room-fold {
+  border-bottom: 1px solid var(--room-line);
+}
+
+.room-fold-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 12px;
+  align-items: center;
+  min-height: 72px;
+  padding: 12px 2px;
+  cursor: pointer;
+  list-style: none;
+  user-select: none;
+}
+
+.room-fold-summary::-webkit-details-marker {
+  display: none;
+}
+
+.room-fold-summary::after {
+  content: '⌄';
+  width: 28px;
+  color: var(--room-sea);
+  font-size: 20px;
+  line-height: 1;
+  text-align: center;
+  transform: rotate(0deg);
+  transition: transform 0.2s ease;
+}
+
+.room-fold[open] > .room-fold-summary::after {
+  transform: rotate(180deg);
+}
+
+.room-fold-summary h2 {
+  margin-top: 2px;
+}
+
+.fold-meta,
+.fold-meta-group {
+  font-family: -apple-system, 'Segoe UI', sans-serif;
+  font-size: 12px;
+  color: var(--room-muted);
+}
+
+.fold-meta-group {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.room-fold-body {
+  padding: 2px 2px 20px;
+}
+
+.newspaper-fold-body {
+  padding-bottom: 10px;
+}
+
+.hand-lanes {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0;
+}
+
+.hand-lane {
+  min-width: 0;
+  padding: 2px 18px 4px 2px;
+}
+
+.hand-lane + .hand-lane {
+  padding-right: 2px;
+  padding-left: 18px;
+  border-left: 1px solid var(--room-line);
+}
+
+.hand-lane h3 {
+  margin-bottom: 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--room-sea);
+}
+
+.drawer-content {
+  max-width: 760px;
+}
+
 .object-chips {
   display: flex;
   flex-wrap: wrap;
@@ -597,11 +707,8 @@ h2 {
   color: var(--room-muted);
 }
 
-.room-grid {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.9fr);
-  gap: 16px;
-  margin-top: 16px;
+.traces-section {
+  margin-top: 18px;
 }
 
 .trace-list {
@@ -658,24 +765,6 @@ h2 {
   line-height: 1.55;
 }
 
-.side-columns {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 12px;
-}
-
-.mini-panel {
-  padding: 14px;
-  background: #fff;
-}
-
-.mini-panel h3 {
-  margin-bottom: 10px;
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--room-sea);
-}
-
 .soft-empty {
   padding: 18px 0;
 }
@@ -726,10 +815,34 @@ h2 {
     justify-content: flex-start;
   }
 
-  .room-hero,
-  .room-grid,
-  .side-columns {
+  .hand-lanes {
     grid-template-columns: 1fr;
+  }
+
+  .hand-lane,
+  .hand-lane + .hand-lane {
+    padding: 4px 0 14px;
+    border-left: 0;
+  }
+
+  .hand-lane + .hand-lane {
+    padding-top: 16px;
+    border-top: 1px solid var(--room-line);
+  }
+
+  .room-fold-summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .fold-meta,
+  .fold-meta-group {
+    grid-column: 1;
+    justify-content: flex-start;
+  }
+
+  .room-fold-summary::after {
+    grid-column: 2;
+    grid-row: 1 / span 2;
   }
 
   .visible-tools {

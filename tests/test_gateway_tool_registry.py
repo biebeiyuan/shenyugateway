@@ -2137,10 +2137,15 @@ def test_room_layers_include_room_door_tools():
     layers, _scene_tag = render_room_layers(
         0.5,
         [],
-        [{"key": "sit", "count": 0}, {"key": "pillow", "count": 0}],
+        [
+            {"key": "sit", "count": 0},
+            {"key": "newspaper_basket", "count": 3},
+            {"key": "pillow", "count": 0},
+        ],
     )
 
     assert "`room_sit_by_window`" in layers["tool_policy"]
+    assert "椅子旁边的旧报纸篓里叠着3期旧报。" in layers["slow"]
 
 
 def test_visible_room_tools_follow_visible_low_charge_doors():

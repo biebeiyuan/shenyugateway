@@ -231,7 +231,8 @@ Core files, separated by concern:
 | `shenyu_gateway/room_scenes.py` | Weather, atmosphere, and window-scene generation. |
 | `shenyu_gateway/room_newspaper.py` | Fixed RSS catalog, feed parsing, issue rolling, optional quality checks, and draft generation. |
 | `shenyu_gateway/store/_room.py` | Room traces, notes, pins, scribbles, and newspaper issue persistence. |
-| `admin/src/views/room/RoomNewspaperPanel.vue` | Newspaper controls and rendering inside the existing Room page. |
+| `admin/src/views/RoomView.vue` | Room preview plus the independent collapsible windowsill, hand, and middle-drawer sections. |
+| `admin/src/views/room/RoomNewspaperPanel.vue` | Newspaper controls and continuous article rendering inside the windowsill section. |
 
 The trigger message stays in the user text. Room context supplies spatial cues through room layers and tool descriptions instead of rewriting the user's message.
 
@@ -246,7 +247,7 @@ Room layers reuse `assemble_layered_messages()` by mapping to the same keys:
 | `tool_policy` | Spatial door descriptions |
 | `format` | `窗开着。东西都在。` |
 
-Passive spatial hints: when doors have activity (unread notes, pending heartbeats, new pins), `render_room_layers` leaks up to 3 subtle observations into the `slow` layer — e.g. "抽屉缝里漏出一角纸". The star map wall gets a special real-data summary: total star count, constellation link count, most recent star (chord + first few chars of content), and optionally a fading star warning (>14 days since last activation). These let Shenyu notice things without calling a tool first.
+Passive spatial hints: when doors have activity (unread notes, pending heartbeats, new pins), `render_room_layers` leaks up to 3 subtle observations into the `slow` layer — e.g. "抽屉缝里漏出一角纸". The star map wall gets a special real-data summary: total star count, constellation link count, most recent star (chord + first few chars of content), and optionally a fading star warning (>14 days since last activation). A non-empty old-newspaper basket also adds its archived issue count as a stable spatial observation. These let Shenyu notice things without calling a tool first.
 
 ### Charge
 

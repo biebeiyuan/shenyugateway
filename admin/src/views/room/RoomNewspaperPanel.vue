@@ -9,6 +9,12 @@ import {
   type NewspaperIssue,
 } from '@/api/room'
 
+const props = withDefaults(defineProps<{
+  embedded?: boolean
+}>(), {
+  embedded: false,
+})
+
 const emit = defineEmits<{
   (event: 'published'): void
 }>()
@@ -86,9 +92,9 @@ defineExpose({ reload })
 </script>
 
 <template>
-  <section class="newspaper-band" data-testid="room-newspaper-panel">
-    <div class="section-head newspaper-head">
-      <div>
+  <section class="newspaper-band" :class="{ embedded: props.embedded }" data-testid="room-newspaper-panel">
+    <div class="section-head newspaper-head" :class="{ embedded: props.embedded }">
+      <div v-if="!props.embedded">
         <span class="panel-kicker">窗台</span>
         <h2>订阅报纸</h2>
       </div>
@@ -179,6 +185,12 @@ defineExpose({ reload })
   border-bottom: 1px solid var(--room-line);
 }
 
+.newspaper-band.embedded {
+  margin-top: 0;
+  padding: 2px 0 8px;
+  border: 0;
+}
+
 .section-head {
   display: flex;
   align-items: flex-start;
@@ -190,6 +202,12 @@ defineExpose({ reload })
 .newspaper-head {
   align-items: center;
   padding: 0 2px;
+}
+
+.newspaper-head.embedded {
+  justify-content: flex-end;
+  margin-bottom: 8px;
+  padding: 0;
 }
 
 .panel-kicker {

@@ -196,7 +196,7 @@ _MAX_PASSIVE_HINTS = 3
 
 
 def _render_passive_hints(door_specs: list[dict]) -> str:
-    """Pick up to 2 spatial hints for doors with activity, plus star wall summary."""
+    """Render stable summaries, then sample other active spatial hints."""
     count_map = {d["key"]: d.get("count", 0) for d in door_specs}
     active = [key for key, count in count_map.items() if count > 0 and key in _PASSIVE_HINTS]
     hints = []
@@ -207,6 +207,10 @@ def _render_passive_hints(door_specs: list[dict]) -> str:
         star_hint = _render_star_wall_hint(star_spec)
         if star_hint:
             hints.append(star_hint)
+
+    newspaper_basket = next((d for d in door_specs if d["key"] == "newspaper_basket"), None)
+    if newspaper_basket and newspaper_basket.get("count", 0) > 0:
+        hints.append(f"椅子旁边的旧报纸篓里叠着{newspaper_basket['count']}期旧报。")
 
     if not active:
         return "\n".join(hints)
