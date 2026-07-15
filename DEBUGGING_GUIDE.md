@@ -23,6 +23,15 @@ The report flags gaps longer than the declared TTL, long-gap hits that suggest r
 
 Cache-prefix fingerprints are protocol-level diagnostics for both Anthropic and OpenAI-compatible payloads. An identical path and fingerprint proves that the gateway emitted the same cacheable prefix after excluding `cache_control` metadata. It does not reveal which upstream node handled the request and is not, by itself, permission to add relay-specific routing, retries, or cache semantics.
 
+For a multi-round tool request, inspect cache evidence in this order:
+
+1. `internal_tool_rounds[].prompt_cache.cache_control_marker_count` and `breakpoints`: prove how many markers were present in the final outbound payload and where the gateway inserted its breakpoints for that round.
+2. `internal_tool_rounds[].prompt_cache.prefix_fingerprints`: compare path/fingerprint pairs across requests or rounds to distinguish a gateway prefix change from an upstream miss.
+3. The same round's `cache_usage` or raw `usage`: compare provider-reported read, creation, and total input only after confirming the outbound structure.
+4. If these content-free fields still cannot resolve the dispute, temporarily enable `GATEWAY_LOG_FULL_PAYLOADS=true`, reproduce one small request, inspect the exact `cache_control` blocks, and disable it again.
+
+The Admin **Raw JSON** tab shows the raw request-log object. Without full-payload retention it contains previews, payload summaries, and the per-round cache evidence above, not the complete JSON body sent upstream.
+
 If a request reports `event=branch`, verify that the first differing raw-window message changed semantically. Image expiry, dynamic Operit bundles, and equivalent string/text-block representations are transient client rewrites and must remain in the current epoch. A true branch changes earlier conversational text or tool structure.
 
 Set these in the shell when checking the deployed gateway:

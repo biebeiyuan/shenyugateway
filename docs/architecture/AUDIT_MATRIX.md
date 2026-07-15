@@ -92,6 +92,7 @@
 - OpenAI 与 Anthropic 的 cache enable、TTL 和 payload 标记分别配置。
 - OpenAI-compatible 可携带 relay-specific extra body 和允许列表中的透传头。
 - 请求侧 `prompt_cache` 只说明网关是否实际插入 breakpoint、使用的协议与 TTL，不证明供应商命中缓存。
+- gateway-managed 工具链在 `internal_tool_rounds[].prompt_cache` 保存每轮最终 payload 的 marker 数量、断点路径和前缀指纹；这些是网关出站结构证据，不是供应商命中证据。
 - 响应侧 completion usage 使用 OpenAI-compatible 基础 token 字段；Anthropic 的 cache read、cache write 和 TTL 创建明细同时保留为扩展字段，供日志诊断使用。
 - `cache_usage` 是从每轮 provider-reported usage 派生的请求级摘要，不是计费估算，也不能在字段缺失时证明 cache miss。
 
@@ -99,7 +100,7 @@
 
 | 层级 | 字段/责任 | 解释 |
 |------|-----------|------|
-| 请求意图 | `prompt_cache.enabled/protocol/ttl/breakpoints` | 网关实际构造了哪些 cache 标记；属于 attempted/configured 事实 |
+| 请求意图 | 顶层及 `internal_tool_rounds[].prompt_cache` | 网关每轮实际构造的 breakpoint、指纹和 `cache_control_marker_count`；属于 outbound/attempted 事实 |
 | 供应商原值 | 每轮 `usage` | 保留上游返回的 token/cache 字段；不跨供应商伪造精确率 |
 | 兼容 token | `prompt_tokens`、`completion_tokens`、`total_tokens` | Anthropic 响应转换成 OpenAI-compatible 客户端形状 |
 | 缓存读取 | `cache_read_input_tokens` 或 `prompt_tokens_details.cached_tokens` | 仅在供应商返回对应字段时代表 reported read |
@@ -120,6 +121,7 @@
 - `tests/test_upstream_passthrough_headers.py`
 - `tests/test_gateway_hisense_context.py`
 - `tests/test_gateway_streaming.py`
+- `tests/test_gateway_store.py`
 
 ### 暂不修改
 
@@ -367,6 +369,15 @@
 - 修复：新增可选 `read_reported`、`write_reported`、`reported` presence 字段；多轮聚合保持任一轮上报状态；详情页只在 `reported=true` 时声称供应商上报，否则显示 unknown。
 - 旧日志兼容：新字段均为可选；旧日志缺失 presence 时按 unknown 展示，不反推 cache miss。
 - 测试：adapter 覆盖 reported zero/unknown，配置测试覆盖 read/write/unknown 三轮聚合；Admin 生产构建通过。
+
+### 工具轮逐轮 cache marker 证据
+
+- 文件：`shenyu_gateway/upstream_client.py`、`shenyu_gateway/tool_loop.py`、`shenyu_gateway/gateway_admin_routes.py`、`admin/src/views/LogsView.vue`
+- 已确认问题：工具请求只在顶层日志保存第一轮 `prompt_cache`，后续轮只有 usage 和 payload 摘要；未开启完整 payload 时，无法直接区分“网关后续轮没带长历史断点”和“relay 忽略了该断点”。
+- 修复：每个 `internal_tool_rounds[]` 保存独立的 `prompt_cache`，包括 breakpoint 路径、前缀指纹、TTL、tail guard，以及最终出站 payload 中实际存在的 `cache_control_marker_count`。Admin Upstream 与 Raw JSON 都可按轮查看。
+- 推荐判断顺序：先核对 marker 数量和路径，再比对指纹，最后解释供应商 read/write；只有结构化证据仍不足时才短期开启完整 payload。
+- 隐私边界：逐轮结构证据不含消息正文，可以进入 SQLite 安全历史；完整 Messages、upstream payload、Response、图片和原始 Thinking 仍不持久化。
+- 测试：`tests/test_gateway_streaming.py` 覆盖两轮独立证据，`tests/test_gateway_store.py` 覆盖安全持久化和列表 API，Admin smoke 覆盖展开轮次后查看 Upstream；全仓 477 项与 Playwright 13 项通过。
 
 ### Admin 配置密钥不回显
 

@@ -54,7 +54,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/chat_pipeline.py`: main chat request orchestration (context build → upstream call → tool loop → response).
 - `shenyu_gateway/streaming.py`: SSE streaming helpers, chunk serialization, keepalive logic.
 - `shenyu_gateway/stream_proxy.py`: plain pass-through streaming with `<heartbeat>` filtering.
-- `shenyu_gateway/tool_loop.py`: internal gateway tool loop (`_run_internal_tool_loop_stream`).
+- `shenyu_gateway/tool_loop.py`: internal gateway tool loop plus per-round request and cache diagnostics.
 - `shenyu_gateway/middleware.py`: FastAPI middleware registration (global exception handler, request-id injection, HTTP event logging).
 
 ### Context assembly
@@ -158,7 +158,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/stars/starMelody.ts`: constellation → Web Audio melody.
 - `admin/src/views/stars/starUi.ts`: shared Star UI formatting and link-order helpers.
 - `admin/src/views/SessionsView.vue`: session inspection page.
-- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs and per-round normalized input/cache badges.
+- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, and cache-structure evidence.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
 - `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
 - `admin/src/views/ArchiveView.vue`: chat archive reader and conflict book clip flow.
@@ -334,7 +334,7 @@ http://localhost:8010/admin
 - `admin/src/views/Mem0View.vue`: Mem prompt/capture/injection/tool controls, mem-note attribute workflow, and old atomic read-only lookup. The "静音但保留工具" preset turns off mem prompt/capture/injection while leaving gateway tools available.
 - `admin/src/views/StarsView.vue`: standalone Star entry shell at `/stars`, with split Star panels under `admin/src/views/stars/` and a lazy-loaded memory star map at `/stars/map`.
 - `admin/src/views/SessionsView.vue`: session inspection page.
-- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs and per-round normalized input/cache badges.
+- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, and cache-structure evidence.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
 - `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.
