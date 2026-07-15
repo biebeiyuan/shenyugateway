@@ -4,21 +4,15 @@ Shenyu Gateway is the single OpenAI-compatible provider entrypoint for Operit. I
 
 The gateway is not a persona layer or roleplay wrapper. It is a context and memory gateway: current conversation text stays primary, long-form primary text can surface softly, and durable memory is handled by explicit layers.
 
-## 新线程阅读顺序
+## 新线程入口
 
-如果只想读一个入口，先读 **`START_HERE.md`**。它用人话解释常见术语，并按任务指向对应现行文档。
+Coding agent 先遵守 **`AGENTS.md`**，再读 **`START_HERE.md`**；人直接从 `START_HERE.md` 开始即可。它会按任务指向现行专题文档，不要求预读全部架构、设计和 Debug 文档。
 
-| 顺序 | 文档 | 用途 |
-|------|------|------|
-| 1 | **`AGENTS.md`** | 当前环境、协作方式、编码与排障规则 |
-| 2 | **`DOCS_MAP.md`** | 文档职责和状态；避免把历史方案当成当前事实 |
-| 3 | **`docs/architecture/SYSTEM_ZONES.md`** | 八个系统区、跨区桥梁和审计入口 |
-| 4 | 本文件 `README.md` § Maintenance Map | 文件地图、API 清单、配置参考 |
-| 改内核前 | `DESIGN.md` | 记忆系统设计哲学、核心逻辑和改动边界 |
-| 按需 | `DEBUGGING_GUIDE.md` | 排错时的日志命令和验证清单 |
-| 忘记日志页怎么看时 | `LOGS_GUIDE.md` | 粉色/绿色轮次、小岛、缓存原始值和来源指纹速查 |
+- 想找文件：看本页 § Maintenance Map，再看 `docs/architecture/SYSTEM_ZONES.md` 的责任边界。
+- 想判断某份 Markdown 是否仍是当前事实：看 `DOCS_MAP.md`。
+- 已经有具体问题：按 `START_HERE.md` 的任务表进入对应文档和代码。
 
-专题设计稿、实施计划和审查快照不要求新线程全部阅读。先在 `DOCS_MAP.md` 确认它们的用途和时效，再结合当前代码判断。
+权威的新线程阅读原则和文档状态统一由 `DOCS_MAP.md` 维护；本页不再复制另一套完整顺序。
 
 ## Current Architecture
 
@@ -52,7 +46,7 @@ The codebase is partly layered already:
 
 ### Storage
 
-- `shenyu_gateway/store/`: SQLite runtime state (package split into mixins: `_base`, `_sessions`, `_messages`, `_pending`, `_snapshots`, `_cold_start`, `_heartbeats`, `_cache`, `_room`, `_admin`).
+- `shenyu_gateway/store/`: SQLite runtime state (package split into mixins: `_base`, `_sessions`, `_messages`, `_pending`, `_snapshots`, `_cold_start`, `_heartbeats`, `_cache`, `_room`, `_admin`, `_window_state`, `_request_log_history`).
 - `shenyu_gateway/supabase.py`: low-level Supabase REST client.
 
 ### Chat pipeline & streaming
@@ -98,7 +92,7 @@ The codebase is partly layered already:
 
 - `shenyu_gateway/chat_archive.py`: L0 verbatim chat archive service (fire-and-forget archival to Supabase `shenyu_chat_archive`).
 - `shenyu_gateway/heartbeat_archive.py`: heartbeat disaster recovery archive to Supabase (`shenyu_heartbeat_archive`), settle window, soft-delete reconciliation.
-- `shenyu_gateway/conflict_books.py`: conflict books CRUD, invariant enforcement (frozen original_text, append-only annotations).
+- `shenyu_gateway/conflict_books.py`: durable conflict-book records and invariants (frozen original_text, append-only annotations); the shelf/tool presentation is also a memory-data concern in system zone six.
 
 ### Calendar
 
@@ -117,16 +111,18 @@ The codebase is partly layered already:
 ### Auth & sessions
 
 - `shenyu_gateway/auth.py`: admin auth middleware, API key verification, login page HTML, and `ADMIN_PROTECTED_PREFIXES`.
-- `shenyu_gateway/sessions.py`: session/message logging facade.
+- `shenyu_gateway/sessions.py`: bridge from request handling to SQLite session/message persistence.
 
 ### Route modules (extracted from gateway.py)
 
 - `shenyu_gateway/gateway_admin_routes.py`: admin API routes (stars, mem notes, room, overview, prune, etc.).
 - `shenyu_gateway/calendar_routes.py`: calendar API routes (prompts, month grid, generation, preview).
-- `shenyu_gateway/hisense_routes.py`: Hisense API routes (preview, notebook, session).
+- `shenyu_gateway/hisense_routes.py`: retained Hisense API routes (preview, notebook, session); this dedicated path is currently not in daily use.
 - `shenyu_gateway/archive_routes.py`: archive reader and conflict book API routes.
 - `shenyu_gateway/config_routes.py`: configuration API routes (get/set runtime config).
 - `shenyu_gateway/admin_shell_routes.py`: admin shell/UI routes (static file serving, login page).
+
+Route modules are HTTP adapters, not a separate business zone. `gateway.py` mounts them, while each endpoint's behavior remains owned by its feature area. The exact Hisense cross-zone path is documented in `docs/architecture/SYSTEM_ZONES.md`.
 
 ### Request logging
 

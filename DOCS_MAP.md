@@ -4,15 +4,13 @@
 
 ## 新线程入口
 
-1. `AGENTS.md`：当前环境、协作方式、编码和排障规则。所有 coding agent 先读。
-2. `START_HERE.md`：人话术语、按任务跳转和新线程最短提示词；不知道读什么时只读这个入口。
-3. `README.md`：当前架构、维护地图、配置和运行入口。
-4. `docs/architecture/SYSTEM_ZONES.md`：按八个系统区查找代码责任、跨区桥梁和风险边界。
-5. `DESIGN.md`：记忆与上下文系统的现行设计原则；准备改内核时阅读相关章节。
-6. `DEBUGGING_GUIDE.md`：出现实际故障时按请求链路排查。
-7. `LOGS_GUIDE.md`：日志页颜色、轮次、小岛、缓存原始值和来源指纹的简短说明。
+权威的最短顺序只有三步：
 
-不需要每个新线程从头读完所有设计稿。先按任务找到相关模块，再读取对应文档和代码。
+1. Coding agent 先遵守 `AGENTS.md`；这通常由工具自动加载，不要求人额外阅读。
+2. 人和 agent 都从 `START_HERE.md` 选择当前任务入口。
+3. 只读该任务指向的现行专题文档和代码；不默认预读其他设计稿或 Debug 文档。
+
+需要快速认识文件时，读 `README.md` § Maintenance Map 和 `docs/architecture/SYSTEM_ZONES.md`。需要判断一份 Markdown 是否仍是当前事实时，查本文件后续状态表。`DESIGN.md` 只在准备修改记忆或上下文内核时阅读相关章节；`DEBUGGING_GUIDE.md` 和 `LOGS_GUIDE.md` 都是按需参考。
 
 ## 内容归属
 

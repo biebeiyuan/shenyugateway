@@ -8,6 +8,8 @@
 
 排查或修改前，先确定问题属于哪个区域，再检查它经过的跨区桥梁。不要仅因为单个文件较大就重构；优先确认输入、输出、状态、外部契约和测试证据。
 
+这里的“核心文件”只标责任边界和高风险入口，不是完整文件清单。逐文件索引统一看 `README.md` § Maintenance Map，避免两份目录重复维护。
+
 ## 总体请求链
 
 ```text
@@ -225,7 +227,15 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 - `shenyu_gateway/calendar*.py`
 - `shenyu_gateway/chat_archive.py`
 - `shenyu_gateway/conflict_books.py`
-- `shenyu_gateway/room_*.py`
+- `shenyu_gateway/room_context.py`
+- `shenyu_gateway/room_text.py`
+- `shenyu_gateway/room_scenes.py`
+- `shenyu_gateway/room_newspaper.py`
+
+**跨区边界**
+
+- `room_tools.py` 是 Room 的工具入口，归区域四；Room 内容、场景和外部 RSS 数据归本区域。
+- 归档和矛盾书数据在召回、工具读取或上下文呈现时归本区域语义；`chat_archive.py`、`conflict_books.py` 的写入、不可变约束和长期保留同时连接区域七。这是同一功能的两种责任，不要求把文件强行归入唯一一个区。
 
 **主要风险**
 
@@ -276,7 +286,7 @@ Stars 的 run/candidate 写入暂时保留在关键路径。它们不仅用于�
 **数据寿命概览**
 
 - SQLite：跨进程保留，但取决于部署卷和 `GATEWAY_DB_PATH`。
-- request logs：进程内 bounded deque，重启即消失。
+- request logs：实时/可选完整详情只在进程内 `deque(maxlen=30)`，重启即消失；默认最近 200 条安全摘要写入 SQLite，可跨进程和容器替换保留。
 - Supabase archive：长期外部状态。
 - retained JSON：人工保存的诊断副本，不属于运行时数据库。
 
@@ -313,6 +323,7 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 **边界**
 
 - Admin 列表 API 应返回摘要；详情 API 优先读取当前进程日志，只有显式开启时才可能含完整 payload。
+- Admin 页面和 API 的交付责任归本区域，但页面所展示数据的业务含义仍归对应功能区；完整页面清单统一看 README，不在这里逐项复制。
 - request log 使用两层保留：进程内 `deque(maxlen=30)` 保存实时/可选完整详情，SQLite 默认保存最近 200 条安全摘要并跨进程恢复。完整 messages/response/payload 不进入持久历史。
 - 每轮顶部 `input` 必须读取后端归一化的 `cache_usage.total_input_tokens`：Anthropic 将未缓存输入、缓存读取和缓存新写相加；OpenAI-compatible 的输入已含 cached 子集，不得在前端重复相加。`⚡ cached` 仍只表示缓存读取和前缀复用率。
 - helper 的 `api` 和 `--via-ssh` 模式读取 Admin request-log API；`local` 读取 JSON；`ssh` 读取容器日志。
@@ -325,6 +336,35 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 - README 已精简为入口、维护地图、配置、运行和部署；子系统细节由 `REQUEST_CONTEXT.md` 与 `MEMORY_ROOM.md` 承接。
 - 生成的 `admin/dist`、`node_modules`、缓存和 `tmp` 会污染审计与仓库卫生判断。
 
+## 跨区归属规则
+
+- `*_routes.py` 是 HTTP 边界：统一由 `gateway.py` 装配，但行为、数据和测试仍跟随 Calendar、Hisense、archive、config 或 Admin 等对应功能区。
+- `admin/src/views/` 和 `admin/src/api/` 归区域八的展示与交互边界；页面背后的记忆、存储、配置或日志语义仍回到对应后端区域判断。
+- `sessions.py` 是请求与 SQLite 的桥梁：请求区通过它记录输入、工具结果和输出，持久化区通过 `GatewayStore` 保存实际数据。
+
+### Hisense 专用路径（当前暂时不用，完整保留）
+
+当前产品状态是“暂时不使用”，不是 legacy、死代码或删除决定。普通请求不会自动进入这条路径，只有客户端名称匹配 `HISENSE_CLIENT_NAME` 时才激活；默认配置名为 `hisense`，并兼容客户端名 `海信`。
+
+```text
+客户端名称匹配
+  -> gateway.py 识别 Hisense，并在无 session tag 时使用 hisense tag
+  -> prepare_messages.py 选择 Hisense 分支
+       -> 不准备普通 cold-start bridge
+       -> 不进入 Room mode
+       -> 选择 Hisense 上游配置；未单独配置时回落到默认上游
+  -> ContextBuilder
+       -> 保留 Calendar 和普通稳定层
+       -> 从独立 Hisense heartbeat 池读取；不消费普通 heartbeat pending
+       -> 读取 Supabase shenyu_notebook 和上次唤醒内容
+       -> 不召回 Mem、Stars，也不注入矛盾书架
+  -> ChatPipeline 调用已选择的上游
+  -> SQLite 保存 session、messages、Hisense heartbeat
+  -> /api/hisense/* 与 HisenseView 提供预览、notebook 和 session 查看
+```
+
+各区触点：区域一负责配置、识别、路由装配和可选独立上游；区域二负责消息准备与上游选择；区域五负责专用上下文组装；区域六连接 Calendar 和 Supabase notebook；区域七保存 session/message/heartbeat；区域八提供 Admin/API。恢复日常使用前应优先运行 `tests/test_gateway_hisense_context.py`，而不是先重构或删除这条分支。
+
 ## 跨区关键桥梁
 
 | 桥梁 | 连接区域 | 审计重点 |
@@ -336,6 +376,8 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 | `tool_registry.py` | schema、配置、gateway/client tools | 名称边界、工具合并、供应商 payload |
 | `tool_loop.py` | 工具、流式、上游、pending 状态 | 多轮正文、断连、资源关闭 |
 | `gateway_admin_routes.py` | Admin、存储、记忆、日志 | API 重量、隐私、领域拆分 |
+| `sessions.py` | 请求、持久化、Admin/Hisense 会话 | 消息计数、写入时机、读取范围 |
+| Hisense 专用路径 | 入口、请求、上游、上下文、外部数据、存储、Admin | 触发条件、默认上游回落、上下文隔离、恢复前回归 |
 
 这些桥梁应优先做契约测试和观测，不应优先做大规模文件重排。
 
