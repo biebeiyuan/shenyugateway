@@ -5,6 +5,7 @@ import math
 from types import SimpleNamespace
 
 from shenyu_gateway.stars import StarService
+from shenyu_gateway.stars._helpers import _direct_reference_kinds
 
 
 class FakeSupabase:
@@ -144,3 +145,47 @@ def test_novelty_modifier_shrinks_with_activation_count():
     scored = _score(rows)
     old = _by_id(scored)["old"]
     assert abs(old["features"]["novelty_modifier"] - 0.5) < 1e-9
+
+
+def test_direct_reference_detector_distinguishes_hard_and_soft_matches():
+    rows = [
+        _star("11111111-1111-4111-8111-111111111111", "那只叫豆包的橘猫第一次跳上窗台"),
+        _star("22222222-2222-4222-8222-222222222222", "一起在旧影院看完降临以后没有说话"),
+    ]
+
+    assert _direct_reference_kinds(rows[0]["id"], rows) == {rows[0]["id"]: "star_id"}
+    assert _direct_reference_kinds("“旧影院看完降临”那颗星", rows) == {
+        rows[1]["id"]: "exact_phrase"
+    }
+    assert _direct_reference_kinds("你还记得豆包吗？", rows) == {
+        rows[0]["id"]: "recall_unique"
+    }
+    assert _direct_reference_kinds("今天晚上吃什么？", rows) == {}
+
+
+def test_soft_direct_reference_requires_one_unambiguous_star():
+    rows = [
+        _star("star-a", "豆包第一次跳上窗台"),
+        _star("star-b", "豆包后来躲进了纸箱"),
+    ]
+
+    assert _direct_reference_kinds("你还记得豆包吗？", rows) == {}
+
+
+def test_low_scoring_direct_candidate_stays_in_final_proposal_then_uses_score_order():
+    service = StarService(_cfg(), FakeSupabase())
+    scored = [
+        {"row": {"id": "high"}, "final_score": 0.03, "features": {"related_signal": 0.8}},
+        {"row": {"id": "mid"}, "final_score": 0.02, "features": {"related_signal": 0.7}},
+        {
+            "row": {"id": "direct"},
+            "final_score": 0.001,
+            "features": {"related_signal": 1.0},
+            "direct_reference_kind": "star_id",
+        },
+        {"row": {"id": "other"}, "final_score": 0.015, "features": {"related_signal": 0.6}},
+    ]
+
+    selected = asyncio.run(service._select_for_chat_inject(scored, limit=3))
+
+    assert [item["row"]["id"] for item in selected] == ["high", "mid", "direct"]

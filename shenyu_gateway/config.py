@@ -115,6 +115,9 @@ class RuntimeConfig:
         self.star_related_min_score: float = _env_float("STAR_RELATED_MIN_SCORE", 0.22, 0.0, 1.0)
         self.star_recent_fatigue_hours: int = _env_int("STAR_RECENT_FATIGUE_HOURS", 6, 0, 168)
         self.star_recent_fatigue_penalty: float = _env_float("STAR_RECENT_FATIGUE_PENALTY", 0.14, 0.0, 1.0)
+        self.star_soft_direct_cooldown_turns: int = _env_int(
+            "STAR_SOFT_DIRECT_COOLDOWN_TURNS", 8, 0, 100
+        )
         self.star_rrf_ch_content: float = _env_float("STAR_RRF_CH_CONTENT", 1.0, 0.0, 5.0)
         self.star_rrf_ch_keyword: float = _env_float("STAR_RRF_CH_KEYWORD", 0.8, 0.0, 5.0)
         self.star_rrf_ch_chord: float = _env_float("STAR_RRF_CH_CHORD", 0.6, 0.0, 5.0)
@@ -251,6 +254,7 @@ class RuntimeConfig:
             "star_related_min_score": self.star_related_min_score,
             "star_recent_fatigue_hours": self.star_recent_fatigue_hours,
             "star_recent_fatigue_penalty": self.star_recent_fatigue_penalty,
+            "star_soft_direct_cooldown_turns": self.star_soft_direct_cooldown_turns,
             "star_rrf_ch_content": self.star_rrf_ch_content,
             "star_rrf_ch_keyword": self.star_rrf_ch_keyword,
             "star_rrf_ch_chord": self.star_rrf_ch_chord,

@@ -32,6 +32,7 @@ DEFAULTED_ENV_KEYS = [
     "ROOM_NEWSPAPER_LLM_URL",
     "ROOM_NEWSPAPER_LLM_API_KEY",
     "ROOM_NEWSPAPER_LLM_PROTOCOL",
+    "STAR_SOFT_DIRECT_COOLDOWN_TURNS",
 ]
 
 
@@ -65,6 +66,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.gateway_request_log_retention == 200
     assert cfg.room_newspaper_qa_enabled is False
     assert cfg.room_newspaper_llm_model == ""
+    assert cfg.star_soft_direct_cooldown_turns == 8
 
 
 def test_aggregate_cache_usage_preserves_multi_round_reported_state():
@@ -461,6 +463,26 @@ def test_config_update_saves_request_log_retention(monkeypatch):
     assert persisted[-1]["GATEWAY_REQUEST_LOG_RETENTION"] == 350
 
 
+def test_config_update_saves_and_clamps_star_soft_direct_cooldown(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "star_soft_direct_cooldown_turns", 8)
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"star_soft_direct_cooldown_turns": 120},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["star_soft_direct_cooldown_turns"] == 100
+    assert "star_soft_direct_cooldown_turns" in payload["changed"]
+    assert gateway.cfg.star_soft_direct_cooldown_turns == 100
+    assert persisted[-1]["STAR_SOFT_DIRECT_COOLDOWN_TURNS"] == 100
+
+
 def test_persist_env_saves_config_overrides_to_sqlite(tmp_path, monkeypatch):
     env_path = tmp_path / ".env"
     monkeypatch.setattr("shenyu_gateway.runtime.ENV_PATH", env_path)
@@ -492,11 +514,13 @@ def test_restore_config_overrides_from_sqlite_feeds_runtime_config(tmp_path, mon
             "UPSTREAM_URL": "https://restored.example.com",
             "ENABLE_GATEWAY_TOOLS": "false",
             "MAX_CLIENT_MESSAGES": "",
+            "STAR_SOFT_DIRECT_COOLDOWN_TURNS": "12",
         }
     )
     monkeypatch.setenv("UPSTREAM_URL", "https://default.example.com")
     monkeypatch.setenv("ENABLE_GATEWAY_TOOLS", "true")
     monkeypatch.delenv("MAX_CLIENT_MESSAGES", raising=False)
+    monkeypatch.setenv("STAR_SOFT_DIRECT_COOLDOWN_TURNS", "8")
 
     gateway._restore_config_overrides_from_db(str(db_path))
     cfg = RuntimeConfig()
@@ -504,3 +528,4 @@ def test_restore_config_overrides_from_sqlite_feeds_runtime_config(tmp_path, mon
     assert cfg.upstream_url == "https://restored.example.com"
     assert cfg.enable_gateway_tools is False
     assert cfg.max_client_messages is None
+    assert cfg.star_soft_direct_cooldown_turns == 12

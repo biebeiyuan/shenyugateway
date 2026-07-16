@@ -181,6 +181,14 @@ def prune_runtime_state(*, cfg: Any, store: Any, session_id: Optional[str] = Non
     )
 
 
+def _memory_island_force_reason(event_meta: dict[str, Any], window_state: dict[str, Any]) -> str:
+    if window_state.get("reset_reason") == "message_high_water":
+        return "message_high_water"
+    if event_meta.get("event_class") == "branch":
+        return "history_branch"
+    return ""
+
+
 def json_clone(value: Any) -> Any:
     return json.loads(_json_dumps(value))
 
@@ -545,6 +553,7 @@ async def prepare_messages(
             if previous_island_state:
                 break
 
+    island_force_reason = _memory_island_force_reason(event_meta, window_state)
     package = await builder.build_context_package(
         session,
         current_user_text=user_text,
@@ -553,7 +562,8 @@ async def prepare_messages(
         client_name=client_name,
         context_event=event_meta,
         previous_island_state=previous_island_state,
-        force_island_rewrite=event_meta["event_class"] == "branch",
+        force_island_rewrite=bool(island_force_reason),
+        force_island_reason=island_force_reason,
         trace_log=log_entry,
     )
     _mark_request_log_phase(

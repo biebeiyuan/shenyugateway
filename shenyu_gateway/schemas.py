@@ -74,6 +74,7 @@ class ConfigUpdate(BaseModel):
     star_related_min_score: Optional[float] = None
     star_recent_fatigue_hours: Optional[int] = None
     star_recent_fatigue_penalty: Optional[float] = None
+    star_soft_direct_cooldown_turns: Optional[int] = None
     star_rrf_ch_content: Optional[float] = None
     star_rrf_ch_keyword: Optional[float] = None
     star_rrf_ch_chord: Optional[float] = None

@@ -43,6 +43,7 @@ const STAR_DEFAULTS: Partial<GatewayConfig> = {
   star_related_min_score: 0.22,
   star_recent_fatigue_hours: 6,
   star_recent_fatigue_penalty: 0.14,
+  star_soft_direct_cooldown_turns: 8,
   star_weight_content: 0.3,
   star_weight_keyword: 0.2,
   star_weight_harmony: 0.35,
@@ -126,6 +127,7 @@ async function saveSettings() {
       star_related_min_score: config.value.star_related_min_score,
       star_recent_fatigue_hours: config.value.star_recent_fatigue_hours,
       star_recent_fatigue_penalty: config.value.star_recent_fatigue_penalty,
+      star_soft_direct_cooldown_turns: config.value.star_soft_direct_cooldown_turns,
       star_weight_content: config.value.star_weight_content,
       star_weight_keyword: config.value.star_weight_keyword,
       star_weight_harmony: config.value.star_weight_harmony,
@@ -357,7 +359,7 @@ function clearSeedIfEmpty(seedId: string) {
           <span v-if="unscoredCount">{{ unscoredCount }}</span>
         </button>
         <button data-testid="stars-mode-labels" type="button" :class="{ active: mode === 'labels' }" @click="mode = 'labels'">标签</button>
-        <button type="button" :class="{ active: mode === 'settings' }" @click="mode = 'settings'">配置</button>
+        <button data-testid="stars-mode-settings" type="button" :class="{ active: mode === 'settings' }" @click="mode = 'settings'">配置</button>
         <button type="button" :class="{ active: mode === 'write' }" @click="mode = 'write'">写星</button>
         <button type="button" :class="{ active: mode === 'list' }" @click="mode = 'list'">星列</button>
       </div>

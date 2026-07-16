@@ -215,6 +215,8 @@
 
 pending transcript 在补回时不会立即标记 consumed；只有请求成功完成并执行 `mark_context_consumed` 后才消费。上游失败时保留 pending，避免客户端工具结果无法重试。
 
+`prepare_messages.py` 在窗口选择完成后把 reset 原因交给 `ContextBuilder`：真实历史分支使用 `history_branch`，越过消息高水位并裁剪使用 `message_high_water`。两者都要求 Memory Island 用本轮完整提案重建；retry、roll、tail edit 和 tool continuation 不推进岛内的真实用户轮次计数。
+
 **主要风险**
 
 - branch、retry、edit-tail 和 tool continuation 的误分类会影响整个窗口 epoch。
@@ -266,13 +268,17 @@ ContextBuilder
   -> Mem contextual recall ─┬─ keyword index
   │                         └─ vector rows（与 keyword 并行）
   -> Stars recall ----------┬─ candidate/activity/scene 等阶段
-                            └─ harmony from/to links（双向查询并行）
-  -> memory island resolve
+                            ├─ harmony from/to links（双向查询并行）
+                            └─ 旧岛 star active 核验 + 直接点名分类
+  -> memory island resolve ─┬─ 普通请求保留 2/3 重合门
+                            └─ branch/high-water/direct/inactive 逃生门
   -> Stars activation 写入
   -> Mem triggered 写入
 ```
 
 Calendar、conflict、Mem 和 Stars 主来源并行。Mem/Stars 普通召回异常在 ContextBuilder 边界降级为 `ok=false`，并保留上一版对应 island；任务取消仍继续传播。
+
+Stars 与 Memory Island 的跨区契约是：排名区只产出完整评分提案、`direct_reference_kind` 和旧岛星的 active 核验结果；上下文区负责 `2/3` 滞回、默认 8 个真实用户轮次且可由 `STAR_SOFT_DIRECT_COOLDOWN_TURNS` 调整的软点名冷却，以及最终 retain/rewrite。强制重写仍采用完整提案的评分顺序，不能在 Island 层拼回旧的 `2/3`。
 
 Stars activation 与 Mem triggered 属于 island 决策后的副作用写入，目前仍按顺序等待。两者内部虽然 fail-soft，但 Mem 标记前还会读取 notes；在没有明确“部分写入也可接受”的产品契约前，不通过并发改变副作用顺序。
 

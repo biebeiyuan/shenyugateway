@@ -139,6 +139,11 @@ test('Stars page loads and switches modes', async ({ page }) => {
     await expect(page.getByTestId(`stars-label-history-item-${star.id}`)).toContainText('已手动调整')
     await expect(page.getByTestId(`stars-label-history-toggle-${star.id}-seen`)).toHaveClass(/selected/)
     await expect(page.getByTestId(`stars-label-history-toggle-${star.id}-want`)).toHaveClass(/selected/)
+    await page.getByTestId('stars-mode-settings').click()
+    const cooldown = page.getByTestId('stars-soft-direct-cooldown').locator('input')
+    await expect(cooldown).toBeVisible()
+    await cooldown.fill('12')
+    await expect(cooldown).toHaveValue('12')
   })
 })
 

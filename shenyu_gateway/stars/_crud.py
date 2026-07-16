@@ -501,6 +501,7 @@ class CrudMixin:
         limit: Optional[int] = None,
         mark_activation: bool = True,
         ignore_recent_fatigue: bool = False,
+        required_star_ids: Optional[set[str]] = None,
         trace_log: Optional[dict] = None,
     ) -> dict[str, Any]:
         if not getattr(self.cfg, "inject_stars", True):
@@ -520,6 +521,7 @@ class CrudMixin:
             injected=mark_activation,
             mark_activation=mark_activation,
             ignore_recent_fatigue=ignore_recent_fatigue,
+            required_star_ids=required_star_ids,
             trace_log=trace_log,
         )
 

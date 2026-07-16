@@ -167,6 +167,7 @@ Only add a row after the root cause has been confirmed by logs, code, or tests a
 
 | 症状 | 根因文件 | 一句话教训 |
 |------|----------|------------|
+| Stars 评分候选已经变化，但动态岛长期仍不换，直接点名和消息高水位也没有逃生 | `shenyu_gateway/stars/_recall.py`、`shenyu_gateway/context_builder.py`、`shenyu_gateway/memory_island.py` | `2/3` 粘性应只约束普通召回；直接点名、旧星失效和窗口重置必须把明确原因接到完整提案重写 |
 
 ## Module Map
 

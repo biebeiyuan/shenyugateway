@@ -8,6 +8,10 @@ from .stars import render_star_context
 from .utils import shorten
 
 
+STAR_SOFT_DIRECT_COOLDOWN_TURNS = 8
+_STAR_HARD_DIRECT_KINDS = frozenset({"star_id", "exact_phrase"})
+
+
 def render_mem_notes(items: list[dict[str, Any]]) -> str:
     if not items:
         return ""
@@ -154,7 +158,7 @@ def _overlap(old_items: list[dict[str, Any]], new_items: list[dict[str, Any]]) -
     return len(old_ids & new_ids) / denominator if denominator else 1.0
 
 
-def _has_forced_new_item(kind: str, old_items: list[dict[str, Any]], new_items: list[dict[str, Any]]) -> bool:
+def _legacy_forced_new_item(kind: str, old_items: list[dict[str, Any]], new_items: list[dict[str, Any]]) -> bool:
     old_ids = {_item_id(item) for item in old_items if _item_id(item)}
     for item in new_items:
         if _item_id(item) in old_ids:
@@ -168,12 +172,51 @@ def _has_forced_new_item(kind: str, old_items: list[dict[str, Any]], new_items: 
     return False
 
 
+def _star_direct_force_reason(
+    old_items: list[dict[str, Any]],
+    proposed_items: list[dict[str, Any]],
+    *,
+    soft_seen_at: dict[str, int],
+    human_turn_index: int,
+    soft_direct_cooldown_turns: int,
+) -> str:
+    old_ids = {_item_id(item) for item in old_items if _item_id(item)}
+    for item in proposed_items:
+        star_id = _item_id(item)
+        if not star_id or star_id in old_ids:
+            continue
+        kind = str(item.get("direct_reference_kind") or "")
+        if kind in _STAR_HARD_DIRECT_KINDS:
+            return f"direct_{kind}"
+        if kind == "recall_unique":
+            last_seen = soft_seen_at.get(star_id)
+            if last_seen is None or human_turn_index - last_seen >= soft_direct_cooldown_turns:
+                return "direct_recall_unique"
+    return ""
+
+
+def _soft_seen_turns(previous_state: dict[str, Any]) -> dict[str, int]:
+    raw = previous_state.get("star_soft_direct_seen_at") or {}
+    if not isinstance(raw, dict):
+        return {}
+    result: dict[str, int] = {}
+    for star_id, value in raw.items():
+        try:
+            turn_index = int(value)
+        except (TypeError, ValueError):
+            continue
+        clean_id = str(star_id or "").strip()
+        if clean_id and turn_index >= 0:
+            result[clean_id] = turn_index
+    return result
+
+
 def _choose_lane(
     kind: str,
     old_items: list[dict[str, Any]],
     proposed_items: list[dict[str, Any]],
     *,
-    force: bool,
+    force_reason: str,
     overlap_threshold: float,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]], dict[str, Any]]:
     overlap = _overlap(old_items, proposed_items)
@@ -181,12 +224,12 @@ def _choose_lane(
     new_fingerprints = _fingerprints(kind, proposed_items)
     shared_ids = set(old_fingerprints) & set(new_fingerprints)
     content_changed = any(old_fingerprints[item_id] != new_fingerprints[item_id] for item_id in shared_ids)
-    forced_new = _has_forced_new_item(kind, old_items, proposed_items)
+    legacy_forced_new = _legacy_forced_new_item(kind, old_items, proposed_items)
     empty_transition = bool(old_items) != bool(proposed_items)
     retain = bool(old_items) and not (
-        force
+        force_reason
         or content_changed
-        or forced_new
+        or legacy_forced_new
         or empty_transition
         or overlap < overlap_threshold
     )
@@ -194,11 +237,11 @@ def _choose_lane(
     old_ids = {_item_id(item) for item in old_items if _item_id(item)}
     entering = [] if retain else [item for item in chosen if _item_id(item) not in old_ids]
     reason = "retained_overlap" if retain else "proposal_applied"
-    if force:
-        reason = "forced"
+    if force_reason:
+        reason = force_reason
     elif content_changed:
         reason = "content_changed"
-    elif forced_new:
+    elif legacy_forced_new:
         reason = "direct_candidate"
     elif empty_transition:
         reason = "empty_transition"
@@ -220,17 +263,60 @@ def resolve_memory_island(
     proposed_mem_notes: list[dict[str, Any]],
     *,
     force: bool = False,
+    force_reason: str = "",
+    active_star_ids: set[str] | None = None,
+    advance_human_turn: bool = False,
+    soft_direct_cooldown_turns: int = STAR_SOFT_DIRECT_COOLDOWN_TURNS,
     overlap_threshold: float = 2 / 3,
 ) -> tuple[dict[str, Any], dict[str, list[dict[str, Any]]], dict[str, Any]]:
     previous_state = previous_state or {}
     old_stars = list(previous_state.get("stars") or [])
     old_mem = list(previous_state.get("mem_notes") or [])
+    try:
+        human_turn_index = max(0, int(previous_state.get("human_turn_index") or 0))
+    except (TypeError, ValueError):
+        human_turn_index = 0
+    if advance_human_turn:
+        human_turn_index += 1
+    try:
+        soft_direct_cooldown_turns = max(0, min(int(soft_direct_cooldown_turns), 100))
+    except (TypeError, ValueError):
+        soft_direct_cooldown_turns = STAR_SOFT_DIRECT_COOLDOWN_TURNS
+    soft_seen_at = _soft_seen_turns(previous_state)
+    external_force_reason = str(force_reason or "").strip() or ("forced" if force else "")
+    star_force_reason = external_force_reason
+    if not star_force_reason and active_star_ids is not None:
+        old_star_ids = {_item_id(item) for item in old_stars if _item_id(item)}
+        active_ids = {str(item or "").strip() for item in active_star_ids if str(item or "").strip()}
+        if old_star_ids - active_ids:
+            star_force_reason = "inactive_item"
+    if not star_force_reason:
+        star_force_reason = _star_direct_force_reason(
+            old_stars,
+            list(proposed_stars or []),
+            soft_seen_at=soft_seen_at,
+            human_turn_index=human_turn_index,
+            soft_direct_cooldown_turns=soft_direct_cooldown_turns,
+        )
     stars, entering_stars, star_meta = _choose_lane(
-        "star", old_stars, list(proposed_stars or []), force=force, overlap_threshold=overlap_threshold
+        "star",
+        old_stars,
+        list(proposed_stars or []),
+        force_reason=star_force_reason,
+        overlap_threshold=overlap_threshold,
     )
     mem_notes, entering_mem, mem_meta = _choose_lane(
-        "mem", old_mem, list(proposed_mem_notes or []), force=force, overlap_threshold=overlap_threshold
+        "mem",
+        old_mem,
+        list(proposed_mem_notes or []),
+        force_reason=external_force_reason,
+        overlap_threshold=overlap_threshold,
     )
+    chosen_star_ids = {_item_id(item) for item in stars if _item_id(item)}
+    for item in proposed_stars or []:
+        star_id = _item_id(item)
+        if star_id in chosen_star_ids and item.get("direct_reference_kind") == "recall_unique":
+            soft_seen_at[star_id] = human_turn_index
     rendered_text = render_memory_island(stars, mem_notes)
     rendered_hash = hashlib.sha256(rendered_text.encode("utf-8")).hexdigest()
     old_hash = str(previous_state.get("rendered_hash") or "")
@@ -243,6 +329,8 @@ def resolve_memory_island(
         "rendered_hash": rendered_hash,
         "star_fingerprints": _fingerprints("star", stars),
         "mem_fingerprints": _fingerprints("mem", mem_notes),
+        "human_turn_index": human_turn_index,
+        "star_soft_direct_seen_at": soft_seen_at,
     }
     if not state["version"]:
         state["version"] = f"island_{uuid.uuid4().hex[:12]}"
@@ -251,5 +339,7 @@ def resolve_memory_island(
         "decision": "rewritten" if changed else "retained",
         "star": star_meta,
         "mem": mem_meta,
+        "human_turn_index": human_turn_index,
+        "force_reason": external_force_reason,
     }
     return state, {"stars": entering_stars, "mem_notes": entering_mem}, meta

@@ -78,10 +78,19 @@ Chat injection flow:
 
 1. `ContextBuilder.build_context_package()` calls `StarService.search_context()` when `INJECT_STARS=true`.
 2. `StarService` ranks active stars using related signals first: content similarity, keyword hits, chord distance, and existing harmony/constellation links.
-3. ACT-R brightness, constant bonus, novelty bonus, repeated-ignore penalty, and recent-injection fatigue adjust the score, but they do not make an unrelated star appear by themselves.
+3. ACT-R brightness, constant bonus, novelty bonus, repeated-ignore penalty, and recent-injection fatigue can adjust the score, but they do not make an unrelated star appear by themselves. Normal chat injection deliberately disables recent-injection fatigue; island stability comes from the `2/3` overlap gate instead of artificial rotation.
 4. Chat injection applies both `STAR_RELATED_MIN_SCORE` and `STAR_MIN_SCORE`; `STAR_INJECT_LIMIT` is only an upper bound, so zero stars may be injected when nothing clears the line.
 5. The selected stars are rendered into the `mem` layer before mem notes.
 6. Candidate rows and activation rows are logged so later tuning can use actual shown/accepted/missed data.
+
+Memory Island decision:
+
+- Normal chat keeps the previous Star lane when the old and proposed ID sets overlap by at least `2/3`. Retention preserves the old text and order; any accepted rewrite adopts the complete current proposal in score order.
+- A hard direct reference means either an active star UUID written in the user text or a sufficiently long exact phrase that occurs in only one active candidate. A newly entering hard reference bypasses the overlap gate with no cooldown.
+- A soft direct reference requires both an explicit recall intent (for example "还记得") and anchors that resolve to exactly one active star. It may bypass the overlap gate once per star after `STAR_SOFT_DIRECT_COOLDOWN_TURNS` real user turns (default 8, editable in Admin Stars settings). Only `initial`, `new_user`, and `branch` advance that counter; retry, roll, tail edit, and tool continuation do not. Setting it to 0 disables this soft cooldown.
+- `branch` and `message_high_water` rebuild both Star and Mem lanes from their current proposals. They are different events: branch means earlier semantic history changed; message high-water means the retained window crossed its trimming boundary.
+- ContextBuilder asks Stars to re-check every previous island star as active, even if it falls outside the normal candidate limit. If a current star was archived, the Star lane immediately adopts the current proposal.
+- Direct-reference traces store only the match kind/count. They do not add the matched phrase itself to candidate feature JSON.
 
 Review flow:
 
@@ -92,7 +101,7 @@ Review flow:
 5. `missed` is a high-value positive signal: it means "this star should have surfaced but did not." It can be recorded from the admin UI or directly through `shenyu_star_review` when Shenyu knows the missing star id.
 6. A single no-action/skip is not treated as negative. The weak ignored penalty only appears after the same candidate has been shown repeatedly without positive feedback.
 
-Scoring (v3, RRF fusion + multiplicative modifiers):
+Scoring (v4, RRF fusion + multiplicative modifiers):
 
 The ranker uses Reciprocal Rank Fusion across 6 independent channels, then applies multiplicative modifiers. A channel that produces 0 for a star simply contributes nothing — it does not penalize.
 
@@ -103,7 +112,7 @@ RRF channels (each sorted independently; stars with score=0 are excluded from th
 - `chord_score` (weight 0.6): chord distance by exact/root/quality family match.
 - `harmony_score` (weight 0.7): existing links from `shenyu_star_links`; constellation links are strongest.
 - `scene_score` (weight 0.4): scene type alignment via rule-based patterns + embedding similarity.
-- `explicit_score` (weight 0.5): direct reference to star keywords in the trigger text.
+- `explicit_score` (weight 0.5): direct reference to star keywords in the trigger text. High-confidence ID, unique exact-phrase, and recall-intent matches set this channel to 1.0 and are also carried separately into the Memory Island decision.
 
 RRF formula per star: `score = Σ channel_weight / (k + rank + 1)` where k=60.
 
@@ -138,6 +147,7 @@ STAR_MIN_SCORE=0.008
 STAR_RELATED_MIN_SCORE=0.22
 STAR_RECENT_FATIGUE_HOURS=6
 STAR_RECENT_FATIGUE_PENALTY=0.14
+STAR_SOFT_DIRECT_COOLDOWN_TURNS=8
 
 STAR_RRF_CH_CONTENT=1.0
 STAR_RRF_CH_KEYWORD=0.8

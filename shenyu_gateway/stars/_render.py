@@ -69,4 +69,5 @@ class RenderMixin:
             "score": round(float(item.get("final_score") or 0.0), 4),
             "scores": {key: round(float(value or 0.0), 4) for key, value in features.items() if isinstance(value, (int, float))},
             "keyword_hits": item.get("keyword_hits") or [],
+            "direct_reference_kind": str(item.get("direct_reference_kind") or ""),
         }

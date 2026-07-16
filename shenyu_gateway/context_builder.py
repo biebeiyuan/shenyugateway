@@ -115,6 +115,7 @@ class ContextBuilder:
         context_event: Optional[dict] = None,
         previous_island_state: Optional[dict] = None,
         force_island_rewrite: bool = False,
+        force_island_reason: str = "",
         trace_log: Optional[dict] = None,
     ) -> dict:
         _mark_request_log_phase(trace_log, "context.start")
@@ -160,6 +161,11 @@ class ContextBuilder:
         )
         inject_mem_notes = bool(current_user_text.strip() and self.cfg.inject_mem_notes)
         inject_stars = bool(current_user_text.strip() and getattr(self.cfg, "inject_stars", True))
+        previous_star_ids = {
+            str(item.get("id") or "").strip()
+            for item in (previous_island_state or {}).get("stars") or []
+            if str(item.get("id") or "").strip()
+        }
 
         calendar_task = self.calendar_context_pages()
         conflict_task = self._conflict_shelf_books() if want_conflict else asyncio.sleep(0, result=[])
@@ -229,6 +235,7 @@ class ContextBuilder:
                         limit=getattr(self.cfg, "star_inject_limit", 3),
                         mark_activation=False,
                         ignore_recent_fatigue=True,
+                        required_star_ids=previous_star_ids,
                         trace_log=trace_log,
                     ),
                     "star",
@@ -253,11 +260,24 @@ class ContextBuilder:
                 if inject_mem_notes and notes_result.get("ok")
                 else list((previous_island_state or {}).get("mem_notes") or []) if inject_mem_notes else []
             )
+            active_star_ids = None
+            if stars_result.get("ok") and "_active_required_ids" in stars_result:
+                active_star_ids = {
+                    str(item or "").strip()
+                    for item in stars_result.get("_active_required_ids") or []
+                    if str(item or "").strip()
+                }
             island_state, entering, island_meta = resolve_memory_island(
                 previous_island_state,
                 proposed_stars,
                 proposed_mem_notes,
                 force=force_island_rewrite,
+                force_reason=force_island_reason,
+                active_star_ids=active_star_ids,
+                advance_human_turn=event_class in {"initial", "new_user", "branch"},
+                soft_direct_cooldown_turns=getattr(
+                    self.cfg, "star_soft_direct_cooldown_turns", 8
+                ),
             )
             island_meta["star_recall_ok"] = bool(stars_result.get("ok"))
             island_meta["mem_recall_ok"] = bool(notes_result.get("ok"))

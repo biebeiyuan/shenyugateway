@@ -56,6 +56,14 @@ const protocolOptions = [
       <NFormItem label="疲劳惩罚">
         <NInputNumber v-model:value="config.star_recent_fatigue_penalty" :min="0" :max="1" :step="0.01" />
       </NFormItem>
+      <NFormItem label="软点名冷却（轮）">
+        <NInputNumber
+          v-model:value="config.star_soft_direct_cooldown_turns"
+          data-testid="stars-soft-direct-cooldown"
+          :min="0"
+          :max="100"
+        />
+      </NFormItem>
     </div>
 
     <details class="advanced-settings">

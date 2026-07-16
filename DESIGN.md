@@ -121,6 +121,14 @@ RRF 公式：`score = Σ channel_weight / (k + rank + 1)`，k=60。
 
 默认最多注入 3 颗。设计哲学："三颗小灯"，不是记忆倾泻。
 
+### 2.4.1 动态岛的稳定门与逃生门
+
+Stars 排名先生成最多 3 颗的完整提案，Memory Island 再决定是否采用。普通聊天中，旧提案与新提案按 ID 至少重合 `2/3` 就保留旧岛；一旦决定重写，就直接采用本轮完整评分顺序，不再额外保留旧岛的 `2/3`。
+
+换岛逃生门保持很窄：直接写出 active `star_id`、复述只属于一颗星的独特原句时，新进入的目标星无冷却地强制换入；“回忆意图 + 唯一候选”属于软点名，同一颗星默认每 8 个真实用户轮次最多强制一次，由 `STAR_SOFT_DIRECT_COOLDOWN_TURNS`（Admin 星星设置中的“软点名冷却”）控制，设为 0 表示不冷却。轮次只计 `initial`、`new_user`、`branch`，不计 retry、roll、tail edit 和 tool continuation。当前岛星被归档也立即重写 Star lane。
+
+窗口侧的 `branch` 与 `message_high_water` 都会让两条 lane 按当前提案重建：前者表示更早历史发生语义变化，后者表示消息数越过高水位并触发裁剪。普通聊天继续关闭 Stars recent fatigue；多场景标签也不参与这条逃生门。
+
 ### 2.5 ACT-R 亮度模型
 
 来自认知心理学的 ACT-R 理论。每次激活（显示、注入、搜索）记一条 activation 记录。

@@ -77,6 +77,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "star_related_min_score": cfg.star_related_min_score,
         "star_recent_fatigue_hours": cfg.star_recent_fatigue_hours,
         "star_recent_fatigue_penalty": cfg.star_recent_fatigue_penalty,
+        "star_soft_direct_cooldown_turns": cfg.star_soft_direct_cooldown_turns,
         "star_rrf_ch_content": cfg.star_rrf_ch_content,
         "star_rrf_ch_keyword": cfg.star_rrf_ch_keyword,
         "star_rrf_ch_chord": cfg.star_rrf_ch_chord,
@@ -203,6 +204,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "star_related_min_score": "STAR_RELATED_MIN_SCORE",
             "star_recent_fatigue_hours": "STAR_RECENT_FATIGUE_HOURS",
             "star_recent_fatigue_penalty": "STAR_RECENT_FATIGUE_PENALTY",
+            "star_soft_direct_cooldown_turns": "STAR_SOFT_DIRECT_COOLDOWN_TURNS",
             "star_rrf_ch_content": "STAR_RRF_CH_CONTENT",
             "star_rrf_ch_keyword": "STAR_RRF_CH_KEYWORD",
             "star_rrf_ch_chord": "STAR_RRF_CH_CHORD",
@@ -587,6 +589,14 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.star_recent_fatigue_penalty = deps.clamp(float(body.star_recent_fatigue_penalty), 0.0, 1.0)
             changed.append("star_recent_fatigue_penalty")
             env_updates[env_names["star_recent_fatigue_penalty"]] = cfg.star_recent_fatigue_penalty
+        if body.star_soft_direct_cooldown_turns is not None:
+            cfg.star_soft_direct_cooldown_turns = max(
+                0, min(body.star_soft_direct_cooldown_turns, 100)
+            )
+            changed.append("star_soft_direct_cooldown_turns")
+            env_updates[env_names["star_soft_direct_cooldown_turns"]] = (
+                cfg.star_soft_direct_cooldown_turns
+            )
         for field in (
             "star_rrf_ch_content",
             "star_rrf_ch_keyword",

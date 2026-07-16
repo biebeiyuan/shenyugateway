@@ -85,6 +85,8 @@ class LoggingMixin:
                     "ignored_penalty": features.get("ignored_penalty") or 0.0,
                     "feature_json": {
                         "ranker_version": STAR_RANKER_VERSION,
+                        "direct_reference_kind": str(item.get("direct_reference_kind") or ""),
+                        "direct_reference_count": 1 if item.get("direct_reference_kind") else 0,
                         "keyword_hits": item.get("keyword_hits") or [],
                         "explicit_hits": item.get("explicit_hits") or [],
                         "related_signal": features.get("related_signal") or 0.0,

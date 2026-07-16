@@ -10,7 +10,7 @@ from shenyu_gateway.context_layers import (
     trim_client_messages,
     trim_client_tool_system_messages,
 )
-from shenyu_gateway.prepare_messages import _assistant_lineage
+from shenyu_gateway.prepare_messages import _assistant_lineage, _memory_island_force_reason
 from shenyu_gateway.context_window import (
     classify_history_event,
     compact_history_event_messages,
@@ -47,6 +47,18 @@ def test_assistant_lineage_detects_client_history_rewrite():
     assert result["available"] is True
     assert result["match"] is False
     assert result["client_sha256"] != result["stored_sha256"]
+
+
+def test_memory_island_force_reason_covers_branch_and_message_high_water():
+    assert _memory_island_force_reason(
+        {"event_class": "new_user"}, {"reset_reason": "message_high_water"}
+    ) == "message_high_water"
+    assert _memory_island_force_reason(
+        {"event_class": "branch"}, {"reset_reason": "history_branch"}
+    ) == "history_branch"
+    assert _memory_island_force_reason(
+        {"event_class": "new_user"}, {"reset_reason": ""}
+    ) == ""
 
 
 def test_context_overflow_defaults_to_20_percent_with_bounds():

@@ -620,3 +620,79 @@ def test_set_scenes_accepts_new_scene_aliases():
 
     assert result["ok"] is True
     assert result["star"]["scenes"] == ["seen", "want", "loose"]
+
+
+def test_context_search_hydrates_active_required_ids_and_excludes_archived_ones():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+    active_id = "11111111-1111-4111-8111-111111111111"
+    archived_id = "22222222-2222-4222-8222-222222222222"
+    for index in range(50):
+        supabase.tables["shenyu_stars"].append(
+            {
+                "id": f"filler-{index}",
+                "content": f"普通候选 {index}",
+                "status": "active",
+                "metadata": {},
+                "activation_count": 0,
+            }
+        )
+    supabase.tables["shenyu_stars"].extend(
+        [
+            {
+                "id": active_id,
+                "content": "候选上限之外仍然活跃的旧岛星",
+                "status": "active",
+                "metadata": {},
+                "activation_count": 0,
+            },
+            {
+                "id": archived_id,
+                "content": "已经归档的旧岛星",
+                "status": "archived",
+                "metadata": {},
+                "activation_count": 0,
+            },
+        ]
+    )
+
+    result = asyncio.run(
+        service.search_context(
+            "今天聊点别的",
+            limit=3,
+            mark_activation=False,
+            required_star_ids={active_id, archived_id},
+        )
+    )
+
+    assert result["_active_required_ids"] == [active_id]
+
+
+def test_explicit_uuid_is_hydrated_even_outside_normal_candidate_limit():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+    target_id = "33333333-3333-4333-8333-333333333333"
+    for index in range(50):
+        supabase.tables["shenyu_stars"].append(
+            {
+                "id": f"filler-{index}",
+                "content": f"普通候选 {index}",
+                "status": "active",
+                "metadata": {},
+                "activation_count": 0,
+            }
+        )
+    supabase.tables["shenyu_stars"].append(
+        {
+            "id": target_id,
+            "content": "候选上限之外被直接点名",
+            "status": "active",
+            "metadata": {},
+            "activation_count": 0,
+        }
+    )
+
+    result = asyncio.run(service.search_context(target_id, limit=3, mark_activation=False))
+
+    assert [item["id"] for item in result["items"]] == [target_id]
+    assert result["items"][0]["direct_reference_kind"] == "star_id"

@@ -65,6 +65,7 @@ export interface GatewayConfig {
   star_related_min_score?: number
   star_recent_fatigue_hours?: number
   star_recent_fatigue_penalty?: number
+  star_soft_direct_cooldown_turns?: number
   star_weight_content?: number
   star_weight_keyword?: number
   star_weight_harmony?: number

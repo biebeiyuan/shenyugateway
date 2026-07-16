@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import copy
+
+import pytest
+
 from shenyu_gateway.memory_island import memory_island_log_content, resolve_memory_island
 
 
@@ -9,6 +13,7 @@ def _star(
     *,
     explicit: float = 0.0,
     force_island_rewrite: bool = False,
+    direct_reference_kind: str = "",
 ) -> dict:
     return {
         "id": item_id,
@@ -16,6 +21,7 @@ def _star(
         "chord": "Am7",
         "scores": {"explicit_score": explicit},
         "force_island_rewrite": force_island_rewrite,
+        "direct_reference_kind": direct_reference_kind,
     }
 
 
@@ -136,3 +142,153 @@ def test_memory_island_log_content_bounds_display_text():
 
     assert len(content["stars"]["current"][0]["text"]) <= 220
     assert len(content["mem_notes"]["current"][0]["text"]) <= 180
+
+
+def test_hard_direct_reference_bypasses_overlap_and_adopts_full_scored_order():
+    initial, _entering, _meta = resolve_memory_island(
+        None,
+        [_star("a", "first"), _star("b", "second"), _star("c", "third")],
+        [],
+    )
+
+    rewritten, entering, meta = resolve_memory_island(
+        initial,
+        [
+            _star("b", "second"),
+            _star("d", "direct", direct_reference_kind="star_id"),
+            _star("a", "first"),
+        ],
+        [],
+        advance_human_turn=True,
+    )
+
+    assert [item["id"] for item in rewritten["stars"]] == ["b", "d", "a"]
+    assert [item["id"] for item in entering["stars"]] == ["d"]
+    assert meta["star"]["reason"] == "direct_star_id"
+
+
+def test_soft_direct_reference_is_suppressed_until_eight_real_user_turns_have_elapsed():
+    initial, _entering, _meta = resolve_memory_island(
+        None,
+        [_star("a", "first"), _star("b", "second"), _star("c", "third")],
+        [],
+    )
+    initial["human_turn_index"] = 10
+    initial["star_soft_direct_seen_at"] = {"d": 4}
+    proposal = [
+        _star("a", "first"),
+        _star("b", "second"),
+        _star("d", "remembered", direct_reference_kind="recall_unique"),
+    ]
+
+    within_cooldown, entering, meta = resolve_memory_island(
+        copy.deepcopy(initial),
+        proposal,
+        [],
+        advance_human_turn=True,
+    )
+    assert [item["id"] for item in within_cooldown["stars"]] == ["a", "b", "c"]
+    assert entering["stars"] == []
+    assert meta["star"]["reason"] == "retained_overlap"
+
+    initial["human_turn_index"] = 11
+    after_cooldown, entering, meta = resolve_memory_island(
+        initial,
+        proposal,
+        [],
+        advance_human_turn=True,
+    )
+    assert [item["id"] for item in after_cooldown["stars"]] == ["a", "b", "d"]
+    assert [item["id"] for item in entering["stars"]] == ["d"]
+    assert after_cooldown["star_soft_direct_seen_at"]["d"] == 12
+    assert meta["star"]["reason"] == "direct_recall_unique"
+
+
+def test_soft_direct_reference_cooldown_accepts_runtime_override():
+    initial, _entering, _meta = resolve_memory_island(
+        None,
+        [_star("a", "first"), _star("b", "second"), _star("c", "third")],
+        [],
+    )
+    initial["human_turn_index"] = 5
+    initial["star_soft_direct_seen_at"] = {"d": 4}
+
+    rewritten, entering, meta = resolve_memory_island(
+        initial,
+        [
+            _star("a", "first"),
+            _star("b", "second"),
+            _star("d", "remembered", direct_reference_kind="recall_unique"),
+        ],
+        [],
+        advance_human_turn=True,
+        soft_direct_cooldown_turns=2,
+    )
+
+    assert [item["id"] for item in rewritten["stars"]] == ["a", "b", "d"]
+    assert [item["id"] for item in entering["stars"]] == ["d"]
+    assert meta["star"]["reason"] == "direct_recall_unique"
+
+
+def test_zero_soft_direct_cooldown_allows_same_turn_reentry():
+    initial, _entering, _meta = resolve_memory_island(
+        None,
+        [_star("a", "first"), _star("b", "second"), _star("c", "third")],
+        [],
+    )
+    initial["human_turn_index"] = 5
+    initial["star_soft_direct_seen_at"] = {"d": 5}
+
+    rewritten, _entering, meta = resolve_memory_island(
+        initial,
+        [
+            _star("a", "first"),
+            _star("b", "second"),
+            _star("d", "remembered", direct_reference_kind="recall_unique"),
+        ],
+        [],
+        soft_direct_cooldown_turns=0,
+    )
+
+    assert [item["id"] for item in rewritten["stars"]] == ["a", "b", "d"]
+    assert meta["star"]["reason"] == "direct_recall_unique"
+
+
+def test_inactive_current_star_forces_full_proposal():
+    initial, _entering, _meta = resolve_memory_island(
+        None,
+        [_star("a", "first"), _star("b", "second"), _star("c", "archived")],
+        [],
+    )
+
+    rewritten, entering, meta = resolve_memory_island(
+        initial,
+        [_star("b", "second"), _star("d", "new"), _star("a", "first")],
+        [],
+        active_star_ids={"a", "b"},
+    )
+
+    assert [item["id"] for item in rewritten["stars"]] == ["b", "d", "a"]
+    assert [item["id"] for item in entering["stars"]] == ["d"]
+    assert meta["star"]["reason"] == "inactive_item"
+
+
+@pytest.mark.parametrize("reason", ["history_branch", "message_high_water"])
+def test_external_window_force_reason_is_preserved(reason):
+    initial, _entering, _meta = resolve_memory_island(
+        None,
+        [_star("a", "first"), _star("b", "second"), _star("c", "third")],
+        [_mem("m1", "first mem")],
+    )
+
+    rewritten, _entering, meta = resolve_memory_island(
+        initial,
+        [_star("b", "second"), _star("a", "first"), _star("d", "new")],
+        [_mem("m2", "second mem")],
+        force=True,
+        force_reason=reason,
+    )
+
+    assert [item["id"] for item in rewritten["stars"]] == ["b", "a", "d"]
+    assert meta["star"]["reason"] == reason
+    assert meta["mem"]["reason"] == reason

@@ -189,6 +189,69 @@ def test_context_recall_failure_preserves_previous_island(monkeypatch, tmp_path)
     assert package["memory_island_decision"]["mem_recall_ok"] is False
 
 
+def test_context_builder_rechecks_previous_star_ids_and_advances_real_user_turn(monkeypatch, tmp_path):
+    captured: dict[str, Any] = {}
+    previous_stars = [
+        {"id": "star-a", "content": "first"},
+        {"id": "star-b", "content": "second"},
+        {"id": "star-c", "content": "third"},
+    ]
+
+    class CapturingStarService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def search_context(self, *_args, **kwargs):
+            captured.update(kwargs)
+            return {
+                "ok": True,
+                "items": previous_stars,
+                "_active_required_ids": ["star-a", "star-b", "star-c"],
+            }
+
+        async def activate_context_items(self, *_args, **_kwargs):
+            raise AssertionError("unchanged island must not reactivate stars")
+
+    monkeypatch.setattr(context_builder_module, "StarService", CapturingStarService)
+    monkeypatch.setattr(cfg, "inject_stars", True, raising=False)
+    monkeypatch.setattr(cfg, "inject_mem_notes", False)
+    monkeypatch.setattr(cfg, "star_inject_limit", 3, raising=False)
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("island-turn", "operit")
+    previous = {
+        "version": "island-previous",
+        "stars": previous_stars,
+        "mem_notes": [],
+        "human_turn_index": 7,
+    }
+
+    package = asyncio.run(
+        _context_builder(store, supabase=object()).build_context_package(
+            session,
+            current_user_text="新的问题",
+            is_first_turn=False,
+            client_name="operit",
+            context_event={"event_class": "new_user"},
+            previous_island_state=previous,
+        )
+    )
+
+    assert captured["required_star_ids"] == {"star-a", "star-b", "star-c"}
+    assert package["memory_island_state"]["human_turn_index"] == 8
+
+    edited_package = asyncio.run(
+        _context_builder(store, supabase=object()).build_context_package(
+            session,
+            current_user_text="改写当前问题",
+            is_first_turn=False,
+            client_name="operit",
+            context_event={"event_class": "edit_tail"},
+            previous_island_state=previous,
+        )
+    )
+    assert edited_package["memory_island_state"]["human_turn_index"] == 7
+
+
 def test_hisense_context_can_see_both_heartbeat_pools(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     normal_session = store.get_or_create_session("main", "operit")

@@ -21,8 +21,8 @@ STAR_ACTIVATION_TABLE = "shenyu_star_activations"
 # ---------------------------------------------------------------------------
 # Version constants
 # ---------------------------------------------------------------------------
-STAR_RANKER_VERSION = "star-ranker-v3"
-STAR_FEATURE_SCHEMA_VERSION = "star-features-v3"
+STAR_RANKER_VERSION = "star-ranker-v4"
+STAR_FEATURE_SCHEMA_VERSION = "star-features-v4"
 STAR_WEIGHTS_VERSION = "rrf-v1"
 
 # ---------------------------------------------------------------------------
@@ -88,6 +88,55 @@ EXPLICIT_MENTION_STOPWORDS = {
     "the",
     "you",
 }
+
+DIRECT_REFERENCE_HARD_KINDS = frozenset({"star_id", "exact_phrase"})
+DIRECT_REFERENCE_SOFT_KIND = "recall_unique"
+_DIRECT_REFERENCE_INTENT_MARKERS = (
+    "还记得",
+    "记不记得",
+    "你记得",
+    "我记得",
+    "之前那次",
+    "以前那次",
+    "那次",
+    "那天",
+    "那颗星",
+    "星星里",
+    "写下的",
+    "记下的",
+    "当时",
+    "想起",
+    "回忆",
+)
+_DIRECT_REFERENCE_STOPWORDS = EXPLICIT_MENTION_STOPWORDS | {
+    "沈予",
+    "圆圆",
+    "圆儿",
+    "星星",
+    "记忆",
+    "事情",
+    "东西",
+    "关系",
+    "知道",
+    "怎么",
+    "为什么",
+    "已经",
+    "还是",
+    "我的",
+    "你的",
+    "她的",
+    "他的",
+    "这里",
+    "那里",
+    "那只",
+    "那件",
+    "那段",
+    "那个",
+    "一下",
+    "一下子",
+}
+for _marker in _DIRECT_REFERENCE_INTENT_MARKERS:
+    _DIRECT_REFERENCE_STOPWORDS.update(recall_terms(_marker))
 
 
 # ---------------------------------------------------------------------------
@@ -193,6 +242,127 @@ def _significant_hit(term: Any) -> bool:
     if re.fullmatch(r"[一-鿿]+", text):
         return len(text) >= 2
     return bool(re.search(r"[a-z0-9]", text)) and len(text) >= 3
+
+
+def _compact_reference_text(value: Any) -> str:
+    normalized = _normalize_text(value).strip().lower()
+    return re.sub(r"[^a-z0-9\u4e00-\u9fff]+", "", normalized)
+
+
+def _query_star_ids(query: str) -> set[str]:
+    return {
+        match.group(0).lower()
+        for match in re.finditer(
+            r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89aAbB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}\b",
+            str(query or ""),
+        )
+    }
+
+
+def _meaningful_reference_phrase(phrase: str) -> bool:
+    if not phrase or phrase.isdigit():
+        return False
+    semantic = re.sub(r"[0-9第年月日号天点分时周早晚凌晨中午]+", "", phrase)
+    return len(semantic) >= 4
+
+
+def _reference_phrase_candidates(query: str) -> set[str]:
+    raw = str(query or "")[:2000]
+    compact = _compact_reference_text(raw)[:1200]
+    if not compact:
+        return set()
+    has_cjk = bool(re.search(r"[\u4e00-\u9fff]", compact))
+    short_min = 6 if has_cjk else 10
+    window = 8 if has_cjk else 12
+    phrases: set[str] = set()
+    if short_min <= len(compact) <= window + 6:
+        phrases.add(compact)
+    if len(compact) >= window:
+        phrases.update(compact[index : index + window] for index in range(len(compact) - window + 1))
+    for match in re.finditer(r"[\"“”「」『』]([^\"“”「」『』]{1,160})[\"“”「」『』]", raw):
+        quoted = _compact_reference_text(match.group(1))
+        quoted_has_cjk = bool(re.search(r"[\u4e00-\u9fff]", quoted))
+        quoted_min = 6 if quoted_has_cjk else 10
+        quoted_window = 8 if quoted_has_cjk else 12
+        if quoted_min <= len(quoted) <= 64:
+            phrases.add(quoted)
+        if len(quoted) > 64:
+            phrases.update(
+                quoted[index : index + quoted_window]
+                for index in range(len(quoted) - quoted_window + 1)
+            )
+    return {phrase for phrase in phrases if _meaningful_reference_phrase(phrase)}
+
+
+def _reference_anchor(term: Any) -> str:
+    compact = _compact_reference_text(term)
+    if not compact or compact in _DIRECT_REFERENCE_STOPWORDS or compact.isdigit():
+        return ""
+    if re.fullmatch(r"[\u4e00-\u9fff]+", compact):
+        return compact if len(compact) >= 2 else ""
+    return compact if len(compact) >= 4 else ""
+
+
+def _direct_reference_kinds(query: str, rows: list[dict[str, Any]]) -> dict[str, str]:
+    """Return high-confidence direct-reference kinds keyed by active star id."""
+    query_text = str(query or "")
+    query_lower = query_text.lower()
+    content_by_id = {
+        _node_id(row.get("id")): _compact_reference_text(row.get("content"))
+        for row in rows
+        if _node_id(row.get("id")) and row.get("content")
+    }
+    result: dict[str, str] = {}
+    for star_id in content_by_id:
+        if len(star_id) >= 8 and star_id.lower() in query_lower:
+            result[star_id] = "star_id"
+
+    phrases = _reference_phrase_candidates(query_text)
+    if phrases:
+        phrases_by_length: dict[int, set[str]] = {}
+        for phrase in phrases:
+            phrases_by_length.setdefault(len(phrase), set()).add(phrase)
+        phrase_owners: dict[str, set[str]] = {}
+        for star_id, content in content_by_id.items():
+            for length, query_phrases in phrases_by_length.items():
+                if len(content) < length:
+                    continue
+                content_phrases = {
+                    content[index : index + length]
+                    for index in range(len(content) - length + 1)
+                }
+                for phrase in query_phrases & content_phrases:
+                    phrase_owners.setdefault(phrase, set()).add(star_id)
+        for phrase, owners in phrase_owners.items():
+            if len(owners) != 1:
+                continue
+            star_id = next(iter(owners))
+            result.setdefault(star_id, "exact_phrase")
+
+    if not any(marker in query_text for marker in _DIRECT_REFERENCE_INTENT_MARKERS):
+        return result
+
+    anchor_text = query_text
+    for marker in _DIRECT_REFERENCE_INTENT_MARKERS:
+        anchor_text = anchor_text.replace(marker, " ")
+    anchors = {
+        anchor
+        for term in recall_terms(anchor_text[:1200])
+        if (anchor := _reference_anchor(term))
+    }
+    anchor_owners: dict[str, set[str]] = {}
+    for anchor in anchors:
+        owners = {star_id for star_id, content in content_by_id.items() if anchor in content}
+        if len(owners) == 1:
+            anchor_owners[anchor] = owners
+    evidence: dict[str, list[str]] = {}
+    for anchor, owners in anchor_owners.items():
+        star_id = next(iter(owners))
+        evidence.setdefault(star_id, []).append(anchor)
+    qualifying = list(evidence)
+    if len(qualifying) == 1:
+        result.setdefault(qualifying[0], DIRECT_REFERENCE_SOFT_KIND)
+    return result
 
 
 def _chord_parts(chord: str) -> tuple[str, str]:
