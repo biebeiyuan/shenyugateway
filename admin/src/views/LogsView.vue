@@ -125,7 +125,7 @@ function fmtNum(n: number): string {
 
 // Prefer the backend-normalized total input; keep a protocol-aware fallback for old logs.
 function totalInputTokens(log: LogEntry, round?: any): number | null {
-  const cache = round?.cache_usage
+  const cache = round?.cache_usage || log.cache_usage
   if (cache?.total_input_reported && typeof cache.total_input_tokens === 'number') {
     return cache.total_input_tokens > 0 ? cache.total_input_tokens : null
   }
@@ -134,7 +134,8 @@ function totalInputTokens(log: LogEntry, round?: any): number | null {
   if (typeof u.cache_input_tokens === 'number' && u.cache_input_tokens > 0) return u.cache_input_tokens
   if (typeof u.prompt_tokens === 'number' && u.prompt_tokens > 0) return u.prompt_tokens
   if (typeof u.input_tokens !== 'number') return null
-  const total = log.prompt_cache?.protocol === 'anthropic'
+  const protocol = round?.prompt_cache?.protocol || log.prompt_cache?.protocol
+  const total = protocol === 'anthropic'
     ? u.input_tokens + usageCacheRead(u) + usageCacheWrite(u)
     : u.input_tokens
   return total > 0 ? total : null
@@ -145,34 +146,51 @@ function totalInputLabel(log: LogEntry, round?: any): string {
   return t === null ? '' : `${fmtNum(t)} input`
 }
 
-function cacheLabel(log: LogEntry, round?: any): string {
-  if (round) {
-    const read = usageCacheRead(round.usage)
-    const percent = usageCachePrefixReusePercent(round.usage)
-    return read > 0 ? `⚡ ${fmtNum(read)} cached${percent === null ? '' : ` · ${percent}%`}` : ''
+function cacheReadTokens(log: LogEntry, round?: any): number {
+  const cache = round?.cache_usage || log.cache_usage
+  if (typeof cache?.cache_read_input_tokens === 'number') {
+    return Math.max(0, cache.cache_read_input_tokens)
   }
-  const cache = log.cache_usage
-  if (!cache?.hit) return ''
-  const read = Number(cache.cache_read_input_tokens) || 0
-  const percent = typeof cache.cache_prefix_reuse_percent === 'number' ? cache.cache_prefix_reuse_percent : null
+  return usageCacheRead(round?.usage || log.usage)
+}
+
+function cacheReadPercent(log: LogEntry, round?: any): number | null {
+  const read = cacheReadTokens(log, round)
+  const total = totalInputTokens(log, round)
+  if (total === null || read > total) return null
+  return Math.round(read * 1000 / total) / 10
+}
+
+function cachePrefixReusePercent(log: LogEntry, round?: any): number | null {
+  const cache = round?.cache_usage || log.cache_usage
+  if (typeof cache?.cache_prefix_reuse_percent === 'number') return cache.cache_prefix_reuse_percent
+  const usage = round?.usage || log.usage
+  return usageCachePrefixReusePercent(usage)
+}
+
+function cacheLabel(log: LogEntry, round?: any): string {
+  const read = cacheReadTokens(log, round)
+  if (read <= 0) return ''
+  const percent = cacheReadPercent(log, round)
   const percentLabel = percent === null ? '' : ` · ${percent}%`
-  return read > 0 ? `⚡ ${fmtNum(read)} cached${percentLabel}` : '⚡ cached'
+  return `⚡ ${fmtNum(read)} cached${percentLabel}`
 }
 
 function cacheTitle(log: LogEntry, round?: any): string {
-  if (round) {
-    const read = usageCacheRead(round.usage)
-    const write = usageCacheWrite(round.usage)
-    const percent = usageCachePrefixReusePercent(round.usage)
-    return `供应商上报缓存读取 ${read.toLocaleString()} tokens · 新写 ${write.toLocaleString()} tokens${percent === null ? '' : ` · 前缀复用 ${percent}%`}。不是省钱比例。`
-  }
-  const cache = log.cache_usage
-  if (!cache?.hit) return ''
-  const read = Number(cache.cache_read_input_tokens) || 0
-  const write = Number(cache.cache_creation_input_tokens) || 0
-  const percent = typeof cache.cache_prefix_reuse_percent === 'number' ? cache.cache_prefix_reuse_percent : null
-  const percentText = percent === null ? '' : ` · 前缀复用 ${percent}%`
-  return `供应商上报缓存读取 ${read.toLocaleString()} tokens · 新写 ${write.toLocaleString()} tokens${percentText}。不是省钱比例。`
+  const cache = round?.cache_usage || log.cache_usage
+  const read = cacheReadTokens(log, round)
+  if (read <= 0) return ''
+  const usage = round?.usage || log.usage
+  const write = typeof cache?.cache_creation_input_tokens === 'number'
+    ? Math.max(0, cache.cache_creation_input_tokens)
+    : usageCacheWrite(usage)
+  const total = totalInputTokens(log, round)
+  const coverage = cacheReadPercent(log, round)
+  const prefixReuse = cachePrefixReusePercent(log, round)
+  const totalText = total === null ? '' : ` · 总输入 ${total.toLocaleString()} tokens`
+  const coverageText = coverage === null ? '' : ` · 缓存率 ${coverage}%`
+  const prefixText = prefixReuse === null ? '' : ` · 前缀复用 ${prefixReuse}%`
+  return `供应商上报缓存读取 ${read.toLocaleString()} tokens${totalText}${coverageText} · 新写 ${write.toLocaleString()} tokens${prefixText}。缓存率是读取 ÷ 总输入，不是费用节省比例。`
 }
 
 function roundKey(id: string, round?: any): string {
@@ -378,8 +396,10 @@ function renderOverview(detail: LogDetail): string {
   if (!detail.prompt_cache?.enabled) {
     html += '<div class="empty-soft">这次没有启用 prompt cache。</div>'
   } else if (cache?.reported) {
-    html += `<div class="cache-raw"><span>读取 ${Number(cache.cache_read_input_tokens || 0).toLocaleString()}</span><span>写入 ${Number(cache.cache_creation_input_tokens || 0).toLocaleString()}</span><span>${cache.rounds || 1} 轮</span></div>`
-    html += '<div class="soft-footnote">顶部百分比只比较缓存读取和缓存新写入，不等于费用节省比例。</div>'
+    const coverage = cacheReadPercent(detail)
+    const prefixReuse = cachePrefixReusePercent(detail)
+    html += `<div class="cache-raw"><span>读取 ${Number(cache.cache_read_input_tokens || 0).toLocaleString()}</span><span>写入 ${Number(cache.cache_creation_input_tokens || 0).toLocaleString()}</span>${coverage === null ? '' : `<span>缓存率 ${coverage}%</span>`}${prefixReuse === null ? '' : `<span>前缀复用 ${prefixReuse}%</span>`}<span>${cache.rounds || 1} 轮</span></div>`
+    html += '<div class="soft-footnote">顶部缓存率使用缓存读取 ÷ 总输入；前缀复用只比较缓存读取和缓存新写入。两者都不等于费用节省比例。</div>'
   } else {
     html += '<div class="empty-soft">这次 API usage 没有提供可识别的缓存读写字段，因此缓存状态未知；不能据此判断供应商内部是否命中缓存。</div>'
   }

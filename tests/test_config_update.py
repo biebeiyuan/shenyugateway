@@ -98,6 +98,23 @@ def test_aggregate_cache_usage_preserves_multi_round_reported_state():
     }
 
 
+def test_aggregate_cache_usage_uses_normalized_total_for_anthropic_coverage():
+    summary = gateway._aggregate_cache_usage(
+        [
+            {
+                "input_tokens": 10,
+                "cache_read_input_tokens": 700,
+                "cache_creation_input_tokens": 300,
+            }
+        ],
+        protocol="anthropic",
+    )
+
+    assert summary["total_input_tokens"] == 1010
+    assert summary["cache_read_percent"] == 69.3
+    assert summary["cache_prefix_reuse_percent"] == 70.0
+
+
 def test_full_config_only_hides_supabase_key(monkeypatch):
     client, _persisted = _config_client(monkeypatch)
     visible_secrets = {

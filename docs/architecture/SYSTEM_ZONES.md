@@ -325,7 +325,7 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 - Admin 列表 API 应返回摘要；详情 API 优先读取当前进程日志，只有显式开启时才可能含完整 payload。
 - Admin 页面和 API 的交付责任归本区域，但页面所展示数据的业务含义仍归对应功能区；完整页面清单统一看 README，不在这里逐项复制。
 - request log 使用两层保留：进程内 `deque(maxlen=30)` 保存实时/可选完整详情，SQLite 默认保存最近 200 条安全摘要并跨进程恢复。完整 messages/response/payload 不进入持久历史。
-- 每轮顶部 `input` 必须读取后端归一化的 `cache_usage.total_input_tokens`：Anthropic 将未缓存输入、缓存读取和缓存新写相加；OpenAI-compatible 的输入已含 cached 子集，不得在前端重复相加。`⚡ cached` 仍只表示缓存读取和前缀复用率。
+- 每轮顶部 `input` 必须读取后端归一化的 `cache_usage.total_input_tokens`：Anthropic 将未缓存输入、缓存读取和缓存新写相加；OpenAI-compatible 的输入已含 cached 子集，不得在前端重复相加。`⚡ cached` 后的紧凑百分比表示缓存读取占该总输入的比例；分母不可靠时省略百分比。读取与新写之间的前缀复用率只在详情中单独标注。
 - helper 的 `api` 和 `--via-ssh` 模式读取 Admin request-log API；`local` 读取 JSON；`ssh` 读取容器日志。
 - 默认页面不应堆满工程 debug 字段。
 - 配置响应不得回显长期密钥；配置页以 `*_configured` 表示已有值，空输入表示保持不变。

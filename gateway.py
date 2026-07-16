@@ -466,8 +466,8 @@ def _aggregate_cache_usage(usages: list[dict], protocol: str = "") -> dict:
         "total_input_tokens": normalized_input_total,
         "total_input_reported": total_input_reported,
         "cache_read_percent": (
-            round(total_read * 100 / reported_input_total, 1)
-            if input_reported and reported_input_total > 0 and total_read <= reported_input_total
+            round(total_read * 100 / normalized_input_total, 1)
+            if total_input_reported and normalized_input_total > 0 and total_read <= normalized_input_total
             else None
         ),
         "cache_prefix_reuse_percent": (

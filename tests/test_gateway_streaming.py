@@ -157,7 +157,9 @@ def test_round_usage_records_protocol_normalized_total_input():
 
     assert round_log["cache_usage"]["total_input_tokens"] == 1010
     assert round_log["cache_usage"]["cache_read_input_tokens"] == 700
+    assert round_log["cache_usage"]["cache_read_percent"] == 69.3
     assert ctx.log_entry["cache_usage"]["total_input_tokens"] == 1010
+    assert ctx.log_entry["cache_usage"]["cache_read_percent"] == 69.3
 
 
 def test_cache_prefix_fingerprints_ignore_cache_control_metadata():

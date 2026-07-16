@@ -358,7 +358,8 @@
 - 修复一：继续提供 `prompt_tokens_details.cached_tokens` 兼容字段，同时保留供应商上报的 cache read、cache write 和 TTL 创建明细；明确上报的 0 也保留。
 - 已确认问题二：部分兼容 relay 同时返回 5m/1h 创建 token 分项且不返回总数时，摘要使用 `or` 只取第一项，导致总写入小于明细之和。
 - 修复二：优先使用供应商明确总数；缺少总数时对已有 TTL 明细求和。
-- 总输入显示：新增每轮 `cache_usage.total_input_tokens`。Anthropic 按未缓存输入 + read + creation 归一化；OpenAI-compatible 直接使用已包含 cached 子集的 `prompt_tokens` / `input_tokens`。前端标签从含输出的 `tok` 改为不含输出的 `input`，`⚡ cached` 口径不变。
+- 总输入显示：新增每轮 `cache_usage.total_input_tokens`。Anthropic 按未缓存输入 + read + creation 归一化；OpenAI-compatible 直接使用已包含 cached 子集的 `prompt_tokens` / `input_tokens`。前端标签从含输出的 `tok` 改为不含输出的 `input`。
+- 单条缓存率：`⚡ cached` 后的百分比使用 read / normalized total input；没有可靠总输入时不显示百分比。原 read / (read + creation) 口径保留为详情中的“前缀复用率”，不再作为紧凑缓存率。
 - 边界：没有改变 cache breakpoint、上游 payload、客户端基本 token 字段或费用计算；provider unknown 状态留待日志/API 包统一建模。
 - 测试：`tests/test_upstream_adapter_stream.py` 覆盖 Anthropic 原值保留和双 TTL 求和，13 项通过。
 

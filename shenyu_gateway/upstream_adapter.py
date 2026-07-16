@@ -407,8 +407,8 @@ def _cache_usage_summary(usage: Optional[dict], protocol: str = "") -> dict:
         "total_input_tokens": total_input_tokens,
         "total_input_reported": total_input_reported,
         "cache_read_percent": (
-            round(read_tokens * 100 / input_tokens, 1)
-            if input_tokens > 0 and read_tokens <= input_tokens
+            round(read_tokens * 100 / total_input_tokens, 1)
+            if total_input_reported and total_input_tokens > 0 and read_tokens <= total_input_tokens
             else None
         ),
         "cache_prefix_reuse_percent": (

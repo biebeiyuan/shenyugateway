@@ -139,8 +139,15 @@ test('logs page exposes per-round cache structure', async ({ page }) => {
     messages_count: 201,
     stream: true,
     final: true,
-    usage: { input_tokens: 83433, cache_creation_input_tokens: 5983 },
-    cache_usage: { total_input_tokens: 89416, cache_creation_input_tokens: 5983, reported: true },
+    usage: { input_tokens: 94000, cache_read_input_tokens: 6000, cache_creation_input_tokens: 0 },
+    cache_usage: {
+      total_input_tokens: 100000,
+      total_input_reported: true,
+      cache_read_input_tokens: 6000,
+      cache_creation_input_tokens: 0,
+      cache_prefix_reuse_percent: 100,
+      reported: true,
+    },
     prompt_cache: promptCache,
     upstream_payload_summary: { model: 'test-model', messages_count: 197, tools_count: 6 },
     tools: [],
@@ -178,7 +185,10 @@ test('logs page exposes per-round cache structure', async ({ page }) => {
   })
   await openAdminRoute(page, '/logs', async () => {
     await expect(page.getByTestId('page-logs')).toBeVisible()
-    await page.getByTestId('log-summary-cache-structure-round-1').click()
+    const summary = page.getByTestId('log-summary-cache-structure-round-1')
+    await expect(summary).toContainText('6.0k cached · 6%')
+    await expect(summary.locator('.tag-cache')).toHaveAttribute('title', /前缀复用 100%/)
+    await summary.click()
     await page.getByTestId('log-tab-upstream-cache-structure-round-1').click()
     const detail = page.getByTestId('log-detail-cache-structure-round-1')
     await expect(detail).toContainText('messages[190].stable_tail.content[0]')
