@@ -260,6 +260,7 @@
 - Admin 与 helper 的 API 模式合并读取进程内 request-log deque 和 SQLite `request_log_history`；同一 id 优先使用当前进程中的实时版本。
 - helper `local` 读取 retained JSON，`ssh` 读取容器 stdout/stderr，它们不是同一底层数据。
 - README 已从 1179 行精简到约 400 行；子系统细节和八区地图已迁入 `docs/architecture/`。
+- README Maintenance Map 是顶层运行模块与独立 Admin 视图的反向索引；package 内部 mixin 继续由 package 条目汇总，`tests/test_project_map.py` 检查新增漏项和失效路径。
 
 ### 待验证风险
 
@@ -268,13 +269,13 @@
 | P2 | 日志列表是否仍复制过多 memory island、timeline 和 round 摘要 | 返回字段已确认 | 序列化体积基准 |
 | P2 | `gateway_admin_routes.py` 聚合多个领域，修改时回归面较大 | import/call 依赖已确认 | 按路由领域拆分建议，不立即搬文件 |
 | P3 | README、DEBUGGING 和专题稿存在重复事实漂移 | README 子系统章节已迁出，文档职责与历史状态已建立 | 后续改动按 DOCS_MAP 内容归属维护 |
-| P3 | `tool_registry.py` 带 UTF-8 BOM | 文件字节已确认 | 单文件编码清理和编译测试 |
 
 ### 现有测试证据
 
 - `tests/test_vps_gateway_logs.py`
 - `tests/test_gateway_store.py`
 - `tests/test_external_contracts.py`
+- `tests/test_project_map.py`
 
 ### 暂不修改
 

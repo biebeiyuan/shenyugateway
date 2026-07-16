@@ -29,11 +29,23 @@
 - Keep the old-newspaper basket reader-facing: list archived issues in reverse order by their Asia/Shanghai publication date, mark an issue read only when its full date is opened, and search stored titles and RSS summaries with literal case-insensitive matching only. Never include drafts, discarded issues, or the current windowsill issue, and do not replace this grep-style lookup with semantic search.
 - History branch detection must compare normalized semantic content, not client representation details. Expired images, dynamic extra bundles, and equivalent string versus text-block forms must not reset the context epoch; only a real earlier conversation edit should be classified as `branch`.
 - If a command, dependency, environment detail, missing document, or repeated manual step makes work slower or less reliable, tell the owner promptly and suggest a concrete improvement. Improving the agent workflow is part of maintaining the project.
-- Before pushing or handing off a meaningful change, consider whether `README.md`, `DESIGN.md`, `DEBUGGING_GUIDE.md`, `LOGS_GUIDE.md`, or `DOCS_MAP.md` must be updated. Update only documentation whose current truth changed; do not create a new design document by default.
-- When a feature develops a clear, independently maintained boundary, extract the smallest coherent module or frontend component and update the existing code map or owning architecture document in the same change. Structure-only extraction must preserve user-visible behavior, and small features should not each receive a duplicate standalone design document.
+- Before pushing or handing off a meaningful change, consider whether `README.md`, `DESIGN.md`, the owning `docs/architecture/*.md` reference, `DEBUGGING_GUIDE.md`, `LOGS_GUIDE.md`, or `DOCS_MAP.md` must be updated. Update only documentation whose current truth changed; do not create a new design document by default.
+- When a feature develops a clear, independently maintained boundary, extract the smallest coherent module or frontend component and follow the project-map synchronization checklist below in the same change. Structure-only extraction must preserve user-visible behavior, and small features should not each receive a duplicate standalone design document.
 - Preserve unrelated working-tree changes. Never stage or commit the whole tree without reviewing the exact diff.
 
 ## Mechanical Change Checklists
+
+### Project map synchronization
+
+Before handing off a meaningful change:
+
+1. For every touched runtime module or independently maintained frontend view/panel, verify that its path is discoverable in `README.md` § Maintenance Map, either directly or through a package entry. Add a missing entry even when the file predates the current change; when such a boundary is added, removed, renamed, or moved, update the map in the same change.
+2. Package-internal mixins and small private helpers may remain summarized under their package entry unless they become an independently maintained boundary. Tests, generated files, and build artifacts do not need per-file map entries.
+3. If module responsibility, a major call chain, or a cross-zone bridge changed, update `docs/architecture/SYSTEM_ZONES.md` and the owning architecture reference. An internal optimization that leaves those facts unchanged should not create architecture-doc churn.
+4. If a Markdown document is added, renamed, archived, or changes status, update `DOCS_MAP.md`. Do not register temporary local investigation notes that will not enter the repository.
+5. When a map-covered path changes, run `python -m pytest -q tests/test_project_map.py` before handoff.
+
+`DOCS_MAP.md` § 地图同步边界 is the authority for which map owns each kind of change.
 
 For every new runtime configuration field that is editable in Admin, inspect and update all of these locations before handoff:
 

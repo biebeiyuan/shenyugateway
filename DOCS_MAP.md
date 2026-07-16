@@ -41,6 +41,20 @@
 | `LOGS_GUIDE.md` | 面向日常使用的日志页速查 | 日志页的含义、标签或展示方式改变时 |
 | `DOCS_MAP.md` | 文档入口、职责和状态 | 新增、归档、改名文档或职责发生变化时 |
 
+## 地图同步边界
+
+地图不是每次改动都全部更新；按改变的事实找到唯一主入口：
+
+| 发生的变化 | 必须核对 | 不需要做 |
+|------|------|------|
+| 修改了运行模块或独立维护的前端视图/面板 | `README.md` § Maintenance Map 是否能直接或通过 package 条目找到该路径；旧文件原本漏项也应在本次补上 | 不把每个 package mixin、私有 helper、测试或生成文件逐一展开 |
+| 新增、删除、改名或移动上述独立边界 | 在同一次改动中更新 `README.md` § Maintenance Map | 不把完整设计说明塞回 README |
+| 模块职责、主要调用链或跨区桥梁改变 | `docs/architecture/SYSTEM_ZONES.md` 和所属现行架构文档 | 纯内部优化且这些事实没变时，不制造文档改动 |
+| 用户可见行为、配置、日志含义或排障方式改变 | 对应的现行专题文档、`DESIGN.md`、`LOGS_GUIDE.md` 或 `DEBUGGING_GUIDE.md` | 不因为“改了代码”就更新所有文档 |
+| Markdown 新增、改名、归档或状态改变 | `DOCS_MAP.md` | 不登记不会进入仓库的临时调查笔记 |
+
+`AGENTS.md` 负责要求 coding agent 在交付前执行这项核对；本节负责说明每类变化由哪张地图或现行文档承接。
+
 ## 专题设计与实施记录
 
 这些文件只在修改对应子系统时阅读。它们包含重要背景，但部分章节记录的是当时方案或实施过程，不能替代当前代码和现行文档。
@@ -62,6 +76,7 @@
 |------|------|
 | `SYSTEM_INVENTORY.md` | 旧 Windows 工作区清单，已被 README 的 Maintenance Map 和本文件取代；保留作历史参考，不作为当前入口 |
 | `docs/history/CLAUDE_REVIEW_FOLLOW_UP.md` | 历史 code-review 执行清单；当前状态以 `docs/architecture/AUDIT_MATRIX.md` 为准 |
+| `docs/history/PROJECT_MAP_AUDIT_2026-07-14.md` | 2026-07-14 项目地图审查快照；部分建议已在后续文档维护中采纳或修正，不作为当前事实 |
 
 ## 维护原则
 

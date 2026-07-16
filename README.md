@@ -62,6 +62,8 @@ The codebase is partly layered already:
 - `shenyu_gateway/context_builder.py`: async parallel gathering of all memory sources into a context package.
 - `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, and cold-start bridge insertion.
 - `shenyu_gateway/context_snapshots.py`: context snapshot creation and helpers for calendar/cold-start sources.
+- `shenyu_gateway/context_window.py`: semantic history-event classification, chunk-safe client-history windowing with high-water/epoch/anchor state, and cold-start bridge overlap deduplication.
+- `shenyu_gateway/memory_island.py`: Stars/Mem island rendering and per-lane retain/rewrite state, including overlap decisions and current/added/updated/removed log summaries.
 - `shenyu_gateway/prepare_messages.py`: cold-start snapshot preparation, runtime state pruning, pending gateway tool turn injection, and message/tool-call helpers.
 
 ### Upstream communication
@@ -150,6 +152,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/ConfigView.vue`: configuration page.
 - `admin/src/views/Mem0View.vue`: Mem prompt/capture/injection/tool controls, mem-note attribute workflow, and old atomic read-only lookup.
 - `admin/src/views/StarsView.vue`: standalone Star entry shell at `/stars`, with split Star panels under `admin/src/views/stars/`.
+- `admin/src/views/stars/StarsLabelsPanel.vue`: manual relationship-label review, small-batch backfill, per-item results, and recent batch history.
 - `admin/src/views/stars/StarsReviewPanel.vue`: admin review scoring, missed recording, and candidate constellation feedback.
 - `admin/src/views/stars/StarsSettingsPanel.vue`: Star memory configuration controls.
 - `admin/src/views/stars/StarsWritePanel.vue`: manual star creation and search.
