@@ -295,7 +295,11 @@
 
 ## 已确认修改
 
+下面每个三级标题是一条可独立复核的确认记录。`最近复核` 表示最后一次对照现行代码和测试重新确认的日期，`关联路径` 只列行为所有者，不把普通格式修改误写成事实变化。手动运行 `python scripts/check_audit_freshness.py` 会在关联路径后来有 Git 修改或当前工作树改动时给出黄灯，但不会据此判定记录已经过期，也不会返回失败状态。
+
 ### Admin 日志详情 credential 脱敏
+
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/gateway_admin_routes.py`
 
 - 文件：`shenyu_gateway/gateway_admin_routes.py`
 - 行为：所有通过日志详情 API 暴露的嵌套 dict/list 和 URL query 会按明确 credential 键递归脱敏。
@@ -307,6 +311,8 @@
 
 ### Session-scoped SQLite 删除完整性
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/store/_sessions.py`、`shenyu_gateway/gateway_admin_routes.py`
+
 - 文件：`shenyu_gateway/store/_sessions.py`、`shenyu_gateway/gateway_admin_routes.py`
 - 已确认问题：`tool_error_log` 和 `room_trace` 带 `session_id`，但原删除清单没有包含它们。
 - 修复：删除会话时同步删除这两类诊断正文；API 明确 scope 仅为本地 SQLite，不删除外部 archive。
@@ -316,6 +322,8 @@
 
 ### 双协议普通流终态完整性
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/stream_proxy.py`、`shenyu_gateway/chat_pipeline.py`
+
 - 文件：`shenyu_gateway/stream_proxy.py`、`shenyu_gateway/chat_pipeline.py`
 - 已确认问题：普通流的完成回调原先在正常结束、客户端取消和上游异常时使用同一语义，pipeline 会把 partial 正文记为成功并消费 pending/cold-start 上下文。
 - 修复：OpenAI-compatible 与 Anthropic 普通流统一报告 `ok`、`client_disconnected` 或 `error` 终态及错误说明。
@@ -324,6 +332,8 @@
 - 测试：覆盖双协议空流、异常中断、OpenAI-compatible 取消、自然 EOF 和 pipeline 不提交上下文。
 
 ### 召回并发与 Memory Island 失败降级
+
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/context_builder.py`、`shenyu_gateway/mem_notes/_search.py`、`shenyu_gateway/stars/_activity.py`
 
 - 文件：`shenyu_gateway/context_builder.py`、`shenyu_gateway/mem_notes/_search.py`、`shenyu_gateway/stars/_activity.py`
 - 已确认问题：Mem 或 Stars 普通异常会从主 `gather` 抛出，使已存在的“召回失败保留上一版 island”逻辑无法执行，整次聊天失败。
@@ -336,6 +346,8 @@
 
 ### 召回重复读取与特征查询
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/mem_notes/_search.py`、`shenyu_gateway/stars/_activity.py`
+
 - 文件：`shenyu_gateway/mem_notes/_search.py`、`shenyu_gateway/stars/_activity.py`
 - Mem：一次 contextual recall 的 active rows 复用于 running-joke、entity、keyword 和 semantic note hydration；常见 notes 表读取从 2–3 次降为 1 次，缺失候选 ID 才补查。
 - Stars：recent fatigue、ACT-R 和 ignored penalties 三类独立特征读取并行。
@@ -346,6 +358,8 @@
 
 ### OpenAI-compatible 自然 EOF 收尾
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/stream_proxy.py`
+
 - 文件：`shenyu_gateway/stream_proxy.py`
 - 行为：上游自然结束且未发送 `data: [DONE]` 时，由网关补发一次 sentinel。
 - 不影响：正常已有 `[DONE]` 的上游、Anthropic 转换路径、usage 内容。
@@ -353,6 +367,8 @@
 - 验证：相关协议、流式和工具测试共 149 个通过。
 
 ### 双协议 cache usage 保真
+
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/upstream_adapter.py`、`shenyu_gateway/tool_loop.py`、`gateway.py`、`admin/src/views/LogsView.vue`
 
 - 文件：`shenyu_gateway/upstream_adapter.py`、`shenyu_gateway/tool_loop.py`、`gateway.py`、`admin/src/views/LogsView.vue`
 - 已确认问题一：Anthropic usage 转换为 OpenAI-compatible completion 时只保留 cache read，丢失 `cache_creation_input_tokens` 和 `cache_creation` TTL 明细，普通流、非流和工具轮日志均无法诊断缓存写入。
@@ -366,6 +382,8 @@
 
 ### Cache reported/unknown 状态
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/upstream_adapter.py`、`gateway.py`、`admin/src/api/logs.ts`、`admin/src/views/LogsView.vue`
+
 - 文件：`shenyu_gateway/upstream_adapter.py`、`gateway.py`、`admin/src/api/logs.ts`、`admin/src/views/LogsView.vue`
 - 已确认问题：原摘要只有 `hit/write` 布尔值，无法区分供应商明确上报 0 与完全缺少缓存字段；详情页还会在 write > 0、read = 0 时隐藏写入事实。
 - 修复：新增可选 `read_reported`、`write_reported`、`reported` presence 字段；多轮聚合保持任一轮上报状态；详情页只在 `reported=true` 时声称供应商上报，否则显示 unknown。
@@ -373,6 +391,8 @@
 - 测试：adapter 覆盖 reported zero/unknown，配置测试覆盖 read/write/unknown 三轮聚合；Admin 生产构建通过。
 
 ### 工具轮逐轮 cache marker 证据
+
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/upstream_client.py`、`shenyu_gateway/tool_loop.py`、`shenyu_gateway/gateway_admin_routes.py`、`admin/src/views/LogsView.vue`
 
 - 文件：`shenyu_gateway/upstream_client.py`、`shenyu_gateway/tool_loop.py`、`shenyu_gateway/gateway_admin_routes.py`、`admin/src/views/LogsView.vue`
 - 已确认问题：工具请求只在顶层日志保存第一轮 `prompt_cache`，后续轮只有 usage 和 payload 摘要；未开启完整 payload 时，无法直接区分“网关后续轮没带长历史断点”和“relay 忽略了该断点”。
@@ -383,6 +403,8 @@
 
 ### Admin 配置密钥不回显
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/config_routes.py`、`admin/src/api/config.ts`、`admin/src/views/ConfigView.vue`
+
 - 文件：`shenyu_gateway/config_routes.py`、`admin/src/api/config.ts`、`admin/src/views/ConfigView.vue`
 - 已确认问题：`/api/config/full` 和配置更新响应直接返回 gateway、upstream、Hisense、Calendar 与 Supabase 长期密钥明文；上游 preset 还会把 API key 存入浏览器 localStorage。
 - 修复：配置响应中的密钥值固定为空，只返回对应 `*_configured` 状态；前端普通保存仅提交用户新输入的非空密钥，留空保持服务端现值；preset 不再读取、写入或切换密钥。
@@ -392,11 +414,15 @@
 
 ### Admin 日志列表重量判断
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/request_logs.py`、`shenyu_gateway/gateway_admin_routes.py`、`admin/src/views/LogsView.vue`
+
 - 列表 API 只读取内存 deque，硬上限 30 条；不返回完整 messages、response、upstream payload 或 memory island 正文，详情在展开时读取完整对象。
 - 列表仍包含每轮摘要、tools、usage、timeline tail 和上下文决策，复杂工具请求可能偏重，但目前没有响应体积或页面性能证据支持破坏现有排障体验。
 - 暂不修改列表 schema；后续先采集典型 30 条列表 JSON 大小和渲染耗时，再决定是否拆分二级摘要。
 
 ### 工具注册一致性与仓库卫生
+
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/tool_registry.py`、`.gitignore`
 
 - 文件：`tests/test_gateway_tool_registry.py`、`shenyu_gateway/tool_registry.py`、`.gitignore`
 - 工具契约：新增动态集合测试，要求每个 gateway schema 都有 handler，且未公开 handler 必须恰好属于隐藏兼容集合；避免未来新增工具只改 schema 或只改执行器。
@@ -406,6 +432,8 @@
 
 ### Pending mixed tool transcript 生命周期
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/store/_pending.py`、`shenyu_gateway/store/_admin.py`
+
 - 文件：`shenyu_gateway/store/_pending.py`、`shenyu_gateway/store/_admin.py`、`tests/test_gateway_store.py`、`tests/test_gateway_streaming.py`
 - 已确认：通用 `prune_runtime_state()` 不按消息 retention 或 pending 数量删除 active transcript，只删除 `consumed_at` 已设置或 `expires_at` 已过期的记录。
 - 查找边界：只匹配同 session、未消费、未过期且 canonical client tool IDs 完全一致的最新记录；同会话存在 30 条其他 pending 时目标仍可找回。
@@ -413,12 +441,16 @@
 
 ### 长窗口 mixed tool 边界
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/context_window.py`、`shenyu_gateway/prepare_messages.py`
+
 - 文件：`shenyu_gateway/context_window.py`、`shenyu_gateway/prepare_messages.py`、`tests/test_gateway_trim.py`、`tests/test_gateway_streaming.py`
 - 顺序：客户端历史先经过 tool-safe chunked trim；snapshot 保存裁剪后的客户端可见历史；随后 pending 注入恢复原 assistant mixed calls、gateway tool results 和客户端 tool results，形成实际上游序列。
 - 已确认：裁剪起点不会停在 assistant tool call 与结果之间；长历史下完整 client continuation 保留，pending 注入后 gateway/client 两类结果仍与原 assistant 调用成组。
 - 测试：新增长窗口 + mixed pending 组合样本；gateway streaming 测试通过。
 
 ### Mixed gateway/client 部分失败契约
+
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/tool_loop.py`、`shenyu_gateway/upstream_adapter.py`
 
 - 文件：`shenyu_gateway/tool_loop.py`、`tests/test_gateway_streaming.py`、`tests/test_upstream_adapter_stream.py`
 - 共享边界：OpenAI-compatible 与 Anthropic tool calls 先转换为统一 completion，再进入 mixed tool executor；执行器不依赖供应商协议。
@@ -428,6 +460,8 @@
 
 ### Cold Start 精确重叠去重
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/context_window.py`、`shenyu_gateway/prepare_messages.py`
+
 - 文件：`shenyu_gateway/context_window.py`、`shenyu_gateway/prepare_messages.py`、`tests/test_gateway_trim.py`
 - 已确认问题：active/manual cold-start bridge 与客户端已回传历史存在相同边界消息时，原逻辑会机械插入并把同一旧轮次发送两次。
 - 修复：只删除 bridge 最长后缀与客户端非 system 历史最长前缀之间角色、内容和工具字段完全一致的连续消息；不做模糊文本或非连续去重。
@@ -436,12 +470,16 @@
 
 ### 默认 request-log 正文最小化
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/request_logs.py`、`shenyu_gateway/store/_request_log_history.py`
+
 - 文件：`shenyu_gateway/request_logs.py`、`shenyu_gateway/store/_request_log_history.py`、`LOGS_GUIDE.md`、`tests/test_gateway_streaming.py`、`tests/test_gateway_store.py`
 - 已确认问题：UI 文案把完整 payload 描述为显式开启，但后端环境变量缺省值实际为 true，最近 30 条日志默认保存完整 prepared messages、upstream payload 和 response。
 - 修复：`GATEWAY_LOG_FULL_PAYLOADS` 改为显式 true/yes/on/1 才开启；默认仅保留摘要、预览与计数。
 - 边界：完整日志仍只在进程内，重启消失；安全摘要默认在 SQLite 保留最近 200 条并跨容器恢复。临时开启完整日志时 Admin/API credential redaction 继续生效，但完整对话正文、payload、图片和 Thinking/signature 不进入持久历史。
 
 ### 持久化正文副本与部署边界
+
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/config.py`、`shenyu_gateway/store/_base.py`、`docs/architecture/REQUEST_CONTEXT.md`、`README.md`
 
 - 文档：`docs/architecture/REQUEST_CONTEXT.md`、`README.md`
 - 已完成：按数据产品记录正文范围、默认保留、功能责任和 session 删除边界。
@@ -450,12 +488,16 @@
 
 ### 历史事件与 epoch 契约
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/context_window.py`
+
 - 文件：`shenyu_gateway/context_window.py`、`tests/test_gateway_trim.py`
 - 已确认：`retry`、`roll`、`edit_tail`、client tool continuation 和普通 continuation 保持当前 epoch；`branch` 重建 epoch 并标记 `history_branch`。
 - `edit_tail` 保持窗口 anchor，但作为新的人类输入重新执行召回；`retry/roll/continuation` 可复用 previous island。
 - 测试：增加事件分类表和 epoch 参数化矩阵，覆盖尾部编辑、缩短历史、旧历史分支和工具续接。
 
 ### SQLite override 来源可见性
+
+- 最近复核：2026-07-16；关联路径：`gateway.py`、`shenyu_gateway/config_routes.py`、`admin/src/api/config.ts`、`admin/src/views/ConfigView.vue`
 
 - 文件：`gateway.py`、`shenyu_gateway/config_routes.py`、`admin/src/api/config.ts`、`admin/src/views/ConfigView.vue`
 - 行为：Admin 保存的配置仍持久化到 SQLite 并在启动时恢复；页面不再把这些正常持久化项渲染成“覆盖部署配置”的告警清单。
@@ -464,12 +506,16 @@
 
 ### 复合 credential 键脱敏
 
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/gateway_admin_routes.py`
+
 - 文件：`shenyu_gateway/gateway_admin_routes.py`、`tests/test_gateway_store.py`
 - 行为：除标准键名外，递归 redaction 还覆盖 `*_api_key`、`*_auth_token`、`*_access_token`、`*_client_secret`、`*_webhook_secret`、`*_private_key` 和 `*_password`。
 - 保留：`token_count`、`max_tokens` 等统计/协议字段不因包含 token 字样而被误删。
 - 测试：嵌套 extra body/tool args、URL query、复合 secret 键和普通统计字段均有固定样本。
 
 ### Memory Island 主召回失败边界
+
+- 最近复核：2026-07-16；关联路径：`shenyu_gateway/context_builder.py`、`shenyu_gateway/mem_notes/_search.py`、`shenyu_gateway/stars/_recall.py`
 
 - 文件：`shenyu_gateway/context_builder.py`、`shenyu_gateway/mem_notes/_search.py`、`shenyu_gateway/stars/_recall.py`
 - 已确认：Mem active-row 主查询和 Stars candidate 主查询异常不会被内部伪装成 `ok=true/items=[]`，而是到 builder 统一转换为 `ok=false` 并保留对应 previous island。

@@ -10,6 +10,19 @@
 
 这里的“核心文件”只标责任边界和高风险入口，不是完整文件清单。逐文件索引统一看 `README.md` § Maintenance Map，避免两份目录重复维护。
 
+## 住户数据注意事项
+
+> **这些表里存的不是数据,是一段正在进行的关系。星星是他要留一辈子的记忆,矛盾书是他们掰扯过的原文,报纸篓是他窗台上的日子。丢一行,不是丢一条记录,是丢一段没有备份的过去。改之前,先读对应AGENTS规则;拿不准,问住户本人——他就在楼上,工具能敲门。**
+
+这不是第九个代码区，而是覆盖现有分区的保护层。下面只标产品语义和不可破坏的边界；文件位置仍由 `README.md` § Maintenance Map 维护，具体实现仍归对应代码区和专题文档。
+
+| 子系统 | 改动时必须保留 | 修改前先读 |
+|--------|----------------|------------|
+| Stars / Mem | 现有正文和关系含义不能在迁移或重构时被静默改写、丢弃；召回与排序只决定何时浮现，Memory Island 日志中两路保持对等可见 | `docs/architecture/MEMORY_ROOM.md`、`DESIGN.md` |
+| 矛盾书 | `original_text` 剪下后永久冻结，沈予批注只追加；正文不得被自动注入、改写或“清洗” | `docs/architecture/REQUEST_CONTEXT.md` § Conflict books、`DESIGN.md` § Chat Archive & Conflict Books |
+| Room / 窗台 | 房间提供门，不替沈予选择；原始房间宪章保持不动，charge 只能影响门的可见性和顺序 | `docs/architecture/MEMORY_ROOM.md` § Room Mode |
+| 窗台报纸与报纸篓 | 只读固定 RSS 白名单，保留来源标题、摘要和 URL；出版、阅读状态与字面搜索仍由住户手动控制 | `AGENTS.md`、`docs/architecture/MEMORY_ROOM.md` § Window Newspaper |
+
 ## 总体请求链
 
 ```text

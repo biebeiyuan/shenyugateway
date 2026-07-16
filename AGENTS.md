@@ -27,6 +27,7 @@
 - In Memory Island logs, Stars and Mem are peer lanes. When showing current contents or changes, apply the same current/added/updated/removed semantics to both; do not make one lane less inspectable than the other.
 - The Room window newspaper is a manual RSS workflow, not personalized recommendation. Fetch only the fixed feed allowlist, keep source titles/summaries/URLs unchanged apart from HTML cleanup and a three-sentence excerpt, reject entries whose feeds provide no real summary, and let the optional quality model return drop ids only. Never let that model crawl pages, translate, summarize, or rewrite feed content.
 - Keep the old-newspaper basket reader-facing: list archived issues in reverse order by their Asia/Shanghai publication date, mark an issue read only when its full date is opened, and search stored titles and RSS summaries with literal case-insensitive matching only. Never include drafts, discarded issues, or the current windowsill issue, and do not replace this grep-style lookup with semantic search.
+- Conflict books are frozen relationship records. Keep `original_text` immutable after clipping, keep Shenyu annotations append-only with timestamps, and never auto-inject the book body; if a migration or cleanup cannot prove those invariants remain intact, stop and ask the resident.
 - History branch detection must compare normalized semantic content, not client representation details. Expired images, dynamic extra bundles, and equivalent string versus text-block forms must not reset the context epoch; only a real earlier conversation edit should be classified as `branch`.
 - If a command, dependency, environment detail, missing document, or repeated manual step makes work slower or less reliable, tell the owner promptly and suggest a concrete improvement. Improving the agent workflow is part of maintaining the project.
 - Before pushing or handing off a meaningful change, consider whether `README.md`, `DESIGN.md`, the owning `docs/architecture/*.md` reference, `DEBUGGING_GUIDE.md`, `LOGS_GUIDE.md`, or `DOCS_MAP.md` must be updated. Update only documentation whose current truth changed; do not create a new design document by default.
@@ -73,6 +74,8 @@ After Admin routes, page loading, or core interactions change, run `cd admin && 
 ## Debugging Approach
 
 First listen to the complete symptom and restate the question being investigated. Use the gateway's architecture to identify the relevant boundaries, then inspect logs before assigning blame or changing code. Logs are evidence, not a substitute for understanding what the owner observed.
+
+After a production bug's root cause is confirmed by logs, code, or tests and the fix is complete, append exactly one row to `DEBUGGING_GUIDE.md` § Symptom Autopsy Index in the format “症状 → 根因文件 → 一句话教训”. Do not record unverified suspicions as autopsy facts.
 
 For gateway, Coolify, VPS, upstream, streaming, cache, or tool-call trouble, the helper is usually the first evidence source:
 

@@ -2,6 +2,8 @@
 
 本文由原 README 的现行子系统章节迁出，负责 Mem Notes、Star Memory、Room Mode 和 private capture 行为。长期设计原则见 `DESIGN.md`。
 
+这些子系统属于 `docs/architecture/SYSTEM_ZONES.md` § 住户数据注意事项覆盖的关系数据；修改前先读其中的共同保护边界，本页只维护具体行为。
+
 ## Mem Note Layer
 
 Mem notes are small personal notes, separate from event memories and calendar pages.

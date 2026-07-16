@@ -55,6 +55,8 @@
 
 `AGENTS.md` 负责要求 coding agent 在交付前执行这项核对；本节负责说明每类变化由哪张地图或现行文档承接。
 
+机械护栏与语义提醒分开处理：`tests/test_project_map.py` 对 README 运行文件覆盖、DOCS_MAP 现行文档路径和 SYSTEM_ZONES 核心路径做红灯检查；`scripts/check_audit_freshness.py` 只根据 AUDIT_MATRIX 的最近复核日期、关联路径、Git 最近修改和当前工作树给黄灯提醒，始终不把“文件后来改过”判定成事实已经过期。
+
 ## 专题设计与实施记录
 
 这些文件只在修改对应子系统时阅读。它们包含重要背景，但部分章节记录的是当时方案或实施过程，不能替代当前代码和现行文档。
@@ -74,6 +76,7 @@
 
 | 文档 | 状态 |
 |------|------|
+| `docs/README.md` | GitHub 浏览 `docs/` 目录时使用的一行入口指针；不维护独立文档清单或事实 |
 | `SYSTEM_INVENTORY.md` | 旧 Windows 工作区清单，已被 README 的 Maintenance Map 和本文件取代；保留作历史参考，不作为当前入口 |
 | `docs/history/CLAUDE_REVIEW_FOLLOW_UP.md` | 历史 code-review 执行清单；当前状态以 `docs/architecture/AUDIT_MATRIX.md` 为准 |
 | `docs/history/PROJECT_MAP_AUDIT_2026-07-14.md` | 2026-07-14 项目地图审查快照；部分建议已在后续文档维护中采纳或修正，不作为当前事实 |

@@ -161,6 +161,13 @@ Preserve behavior before cleanup. This gateway has browser-facing contracts outs
 
 Do not commit one-off test files. Prefer `python -c`, temp directories, or existing `test_*.py` files. If a temporary test script is created in the repo, delete it before committing unless it is intentionally promoted into a permanent regression test and documented.
 
+## Symptom Autopsy Index
+
+Only add a row after the root cause has been confirmed by logs, code, or tests and the fix is complete. Keep every entry in the fixed format “症状 → 根因文件 → 一句话教训”; diagnosis directions and unverified suspicions do not belong here.
+
+| 症状 | 根因文件 | 一句话教训 |
+|------|----------|------------|
+
 ## Module Map
 
 - `gateway.py`: FastAPI app, middleware, routes, service orchestration, upstream HTTP calls, tool loop, response filtering, and public API contracts.
