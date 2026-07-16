@@ -106,11 +106,39 @@ test('Mem page loads and its search field accepts input', async ({ page }) => {
 })
 
 test('Stars page loads and switches modes', async ({ page }) => {
+  const star = {
+    id: 'scene-history-star',
+    session_tag: 'smoke',
+    content: '一颗用于检查最近分类记录的星星',
+    chord: 'Am',
+    scenes: ['seen', 'want'],
+    status: 'active',
+    is_constant: false,
+  }
+  await page.addInitScript(({ history }) => {
+    window.localStorage.setItem('star-scene-batch-history-v1', JSON.stringify(history))
+  }, {
+    history: [{
+      id: 'recent-scene-run',
+      createdAt: '2026-07-16T08:30:00.000Z',
+      selected: 1,
+      updated: 1,
+      failed: 0,
+      items: [{ starId: star.id, assignedScenes: ['seen'], ok: true }],
+    }],
+  })
+  await page.route('**/api/gateway/stars?*', async (route) => {
+    await route.fulfill({ json: { ok: true, count: 1, items: [star] } })
+  })
   await openAdminRoute(page, '/stars', async () => {
     await expect(page.getByTestId('page-stars')).toBeVisible()
     const labels = page.getByTestId('stars-mode-labels')
     await labels.click()
     await expect(labels).toHaveClass(/active/)
+    await expect(page.getByTestId('stars-label-history')).toBeVisible()
+    await expect(page.getByTestId(`stars-label-history-item-${star.id}`)).toContainText('已手动调整')
+    await expect(page.getByTestId(`stars-label-history-toggle-${star.id}-seen`)).toHaveClass(/selected/)
+    await expect(page.getByTestId(`stars-label-history-toggle-${star.id}-want`)).toHaveClass(/selected/)
   })
 })
 

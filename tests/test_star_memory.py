@@ -606,3 +606,17 @@ def test_set_scenes_preserves_content_and_other_metadata():
     assert row["metadata"]["note"] == "保留"
     assert row["metadata"]["scenes"] == ["warm", "rift"]
     assert "scene" not in row["metadata"]
+
+
+def test_set_scenes_accepts_new_scene_aliases():
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        created = await service.create_star("新的关系场景")
+        return await service.set_scenes(created["star_id"], ["被看穿", "欲/馋", "漏"])
+
+    result = asyncio.run(run())
+
+    assert result["ok"] is True
+    assert result["star"]["scenes"] == ["seen", "want", "loose"]

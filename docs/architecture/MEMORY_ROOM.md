@@ -61,7 +61,7 @@ The design goal is not "store everything and always inject more." It is:
 4. Treat explicit feedback as training data for later weight/threshold changes.
 5. Avoid learning from noisy silence: one skipped candidate is not a negative sample; repeated ignored candidates create only a weak penalty.
 
-Admin scene-label backfill asks the configured LLM to classify each star by its central event and its place in Shenyu and Yuanyuan's relationship, rather than by isolated words such as tears, code, or dates. Automatic results may contain zero to three labels from `anchor`, `deep`, `warm`, `rift`, `create`, and `daily`; manual admin edits remain unrestricted.
+Admin scene-label backfill asks the configured LLM to classify each star by its central event and its place in Shenyu and Yuanyuan's relationship, rather than by isolated words such as tears, code, or dates. Automatic results may contain zero to three labels from `anchor`, `deep`, `warm`, `rift`, `create`, `daily`, `seen`, `want`, and `loose`; manual admin edits may select any number of those fixed labels.
 
 Core tables:
 
@@ -154,7 +154,7 @@ STAR_SCENE_LLM_API_KEY=
 STAR_SCENE_LLM_PROTOCOL=
 ```
 
-Scene labels are manually backfilled from the admin API; star creation does not call the classifier. The classifier reads the six descriptions from `star_scene_rules.json`, returns zero or more fixed labels, and only writes `metadata.scenes`. Rows that already contain `metadata.scenes` (including an empty list) or legacy `metadata.scene` are skipped and never overwritten by batch backfill. The dedicated per-star patch route is the explicit manual correction path.
+Scene labels are manually backfilled from the admin API; star creation does not call the classifier. The Admin classifier uses the nine-label relationship prompt and only writes `metadata.scenes`. Rows that already contain `metadata.scenes` (including an empty list) or legacy `metadata.scene` are skipped and never overwritten by batch backfill. The dedicated per-star patch route is the explicit manual correction path. These multi-label values are not currently connected to recall scoring; `star_scene_rules.json` remains the separate configuration for the existing single-scene recall classifier.
 
 Tools:
 

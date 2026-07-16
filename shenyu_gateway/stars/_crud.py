@@ -22,6 +22,7 @@ from ._scene import (
     _load_scene_config,
     _normalize_scenes,
     _parse_scene_batch,
+    _scene_key,
     _scene_batch_prompt,
 )
 from ._weights import StarWeights
@@ -323,7 +324,7 @@ class CrudMixin:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured."}
         normalized = _normalize_scenes(scenes)
-        invalid = [str(item) for item in (scenes or []) if str(item or "").strip().lower() not in SCENE_KEYS]
+        invalid = [str(item) for item in (scenes or []) if _scene_key(item) not in SCENE_KEYS]
         if invalid:
             return {"ok": False, "error": f"invalid scenes: {', '.join(invalid)}"}
         rows = await self.supabase.query(STAR_TABLE, {"select": STAR_SELECT, "id": f"eq.{star_id}", "limit": "1"})
