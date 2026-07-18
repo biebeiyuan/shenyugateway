@@ -473,14 +473,14 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_conflict_read",
-                "description": "翻开一本矛盾书：当时的原文、圆圆的注、我之前留下的批注。什么时候翻、翻不翻都是我自己的事。",
+                "description": "翻开一本矛盾书：先用 shenyu_conflict_list 看书架，再传精确 title；也可传 book_id。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "book_id": {"type": "string"},
                         "id": {"type": "string", "description": "book_id 的别名"},
+                        "title": {"type": "string", "description": "书架上的精确书名；标题重复时会拒绝猜测"},
                     },
-                    "required": ["book_id"],
                 },
             },
         },
@@ -488,15 +488,16 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_conflict_annotate",
-                "description": "在一本矛盾书里追加一条我的批注。落笔即存档：不可改、不可删，每次的理解都会留在那里。",
+                "description": "在一本矛盾书里追加一条批注。传书架上的精确 title 或 book_id；落笔即存档，不可改、不可删。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "book_id": {"type": "string"},
                         "id": {"type": "string", "description": "book_id 的别名"},
+                        "title": {"type": "string", "description": "书架上的精确书名；标题重复时会拒绝猜测"},
                         "content": {"type": "string"},
                     },
-                    "required": ["book_id", "content"],
+                    "required": ["content"],
                 },
             },
         },

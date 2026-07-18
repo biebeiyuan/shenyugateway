@@ -21,7 +21,7 @@ from shenyu_gateway.tool_schemas import (
     _gateway_notebook_and_recall_tools,
     _gateway_supabase_tools,
 )
-from shenyu_gateway.tool_loop import _classify_tool_error, _tool_call_arguments
+from shenyu_gateway.tool_loop import _classify_tool_error, _decorate_tool_error_result, _tool_call_arguments
 
 
 class FakeToolService:
@@ -428,12 +428,18 @@ class FakeToolService:
         self.calls.append({"tool": "shenyu_conflict_list"})
         return {"ok": True, "books": []}
 
-    async def conflict_read(self, book_id):
-        self.calls.append({"tool": "shenyu_conflict_read", "book_id": book_id})
+    async def conflict_read(self, book_id, title=""):
+        call = {"tool": "shenyu_conflict_read", "book_id": book_id}
+        if title:
+            call["title"] = title
+        self.calls.append(call)
         return {"ok": True, "book": {"id": book_id}}
 
-    async def conflict_annotate(self, book_id, content):
-        self.calls.append({"tool": "shenyu_conflict_annotate", "book_id": book_id, "content": content})
+    async def conflict_annotate(self, book_id, content, title=""):
+        call = {"tool": "shenyu_conflict_annotate", "book_id": book_id, "content": content}
+        if title:
+            call["title"] = title
+        self.calls.append(call)
         return {"ok": True}
 
     async def supabase_query(
@@ -1063,12 +1069,39 @@ def test_execute_gateway_tool_reports_invalid_broker_arguments():
     assert result == {"ok": False, "error": "`params`/`arguments` must be an object or a JSON object string."}
 
 
+def test_execute_gateway_tool_routes_conflict_title_through_broker():
+    service = FakeToolService()
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {"tool": "shenyu_conflict_read", "params": {"title": "唯一书名"}},
+            session_tag="default",
+            cfg=_cfg(gateway_tool_surface="daily"),
+            service=service,
+        )
+    )
+
+    assert result["ok"] is True
+    assert service.calls == [{"tool": "shenyu_conflict_read", "book_id": "", "title": "唯一书名"}]
+
+
 def test_classify_tool_error_uses_declared_kind_first():
     assert _classify_tool_error({"ok": False, "error": "content is required"}) == "validation"
     assert _classify_tool_error({"ok": False, "error": "Supabase not configured"}) == "config"
     assert _classify_tool_error({"ok": False, "error": "'list' object has no attribute 'strip'"}) == "exception"
     assert _classify_tool_error({"ok": False, "error": "not configured", "error_kind": "validation"}) == "validation"
     assert _classify_tool_error("boom") == "exception"
+
+
+def test_tool_error_result_adds_resident_ps_without_replacing_error():
+    validation = _decorate_tool_error_result({"ok": False, "error": "book_id or title is required"})
+    assert validation["error"] == "book_id or title is required"
+    assert validation["error_kind"] == "validation"
+    assert validation["ps"] == "圆儿ps:予予你仔细看有没有暴露给你正确的方法呀，没有的话一会告诉我！又抓到家里的bug了！"
+
+    exception = _decorate_tool_error_result({"ok": False, "error": "TypeError: bad value", "error_kind": "exception"})
+    assert exception["error_kind"] == "exception"
+    assert exception["ps"] == "圆儿ps:予予你又抓到一个家里的bug^ ^"
 
 
 def test_execute_gateway_tool_reports_unsupported_broker_target():
@@ -1709,6 +1742,47 @@ def test_execute_gateway_tool_accepts_calendar_anchor_date_alias():
     ]
 
 
+def test_execute_gateway_tool_converts_calendar_date_for_week_and_month():
+    for period_type, expected_key in (("week", "2026-W28"), ("month", "2026-07")):
+        service = FakeToolService()
+        result = asyncio.run(
+            execute_gateway_tool(
+                "shenyu_gateway_tool",
+                {
+                    "tool": "shenyu_add_calendar",
+                    "params": {
+                        "date": "2026-07-12",
+                        "period_type": period_type,
+                        "content": "写进对应周期。",
+                    },
+                },
+                session_tag="default",
+                cfg=_cfg(),
+                service=service,
+            )
+        )
+
+        assert result["ok"] is True
+        assert service.calls[0]["period_key"] == expected_key
+
+
+def test_execute_gateway_tool_rejects_invalid_calendar_natural_date():
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_add_calendar",
+                "params": {"date": "2026-W28", "period_type": "week", "content": "格式用错了。"},
+            },
+            session_tag="default",
+            cfg=_cfg(),
+            service=FakeToolService(),
+        )
+    )
+
+    assert result == {"ok": False, "error": "date must be YYYY-MM-DD.", "error_kind": "validation"}
+
+
 def test_execute_gateway_tool_unwraps_nested_broker_arguments_object():
     service = FakeToolService()
 
@@ -2055,6 +2129,8 @@ def test_daily_gateway_surface_hides_maintenance_tools():
     assert "shenyu_write_mem_note" in broker_names
     assert "shenyu_notebook_list" in broker_names
     assert "shenyu_conflict_read" in broker_names
+    assert "shenyu_conflict_list" in broker_names
+    assert "shenyu_conflict_annotate" in broker_names
     assert "shenyu_windowsill_write" in broker_names
     assert "shenyu_windowsill_list" in broker_names
 
@@ -2069,6 +2145,8 @@ def test_daily_gateway_surface_hides_maintenance_tools():
     assert "supabase_query" not in broker_names
     assert "后台管理和数据库工具收起来了" in description
     assert "bulk_update_mem_notes" not in description
+    assert "conflict_list" in description
+    assert "conflict_annotate" in description
 
 
 def test_daily_client_surface_keeps_hand_tools_and_hides_dev_tools():

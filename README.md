@@ -133,7 +133,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 
 ### Tool error logging
 
-- `shenyu_gateway/tool_loop.py`: records gateway-tool results with `ok: false` through `_record_tool_error()`; this is separate from request-level error filtering.
+- `shenyu_gateway/tool_loop.py`: classifies gateway-tool results with `ok: false`, adds the resident-facing error `ps`, and records them through `_record_tool_error()`; this is separate from request-level error filtering.
 - `shenyu_gateway/store/_admin.py`: writes and reads the dedicated SQLite `tool_error_log` table, including `validation`, `config`, and `exception` classification.
 - `shenyu_gateway/gateway_admin_routes.py`: exposes `GET /api/gateway/tool-errors` for the Admin UI and diagnostics.
 - `admin/src/api/toolErrors.ts` → `admin/src/views/ToolErrorsView.vue`: frontend API mapping and the “工具报错” page.

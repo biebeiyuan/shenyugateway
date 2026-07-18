@@ -51,6 +51,19 @@ def default_period_key(period_type: str, now_dt: Optional[datetime] = None) -> s
     raise ValueError(f"Unsupported period_type: {period_type}")
 
 
+def period_key_from_date(period_type: str, day_key: str) -> str:
+    """Convert the natural YYYY-MM-DD tool input into the selected calendar key."""
+    day = datetime.strptime((day_key or "").strip(), "%Y-%m-%d")
+    if period_type == "day":
+        return day.strftime("%Y-%m-%d")
+    if period_type == "week":
+        iso = day.isocalendar()
+        return f"{iso.year}-W{iso.week:02d}"
+    if period_type == "month":
+        return day.strftime("%Y-%m")
+    raise ValueError(f"Unsupported period_type: {period_type}")
+
+
 def month_grid(month_key: str) -> list[dict[str, Any]]:
     start, end = _month_bounds(month_key)
     first = start - timedelta(days=start.weekday())

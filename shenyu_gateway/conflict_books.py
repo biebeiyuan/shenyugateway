@@ -140,7 +140,7 @@ class ConflictBookService:
             rows = await self.supabase.query(
                 BOOKS_TABLE,
                 params={
-                    "select": "id,title,thread,span_start,span_end,status,read_count,last_read_at,created_at",
+                    "select": "title,thread,span_start,span_end,status,read_count,last_read_at,created_at",
                     "deleted_at": "is.null",
                     "order": "created_at.desc",
                     "limit": "100",
@@ -150,22 +150,28 @@ class ConflictBookService:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    async def read_book(self, book_id: str) -> dict:
+    async def read_book(self, book_id: str = "", *, title: str = "") -> dict:
         """Full read: frozen text + user's notes + all annotations. Logs the read."""
-        return await self._read_book(book_id, log_read=True)
+        return await self._read_book(book_id, title=title, log_read=True)
 
-    async def annotate_book(self, book_id: str, content: str) -> dict:
+    async def annotate_book(self, book_id: str = "", content: str = "", *, title: str = "") -> dict:
         """Append one annotation. There is no way to edit or remove it later."""
         if error := self._ready():
             return error
-        if not book_id:
-            return {"ok": False, "error": "book_id is required"}
+        book_id = (book_id or "").strip()
+        title = (title or "").strip()
+        if not book_id and not title:
+            return {"ok": False, "error": "book_id or title is required"}
         content = (content or "").strip()
         if not content:
             return {"ok": False, "error": "content is required"}
-        book = await self._get_alive_book(book_id, select="id")
+        try:
+            book = await self._get_alive_book(book_id, select="id", title=title)
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc)}
         if book is None:
             return {"ok": False, "error": "book not found"}
+        book_id = str(book.get("id") or book_id)
         try:
             row = await self.supabase.insert(ANNOTATIONS_TABLE, {"book_id": book_id, "content": content})
             return {"ok": True, "annotation": row, "note": "已落笔。批注不可改、不可删，和原文待在一起了。"}
@@ -174,21 +180,31 @@ class ConflictBookService:
 
     # ---- internals ----
 
-    async def _get_alive_book(self, book_id: str, select: str) -> Optional[dict]:
+    async def _get_alive_book(self, book_id: str, select: str, *, title: str = "") -> Optional[dict]:
+        book_id = (book_id or "").strip()
+        title = (title or "").strip()
+        if not book_id and not title:
+            return None
+        key, value = ("id", book_id) if book_id else ("title", title)
         rows = await self.supabase.query(
             BOOKS_TABLE,
-            params={"select": select, "id": f"eq.{book_id}", "deleted_at": "is.null", "limit": "1"},
+            params={"select": select, key: f"eq.{value}", "deleted_at": "is.null", "limit": "2"},
         )
+        if len(rows or []) > 1:
+            raise ValueError("title is ambiguous; use a unique title or book_id")
         return rows[0] if rows else None
 
-    async def _read_book(self, book_id: str, *, log_read: bool) -> dict:
+    async def _read_book(self, book_id: str = "", *, title: str = "", log_read: bool) -> dict:
         if error := self._ready():
             return error
-        if not book_id:
-            return {"ok": False, "error": "book_id is required"}
+        book_id = (book_id or "").strip()
+        title = (title or "").strip()
+        if not book_id and not title:
+            return {"ok": False, "error": "book_id or title is required"}
         try:
             book = await self._get_alive_book(
                 book_id,
+                title=title,
                 select=(
                     "id,title,thread,span_start,span_end,status,original_text,"
                     "epilogue,user_notes,read_count,last_read_at,created_at,updated_at"
@@ -196,6 +212,7 @@ class ConflictBookService:
             )
             if book is None:
                 return {"ok": False, "error": "book not found"}
+            book_id = str(book.get("id") or book_id)
             annotations = await self.supabase.query(
                 ANNOTATIONS_TABLE,
                 params={

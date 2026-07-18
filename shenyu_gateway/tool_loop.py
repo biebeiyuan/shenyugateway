@@ -250,6 +250,7 @@ async def _execute_mixed_gateway_tool_calls(
         except Exception as exc:
             logger.exception("[GatewayTool] Mixed tool call failed: %s", name)
             result = {"ok": False, "error": str(exc), "error_kind": "exception"}
+        result = _decorate_tool_error_result(result)
         ctx.sessions.log_tool_result(ctx.session_id, name, args, result)
         if isinstance(result, dict) and result.get("ok") is False:
             _record_tool_error(ctx, name, args, result)
@@ -717,6 +718,7 @@ async def _execute_internal_tool_call(
         except Exception as exc:
             logger.exception("[GatewayTool] %s: %s", log_label, name)
             result = {"ok": False, "error": str(exc), "error_kind": "exception"}
+        result = _decorate_tool_error_result(result)
         duration_ms = int((time.monotonic() - t0) * 1000)
         tool_result_cache[cache_key] = result
         ctx.sessions.log_tool_result(ctx.session_id, name, args, result)
@@ -773,6 +775,24 @@ def _classify_tool_error(result: dict) -> str:
     if any(marker in lowered for marker in exception_markers):
         return "exception"
     return "validation"
+
+
+def _decorate_tool_error_result(result: Any) -> Any:
+    """Keep the machine-readable error and add a short resident-facing hint."""
+    if not isinstance(result, dict) or result.get("ok") is not False:
+        return result
+    decorated = dict(result)
+    error_kind = _classify_tool_error(decorated)
+    decorated["error_kind"] = error_kind
+    decorated.setdefault(
+        "ps",
+        (
+            "圆儿ps:予予你又抓到一个家里的bug^ ^"
+            if error_kind in {"exception", "config"}
+            else "圆儿ps:予予你仔细看有没有暴露给你正确的方法呀，没有的话一会告诉我！又抓到家里的bug了！"
+        ),
+    )
+    return decorated
 
 
 def _record_tool_error(ctx: InternalToolLoopContext, name: str, args: dict, result: dict) -> None:

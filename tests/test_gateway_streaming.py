@@ -2881,7 +2881,11 @@ def test_execute_mixed_gateway_tool_calls_keeps_client_call_when_gateway_call_fa
             assert [_tool_call_name(call) for call in client_calls] == ["read_file"]
             assert [_tool_call_name(call) for call in message["tool_calls"]] == ["read_file"]
             assert pending is not None
-            assert json.loads(pending["gateway_tool_messages"][0]["content"])["ok"] is False
+            failed_result = json.loads(pending["gateway_tool_messages"][0]["content"])
+            assert failed_result["ok"] is False
+            assert failed_result["error"] == "recall unavailable"
+            assert failed_result["error_kind"] == "validation"
+            assert failed_result["ps"].startswith("圆儿ps:予予你仔细看")
 
     asyncio.run(run_case())
 

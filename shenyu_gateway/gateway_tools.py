@@ -276,11 +276,11 @@ class GatewayToolService:
     async def conflict_list(self) -> dict:
         return await self._conflict_books().list_books()
 
-    async def conflict_read(self, book_id: str) -> dict:
-        return await self._conflict_books().read_book(book_id)
+    async def conflict_read(self, book_id: str = "", title: str = "") -> dict:
+        return await self._conflict_books().read_book(book_id, title=title)
 
-    async def conflict_annotate(self, book_id: str, content: str) -> dict:
-        return await self._conflict_books().annotate_book(book_id, content)
+    async def conflict_annotate(self, book_id: str = "", content: str = "", title: str = "") -> dict:
+        return await self._conflict_books().annotate_book(book_id, content, title=title)
 
     def _recall_source_types(self, value: Any) -> Optional[list[str]]:
         if isinstance(value, list):

@@ -15,6 +15,7 @@ from shenyu_gateway.store import GatewayStore
 class FakeSupabase:
     def __init__(self):
         self.tables: dict[str, list[dict]] = {}
+        self.queries: list[tuple[str, dict]] = []
         self._next_id = 0
 
     def _table(self, name: str) -> list[dict]:
@@ -45,6 +46,7 @@ class FakeSupabase:
 
     async def query(self, table: str, params=None) -> list:
         params = params or {}
+        self.queries.append((table, dict(params)))
         rows = list(self._table(table))
         and_clause = str(params.get("and") or "")
         for key, value in params.items():
@@ -132,11 +134,40 @@ def test_conflict_book_invariants():
         assert len(supabase.tables["shenyu_conflict_reads"]) == 1
         assert read["book"]["annotations"][0]["content"].startswith("半年后")
 
+        listed = await service.list_books()
+        assert listed["ok"], listed
+        assert listed["books"][0]["title"] == "改了标题"
+        assert supabase.queries[-1][1]["select"].split(",")[0] == "title"
+
         # shelf renders titles only, never text
         shelf = render_conflict_shelf([read["book"]])
         assert "改了标题" in shelf
         assert "原文冻结内容" not in shelf
         assert "翻过 1 次" in shelf
+
+    asyncio.run(run())
+
+
+def test_conflict_book_can_read_and_annotate_by_exact_title():
+    async def run():
+        supabase = FakeSupabase()
+        service = ConflictBookService(supabase)
+
+        first = await service.create_book(title="唯一书名", original_text="第一份原文")
+        assert first["ok"], first
+        read = await service.read_book(title="唯一书名")
+        assert read["ok"], read
+        assert read["book"]["original_text"] == "第一份原文"
+        assert supabase.tables["shenyu_conflict_reads"][0]["book_id"] == first["book"]["id"]
+
+        note = await service.annotate_book(title="唯一书名", content="按书名落了一笔")
+        assert note["ok"], note
+        assert supabase.tables["shenyu_conflict_annotations"][0]["book_id"] == first["book"]["id"]
+
+        duplicate = await service.create_book(title="唯一书名", original_text="第二份原文")
+        assert duplicate["ok"], duplicate
+        ambiguous = await service.read_book(title="唯一书名")
+        assert ambiguous == {"ok": False, "error": "title is ambiguous; use a unique title or book_id"}
 
     asyncio.run(run())
 

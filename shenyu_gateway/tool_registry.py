@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
 from shenyu_gateway.gateway_tools import GatewayToolService
+from shenyu_gateway.calendar import period_key_from_date
 from shenyu_gateway.mem_notes import MEM_NOTE_MEMORY_KINDS, MEM_NOTE_PATCH_FIELDS, MEM_NOTE_TYPES
 from shenyu_gateway.tool_schemas import (
     _gateway_core_tools,
@@ -46,7 +47,9 @@ DAILY_GATEWAY_TOOL_NAMES = {
     "shenyu_search_mem_notes",
     "shenyu_notebook_write",
     "shenyu_notebook_list",
+    "shenyu_conflict_list",
     "shenyu_conflict_read",
+    "shenyu_conflict_annotate",
 }
 
 DAILY_CLIENT_TOOL_EXACT = {
@@ -109,9 +112,9 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   notebook_update(id*, content?, status?)
 
 矛盾书
-  conflict_list()
-  conflict_read(book_id*)
-  conflict_annotate(book_id*, content*)
+  conflict_list()  — 先看书架和精确书名
+  conflict_read(title* 或 book_id*)
+  conflict_annotate(title* 或 book_id*, content*)
 
 Supabase 直接操作看 supabase_guide。"""
 
@@ -148,7 +151,9 @@ _BROKER_DAILY_DESCRIPTION = """\
   notebook_list(scope?: shared|hisense|handoff, limit?)
 
 矛盾书
-  conflict_read(book_id*)"""
+  conflict_list()  — 先看书架和精确书名
+  conflict_read(title* 或 book_id*)
+  conflict_annotate(title* 或 book_id*, content*)"""
 
 
 def _upstream_tools_enabled(cfg: Any) -> bool:
@@ -588,11 +593,18 @@ async def _handle_surface_passages(ctx: ToolContext) -> dict:
 
 @_tool_handler("shenyu_add_calendar")
 async def _handle_add_calendar(ctx: ToolContext) -> dict:
-    period_key = ctx.arguments.get("period_key") or ctx.arguments.get("date") or ctx.arguments.get("anchor_date")
+    period_type = ctx.arguments.get("period_type", "day")
+    period_key = ctx.arguments.get("period_key")
+    natural_date = ctx.arguments.get("date") or ctx.arguments.get("anchor_date")
+    if not period_key and natural_date:
+        try:
+            period_key = period_key_from_date(str(period_type or "day").strip().lower(), str(natural_date))
+        except ValueError:
+            return {"ok": False, "error": "date must be YYYY-MM-DD.", "error_kind": "validation"}
     return await ctx.service.add_calendar(
         content=ctx.arguments.get("content", ""),
         period_key=period_key,
-        period_type=ctx.arguments.get("period_type", "day"),
+        period_type=period_type,
         title=ctx.arguments.get("title", ""),
         author=ctx.arguments.get("author", "沈予"),
         mode=ctx.arguments.get("mode", "append"),
@@ -699,6 +711,10 @@ def _conflict_book_id_arg(arguments: dict) -> str:
     return ""
 
 
+def _conflict_title_arg(arguments: dict) -> str:
+    return str(arguments.get("title") or "").strip()
+
+
 @_tool_handler("shenyu_conflict_list")
 async def _handle_conflict_list(ctx: ToolContext) -> dict:
     return await ctx.service.conflict_list()
@@ -706,7 +722,10 @@ async def _handle_conflict_list(ctx: ToolContext) -> dict:
 
 @_tool_handler("shenyu_conflict_read")
 async def _handle_conflict_read(ctx: ToolContext) -> dict:
-    return await ctx.service.conflict_read(_conflict_book_id_arg(ctx.arguments))
+    return await ctx.service.conflict_read(
+        _conflict_book_id_arg(ctx.arguments),
+        title=_conflict_title_arg(ctx.arguments),
+    )
 
 
 @_tool_handler("shenyu_conflict_annotate")
@@ -714,6 +733,7 @@ async def _handle_conflict_annotate(ctx: ToolContext) -> dict:
     return await ctx.service.conflict_annotate(
         _conflict_book_id_arg(ctx.arguments),
         ctx.arguments.get("content", ""),
+        title=_conflict_title_arg(ctx.arguments),
     )
 
 

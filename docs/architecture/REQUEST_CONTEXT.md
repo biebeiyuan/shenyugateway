@@ -129,6 +129,8 @@ Classification lives in `_classify_tool_error()` (`shenyu_gateway/tool_loop.py`)
 
 The admin view groups errors into three tabs — `全部` / `真报错` (`exception` + `config`) / `调用被拒` (`validation`) — and expands a `调用被拒` row to show `args_json` (what Shenyu actually passed) beside `error_text` (what was expected). That side-by-side is the evidence base for tightening tool schemas so Shenyu stops mis-calling them.
 
+The tool result sent back to Shenyu keeps the original `error`, adds the resolved `error_kind`, and includes a short `ps` from 圆儿. `exception`/`config` results say that he found a household bug; `validation` results ask him to check whether the correct method was actually exposed and report it if not. The `ps` is conversational guidance only and never replaces the machine-readable error.
+
 - Table: SQLite `tool_error_log`. The `error_kind` column is auto-migrated on startup via `_ensure_column` (existing rows default to `unknown`); no manual migration or new env var is required.
 - API: `GET /api/gateway/tool-errors?limit=50&kind=<exception|config|validation>` (`kind` optional; the view currently filters client-side).
 - Frontend: `admin/src/views/ToolErrorsView.vue`, `admin/src/api/toolErrors.ts`.
@@ -386,6 +388,8 @@ Chat injection:
 
 The active source renderer is snapshot-based. It no longer injects the retired summary/window blocks.
 
+For `shenyu_add_calendar`, `date` is always the natural `YYYY-MM-DD` alias. The gateway converts it to `YYYY-Www` for week pages and `YYYY-MM` for month pages before calling the calendar service; callers that already know the canonical key can pass `period_key` directly.
+
 Endpoints:
 
 - `GET /api/calendar/prompts`
@@ -445,5 +449,6 @@ Frozen verbatim excerpts of arguments, clipped by the user from the archive read
 - Shenyu's annotations are append-only with timestamps; no update or delete endpoint exists.
 - Every `shenyu_conflict_read` appends a row to `shenyu_conflict_reads` and bumps `read_count`, so the shelf shows 翻过几次/最近何时.
 - Books are never auto-injected as content. The only passive surface is the `## 矛盾书` shelf block (titles + status only) in the `slow` layer, toggled by `INJECT_CONFLICT_SHELF`.
+- The daily broker exposes list, read, and annotate. Shenyu first calls `shenyu_conflict_list`, then reads or annotates with the exact unique `title`; `book_id` remains a fallback. Duplicate titles are rejected as ambiguous rather than guessed.
 
 Tools: `shenyu_conflict_list`, `shenyu_conflict_read`, `shenyu_conflict_annotate`. Admin UI: 档案 tab (clip flow) and 矛盾书 tab (edit title/notes/epilogue/status; soft delete). Migrations: `20260613_shenyu_heartbeat_archive.sql`, `20260613_shenyu_chat_archive.sql`, `20260613_shenyu_conflict_books.sql`.
