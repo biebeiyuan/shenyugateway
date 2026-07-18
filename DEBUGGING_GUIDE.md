@@ -227,6 +227,21 @@ Never treat opaque signature or redacted Thinking data as readable chain-of-thou
 
 Tool schemas and name dispatch live in `shenyu_gateway/tool_registry.py`; implementation methods live in `shenyu_gateway/gateway_tools.py`. If a tool is visible but behaves wrong, check `tool_registry.py` dispatch first, then the matching method in `gateway_tools.py`.
 
+### Gateway tool error log chain
+
+The Admin “工具报错” page does not read the ordinary request-log error list. Gateway-tool results with `ok: false` are recorded by `shenyu_gateway/tool_loop.py::_record_tool_error()` into the dedicated SQLite `tool_error_log` table through `shenyu_gateway/store/_admin.py`. `shenyu_gateway/gateway_admin_routes.py` exposes them at `GET /api/gateway/tool-errors`, while `admin/src/api/toolErrors.ts` feeds `admin/src/views/ToolErrorsView.vue`.
+
+When the page shows a tool failure, inspect this dedicated chain first; `python scripts/vps_gateway_logs.py api --errors ...` only filters request-level logs and can legitimately return no matches. Read these fields together:
+
+- `tool_name` and `target_tool`: distinguish the broker (`shenyu_gateway_tool`) from the actual target tool.
+- `args_json`: verify the broker envelope and target arguments without assuming the model used the visible schema correctly.
+- `error_kind=validation`: the call was rejected by its contract or returned a validation-style failure.
+- `error_kind=config`: required runtime configuration was unavailable.
+- `error_kind=exception`: the tool entered execution and raised a real code or dependency exception.
+- `error_source=result|execute`: distinguish a structured `ok: false` result from an execution exception.
+
+For a direct read, use `GET /api/gateway/tool-errors?limit=50`; add `&kind=validation`, `config`, or `exception` when narrowing the list. Do not confuse this durable SQLite table with the live request deque or bounded request-log history.
+
 For quick live triage, call `GET /api/gateway/debug` from the admin session. It returns masked config, upstream routing, tool mode, store overview, and latest request/error IDs without dumping the full prompt payload.
 
 Gateway tool descriptions are intentionally short because they enter the model tool context. Keep them to one-line purpose plus backing pool/table. Put detailed usage notes in `shenyu_supabase_guide` or docs, not in every parameter description.

@@ -2,6 +2,16 @@
 
 这份说明是给“过一阵忘了每个框是什么意思”的时候看的。日志页优先按真实链路展示，不替上游猜测计费或审核逻辑。
 
+## 工具报错页
+
+“工具报错”是独立于普通请求日志的专表视图。网关工具返回 `ok: false` 时，工具循环会把目标工具、参数、错误文本和分类写入 SQLite `tool_error_log`，前端通过 `GET /api/gateway/tool-errors` 读取。因此普通请求可能整体成功、请求日志里没有红色错误，但这里仍有一条工具失败记录。
+
+- **调用被拒**（`validation`）：参数、工具名或调用契约不符合要求；也可能是底层服务返回了可解释的输入错误。
+- **真报错**（`exception` / `config`）：工具已经进入执行后抛出异常，或运行配置缺失，通常需要检查代码、依赖或部署配置。
+- 展开记录时先看 `target_tool`，再并排看 `args_json` 和 `error_text`。`shenyu_gateway_tool` 只是总机，真正坏在哪个工具由 `target_tool` 判断。
+
+排障时不要用 `scripts/vps_gateway_logs.py api --errors` 代替这张表；该参数筛选的是请求级错误。完整代码链路和接口位置见 `DEBUGGING_GUIDE.md` § Gateway tool error log chain。
+
 ## 先看大框颜色
 
 - **绿色大框**：这次客户端请求的最后一轮上游回复。普通对话通常只有这一框。
