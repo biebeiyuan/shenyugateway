@@ -75,7 +75,7 @@ After Admin routes, page loading, or core interactions change, run `cd admin && 
 
 First listen to the complete symptom and restate the question being investigated. Use the gateway's architecture to identify the relevant boundaries, then inspect logs before assigning blame or changing code. Logs are evidence, not a substitute for understanding what the owner observed.
 
-After a production bug's root cause is confirmed by logs, code, or tests and the fix is complete, append exactly one row to `DEBUGGING_GUIDE.md` § Symptom Autopsy Index in the format “症状 → 根因文件 → 一句话教训”. Do not record unverified suspicions as autopsy facts.
+After a production bug's root cause is confirmed by logs, code, or tests and the fix is complete, append exactly one row to `DEBUGGING_GUIDE.md` § Symptom Autopsy Index and follow that section's writing rules: an externally observable symptom, the minimal root-cause path plus fault, and an actionable lesson for the next investigator. Do not record unverified suspicions as autopsy facts.
 
 For gateway, Coolify, VPS, upstream, streaming, cache, or tool-call trouble, the helper is usually the first evidence source:
 

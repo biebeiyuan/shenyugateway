@@ -163,11 +163,17 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 
 ## Symptom Autopsy Index
 
-Only add a row after the root cause has been confirmed by logs, code, or tests and the fix is complete. Keep every entry in the fixed format “症状 → 根因文件 → 一句话教训”; diagnosis directions and unverified suspicions do not belong here.
+这里只在根因已经由日志、代码或测试确认，并且修复完成后新增一行。这是给下一位排障者搜索的已确认故障索引，不是完整复盘记录。
 
-| 症状 | 根因文件 | 一句话教训 |
-|------|----------|------------|
-| Stars 评分候选已经变化，但动态岛长期仍不换，直接点名和消息高水位也没有逃生 | `shenyu_gateway/stars/_recall.py`、`shenyu_gateway/context_builder.py`、`shenyu_gateway/memory_island.py` | `2/3` 粘性应只约束普通召回；直接点名、旧星失效和窗口重置必须把明确原因接到完整提案重写 |
+1. **症状**：只写用户、调用方或管理员实际看到的现象，不提前写只有定位后才知道的内部术语。
+2. **根因文件与错误**：列出定位根因所需的最小文件路径，并用一句短语说明哪里判断、状态或协议处理错了；修复过程留在 Git 历史中。
+3. **一句话教训**：写给下一个遇到相似现象的人，优先使用“先查 X，再查 Y”这类可以直接执行的排查顺序或判定规则，不写空泛总结。
+
+已经确认的排查顺序属于“一句话教训”；未经验证的猜测、一次性排查流水账和聊天复述不进入这里。
+
+| 症状 | 根因文件与错误 | 一句话教训 |
+|------|----------------|------------|
+| 连续多轮聊到新的 Stars 内容，记忆岛仍停在旧内容；直接点名某颗星也不切换 | `shenyu_gateway/stars/_recall.py`、`shenyu_gateway/context_builder.py`、`shenyu_gateway/memory_island.py`：直接点名、旧星失效和窗口重置等强制改写原因没有完整传到小岛决策，`2/3` 重叠粘性仍保留旧内容 | 遇到“候选已变但岛不换”，先查强制改写原因是否生成并贯通，再查重叠粘性是否仍把新提案拦回去 |
 
 ## Module Map
 
