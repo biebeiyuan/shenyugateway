@@ -181,7 +181,7 @@ Default online retention:
 
 - `GATEWAY_MESSAGE_RETENTION=1500`: keep the newest local message rows per session. These rows are for admin inspection and export, not for cold-start injection.
 - `GATEWAY_CONTEXT_SNAPSHOT_RETENTION=3`: keep the newest context snapshots per session. Do not set this to `0`; cold-start and calendar source collection need recent snapshots.
-- `GATEWAY_COLD_START_RETENTION=20`: keep recent cold-start snapshots per session. Cleanup only removes old snapshots whose `injected_count >= max_injections`, so active cold-start bridges are preserved.
+- `GATEWAY_COLD_START_RETENTION=20`: keep recent cold-start snapshots per session. Cleanup only removes old inactive snapshots; an active bridge remains available until the normal window trim retires it.
 - `GATEWAY_REQUEST_LOG_RETENTION=200`: keep the newest safe request-log summaries globally. The Admin/API list merges them with the live 30-entry deque and prefers the live copy when both exist. A startup pass marks rows left in `preparing`, `pending`, or streaming states as `interrupted`.
 - Consumed or expired `pending_gateway_tool_turns` are removed during cleanup. Unconsumed pending rows are kept until expiry so a client can return its tool result in the next request.
 - `heartbeat_entries` and `hisense_heartbeat` are not removed by automatic cleanup. They can be manually written/deleted from the admin session page, and those actions affect their respective heartbeat pools.
@@ -325,9 +325,10 @@ as ordinary user/assistant history before the new thread's messages, then it shr
 `POST /api/gateway/cold-start/preview` is also the freezing endpoint used by the admin UI. The daily cold-start form
 binds the latest source thread's effective window to an explicit new session tag. The lightweight form additionally
 accepts an explicit source thread and message limit. Both forms return a header such as
-`X-Shenyu-Session-Tag: 7.12`; the first request using that tag consumes the frozen bridge once. If no frozen snapshot
-was prepared, a previously unseen session tag still automatically chooses the latest source thread with a request
-context snapshot. Existing sessions never trigger cross-thread cold start merely because they were idle.
+`X-Shenyu-Session-Tag: 7.12`; the first request using that tag binds the frozen bridge, which stays available while
+the rolling window still retains it. If no frozen snapshot was prepared, a previously unseen session tag still
+automatically chooses the latest source thread with a request context snapshot. Existing sessions never trigger
+cross-thread cold start merely because they were idle.
 
 Flow:
 
@@ -335,8 +336,11 @@ Flow:
 2. `_maybe_prepare_cold_start_snapshot()` first reuses a frozen snapshot bound to the target session.
 3. It calculates the gap between the target window and the real current client message count.
 4. If the session is new and has no frozen snapshot, it chooses the latest source thread automatically.
-5. It inserts only the number needed to fill the current live gap.
-6. After a successful bridge injection, the one-shot snapshot becomes inactive.
+5. It freezes the bounded source bridge and reuses it on later requests; the ordinary window decides when old bridge
+   messages are trimmed.
+6. After a successful bridge injection, the snapshot remains active while the fixed bridge is still inside the rolling
+   window. It becomes inactive only after the normal window trim has pushed the bridge entirely out; a client-side
+   duplicate of the bridge does not consume it because the client may omit that history again on a later request.
 
 Config:
 

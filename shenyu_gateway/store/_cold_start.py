@@ -100,15 +100,13 @@ class ColdStartMixin:
         return self._cold_start_snapshot_from_row(row)
 
     def mark_cold_start_injected(self, snapshot_id: str):
+        # The count is diagnostic only. A bridge belongs to the target window
+        # until prepare_messages observes that rolling trim removed it.
         with self._connect() as conn:
             conn.execute(
                 """
                 UPDATE cold_start_snapshots
-                SET injected_count = injected_count + 1,
-                    active = CASE
-                        WHEN injected_count + 1 >= max_injections THEN 0
-                        ELSE active
-                    END
+                SET injected_count = injected_count + 1
                 WHERE id = ? AND active = 1
                 """,
                 (snapshot_id,),

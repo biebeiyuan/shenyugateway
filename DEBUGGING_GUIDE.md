@@ -174,6 +174,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 | 症状 | 根因文件与错误 | 一句话教训 |
 |------|----------------|------------|
 | 连续多轮聊到新的 Stars 内容，记忆岛仍停在旧内容；直接点名某颗星也不切换 | `shenyu_gateway/stars/_recall.py`、`shenyu_gateway/context_builder.py`、`shenyu_gateway/memory_island.py`：直接点名、旧星失效和窗口重置等强制改写原因没有完整传到小岛决策，`2/3` 重叠粘性仍保留旧内容 | 遇到“候选已变但岛不换”，先查强制改写原因是否生成并贯通，再查重叠粘性是否仍把新提案拦回去 |
+| 冷启动首轮能看到源线程，下一轮只剩客户端尾部消息，桥接没有继续增长到高水位再剪裁 | `shenyu_gateway/store/_cold_start.py`、`shenyu_gateway/prepare_messages.py`：注入计数达到 `max_injections=1` 就停用快照，且完全重叠被误判为桥接已剪掉 | 先查快照是否仍 active，再查 `cold_start_bridge_messages` 是否因滑动窗口真正归零；客户端重复带回历史不等于桥接已经可以销毁 |
 
 ## Module Map
 

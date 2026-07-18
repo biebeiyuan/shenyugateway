@@ -636,7 +636,7 @@ def test_existing_session_never_auto_cold_starts(tmp_path):
     assert snapshot is None
 
 
-def test_one_shot_cold_start_snapshot_deactivates_after_injection(tmp_path):
+def test_cold_start_snapshot_stays_active_until_window_retires_bridge(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     target = store.get_or_create_session("7.12", "operit")
     snapshot = store.write_cold_start_snapshot(
@@ -649,6 +649,12 @@ def test_one_shot_cold_start_snapshot_deactivates_after_injection(tmp_path):
     )
 
     store.mark_cold_start_injected(snapshot["id"])
+
+    active = store.latest_active_cold_start_snapshot(target["id"])
+    assert active is not None
+    assert active["injected_count"] == 1
+
+    store.complete_cold_start_snapshot(snapshot["id"])
 
     assert store.latest_active_cold_start_snapshot(target["id"]) is None
 

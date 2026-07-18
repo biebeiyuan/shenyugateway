@@ -414,7 +414,15 @@ async def prepare_messages(
         len(deduplicated_bridge_messages) - int(window_state.get("window_start_index") or 0),
     )
     trim_meta["cold_start_bridge_overlap_messages"] = bridge_overlap_messages
-    if cold_start_snapshot and bridge_messages and trim_meta["cold_start_bridge_messages"] == 0:
+    # A fully overlapping bridge is still part of the fixed cold-start handoff:
+    # the client may omit that history again on its next request. Only retire
+    # the snapshot after an actually inserted bridge has been pushed entirely
+    # out by the rolling window.
+    if (
+        cold_start_snapshot
+        and deduplicated_bridge_messages
+        and trim_meta["cold_start_bridge_messages"] == 0
+    ):
         store.complete_cold_start_snapshot(cold_start_snapshot["id"])
         window_state["window_start_index"] = max(
             0,
