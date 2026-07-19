@@ -179,11 +179,11 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         return ConflictBookService(_supabase())
 
     def _resident_books() -> ResidentBooksService:
-        return ResidentBooksService(_supabase())
+        return ResidentBooksService(deps.get_supabase_client())
 
     @router.get("/api/books")
-    async def resident_books_shelf():
-        return await _resident_books().shelf()
+    async def resident_books_overview():
+        return await _resident_books().overview()
 
     @router.get("/api/books/{book}")
     async def resident_book_read(book: str, view: str = "current"):

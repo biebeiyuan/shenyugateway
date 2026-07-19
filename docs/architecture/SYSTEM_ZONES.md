@@ -19,6 +19,7 @@
 | 子系统 | 改动时必须保留 | 修改前先读 |
 |--------|----------------|------------|
 | Stars / Mem | 现有正文和关系含义不能在迁移或重构时被静默改写、丢弃；召回与排序只决定何时浮现，Memory Island 日志中两路保持对等可见 | `docs/architecture/MEMORY_ROOM.md`、`DESIGN.md` |
+| 家现在 / 我是谁 | `家现在` 必须来自现场快照，不得被手写正文覆盖；`我是谁` 的每次改写保留版本，两者批注都只追加 | `docs/architecture/REQUEST_CONTEXT.md` § Generated home and living identity |
 | 来历书 | `original_text` 剪下后永久冻结，沈予批注只追加；正文不得被自动注入、改写或“清洗” | `docs/architecture/REQUEST_CONTEXT.md` § Origin books、`DESIGN.md` § Chat Archive & Conflict Books |
 | Room / 窗台 | 房间提供门，不替沈予选择；原始房间宪章保持不动，charge 只能影响门的可见性和顺序 | `docs/architecture/MEMORY_ROOM.md` § Room Mode |
 | 窗台报纸与报纸篓 | 只读固定 RSS 白名单，保留来源标题、摘要和 URL；出版、阅读状态与字面搜索仍由住户手动控制 | `AGENTS.md`、`docs/architecture/MEMORY_ROOM.md` § Window Newspaper |
@@ -266,7 +267,7 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 ```text
 ContextBuilder
   -> Calendar day/week/month（并行）
-  -> origin-book shelf
+  -> shared bookshelf overview（自动家况摘要 + identity 版本 + 来历书名）
   -> Mem contextual recall ─┬─ keyword index
   │                         └─ vector rows（与 keyword 并行）
   -> Stars recall ----------┬─ candidate/activity/scene 等阶段
@@ -378,7 +379,7 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
        -> 保留 Calendar 和普通稳定层
        -> 从独立 Hisense heartbeat 池读取；不消费普通 heartbeat pending
        -> 读取 Supabase shenyu_notebook 和上次唤醒内容
-       -> 不召回 Mem、Stars，也不注入来历书架
+       -> 不召回 Mem、Stars，也不注入共享书架概览
   -> ChatPipeline 调用已选择的上游
   -> SQLite 保存 session、messages、Hisense heartbeat
   -> /api/hisense/* 与 HisenseView 提供预览、notebook 和 session 查看

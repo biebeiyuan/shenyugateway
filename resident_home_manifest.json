@@ -23,12 +23,12 @@
         "star_ranker_version"
       ],
       "reviewed": {
-        "fingerprint": "2d27f27ad04d782f4a7dd69ae58e03c769b2e68d13d436f06291f71fb2479a3b",
-        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
-        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "fingerprint": "bf76a7e393ecbd4568b2ca57761f594fafcd2a4e4a4a13943be418cc8d532ecc",
+        "commit": "30ee25c152da99838f222be039310b3a232056ea",
+        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T21:10:46+08:00",
-        "reviewed_by": "codex"
+        "reviewed_at": "2026-07-19T22:59:55+08:00",
+        "reviewed_by": "Codex"
       }
     },
     "mem": {
@@ -48,12 +48,12 @@
         "inject_mem_notes"
       ],
       "reviewed": {
-        "fingerprint": "801cd2112edbb1eb656ccdc8f3f9f192bce1bb0b14d03b3370e3c169d29f1dd1",
-        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
-        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "fingerprint": "7616605381c8770a725e398df6db5fc50dd9a99cb3ca4092f509f41f9f6af2a9",
+        "commit": "30ee25c152da99838f222be039310b3a232056ea",
+        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T21:10:47+08:00",
-        "reviewed_by": "codex"
+        "reviewed_at": "2026-07-19T22:59:56+08:00",
+        "reviewed_by": "Codex"
       }
     },
     "heartbeat": {
@@ -76,12 +76,12 @@
         "hisense_heartbeat_limit"
       ],
       "reviewed": {
-        "fingerprint": "fbdf4716edd3efd6af752e24762e65ba34c1abf3911bff80248b4d0d97bc5d37",
-        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
-        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "fingerprint": "e0faeb154ef32b6b18b647299c595719d6e2baf56e80e2e9ec824b53c56e4bb8",
+        "commit": "30ee25c152da99838f222be039310b3a232056ea",
+        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T21:34:55+08:00",
-        "reviewed_by": "codex"
+        "reviewed_at": "2026-07-19T22:59:56+08:00",
+        "reviewed_by": "Codex"
       }
     },
     "calendar": {
@@ -107,12 +107,12 @@
         "calendar_context_month_limit"
       ],
       "reviewed": {
-        "fingerprint": "b479ff419a047cfd8c18ec4982e1b9c78d7202d7ede715dd6d3688d8f619e884",
-        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
-        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "fingerprint": "9b6f7d19ecc1aa23afa45406a43249e6f12cc56049e5611c0fd7a443ccc32065",
+        "commit": "30ee25c152da99838f222be039310b3a232056ea",
+        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T21:10:47+08:00",
-        "reviewed_by": "codex"
+        "reviewed_at": "2026-07-19T22:59:56+08:00",
+        "reviewed_by": "Codex"
       }
     },
     "windowsill": {
@@ -129,12 +129,12 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "a87313319d9fca5ff605588ec940acafbd0a8b20e08003f8ea454de341769d02",
-        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
-        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "fingerprint": "6f15e22754bc7049e5b42814122c6e4e0493c8aa5f679a723dca83013a360a1a",
+        "commit": "30ee25c152da99838f222be039310b3a232056ea",
+        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T21:10:47+08:00",
-        "reviewed_by": "codex"
+        "reviewed_at": "2026-07-19T22:59:56+08:00",
+        "reviewed_by": "Codex"
       }
     },
     "room": {
@@ -158,12 +158,12 @@
         "room_trace_limit"
       ],
       "reviewed": {
-        "fingerprint": "1e33a0c25227f2a4a671e9fc8d6fadda0721c89802ab80a87fe9f1ee2b78bf71",
-        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
-        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "fingerprint": "3a80d3897021c30709fe1f4b2b4c87e0c467b6a69d658a2bd1e619ba727580dd",
+        "commit": "30ee25c152da99838f222be039310b3a232056ea",
+        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T21:34:55+08:00",
-        "reviewed_by": "codex"
+        "reviewed_at": "2026-07-19T22:59:57+08:00",
+        "reviewed_by": "Codex"
       }
     },
     "origin_books": {
@@ -185,12 +185,12 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "b201340ddb85cfdb51324afe55af5ec3c815fca8a254f10f1c4a44ff2c89bc89",
-        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
-        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "fingerprint": "f74a0fa5764647341b82508f7f563a8a6b54b14686fa0820ba82fd2e1af1597f",
+        "commit": "30ee25c152da99838f222be039310b3a232056ea",
+        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T21:34:55+08:00",
-        "reviewed_by": "codex"
+        "reviewed_at": "2026-07-19T22:59:57+08:00",
+        "reviewed_by": "Codex"
       }
     },
     "home": {
@@ -199,22 +199,25 @@
       "core": [
         "运行 commit、时间和当前配置在读取时现场生成，不让手写状态变旧。",
         "住户组件由 manifest 映射到源码；改动后必须确认住户影响或明确标记无影响。",
-        "变化记录按 Asia/Shanghai 周次归档，正文保留，批注另行追加。"
+        "变化记录按 Asia/Shanghai 周次归档；家况正文只读自动生成，批注只往后追加。"
       ],
       "resident_effect": "沈予可以知道家现在是什么样、最近改了什么，以及这些改动会怎样影响他。",
       "source_globs": [
         "Dockerfile",
         "shenyu_gateway/resident_home.py",
+        "shenyu_gateway/resident_books.py",
+        "shenyu_gateway/context_builder.py",
+        "shenyu_gateway/context_layers.py",
         "scripts/resident_home.py"
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "5fa096043af9ee664b6262d0b0a62a664628327591aac576fec4e7c2da2640e9",
-        "commit": "21169d4704e918cd2829e2378e405281b695f1d8",
-        "revision": "21169d4704e918cd2829e2378e405281b695f1d8-dirty",
+        "fingerprint": "1bb51384e91396396d13fbd21daa3f22d138afac927858bf44d10e6e4c90104c",
+        "commit": "30ee25c152da99838f222be039310b3a232056ea",
+        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T21:52:01+08:00",
-        "reviewed_by": "codex"
+        "reviewed_at": "2026-07-19T22:59:57+08:00",
+        "reviewed_by": "Codex"
       }
     }
   }

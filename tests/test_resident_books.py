@@ -4,7 +4,7 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 
-from shenyu_gateway.resident_books import ResidentBooksService
+from shenyu_gateway.resident_books import ResidentBooksService, render_bookshelf_overview
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -55,7 +55,7 @@ class FakeSupabase:
         return updated
 
 
-def test_shelf_includes_home_snapshot_living_books_and_origin_books():
+def test_overview_includes_generated_home_identity_and_origin_books():
     async def run():
         supabase = FakeSupabase()
         await supabase.insert(
@@ -79,12 +79,17 @@ def test_shelf_includes_home_snapshot_living_books_and_origin_books():
                 "deleted_at": None,
             },
         )
-        result = await ResidentBooksService(supabase, root=ROOT).shelf()
+        result = await ResidentBooksService(supabase, root=ROOT).overview()
         assert result["ok"]
-        assert result["home"]["live"]["commit"]
-        assert {book["kind"] for book in result["books"]} == {"living", "origin"}
-        assert any(book.get("slug") == "identity" for book in result["books"])
-        assert any(book.get("title") == "旧书" for book in result["books"])
+        assert result["home"]["current_week"]
+        assert result["identity"]["slug"] == "identity"
+        assert result["identity"]["revision"] == 2
+        assert result["origin_books"][0]["title"] == "旧书"
+        rendered = render_bookshelf_overview(result)
+        assert "## 书架一览" in rendered
+        assert "- 家现在：本周" in rendered
+        assert "- 我是谁：第 2 版，最后由沈予修改" in rendered
+        assert "- 来历书：1 本——《旧书》" in rendered
 
     asyncio.run(run())
 
@@ -114,14 +119,19 @@ def test_living_book_write_keeps_revision_and_rejects_stale_write():
     asyncio.run(run())
 
 
-def test_living_annotation_and_origin_alias_use_separate_rules():
+def test_home_is_generated_read_only_and_keeps_append_only_annotations():
     async def run():
         supabase = FakeSupabase()
         service = ResidentBooksService(supabase, root=ROOT)
-        await service.write(book="home", content="家现在有一层活文档。")
+        rejected = await service.write(book="home", content="不应该出现的手写家况")
+        assert rejected["error_kind"] == "read_only"
         note = await service.annotate(book="home", content="这条由圆圆补充。", actor="圆圆")
         assert note["ok"]
         current = await service.read(book="家现在")
+        assert current["kind"] == "snapshot"
+        assert current["snapshot"]["live"]["commit"]
+        assert "body" not in current["book"]
+        assert "revision" not in current["book"]
         assert current["book"]["annotations"][0]["actor"] == "圆圆"
 
         origin = await service.annotate(book="来历书", title="不存在", content="批注")
@@ -130,7 +140,7 @@ def test_living_annotation_and_origin_alias_use_separate_rules():
     asyncio.run(run())
 
 
-def test_shelf_keeps_origin_books_when_living_table_is_temporarily_unavailable():
+def test_overview_keeps_origin_books_when_identity_table_is_temporarily_unavailable():
     class OriginOnlySupabase(FakeSupabase):
         async def query(self, table: str, params=None):
             if table == "shenyu_books":
@@ -140,9 +150,20 @@ def test_shelf_keeps_origin_books_when_living_table_is_temporarily_unavailable()
     async def run():
         supabase = OriginOnlySupabase()
         await supabase.insert("shenyu_conflict_books", {"title": "旧书", "status": "open", "deleted_at": None})
-        result = await ResidentBooksService(supabase, root=ROOT).shelf()
+        result = await ResidentBooksService(supabase, root=ROOT).overview()
         assert result["ok"]
-        assert any(book.get("title") == "旧书" for book in result["books"])
-        assert any("Living books are unavailable" in warning for warning in result["warnings"])
+        assert result["origin_books"][0]["title"] == "旧书"
+        assert any("Identity book is unavailable" in warning for warning in result["warnings"])
+
+    asyncio.run(run())
+
+
+def test_home_snapshot_still_reads_without_supabase():
+    async def run():
+        result = await ResidentBooksService(None, root=ROOT).read(book="home")
+        assert result["ok"]
+        assert result["kind"] == "snapshot"
+        assert result["snapshot"]["components"]
+        assert result["book"]["annotations"] == []
 
     asyncio.run(run())

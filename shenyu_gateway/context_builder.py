@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable, Optional
 
-from .conflict_books import ConflictBookService
 from .context_layers import (
     ContextLayerSettings,
     render_layered_additions as _render_layered_additions,
@@ -13,6 +12,7 @@ from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
 from .memory_island import memory_island_log_content, resolve_memory_island
 from .request_logs import _mark_request_log_phase
+from .resident_books import ResidentBooksService, render_bookshelf_overview
 from .runtime import logger
 from .stars import StarService
 from .tool_registry import gateway_native_tools
@@ -140,7 +140,7 @@ class ContextBuilder:
             "stars": [],
             "notebook_items": [],
             "last_wake_recap": "",
-            "conflict_books": [],
+            "book_overview": {},
             "memory_island_state": previous_island_state or {},
             "memory_island_decision": {},
         }
@@ -148,7 +148,7 @@ class ContextBuilder:
         # Collect independent context sources concurrently. Each source is normalized
         # to a fail-soft result below so a recall outage does not discard the previous
         # memory island or block an otherwise valid chat request.
-        want_conflict = (not is_hisense) and getattr(self.cfg, "inject_conflict_shelf", True)
+        want_bookshelf = (not is_hisense) and getattr(self.cfg, "inject_conflict_shelf", True)
         event_class = str((context_event or {}).get("event_class") or "new_user")
         reuse_previous_island = bool(
             previous_island_state
@@ -163,14 +163,14 @@ class ContextBuilder:
         }
 
         calendar_task = self.calendar_context_pages()
-        conflict_task = self._conflict_shelf_books() if want_conflict else asyncio.sleep(0, result=[])
+        bookshelf_task = self._bookshelf_overview() if want_bookshelf else asyncio.sleep(0, result={})
 
         _mark_request_log_phase(
             trace_log,
             "context.sources_start",
             detail={
                 "is_hisense": is_hisense,
-                "want_conflict": want_conflict,
+                "want_bookshelf": want_bookshelf,
                 "inject_mem_notes": inject_mem_notes,
                 "inject_stars": inject_stars,
             },
@@ -179,8 +179,8 @@ class ContextBuilder:
         if is_hisense:
             notebook_task = self._hisense_notebook_items()
             wake_task = self._hisense_last_wake_recap(session)
-            calendar_context, conflict_books, notebook_items, last_wake_recap = await asyncio.gather(
-                calendar_task, conflict_task, notebook_task, wake_task
+            calendar_context, book_overview, notebook_items, last_wake_recap = await asyncio.gather(
+                calendar_task, bookshelf_task, notebook_task, wake_task
             )
             package["calendar_context"] = calendar_context
             package["notebook_items"] = notebook_items
@@ -238,8 +238,8 @@ class ContextBuilder:
             else:
                 stars_task = asyncio.sleep(0, result={"ok": True, "items": []})
 
-            calendar_context, conflict_books, notes_result, stars_result = await asyncio.gather(
-                calendar_task, conflict_task, notes_task, stars_task
+            calendar_context, book_overview, notes_result, stars_result = await asyncio.gather(
+                calendar_task, bookshelf_task, notes_task, stars_task
             )
             package["calendar_context"] = calendar_context
             package["mem_notes"] = notes_result.get("items") or []
@@ -297,8 +297,8 @@ class ContextBuilder:
                     entering["mem_notes"]
                 )
 
-        if want_conflict:
-            package["conflict_books"] = conflict_books
+        if want_bookshelf:
+            package["book_overview"] = book_overview
 
         _mark_request_log_phase(
             trace_log,
@@ -307,7 +307,7 @@ class ContextBuilder:
                 "day": len((package.get("calendar_context") or {}).get("day") or []),
                 "week": len((package.get("calendar_context") or {}).get("week") or []),
                 "month": len((package.get("calendar_context") or {}).get("month") or []),
-                "books": len(package.get("conflict_books") or []),
+                "books": self._bookshelf_item_count(package.get("book_overview") or {}),
                 "mem_notes": len(notes_result.get("items") or []),
                 "stars": len(stars_result.get("items") or []),
                 "stars_ok": bool(stars_result.get("ok")),
@@ -318,14 +318,20 @@ class ContextBuilder:
         _mark_request_log_phase(trace_log, "context.done")
         return package
 
-    async def _conflict_shelf_books(self) -> list[dict]:
-        if not self.supabase_client:
-            return []
+    async def _bookshelf_overview(self) -> dict:
         try:
-            result = await ConflictBookService(self.supabase_client).list_books()
-            return result.get("books") or []
+            return await ResidentBooksService(
+                self.supabase_client,
+                runtime_config=self.cfg,
+            ).overview()
         except Exception:
-            return []
+            return {}
+
+    @staticmethod
+    def _bookshelf_item_count(overview: dict) -> int:
+        if not overview:
+            return 0
+        return 1 + (1 if overview.get("identity") else 0) + len(overview.get("origin_books") or [])
 
     def _normal_heartbeat_digest(self, session_id: str, consume_pending: bool = True) -> str:
         digest, _ = self._normal_heartbeat_context(session_id=session_id, consume_pending=consume_pending)
@@ -478,10 +484,15 @@ class ContextBuilder:
         trace_limit = getattr(self.cfg, "room_trace_limit", 5)
         last_traces = self.store.recent_room_traces(limit=trace_limit)
 
-        door_specs = await collect_door_counts(
-            store=self.store,
-            cfg=self.cfg,
-            supabase_client=self.supabase_client,
+        door_specs, book_overview = await asyncio.gather(
+            collect_door_counts(
+                store=self.store,
+                cfg=self.cfg,
+                supabase_client=self.supabase_client,
+            ),
+            self._bookshelf_overview()
+            if getattr(self.cfg, "inject_conflict_shelf", True)
+            else asyncio.sleep(0, result={}),
         )
 
         hours_since_last_visit = signals.get("hours_since_last_visit")
@@ -508,6 +519,9 @@ class ContextBuilder:
             hours_since_last_visit=hours_since_last_visit,
             prev_scene=prev_scene,
         )
+        bookshelf_text = render_bookshelf_overview(book_overview)
+        if bookshelf_text:
+            layers["slow"] = layers["slow"].rstrip() + "\n\n" + bookshelf_text
         visible_tool_names = visible_room_tool_names(door_specs, charge)
         room_tools = room_tool_definitions(visible_tool_names)
 

@@ -471,16 +471,15 @@ def _gateway_books_tool() -> dict:
         "function": {
             "name": "shenyu_books",
             "description": (
-                "书架总入口。action=shelf 看现状和书架，read 翻开，write 修改可持续书写的活文档，"
-                "annotate 追加批注。来历书正文仍然冻结，活文档每次写入都会留下版本。"
+                "翻开或落笔书架上的书。read 可读我是谁、自动生成的家现在或指定来历书；"
+                "write 只修改我是谁并留下版本；annotate 给三类书追加不可覆盖的批注。"
             ),
             "parameters": {
                 "type": "object",
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["shelf", "read", "write", "annotate"],
-                        "default": "shelf",
+                        "enum": ["read", "write", "annotate"],
                     },
                     "book": {
                         "type": "string",
@@ -490,7 +489,7 @@ def _gateway_books_tool() -> dict:
                     "book_id": {"type": "string", "description": "来历书书架上的 book_id。"},
                     "id": {"type": "string", "description": "book_id 的别名。"},
                     "title": {"type": "string", "description": "来历书书架上的精确书名。"},
-                    "content": {"type": "string", "description": "write 或 annotate 时的正文。"},
+                    "content": {"type": "string", "description": "write 或 annotate 时的正文；write 仅支持我是谁。"},
                     "mode": {"type": "string", "enum": ["replace", "append"], "default": "replace"},
                     "expected_revision": {"type": "integer", "minimum": 0},
                     "target_revision": {"type": "integer", "minimum": 0},

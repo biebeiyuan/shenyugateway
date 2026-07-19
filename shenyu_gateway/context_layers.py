@@ -5,9 +5,9 @@ from dataclasses import dataclass
 import re
 from typing import Any, Optional
 
-from .conflict_books import render_conflict_shelf
 from .context_window import INTERNAL_LAYER_KEY, MEMORY_ISLAND_LAYER
 from .memory_island import render_mem_notes
+from .resident_books import render_bookshelf_overview
 from .stars import render_star_context
 from .tool_registry import (
     DAILY_CLIENT_TOOL_EXACT,
@@ -102,9 +102,9 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
             nb_lines.append(f"- {prefix} {item.get('content', '')}")
         slow_blocks.append("\n".join(nb_lines))
 
-    conflict_shelf = render_conflict_shelf(package.get("conflict_books") or [])
-    if conflict_shelf:
-        slow_blocks.append(conflict_shelf)
+    bookshelf = render_bookshelf_overview(package.get("book_overview") or {})
+    if bookshelf:
+        slow_blocks.append(bookshelf)
 
     last_wake_recap = package.get("last_wake_recap") or ""
     if last_wake_recap:

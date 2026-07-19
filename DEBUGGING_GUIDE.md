@@ -177,6 +177,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 | 冷启动首轮能看到源线程，下一轮只剩客户端尾部消息，桥接没有继续增长到高水位再剪裁 | `shenyu_gateway/store/_cold_start.py`、`shenyu_gateway/prepare_messages.py`：注入计数达到 `max_injections=1` 就停用快照，且完全重叠被误判为桥接已剪掉 | 先查快照是否仍 active，再查 `cold_start_bridge_messages` 是否因滑动窗口真正归零；客户端重复带回历史不等于桥接已经可以销毁 |
 | 沈予在书架看得到矛盾书名，却连续换参数仍打不开或无法批注 | `shenyu_gateway/tool_registry.py`、`shenyu_gateway/tool_schemas.py`、`shenyu_gateway/conflict_books.py`：daily 只暴露读取且读取只收 UUID，书架提供的精确标题没有可用读取路径 | 先对照生产工具 enum、broker 描述和书架实际给出的定位字段；模型看得到的书名必须能被读写工具直接接受 |
 | `shenyu_add_calendar` 按说明传 `period_type=week` 和 `date=YYYY-MM-DD`，工具页出现 `not enough values to unpack` 真异常 | `shenyu_gateway/tool_registry.py`、`shenyu_gateway/calendar.py`：自然日期别名未经转换就送进只接受 `YYYY-Www` 的周键解析器 | 先查 schema 承诺的自然输入是否在 handler 边界归一化，再查周期解析器；不要让调用方替内部键格式兜底 |
+| 前端翻开“家现在”时，同时出现自动家况和一份空白可写正文，看起来像两本重叠的书 | `shenyu_gateway/resident_books.py`、`supabase/migrations/20260719_shenyu_books.sql`、`admin/src/views/ConflictView.vue`：`home` 被误建成可写 living book，自动快照只作为附加字段挂在空正文旁边 | 遇到“自动视图旁又多一份可编辑正文”，先确认对象的唯一事实来源，再查数据库类型、工具 write 权限和前端编辑控件是否都服从同一边界 |
 
 ## Module Map
 
@@ -205,7 +206,7 @@ Main chat flow is centered in `gateway.py`:
 4. `ContextBuilder.build_context_package()` fetches runtime data: heartbeat digest, calendar context, Hisense notebook/recap, and active mem notes.
 5. `shenyu_gateway.context_layers` renders the package into:
    - `stable`: charter and optional wake welcome message.
-   - `slow`: calendar memory, Hisense notebook, wake recap.
+   - `slow`: calendar memory, the unified bookshelf overview in normal/Room contexts, Hisense notebook, wake recap.
    - `mem`: active mem notes headed by `## 我之前写下的便签，可能用的到。`, after `slow` and before heartbeat.
    - `heartbeat`: independent `## 我之前的心跳` block after `mem`.
    - `tool_policy`: compact `## 工具怎么用` reminder after heartbeat.

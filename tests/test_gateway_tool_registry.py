@@ -718,7 +718,7 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "created_to": "2026-06-01",
         },
         "shenyu_last_seen": {},
-            "shenyu_books": {"action": "shelf"},
+            "shenyu_books": {"action": "read", "book": "home"},
         "shenyu_update_mem_note": {"noteId": "note-1", "content": "正文", "status": "active"},
         "shenyu_bulk_update_mem_notes": {
             "note_ids": "note-1，note-2",
@@ -950,8 +950,8 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
         "shenyu_last_seen": {"tool": "shenyu_last_seen"},
             "shenyu_books": {
                 "tool": "shenyu_books",
-                "action": "shelf",
-                "book": "",
+                "action": "read",
+                "book": "home",
                 "book_id": "",
                 "title": "",
                 "content": "",
@@ -2153,6 +2153,14 @@ def test_daily_gateway_surface_hides_maintenance_tools():
     assert "后台管理和数据库工具收起来了" in description
     assert "bulk_update_mem_notes" not in description
     assert "books(action" in description
+
+
+def test_books_tool_exposes_direct_actions_without_shelf_action():
+    tool = next(tool for tool in _gateway_core_tools() if tool["function"]["name"] == "shenyu_books")
+    actions = tool["function"]["parameters"]["properties"]["action"]["enum"]
+
+    assert actions == ["read", "write", "annotate"]
+    assert "shelf" not in tool["function"]["description"]
 
 
 def test_daily_client_surface_keeps_hand_tools_and_hides_dev_tools():

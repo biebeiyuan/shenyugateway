@@ -1,6 +1,6 @@
--- Living books for resident-authored identity and current-home documents.
--- Origin books remain in shenyu_conflict_books; this table is the new facade's
--- editable side and keeps every body revision before updating the current row.
+-- Resident book anchors for the writable identity document and generated home snapshot.
+-- Origin books remain in shenyu_conflict_books. Only identity uses body revisions;
+-- the home row is a stable foreign-key anchor for append-only annotations.
 
 create extension if not exists pgcrypto;
 
@@ -8,7 +8,7 @@ create table if not exists shenyu_books (
   id uuid primary key default gen_random_uuid(),
   slug text not null unique,
   title text not null,
-  kind text not null default 'living' check (kind = 'living'),
+  kind text not null default 'living' check (kind in ('living', 'snapshot')),
   status text not null default 'active' check (status in ('active', 'archived')),
   body text not null default '',
   revision integer not null default 0 check (revision >= 0),
@@ -45,5 +45,5 @@ create index if not exists idx_shenyu_book_annotations_book
   on shenyu_book_annotations (book_id, created_at asc);
 
 insert into shenyu_books (slug, title, kind)
-values ('identity', '我是谁', 'living'), ('home', '家现在', 'living')
+values ('identity', '我是谁', 'living'), ('home', '家现在', 'snapshot')
 on conflict (slug) do nothing;

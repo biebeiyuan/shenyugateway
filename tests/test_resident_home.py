@@ -16,6 +16,7 @@ from shenyu_gateway.resident_home import (
     load_manifest,
     review_component,
     format_weekly_report,
+    home_overview,
 )
 
 
@@ -75,6 +76,15 @@ def test_home_snapshot_exposes_live_revision_and_component_core():
     stars = next(item for item in snapshot["components"] if item["id"] == "stars")
     assert any("六通道加权 RRF" in value for value in stars["core"])
     assert stars["config"]["star_inject_limit"] == 3
+
+
+def test_home_overview_is_lightweight_and_keeps_confirmation_summary():
+    overview = home_overview()
+
+    assert overview["current_week"]
+    assert isinstance(overview["current_week_changes"], int)
+    assert overview["last_confirmed_at"]
+    assert "components" not in overview
 
 
 def test_changed_mapped_source_requires_review(tmp_path):

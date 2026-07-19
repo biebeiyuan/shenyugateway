@@ -22,7 +22,7 @@ The retired rolling and frozen context layers have been removed from the active 
 
 `GATEWAY_TOOL_MODE=broker` is the default for normal threads and exposes one compact `shenyu_gateway_tool` dispatcher that calls the same gateway-native tools with fewer schema tokens. Broker calls should set `tool` to the full gateway tool name, including the `shenyu_` or `supabase_` prefix, and put the selected tool's arguments in the `params` object, not a JSON-encoded string. The old `arguments` field remains compatible. Use `full` when strict per-tool parameter guidance matters more than prompt size.
 
-`GATEWAY_TOOL_SURFACE=daily` keeps broker mode but narrows the broker enum/description to daily hand tools: stars, recall, calendar, heartbeat, mem notes write/search, notebook, and `shenyu_books`. `CLIENT_TOOL_SURFACE=daily` filters client-provided tools to the normal desktop set (`gateway`, `read_file`, `visit_web`, `package_proxy`, room, and coread tools), while `none` hides client tools entirely. These surface filters do not apply room tools as a broker; room mode exposes direct room tools plus the same `shenyu_books` shelf.
+`GATEWAY_TOOL_SURFACE=daily` keeps broker mode but narrows the broker enum/description to daily hand tools: stars, recall, calendar, heartbeat, mem notes write/search, notebook, and `shenyu_books`. `CLIENT_TOOL_SURFACE=daily` filters client-provided tools to the normal desktop set (`gateway`, `read_file`, `visit_web`, `package_proxy`, room, and coread tools), while `none` hides client tools entirely. These surface filters do not apply room tools as a broker; room mode exposes direct room tools plus the same `shenyu_books` read/write/annotate entry, while the bookshelf overview is already present in Room context.
 
 ## Prompt Cache
 
@@ -447,12 +447,12 @@ Frozen verbatim excerpts of arguments, clipped by the user from the archive read
 
 - `original_text` is frozen at clip time; update paths drop it and a text-only patch is rejected.
 - Shenyu's annotations are append-only with timestamps; no update or delete endpoint exists.
-- Every origin-book read through `shenyu_books` still appends a row to `shenyu_conflict_reads` and bumps `read_count`, so the shelf shows 翻过几次/最近何时.
-- Books are never auto-injected as content. The only passive surface is the `## 来历书` shelf block (titles + status only) in the `slow` layer, toggled by `INJECT_CONFLICT_SHELF`.
-- The public book entry is `shenyu_books` with `action=shelf|read|annotate`; the old `shenyu_conflict_*` names remain hidden compatibility handlers. Duplicate titles are rejected as ambiguous rather than guessed.
+- Every origin-book read through `shenyu_books` still appends a row to `shenyu_conflict_reads` and bumps `read_count`, so the overview and Admin shelf can show 翻过几次/最近何时.
+- Full book contents are never auto-injected. The passive `slow` surface is `## 书架一览`: generated-home change count/last confirmation, identity revision/actor, and origin-book titles. The legacy `INJECT_CONFLICT_SHELF` switch still gates this unified overview.
+- The public book entry is `shenyu_books` with `action=read|write|annotate`; there is no model-facing list/shelf action. `write` only accepts `identity`, while `home` is generated and read-only. The old `shenyu_conflict_*` names remain hidden compatibility handlers. Duplicate origin titles are rejected as ambiguous rather than guessed.
 
-Tools: `shenyu_books`. Admin UI: 档案 tab (clip flow) and 来历书管理页 (the legacy route/data names stay internal). Living books use `shenyu_books`, `shenyu_book_revisions`, and `shenyu_book_annotations` from `20260719_shenyu_books.sql`; origin books continue using `20260613_shenyu_conflict_books.sql`.
+Tools: `shenyu_books`. Admin UI: 档案 tab (clip flow) and the three-tier shared bookshelf at the legacy `/conflict` route: revisioned `我是谁`, generated read-only `家现在`, and frozen origin books. All three can receive append-only annotations; origin-book cover fields and soft deletion remain available without exposing any original-text update path. Identity and the home annotation anchor use `shenyu_books` / `shenyu_book_revisions` / `shenyu_book_annotations`; origin books continue using `20260613_shenyu_conflict_books.sql`.
 
-### Living books
+### Generated home and living identity
 
-`identity`（我是谁）and `home`（家现在）are shared, mutable documents. Every write creates a revision before updating the current body; `expected_revision` can reject a stale write instead of silently overwriting a newer edit. Annotations are append-only, and timestamps/actors are assigned by the gateway entry point. `home` reads also include the repository/runtime snapshot from `resident_home_manifest.json` and its weekly change ledger.
+`home`（家现在）is generated from the current repository/runtime snapshot, `resident_home_manifest.json`, and the weekly change ledger. It has no writable body or revision flow: reads return the full current home, and annotations append against a stable internal anchor without changing the generated content. `identity`（我是谁）is the single shared mutable document. Every identity write creates a revision before updating the current body; `expected_revision` rejects stale writes instead of silently overwriting a newer edit. Timestamps and actors are assigned by the gateway entry point.

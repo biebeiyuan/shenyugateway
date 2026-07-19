@@ -113,7 +113,7 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   notebook_update(id*, content?, status?)
 
 来历书
-  books(action?: shelf|read|write|annotate, book?: identity|home|origin, book_id/title?, content?, expected_revision?)
+  books(action: read|write|annotate, book?: identity|home|origin, book_id/title?, content?, expected_revision?)
 
 Supabase 直接操作看 supabase_guide。"""
 
@@ -150,7 +150,7 @@ _BROKER_DAILY_DESCRIPTION = """\
   notebook_list(scope?: shared|hisense|handoff, limit?)
 
 来历书
-  books(action?: shelf|read|write|annotate, book?: identity|home|origin, book_id/title?, content?, expected_revision?)"""
+  books(action: read|write|annotate, book?: identity|home|origin, book_id/title?, content?, expected_revision?)"""
 
 
 def _upstream_tools_enabled(cfg: Any) -> bool:
@@ -737,7 +737,7 @@ async def _handle_conflict_annotate(ctx: ToolContext) -> dict:
 @_tool_handler("shenyu_books")
 async def _handle_books(ctx: ToolContext) -> dict:
     return await ctx.service.books(
-        action=ctx.arguments.get("action", "shelf"),
+        action=ctx.arguments.get("action", ""),
         book=ctx.arguments.get("book", ""),
         book_id=_conflict_book_id_arg(ctx.arguments),
         title=_conflict_title_arg(ctx.arguments),

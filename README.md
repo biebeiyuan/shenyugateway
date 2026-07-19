@@ -62,7 +62,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/context_builder.py`: async parallel gathering of all memory sources into a context package.
 - `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, and cold-start bridge insertion.
 - `shenyu_gateway/resident_home.py`: resident-facing component manifest, source fingerprints, review acknowledgements, and weekly change records.
-- `shenyu_gateway/resident_books.py`: unified `shenyu_books` facade for the home snapshot, living books, annotations, and legacy origin-book storage.
+- `shenyu_gateway/resident_books.py`: unified bookshelf facade for the generated read-only home snapshot, the revisioned `我是谁` document, append-only annotations, and legacy origin-book storage.
 - `shenyu_gateway/resident_profile.py`: stable wake/profile text for memory practice, the origin book, and the Hisense home note.
 - `shenyu_gateway/context_snapshots.py`: context snapshot creation and helpers for calendar/cold-start sources.
 - `shenyu_gateway/context_window.py`: semantic history-event classification, chunk-safe client-history windowing with high-water/epoch/anchor state, and cold-start bridge overlap deduplication.
@@ -155,7 +155,8 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/api/logs.ts`: request log list and detail APIs.
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
 - `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
-- `admin/src/api/archive.ts`: chat archive reader and origin-book APIs.
+- `admin/src/api/archive.ts`: chat archive reader and frozen origin-book APIs.
+- `admin/src/api/books.ts`: resident-shelf APIs for the generated `home` snapshot, the revisioned `identity` book, and their annotation flows.
 - `admin/src/api/room.ts`: room mode APIs (traces, drawer notes, scribbles, pins, newspapers).
 - `admin/src/api/toolErrors.ts`: tool error log APIs.
 - `admin/src/views/HomeView.vue`: admin landing/dashboard page.
@@ -175,7 +176,8 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
 - `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
 - `admin/src/views/ArchiveView.vue`: chat archive reader and origin-book clip flow.
-- `admin/src/views/ConflictView.vue`: origin-book management (edit title/notes/epilogue/status, soft delete).
+- `admin/src/views/ConflictView.vue`: three-tier resident bookshelf for revisioned `我是谁`, generated read-only `家现在`, and frozen origin books; keeps annotations and origin-book cover management together.
+- `admin/src/views/bookshelf/HomeBookModal.vue`: generated-home reader for live commit/confirmation state, resident components, weekly impacts, and append-only annotations.
 - `admin/src/views/RoomView.vue`: room mode admin preview shell (charge, traces, drawer notes, pins, and newspaper placement).
 - `admin/src/views/room/RoomNewspaperPanel.vue`: in-place Room newspaper panel (generate, review, publish, discard, and source status).
 - `admin/src/views/ToolErrorsView.vue`: tool error log viewer.
@@ -380,7 +382,7 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 - `GET /api/calendar/send-preview?...` should show `Current Client Context Snapshots`, not rolling/frozen blocks.
 - `GET /api/gateway/logs` should show prompt cache breakpoints and cold-start metadata.
 - `GET /api/gateway/logs/{id}` should show `response_full` for retained payloads; the list view should keep using short previews.
-- `GET /api/books` should expose the unified resident shelf; `/api/books/{identity|home}` reads or writes living books with revision history, while origin books stay behind the frozen conflict-book service.
+- `GET /api/books` should expose the lightweight unified overview; `/api/books/home` reads the generated home snapshot, `/api/books/identity` owns revisioned writes, and origin books stay behind the frozen conflict-book service.
 - After star-memory edits, run `pytest -q test_star_memory.py test_gateway_tool_registry.py test_response_capture.py test_gateway_tags.py`.
 - Run `python -c "import test_gateway_streaming as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after streaming/tool-loop edits when `pytest` is unavailable.
 - Run `python -c "import test_upstream_adapter_stream as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after upstream stream adapter edits when `pytest` is unavailable.

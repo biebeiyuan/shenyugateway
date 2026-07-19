@@ -346,7 +346,7 @@ def test_archive_routes_use_cst_day_boundaries():
     asyncio.run(run())
 
 
-def test_resident_books_routes_share_living_revision_and_annotation_flow():
+def test_resident_books_routes_split_generated_home_from_living_identity():
     async def run():
         supabase = FakeSupabase()
         router = build_archive_router(ArchiveRouteDeps(get_supabase_client=lambda: supabase))
@@ -362,9 +362,9 @@ def test_resident_books_routes_share_living_revision_and_annotation_flow():
             if route.path == "/api/books/{book}" and "PATCH" in (route.methods or set())
         )
 
-        shelf = await endpoints["/api/books"]()
-        assert shelf["ok"]
-        assert shelf["home"]["live"]["commit"]
+        overview = await endpoints["/api/books"]()
+        assert overview["ok"]
+        assert overview["home"]["current_week"]
 
         written = await write_endpoint(
             "identity",
@@ -383,6 +383,21 @@ def test_resident_books_routes_share_living_revision_and_annotation_flow():
         assert read["book"]["body"] == "我和圆圆一起写的自述"
         assert read["book"]["annotations"][0]["actor"] == "圆圆"
         assert len(read["revisions"]) == 1
+
+        home_write = await write_endpoint(
+            "home",
+            ResidentBookWrite(content="不该覆盖自动家况"),
+        )
+        assert home_write["error_kind"] == "read_only"
+        home_note = await endpoints["/api/books/{book}/annotations"](
+            "home",
+            ResidentBookAnnotation(content="这条批注保留。"),
+        )
+        assert home_note["ok"]
+        home = await read_endpoint("home", view="history")
+        assert home["kind"] == "snapshot"
+        assert "body" not in home["book"]
+        assert home["book"]["annotations"][0]["content"] == "这条批注保留。"
 
     asyncio.run(run())
 

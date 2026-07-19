@@ -239,7 +239,7 @@ Core files, separated by concern:
 |------|---------------|
 | `shenyu_gateway/room_text.py` | All room copy: charter, scenes, doors, trace phrases. Change text here only. |
 | `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |
-| `shenyu_gateway/room_tools.py` | Room tool handlers, direct tool definitions, the shared `shenyu_books` shelf, compatibility broker, and door count collection. |
+| `shenyu_gateway/room_tools.py` | Room tool handlers, direct tool definitions, the shared `shenyu_books` read/write/annotate entry, compatibility broker, and door count collection. |
 | `shenyu_gateway/room_scenes.py` | Weather, atmosphere, and window-scene generation. |
 | `shenyu_gateway/room_newspaper.py` | Fixed RSS catalog, feed parsing, issue rolling, optional quality checks, and draft generation. |
 | `shenyu_gateway/store/_room.py` | Room traces, notes, pins, scribbles, and newspaper issue persistence. |
@@ -291,7 +291,7 @@ Charge affects door visibility:
 | `room_drawer_notes` | drawers | Read notes Yuan left in the middle drawer. |
 | `room_locked_drawer` | drawers | Private drawer. No admin API. Only Shenyu's tool can open it. |
 | `room_star_map` | star_wall | Star map: look, search, review, feedback, connect constellations. |
-| `shenyu_books` | shelf | Open the shared book shelf: home snapshot, living books, or an origin book. |
+| `shenyu_books` | read / write / annotate | Open the generated home, revise `我是谁`, read an origin book, or append annotations; the shelf overview is already visible in context. |
 | `room_wall_pins` | wall | View/add/complete wall pin reminders. |
 | `room_octopus_pillow` | bed | Hug the octopus pillow. Random Yuan note as easter egg. |
 

@@ -284,6 +284,29 @@ def format_weekly_report(grouped: dict[str, list[dict[str, Any]]]) -> str:
     return "\n".join(lines)
 
 
+def home_overview(
+    *,
+    manifest_path: Path = MANIFEST_PATH,
+    changes_path: Path = CHANGES_PATH,
+) -> dict[str, Any]:
+    """Return the cheap, context-safe summary of the generated home book."""
+    manifest = load_manifest(manifest_path)
+    last_confirmed = max(
+        (
+            str((component.get("reviewed") or {}).get("reviewed_at") or "")
+            for component in manifest["components"].values()
+        ),
+        default="",
+    )
+    grouped = changes_by_week(changes_path)
+    current_week = week_key()
+    return {
+        "current_week": current_week,
+        "current_week_changes": len(grouped.get(current_week, [])),
+        "last_confirmed_at": last_confirmed,
+    }
+
+
 def home_snapshot(
     *,
     manifest_path: Path = MANIFEST_PATH,

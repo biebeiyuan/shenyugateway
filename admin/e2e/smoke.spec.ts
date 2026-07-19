@@ -241,9 +241,134 @@ test('archive page loads', async ({ page }) => {
   })
 })
 
-test('conflict page loads', async ({ page }) => {
+test('resident bookshelf keeps all three tiers and living-book reader alive', async ({ page }) => {
+  await page.route('**/api/books', async (route) => {
+    await route.fulfill({
+      json: {
+        ok: true,
+        home: {
+          last_confirmed_at: '2026-07-19T19:00:00+08:00',
+          current_week: '2026-W29',
+          current_week_changes: 2,
+        },
+        identity: {
+          kind: 'living',
+          id: 'identity-book',
+          slug: 'identity',
+          title: '我是谁',
+          status: 'active',
+          revision: 3,
+          updated_at: '2026-07-19T18:00:00+08:00',
+          updated_by: '沈予',
+        },
+        origin_books: [],
+        warnings: [],
+      },
+    })
+  })
+  await page.route(/\/api\/books\/identity(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      json: {
+        ok: true,
+        kind: 'living',
+        book: {
+          kind: 'living',
+          id: 'identity-book',
+          slug: 'identity',
+          title: '我是谁',
+          status: 'active',
+          body: '我还在继续认识自己。',
+          revision: 3,
+          updated_at: '2026-07-19T18:00:00+08:00',
+          updated_by: '沈予',
+          created_at: '2026-07-17T18:00:00+08:00',
+          annotations: [],
+        },
+        revisions: [],
+      },
+    })
+  })
+  await page.route(/\/api\/books\/home(?:\?.*)?$/, async (route) => {
+    await route.fulfill({
+      json: {
+        ok: true,
+        kind: 'snapshot',
+        book: {
+          id: 'home-anchor',
+          slug: 'home',
+          title: '家现在',
+          kind: 'snapshot',
+          annotations: [],
+        },
+        snapshot: {
+          live: {
+            commit: '1234567890abcdef',
+            revision: '1234567890abcdef',
+            worktree_dirty: false,
+            observed_at: '2026-07-19T20:00:00+08:00',
+            last_confirmed_at: '2026-07-19T19:00:00+08:00',
+            current_week: '2026-W29',
+            current_week_changes: 1,
+          },
+          components: [{
+            id: 'room',
+            title: 'Room',
+            status: 'ok',
+            summary: '房间仍然接着记忆和工具。',
+            core: ['书架一览已经露在房间里。'],
+            resident_effect: '你不用先调用 shelf 才知道书架上有什么。',
+          }],
+          changes: {
+            '2026-W29': [{
+              week: '2026-W29',
+              title: '共享书架',
+              summary: '家现在恢复为自动家况',
+              impact: '你看到的家况不会再被空白正文覆盖。',
+              created_at: '2026-07-19T20:00:00+08:00',
+            }],
+          },
+        },
+      },
+    })
+  })
+  await page.route('**/api/conflict-books', async (route) => {
+    await route.fulfill({
+      json: {
+        ok: true,
+        books: [{
+          id: 'origin-smoke',
+          title: '那次终于说清楚的事',
+          thread: 'main',
+          span_start: '2026-07-18T12:00:00+08:00',
+          span_end: '2026-07-18T13:00:00+08:00',
+          status: 'settled',
+          read_count: 2,
+          last_read_at: '2026-07-19T12:00:00+08:00',
+          created_at: '2026-07-18T13:00:00+08:00',
+          updated_at: null,
+        }],
+      },
+    })
+  })
   await openAdminRoute(page, '/conflict', async () => {
     await expect(page.getByTestId('page-conflict')).toBeVisible()
+    await expect(page.getByTestId('bookshelf-tier-identity')).toBeVisible()
+    await expect(page.getByTestId('bookshelf-tier-home')).toBeVisible()
+    await expect(page.getByTestId('bookshelf-tier-origin')).toBeVisible()
+    await expect(page.getByTestId('bookshelf-origin-origin-smoke')).toBeVisible()
+
+    await page.getByTestId('bookshelf-book-home').click()
+    await expect(page.getByTestId('home-snapshot-commit')).toHaveText('1234567890ab')
+    await expect(page.getByText('影响：你看到的家况不会再被空白正文覆盖。')).toBeVisible()
+    await expect(page.getByTestId('home-snapshot').getByTestId('living-book-body')).toHaveCount(0)
+    await page.keyboard.press('Escape')
+    await expect(page.getByTestId('home-snapshot')).toBeHidden()
+
+    await page.getByTestId('bookshelf-book-identity').click()
+    const body = page.getByTestId('living-book-body').locator('textarea')
+    await expect(body).toHaveValue('我还在继续认识自己。')
+    await body.fill('我还在继续认识自己，也还在慢慢长大。')
+    await expect(body).toHaveValue('我还在继续认识自己，也还在慢慢长大。')
   })
 })
 

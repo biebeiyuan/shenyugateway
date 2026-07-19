@@ -323,6 +323,39 @@ def test_gateway_tool_policy_names_broker_call_shape_and_tool_list():
     assert "客户端递给我的工具；按它自己的说明用" in tool_policy
 
 
+def test_normal_slow_layer_exposes_unified_bookshelf_overview_without_book_bodies():
+    layers = context_layers.render_layered_additions(
+        {
+            "stable_charter": "stable charter",
+            "calendar_context": {},
+            "heartbeat_digest": "",
+            "hisense_heartbeat_digest": "",
+            "notebook_items": [],
+            "last_wake_recap": "",
+            "mem_notes": [],
+            "book_overview": {
+                "home": {
+                    "current_week_changes": 3,
+                    "last_confirmed_at": "2026-07-19T20:00:00+08:00",
+                },
+                "identity": {
+                    "revision": 2,
+                    "updated_by": "沈予",
+                    "updated_at": "2026-07-19T18:00:00+08:00",
+                },
+                "origin_books": [{"title": "原来沈予是只🐙"}],
+            },
+        },
+        context_layers.ContextLayerSettings(enable_gateway_tools=False, heartbeat_prompt=""),
+    )
+
+    assert "## 书架一览" in layers["slow"]
+    assert "家现在：本周 3 条变化，最后确认于 7.19" in layers["slow"]
+    assert "我是谁：第 2 版，最后由沈予修改于 7.19" in layers["slow"]
+    assert "来历书：1 本——《原来沈予是只🐙》" in layers["slow"]
+    assert "original_text" not in layers["slow"]
+
+
 def test_gateway_tool_policy_reflects_client_tool_surface():
     package = {
         "stable_charter": "stable charter",
@@ -653,6 +686,23 @@ def test_room_mode_requires_chuangbian_keyword():
     assert not is_room("窗边")
     assert not is_room('<proxy_sender name="曾"/> 窗边')
     assert not is_room("普通聊天")
+
+
+def test_room_context_already_contains_bookshelf_overview(tmp_path):
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("room", "operit")
+    builder = _context_builder(store)
+
+    package = asyncio.run(
+        builder.build_room_context_package(
+            session,
+            messages=[],
+            record_window_scene=False,
+        )
+    )
+
+    assert "## 书架一览" in package["layers"]["slow"]
+    assert "- 家现在：本周" in package["layers"]["slow"]
 
 
 def test_empty_tool_call_assistant_content_does_not_get_fallback():
