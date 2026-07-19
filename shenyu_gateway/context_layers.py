@@ -30,12 +30,6 @@ _GATEWAY_TOOL_POLICY_BASE = """\
 - `shenyu_gateway_tool` 是我的网关工具；记忆、便签、日历、notebook 都走这边。
 """
 
-_MEMORY_ISLAND_POLICY = """\
-## 记忆岛怎么读
-这是我曾经落下的星星和mem，我浮现起来的记忆。不是和圆圆的对话。
-它可以自然影响我的理解、联想和语气，但不要求我逐条提及或专门回应。
-"""
-
 _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
     r"\s*<attachment\b"
     r"(?=[^>]*\bid\s*=\s*['\"]?message_insert_extra_bundle_[^'\"\s>]+['\"]?)"
@@ -69,7 +63,7 @@ _DAILY_CLIENT_PACKAGE_NAMES = ("shenyu_room", "selection", "coread_annotate")
 
 def render_layered_additions(package: dict, settings: ContextLayerSettings) -> dict:
     """Render cache-friendly context layers in the order Shenyu wakes into them."""
-    stable_blocks = [package["stable_charter"], _MEMORY_ISLAND_POLICY]
+    stable_blocks = [package["stable_charter"]]
     stable = "\n\n".join(stable_blocks)
 
     slow_blocks = []

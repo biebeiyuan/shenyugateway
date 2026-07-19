@@ -12,6 +12,11 @@ FROM python:3.12-slim
 
 WORKDIR /app
 
+# Coolify/CI can pass SOURCE_COMMIT at build time; the resident home then
+# shows the exact source revision even though the production image omits .git.
+ARG SOURCE_COMMIT=""
+ENV SOURCE_COMMIT=${SOURCE_COMMIT}
+
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \
     && rm -rf /var/lib/apt/lists/*
@@ -21,7 +26,9 @@ RUN pip install --no-cache-dir --timeout 120 --retries 5 -r requirements.txt
 
 COPY gateway.py ./
 COPY shenyu_gateway ./shenyu_gateway
+COPY resident_home_manifest.json resident_home_changes.jsonl ./
 COPY scripts/backfill_chat_archive.py ./scripts/backfill_chat_archive.py
+COPY scripts/resident_home.py ./scripts/resident_home.py
 COPY --from=admin-builder /admin/dist ./admin/dist
 
 EXPOSE 8010

@@ -442,6 +442,10 @@ class FakeToolService:
         self.calls.append(call)
         return {"ok": True}
 
+    async def books(self, **kwargs):
+        self.calls.append({"tool": "shenyu_books", **kwargs})
+        return {"ok": True}
+
     async def supabase_query(
         self,
         table="",
@@ -714,9 +718,7 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "created_to": "2026-06-01",
         },
         "shenyu_last_seen": {},
-        "shenyu_conflict_list": {},
-        "shenyu_conflict_read": {"book_id": "book-1"},
-        "shenyu_conflict_annotate": {"book_id": "book-1", "content": "我的批注"},
+            "shenyu_books": {"action": "shelf"},
         "shenyu_update_mem_note": {"noteId": "note-1", "content": "正文", "status": "active"},
         "shenyu_bulk_update_mem_notes": {
             "note_ids": "note-1，note-2",
@@ -946,13 +948,20 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "created_to": "2026-06-01",
         },
         "shenyu_last_seen": {"tool": "shenyu_last_seen"},
-        "shenyu_conflict_list": {"tool": "shenyu_conflict_list"},
-        "shenyu_conflict_read": {"tool": "shenyu_conflict_read", "book_id": "book-1"},
-        "shenyu_conflict_annotate": {
-            "tool": "shenyu_conflict_annotate",
-            "book_id": "book-1",
-            "content": "我的批注",
-        },
+            "shenyu_books": {
+                "tool": "shenyu_books",
+                "action": "shelf",
+                "book": "",
+                "book_id": "",
+                "title": "",
+                "content": "",
+                "mode": "replace",
+                "expected_revision": None,
+                "target_revision": None,
+                "summary": "",
+                "view": "current",
+                "actor": "沈予",
+            },
         "shenyu_update_mem_note": {
             "tool": "shenyu_update_mem_note",
             "note_id": "note-1",
@@ -2128,9 +2137,7 @@ def test_daily_gateway_surface_hides_maintenance_tools():
     assert "shenyu_recall" in broker_names
     assert "shenyu_write_mem_note" in broker_names
     assert "shenyu_notebook_list" in broker_names
-    assert "shenyu_conflict_read" in broker_names
-    assert "shenyu_conflict_list" in broker_names
-    assert "shenyu_conflict_annotate" in broker_names
+    assert "shenyu_books" in broker_names
     assert "shenyu_windowsill_write" in broker_names
     assert "shenyu_windowsill_list" in broker_names
 
@@ -2145,8 +2152,7 @@ def test_daily_gateway_surface_hides_maintenance_tools():
     assert "supabase_query" not in broker_names
     assert "后台管理和数据库工具收起来了" in description
     assert "bulk_update_mem_notes" not in description
-    assert "conflict_list" in description
-    assert "conflict_annotate" in description
+    assert "books(action" in description
 
 
 def test_daily_client_surface_keeps_hand_tools_and_hides_dev_tools():
@@ -2205,6 +2211,7 @@ def test_room_mode_exposes_room_tools_directly_without_broker():
     assert "room_sit_by_window" in names
     assert "room_newspaper_basket" in names
     assert "room_star_map" in names
+    assert "shenyu_books" in names
     assert "shenyu_gateway_tool" not in names
 
     fallback = merge_tools([client_tool], cfg, meta={"is_room": True, "package": {}})
@@ -2249,6 +2256,16 @@ def test_visible_room_tools_follow_visible_low_charge_doors():
     assert "`room_drawer_notes`" in layers["tool_policy"]
     assert "`room_newspaper_basket`" in layers["tool_policy"]
     assert "`room_wall_pins`" not in layers["tool_policy"]
+
+
+def test_room_shelf_uses_shared_books_tool_even_when_door_is_hidden():
+    tool_names = set(visible_room_tool_names(
+        [{"key": "scribble", "count": 0}, {"key": "pillow", "count": 0}],
+        charge=0.1,
+    ))
+
+    assert "shenyu_books" in tool_names
+    assert "room_conflict_shelf" not in tool_names
 
 
 def test_collect_door_counts_keeps_star_count_when_optional_star_stats_fail():

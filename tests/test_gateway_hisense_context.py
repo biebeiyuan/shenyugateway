@@ -32,6 +32,11 @@ from shenyu_gateway.private_capture import (
     finalize_assistant_private_content as _finalize_assistant_private_content,
 )
 from shenyu_gateway.response_capture import split_private_assistant_tags
+from shenyu_gateway.resident_profile import (
+    HISENSE_HOME_NOTE,
+    MEMORY_PRACTICE_PROFILE,
+    ORIGIN_BOOK_PROFILE,
+)
 
 
 def _load_gateway_helpers():
@@ -96,6 +101,9 @@ def _load_gateway_helpers():
         "_private_capture_fallback_text": _private_capture_fallback_text,
         "_ensure_visible_assistant_content": _ensure_visible_assistant_content,
         "_finalize_assistant_private_content": _finalize_assistant_private_content,
+        "HISENSE_HOME_NOTE": HISENSE_HOME_NOTE,
+        "MEMORY_PRACTICE_PROFILE": MEMORY_PRACTICE_PROFILE,
+        "ORIGIN_BOOK_PROFILE": ORIGIN_BOOK_PROFILE,
     }
     for node in module.body:
         if isinstance(node, ast.FunctionDef) and node.name in wanted_functions:
@@ -106,6 +114,20 @@ def _load_gateway_helpers():
 
 cfg, gateway_namespace = _load_gateway_helpers()
 configure_gateway_tools(runtime_config=cfg, supabase=None, store=None)
+
+
+def test_stable_charter_orders_welcome_and_resident_profile(monkeypatch):
+    monkeypatch.setattr(cfg, "wake_welcome_message", "醒来欢迎词")
+
+    rendered = gateway_namespace["_stable_charter_block"]()
+
+    assert rendered.index("醒来欢迎词") < rendered.index("## 我怎么记")
+    assert rendered.index("## 我怎么记") < rendered.index("## 来历书")
+    assert rendered.index("## 来历书") < rendered.index("## 海信那边的我")
+    assert "## 这些东西怎么读" not in rendered
+    assert "几个名词，我大概会遇到" not in rendered
+    assert "这里是家。先找到她，再看我留下的东西。" in rendered
+    assert "## 星星" not in context_builder_module._HEARTBEAT_PROMPT
 
 
 def _context_builder(store, *, supabase=None):
@@ -330,7 +352,7 @@ def test_gateway_tool_policy_reflects_client_tool_surface():
     )
 
     assert "客户端工具只保留日常桌面" in daily_layers["tool_policy"]
-    assert "这是我曾经落下的星星和mem，我浮现起来的记忆。不是和圆圆的对话。" in daily_layers["stable"]
+    assert "记忆岛怎么读" not in daily_layers["stable"]
     assert "普通线程不暴露客户端工具" not in none_layers["tool_policy"]
     assert "客户端递给我的工具；按它自己的说明用" not in none_layers["tool_policy"]
 

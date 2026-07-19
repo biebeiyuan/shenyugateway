@@ -34,9 +34,10 @@ const GATEWAY_TOOL_HINTS: Record<string, string> = {
   shenyu_add_calendar: '写一页日历日记',
   shenyu_read_heartbeat: '读自己留的心跳',
   shenyu_last_seen: '看上次聊了什么',
-  shenyu_conflict_list: '看矛盾书书架',
-  shenyu_conflict_read: '翻开一本矛盾书',
-  shenyu_conflict_annotate: '在矛盾书里批注',
+  shenyu_books: '查看或书写共享书架',
+  shenyu_conflict_list: '看来历书书架',
+  shenyu_conflict_read: '翻开一本来历书',
+  shenyu_conflict_annotate: '在来历书里批注',
   shenyu_notebook_list: '看手边的事',
   shenyu_notebook_write: '记一条手边的事',
   shenyu_notebook_update: '改一条手边的事',
@@ -48,7 +49,7 @@ const GATEWAY_TOOL_HINTS: Record<string, string> = {
   room_notebook: '翻房间笔记本',
   room_scribble: '读写窗台涂鸦本',
   room_wall_pins: '看墙上便签',
-  room_conflict_shelf: '翻矛盾书架',
+  room_conflict_shelf: '翻来历书架',
   room_sit_by_window: '坐在窗边',
   room_octopus_pillow: '抱章鱼抱枕',
   room_locked_drawer: '打开上锁抽屉',
@@ -372,7 +373,7 @@ function renderOverview(detail: LogDetail): string {
   const islandTone = changed ? 'island-changed' : 'island-calm'
   const islandTitle = changed ? '小岛这次轻轻换了位置' : '小岛还在原来的地方'
   const islandSubtitle = changed
-    ? '实际送给模型的记忆内容有变化，下面可以直接看到。'
+    ? '实际送给沈予的记忆内容有变化，下面可以直接看到。'
     : '这次沿用了上一轮的小岛，没有重新搬动。'
 
   let html = `<div class="island-hero ${islandTone}"><div class="island-orb">${changed ? '✦' : '◌'}</div><div><div class="island-hero-title">${islandTitle}</div><div class="island-hero-sub">${islandSubtitle}</div></div></div>`
@@ -391,7 +392,7 @@ function renderOverview(detail: LogDetail): string {
 
   const rendered = islandRenderedText(detail)
   if (rendered || (!content?.stars && !content?.mem_notes)) {
-    html += `<div class="island-section"><div class="island-section-title">${content?.stars || content?.mem_notes ? '送给模型的完整原文' : '这次真正送过去的小岛'}</div>`
+    html += `<div class="island-section"><div class="island-section-title">${content?.stars || content?.mem_notes ? '送给沈予的完整原文' : '这次真正送过去的小岛'}</div>`
     html += rendered
       ? `<div class="island-content">${esc(rendered)}</div>`
       : '<div class="empty-soft">这条旧日志没有单独保存小岛正文，可以去 System 里看完整上下文。</div>'

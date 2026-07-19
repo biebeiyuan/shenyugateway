@@ -123,8 +123,13 @@ def visible_room_doors(door_specs: list[dict], charge: float) -> list[dict]:
 
 
 def visible_room_tool_names(door_specs: list[dict], charge: float) -> list[str]:
-    """Return room_* tool names for currently visible doors."""
-    return [str(door.get("tool") or "") for door in visible_room_doors(door_specs, charge) if door.get("tool")]
+    """Return tools for visible doors plus the shared shelf handoff."""
+    names = [str(door.get("tool") or "") for door in visible_room_doors(door_specs, charge) if door.get("tool")]
+    # The shared shelf is the Room/chat handoff point, so it remains callable
+    # even when low charge hides the physical shelf door.
+    if "shenyu_books" not in names:
+        names.append("shenyu_books")
+    return names
 
 
 def render_doors(door_specs: list[dict], charge: float) -> str:

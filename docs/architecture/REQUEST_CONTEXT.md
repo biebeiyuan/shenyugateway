@@ -9,7 +9,7 @@ Context is assembled in the order Shenyu should wake into it:
 | Layer | Placement | Contents | Cache policy |
 |---|---|---|---|
 | request tools | request tools | client tools + `shenyu_*` / `supabase_*` tools | no dedicated breakpoint |
-| `stable` | start of the system prefix | stable charter, wake welcome message, and the memory-island reading policy | covered by `system.end` |
+| `stable` | start of the system prefix | stable charter, wake welcome message, and resident memory profile | covered by `system.end` |
 | `slow` | system prefix after `stable` | calendar memory, Hisense notebook/recap | covered by `system.end` |
 | `heartbeat` | system prefix after `slow` | `## 我之前的心跳` and optional Hisense heartbeat block | covered by `system.end` |
 | `tool_policy` | system prefix after heartbeat | compact gateway/client tool reminder rendered as `## 工具怎么用` | covered by `system.end` |
@@ -22,7 +22,7 @@ The retired rolling and frozen context layers have been removed from the active 
 
 `GATEWAY_TOOL_MODE=broker` is the default for normal threads and exposes one compact `shenyu_gateway_tool` dispatcher that calls the same gateway-native tools with fewer schema tokens. Broker calls should set `tool` to the full gateway tool name, including the `shenyu_` or `supabase_` prefix, and put the selected tool's arguments in the `params` object, not a JSON-encoded string. The old `arguments` field remains compatible. Use `full` when strict per-tool parameter guidance matters more than prompt size.
 
-`GATEWAY_TOOL_SURFACE=daily` keeps broker mode but narrows the broker enum/description to daily hand tools: stars, recall, calendar, heartbeat, mem notes write/search, notebook, and conflict books. `CLIENT_TOOL_SURFACE=daily` filters client-provided tools to the normal desktop set (`gateway`, `read_file`, `visit_web`, `package_proxy`, room, and coread tools), while `none` hides client tools entirely. These surface filters do not apply room tools as a broker; room mode exposes direct `room_*` tools for the currently visible doors.
+`GATEWAY_TOOL_SURFACE=daily` keeps broker mode but narrows the broker enum/description to daily hand tools: stars, recall, calendar, heartbeat, mem notes write/search, notebook, and `shenyu_books`. `CLIENT_TOOL_SURFACE=daily` filters client-provided tools to the normal desktop set (`gateway`, `read_file`, `visit_web`, `package_proxy`, room, and coread tools), while `none` hides client tools entirely. These surface filters do not apply room tools as a broker; room mode exposes direct room tools plus the same `shenyu_books` shelf.
 
 ## Prompt Cache
 
@@ -441,14 +441,18 @@ SQLite stays the live read path; injection behavior is unchanged. Config: `ENABL
 - Config: `ENABLE_CHAT_ARCHIVE`.
 - This table is the source of truth: recall indexes and conflict books are derived from it; soft-delete only.
 
-### Conflict books（矛盾书）
+### Origin books（来历书）
 
 Frozen verbatim excerpts of arguments, clipped by the user from the archive reader, readable and annotatable by Shenyu. Invariants enforced in `shenyu_gateway/conflict_books.py` (no API path can violate them):
 
 - `original_text` is frozen at clip time; update paths drop it and a text-only patch is rejected.
 - Shenyu's annotations are append-only with timestamps; no update or delete endpoint exists.
-- Every `shenyu_conflict_read` appends a row to `shenyu_conflict_reads` and bumps `read_count`, so the shelf shows 翻过几次/最近何时.
-- Books are never auto-injected as content. The only passive surface is the `## 矛盾书` shelf block (titles + status only) in the `slow` layer, toggled by `INJECT_CONFLICT_SHELF`.
-- The daily broker exposes list, read, and annotate. Shenyu first calls `shenyu_conflict_list`, then reads or annotates with the exact unique `title`; `book_id` remains a fallback. Duplicate titles are rejected as ambiguous rather than guessed.
+- Every origin-book read through `shenyu_books` still appends a row to `shenyu_conflict_reads` and bumps `read_count`, so the shelf shows 翻过几次/最近何时.
+- Books are never auto-injected as content. The only passive surface is the `## 来历书` shelf block (titles + status only) in the `slow` layer, toggled by `INJECT_CONFLICT_SHELF`.
+- The public book entry is `shenyu_books` with `action=shelf|read|annotate`; the old `shenyu_conflict_*` names remain hidden compatibility handlers. Duplicate titles are rejected as ambiguous rather than guessed.
 
-Tools: `shenyu_conflict_list`, `shenyu_conflict_read`, `shenyu_conflict_annotate`. Admin UI: 档案 tab (clip flow) and 矛盾书 tab (edit title/notes/epilogue/status; soft delete). Migrations: `20260613_shenyu_heartbeat_archive.sql`, `20260613_shenyu_chat_archive.sql`, `20260613_shenyu_conflict_books.sql`.
+Tools: `shenyu_books`. Admin UI: 档案 tab (clip flow) and 来历书管理页 (the legacy route/data names stay internal). Living books use `shenyu_books`, `shenyu_book_revisions`, and `shenyu_book_annotations` from `20260719_shenyu_books.sql`; origin books continue using `20260613_shenyu_conflict_books.sql`.
+
+### Living books
+
+`identity`（我是谁）and `home`（家现在）are shared, mutable documents. Every write creates a revision before updating the current body; `expected_revision` can reject a stale write instead of silently overwriting a newer edit. Annotations are append-only, and timestamps/actors are assigned by the gateway entry point. `home` reads also include the repository/runtime snapshot from `resident_home_manifest.json` and its weekly change ledger.

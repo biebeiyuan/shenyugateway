@@ -461,47 +461,46 @@ def _gateway_core_tools() -> list[dict]:
                 "parameters": {"type": "object", "properties": {}},
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_conflict_list",
-                "description": "看矛盾书的书架：圆圆整理的、我们掰扯过的事的原文。只有书名和状态。",
-                "parameters": {"type": "object", "properties": {}},
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_conflict_read",
-                "description": "翻开一本矛盾书：先用 shenyu_conflict_list 看书架，再传精确 title；也可传 book_id。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "book_id": {"type": "string"},
-                        "id": {"type": "string", "description": "book_id 的别名"},
-                        "title": {"type": "string", "description": "书架上的精确书名；标题重复时会拒绝猜测"},
-                    },
-                },
-            },
-        },
-        {
-            "type": "function",
-            "function": {
-                "name": "shenyu_conflict_annotate",
-                "description": "在一本矛盾书里追加一条批注。传书架上的精确 title 或 book_id；落笔即存档，不可改、不可删。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "book_id": {"type": "string"},
-                        "id": {"type": "string", "description": "book_id 的别名"},
-                        "title": {"type": "string", "description": "书架上的精确书名；标题重复时会拒绝猜测"},
-                        "content": {"type": "string"},
-                    },
-                    "required": ["content"],
-                },
-            },
-        },
+        _gateway_books_tool(),
     ]
+
+
+def _gateway_books_tool() -> dict:
+    return {
+        "type": "function",
+        "function": {
+            "name": "shenyu_books",
+            "description": (
+                "书架总入口。action=shelf 看现状和书架，read 翻开，write 修改可持续书写的活文档，"
+                "annotate 追加批注。来历书正文仍然冻结，活文档每次写入都会留下版本。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["shelf", "read", "write", "annotate"],
+                        "default": "shelf",
+                    },
+                    "book": {
+                        "type": "string",
+                        "enum": ["identity", "home", "origin", "我是谁", "家现在", "来历书"],
+                        "description": "identity=我是谁，home=家现在，origin=来历书。",
+                    },
+                    "book_id": {"type": "string", "description": "来历书书架上的 book_id。"},
+                    "id": {"type": "string", "description": "book_id 的别名。"},
+                    "title": {"type": "string", "description": "来历书书架上的精确书名。"},
+                    "content": {"type": "string", "description": "write 或 annotate 时的正文。"},
+                    "mode": {"type": "string", "enum": ["replace", "append"], "default": "replace"},
+                    "expected_revision": {"type": "integer", "minimum": 0},
+                    "target_revision": {"type": "integer", "minimum": 0},
+                    "summary": {"type": "string", "description": "这次活文档修改的一句话说明。"},
+                    "view": {"type": "string", "enum": ["current", "history"], "default": "current"},
+                },
+                "required": ["action"],
+            },
+        },
+    }
 
 
 def _gateway_mem0_management_tools() -> list[dict]:

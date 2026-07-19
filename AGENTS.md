@@ -48,6 +48,16 @@ Before handing off a meaningful change:
 
 `DOCS_MAP.md` § 地图同步边界 is the authority for which map owns each kind of change.
 
+### Resident home synchronization
+
+When a runtime, configuration, or architecture change may alter what a resident experiences, run:
+
+```bash
+python scripts/resident_home.py check
+```
+
+For every `review_required` component, record a short resident-facing summary and impact with `review <component> --summary ... --impact ...`, or explicitly acknowledge that the change has no resident impact with `--no-impact`. The command records the current source fingerprint, commit, author, and Asia/Shanghai timestamp itself; do not hand-write those fields. The structured source of truth is `resident_home_manifest.json`, and the weekly ledger is `resident_home_changes.jsonl`.
+
 For every new runtime configuration field that is editable in Admin, inspect and update all of these locations before handoff:
 
 1. `shenyu_gateway/config.py` — environment/default loading and runtime serialization.

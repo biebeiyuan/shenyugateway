@@ -218,7 +218,7 @@ async function saveClip() {
       user_notes: clipNotes.value.trim() || undefined,
     })
     if (result.ok) {
-      message.success('已截入矛盾书。原文从这一刻起冻结。')
+      message.success('已截入来历书。原文从这一刻起冻结。')
       showClipModal.value = false
       toggleSelecting()
     } else {
@@ -286,7 +286,7 @@ async function saveClip() {
                 {{ selecting ? '取消' : '选取' }}
               </NButton>
               <NButton v-if="selecting" size="small" type="primary" :disabled="!selectedIds.size" @click="openClipModal">
-                截入矛盾书（{{ selectedIds.size }}）
+                截入来历书（{{ selectedIds.size }}）
               </NButton>
             </div>
           </div>
@@ -331,7 +331,7 @@ async function saveClip() {
     </section>
 
     <!-- Clip Modal -->
-    <NModal v-model:show="showClipModal" preset="card" title="截入矛盾书" style="max-width: 560px">
+    <NModal v-model:show="showClipModal" preset="card" title="截入来历书" style="max-width: 560px">
       <div class="clip-form">
         <NInput v-model:value="clipTitle" placeholder="书名，例如：关于重roll的那次掰扯" />
         <NInput

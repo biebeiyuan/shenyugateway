@@ -61,6 +61,9 @@ The codebase is partly layered already:
 
 - `shenyu_gateway/context_builder.py`: async parallel gathering of all memory sources into a context package.
 - `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, and cold-start bridge insertion.
+- `shenyu_gateway/resident_home.py`: resident-facing component manifest, source fingerprints, review acknowledgements, and weekly change records.
+- `shenyu_gateway/resident_books.py`: unified `shenyu_books` facade for the home snapshot, living books, annotations, and legacy origin-book storage.
+- `shenyu_gateway/resident_profile.py`: stable wake/profile text for memory practice, the origin book, and the Hisense home note.
 - `shenyu_gateway/context_snapshots.py`: context snapshot creation and helpers for calendar/cold-start sources.
 - `shenyu_gateway/context_window.py`: semantic history-event classification, chunk-safe client-history windowing with high-water/epoch/anchor state, and cold-start bridge overlap deduplication.
 - `shenyu_gateway/memory_island.py`: Stars/Mem island rendering and per-lane retain/rewrite state, including overlap decisions and current/added/updated/removed log summaries.
@@ -94,7 +97,7 @@ The codebase is partly layered already:
 
 - `shenyu_gateway/chat_archive.py`: L0 verbatim chat archive service (fire-and-forget archival to Supabase `shenyu_chat_archive`).
 - `shenyu_gateway/heartbeat_archive.py`: heartbeat disaster recovery archive to Supabase (`shenyu_heartbeat_archive`), settle window, soft-delete reconciliation.
-- `shenyu_gateway/conflict_books.py`: durable conflict-book records and invariants (frozen original_text, append-only annotations); the shelf/tool presentation is also a memory-data concern in system zone six.
+- `shenyu_gateway/conflict_books.py`: durable origin-book records and invariants (frozen original_text, append-only annotations); the shelf/tool presentation is also a memory-data concern in system zone six.
 
 ### Calendar
 
@@ -120,7 +123,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/gateway_admin_routes.py`: admin API routes (stars, mem notes, room, overview, prune, etc.).
 - `shenyu_gateway/calendar_routes.py`: calendar API routes (prompts, month grid, generation, preview).
 - `shenyu_gateway/hisense_routes.py`: retained Hisense API routes (preview, notebook, session); this dedicated path is currently not in daily use.
-- `shenyu_gateway/archive_routes.py`: archive reader and conflict book API routes.
+- `shenyu_gateway/archive_routes.py`: archive reader, origin-book, and shared resident-book API routes.
 - `shenyu_gateway/config_routes.py`: configuration API routes (get/set runtime config).
 - `shenyu_gateway/admin_shell_routes.py`: admin shell/UI routes (static file serving, login page).
 
@@ -152,7 +155,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/api/logs.ts`: request log list and detail APIs.
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
 - `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
-- `admin/src/api/archive.ts`: chat archive reader and conflict book APIs.
+- `admin/src/api/archive.ts`: chat archive reader and origin-book APIs.
 - `admin/src/api/room.ts`: room mode APIs (traces, drawer notes, scribbles, pins, newspapers).
 - `admin/src/api/toolErrors.ts`: tool error log APIs.
 - `admin/src/views/HomeView.vue`: admin landing/dashboard page.
@@ -171,8 +174,8 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, and cache-structure evidence.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
 - `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
-- `admin/src/views/ArchiveView.vue`: chat archive reader and conflict book clip flow.
-- `admin/src/views/ConflictView.vue`: conflict book management (edit title/notes/epilogue/status, soft delete).
+- `admin/src/views/ArchiveView.vue`: chat archive reader and origin-book clip flow.
+- `admin/src/views/ConflictView.vue`: origin-book management (edit title/notes/epilogue/status, soft delete).
 - `admin/src/views/RoomView.vue`: room mode admin preview shell (charge, traces, drawer notes, pins, and newspaper placement).
 - `admin/src/views/room/RoomNewspaperPanel.vue`: in-place Room newspaper panel (generate, review, publish, discard, and source status).
 - `admin/src/views/ToolErrorsView.vue`: tool error log viewer.
@@ -370,12 +373,14 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 
 ## Verification Checklist
 
+- After a resident-facing runtime or configuration change, run `python scripts/resident_home.py check`; review affected entries with `python scripts/resident_home.py review <component> --summary ... --impact ...` or explicitly acknowledge `--no-impact`.
 - Search the active code paths for retired summary/window env vars and the removed short-lived notes table; they should not appear.
 - `GET /api/gateway/context/preview` should show `stable`, optional `slow`, optional `mem`, `heartbeat`, `tool_policy`, and `format`.
 - When `INJECT_STARS=true`, relevant stars that clear `STAR_RELATED_MIN_SCORE` and `STAR_MIN_SCORE` should appear in the `mem` layer before mem notes; `STAR_INJECT_LIMIT` is an upper bound, not a promise to always inject that many.
 - `GET /api/calendar/send-preview?...` should show `Current Client Context Snapshots`, not rolling/frozen blocks.
 - `GET /api/gateway/logs` should show prompt cache breakpoints and cold-start metadata.
 - `GET /api/gateway/logs/{id}` should show `response_full` for retained payloads; the list view should keep using short previews.
+- `GET /api/books` should expose the unified resident shelf; `/api/books/{identity|home}` reads or writes living books with revision history, while origin books stay behind the frozen conflict-book service.
 - After star-memory edits, run `pytest -q test_star_memory.py test_gateway_tool_registry.py test_response_capture.py test_gateway_tags.py`.
 - Run `python -c "import test_gateway_streaming as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after streaming/tool-loop edits when `pytest` is unavailable.
 - Run `python -c "import test_upstream_adapter_stream as t; [getattr(t, name)() for name in dir(t) if name.startswith('test_')]"` after upstream stream adapter edits when `pytest` is unavailable.
@@ -399,6 +404,8 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 4. Set environment variables in Coolify's dashboard (`.env` content).
 5. Port mapping: `8010:8010`.
 6. Coolify auto-deploys on every git push.
+
+For the resident home snapshot to show the deployed revision inside the image, pass the source SHA as the Docker build argument `SOURCE_COMMIT` (or set the runtime environment variable with the same name). The image intentionally omits `.git`.
 
 If local sessions, context snapshots, pending tool turns, persisted request-log summaries, or Admin configuration overrides must survive container replacement, mount a persistent volume at `/app/data` (or the parent directory configured by `GATEWAY_DB_PATH`). The Dockerfile does not declare a volume, so the default `/app/data/shenyu_gateway.db` otherwise belongs to the disposable container filesystem. Supabase archives are independent of this local volume. `GATEWAY_REQUEST_LOG_RETENTION` controls the bounded history size and defaults to `200`; full debug payloads are never written to this history.
 

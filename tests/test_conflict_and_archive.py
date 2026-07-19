@@ -5,7 +5,12 @@ import tempfile
 from datetime import datetime
 from pathlib import Path
 
-from shenyu_gateway.archive_routes import ArchiveRouteDeps, build_archive_router
+from shenyu_gateway.archive_routes import (
+    ArchiveRouteDeps,
+    ResidentBookAnnotation,
+    ResidentBookWrite,
+    build_archive_router,
+)
 from shenyu_gateway.chat_archive import ChatArchiveService, derive_thread
 from scripts.backfill_chat_archive import _candidate_rows
 from shenyu_gateway.conflict_books import ConflictBookService, render_conflict_shelf
@@ -337,6 +342,47 @@ def test_archive_routes_use_cst_day_boundaries():
             {"date": "2026-06-15", "count": 1},
         ]
         assert [row["content"] for row in messages["messages"]] == ["inside-early", "inside-late"]
+
+    asyncio.run(run())
+
+
+def test_resident_books_routes_share_living_revision_and_annotation_flow():
+    async def run():
+        supabase = FakeSupabase()
+        router = build_archive_router(ArchiveRouteDeps(get_supabase_client=lambda: supabase))
+        endpoints = {route.path: route.endpoint for route in router.routes}
+        read_endpoint = next(
+            route.endpoint
+            for route in router.routes
+            if route.path == "/api/books/{book}" and "GET" in (route.methods or set())
+        )
+        write_endpoint = next(
+            route.endpoint
+            for route in router.routes
+            if route.path == "/api/books/{book}" and "PATCH" in (route.methods or set())
+        )
+
+        shelf = await endpoints["/api/books"]()
+        assert shelf["ok"]
+        assert shelf["home"]["live"]["commit"]
+
+        written = await write_endpoint(
+            "identity",
+            ResidentBookWrite(content="我和圆圆一起写的自述", summary="第一版自述"),
+        )
+        assert written["ok"]
+        assert written["book"]["revision"] == 1
+
+        annotated = await endpoints["/api/books/{book}/annotations"](
+            "identity",
+            ResidentBookAnnotation(content="这条是圆圆留下的批注。"),
+        )
+        assert annotated["ok"]
+
+        read = await read_endpoint("identity", view="history")
+        assert read["book"]["body"] == "我和圆圆一起写的自述"
+        assert read["book"]["annotations"][0]["actor"] == "圆圆"
+        assert len(read["revisions"]) == 1
 
     asyncio.run(run())
 

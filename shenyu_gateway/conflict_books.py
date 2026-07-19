@@ -244,7 +244,7 @@ def render_conflict_shelf(books: list[dict]) -> str:
     """
     if not books:
         return ""
-    lines = ["## 矛盾书", "圆圆整理的、我们掰扯过的事的原文。想回去看哪一本，用 shenyu_conflict_read。"]
+    lines = ["## 来历书", "圆圆整理的、我们一起走过的事的原文。想回去看哪一本，用 shenyu_books 翻开。"]
     for book in books:
         status = "已落地" if book.get("status") == "settled" else "还开着"
         read_count = int(book.get("read_count") or 0)

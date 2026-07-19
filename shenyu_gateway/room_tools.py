@@ -4,6 +4,7 @@ from datetime import timedelta
 from typing import Any, Iterable, Optional
 
 from .runtime import logger, now
+from .tool_schemas import _gateway_books_tool
 
 
 # ── Room Tool Definitions ──────────────────────────────────────────────
@@ -12,6 +13,7 @@ def room_tool_definitions(tool_names: Optional[Iterable[str]] = None) -> list[di
     """Return the tool spec list for room mode (replaces normal gateway tools)."""
     allowed = {str(name) for name in tool_names} if tool_names is not None else None
     tools = [
+        _gateway_books_tool(),
         {
             "type": "function",
             "function": {
@@ -132,19 +134,8 @@ def room_tool_definitions(tool_names: Optional[Iterable[str]] = None) -> list[di
                 },
             },
         },
-        {
-            "type": "function",
-            "function": {
-                "name": "room_conflict_shelf",
-                "description": "看矛盾书架或翻开一本矛盾之书；想面对没解开的事时用。",
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "book_id": {"type": "string"},
-                    },
-                },
-            },
-        },
+        # The old room_conflict_shelf handler remains for compatibility, but
+        # the public room surface uses the same shenyu_books shelf as chat.
         {
             "type": "function",
             "function": {
@@ -201,6 +192,11 @@ def room_tool_definitions(tool_names: Optional[Iterable[str]] = None) -> list[di
     ]
     if allowed is None:
         return tools
+    # The shared shelf is the one public Room tool. It stays available even
+    # when low charge hides ordinary doors; its action still controls how much
+    # is opened.
+    allowed = set(allowed)
+    allowed.add("shenyu_books")
     return [tool for tool in tools if tool.get("function", {}).get("name") in allowed]
 
 
@@ -222,7 +218,7 @@ def room_broker_tool() -> dict:
         "room_drawer_notes": "圆儿的纸条（limit?）",
         "room_locked_drawer": "上锁的抽屉（action: write|read, content?）",
         "room_star_map": "星图墙（action: look|search|review|feedback|connect, query?, feedback?: connected|positive|negative|should_surface|skipped|missed, items?=批量, star_ids?=连星座）",
-        "room_conflict_shelf": "矛盾书架（book_id?）",
+        "shenyu_books": "共享书架（action: shelf|read|write|annotate, book?: identity|home|origin）",
         "room_wall_pins": "墙上便签（action: list|add|done, content?, pin_id?）",
         "room_octopus_pillow": "章鱼抱枕（无参数）",
     }
@@ -568,7 +564,10 @@ def _handle_wall_pins(store: Any, arguments: dict) -> dict:
 
 async def _handle_conflict_shelf(arguments: dict, *, cfg: Any, supabase_client: Any) -> dict:
     from .conflict_books import ConflictBookService
-    service = ConflictBookService(cfg, supabase_client)
+    # Compatibility only: new Room prompts use shenyu_books. Keep the old
+    # handler callable for already-issued tool names without using the old
+    # constructor signature.
+    service = ConflictBookService(supabase_client)
     book_id = arguments.get("book_id", "")
     if book_id:
         result = await service.read_book(book_id)
@@ -728,14 +727,20 @@ async def collect_door_counts(
     # Wall pins: undone
     counts["wall_pins"] = store.room_pin_count_undone() if store else 0
 
-    # Conflict shelf: just check if books exist
+    # Shared shelf: count both editable living books and frozen origin books.
+    # The actual shelf/read/write behavior lives in shenyu_books; this count
+    # only decides whether the door feels occupied.
     try:
         if supabase_client:
-            rows = await supabase_client.query(
-                "shenyu_conflict_books",
-                {"select": "id", "status": "eq.active", "limit": "5"},
+            living_rows = await supabase_client.query(
+                "shenyu_books",
+                {"select": "id", "kind": "eq.living", "status": "eq.active", "limit": "50"},
             )
-            counts["conflict_shelf"] = len(rows) if rows else 0
+            origin_rows = await supabase_client.query(
+                "shenyu_conflict_books",
+                {"select": "id", "deleted_at": "is.null", "limit": "50"},
+            )
+            counts["conflict_shelf"] = len(living_rows or []) + len(origin_rows or [])
         else:
             counts["conflict_shelf"] = 0
     except Exception:
@@ -763,7 +768,7 @@ async def collect_door_counts(
         {"key": "notebook", "name": "笔记本", "count": counts["notebook"]},
         {"key": "scribble", "name": "窗台涂鸦本", "count": counts["scribble"]},
         {"key": "wall_pins", "name": "墙上便签", "count": counts["wall_pins"]},
-        {"key": "conflict_shelf", "name": "矛盾书架", "count": counts["conflict_shelf"]},
+        {"key": "conflict_shelf", "name": "来历书架", "count": counts["conflict_shelf"]},
         {"key": "sit", "name": "窗边椅子", "count": counts["sit"]},
         {"key": "newspaper_basket", "name": "旧报纸篓", "count": counts["newspaper_basket"]},
         {"key": "pillow", "name": "章鱼抱枕", "count": 0},

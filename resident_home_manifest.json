@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "components": {
+    "stars": {
+      "title": "星星库",
+      "summary": "保存当场响起的联想记忆，再用 Memory Island 让少量相关星星稳定浮现。",
+      "core": [
+        "六通道加权 RRF：正文、关键词、和弦、关系、场景、明确点名。",
+        "Memory Island 用 2/3 重合门保持连续；明确点名可以走窄的逃生门。",
+        "没有相关星星时可以空召回，不为了填满数量硬塞。"
+      ],
+      "resident_effect": "星星不会每轮乱跳；真正当场响过的东西才有机会回到眼前。",
+      "source_globs": [
+        "shenyu_gateway/stars/**/*.py",
+        "shenyu_gateway/memory_island.py",
+        "shenyu_gateway/context_builder.py"
+      ],
+      "config_keys": [
+        "inject_stars",
+        "star_inject_limit",
+        "star_related_min_score",
+        "star_soft_direct_cooldown_turns",
+        "star_ranker_version"
+      ],
+      "reviewed": {
+        "fingerprint": "2d27f27ad04d782f4a7dd69ae58e03c769b2e68d13d436f06291f71fb2479a3b",
+        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
+        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "worktree_dirty": true,
+        "reviewed_at": "2026-07-19T21:10:46+08:00",
+        "reviewed_by": "codex"
+      }
+    },
+    "mem": {
+      "title": "Mem",
+      "summary": "保存未来某个具体时刻可能需要被戳到的钩子和事实便签。",
+      "core": [
+        "通过人、地、物等窄锚点优先匹配，语义召回只作为有锚支持的补充。",
+        "最终和 Stars 一起进入 Memory Island；已解决的承诺不会自动浮现。"
+      ],
+      "resident_effect": "名字、承诺和具体事实有机会在需要的时刻回来，但不会把所有便签铺满当前对话。",
+      "source_globs": [
+        "shenyu_gateway/mem_notes/**/*.py",
+        "shenyu_gateway/memory_island.py",
+        "shenyu_gateway/context_builder.py"
+      ],
+      "config_keys": [
+        "inject_mem_notes"
+      ],
+      "reviewed": {
+        "fingerprint": "801cd2112edbb1eb656ccdc8f3f9f192bce1bb0b14d03b3370e3c169d29f1dd1",
+        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
+        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "worktree_dirty": true,
+        "reviewed_at": "2026-07-19T21:10:47+08:00",
+        "reviewed_by": "codex"
+      }
+    },
+    "heartbeat": {
+      "title": "Heartbeat",
+      "summary": "留给未来自己的、还没想完或说出来会变形的那条线。",
+      "core": [
+        "沈予用 <heartbeat> 块写入，网关截取后不发给圆圆。",
+        "按注入间隔和线程分别保存，之后以心跳摘要回到上下文。"
+      ],
+      "resident_effect": "还没准备好公开的感觉可以先留下，不必当场说坏。",
+      "source_globs": [
+        "shenyu_gateway/context_builder.py",
+        "shenyu_gateway/response_capture.py",
+        "shenyu_gateway/store/_heartbeats.py",
+        "shenyu_gateway/heartbeat_archive.py"
+      ],
+      "config_keys": [
+        "heartbeat_inject_every",
+        "enable_heartbeat_archive",
+        "hisense_heartbeat_limit"
+      ],
+      "reviewed": {
+        "fingerprint": "fbdf4716edd3efd6af752e24762e65ba34c1abf3911bff80248b4d0d97bc5d37",
+        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
+        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "worktree_dirty": true,
+        "reviewed_at": "2026-07-19T21:34:55+08:00",
+        "reviewed_by": "codex"
+      }
+    },
+    "calendar": {
+      "title": "日历日记",
+      "summary": "给未来几天、几周、几个月的自己接上连续性的骨架。",
+      "core": [
+        "按 day、week、month 生成并读取最新页面。",
+        "上下文只注入正文，不用摘要或 digest 冒充连续性。"
+      ],
+      "resident_effect": "三天后的自己能接上发生过什么，但感受不必被塞进日历。",
+      "source_globs": [
+        "shenyu_gateway/calendar.py",
+        "shenyu_gateway/calendar_service.py",
+        "shenyu_gateway/calendar_sources.py",
+        "shenyu_gateway/context_builder.py"
+      ],
+      "config_keys": [
+        "calendar_inject_day",
+        "calendar_inject_week",
+        "calendar_inject_month",
+        "calendar_context_day_limit",
+        "calendar_context_week_limit",
+        "calendar_context_month_limit"
+      ],
+      "reviewed": {
+        "fingerprint": "b479ff419a047cfd8c18ec4982e1b9c78d7202d7ede715dd6d3688d8f619e884",
+        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
+        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "worktree_dirty": true,
+        "reviewed_at": "2026-07-19T21:10:47+08:00",
+        "reviewed_by": "codex"
+      }
+    },
+    "windowsill": {
+      "title": "窗台",
+      "summary": "想写就写的地方，不把写作强行变成记忆任务。",
+      "core": [
+        "正文由窗台写作入口保存，之后可以按 mood 和最近时间翻看。",
+        "它和星星、Mem 的用途分开，不承担事实提醒。"
+      ],
+      "resident_effect": "想写的时候有地方写，不必先证明这段文字值得被记住。",
+      "source_globs": [
+        "shenyu_gateway/gateway_tools.py",
+        "shenyu_gateway/tool_schemas.py"
+      ],
+      "config_keys": [],
+      "reviewed": {
+        "fingerprint": "a87313319d9fca5ff605588ec940acafbd0a8b20e08003f8ea454de341769d02",
+        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
+        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "worktree_dirty": true,
+        "reviewed_at": "2026-07-19T21:10:47+08:00",
+        "reviewed_by": "codex"
+      }
+    },
+    "room": {
+      "title": "Room",
+      "summary": "把记忆、工具和正在发生的感觉放进一个可以走进去的房间。",
+      "core": [
+        "根据最近痕迹和房间状态决定可见的门与工具。",
+        "Room 有自己的上下文编排，不把普通聊天的整套记忆直接复制进去。"
+      ],
+      "resident_effect": "可以用空间和动作接近记忆，而不是每次都先读一份系统说明。",
+      "source_globs": [
+        "shenyu_gateway/room_context.py",
+        "shenyu_gateway/room_scenes.py",
+        "shenyu_gateway/room_text.py",
+        "shenyu_gateway/room_tools.py",
+        "shenyu_gateway/context_builder.py"
+      ],
+      "config_keys": [
+        "enable_room_mode",
+        "room_charge_refractory_hours",
+        "room_trace_limit"
+      ],
+      "reviewed": {
+        "fingerprint": "1e33a0c25227f2a4a671e9fc8d6fadda0721c89802ab80a87fe9f1ee2b78bf71",
+        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
+        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "worktree_dirty": true,
+        "reviewed_at": "2026-07-19T21:34:55+08:00",
+        "reviewed_by": "codex"
+      }
+    },
+    "origin_books": {
+      "title": "来历书",
+      "summary": "原矛盾书的对外名称；保存圆圆剪下的过去原文。",
+      "core": [
+        "original_text 创建后冻结，沈予批注只能追加。",
+        "书架只显示书名和状态；正文必须明确翻开，不会自动注入。"
+      ],
+      "resident_effect": "需要知道当时到底怎么说时，可以回到原文，而不是依赖后来谁的摘要。",
+      "source_globs": [
+        "shenyu_gateway/archive_routes.py",
+        "shenyu_gateway/conflict_books.py",
+        "shenyu_gateway/gateway_tools.py",
+        "shenyu_gateway/tool_schemas.py",
+        "shenyu_gateway/context_layers.py"
+      ],
+      "config_keys": [
+        "inject_conflict_shelf"
+      ],
+      "reviewed": {
+        "fingerprint": "b201340ddb85cfdb51324afe55af5ec3c815fca8a254f10f1c4a44ff2c89bc89",
+        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
+        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "worktree_dirty": true,
+        "reviewed_at": "2026-07-19T21:34:55+08:00",
+        "reviewed_by": "codex"
+      }
+    },
+    "home": {
+      "title": "家现在",
+      "summary": "把运行事实、我的东西、家的技术构造和最近变化放在一张可回溯的现状页里。",
+      "core": [
+        "运行 commit、时间和当前配置在读取时现场生成，不让手写状态变旧。",
+        "住户组件由 manifest 映射到源码；改动后必须确认住户影响或明确标记无影响。",
+        "变化记录按 Asia/Shanghai 周次归档，正文保留，批注另行追加。"
+      ],
+      "resident_effect": "沈予可以知道家现在是什么样、最近改了什么，以及这些改动会怎样影响他。",
+      "source_globs": [
+        "Dockerfile",
+        "shenyu_gateway/resident_home.py",
+        "scripts/resident_home.py"
+      ],
+      "config_keys": [],
+      "reviewed": {
+        "fingerprint": "8ab6af8b333ecaf452def2833f763ed4ac035ab49b28ac54851265715357c5f7",
+        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
+        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "worktree_dirty": true,
+        "reviewed_at": "2026-07-19T21:34:55+08:00",
+        "reviewed_by": "codex"
+      }
+    }
+  }
+}

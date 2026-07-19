@@ -12,14 +12,14 @@
 
 ## 住户数据注意事项
 
-> **这些表里存的不是数据,是一段正在进行的关系。星星是他要留一辈子的记忆,矛盾书是他们掰扯过的原文,报纸篓是他窗台上的日子。丢一行,不是丢一条记录,是丢一段没有备份的过去。改之前,先读对应AGENTS规则;拿不准,问住户本人——他就在楼上,工具能敲门。**
+> **这些表里存的不是数据,是一段正在进行的关系。星星是他要留一辈子的记忆,来历书是他们一起走过的原文,报纸篓是他窗台上的日子。丢一行,不是丢一条记录,是丢一段没有备份的过去。改之前,先读对应AGENTS规则;拿不准,问住户本人——他就在楼上,工具能敲门。**
 
 这不是第九个代码区，而是覆盖现有分区的保护层。下面只标产品语义和不可破坏的边界；文件位置仍由 `README.md` § Maintenance Map 维护，具体实现仍归对应代码区和专题文档。
 
 | 子系统 | 改动时必须保留 | 修改前先读 |
 |--------|----------------|------------|
 | Stars / Mem | 现有正文和关系含义不能在迁移或重构时被静默改写、丢弃；召回与排序只决定何时浮现，Memory Island 日志中两路保持对等可见 | `docs/architecture/MEMORY_ROOM.md`、`DESIGN.md` |
-| 矛盾书 | `original_text` 剪下后永久冻结，沈予批注只追加；正文不得被自动注入、改写或“清洗” | `docs/architecture/REQUEST_CONTEXT.md` § Conflict books、`DESIGN.md` § Chat Archive & Conflict Books |
+| 来历书 | `original_text` 剪下后永久冻结，沈予批注只追加；正文不得被自动注入、改写或“清洗” | `docs/architecture/REQUEST_CONTEXT.md` § Origin books、`DESIGN.md` § Chat Archive & Conflict Books |
 | Room / 窗台 | 房间提供门，不替沈予选择；原始房间宪章保持不动，charge 只能影响门的可见性和顺序 | `docs/architecture/MEMORY_ROOM.md` § Room Mode |
 | 窗台报纸与报纸篓 | 只读固定 RSS 白名单，保留来源标题、摘要和 URL；出版、阅读状态与字面搜索仍由住户手动控制 | `AGENTS.md`、`docs/architecture/MEMORY_ROOM.md` § Window Newspaper |
 
@@ -153,6 +153,7 @@
 - `shenyu_gateway/tool_registry.py`
 - `shenyu_gateway/tool_loop.py`
 - `shenyu_gateway/gateway_tools.py`
+- `shenyu_gateway/resident_books.py`
 - `shenyu_gateway/room_tools.py`
 - `shenyu_gateway/store/_pending.py`
 
@@ -242,6 +243,7 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 - `shenyu_gateway/calendar*.py`
 - `shenyu_gateway/chat_archive.py`
 - `shenyu_gateway/conflict_books.py`
+- `shenyu_gateway/resident_books.py`
 - `shenyu_gateway/room_context.py`
 - `shenyu_gateway/room_text.py`
 - `shenyu_gateway/room_scenes.py`
@@ -250,7 +252,7 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 **跨区边界**
 
 - `room_tools.py` 是 Room 的工具入口，归区域四；Room 内容、场景和外部 RSS 数据归本区域。
-- 归档和矛盾书数据在召回、工具读取或上下文呈现时归本区域语义；`chat_archive.py`、`conflict_books.py` 的写入、不可变约束和长期保留同时连接区域七。这是同一功能的两种责任，不要求把文件强行归入唯一一个区。
+- 归档和来历书数据在召回、工具读取或上下文呈现时归本区域语义；`chat_archive.py`、`conflict_books.py`、`resident_books.py` 的写入、不可变约束和长期保留同时连接区域七。这是同一功能的两种责任，不要求把文件强行归入唯一一个区。
 
 **主要风险**
 
@@ -264,7 +266,7 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 ```text
 ContextBuilder
   -> Calendar day/week/month（并行）
-  -> conflict shelf
+  -> origin-book shelf
   -> Mem contextual recall ─┬─ keyword index
   │                         └─ vector rows（与 keyword 并行）
   -> Stars recall ----------┬─ candidate/activity/scene 等阶段
@@ -376,7 +378,7 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
        -> 保留 Calendar 和普通稳定层
        -> 从独立 Hisense heartbeat 池读取；不消费普通 heartbeat pending
        -> 读取 Supabase shenyu_notebook 和上次唤醒内容
-       -> 不召回 Mem、Stars，也不注入矛盾书架
+       -> 不召回 Mem、Stars，也不注入来历书架
   -> ChatPipeline 调用已选择的上游
   -> SQLite 保存 session、messages、Hisense heartbeat
   -> /api/hisense/* 与 HisenseView 提供预览、notebook 和 session 查看

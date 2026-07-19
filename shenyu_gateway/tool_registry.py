@@ -23,6 +23,9 @@ MEM_NOTE_TYPE_ENUM = list(MEM_NOTE_TYPES)
 MEM_NOTE_PATCH_KEYS = MEM_NOTE_PATCH_FIELDS
 HIDDEN_COMPAT_TOOL_NAMES = {
     "shenyu_surface_passages",
+    "shenyu_conflict_list",
+    "shenyu_conflict_read",
+    "shenyu_conflict_annotate",
 }
 DEPRECATED_COMPAT_TOOL_MESSAGES = {
     "shenyu_ask_memory": "Deprecated gateway tool: shenyu_ask_memory. Use shenyu_recall instead.",
@@ -47,9 +50,7 @@ DAILY_GATEWAY_TOOL_NAMES = {
     "shenyu_search_mem_notes",
     "shenyu_notebook_write",
     "shenyu_notebook_list",
-    "shenyu_conflict_list",
-    "shenyu_conflict_read",
-    "shenyu_conflict_annotate",
+    "shenyu_books",
 }
 
 DAILY_CLIENT_TOOL_EXACT = {
@@ -111,10 +112,8 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   notebook_list(scope?: shared|hisense|handoff, limit?)
   notebook_update(id*, content?, status?)
 
-矛盾书
-  conflict_list()  — 先看书架和精确书名
-  conflict_read(title* 或 book_id*)
-  conflict_annotate(title* 或 book_id*, content*)
+来历书
+  books(action?: shelf|read|write|annotate, book?: identity|home|origin, book_id/title?, content?, expected_revision?)
 
 Supabase 直接操作看 supabase_guide。"""
 
@@ -150,10 +149,8 @@ _BROKER_DAILY_DESCRIPTION = """\
   notebook_write(content*, scope?: shared|hisense|handoff)
   notebook_list(scope?: shared|hisense|handoff, limit?)
 
-矛盾书
-  conflict_list()  — 先看书架和精确书名
-  conflict_read(title* 或 book_id*)
-  conflict_annotate(title* 或 book_id*, content*)"""
+来历书
+  books(action?: shelf|read|write|annotate, book?: identity|home|origin, book_id/title?, content?, expected_revision?)"""
 
 
 def _upstream_tools_enabled(cfg: Any) -> bool:
@@ -734,6 +731,23 @@ async def _handle_conflict_annotate(ctx: ToolContext) -> dict:
         _conflict_book_id_arg(ctx.arguments),
         ctx.arguments.get("content", ""),
         title=_conflict_title_arg(ctx.arguments),
+    )
+
+
+@_tool_handler("shenyu_books")
+async def _handle_books(ctx: ToolContext) -> dict:
+    return await ctx.service.books(
+        action=ctx.arguments.get("action", "shelf"),
+        book=ctx.arguments.get("book", ""),
+        book_id=_conflict_book_id_arg(ctx.arguments),
+        title=_conflict_title_arg(ctx.arguments),
+        content=ctx.arguments.get("content", ""),
+        mode=ctx.arguments.get("mode", "replace"),
+        expected_revision=ctx.arguments.get("expected_revision"),
+        target_revision=ctx.arguments.get("target_revision"),
+        summary=ctx.arguments.get("summary", ""),
+        view=ctx.arguments.get("view", "current"),
+        actor="沈予",
     )
 
 

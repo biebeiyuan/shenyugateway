@@ -239,7 +239,7 @@ Core files, separated by concern:
 |------|---------------|
 | `shenyu_gateway/room_text.py` | All room copy: charter, scenes, doors, trace phrases. Change text here only. |
 | `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |
-| `shenyu_gateway/room_tools.py` | 11 tool handlers, direct tool definitions, compatibility broker, door count collection. |
+| `shenyu_gateway/room_tools.py` | Room tool handlers, direct tool definitions, the shared `shenyu_books` shelf, compatibility broker, and door count collection. |
 | `shenyu_gateway/room_scenes.py` | Weather, atmosphere, and window-scene generation. |
 | `shenyu_gateway/room_newspaper.py` | Fixed RSS catalog, feed parsing, issue rolling, optional quality checks, and draft generation. |
 | `shenyu_gateway/store/_room.py` | Room traces, notes, pins, scribbles, and newspaper issue persistence. |
@@ -279,7 +279,7 @@ Charge affects door visibility:
 - **Low (< 0.3)**: only "always" doors (sit, newspaper basket, scribble, pillow) + top 2 active doors
 - **Mid/High (≥ 0.3)**: all doors visible
 
-### Doors (11 tools)
+### Doors (11 public tools)
 
 | Tool | Zone | What it does |
 |------|------|-------------|
@@ -291,11 +291,11 @@ Charge affects door visibility:
 | `room_drawer_notes` | drawers | Read notes Yuan left in the middle drawer. |
 | `room_locked_drawer` | drawers | Private drawer. No admin API. Only Shenyu's tool can open it. |
 | `room_star_map` | star_wall | Star map: look, search, review, feedback, connect constellations. |
-| `room_conflict_shelf` | shelf | Pull a conflict book from the shelf. |
+| `shenyu_books` | shelf | Open the shared book shelf: home snapshot, living books, or an origin book. |
 | `room_wall_pins` | wall | View/add/complete wall pin reminders. |
 | `room_octopus_pillow` | bed | Hug the octopus pillow. Random Yuan note as easter egg. |
 
-Room mode exposes visible `room_*` tools directly instead of routing them through `shenyu_gateway_tool`. At low charge, only always-visible doors plus the top active doors get matching tool schemas; when charge is mid/high, all room doors and their tools are visible. Normal gateway tools are omitted in room mode, while filtered client tools can remain alongside the direct room tools.
+Room mode exposes visible `room_*` tools directly instead of routing them through `shenyu_gateway_tool`; `shenyu_books` is the one shared book entry that remains alongside them. At low charge, only always-visible doors plus the top active doors get matching tool schemas; when charge is mid/high, all room doors and their tools are visible. Normal gateway tools are omitted in room mode, while filtered client tools can remain alongside the direct room tools.
 
 Dynamic door text: some doors show different text when there's activity (e.g., "好像多了几张" when new notes exist).
 

@@ -37,7 +37,7 @@ async function loadBooks() {
   try {
     books.value = await fetchConflictBooks()
   } catch {
-    message.error('加载矛盾书失败')
+    message.error('加载来历书失败')
   } finally {
     loading.value = false
   }
@@ -115,7 +115,7 @@ function threadLabel(key: string | null): string {
 
     <NSpin :show="loading">
       <div v-if="!books.length && !loading" class="empty">
-        还没有矛盾书。去「档案」页选取一段聊天记录截进来。
+        还没有来历书。去「档案」页选取一段聊天记录截进来。
       </div>
       <div class="shelf">
         <button v-for="book in books" :key="book.id" class="book" @click="openBook(book)">

@@ -39,7 +39,7 @@ TRACE_PHRASES: dict[str, str] = {
     "notebook":       "上次来的时候，翻了翻笔记本。",
     "scribble":       "上次来的时候，在窗台的本子上写了点什么。",
     "wall_pins":      "上次来的时候，看了看墙上的便签。",
-    "conflict_shelf": "上次来的时候，从书架上抽了一本矛盾之书。",
+    "conflict_shelf": "上次来的时候，从书架上翻了一页来历书。",
     "pillow":         "上次来的时候，抱了一会儿章鱼抱枕。",
     "locked_drawer":  "上次来的时候，打开过最下面那层抽屉。",
     "drawer_notes":   "上次来的时候，翻了翻圆儿塞的纸条。",
@@ -199,11 +199,11 @@ DOORS = [
     # ── 书架 ──
     _door(
         key="conflict_shelf",
-        tool="room_conflict_shelf",
+        tool="shenyu_books",
         zone="shelf",
         base=(
-            "书桌旁边有一排矮书架。里面有几本矛盾之书，很薄，每本只讲一件没有解开的事。\n"
-            "抽一本。`room_conflict_shelf`"
+            "书桌旁边有一排矮书架。里面有我和圆儿一起留下的活文档，也有过去原文的来历书。\n"
+            "想看全貌、翻开或落笔，都从这里开始。`shenyu_books`"
         ),
     ),
 

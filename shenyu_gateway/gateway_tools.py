@@ -19,6 +19,7 @@ from shenyu_gateway.recall import (
     classify_recall_mode,
     recall_terms,
 )
+from shenyu_gateway.resident_books import ResidentBooksService
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
     json_dumps as _json_dumps,
@@ -272,6 +273,50 @@ class GatewayToolService:
 
     def _conflict_books(self) -> ConflictBookService:
         return ConflictBookService(self.supabase)
+
+    def _resident_books(self) -> ResidentBooksService:
+        return ResidentBooksService(self.supabase, runtime_config=self.cfg)
+
+    async def books(
+        self,
+        *,
+        action: str = "shelf",
+        book: str = "",
+        book_id: str = "",
+        title: str = "",
+        content: str = "",
+        mode: str = "replace",
+        expected_revision: Optional[int] = None,
+        target_revision: Optional[int] = None,
+        summary: str = "",
+        view: str = "current",
+        actor: str = "沈予",
+    ) -> dict:
+        service = self._resident_books()
+        action_key = str(action or "shelf").strip().lower()
+        if action_key == "shelf":
+            return await service.shelf()
+        if action_key == "read":
+            return await service.read(book=book, book_id=book_id, title=title, view=view)
+        if action_key == "write":
+            return await service.write(
+                book=book,
+                content=content,
+                mode=mode,
+                expected_revision=expected_revision,
+                summary=summary,
+                actor=actor,
+            )
+        if action_key == "annotate":
+            return await service.annotate(
+                book=book,
+                book_id=book_id,
+                title=title,
+                content=content,
+                target_revision=target_revision,
+                actor=actor,
+            )
+        return {"ok": False, "error": "action must be shelf, read, write, or annotate", "error_kind": "validation"}
 
     async def conflict_list(self) -> dict:
         return await self._conflict_books().list_books()

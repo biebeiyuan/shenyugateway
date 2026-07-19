@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-"""Admin routes for the chat archive reader and conflict books.
+"""Admin routes for the chat archive reader and resident books.
 
 The archive reader lists/browses verbatim messages by day and thread.
-Conflict book routes serve the user-side workflow: clip frozen text from the
+Origin-book routes serve the user-side workflow: clip frozen text from the
 archive, edit title/epilogue/notes/status, never the original text.
 """
 
@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .conflict_books import ConflictBookService
+from .resident_books import ResidentBooksService
 
 ARCHIVE_TABLE = "shenyu_chat_archive"
 _CST = timezone(timedelta(hours=8))
@@ -37,6 +38,18 @@ class ConflictBookPatch(BaseModel):
     epilogue: Optional[str] = None
     user_notes: Optional[str] = None
     status: Optional[str] = None
+
+
+class ResidentBookWrite(BaseModel):
+    content: str
+    mode: str = "replace"
+    expected_revision: Optional[int] = None
+    summary: str = ""
+
+
+class ResidentBookAnnotation(BaseModel):
+    content: str
+    target_revision: Optional[int] = None
 
 
 @dataclass(frozen=True)
@@ -164,6 +177,37 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
 
     def _books() -> ConflictBookService:
         return ConflictBookService(_supabase())
+
+    def _resident_books() -> ResidentBooksService:
+        return ResidentBooksService(_supabase())
+
+    @router.get("/api/books")
+    async def resident_books_shelf():
+        return await _resident_books().shelf()
+
+    @router.get("/api/books/{book}")
+    async def resident_book_read(book: str, view: str = "current"):
+        return await _resident_books().read(book=book, view=view)
+
+    @router.patch("/api/books/{book}")
+    async def resident_book_write(book: str, body: ResidentBookWrite):
+        return await _resident_books().write(
+            book=book,
+            content=body.content,
+            mode=body.mode,
+            expected_revision=body.expected_revision,
+            summary=body.summary,
+            actor="圆圆",
+        )
+
+    @router.post("/api/books/{book}/annotations")
+    async def resident_book_annotate(book: str, body: ResidentBookAnnotation):
+        return await _resident_books().annotate(
+            book=book,
+            content=body.content,
+            target_revision=body.target_revision,
+            actor="圆圆",
+        )
 
     @router.get("/api/conflict-books")
     async def conflict_books_list(include_text: bool = False):
