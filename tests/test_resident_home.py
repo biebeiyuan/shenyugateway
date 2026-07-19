@@ -15,6 +15,7 @@ from shenyu_gateway.resident_home import (
     home_snapshot,
     load_manifest,
     review_component,
+    format_weekly_report,
 )
 
 
@@ -145,3 +146,15 @@ def test_review_without_impact_requires_explicit_no_impact(tmp_path):
     )
     assert result["event"] is None
     assert not changes_path.exists()
+
+
+def test_weekly_report_keeps_impact_on_a_stable_resident_line():
+    rendered = format_weekly_report(
+        {
+            "2026-W29": [
+                {"title": "共享书架", "summary": "接通书架", "impact": "你在任何地方说“翻书架”，都能翻到同一个架子。"}
+            ]
+        }
+    )
+
+    assert rendered == "2026-W29 · 1 条变化\n- 共享书架: 接通书架\n  影响：你在任何地方说“翻书架”，都能翻到同一个架子。"

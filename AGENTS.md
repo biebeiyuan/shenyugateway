@@ -56,7 +56,7 @@ When a runtime, configuration, or architecture change may alter what a resident 
 python scripts/resident_home.py check
 ```
 
-For every `review_required` component, record a short resident-facing summary and impact with `review <component> --summary ... --impact ...`, or explicitly acknowledge that the change has no resident impact with `--no-impact`. The command records the current source fingerprint, commit, author, and Asia/Shanghai timestamp itself; do not hand-write those fields. The structured source of truth is `resident_home_manifest.json`, and the weekly ledger is `resident_home_changes.jsonl`.
+For every `review_required` component, record a short resident-facing summary and impact with `review <component> --summary ... --impact ...`, or explicitly acknowledge that the change has no resident impact with `--no-impact`. Write `impact` from the resident's perspective (preferably starting with `你...`); the human report renders it on a fixed `影响：...` line. The command records the current source fingerprint, commit, author, and Asia/Shanghai timestamp itself; do not hand-write those fields. The structured source of truth is `resident_home_manifest.json`, and the weekly ledger is `resident_home_changes.jsonl`.
 
 For every new runtime configuration field that is editable in Admin, inspect and update all of these locations before handoff:
 

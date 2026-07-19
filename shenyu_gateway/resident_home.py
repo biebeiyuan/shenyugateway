@@ -273,6 +273,17 @@ def changes_by_week(path: Path = CHANGES_PATH) -> dict[str, list[dict[str, Any]]
     return dict(sorted(grouped.items(), reverse=True))
 
 
+def format_weekly_report(grouped: dict[str, list[dict[str, Any]]]) -> str:
+    """Render a resident-readable report with a stable impact line."""
+    lines: list[str] = []
+    for week, events in grouped.items():
+        lines.append(f"{week} · {len(events)} 条变化")
+        for event in events:
+            lines.append(f"- {event.get('title')}: {event.get('summary')}")
+            lines.append(f"  影响：{event.get('impact') or ''}")
+    return "\n".join(lines)
+
+
 def home_snapshot(
     *,
     manifest_path: Path = MANIFEST_PATH,
@@ -391,10 +402,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.as_json:
             print(json.dumps(grouped, ensure_ascii=False, indent=2))
         else:
-            for week, events in grouped.items():
-                print(f"{week} · {len(events)} 条变化")
-                for event in events:
-                    print(f"- {event.get('title')}: {event.get('summary')}（影响：{event.get('impact')}）")
+            print(format_weekly_report(grouped))
         return 0
     except ResidentHomeError as exc:
         print(f"resident-home: {exc}")

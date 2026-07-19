@@ -209,11 +209,11 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "8ab6af8b333ecaf452def2833f763ed4ac035ab49b28ac54851265715357c5f7",
-        "commit": "812358f72f77808ad51e3660cf3cbef63952cc09",
-        "revision": "812358f72f77808ad51e3660cf3cbef63952cc09-dirty",
+        "fingerprint": "5fa096043af9ee664b6262d0b0a62a664628327591aac576fec4e7c2da2640e9",
+        "commit": "21169d4704e918cd2829e2378e405281b695f1d8",
+        "revision": "21169d4704e918cd2829e2378e405281b695f1d8-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T21:34:55+08:00",
+        "reviewed_at": "2026-07-19T21:52:01+08:00",
         "reviewed_by": "codex"
       }
     }
