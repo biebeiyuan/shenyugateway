@@ -26,6 +26,10 @@ def _expected_map_paths() -> set[str]:
         for path in (ROOT / "admin" / "src" / "views").rglob("*")
         if path.suffix in {".ts", ".vue"}
     )
+    paths.update(
+        path.relative_to(ROOT).as_posix()
+        for path in (ROOT / "admin" / "src" / "api").glob("*.ts")
+    )
     return paths
 
 
@@ -43,6 +47,10 @@ def _indexed_map_paths() -> set[str]:
         or (
             entry.startswith("admin/src/views/")
             and Path(entry).suffix in {".ts", ".vue"}
+        )
+        or (
+            entry.startswith("admin/src/api/")
+            and Path(entry).suffix == ".ts"
         )
     }
 

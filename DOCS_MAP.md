@@ -55,7 +55,17 @@
 
 `AGENTS.md` 负责要求 coding agent 在交付前执行这项核对；本节负责说明每类变化由哪张地图或现行文档承接。
 
-机械护栏与语义提醒分开处理：`tests/test_project_map.py` 对 README 运行文件覆盖、DOCS_MAP 现行文档路径和 SYSTEM_ZONES 核心路径做红灯检查；`scripts/check_audit_freshness.py` 只根据 AUDIT_MATRIX 的最近复核日期、关联路径、Git 最近修改和当前工作树给黄灯提醒，始终不把“文件后来改过”判定成事实已经过期。
+## 证据等级
+
+地图和审计工具回答的是不同问题，交付时按三种信号理解：
+
+| 信号 | 当前检查 | 含义与处理 |
+|------|----------|------------|
+| 红灯：自动阻断 | Python 单测、Admin Playwright smoke、`tests/test_project_map.py` | 测试失败、浏览器运行时/同源资源失败或地图路径缺失时，先修复或明确解释，不能当作通过交付。 |
+| 黄灯：人工复核提醒 | `python scripts/check_audit_freshness.py` | 只说明审计关联文件后来改过、正在修改或记录格式不完整；它不自动证明原审计结论失效，也不作为 CI 失败条件。 |
+| Agent / 人工判断 | 对照代码、测试、日志和用户可见行为 | 判断文档语义是否仍准确、产品边界是否改变，以及是否需要更新审计结论；自动路径检查不能替代这个判断。 |
+
+当前 CI 在 push 和 pull request 上运行 `pytest tests/ -x -q`，并在 `admin/` 工作目录运行 `npm run test:e2e`。Playwright smoke 负责页面可加载、核心交互、浏览器运行时错误和同源资源失败；它是活性护栏，不是视觉验收。
 
 ## 专题设计与实施记录
 

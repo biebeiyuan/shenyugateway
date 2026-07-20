@@ -108,13 +108,16 @@ Config shape:
 {
   "gateway_url": "https://gateway.example.com",
   "gateway_token": "gateway-api-token",
+  "ssh_alias": "vps",
   "vps_host": "example.com",
   "vps_user": "root",
   "vps_port": 22,
-  "vps_identity": "C:/Users/曾/.ssh/cyberboss_vps_ed25519",
+  "vps_identity": "/home/yuan/.ssh/vps_ed25519",
   "container_match": "shenyu|gateway"
 }
 ```
+
+在当前 WSL Ubuntu 环境中，`vps_identity` 必须是 Linux 可见路径；如果使用 `ssh_alias`，让 WSL 的 `~/.ssh/config` 负责主机、用户和密钥配置，不要照抄 Windows `C:/...` 路径。
 
 For a retained local JSON log:
 

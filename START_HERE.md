@@ -17,7 +17,7 @@
 | 查一次请求到底怎样走 | `docs/architecture/REQUEST_CONTEXT.md` | `DEBUGGING_GUIDE.md` § Chat Request Flow |
 | 查工具、mixed tool 或 pending transcript | 本页 § 工具人话解释 | `docs/architecture/REQUEST_CONTEXT.md` § Tool Calls |
 | 查 Memory Island、裁剪、cold start | `docs/architecture/REQUEST_CONTEXT.md` | `docs/architecture/AUDIT_MATRIX.md` § 区域五：上下文窗口与 Memory Island |
-| 查 Mem、Stars、Room、矛盾书 | `docs/architecture/SYSTEM_ZONES.md` § 住户数据注意事项 | 按对象读 `docs/architecture/MEMORY_ROOM.md` 或 `docs/architecture/REQUEST_CONTEXT.md`；改核心语义再读 `DESIGN.md` |
+| 查 Mem、Stars、Room、来历书/共享书架（旧内部名：矛盾书） | `docs/architecture/SYSTEM_ZONES.md` § 住户数据注意事项 | 按对象读 `docs/architecture/MEMORY_ROOM.md` 或 `docs/architecture/REQUEST_CONTEXT.md`；改核心语义再读 `DESIGN.md` |
 | 查 OpenAI/Anthropic、缓存或 usage | `docs/architecture/REQUEST_CONTEXT.md` | `docs/architecture/AUDIT_MATRIX.md` § 区域三：上游协议与供应商适配 |
 | 线上报错、流卡住、工具没执行 | `DEBUGGING_GUIDE.md` | `LOGS_GUIDE.md` |
 | 看已经确认的问题和暂不该动的地方 | `docs/architecture/AUDIT_MATRIX.md` | 对应测试和代码 |

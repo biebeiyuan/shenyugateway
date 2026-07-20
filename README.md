@@ -185,6 +185,21 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/e2e/smoke.spec.ts`: read-only Chromium smoke checks for every Admin route and a few core interactions.
 - `admin/playwright.config.ts`: isolated local gateway, temporary SQLite, authentication, and browser settings for Admin smoke tests.
 
+### 按产品对象反查
+
+`Maintenance Map` 解决“文件在哪里”；这张小表解决“我看到产品里的哪个东西，应该从哪里进去”。它是反查索引，不替代路径地图，也不要求为每个私有 helper 再建一条记录。
+
+| 产品对象 | 常用叫法 / 旧名 | 后端入口 | Admin/API | 现行文档 |
+|----------|-----------------|----------|-----------|----------|
+| 共享书架 | `家现在`、`我是谁`、`来历书`（旧内部名：矛盾书） | `resident_books.py`、`conflict_books.py` | `admin/src/api/books.ts`、`ConflictView.vue`、`bookshelf/HomeBookModal.vue` | `REQUEST_CONTEXT.md` § Generated home and living identity / Origin books |
+| Memory Island | Stars + Mem 当前岛 | `memory_island.py`、`context_builder.py` | `admin/src/api/logs.ts`、`LogsView.vue` | `REQUEST_CONTEXT.md`、`MEMORY_ROOM.md` |
+| Stars | 星星 / 关联记忆 | `shenyu_gateway/stars/` | `admin/src/api/stars.ts`、`StarsView.vue`、`views/stars/` | `MEMORY_ROOM.md` § Star Memory Layer |
+| Mem | Mem Notes / 便签 | `shenyu_gateway/mem_notes/`、`mem_notes_relevance.py` | `admin/src/api/mem0.ts`、`Mem0View.vue` | `MEMORY_ROOM.md` § Mem Note Layer |
+| Room | 房间 / 窗台 | `room_context.py`、`room_tools.py`、`room_newspaper.py` | `admin/src/api/room.ts`、`RoomView.vue`、`views/room/` | `MEMORY_ROOM.md` § Room Mode |
+| 请求日志 / 工具报错 | 日志页、工具报错页 | `request_logs.py`、`tool_loop.py`、`store/_admin.py` | `admin/src/api/logs.ts`、`toolErrors.ts`、`LogsView.vue`、`ToolErrorsView.vue` | `DEBUGGING_GUIDE.md`、`LOGS_GUIDE.md` |
+| Calendar | 日历 / 日周月页 | `calendar_service.py`、`calendar_sources.py` | `admin/src/api/calendar.ts`、`CalendarView.vue` | `REQUEST_CONTEXT.md` § Calendar |
+| Hisense | Hisense 专用路径 | `hisense_routes.py`、`context_builder.py` | `admin/src/api/hisense.ts`、`HisenseView.vue` | `SYSTEM_ZONES.md` § Hisense 专用路径 |
+
 When cleaning or refactoring, preserve behavior first and move code by boundary:
 
 1. Route handlers should stay thin and call service classes.

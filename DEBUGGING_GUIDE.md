@@ -1,22 +1,36 @@
 # Shenyu Gateway Debugging Guide
 
-This guide is the quick entrypoint for future debugging windows. Read it together with `README.md` before changing gateway logic.
+This guide is the on-demand handbook for production and request debugging. Start from `START_HERE.md`, then come here when the symptom is an upstream error, a stalled stream, a missing tool execution, or a context/cache question. It is not a mandatory pre-read for ordinary code changes.
+
+Commands below assume the authoritative environment: Ubuntu Bash in `/home/yuan/shenyu-gateway`. The Windows SSH command is kept only as an explicitly labelled emergency fallback when the WSL transport path itself is confirmed to be stuck.
 
 For the admin log page itself—round colors, tabs, memory-island content, raw cache values, and assistant lineage—see `LOGS_GUIDE.md`.
+
+## Symptom Triage
+
+Use the smallest first evidence below, then follow the linked stage and owning document. The full request sequence is in [Chat Request Flow](#chat-request-flow) further down.
+
+| 症状 | 第一证据 | 对应阶段 | 所属区域 | 专题文档 |
+|------|----------|----------|----------|----------|
+| 上游报错、流没有输出或中途卡住 | `python scripts/vps_gateway_logs.py api --via-ssh --errors --detail` | 上游请求 / 流式响应 | 区域二、三 | `docs/architecture/REQUEST_CONTEXT.md`、`LOGS_GUIDE.md` |
+| 有工具被提供，但网关工具一次都没执行 | helper 输出的 `tools_offered` 与 `gateway_tools_executed`；Admin 展开日志卡片的“工具执行”页签，看上半段工具清单和下半段实际调用 | 上游返回 / 工具路由前 | 区域三、四 | `docs/architecture/REQUEST_CONTEXT.md`、`LOGS_GUIDE.md` |
+| 历史消失、上下文分叉或冷启动桥接不对 | 请求详情与 `context_window_observer.py` 时间线 | 上下文组装 / 窗口 | 区域五 | `docs/architecture/REQUEST_CONTEXT.md` |
+| 缓存比例或断点结构不对 | `internal_tool_rounds[].prompt_cache` | provider 适配 / prompt cache | 区域三 | `docs/architecture/REQUEST_CONTEXT.md`、`LOGS_GUIDE.md` |
+| Admin 页面打不开或交互失效 | Playwright smoke 与浏览器运行时/同源资源错误 | 前端路由 / 资源 | 区域八 | `README.md` § Maintenance Map |
 
 ## Error Log Quickstart
 
 For live triage, start with the helper script before changing code:
 
-```powershell
-python scripts\vps_gateway_logs.py api --via-ssh --errors --detail
+```bash
+python scripts/vps_gateway_logs.py api --via-ssh --errors --detail
 ```
 
 For prompt-cache, image, epoch, or memory-island questions, start with the compact timeline report. It defaults to `ssh vps`, does not print message content, and follows a stale Coolify container name to the current deployment:
 
-```powershell
-python scripts\vps_gateway_logs.py cache
-python scripts\vps_gateway_logs.py cache --session 6.20 --limit 12
+```bash
+python scripts/vps_gateway_logs.py cache
+python scripts/vps_gateway_logs.py cache --session 6.20 --limit 12
 ```
 
 The report flags gaps longer than the declared TTL, long-gap hits that suggest relay-side automatic caching, island rewrites, history-branch resets, attachment/image retention, the active tail user-turn guard, cache misses where the relay omitted cache-creation usage, and adjacent requests whose cache-prefix fingerprints stayed identical despite a reported miss.
@@ -36,9 +50,9 @@ If a request reports `event=branch`, verify that the first differing raw-window 
 
 Set these in the shell when checking the deployed gateway:
 
-```powershell
-$env:SHENYU_GATEWAY_URL="https://gateway.example.com"
-$env:SHENYU_GATEWAY_TOKEN="gateway-api-token"
+```bash
+export SHENYU_GATEWAY_URL="https://gateway.example.com"
+export SHENYU_GATEWAY_TOKEN="gateway-api-token"
 ```
 
 The helper also auto-loads a local ignored config file at `.shenyu-gateway-debug.local.json`, a home config at `~/.shenyu-gateway-debug.json`, or the path in `SHENYU_GATEWAY_LOG_CONFIG`.
@@ -49,37 +63,40 @@ Example local config:
 {
   "gateway_url": "https://gateway.example.com",
   "gateway_token": "gateway-api-token",
+  "ssh_alias": "vps",
   "vps_host": "example.com",
   "vps_user": "root",
   "vps_port": 22,
-  "vps_identity": "C:/Users/曾/.ssh/cyberboss_vps_ed25519",
+  "vps_identity": "/home/yuan/.ssh/vps_ed25519",
   "container_match": "shenyu|gateway"
 }
 ```
 
+这是字段示例，不要照抄密钥路径。WSL 下 `vps_identity` 必须是 Linux 可见路径；若使用 `ssh_alias`，让 `~/.ssh/config` 负责主机、用户和密钥配置。
+
 Useful variants:
 
-```powershell
+```bash
 # Watch new gateway request errors
-python scripts\vps_gateway_logs.py api --via-ssh --watch --errors --interval 5
+python scripts/vps_gateway_logs.py api --via-ssh --watch --errors --interval 5
 
 # Inspect one request by log id or request id
-python scripts\vps_gateway_logs.py api --via-ssh --id 84f8b85a
+python scripts/vps_gateway_logs.py api --via-ssh --id 84f8b85a
 
 # Parse a retained local JSON log
-python scripts\vps_gateway_logs.py local tmp_gateway_log_84f8b85a.json --detail
+python scripts/vps_gateway_logs.py local tmp_gateway_log_84f8b85a.json --detail
 
 # Tail VPS/Coolify/Docker logs when SSH is configured
-$env:SHENYU_VPS_HOST="root@example.com"
-python scripts\vps_gateway_logs.py ssh --list-containers
-python scripts\vps_gateway_logs.py ssh --match "shenyu|gateway" --tail 300 -f
+export SHENYU_VPS_HOST="root@example.com"
+python scripts/vps_gateway_logs.py ssh --list-containers
+python scripts/vps_gateway_logs.py ssh --match "shenyu|gateway" --tail 300 -f
 ```
 
 Use `api` without `--via-ssh` only when public gateway API access is not blocked by Cloudflare.
 
 `api` and `cache` read a merged view of the live 30-entry process buffer and the bounded SQLite request-log history. With the SQLite directory on a persistent volume, completed request summaries remain available after a Coolify container replacement; use `--limit 200` when an incident may predate the current process. Full Messages, upstream payloads, responses, images, and raw Thinking/signature data are not stored in this history. By contrast, `ssh` mode still runs `docker logs` against the current container only, so deleted-container stdout/stderr is not recovered by the request-log history.
 
-On Windows, the helper uses the local `vps` SSH alias by default unless explicit connection flags are passed. Container lookup first honors configured name/label/service hints, then tries the stable Coolify application prefix and regex match before the slower environment inspection, so a redeploy does not require copying the new random container name into local config.
+In the WSL Ubuntu workflow, the helper invokes Linux `ssh`. When `ssh_alias` is configured it uses that alias; otherwise it builds the connection from `vps_host`, `vps_user`, `vps_port`, and `vps_identity`. Container lookup first honors configured name/label/service hints, then tries the stable Coolify application prefix and regex match before the slower environment inspection, so a redeploy does not require copying the new random container name into local config.
 
 The script separates `tools_offered` from `gateway_tools_executed`. If tools were offered but zero gateway tools executed, the model/upstream failed before the gateway got any tool call. In that case, inspect upstream errors, relay retries, streaming behavior, request payload shape, and prompt-cache compatibility before editing `gateway_tools.py`.
 
@@ -89,49 +106,50 @@ Do not put gateway tokens, VPS hosts, SSH keys, or API keys into repo files. Use
 
 The chunked-window implementation persists content-free observations in SQLite. After the new gateway has handled normal chat, retries, rolls, and tool continuations, summarize the events with:
 
-```powershell
-python scripts\context_window_observer.py --db data\shenyu_gateway.db
-python scripts\context_window_observer.py --db data\shenyu_gateway.db --session-tag 6.20 --json
+```bash
+python scripts/context_window_observer.py --db data/shenyu_gateway.db
+python scripts/context_window_observer.py --db data/shenyu_gateway.db --session-tag 6.20 --json
 ```
 
 The report includes event classification, epoch reset reasons, retained-message percentiles, raw protected human turns, and memory-island retain/rewrite counts. It does not read or print chat message content. Use this report before tuning the 32-message overflow block or implementing tool-result compression.
 
 ## VPS, SSH, and Coolify Operations
 
-Use the configured `vps` SSH alias. Start with a cheap command and a bounded connection timeout before running Docker or database operations:
+Use the configured `vps` SSH alias when present; otherwise use the WSL connection fields from the local debug config. Start with a cheap command and a bounded connection timeout before running Docker or database operations:
 
-```powershell
+```bash
 ssh -o BatchMode=yes -o ConnectTimeout=10 vps date
 ```
 
 ### When WSL SSH stalls
 
-WSL SSH can occasionally connect but stall during key exchange, commonly after printing `expecting SSH2_MSG_KEX_ECDH_REPLY` under `ssh -vv`. This is a transport-path problem, not evidence that Docker, Coolify, or the target command is broken. Native Windows `ssh.exe` from PowerShell may remain healthy through the same alias and key configuration, so retry the cheap probe there before touching the VPS:
-
-```powershell
-Get-Command ssh
-ssh -o BatchMode=yes -o ConnectTimeout=10 vps date
-```
-
-Repeated timed-out probes may leave local `ssh ... vps` processes alive. Inspect local processes before opening more sessions. Terminate only PIDs created by the current debugging attempt; do not use a blanket `pkill ssh`, because another task may be following production logs through a legitimate long-lived connection.
+WSL SSH can occasionally connect but stall during key exchange, commonly after printing `expecting SSH2_MSG_KEX_ECDH_REPLY` under `ssh -vv`. This is a transport-path problem, not evidence that Docker, Coolify, or the target command is broken. First inspect and stop only the stuck WSL processes from the current attempt. Only when that transport issue is confirmed should you use the Windows fallback below:
 
 ```bash
 ps -eo pid,ppid,etime,args | grep '[s]sh .*vps'
 kill 12345  # replace with a stuck PID from this debugging attempt
 ```
 
+**Windows emergency fallback only:** retry the cheap probe with the host's `ssh.exe` from PowerShell. This is not the normal project shell.
+
+```powershell
+Get-Command ssh
+ssh -o BatchMode=yes -o ConnectTimeout=10 vps date
+```
+
 Do not diagnose the Docker daemon from a hanging `docker ps` until a plain `ssh vps date` succeeds reliably. This separates SSH transport trouble from a real remote Docker problem.
 
 ### Avoid nested shell quoting
 
-PowerShell, WSL Bash, the remote shell, `docker exec`, SQL, Python, and PHP each have different quoting rules. Pipes, `$()`, `$variables`, regex `|`, and nested quotes can be consumed by the wrong shell. For a multiline read-only script or SQL statement, encode the payload locally, decode it on the VPS, and pass it through stdin:
+The local Bash shell, remote shell, `docker exec`, SQL, Python, and PHP each have different quoting rules. Pipes, `$()`, variables, regex `|`, and nested quotes can be consumed by the wrong shell. For a multiline read-only script or SQL statement, encode the payload locally, decode it on the VPS, and pass it through stdin:
 
-```powershell
-$payload = @'
+```bash
+payload=$(cat <<'SQL'
 select status from application_deployment_queues where deployment_uuid = 'example';
-'@
-$encoded = [Convert]::ToBase64String([Text.Encoding]::UTF8.GetBytes($payload))
-ssh vps "echo $encoded | base64 -d | docker exec -i coolify-db psql -U coolify -d coolify -At"
+SQL
+)
+encoded=$(printf '%s' "$payload" | base64 -w0)
+printf '%s' "$encoded" | ssh vps "base64 -d | docker exec -i coolify-db psql -U coolify -d coolify -At"
 ```
 
 Base64 here is only a quoting transport, not secret protection. Never print or commit an encoded API key, and keep secret-bearing payloads out of retained shell history and logs.
@@ -346,25 +364,25 @@ Browser behavior to preserve:
 - `OPTIONS` must not be blocked by auth middleware.
 - Keep CORS origins listed in `README.md`, including `null`.
 
-Permanent test coverage for these contracts is in `test_external_contracts.py`.
+Permanent test coverage for these contracts is in `tests/test_external_contracts.py`.
 
 ## Verification Checklist
 
 After Python changes:
 
-```powershell
-python -m py_compile gateway.py shenyu_gateway\store\__init__.py shenyu_gateway\stars\__init__.py shenyu_gateway\calendar_sources.py shenyu_gateway\context_layers.py shenyu_gateway\response_capture.py shenyu_gateway\upstream_adapter.py test_external_contracts.py test_gateway_hisense_context.py test_gateway_tags.py test_gateway_trim.py
+```bash
+python -m py_compile gateway.py shenyu_gateway/store/__init__.py shenyu_gateway/stars/__init__.py shenyu_gateway/calendar_sources.py shenyu_gateway/context_layers.py shenyu_gateway/response_capture.py shenyu_gateway/upstream_adapter.py tests/test_external_contracts.py tests/test_gateway_hisense_context.py tests/test_gateway_tags.py tests/test_gateway_trim.py
 git diff --check
-rg -n "<AGENTS.md mojibake pattern>" README.md DEBUGGING_GUIDE.md gateway.py shenyu_gateway test_*.py
+rg -n '淇|閺|鈹|銆|锛|紝|娌堜簣' README.md DEBUGGING_GUIDE.md gateway.py shenyu_gateway tests
 ```
 
 If the local environment has `pytest` available:
 
-```powershell
-python -m pytest test_gateway_trim.py test_gateway_tags.py test_gateway_hisense_context.py test_external_contracts.py
+```bash
+python -m pytest tests/test_gateway_trim.py tests/test_gateway_tags.py tests/test_gateway_hisense_context.py tests/test_external_contracts.py
 ```
 
-If `pytest` is not available or WindowsApps Python fails, use a no-file smoke test with `TestClient` and a temporary SQLite database. Do not leave one-off smoke scripts in the repo.
+If `pytest` is unavailable, install/use the WSL Python environment or run a no-file `TestClient` smoke test with a temporary SQLite database. Do not route ordinary work through WindowsApps Python and do not leave one-off smoke scripts in the repo.
 
 ## Refactor Boundaries
 
