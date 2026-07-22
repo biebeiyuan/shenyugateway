@@ -187,6 +187,9 @@ class RuntimeConfig:
         self.heartbeat_archive_settle_hours: int = _env_int("HEARTBEAT_ARCHIVE_SETTLE_HOURS", 6, 0, 720)
         self.heartbeat_archive_interval_seconds: int = _env_int("HEARTBEAT_ARCHIVE_INTERVAL_SECONDS", 600, 60, 86400)
         self.heartbeat_archive_batch_size: int = _env_int("HEARTBEAT_ARCHIVE_BATCH_SIZE", 200, 1, 1000)
+        self.heartbeat_archive_reconcile_deletions: bool = _env_bool(
+            "HEARTBEAT_ARCHIVE_RECONCILE_DELETIONS", False
+        )
         self.gateway_message_retention: int = _env_int("GATEWAY_MESSAGE_RETENTION", 1500, 50, 200000)
         self.gateway_context_snapshot_retention: int = _env_int("GATEWAY_CONTEXT_SNAPSHOT_RETENTION", 3, 1, 100)
         self.gateway_cold_start_retention: int = _env_int("GATEWAY_COLD_START_RETENTION", 20, 1, 1000)
@@ -314,6 +317,7 @@ class RuntimeConfig:
             "heartbeat_archive_settle_hours": self.heartbeat_archive_settle_hours,
             "heartbeat_archive_interval_seconds": self.heartbeat_archive_interval_seconds,
             "heartbeat_archive_batch_size": self.heartbeat_archive_batch_size,
+            "heartbeat_archive_reconcile_deletions": self.heartbeat_archive_reconcile_deletions,
             "gateway_message_retention": self.gateway_message_retention,
             "gateway_context_snapshot_retention": self.gateway_context_snapshot_retention,
             "gateway_cold_start_retention": self.gateway_cold_start_retention,

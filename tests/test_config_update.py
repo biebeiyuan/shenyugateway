@@ -33,6 +33,7 @@ DEFAULTED_ENV_KEYS = [
     "ROOM_NEWSPAPER_LLM_API_KEY",
     "ROOM_NEWSPAPER_LLM_PROTOCOL",
     "STAR_SOFT_DIRECT_COOLDOWN_TURNS",
+    "HEARTBEAT_ARCHIVE_RECONCILE_DELETIONS",
 ]
 
 
@@ -67,6 +68,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.room_newspaper_qa_enabled is False
     assert cfg.room_newspaper_llm_model == ""
     assert cfg.star_soft_direct_cooldown_turns == 8
+    assert cfg.heartbeat_archive_reconcile_deletions is False
 
 
 def test_aggregate_cache_usage_preserves_multi_round_reported_state():

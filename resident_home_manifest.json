@@ -73,14 +73,15 @@
       "config_keys": [
         "heartbeat_inject_every",
         "enable_heartbeat_archive",
+        "heartbeat_archive_reconcile_deletions",
         "hisense_heartbeat_limit"
       ],
       "reviewed": {
-        "fingerprint": "e0faeb154ef32b6b18b647299c595719d6e2baf56e80e2e9ec824b53c56e4bb8",
-        "commit": "30ee25c152da99838f222be039310b3a232056ea",
-        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
+        "fingerprint": "e3d0c49d8ba48668491a3b21a6775b73b7a20a320a8cf9b2e65932e9844b1d79",
+        "commit": "edcb847053a69e581ca78e72a26039a024c84f91",
+        "revision": "edcb847053a69e581ca78e72a26039a024c84f91-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T22:59:56+08:00",
+        "reviewed_at": "2026-07-22T18:50:58+08:00",
         "reviewed_by": "Codex"
       }
     },

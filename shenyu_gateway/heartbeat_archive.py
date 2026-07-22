@@ -5,8 +5,9 @@ from __future__ import annotations
 SQLite heartbeat pools stay the live read path. This service copies rows into
 the Supabase `shenyu_heartbeat_archive` table after a settle window, so manual
 cleanup (re-roll duplicates, runaway heartbeats) done in SQLite before the
-window closes never reaches the archive. Rows deleted from SQLite after they
-were archived are soft-deleted in the archive via reconciliation, never erased.
+window closes never reaches the archive. Optional deletion reconciliation is
+kept behind an explicit production guard because it treats one SQLite store as
+the authority for remote archive visibility.
 """
 
 from typing import Any, Optional
@@ -29,6 +30,9 @@ class HeartbeatArchiveService:
 
     def _batch_size(self) -> int:
         return max(1, min(int(getattr(self.cfg, "heartbeat_archive_batch_size", 200) or 200), 1000))
+
+    def _reconcile_deletions_enabled(self) -> bool:
+        return bool(getattr(self.cfg, "heartbeat_archive_reconcile_deletions", False))
 
     async def run_once(self) -> dict[str, Any]:
         result: dict[str, Any] = {"archived": 0, "soft_deleted": 0, "errors": []}
@@ -73,6 +77,8 @@ class HeartbeatArchiveService:
 
     async def _reconcile_deleted(self, scope: str, hisense: bool) -> int:
         """Soft-delete archive rows whose SQLite source row was removed after archiving."""
+        if not self._reconcile_deletions_enabled():
+            return 0
         archived = await self.supabase.query(
             ARCHIVE_TABLE,
             params={"select": "id", "scope": f"eq.{scope}", "deleted_at": "is.null", "limit": "10000"},
@@ -81,6 +87,11 @@ class HeartbeatArchiveService:
         if not archived_ids:
             return 0
         live_ids = self.store.get_all_heartbeat_ids(hisense=hisense)
+        if not live_ids:
+            raise RuntimeError(
+                f"refusing to reconcile {len(archived_ids)} {scope} archive rows "
+                "against an empty local heartbeat pool"
+            )
         missing = sorted(archived_ids - live_ids)
         if not missing:
             return 0
@@ -101,7 +112,12 @@ async def heartbeat_archive_worker(service: HeartbeatArchiveService, interval_se
     import asyncio
 
     interval = max(int(interval_seconds or 600), 60)
-    logger.info("[HeartbeatArchiveWorker] started interval=%ss settle_hours=%s", interval, service._settle_hours())
+    logger.info(
+        "[HeartbeatArchiveWorker] started interval=%ss settle_hours=%s reconcile_deletions=%s",
+        interval,
+        service._settle_hours(),
+        service._reconcile_deletions_enabled(),
+    )
     try:
         while True:
             try:

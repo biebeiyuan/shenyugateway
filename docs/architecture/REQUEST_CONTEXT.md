@@ -427,10 +427,11 @@ SQLite holds only rebuildable runtime state. Anything whose loss would hurt live
 `shenyu_heartbeat_archive` in Supabase is the durable copy of both SQLite heartbeat pools. The worker (`shenyu_gateway/heartbeat_archive.py`):
 
 - syncs heartbeats only after a settle window (`HEARTBEAT_ARCHIVE_SETTLE_HOURS=6`), so manual cleanup of re-roll duplicates or runaway heartbeats done in SQLite first never reaches the archive;
-- reconciles afterwards: rows deleted from SQLite after archiving are soft-deleted (`deleted_at`) in the archive, never erased;
+- uploads remain enabled independently from deletion reconciliation;
+- only when `HEARTBEAT_ARCHIVE_RECONCILE_DELETIONS=true` does it reconcile rows deleted from SQLite after archiving into archive `deleted_at`; the default is `false`, and even an explicitly enabled worker refuses to reconcile a non-empty remote scope against an empty local heartbeat pool;
 - backfills all history automatically on first run.
 
-SQLite stays the live read path; injection behavior is unchanged. Config: `ENABLE_HEARTBEAT_ARCHIVE`, `HEARTBEAT_ARCHIVE_SETTLE_HOURS`, `HEARTBEAT_ARCHIVE_INTERVAL_SECONDS`, `HEARTBEAT_ARCHIVE_BATCH_SIZE`.
+SQLite stays the live read path; injection behavior is unchanged. Enable deletion reconciliation only on the production instance with its stable persistent SQLite volume. Config: `ENABLE_HEARTBEAT_ARCHIVE`, `HEARTBEAT_ARCHIVE_SETTLE_HOURS`, `HEARTBEAT_ARCHIVE_INTERVAL_SECONDS`, `HEARTBEAT_ARCHIVE_BATCH_SIZE`, `HEARTBEAT_ARCHIVE_RECONCILE_DELETIONS`.
 
 ### Chat archive (L0 source of truth)
 

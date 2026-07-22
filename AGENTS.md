@@ -10,6 +10,7 @@
 - The old Windows checkout at `C:\Users\曾\Desktop\shenyu-gateway` and its `/mnt/c/...` mapping are not the active working copy. Do not edit or deploy from them unless the user explicitly asks.
 - `.wslconfig` is configured at `~/.wslconfig` (`networkingMode=mirrored`, `autoProxy=true`, memory capped at 8GB) to avoid the "localhost proxy not mirrored" warning.
 - VS Code should open the Linux repository through the official WSL extension.
+- For manual Admin browser/visual checks, use `cd admin && npm run preview:isolated`. It builds the UI and starts a `/tmp` SQLite gateway with `.env`, Supabase, archives, and background workers disabled. Do not start the ordinary gateway against real credentials for a visual-only preview.
 
 ## Project Memory and Collaboration
 
