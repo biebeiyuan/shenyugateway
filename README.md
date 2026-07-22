@@ -97,7 +97,7 @@ The codebase is partly layered already:
 ### Durable archive
 
 - `shenyu_gateway/chat_archive.py`: L0 verbatim chat archive service (fire-and-forget archival to Supabase `shenyu_chat_archive`).
-- `shenyu_gateway/heartbeat_archive.py`: heartbeat disaster recovery archive to Supabase (`shenyu_heartbeat_archive`), settle window, soft-delete reconciliation.
+- `shenyu_gateway/heartbeat_archive.py`: heartbeat disaster recovery archive to Supabase (`shenyu_heartbeat_archive`), settle window, and explicitly gated soft-delete reconciliation with an empty-local-pool refusal.
 - `shenyu_gateway/conflict_books.py`: durable origin-book records and invariants (frozen original_text, append-only annotations); the shelf/tool presentation is also a memory-data concern in system zone six.
 
 ### Calendar
@@ -179,13 +179,18 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/ArchiveView.vue`: chat archive reader and origin-book clip flow.
 - `admin/src/views/ConflictView.vue`: three-tier bookshelf for revisioned `我是谁`, generated read-only `家现在`, owner-only `家里地图`, and frozen origin books; keeps their distinct visibility and write boundaries explicit.
 - `admin/src/views/bookshelf/HomeBookModal.vue`: generated-home reader for live commit/confirmation state, resident components, weekly impacts, and append-only annotations.
-- `admin/src/views/bookshelf/ProjectMapBookModal.vue`: owner-facing interactive atlas for the live overview, request route, one-hop component connections, confirmation state, and recent resident-impact changes.
+- `admin/src/views/bookshelf/ProjectMapBookModal.vue`: owner-facing atlas shell for live status, page selection, and the Admin-only visibility boundary.
+- `admin/src/views/bookshelf/ProjectMapOverviewPanel.vue`: progressive overview for resident mechanisms, Agent architecture zones, and cross-zone bridges.
+- `admin/src/views/bookshelf/ProjectMapFlowPanel.vue`: interactive request route from client entry through context, tools/upstream, capture, and return.
+- `admin/src/views/bookshelf/ProjectMapConnectionsPanel.vue`: one-hop component coupling map derived from shared mapped source files, with explicit architecture bridges as secondary evidence.
+- `admin/src/views/bookshelf/ProjectMapChangesPanel.vue`: review state, resident-impact changes, component confirmations, and current-document evidence.
 - `admin/src/views/RoomView.vue`: room mode admin preview shell (charge, traces, drawer notes, pins, and newspaper placement).
 - `admin/src/views/room/RoomNewspaperPanel.vue`: in-place Room newspaper panel (generate, review, publish, discard, and source status).
 - `admin/src/views/ToolErrorsView.vue`: tool error log viewer.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.
 - `admin/e2e/smoke.spec.ts`: read-only Chromium smoke checks for every Admin route and a few core interactions.
 - `admin/playwright.config.ts`: isolated local gateway, temporary SQLite, authentication, and browser settings for Admin smoke tests.
+- `scripts/admin_preview.py`: isolated built-Admin preview launcher that disables repository `.env`, external stores, archives, and background workers.
 
 ### 按产品对象反查
 
@@ -259,6 +264,9 @@ COLD_START_MESSAGE_LIMIT=
 MAX_CLIENT_MESSAGES=75
 
 INJECT_MEM_NOTES=true
+
+ENABLE_HEARTBEAT_ARCHIVE=true
+HEARTBEAT_ARCHIVE_RECONCILE_DELETIONS=false
 
 INJECT_STARS=true
 ENABLE_STAR_EMBEDDINGS=false
@@ -434,6 +442,7 @@ If local sessions, context snapshots, pending tool turns, persisted request-log 
 | Environment | Command | URL |
 |---|---|---|
 | Local dev | `cd admin && npm run dev` | `http://localhost:5173` (hot reload) |
+| Isolated full preview | `cd admin && npm run preview:isolated` | `http://127.0.0.1:18112/admin/` (no `.env`, Supabase, archives, or workers) |
 | Production | `cd admin && npm run build` → served by Python from `dist/` | `https://your-domain/admin` |
 
 **Before each deploy to Coolify:**

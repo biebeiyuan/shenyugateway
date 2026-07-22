@@ -475,6 +475,8 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
     await expect(page.getByTestId('project-map-flow')).toContainText('ContextBuilder')
     await page.getByTestId('project-map-tab-connections').click()
     await expect(page.getByTestId('project-map-connections')).toContainText('Mem')
+    await page.getByTestId('project-map-tab-changes').click()
+    await expect(page.getByTestId('project-map-atlas')).toContainText('当前映射都已确认')
     await expect(page.getByText('这册只在 Admin 里出现，不进入沈予的上下文。')).toBeVisible()
     await page.keyboard.press('Escape')
 
