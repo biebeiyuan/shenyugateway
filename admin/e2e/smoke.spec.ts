@@ -331,6 +331,110 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
       },
     })
   })
+  await page.route('**/api/project-map', async (route) => {
+    await route.fulfill({
+      json: {
+        ok: true,
+        live: {
+          commit: '1234567890abcdef',
+          revision: '1234567890abcdef',
+          worktree_dirty: false,
+          observed_at: '2026-07-22T14:00:00+08:00',
+          last_confirmed_at: '2026-07-22T13:00:00+08:00',
+        },
+        summary: {
+          status: 'confirmed',
+          component_count: 2,
+          confirmed_count: 2,
+          pending_count: 0,
+          error_count: 0,
+          zone_count: 2,
+          bridge_count: 1,
+          document_count: 1,
+        },
+        components: [
+          {
+            id: 'stars',
+            title: '星星库',
+            status: 'ok',
+            summary: '让真正相关的联想记忆回来。',
+            resident_effect: '星星不会每轮乱跳。',
+            core: ['只让相关的星星浮现。'],
+            files: ['shenyu_gateway/context_builder.py'],
+            reviewed: { reviewed_at: '2026-07-22T13:00:00+08:00', reviewed_by: 'Codex' },
+            zone_ids: ['zone-2'],
+          },
+          {
+            id: 'mem',
+            title: 'Mem',
+            status: 'ok',
+            summary: '让具体事实在需要时回来。',
+            resident_effect: '承诺和名字不会轻易丢掉。',
+            core: ['只在有锚点时召回。'],
+            files: ['shenyu_gateway/context_builder.py'],
+            reviewed: { reviewed_at: '2026-07-22T12:00:00+08:00', reviewed_by: 'Codex' },
+            zone_ids: ['zone-2'],
+          },
+        ],
+        zones: [
+          {
+            id: 'zone-1',
+            number: '一',
+            title: '入口与运行时',
+            summary: '让请求安全进入。',
+            responsibilities: ['让请求安全进入。'],
+            core_files: ['gateway.py'],
+            component_ids: [],
+          },
+          {
+            id: 'zone-2',
+            number: '五',
+            title: '上下文与记忆',
+            summary: '整理此刻需要带上的记忆。',
+            responsibilities: ['整理此刻需要带上的记忆。'],
+            core_files: ['shenyu_gateway/context_builder.py'],
+            component_ids: ['stars', 'mem'],
+          },
+        ],
+        request_flow: [
+          {
+            id: 'flow-1',
+            label: '客户端',
+            meaning: '你发来的话从这里出发。',
+            zone_ids: [],
+            details: [],
+          },
+          {
+            id: 'flow-2',
+            label: 'ContextBuilder',
+            meaning: '整理此刻真正需要带上的记忆。',
+            zone_ids: ['zone-2'],
+            details: ['Calendar / Mem / Stars / Room'],
+          },
+        ],
+        bridges: [{
+          '桥梁': 'context_builder.py',
+          '连接区域': '上下文、记忆、Room',
+          '审计重点': '实际注入内容',
+        }],
+        component_bridges: [{
+          id: 'stars--mem',
+          left_id: 'stars',
+          right_id: 'mem',
+          via_files: ['shenyu_gateway/context_builder.py'],
+          meaning: '它们共同经过 context_builder.py，改动时需要一起确认。',
+        }],
+        documents: [{
+          '文档': 'docs/architecture/SYSTEM_ZONES.md',
+          '职责': '现行代码分区、跨区桥梁和审计入口',
+          '什么时候更新': '主要调用链改变时',
+        }],
+        products: [],
+        changes: [],
+        warnings: [],
+      },
+    })
+  })
   await page.route('**/api/conflict-books', async (route) => {
     await route.fulfill({
       json: {
@@ -356,6 +460,23 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
     await expect(page.getByTestId('bookshelf-tier-home')).toBeVisible()
     await expect(page.getByTestId('bookshelf-tier-origin')).toBeVisible()
     await expect(page.getByTestId('bookshelf-origin-origin-smoke')).toBeVisible()
+    await expect(page.getByTestId('bookshelf-book-project-map')).toBeVisible()
+
+    await page.getByTestId('bookshelf-book-project-map').click()
+    await expect(page.getByTestId('project-map-atlas')).toBeVisible()
+    await expect(page.getByTestId('project-map-status')).toHaveText('地图与现场一致')
+    await page.getByTestId('project-map-overview-components').click()
+    await expect(page.getByTestId('project-map-atlas')).toContainText('只让相关的星星浮现。')
+    await page.getByTestId('project-map-overview-zones').click()
+    await expect(page.getByTestId('project-map-zone-index')).toContainText('入口与运行时')
+    await page.getByTestId('project-map-overview-bridges').click()
+    await expect(page.getByTestId('project-map-bridge-index')).toContainText('context_builder.py')
+    await page.getByTestId('project-map-tab-flow').click()
+    await expect(page.getByTestId('project-map-flow')).toContainText('ContextBuilder')
+    await page.getByTestId('project-map-tab-connections').click()
+    await expect(page.getByTestId('project-map-connections')).toContainText('Mem')
+    await expect(page.getByText('这册只在 Admin 里出现，不进入沈予的上下文。')).toBeVisible()
+    await page.keyboard.press('Escape')
 
     await page.getByTestId('bookshelf-book-home').click()
     await expect(page.getByTestId('home-snapshot-commit')).toHaveText('1234567890ab')

@@ -13,6 +13,7 @@ import {
   annotateBook,
   fetchHomeBook,
   fetchIdentityBook,
+  fetchProjectMap,
   fetchResidentOverview,
   updateIdentityBook,
   type BookAnnotation,
@@ -20,9 +21,11 @@ import {
   type LivingBookDetail,
   type LivingBookRevision,
   type LivingBookSummary,
+  type ProjectMapSnapshot,
   type ResidentHomeSnapshot,
 } from '@/api/books'
 import HomeBookModal from '@/views/bookshelf/HomeBookModal.vue'
+import ProjectMapBookModal from '@/views/bookshelf/ProjectMapBookModal.vue'
 
 const message = useMessage()
 
@@ -57,6 +60,10 @@ const homeSnapshot = ref<ResidentHomeSnapshot | null>(null)
 const homeAnnotations = ref<BookAnnotation[]>([])
 const homeAnnotation = ref('')
 const homeAnnotationSaving = ref(false)
+
+const showProjectMap = ref(false)
+const projectMapLoading = ref(false)
+const projectMapSnapshot = ref<ProjectMapSnapshot | null>(null)
 
 const statusOptions = [
   { label: '还开着', value: 'open' },
@@ -221,6 +228,21 @@ async function addHomeAnnotation() {
   }
 }
 
+async function openProjectMap() {
+  showProjectMap.value = true
+  projectMapLoading.value = true
+  try {
+    const result = await fetchProjectMap()
+    if (!result.ok) throw new Error('地图暂时没有画出来')
+    projectMapSnapshot.value = result
+  } catch (error) {
+    message.error(error instanceof Error ? error.message : '地图暂时没有画出来')
+    showProjectMap.value = false
+  } finally {
+    projectMapLoading.value = false
+  }
+}
+
 async function openOriginBook(book: ConflictBookSummary) {
   showOriginDetail.value = true
   originDetailLoading.value = true
@@ -310,7 +332,7 @@ function spineChars(title: string, limit = 5): string[] {
       <div>
         <div class="eyebrow">OUR LITTLE LIBRARY</div>
         <h2>我们的小书架</h2>
-        <p>三层，三种规则：家况自动生成，自述留下版本，来历保留原文。</p>
+        <p>三层，四册各有边界：自述留版本，家况与地图现场生成，来历保留原文。</p>
       </div>
       <NButton size="small" data-testid="bookshelf-refresh" @click="loadBooks">掸掸灰</NButton>
     </header>
@@ -322,7 +344,7 @@ function spineChars(title: string, limit = 5): string[] {
     </div>
 
     <NSpin :show="loading">
-      <div class="bookcase" aria-label="三层共享书架">
+      <div class="bookcase" aria-label="三层书架">
         <section class="shelf-tier identity-tier" data-testid="bookshelf-tier-identity">
           <div class="shelf-label">
             <span>第一层</span>
@@ -354,8 +376,8 @@ function spineChars(title: string, limit = 5): string[] {
         <section class="shelf-tier home-tier" data-testid="bookshelf-tier-home">
           <div class="shelf-label">
             <span>第二层</span>
-            <strong>家现在</strong>
-            <small>我们此刻住着的地方</small>
+            <strong>家的两册</strong>
+            <small>给沈予的家况 · 给圆圆的地图</small>
           </div>
           <div class="shelf-stage">
             <div class="shelf-books">
@@ -370,12 +392,23 @@ function spineChars(title: string, limit = 5): string[] {
                 <span class="feature-mark auto-mark">自动</span>
                 <span class="feature-meta">只读 · 可批注</span>
               </button>
+              <button
+                class="book-volume feature-book project-map-book"
+                data-testid="bookshelf-book-project-map"
+                title="翻开《家里地图》"
+                @click="openProjectMap"
+              >
+                <span class="book-ridge"></span>
+                <span class="feature-title map-title"><span>家</span><span>里</span><span>地</span><span>图</span></span>
+                <span class="feature-mark owner-mark">给圆圆</span>
+                <span class="feature-meta">只读 · 自动映射</span>
+              </button>
               <div class="shelf-card home-card">
                 <strong>{{ homeOverview?.current_week_changes || 0 }} 条本周变化</strong>
                 <span>
                   {{ homeOverview?.last_confirmed_at ? `最后确认于 ${fmtShortDate(homeOverview.last_confirmed_at)}` : '等待第一次确认' }}
                 </span>
-                <p>{{ homeShelfNote }}</p>
+                <p>{{ homeShelfNote }} 地图会在翻开时按当前版本重新画。</p>
               </div>
             </div>
           </div>
@@ -418,7 +451,7 @@ function spineChars(title: string, limit = 5): string[] {
       </div>
     </NSpin>
 
-    <p class="shelf-footnote">上下文只露出书架一览；完整家况、自述正文和来历原文都要明确翻开。</p>
+    <p class="shelf-footnote">沈予的上下文只露出共享书架一览；《家里地图》只给后台里的圆圆看。</p>
 
     <NModal
       v-model:show="showLivingDetail"
@@ -504,6 +537,12 @@ function spineChars(title: string, limit = 5): string[] {
       :annotations="homeAnnotations"
       :annotation-saving="homeAnnotationSaving"
       @annotate="addHomeAnnotation"
+    />
+
+    <ProjectMapBookModal
+      v-model:show="showProjectMap"
+      :loading="projectMapLoading"
+      :snapshot="projectMapSnapshot"
     />
 
     <NModal
@@ -763,6 +802,24 @@ function spineChars(title: string, limit = 5): string[] {
   background: linear-gradient(105deg, #8c6d5c 0%, #a5826d 55%, #7f604f 100%);
 }
 
+.project-map-book {
+  width: 96px;
+  height: 154px;
+  margin-left: 4px;
+  background: linear-gradient(105deg, #a06f7e 0%, #bc8998 55%, #8d5f6d 100%);
+}
+
+.map-title {
+  top: 27px;
+  gap: 3px;
+  font-size: 15px;
+}
+
+.feature-mark.owner-mark {
+  border-color: rgb(255 232 239 / 55%);
+  color: #ffe8ef;
+}
+
 .feature-title {
   position: absolute;
   top: 33px;
@@ -855,6 +912,7 @@ function spineChars(title: string, limit = 5): string[] {
 }
 
 .home-card {
+  flex: 0 0 250px;
   transform: rotate(0.7deg);
 }
 
@@ -1226,6 +1284,10 @@ function spineChars(title: string, limit = 5): string[] {
 
   .home-book {
     height: 145px;
+  }
+
+  .project-map-book {
+    height: 139px;
   }
 
   .shelf-card {

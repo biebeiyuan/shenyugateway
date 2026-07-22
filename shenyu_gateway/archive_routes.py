@@ -15,6 +15,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel, Field
 
 from .conflict_books import ConflictBookService
+from .project_map import project_map_snapshot
 from .resident_books import ResidentBooksService
 
 ARCHIVE_TABLE = "shenyu_chat_archive"
@@ -184,6 +185,11 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
     @router.get("/api/books")
     async def resident_books_overview():
         return await _resident_books().overview()
+
+    @router.get("/api/project-map")
+    async def project_map_read():
+        """Owner-only live map; deliberately separate from resident books."""
+        return project_map_snapshot()
 
     @router.get("/api/books/{book}")
     async def resident_book_read(book: str, view: str = "current"):

@@ -27,6 +27,8 @@ RUN pip install --no-cache-dir --timeout 120 --retries 5 -r requirements.txt
 COPY gateway.py ./
 COPY shenyu_gateway ./shenyu_gateway
 COPY resident_home_manifest.json resident_home_changes.jsonl ./
+COPY README.md DOCS_MAP.md ./
+COPY docs/architecture/SYSTEM_ZONES.md ./docs/architecture/SYSTEM_ZONES.md
 COPY scripts/backfill_chat_archive.py ./scripts/backfill_chat_archive.py
 COPY scripts/resident_home.py ./scripts/resident_home.py
 COPY --from=admin-builder /admin/dist ./admin/dist

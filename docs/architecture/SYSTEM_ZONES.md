@@ -326,16 +326,19 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 
 - 提供 Admin API 和 Vue 管理界面。
 - 展示 request logs、工具轮、memory island、cache usage 和上下文窗口。
+- 把现行地图、组件确认状态和变化记录现场组装成只给圆圆看的《家里地图》。
 - 通过 helper 读取 API 日志、retained JSON 或 VPS 容器日志。
 - 维护部署、排障和现行设计入口。
 
 **核心文件**
 
 - `shenyu_gateway/gateway_admin_routes.py`
+- `shenyu_gateway/project_map.py`
 - `shenyu_gateway/request_logs.py`
 - `shenyu_gateway/store/_request_log_history.py`
 - `admin/src/api/logs.ts`
 - `admin/src/views/LogsView.vue`
+- `admin/src/views/bookshelf/ProjectMapBookModal.vue`
 - `scripts/vps_gateway_logs.py`
 - `README.md`
 - `DOCS_MAP.md`
@@ -345,6 +348,7 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 **边界**
 
 - Admin 列表 API 应返回摘要；详情 API 优先读取当前进程日志，只有显式开启时才可能含完整 payload。
+- 《家里地图》只属于 Admin：不得加入 `shenyu_books`、共享书架概览、Room 或任何模型上下文。它在每次读取时从现行权威源重画，不保存可被手写覆盖的第二份地图正文。
 - Admin 页面和 API 的交付责任归本区域，但页面所展示数据的业务含义仍归对应功能区；完整页面清单统一看 README，不在这里逐项复制。
 - request log 使用两层保留：进程内 `deque(maxlen=30)` 保存实时/可选完整详情，SQLite 默认保存最近 200 条安全摘要并跨进程恢复。完整 messages/response/payload 不进入持久历史。
 - 每轮顶部 `input` 必须读取后端归一化的 `cache_usage.total_input_tokens`：Anthropic 将未缓存输入、缓存读取和缓存新写相加；OpenAI-compatible 的输入已含 cached 子集，不得在前端重复相加。`⚡ cached` 后的紧凑百分比表示缓存读取占该总输入的比例；分母不可靠时省略百分比。读取与新写之间的前缀复用率只在详情中单独标注。
@@ -398,6 +402,7 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 | `tool_registry.py` | schema、配置、gateway/client tools | 名称边界、工具合并、供应商 payload |
 | `tool_loop.py` | 工具、流式、上游、pending 状态 | 多轮正文、断连、资源关闭 |
 | `gateway_admin_routes.py` | Admin、存储、记忆、日志 | API 重量、隐私、领域拆分 |
+| `project_map.py` | Admin、现行文档、住户组件映射与变化记录 | 权威源解析、组件连线、部署内可读性、不得进入模型上下文 |
 | `sessions.py` | 请求、持久化、Admin/Hisense 会话 | 消息计数、写入时机、读取范围 |
 | Hisense 专用路径 | 入口、请求、上游、上下文、外部数据、存储、Admin | 触发条件、默认上游回落、上下文隔离、恢复前回归 |
 

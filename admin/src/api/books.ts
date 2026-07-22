@@ -102,6 +102,78 @@ export interface HomeBookReadResponse {
   warnings?: string[]
 }
 
+export interface ProjectMapComponent {
+  id: string
+  title: string
+  status: 'ok' | 'review_required' | 'error'
+  summary: string
+  resident_effect: string
+  core: string[]
+  files: string[]
+  reviewed: {
+    reviewed_at?: string
+    reviewed_by?: string
+    revision?: string
+  }
+  zone_ids: string[]
+}
+
+export interface ProjectMapZone {
+  id: string
+  number: string
+  title: string
+  summary: string
+  responsibilities: string[]
+  core_files: string[]
+  component_ids: string[]
+}
+
+export interface ProjectMapFlowStage {
+  id: string
+  label: string
+  meaning: string
+  zone_ids: string[]
+  details: string[]
+}
+
+export interface ProjectMapComponentBridge {
+  id: string
+  left_id: string
+  right_id: string
+  via_files: string[]
+  meaning: string
+}
+
+export interface ProjectMapSnapshot {
+  ok: boolean
+  live: {
+    commit: string
+    revision: string
+    worktree_dirty: boolean
+    observed_at: string
+    last_confirmed_at: string
+  }
+  summary: {
+    status: 'confirmed' | 'attention'
+    component_count: number
+    confirmed_count: number
+    pending_count: number
+    error_count: number
+    zone_count: number
+    bridge_count: number
+    document_count: number
+  }
+  components: ProjectMapComponent[]
+  zones: ProjectMapZone[]
+  request_flow: ProjectMapFlowStage[]
+  bridges: Array<Record<string, string>>
+  component_bridges: ProjectMapComponentBridge[]
+  documents: Array<Record<string, string>>
+  products: Array<Record<string, string>>
+  changes: ResidentHomeChange[]
+  warnings: string[]
+}
+
 export async function fetchResidentOverview() {
   const { data } = await api.get<ResidentShelfResponse>('/api/books')
   return data
@@ -114,6 +186,11 @@ export async function fetchIdentityBook(view: 'current' | 'history' = 'history')
 
 export async function fetchHomeBook() {
   const { data } = await api.get<HomeBookReadResponse>('/api/books/home')
+  return data
+}
+
+export async function fetchProjectMap() {
+  const { data } = await api.get<ProjectMapSnapshot>('/api/project-map')
   return data
 }
 

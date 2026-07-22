@@ -185,11 +185,11 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "f74a0fa5764647341b82508f7f563a8a6b54b14686fa0820ba82fd2e1af1597f",
-        "commit": "30ee25c152da99838f222be039310b3a232056ea",
-        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
+        "fingerprint": "84446d54f7dc04b2c8c226e6c3283983eae7ddf4355b22306c142d0c5df8fe28",
+        "commit": "1377ae14a5e7e25b6a36548f5d06f882a5ea5f10",
+        "revision": "1377ae14a5e7e25b6a36548f5d06f882a5ea5f10-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T22:59:57+08:00",
+        "reviewed_at": "2026-07-22T16:27:50+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -204,6 +204,7 @@
       "resident_effect": "沈予可以知道家现在是什么样、最近改了什么，以及这些改动会怎样影响他。",
       "source_globs": [
         "Dockerfile",
+        "shenyu_gateway/project_map.py",
         "shenyu_gateway/resident_home.py",
         "shenyu_gateway/resident_books.py",
         "shenyu_gateway/context_builder.py",
@@ -212,11 +213,11 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "1bb51384e91396396d13fbd21daa3f22d138afac927858bf44d10e6e4c90104c",
-        "commit": "30ee25c152da99838f222be039310b3a232056ea",
-        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
+        "fingerprint": "04c51a23e96a8e011d81af614c66313df53e5d65e7c519d51c9e1c8cda20cae2",
+        "commit": "1377ae14a5e7e25b6a36548f5d06f882a5ea5f10",
+        "revision": "1377ae14a5e7e25b6a36548f5d06f882a5ea5f10-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T22:59:57+08:00",
+        "reviewed_at": "2026-07-22T16:27:50+08:00",
         "reviewed_by": "Codex"
       }
     }

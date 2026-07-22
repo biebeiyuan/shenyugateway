@@ -61,6 +61,7 @@ The codebase is partly layered already:
 
 - `shenyu_gateway/context_builder.py`: async parallel gathering of all memory sources into a context package.
 - `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, and cold-start bridge insertion.
+- `shenyu_gateway/project_map.py`: owner-only live project map assembled from the current system zones, maintenance/product indexes, resident component fingerprints, and change ledger; it also derives component links from shared mapped source files.
 - `shenyu_gateway/resident_home.py`: resident-facing component manifest, source fingerprints, review acknowledgements, and weekly change records.
 - `shenyu_gateway/resident_books.py`: unified bookshelf facade for the generated read-only home snapshot, the revisioned `我是谁` document, append-only annotations, and legacy origin-book storage.
 - `shenyu_gateway/resident_profile.py`: stable wake/profile text for memory practice, the origin book, and the Hisense home note.
@@ -123,7 +124,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/gateway_admin_routes.py`: admin API routes (stars, mem notes, room, overview, prune, etc.).
 - `shenyu_gateway/calendar_routes.py`: calendar API routes (prompts, month grid, generation, preview).
 - `shenyu_gateway/hisense_routes.py`: retained Hisense API routes (preview, notebook, session); this dedicated path is currently not in daily use.
-- `shenyu_gateway/archive_routes.py`: archive reader, origin-book, and shared resident-book API routes.
+- `shenyu_gateway/archive_routes.py`: archive reader, origin-book, shared resident-book, and owner-only project-map API routes.
 - `shenyu_gateway/config_routes.py`: configuration API routes (get/set runtime config).
 - `shenyu_gateway/admin_shell_routes.py`: admin shell/UI routes (static file serving, login page).
 
@@ -156,7 +157,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
 - `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
 - `admin/src/api/archive.ts`: chat archive reader and frozen origin-book APIs.
-- `admin/src/api/books.ts`: resident-shelf APIs for the generated `home` snapshot, the revisioned `identity` book, and their annotation flows.
+- `admin/src/api/books.ts`: resident-shelf APIs plus the separate owner-only live project-map contract.
 - `admin/src/api/room.ts`: room mode APIs (traces, drawer notes, scribbles, pins, newspapers).
 - `admin/src/api/toolErrors.ts`: tool error log APIs.
 - `admin/src/views/HomeView.vue`: admin landing/dashboard page.
@@ -176,8 +177,9 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
 - `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
 - `admin/src/views/ArchiveView.vue`: chat archive reader and origin-book clip flow.
-- `admin/src/views/ConflictView.vue`: three-tier resident bookshelf for revisioned `我是谁`, generated read-only `家现在`, and frozen origin books; keeps annotations and origin-book cover management together.
+- `admin/src/views/ConflictView.vue`: three-tier bookshelf for revisioned `我是谁`, generated read-only `家现在`, owner-only `家里地图`, and frozen origin books; keeps their distinct visibility and write boundaries explicit.
 - `admin/src/views/bookshelf/HomeBookModal.vue`: generated-home reader for live commit/confirmation state, resident components, weekly impacts, and append-only annotations.
+- `admin/src/views/bookshelf/ProjectMapBookModal.vue`: owner-facing interactive atlas for the live overview, request route, one-hop component connections, confirmation state, and recent resident-impact changes.
 - `admin/src/views/RoomView.vue`: room mode admin preview shell (charge, traces, drawer notes, pins, and newspaper placement).
 - `admin/src/views/room/RoomNewspaperPanel.vue`: in-place Room newspaper panel (generate, review, publish, discard, and source status).
 - `admin/src/views/ToolErrorsView.vue`: tool error log viewer.
@@ -192,6 +194,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 | 产品对象 | 常用叫法 / 旧名 | 后端入口 | Admin/API | 现行文档 |
 |----------|-----------------|----------|-----------|----------|
 | 共享书架 | `家现在`、`我是谁`、`来历书`（旧内部名：矛盾书） | `resident_books.py`、`conflict_books.py` | `admin/src/api/books.ts`、`ConflictView.vue`、`bookshelf/HomeBookModal.vue` | `REQUEST_CONTEXT.md` § Generated home and living identity / Origin books |
+| 家里地图 | 给圆圆的项目地图、Owner map | `project_map.py` | `GET /api/project-map`、`admin/src/api/books.ts`、`bookshelf/ProjectMapBookModal.vue` | `SYSTEM_ZONES.md`、`REQUEST_CONTEXT.md` § Owner-only project map |
 | Memory Island | Stars + Mem 当前岛 | `memory_island.py`、`context_builder.py` | `admin/src/api/logs.ts`、`LogsView.vue` | `REQUEST_CONTEXT.md`、`MEMORY_ROOM.md` |
 | Stars | 星星 / 关联记忆 | `shenyu_gateway/stars/` | `admin/src/api/stars.ts`、`StarsView.vue`、`views/stars/` | `MEMORY_ROOM.md` § Star Memory Layer |
 | Mem | Mem Notes / 便签 | `shenyu_gateway/mem_notes/`、`mem_notes_relevance.py` | `admin/src/api/mem0.ts`、`Mem0View.vue` | `MEMORY_ROOM.md` § Mem Note Layer |
