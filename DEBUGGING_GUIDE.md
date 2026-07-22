@@ -199,7 +199,9 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 
 ## Module Map
 
-- `gateway.py`: FastAPI app, middleware, routes, service orchestration, upstream HTTP calls, tool loop, response filtering, and public API contracts.
+- `gateway.py`: FastAPI app composition, runtime wiring, route registration, and public HTTP contracts.
+- `shenyu_gateway/chat_pipeline.py`: chat request orchestration across message preparation, upstream selection, gateway-tool/plain paths, streaming, capture, and request-log finalization.
+- `shenyu_gateway/prepare_messages.py`: session opening, raw-window/history handling, client-window trimming, cold-start and pending-tool restoration, context package construction, and layered-message assembly.
 - `shenyu_gateway/config.py`: environment-backed runtime config.
 - `shenyu_gateway/store/`: SQLite runtime state (mixin package). Routes and services should call `GatewayStore` instead of writing SQL directly.
 - `shenyu_gateway/supabase.py`: low-level Supabase REST mechanics.
@@ -210,28 +212,28 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 - `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations. Look here for Supabase table tools, recall compatibility helpers, heartbeat reads, notebook helpers, and memory helper behavior.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, heartbeat persistence helper.
-- `shenyu_gateway/mem_notes.py`: note CRUD with memory_kind alias resolution, auto-enrichment (only `content` required), heat exposure, and old atomic read-only lookup.
+- `shenyu_gateway/mem_notes/`: note CRUD, validation, suggestions, search, memory_kind alias resolution, heat exposure, and old atomic read-only lookup.
 - `shenyu_gateway/mem_notes_relevance.py`: pure helpers for recall scoring, anchor matching, auto-extraction (people/places/objects/keywords/summary/memory_kind), `compute_heat()`, and `running_joke_serendipity_rate()`.
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic payload, cache, stream, and model URL conversion helpers.
 
 ## Chat Request Flow
 
-Main chat flow is centered in `gateway.py`:
+The chat route is wired in `gateway.py`; `ChatPipeline` owns the request orchestration:
 
 1. Auth middleware allows `OPTIONS` and accepts both `Authorization` and `?token=...`.
-2. Chat route calls `_prepare_messages()`.
-3. `_prepare_messages()` opens the gateway session, stores a raw request window, trims client messages, writes a request context snapshot, builds a context package, renders context layers, and inserts them into the message list.
-4. `ContextBuilder.build_context_package()` fetches runtime data: heartbeat digest, calendar context, Hisense notebook/recap, and active mem notes.
+2. The chat route calls `_chat_pipeline(store).run()`; `gateway.py` supplies the pipeline's runtime dependencies.
+3. `ChatPipeline` calls `shenyu_gateway.prepare_messages.prepare_messages()` through the thin `_prepare_messages()` wiring adapter.
+4. `prepare_messages()` opens the gateway session, stores the raw request window, classifies history, restores eligible cold-start and pending-tool context, trims client messages, writes a request context snapshot, and builds the mode-specific context package. `ContextBuilder` supplies Calendar, heartbeat, Memory Island, Room, or Hisense data as appropriate.
 5. `shenyu_gateway.context_layers` renders the package into:
    - `stable`: charter and optional wake welcome message.
    - `slow`: calendar memory, the unified bookshelf overview in normal/Room contexts, Hisense notebook, wake recap.
    - `mem`: active mem notes headed by `## 我之前写下的便签，可能用的到。`, after `slow` and before heartbeat.
    - `heartbeat`: independent `## 我之前的心跳` block after `mem`.
    - `tool_policy`: compact `## 工具怎么用` reminder after heartbeat.
-   - `format`: heartbeat and inline mem format reminders after tool policy.
+   - `format`: private heartbeat format reminder after tool policy.
 6. `_build_upstream_request()` prepares the upstream payload.
 7. `shenyu_gateway.upstream_adapter` converts OpenAI-compatible messages/tools to Anthropic when needed, adds cache markers, and converts responses/chunks back.
-8. Tool loop may call gateway tools, then `shenyu_gateway.response_capture` filters private `<heartbeat>` and `[mem]...[/mem]` blocks before visible output is logged or sent.
+8. The tool path may call gateway tools. Response capture strips private `<heartbeat>` blocks before visible output is logged or sent; `[mem]...[/mem]` and `[star]...[/star]` remain visible text, and durable Mem/Star writes happen only through their tools.
 
 For native Anthropic tool turns, the gateway temporarily preserves the upstream Thinking/redacted blocks and their opaque signatures so the next tool-result request can continue the same provider transcript. The first request's Thinking configuration and effort are pinned only for that unfinished tool turn; changing the admin effort setting affects the next new turn, not a tool turn already in progress.
 
