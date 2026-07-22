@@ -233,18 +233,50 @@ Trigger text example: `<proxy_sender name="沈予"/>——窗边` (the `窗边` 
 
 ### Architecture
 
-Core files, separated by concern:
+Core and bridge files, separated by concern:
 
 | File | Responsibility |
 |------|---------------|
+| `shenyu_gateway/prepare_messages.py` | Detects the Room trigger and selects the Room package instead of the normal/Hisense context path. |
+| `shenyu_gateway/context_builder.py` | Assembles the complete Room package: charge signals, door state, scene layers, conditional bookshelf overview, and visible tool schemas. |
 | `shenyu_gateway/room_text.py` | All room copy: charter, scenes, doors, trace phrases. Change text here only. |
 | `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |
 | `shenyu_gateway/room_tools.py` | Room tool handlers, direct tool definitions, the shared `shenyu_books` read/write/annotate entry, compatibility broker, and door count collection. |
 | `shenyu_gateway/room_scenes.py` | Weather, atmosphere, and window-scene generation. |
 | `shenyu_gateway/room_newspaper.py` | Fixed RSS catalog, feed parsing, issue rolling, optional quality checks, and draft generation. |
 | `shenyu_gateway/store/_room.py` | Room traces, notes, pins, scribbles, and newspaper issue persistence. |
+| `shenyu_gateway/tool_registry.py` | In Room mode, merges filtered client tools with only the direct Room tools selected in the package and omits the normal gateway surface. |
 | `admin/src/views/RoomView.vue` | Room preview plus the independent collapsible windowsill, hand, and middle-drawer sections. |
 | `admin/src/views/room/RoomNewspaperPanel.vue` | Newspaper controls and continuous article rendering inside the windowsill section. |
+
+### Request Path
+
+Use this path first when a Room symptom crosses context assembly and tool exposure:
+
+```text
+ChatPipeline
+  -> prepare_messages()
+       -> is_room_mode(user_text)
+       -> ContextBuilder.build_room_context_package()
+            -> collect charge signals + door counts + bookshelf overview
+            -> render_room_layers(charge, doors)
+            -> visible_room_tool_names(doors, charge)
+            -> if the shelf door is visible:
+                 append the lightweight bookshelf overview
+                 include shenyu_books in room_tools
+       -> assemble_layered_messages() with Room layers
+  -> merge_tools(meta.is_room)
+       -> filtered client tools + package.room_tools
+       -> no normal gateway tool surface
+  -> upstream model
+
+When the model calls shenyu_books:
+  tool_registry._handle_books()
+    -> GatewayToolService.books()
+    -> ResidentBooksService read / write / annotate
+```
+
+For bookshelf-specific work, `resident_books.py` owns the overview data and per-book semantics; `context_builder.py` owns whether the overview enters Room; `room_context.py` owns whether the physical shelf door is visible; and `room_tools.py` adds the shared schema to the Room surface and supplies the door count. `tool_schemas.py` defines that shared schema, while `tool_registry.py` and `GatewayToolService.books()` route execution into `ResidentBooksService`. The stable resident profile can still explain what an origin book is when the physical shelf is hidden, but titles, status, and `shenyu_books` follow the shelf-door decision.
 
 The trigger message stays in the user text. Room context supplies spatial cues through room layers and tool descriptions instead of rewriting the user's message.
 
