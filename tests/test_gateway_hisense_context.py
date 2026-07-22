@@ -10,6 +10,7 @@ import pytest
 
 from shenyu_gateway import context_builder as context_builder_module
 from shenyu_gateway import context_layers
+from shenyu_gateway import room_context
 from shenyu_gateway import upstream_adapter
 from shenyu_gateway.context_builder import ContextBuilder
 from shenyu_gateway.gateway_tools import GatewayToolService
@@ -688,12 +689,12 @@ def test_room_mode_requires_chuangbian_keyword():
     assert not is_room("普通聊天")
 
 
-def test_room_context_already_contains_bookshelf_overview(tmp_path):
+def test_room_bookshelf_overview_and_tool_follow_visible_door(tmp_path, monkeypatch):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     session = store.get_or_create_session("room", "operit")
     builder = _context_builder(store)
 
-    package = asyncio.run(
+    low_package = asyncio.run(
         builder.build_room_context_package(
             session,
             messages=[],
@@ -701,8 +702,23 @@ def test_room_context_already_contains_bookshelf_overview(tmp_path):
         )
     )
 
-    assert "## 书架一览" in package["layers"]["slow"]
-    assert "- 家现在：本周" in package["layers"]["slow"]
+    assert "## 书架一览" not in low_package["layers"]["slow"]
+    assert "书桌旁边有一排矮书架" not in low_package["layers"]["tool_policy"]
+    assert "shenyu_books" not in {tool["function"]["name"] for tool in low_package["room_tools"]}
+
+    monkeypatch.setattr(room_context, "compute_charge", lambda **_kwargs: 0.5)
+    active_package = asyncio.run(
+        builder.build_room_context_package(
+            session,
+            messages=[],
+            record_window_scene=False,
+        )
+    )
+
+    assert "## 书架一览" in active_package["layers"]["slow"]
+    assert "- 家现在：本周" in active_package["layers"]["slow"]
+    assert "书桌旁边有一排矮书架" in active_package["layers"]["tool_policy"]
+    assert "shenyu_books" in {tool["function"]["name"] for tool in active_package["room_tools"]}
 
 
 def test_empty_tool_call_assistant_content_does_not_get_fallback():

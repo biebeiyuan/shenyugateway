@@ -123,13 +123,8 @@ def visible_room_doors(door_specs: list[dict], charge: float) -> list[dict]:
 
 
 def visible_room_tool_names(door_specs: list[dict], charge: float) -> list[str]:
-    """Return tools for visible doors plus direct shared-book actions."""
-    names = [str(door.get("tool") or "") for door in visible_room_doors(door_specs, charge) if door.get("tool")]
-    # Direct book actions remain callable even when low charge hides the
-    # physical shelf door; the overview itself is already in Room context.
-    if "shenyu_books" not in names:
-        names.append("shenyu_books")
-    return names
+    """Return tool names for the doors visible at the current charge."""
+    return [str(door.get("tool") or "") for door in visible_room_doors(door_specs, charge) if door.get("tool")]
 
 
 def render_doors(door_specs: list[dict], charge: float) -> str:

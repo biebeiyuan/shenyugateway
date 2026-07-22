@@ -192,10 +192,6 @@ def room_tool_definitions(tool_names: Optional[Iterable[str]] = None) -> list[di
     ]
     if allowed is None:
         return tools
-    # The shared books entry stays available even when low charge hides the
-    # physical shelf door; the overview itself is already present in context.
-    allowed = set(allowed)
-    allowed.add("shenyu_books")
     return [tool for tool in tools if tool.get("function", {}).get("name") in allowed]
 
 

@@ -519,10 +519,10 @@ class ContextBuilder:
             hours_since_last_visit=hours_since_last_visit,
             prev_scene=prev_scene,
         )
-        bookshelf_text = render_bookshelf_overview(book_overview)
-        if bookshelf_text:
-            layers["slow"] = layers["slow"].rstrip() + "\n\n" + bookshelf_text
         visible_tool_names = visible_room_tool_names(door_specs, charge)
+        bookshelf_text = render_bookshelf_overview(book_overview)
+        if bookshelf_text and "shenyu_books" in visible_tool_names:
+            layers["slow"] = layers["slow"].rstrip() + "\n\n" + bookshelf_text
         room_tools = room_tool_definitions(visible_tool_names)
 
         if record_window_scene:
