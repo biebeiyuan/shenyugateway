@@ -123,3 +123,14 @@ class ValidationMixin:
         if not trigger_text and not trigger_keywords and not entities and not structured_anchors:
             return "active mem note requires trigger_text, trigger_keywords, entities, or structured anchors."
         return ""
+
+    def _auto_surface_eligibility(self, row: dict[str, Any]) -> tuple[bool, str]:
+        """Return whether a note may participate in automatic Memory Island recall."""
+        if row.get("status") != "active":
+            return False, "stored"
+        active_error = self._active_validation_error(row)
+        if active_error:
+            return False, "missing_trigger"
+        if (row.get("memory_kind") or "") == "promise" and bool(row.get("resolved")):
+            return False, "resolved_promise"
+        return True, "active"

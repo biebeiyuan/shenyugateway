@@ -123,13 +123,19 @@ class SuggestionsMixin:
         return result[:8]
 
     def _public_list_item(self, row: dict[str, Any]) -> dict[str, Any]:
-        item = dict(row)
-        suggestions = self.suggest_note_fields(row)
+        item = self._effective_note(row)
+        suggestions = self.suggest_note_fields(item)
+        eligible, eligibility_reason = self._auto_surface_eligibility(item)
         item["suggested_mem_type"] = suggestions["mem_type"]
         item["suggested_trigger_text"] = suggestions["trigger_text"]
         item["suggested_trigger_keywords"] = suggestions["trigger_keywords"]
         item["suggestion_reason"] = suggestions["reason"]
         item["heat"] = round(compute_heat(row), 3)
+        item["auto_surface_eligible"] = eligible
+        item["auto_surface_reason"] = eligibility_reason
+        item["written_by_shenyu"] = str(row.get("source_model") or "").startswith(
+            "tool:shenyu_write_mem_note"
+        )
         return item
 
     def _patch_with_suggestions(self, current: dict[str, Any], patch: dict[str, Any]) -> dict[str, Any]:

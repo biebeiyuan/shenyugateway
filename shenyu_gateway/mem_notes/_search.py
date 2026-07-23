@@ -81,7 +81,7 @@ class SearchMixin:
         )
         scored: list[tuple[float, dict, list[str]]] = []
         for row in rows:
-            if _skip_auto_surface(row):
+            if not self._auto_surface_eligibility(row)[0]:
                 continue
             if self._should_skip_retrigger(
                 row,
@@ -214,6 +214,15 @@ class SearchMixin:
         note_ids = [str(item.get("id") or "") for item in items if item.get("id")]
         rows_by_id = await self._get_notes_by_ids(note_ids)
         await self._mark_triggered([rows_by_id[note_id] for note_id in note_ids if note_id in rows_by_id])
+
+    async def auto_surface_active_ids(self, note_ids: list[str]) -> set[str]:
+        """Return requested note ids that are still eligible for automatic recall."""
+        rows_by_id = await self._get_notes_by_ids(note_ids)
+        return {
+            note_id
+            for note_id, row in rows_by_id.items()
+            if self._auto_surface_eligibility(row)[0]
+        }
 
     # ------------------------------------------------------------------
     # Rendering
@@ -592,7 +601,8 @@ class SearchMixin:
         if session_tag:
             params["session_tag"] = f"eq.{session_tag}"
         rows = await self.supabase.query("shenyu_mem_notes", params)
-        return [self._effective_note(row) for row in rows]
+        effective_rows = [self._effective_note(row) for row in rows]
+        return [row for row in effective_rows if self._auto_surface_eligibility(row)[0]]
 
     async def _get_notes_by_ids(self, note_ids: list[str]) -> dict[str, dict[str, Any]]:
         if not note_ids or not self.supabase:

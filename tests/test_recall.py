@@ -27,7 +27,7 @@ class FakeSupabase:
 
     async def query(self, table, params=None):
         assert table == "shenyu_recall_index"
-        return self.rows
+        return self.rows + self.vector_rows
 
     async def update(self, table, match, data):
         self.updates.append((table, match, data))
@@ -539,7 +539,7 @@ def test_recall_public_item_includes_title_only_for_journal():
     ]
 
 
-def test_recall_public_item_returns_matched_fragment_and_full_source_signal():
+def test_recall_hydrates_all_source_chunks_after_selecting_a_match():
     rows = [
         {
             "source_table": "room",
@@ -584,14 +584,14 @@ def test_recall_public_item_returns_matched_fragment_and_full_source_signal():
 
     assert result["items"] == [
         {
-            "content": "第二段写海獭。",
+            "content": "第一段写长隆。\n\n第二段写海獭。",
             "source_id": "room-1",
             "title": "海洋馆房间",
             "source_type": "room",
             "source_table": "room",
             "content_kind": "room",
             "event_date": "2026-05-20T00:00:00+00:00",
-            "has_more": True,
+            "has_more": False,
         }
     ]
 
@@ -742,8 +742,8 @@ def test_recall_merges_keyword_and_vector_chunks_for_same_source():
     result = asyncio.run(service.recall("长隆", session_tag="5.15", auto_sync=False))
 
     assert result["count"] == 1
-    assert result["items"][0]["content"] == "第一段写长隆关键词。"
-    assert result["items"][0]["has_more"] is True
+    assert result["items"][0]["content"] == "第一段写长隆关键词。\n\n第二段是语义向量命中的海洋馆细节。"
+    assert result["items"][0]["has_more"] is False
 
 
 def test_upsert_documents_resets_embedding_only_when_content_changes():
@@ -932,16 +932,16 @@ def test_recall_returns_clear_error_when_index_table_is_missing():
     assert "recall index table is not ready" in result["error"]
 
 
-def test_recall_source_type_filter_hides_atomic_meta_and_public_mem_note():
+def test_recall_source_type_filter_hides_atomic_meta_and_includes_mem_note():
     service = RecallIndexService(FakeSupabase([]))
 
     assert service._source_type_filter(None) == [
-        "memory", "journal", "windowsill", "heartbeat", "room", "board", "calendar", "notebook"
+        "memory", "journal", "windowsill", "heartbeat", "room", "board", "calendar", "mem_note", "notebook"
     ]
-    assert service._source_type_filter(["mem_note"]) == []
-    assert service._source_type_filter(["note"]) == []
-    assert service._source_type_filter(["mem_note"], allow_mem_note=True) == ["mem_note", "note"]
-    assert service._source_type_filter(["note"], allow_mem_note=True) == ["mem_note", "note"]
+    assert service._source_type_filter(["mem_note"]) == ["mem_note"]
+    assert service._source_type_filter(["note"]) == ["mem_note"]
+    assert service._source_type_filter(["mem_note"], allow_mem_note=True) == ["mem_note"]
+    assert service._source_type_filter(["note"], allow_mem_note=True) == ["mem_note"]
     assert service._source_type_filter(["atomic", "meta", "memory"]) == ["memory"]
     assert service._source_type_filter(["atomic", "meta"]) == []
     assert service._adapter_names() == [
@@ -959,7 +959,7 @@ def test_recall_source_type_filter_hides_atomic_meta_and_public_mem_note():
     assert service._adapter_names(["atomic", "meta"]) == []
 
 
-def test_recall_default_filters_out_mem_note_and_atomic_rows_from_rpc():
+def test_recall_default_includes_mem_note_but_filters_out_atomic_rows_from_rpc():
     rows = [
         {
             "source_table": "shenyu_mem_notes",
@@ -1021,9 +1021,9 @@ def test_recall_default_filters_out_mem_note_and_atomic_rows_from_rpc():
 
     result = asyncio.run(service.recall("长隆", session_tag="5.15", auto_sync=False))
 
-    assert [item["source_table"] for item in result["items"]] == ["memories"]
+    assert [item["source_table"] for item in result["items"]] == ["shenyu_mem_notes", "memories"]
     assert supabase.rpc_calls[0][1]["source_types"] == [
-        "memory", "journal", "windowsill", "heartbeat", "room", "board", "calendar", "notebook"
+        "memory", "journal", "windowsill", "heartbeat", "room", "board", "calendar", "mem_note", "notebook"
     ]
 
 
@@ -1057,7 +1057,7 @@ def test_recall_rejects_removed_source_types_without_widening_to_all():
     assert supabase.rpc_calls == []
 
 
-def test_load_mem_notes_filters_noisy_v2_keywords_from_recall_index():
+def test_load_mem_notes_recall_index_keeps_only_original_content_and_time():
     supabase = FakeSourceSupabase(
         [
             {
@@ -1085,8 +1085,52 @@ def test_load_mem_notes_filters_noisy_v2_keywords_from_recall_index():
 
     assert len(docs) == 1
     doc = docs[0]
-    assert "上游预设" in doc.search_text
-    assert "上游预设" in doc.tags_json
-    assert "今天" not in doc.tags_json
-    assert "帮我" not in doc.tags_json
-    assert "我把" not in doc.tags_json
+    assert doc.title == ""
+    assert doc.search_text == "圆圆今天帮我把上游预设修回气泡。"
+    assert doc.tags_json == []
+    assert doc.entities_json == []
+    assert doc.metadata_json == {}
+    assert doc.event_date == "2026-06-29T00:00:00+00:00"
+
+
+def test_mem_note_recall_corpus_excludes_all_summary_and_anchor_fields():
+    """Mem unified Recall indexes only the original note body and its time."""
+    supabase = FakeSourceSupabase(
+        [
+            {
+                "id": "note-embed-corpus-1",
+                "session_tag": "7.23",
+                "content": "今天天气不错",
+                "summary": "散步时的心情",
+                "trigger_text": "提到溜达感受时浮现",
+                "promise_text": "答应周末一起去",
+                "mem_type": "她为我做的事",
+                "memory_kind": "event",
+                "trigger_keywords": [],
+                "people": ["老周"],
+                "places": [],
+                "objects": [],
+                "keywords": [],
+                "scene_tags": [],
+                "trigger_scenarios": [],
+                "status": "active",
+                "created_at": "2026-07-23T00:00:00+00:00",
+                "updated_at": "2026-07-23T00:00:00+00:00",
+            }
+        ]
+    )
+
+    docs = asyncio.run(RecallIndexService(supabase)._load_mem_notes())
+    assert len(docs) == 1
+    doc = docs[0]
+
+    assert "今天天气不错" in doc.embedding_text
+    for value in [
+        "她为我做的事",
+        "老周",
+        "散步时的心情",
+        "提到溜达感受时浮现",
+        "答应周末一起去",
+    ]:
+        assert value not in doc.embedding_text
+        assert value not in doc.search_text

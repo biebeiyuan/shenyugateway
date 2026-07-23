@@ -99,9 +99,53 @@ test('calendar page loads', async ({ page }) => {
 test('Mem page loads and its search field accepts input', async ({ page }) => {
   await openAdminRoute(page, '/mem0', async () => {
     await expect(page.getByTestId('page-mem')).toBeVisible()
+    await expect(page.getByRole('button', { name: '可自动想起' })).toBeVisible()
+    const storedTab = page.getByRole('button', { name: '已收起' })
+    await storedTab.click()
+    await expect(storedTab).toHaveClass(/active/)
     const search = page.getByTestId('mem-search')
     await search.fill('smoke')
     await expect(search).toHaveValue('smoke')
+  })
+})
+
+test('memory graph page loads and exposes anchor management', async ({ page }) => {
+  await page.route('**/api/gateway/memory-graph?*', async (route) => {
+    await route.fulfill({
+      json: { ok: true, available: true, entities: [], relations: [], entity_count: 0, relation_count: 0 },
+    })
+  })
+  await page.route('**/api/gateway/memory-graph/recall-preview', async (route) => {
+    await route.fulfill({
+      json: {
+        ok: true,
+        count: 1,
+        items: [{
+          source_id: 'journal-smoke',
+          source_type: 'journal',
+          source_table: 'journal',
+          title: '和老周见面',
+          event_date: '2026-07-23T00:00:00Z',
+          content: '今天和老周吃饭，聊了很久。',
+          recall_match: { group: 'direct', label: '直达：已确认锚点「老周」' },
+        }],
+      },
+    })
+  })
+  await page.route('**/api/gateway/memory-graph/sources/**', async (route) => {
+    await route.fulfill({ json: { ok: true, mentions: [] } })
+  })
+  await openAdminRoute(page, '/memory-graph', async () => {
+    await expect(page.getByTestId('page-memory-graph')).toBeVisible()
+    const search = page.getByTestId('memory-graph-search').locator('input')
+    await search.fill('老周')
+    await expect(search).toHaveValue('老周')
+    await expect(page.getByRole('button', { name: '建立锚点' })).toBeVisible()
+    const recall = page.getByTestId('memory-graph-recall-input').locator('input')
+    await recall.fill('老周')
+    await page.getByRole('button', { name: '想起', exact: true }).click()
+    await expect(page.getByText('今天和老周吃饭，聊了很久。')).toBeVisible()
+    await expect(page.getByText('直达：已确认锚点「老周」')).toBeVisible()
   })
 })
 

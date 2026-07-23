@@ -172,6 +172,112 @@ def test_list_notes_includes_review_suggestions():
     assert "圆圆" in item["suggested_trigger_keywords"]
 
 
+def test_list_notes_all_rows_pages_and_exposes_surface_eligibility_and_origin():
+    class PagedSupabase:
+        def __init__(self, rows):
+            self.rows = rows
+            self.queries = []
+
+        async def query(self, table: str, params: dict):
+            self.queries.append({"table": table, "params": dict(params)})
+            offset = int(params.get("offset") or 0)
+            limit = int(params.get("limit") or len(self.rows))
+            return self.rows[offset : offset + limit]
+
+    rows = [
+        {
+            "id": f"active-{index}",
+            "content": f"可召回便签 {index}",
+            "mem_type": "心里那一档",
+            "trigger_text": f"话题 {index}",
+            "trigger_keywords": [],
+            "status": "active",
+            "source_model": "tool:shenyu_write_mem_note" if index == 0 else "legacy:inline",
+        }
+        for index in range(1000)
+    ]
+    rows.extend(
+        [
+            {
+                "id": "archived-one",
+                "content": "已经收起",
+                "status": "archived",
+                "source_model": "legacy:inline",
+            },
+            {
+                "id": "resolved-promise",
+                "content": "已经兑现的承诺",
+                "mem_type": "承诺",
+                "memory_kind": "promise",
+                "trigger_text": "聊到承诺",
+                "status": "active",
+                "resolved": True,
+                "source_model": "tool:shenyu_write_mem_note",
+            },
+            {
+                "id": "invalid-active",
+                "content": "旧数据里缺少触发条件",
+                "mem_type": None,
+                "trigger_text": "",
+                "trigger_keywords": [],
+                "status": "active",
+                "source_model": "legacy:inline",
+            },
+        ]
+    )
+    supabase = PagedSupabase(rows)
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), supabase)
+
+    result = asyncio.run(service.list_notes(status="all", all_rows=True))
+
+    assert result["count"] == 1003
+    assert result["eligible_count"] == 1000
+    assert result["stored_count"] == 3
+    assert result["status_counts"]["active"] == 1002
+    assert result["status_counts"]["archived"] == 1
+    assert [call["params"]["offset"] for call in supabase.queries] == ["0", "1000"]
+    items = {item["id"]: item for item in result["items"]}
+    assert items["active-0"]["written_by_shenyu"] is True
+    assert items["active-1"]["written_by_shenyu"] is False
+    assert items["archived-one"]["auto_surface_reason"] == "stored"
+    assert items["resolved-promise"]["auto_surface_reason"] == "resolved_promise"
+    assert items["invalid-active"]["auto_surface_reason"] == "missing_trigger"
+
+
+def test_contextual_active_pool_uses_the_same_auto_surface_eligibility_rule():
+    rows = [
+        {
+            "id": "eligible",
+            "content": "会进入自动召回池",
+            "mem_type": "心里那一档",
+            "trigger_text": "聊到召回",
+            "status": "active",
+        },
+        {
+            "id": "missing-trigger",
+            "content": "旧 active 行缺少触发条件",
+            "mem_type": None,
+            "trigger_text": "",
+            "trigger_keywords": [],
+            "status": "active",
+        },
+        {
+            "id": "resolved-promise",
+            "content": "已经兑现",
+            "mem_type": "承诺",
+            "memory_kind": "promise",
+            "trigger_text": "聊到承诺",
+            "status": "active",
+            "resolved": True,
+        },
+    ]
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FakeSupabase(rows=rows))
+
+    active_rows = asyncio.run(service._load_active_rows())
+
+    assert [row["id"] for row in active_rows] == ["eligible"]
+
+
 def test_note_suggestions_ignore_gateway_tool_results_junk():
     row = {
         "id": "note-1",

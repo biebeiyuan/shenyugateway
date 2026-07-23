@@ -19,6 +19,7 @@
 | 子系统 | 改动时必须保留 | 修改前先读 |
 |--------|----------------|------------|
 | Stars / Mem | 现有正文和关系含义不能在迁移或重构时被静默改写、丢弃；召回与排序只决定何时浮现，Memory Island 日志中两路保持对等可见 | `docs/architecture/MEMORY_ROOM.md`、`DESIGN.md` |
+| 记忆网络 | 原文仍由各来源表持有；实体、别名、提及和关系必须保留来源与确认状态，向量或模型猜测不得静默升级为事实 | `docs/architecture/MEMORY_ROOM.md` § Personal Memory Graph |
 | 家现在 / 我是谁 | `家现在` 必须来自现场快照，不得被手写正文覆盖；`我是谁` 的每次改写保留版本，两者批注都只追加 | `docs/architecture/REQUEST_CONTEXT.md` § Generated home and living identity |
 | 来历书 | `original_text` 剪下后永久冻结，沈予批注只追加；正文不得被自动注入、改写或“清洗” | `docs/architecture/REQUEST_CONTEXT.md` § Origin books、`DESIGN.md` § Chat Archive & Conflict Books |
 | Room / 窗台 | 房间提供门，不替沈予选择；原始房间宪章保持不动，charge 只能影响门的可见性和顺序 | `docs/architecture/MEMORY_ROOM.md` § Room Mode |
@@ -236,6 +237,7 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 **核心文件**
 
 - `shenyu_gateway/recall.py`
+- `shenyu_gateway/memory_graph.py`
 - `shenyu_gateway/embeddings.py`
 - `shenyu_gateway/supabase.py`
 - `shenyu_gateway/stars/`
@@ -261,6 +263,7 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 - Supabase 查询失败的降级语义不完全一致。
 - `recall.py` 和 `mem_notes_relevance.py` 是较大的算法模块，应按数据流和测试拆解，而不是按行数直接切割。
 - 召回性能优化不能暗中改变候选语义或编辑记忆正文。
+- 图谱只持有跨表连线和证据，来源正文仍由原表负责；新来源通过稳定 source key 和 Recall adapter 接入。
 
 ### 当前请求内调用关系
 
@@ -277,6 +280,17 @@ ContextBuilder
                             └─ branch/high-water/direct/inactive 逃生门
   -> Stars activation 写入
   -> Mem triggered 写入
+```
+
+主动 `shenyu_recall` 走另一条不写 Memory Island 的路径：
+
+```text
+query
+  -> keyword candidates + vector candidates + exact entity aliases
+  -> direct entity mentions + one confirmed relation hop
+  -> shared ranking and source dedupe
+  -> hydrate every selected source from all indexed chunks
+  -> complete original content returned to Shenyu
 ```
 
 Calendar、conflict、Mem 和 Stars 主来源并行。Mem/Stars 普通召回异常在 ContextBuilder 边界降级为 `ok=false`，并保留上一版对应 island；任务取消仍继续传播。

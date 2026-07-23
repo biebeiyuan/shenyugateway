@@ -265,6 +265,7 @@ def resolve_memory_island(
     force: bool = False,
     force_reason: str = "",
     active_star_ids: set[str] | None = None,
+    active_mem_note_ids: set[str] | None = None,
     advance_human_turn: bool = False,
     soft_direct_cooldown_turns: int = STAR_SOFT_DIRECT_COOLDOWN_TURNS,
     overlap_threshold: float = 2 / 3,
@@ -298,6 +299,22 @@ def resolve_memory_island(
             human_turn_index=human_turn_index,
             soft_direct_cooldown_turns=soft_direct_cooldown_turns,
         )
+    mem_force_reason = external_force_reason
+    proposed_mem = list(proposed_mem_notes or [])
+    if active_mem_note_ids is not None:
+        old_mem_ids = {_item_id(item) for item in old_mem if _item_id(item)}
+        active_mem_ids = {
+            str(item or "").strip()
+            for item in active_mem_note_ids
+            if str(item or "").strip()
+        }
+        inactive_old_mem_ids = old_mem_ids - active_mem_ids
+        if inactive_old_mem_ids:
+            proposed_mem = [
+                item for item in proposed_mem if _item_id(item) not in inactive_old_mem_ids
+            ]
+            if not mem_force_reason:
+                mem_force_reason = "inactive_item"
     stars, entering_stars, star_meta = _choose_lane(
         "star",
         old_stars,
@@ -308,8 +325,8 @@ def resolve_memory_island(
     mem_notes, entering_mem, mem_meta = _choose_lane(
         "mem",
         old_mem,
-        list(proposed_mem_notes or []),
-        force_reason=external_force_reason,
+        proposed_mem,
+        force_reason=mem_force_reason,
         overlap_threshold=overlap_threshold,
     )
     chosen_star_ids = {_item_id(item) for item in stars if _item_id(item)}

@@ -273,6 +273,25 @@ def test_inactive_current_star_forces_full_proposal():
     assert meta["star"]["reason"] == "inactive_item"
 
 
+def test_inactive_current_mem_note_is_removed_from_a_reused_proposal():
+    initial, _entering, _meta = resolve_memory_island(
+        None,
+        [],
+        [_mem("m-a", "first"), _mem("m-b", "second"), _mem("m-c", "archived")],
+    )
+
+    rewritten, entering, meta = resolve_memory_island(
+        initial,
+        [],
+        [_mem("m-a", "first"), _mem("m-b", "second"), _mem("m-c", "archived")],
+        active_mem_note_ids={"m-a", "m-b"},
+    )
+
+    assert [item["id"] for item in rewritten["mem_notes"]] == ["m-a", "m-b"]
+    assert entering["mem_notes"] == []
+    assert meta["mem"]["reason"] == "inactive_item"
+
+
 @pytest.mark.parametrize("reason", ["history_branch", "message_high_water"])
 def test_external_window_force_reason_is_preserved(reason):
     initial, _entering, _meta = resolve_memory_island(

@@ -23,11 +23,11 @@
         "star_ranker_version"
       ],
       "reviewed": {
-        "fingerprint": "64cb3c3ef9d12ba456c15de3c7331c23a63624d4cafd5da363fbdbaaf9ba175e",
-        "commit": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821",
-        "revision": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821-dirty",
+        "fingerprint": "79e597a27b9388d803628d9bf205ce14d7b15653e45625d9f7923320734fe30d",
+        "commit": "e247ea70d01cf448402576ab9c6f5e45a1b348ca",
+        "revision": "e247ea70d01cf448402576ab9c6f5e45a1b348ca-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-22T22:11:38+08:00",
+        "reviewed_at": "2026-07-23T13:18:29+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -48,11 +48,11 @@
         "inject_mem_notes"
       ],
       "reviewed": {
-        "fingerprint": "2c89a046fd9cd066e0fd9c87ea6741b42fb528846c8a3691f4fe7b6c50fbd4d5",
-        "commit": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821",
-        "revision": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821-dirty",
+        "fingerprint": "982419832da2cfa9fdc9046731a481c104b346b444f69c90b1a3fea96541b199",
+        "commit": "e247ea70d01cf448402576ab9c6f5e45a1b348ca",
+        "revision": "e247ea70d01cf448402576ab9c6f5e45a1b348ca-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-22T22:11:38+08:00",
+        "reviewed_at": "2026-07-23T19:32:03+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -77,11 +77,11 @@
         "hisense_heartbeat_limit"
       ],
       "reviewed": {
-        "fingerprint": "c703750a155be5523f94039584630868a0fe4abe0ca064fca24f6dfc324fbcf8",
-        "commit": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821",
-        "revision": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821-dirty",
+        "fingerprint": "8fe5958915372f1c90f4678534d92cb8f789b2f515170a06c701bed35f7d2229",
+        "commit": "e247ea70d01cf448402576ab9c6f5e45a1b348ca",
+        "revision": "e247ea70d01cf448402576ab9c6f5e45a1b348ca-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-22T22:11:38+08:00",
+        "reviewed_at": "2026-07-23T13:18:29+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -108,11 +108,11 @@
         "calendar_context_month_limit"
       ],
       "reviewed": {
-        "fingerprint": "0271bc3e2f9f71846cae7faac2720e586025c52967900f5961674f16ee1075b7",
-        "commit": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821",
-        "revision": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821-dirty",
+        "fingerprint": "6b885a601771be2c9a0727c4b8891b3831887e7e27f9fe0cca2fdf1797cfa657",
+        "commit": "e247ea70d01cf448402576ab9c6f5e45a1b348ca",
+        "revision": "e247ea70d01cf448402576ab9c6f5e45a1b348ca-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-22T22:11:38+08:00",
+        "reviewed_at": "2026-07-23T13:18:29+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -130,11 +130,11 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "6f15e22754bc7049e5b42814122c6e4e0493c8aa5f679a723dca83013a360a1a",
-        "commit": "30ee25c152da99838f222be039310b3a232056ea",
-        "revision": "30ee25c152da99838f222be039310b3a232056ea-dirty",
+        "fingerprint": "6fbe089267465d74791d1fc77c4a500ebe500d9ce80c1a75ca9ac855968fde47",
+        "commit": "e247ea70d01cf448402576ab9c6f5e45a1b348ca",
+        "revision": "e247ea70d01cf448402576ab9c6f5e45a1b348ca-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-19T22:59:56+08:00",
+        "reviewed_at": "2026-07-23T21:38:39+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -159,11 +159,11 @@
         "room_trace_limit"
       ],
       "reviewed": {
-        "fingerprint": "1b5539776bedd7718789f88b2cca2633ad69916669d1583d97b76a1981857b6d",
-        "commit": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821",
-        "revision": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821-dirty",
+        "fingerprint": "13c2d54bb6598af2cbdf6675e14238d8c40f252abec2ea871494011c96362401",
+        "commit": "e247ea70d01cf448402576ab9c6f5e45a1b348ca",
+        "revision": "e247ea70d01cf448402576ab9c6f5e45a1b348ca-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-22T22:11:38+08:00",
+        "reviewed_at": "2026-07-23T13:18:29+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -186,11 +186,11 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "84446d54f7dc04b2c8c226e6c3283983eae7ddf4355b22306c142d0c5df8fe28",
-        "commit": "1377ae14a5e7e25b6a36548f5d06f882a5ea5f10",
-        "revision": "1377ae14a5e7e25b6a36548f5d06f882a5ea5f10-dirty",
+        "fingerprint": "52ca669dffa27c525066dc03949103119a1cb07297514753de8bb9f6860d4843",
+        "commit": "e247ea70d01cf448402576ab9c6f5e45a1b348ca",
+        "revision": "e247ea70d01cf448402576ab9c6f5e45a1b348ca-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-22T16:27:50+08:00",
+        "reviewed_at": "2026-07-23T21:38:49+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -214,11 +214,11 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "cf8be61046cd6a476e20bc75ec387e727512a7cea10153a7c34edbd2fd2f4638",
-        "commit": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821",
-        "revision": "9c2a5a9e81cc7f52b44aca991e8b0d6e1e937821-dirty",
+        "fingerprint": "5b4471a0aec9eb71cecd317db0234ad327035f95abd44da528eb5d30a4aedf69",
+        "commit": "e247ea70d01cf448402576ab9c6f5e45a1b348ca",
+        "revision": "e247ea70d01cf448402576ab9c6f5e45a1b348ca-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-22T22:11:38+08:00",
+        "reviewed_at": "2026-07-23T13:18:29+08:00",
         "reviewed_by": "Codex"
       }
     }

@@ -388,6 +388,7 @@ class GatewayToolService:
                 include_undated=include_undated,
                 limit=main_limit,
                 auto_sync=auto_sync,
+                include_trace=True,
             )
         if companion_slots and include_star:
             tasks["star"] = self._stars().search_recall(
@@ -424,12 +425,12 @@ class GatewayToolService:
         star_result = results.get("star")
         if isinstance(star_result, dict) and star_result.get("items"):
             for star in star_result["items"]:
-                companion_candidates.append((float(star.get("score") or 0.0), self._recall_star_item(star)))
+                companion_candidates.append((float(star.get("score") or 0.0), self._recall_star_item(star, full=True)))
         mem_result = results.get("mem_note")
         if isinstance(mem_result, dict) and mem_result.get("items"):
             for note in mem_result["items"]:
                 companion_candidates.append(
-                    (self._mem_note_recall_confidence(note), self._recall_mem_note_item(note))
+                    (self._mem_note_recall_confidence(note), self._recall_mem_note_item(note, full=True))
                 )
         heartbeat_result = results.get("heartbeat")
         if isinstance(heartbeat_result, dict):
@@ -572,7 +573,7 @@ class GatewayToolService:
                 score = min(1.0, score + 0.2)
             if score <= 0:
                 continue
-            item = self._recall_heartbeat_item(row)
+            item = self._recall_heartbeat_item(row, full=True)
             item["_recall_score"] = score
             scored.append((score, item))
         scored.sort(key=lambda item: item[0], reverse=True)
@@ -610,13 +611,13 @@ class GatewayToolService:
             if score <= 0 and unique_terms:
                 continue
             item = {
-                "content": _shorten(content, 720),
+                "content": content,
                 "source_id": str(row.get("id") or ""),
                 "source_type": "chat",
                 "source_table": "shenyu_chat_archive",
                 "content_kind": row.get("role") or "message",
                 "event_date": row.get("event_at") or row.get("archived_at") or "",
-                "has_more": len(content) > len(_shorten(content, 720)),
+                "has_more": False,
             }
             scored.append((score, item))
         scored.sort(key=lambda item: item[0], reverse=True)

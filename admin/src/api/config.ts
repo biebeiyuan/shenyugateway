@@ -191,6 +191,9 @@ export interface MemNoteItem {
   last_triggered_at: string | null
   trigger_count: number
   source_model?: string | null
+  written_by_shenyu?: boolean
+  auto_surface_eligible?: boolean
+  auto_surface_reason?: 'active' | 'stored' | 'missing_trigger' | 'resolved_promise' | string
   source_session_id?: string | null
   source_excerpt?: string | null
   review_note?: string | null

@@ -234,6 +234,10 @@ Supabase remains the durable fact and content source:
 - `shenyu_star_recall_candidates`
 - `shenyu_star_feedback`
 - `shenyu_star_activations`
+- `shenyu_entities`
+- `shenyu_entity_aliases`
+- `shenyu_entity_mentions`
+- `shenyu_entity_relations`
 - `atomic_memories` (legacy read-only migration source)
 
 The short-lived notes table is no longer used by gateway code.
@@ -251,7 +255,7 @@ The mem review UI reads and updates Supabase `shenyu_mem_notes`. The star review
 
 ## Recall Index
 
-`shenyu_recall` is the unified search entrypoint for old context. It returns a small matched excerpt plus `source_type` and `source_id`; use `shenyu_recall_read(source_type, source_id)` only when the full original is needed. It never exposes rank scores or match explanations to Shenyu. Full candidate and selection traces stay in gateway logs.
+`shenyu_recall` is the unified search entrypoint for old context. Every selected indexed source is hydrated from all its indexed chunks before returning, so the result contains its complete original content plus `source_type` and `source_id`. `shenyu_recall_read(source_type, source_id)` remains available for direct reads when those identifiers are already known. It never exposes rank scores, but a selected original may carry a compact `recall_match` structure: direct confirmed anchor, one confirmed relationship path, or another association. This tells Shenyu why an original is present without adding summaries, importance, or hidden ranking fields. The owner-only `/api/gateway/memory-graph/recall-preview` read path displays the same route label in Admin, calls Recall with auto-sync disabled, and does not mutate memory state. Full candidate and selection traces stay in gateway logs.
 
 Recall accepts `mode=auto|exact|fuzzy|mood|verbatim`. `auto` only switches on strong intent signals and otherwise behaves as `fuzzy`:
 
@@ -271,9 +275,10 @@ Indexed public source types:
 - `room`: rows from `room`
 - `board`: rows from `message_board`
 - `calendar`: rows from `calendar_pages`
+- `mem_note`: active rows from `shenyu_mem_notes`
 - `notebook`: rows from `shenyu_notebook`
 
-Stars and active mem notes are federated through their existing specialized rankers instead of being duplicated into the public document source filter. Recent unsettled normal heartbeats are scored from SQLite; settled heartbeats are indexed from the Supabase archive. `atomic_memories` and `meta_summaries` remain internal/legacy sources.
+Stars remain a specialized federated ranker. Active mem notes are now indexed public sources so manually confirmed entity anchors and the shared keyword/vector/graph ranking can reach their original content; that shared document contains only the note body and time, not summaries, triggers, importance, or structured Mem fields. The existing Mem-specific candidate path remains a companion lane and source dedupe prevents duplicate returns. Recent unsettled normal heartbeats are scored from SQLite; settled heartbeats are indexed from the Supabase archive. `atomic_memories` and `meta_summaries` remain internal/legacy sources.
 
 `shenyu_mem_notes` is the single canonical light-memory table. Legacy rows and v2 rows are not separate pools: legacy trigger/content fields remain readable, while missing `summary` and `memory_kind` receive a non-destructive runtime projection. Automatic mem-note recall is cross-session for normal chat. Only active notes enter the semantic index; captured and archived notes remain available to management/search tools without automatically surfacing.
 
@@ -282,6 +287,9 @@ Required Supabase migrations:
 - `supabase/migrations/20260526_shenyu_recall_index.sql`
 - `supabase/migrations/20260527_shenyu_recall_keyword_rpc.sql`
 - `supabase/migrations/20260527_shenyu_recall_vector_rpc.sql`
+- `supabase/migrations/20260723_create_memory_graph.sql` (entities, aliases, source mentions, and typed relations)
+
+Migrations are an explicit deployment operation, not a gateway-startup side effect. Apply the required SQL through the project's Supabase migration workflow before deploying code that reads or writes the new schema. For the memory graph, verify the four `shenyu_entity_*` tables first; then deploy, open `/admin/#/memory-graph`, create one test anchor, and only then run the historical backfill.
 
 Recall-related env vars:
 

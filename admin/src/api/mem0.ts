@@ -21,14 +21,22 @@ export async function saveMem0Config(patch: Partial<GatewayConfig>): Promise<Sav
 export async function fetchMemNotes(params: {
   status?: string
   limit?: number
+  all_rows?: boolean
   session_tag?: string
   q?: string
   mem_type?: string
   memory_kind?: string
-}): Promise<{ items: MemNoteItem[]; count: number }> {
+}): Promise<{
+  items: MemNoteItem[]
+  count: number
+  eligible_count?: number
+  stored_count?: number
+  status_counts?: Record<string, number>
+}> {
   const qs = new URLSearchParams()
   if (params.status) qs.set('status', params.status)
   if (params.limit) qs.set('limit', String(params.limit))
+  if (params.all_rows) qs.set('all_rows', 'true')
   if (params.session_tag) qs.set('session_tag', params.session_tag)
   if (params.q) qs.set('q', params.q)
   if (params.mem_type) qs.set('mem_type', params.mem_type)

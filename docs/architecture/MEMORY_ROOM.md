@@ -8,7 +8,7 @@
 
 Mem notes are small personal notes, separate from event memories and calendar pages.
 
-`INJECT_MEM_NOTES` controls injection: before a reply, search active mem notes and inject relevant hits in the `mem` layer.
+`INJECT_MEM_NOTES` controls injection: before a reply, search mem notes that are eligible for automatic recall and inject relevant hits in the `mem` layer. `active` is necessary but not sufficient: the row must also pass active-ready validation, and a resolved promise is never automatically surfaced. Eligibility means the note may participate in retrieval; it does not promise that the note will appear in a particular turn.
 
 Inline `[mem]...[/mem]` tag capture has been removed. Mem notes are now written exclusively via tool call (`shenyu_write_mem_note`). The note types are `她为我做的事`, `我为她做的事`, `关于她的事实`, `关于我的事`, `心里那一档`, and `承诺`. If type or trigger is missing, the writer fills safe defaults so the note can surface immediately.
 
@@ -32,7 +32,11 @@ Search/injection flow:
 5. Semantic recall is capped as anchored support and no longer fills empty slots with generic matches.
 6. Cooldown blocks frequent repeats. Relevant hits are rendered as short bracket-style thoughts in the `mem` layer, with optional person/place/object anchors.
 
+Before resolving each normal Memory Island, `ContextBuilder` re-checks the previous Mem lane against the current automatic-recall eligibility rule. A note that was collected into the old island but has since been archived, paused, left captured, made invalid for activation, or marked as a resolved promise is removed on the next context build instead of being retained by the `2/3` overlap gate. If that authoritative check itself fails, the old lane is preserved fail-soft rather than guessed inactive.
+
 The active-ready validation accepts either legacy triggers (`trigger_text`, `trigger_keywords`, `entities`) or v2 structured anchors (`people`, `places`, `objects`, `keywords`, `scene_tags`, `trigger_scenarios`).
+
+When an active Mem note enters the shared unified Recall index, its document contains only the original `content` and its time. `summary`, type, trigger text, importance, source model, and all structured fields remain Mem-management data; they do not enter shared keyword search, embedding, or graph auto-linking. The Mem-specific automatic-injection lane above still uses its own explicit eligibility and anchor rules.
 
 Endpoints:
 
@@ -48,8 +52,40 @@ Admin UI notes:
 - Mem0 is now a standalone admin area instead of being embedded in the generic config page.
 - The Mem0 page includes:
   - controls for mem-note injection
-  - the mem-note attribute workflow for Supabase `shenyu_mem_notes`, including suggestions, bulk save, and bulk activation
+  - a full-set management view loaded with internal backend pagination rather than the old 50-row display cap
+  - two resident-facing groups: `可自动想起` for rows that currently meet automatic-recall eligibility, and `已收起` for every other legacy status or ineligible active row
+  - `收起来` writes `archived`; `放回来` writes `active` after the required category and trigger fields are present. Existing `captured`, `paused`, and `archived` rows remain unchanged until someone acts on them; the UI grouping is not a data migration
+  - a row-level `沈予写的` badge when `source_model` starts with `tool:shenyu_write_mem_note`. This proves that the whole row came from Shenyu's write tool; old rows do not contain field-level provenance for distinguishing which individual fields were model-filled or gateway-enriched
+  - the mem-note attribute workflow for Supabase `shenyu_mem_notes`, including suggestions, bulk save, bulk restore, and bulk storage
+  - manually confirmed global entity anchors; unique exact-alias links are shown separately from resident-confirmed selections
   - read-only old `atomic_memories` lookup for manual migration
+
+## Personal Memory Graph
+
+The personal memory graph is a shared association layer over source-owned content. It does not copy or replace Mem, journal, notebook, calendar, heartbeat, Room, or old-memory bodies. Every mention points back to a stable `source_table + source_type + source_id`; the original table remains authoritative for the complete text.
+
+Supabase tables:
+
+- `shenyu_entities`: canonical `person`, `place`, `object`, or `topic` anchors.
+- `shenyu_entity_aliases`: confirmed or suggested aliases with provenance. The canonical name is stored as the primary confirmed alias.
+- `shenyu_entity_mentions`: entity-to-source links with `manual`, `exact_alias`, `structural`, or `suggestion` origin.
+- `shenyu_entity_relations`: typed, time-aware entity relationships with evidence and provenance.
+
+Confirmation rules:
+
+- A resident selection, one unambiguous confirmed alias, or an existing structural source reference may create a confirmed link.
+- Chinese automatic aliases require an exact contiguous phrase of at least two characters. ASCII aliases such as `lx` are case-insensitive but require ASCII token boundaries, so `lx` does not match `flux`.
+- If one normalized alias belongs to multiple active entities, automatic linking stops and waits for a manual choice.
+- Vector similarity and future LLM extraction may create suggestions only. They must not silently confirm an alias, identity merge, or relationship.
+- Updating a source removes stale `exact_alias` mentions but preserves resident-confirmed and structural links.
+
+Recall uses this graph as one additional lane beside keyword and vector search. An exact query alias loads direct source mentions first, then at most one confirmed relationship hop at lower strength. Selected Recall sources are hydrated from all indexed chunks before returning to Shenyu; a hydration failure is explicitly marked incomplete instead of silently presenting a 720-character fragment as the whole source. Active Mem notes are public Recall sources, but this does not enable Mem Memory Island injection: `INJECT_MEM_NOTES` remains a separate configuration path, and the graph itself never writes a dynamic island.
+
+Recall indexing scans only each registered source's title and complete original body for confirmed aliases; summaries, trigger fields, importance, index tags, and entity fields do not create automatic graph links. `POST /api/gateway/memory-graph/backfill` applies the same deterministic matcher to existing `shenyu_recall_index` rows. Adding a future source still requires a Recall adapter that preserves the stable source key; the graph tables themselves do not need a per-table schema change.
+
+Admin management lives at `/memory-graph`. The page can create/edit/archive entities, add confirmed aliases, inspect source counts, maintain typed relationships, run historical backfill, and run the read-only `试着想起` preview. That preview reuses Recall with auto-sync disabled, groups complete originals as direct anchors, one-hop confirmed relations, or other associations, and never writes Mem counters, Memory Island state, or graph rows. Its optional source-anchor picker writes only after the resident chooses `保存关联`. The Mem drawer can create an anchor in place and attach resident-confirmed anchors while displaying automatic exact-alias links separately.
+
+Activation is explicit: apply `supabase/migrations/20260723_create_memory_graph.sql` through the Supabase migration workflow before deploying graph code, verify the four graph tables, then create a small test anchor before running historical backfill.
 
 ## Star Memory Layer
 

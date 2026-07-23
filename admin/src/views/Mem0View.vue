@@ -37,6 +37,15 @@ import {
   saveMem0Config,
   updateMemNote,
 } from '@/api/mem0'
+import {
+  createMemoryEntity,
+  fetchMemoryGraph,
+  fetchSourceEntityMentions,
+  replaceSourceEntities,
+  type MemoryEntity,
+  type MemoryEntityType,
+  type SourceEntityMention,
+} from '@/api/memoryGraph'
 
 const message = useMessage()
 
@@ -65,25 +74,16 @@ const memoryKindOptions: Array<{ label: string; value: MemoryKind | '' }> = [
   { label: '话题线', value: 'thread' },
 ]
 
-const statusTabs: Array<{ label: string; value: MemNoteStatus | 'all' }> = [
-  { label: '待整理', value: 'captured' },
-  { label: '生效中', value: 'active' },
-  { label: '暂停', value: 'paused' },
-  { label: '归档', value: 'archived' },
-  { label: '全部', value: 'all' },
-]
+type MemViewStatus = 'eligible' | 'stored' | 'all'
 
-const editStatusOptions: Array<{ label: string; value: MemNoteStatus }> = [
-  { label: '待整理', value: 'captured' },
-  { label: '生效中', value: 'active' },
-  { label: '暂停', value: 'paused' },
-  { label: '归档', value: 'archived' },
+const statusTabs: Array<{ label: string; value: MemViewStatus }> = [
+  { label: '可自动想起', value: 'eligible' },
+  { label: '已收起', value: 'stored' },
+  { label: '全部', value: 'all' },
 ]
 
 /* ─── config state ─── */
 const MEM_TUNING_DEFAULTS: Partial<GatewayConfig> = {
-  inject_inline_memory_prompt: true,
-  enable_inline_memory_capture: true,
   inject_mem_notes: true,
   enable_gateway_tools: true,
   enable_mem0_management_tools: true,
@@ -100,8 +100,6 @@ const MEM_TUNING_DEFAULTS: Partial<GatewayConfig> = {
 }
 
 const config = ref<Partial<GatewayConfig>>({
-  inject_inline_memory_prompt: true,
-  enable_inline_memory_capture: true,
   inject_mem_notes: true,
   enable_gateway_tools: true,
   enable_mem0_management_tools: true,
@@ -117,12 +115,11 @@ const deletingNoteId = ref('')
 const bulkSaving = ref(false)
 const selectedNoteIds = ref<string[]>([])
 
-const noteStatus = ref<MemNoteStatus | 'all'>('captured')
+const noteStatus = ref<MemViewStatus>('eligible')
 const noteType = ref<MemNoteType | ''>('')
 const noteMemoryKind = ref<MemoryKind | ''>('')
 const noteSessionTag = ref('')
 const noteQuery = ref('')
-const noteLimit = ref(50)
 
 /* ─── drafts ─── */
 const keywordDrafts = ref<Record<string, string>>({})
@@ -139,6 +136,15 @@ const openQuestionsDrafts = ref<Record<string, string>>({})
 /* ─── drawer ─── */
 const drawerVisible = ref(false)
 const activeNote = ref<MemNoteItem | null>(null)
+const graphEntities = ref<MemoryEntity[]>([])
+const graphAvailable = ref(false)
+const manualAnchorIds = ref<string[]>([])
+const automaticAnchors = ref<SourceEntityMention[]>([])
+const loadingAnchors = ref(false)
+const creatingAnchor = ref(false)
+const newAnchorType = ref<MemoryEntityType>('person')
+const newAnchorName = ref('')
+const newAnchorAliases = ref('')
 
 /* ─── legacy ─── */
 const legacyItems = ref<LegacyAtomicMemoryItem[]>([])
@@ -148,17 +154,84 @@ const legacySessionTag = ref('')
 const legacyLimit = ref(30)
 
 /* ─── computed ─── */
+const visibleNotes = computed(() => notes.value.filter((item) => {
+  if (noteStatus.value === 'eligible') return isAutoSurfaceEligible(item)
+  if (noteStatus.value === 'stored') return !isAutoSurfaceEligible(item)
+  return true
+}))
+const eligibleCount = computed(() => notes.value.filter(isAutoSurfaceEligible).length)
+const storedCount = computed(() => notes.value.length - eligibleCount.value)
 const selectedNotes = computed(() => notes.value.filter((item) => selectedNoteIds.value.includes(item.id)))
 const selectedActivationMissing = computed(() => {
-  const missing = selectedNotes.value.map((item) => activationMissing(item)).filter(Boolean)
+  const missing = selectedNotes.value.map((item) => restoreMissing(item)).filter(Boolean)
   return missing[0] || ''
 })
 const drawerWidth = computed(() => (typeof window === 'undefined' ? 720 : Math.min(720, window.innerWidth)))
+const graphAnchorOptions = computed(() => graphEntities.value.map((entity) => ({
+  label: `${entity.canonical_name} · ${entityTypeLabel(entity.entity_type)}`,
+  value: entity.id,
+})))
+const graphEntityTypeOptions: Array<{ label: string; value: MemoryEntityType }> = [
+  { label: '人物', value: 'person' },
+  { label: '地点', value: 'place' },
+  { label: '物件', value: 'object' },
+  { label: '主题', value: 'topic' },
+]
 
 /* ─── lifecycle ─── */
 onMounted(async () => {
-  await Promise.all([loadConfig(), loadNotes()])
+  await Promise.all([loadConfig(), loadNotes(), loadGraphAnchors()])
 })
+
+async function loadGraphAnchors() {
+  try {
+    const result = await fetchMemoryGraph()
+    graphAvailable.value = result.available
+    graphEntities.value = result.entities || []
+  } catch {
+    graphAvailable.value = false
+    graphEntities.value = []
+  }
+}
+
+async function loadNoteAnchors(noteId: string) {
+  manualAnchorIds.value = []
+  automaticAnchors.value = []
+  if (!graphAvailable.value) return
+  loadingAnchors.value = true
+  try {
+    const mentions = await fetchSourceEntityMentions('shenyu_mem_notes', noteId)
+    manualAnchorIds.value = mentions
+      .filter((mention) => mention.origin === 'manual')
+      .map((mention) => mention.entity_id)
+    automaticAnchors.value = mentions.filter((mention) => mention.origin !== 'manual')
+  } catch {
+    message.error('读取关联锚点失败')
+  } finally {
+    loadingAnchors.value = false
+  }
+}
+
+async function createAnchorForActiveNote() {
+  if (!activeNote.value || !newAnchorName.value.trim() || creatingAnchor.value) return
+  creatingAnchor.value = true
+  try {
+    const entity = await createMemoryEntity({
+      entity_type: newAnchorType.value,
+      canonical_name: newAnchorName.value.trim(),
+      aliases: splitAnchorAliases(newAnchorAliases.value),
+    })
+    newAnchorName.value = ''
+    newAnchorAliases.value = ''
+    await loadGraphAnchors()
+    manualAnchorIds.value = [...new Set([...manualAnchorIds.value, entity.id])]
+    message.success('锚点已建立并选中')
+  } catch {
+    message.error('建立锚点失败')
+  } finally {
+    creatingAnchor.value = false
+  }
+}
 
 /* ─── config methods ─── */
 async function loadConfig() {
@@ -173,8 +246,6 @@ async function saveSettings() {
   savingConfig.value = true
   try {
     const result = await saveMem0Config({
-      inject_inline_memory_prompt: config.value.inject_inline_memory_prompt,
-      enable_inline_memory_capture: config.value.enable_inline_memory_capture,
       inject_mem_notes: config.value.inject_mem_notes,
       enable_gateway_tools: config.value.enable_gateway_tools,
       enable_mem0_management_tools: config.value.enable_mem0_management_tools,
@@ -204,8 +275,6 @@ function resetMemTuningDefaults() {
 }
 
 function setMemToolsOnly() {
-  config.value.inject_inline_memory_prompt = false
-  config.value.enable_inline_memory_capture = false
   config.value.inject_mem_notes = false
   config.value.enable_gateway_tools = true
   config.value.enable_mem0_management_tools = true
@@ -213,8 +282,6 @@ function setMemToolsOnly() {
 }
 
 function setMemAllOn() {
-  config.value.inject_inline_memory_prompt = true
-  config.value.enable_inline_memory_capture = true
   config.value.inject_mem_notes = true
   config.value.enable_gateway_tools = true
   config.value.enable_mem0_management_tools = true
@@ -226,8 +293,8 @@ async function loadNotes() {
   loadingNotes.value = true
   try {
     const result = await fetchMemNotes({
-      status: noteStatus.value,
-      limit: Math.max(1, Math.min(200, Number(noteLimit.value || 50))),
+      status: 'all',
+      all_rows: true,
       session_tag: noteSessionTag.value.trim() || undefined,
       q: noteQuery.value.trim() || undefined,
       mem_type: noteType.value || undefined,
@@ -264,11 +331,13 @@ function splitKeywords(value: string): string[] {
   return value.split(/[,，、\s]+/).map((s) => s.trim()).filter(Boolean)
 }
 
+function splitAnchorAliases(value: string): string[] {
+  return [...new Set(value.split(/[,，、\n]+/).map((item) => item.trim()).filter(Boolean))]
+}
+
 /* ─── card helpers ─── */
 function typeColor(item: MemNoteItem): string {
-  if (item.status === 'archived') return '#f7f7f4'
-  if (item.status === 'paused') return '#f8f5ee'
-  if (item.status === 'captured') return '#fffdf7'
+  if (!isAutoSurfaceEligible(item)) return '#f7f7f4'
   return '#fffefb'
 }
 
@@ -295,12 +364,25 @@ function cardPreview(item: MemNoteItem): string {
   return text.length > 60 ? text.slice(0, 60) + '…' : text
 }
 
-function statusDot(status: string): string {
-  if (status === 'active') return '生效'
-  if (status === 'captured') return '待整理'
-  if (status === 'paused') return '暂停'
-  if (status === 'archived') return '归档'
-  return status
+function isAutoSurfaceEligible(item: MemNoteItem): boolean {
+  if (typeof item.auto_surface_eligible === 'boolean') return item.auto_surface_eligible
+  return item.status === 'active' && !(item.memory_kind === 'promise' && item.resolved)
+}
+
+function isShenyuWritten(item: MemNoteItem): boolean {
+  if (typeof item.written_by_shenyu === 'boolean') return item.written_by_shenyu
+  return (item.source_model || '').startsWith('tool:shenyu_write_mem_note')
+}
+
+function statusDot(item: MemNoteItem): string {
+  return isAutoSurfaceEligible(item) ? '可自动想起' : '已收起'
+}
+
+function eligibilityText(item: MemNoteItem): string {
+  if (isAutoSurfaceEligible(item)) return '聊到相关内容时，这条便签有资格参与召回；不代表每一轮都会浮现。'
+  if (item.auto_surface_reason === 'resolved_promise') return '这条承诺已标记兑现，不会再自动浮现。'
+  if (item.auto_surface_reason === 'missing_trigger') return '缺少分类或触发条件，暂时不能参与自动召回。'
+  return '这条便签已收起，不会参与自动召回；需要时可以再放回来。'
 }
 
 function kindLabel(kind?: string | null): string {
@@ -320,15 +402,25 @@ function kindLabel(kind?: string | null): string {
   return map[kind] || kind
 }
 
+function entityTypeLabel(kind: string): string {
+  return ({ person: '人物', place: '地点', object: '物件', topic: '主题' } as Record<string, string>)[kind] || kind
+}
+
 /* ─── drawer ─── */
-function openNote(item: MemNoteItem) {
+async function openNote(item: MemNoteItem) {
   activeNote.value = item
+  newAnchorType.value = 'person'
+  newAnchorName.value = ''
+  newAnchorAliases.value = ''
   drawerVisible.value = true
+  await loadNoteAnchors(item.id)
 }
 
 function closeDrawer() {
   drawerVisible.value = false
   activeNote.value = null
+  newAnchorName.value = ''
+  newAnchorAliases.value = ''
 }
 
 /* ─── note CRUD ─── */
@@ -408,20 +500,28 @@ function activationMissing(item: MemNoteItem): string {
     || splitKeywords(keywordsDrafts.value[item.id] || '').length > 0
     || splitKeywords(sceneDrafts.value[item.id] || '').length > 0
     || splitKeywords(triggerScenariosDrafts.value[item.id] || '').length > 0
-  if (!hasType && !hasTrigger) return '需要补充「分类」和「什么时候想起来」才能激活'
-  if (!hasType) return '需要补充「分类」才能激活'
-  if (!hasTrigger) return '需要补充「什么时候想起来」才能激活'
+  if (!hasType && !hasTrigger) return '需要补充「分类」和「什么时候想起来」才能放回来'
+  if (!hasType) return '需要补充「分类」才能放回来'
+  if (!hasTrigger) return '需要补充「什么时候想起来」才能放回来'
   return ''
 }
 
+function restoreMissing(item: MemNoteItem): string {
+  if (item.memory_kind === 'promise' && item.resolved) return '承诺已标记兑现；取消「已兑现」后才能放回来'
+  return activationMissing(item)
+}
+
 function canActivate(item: MemNoteItem): boolean {
-  return !activationMissing(item)
+  return !restoreMissing(item)
 }
 
 async function saveNote(item: MemNoteItem, status?: MemNoteStatus) {
   if (savingNoteId.value) return
-  const targetStatus = status || item.status
-  const missing = targetStatus === 'active' ? activationMissing(item) : ''
+  const missing = status === 'active'
+    ? restoreMissing(item)
+    : item.status === 'active'
+      ? activationMissing(item)
+      : ''
   if (missing) {
     message.warning(missing)
     return
@@ -429,6 +529,16 @@ async function saveNote(item: MemNoteItem, status?: MemNoteStatus) {
   savingNoteId.value = item.id
   try {
     await updateMemNote(item.id, notePatch(item, status))
+    if (graphAvailable.value) {
+      await replaceSourceEntities({
+        source_table: 'shenyu_mem_notes',
+        source_type: 'mem_note',
+        source_id: item.id,
+        entity_ids: manualAnchorIds.value,
+        evidence: 'Mem 管理页手动确认',
+      })
+      await loadNoteAnchors(item.id)
+    }
     message.success('已保存 ✓')
     await loadNotes()
   } catch {
@@ -475,7 +585,8 @@ async function saveSelectedNotes(status?: MemNoteStatus) {
     if (result.failed_count) {
       message.warning(`保存了 ${result.updated_count} 条，${result.failed_count} 条失败`)
     } else {
-      message.success(status === 'active' ? `已激活 ${result.updated_count} 条 ✓` : `已保存 ${result.updated_count} 条 ✓`)
+      const label = status === 'active' ? '已放回来' : status === 'archived' ? '已收起来' : '已保存'
+      message.success(`${label} ${result.updated_count} 条 ✓`)
     }
     await loadNotes()
   } catch {
@@ -499,13 +610,13 @@ async function activateSelectedWithSuggestions() {
       return
     }
     if (result.failed_count) {
-      message.warning(`激活了 ${result.updated_count} 条，${result.failed_count} 条失败`)
+      message.warning(`放回了 ${result.updated_count} 条，${result.failed_count} 条失败`)
     } else {
-      message.success(`已用建议激活 ${result.updated_count} 条 ✓`)
+      message.success(`已整理并放回来 ${result.updated_count} 条 ✓`)
     }
     await loadNotes()
   } catch {
-    message.error('批量激活失败')
+    message.error('整理并放回来失败')
   } finally {
     bulkSaving.value = false
   }
@@ -520,7 +631,7 @@ function toggleSelected(id: string, checked: boolean) {
 }
 
 function selectVisibleNotes() {
-  selectedNoteIds.value = notes.value.map((item) => item.id)
+  selectedNoteIds.value = visibleNotes.value.map((item) => item.id)
 }
 
 function clearSelectedNotes() {
@@ -557,7 +668,7 @@ function formatTime(value?: string | null) {
     <div class="memo-header">
       <div>
         <h1 class="memo-title">便签</h1>
-        <p class="memo-subtitle">轻一点地收好那些会再想起的事。</p>
+        <p class="memo-subtitle">这里显示全部便签；“可自动想起”只是参与召回的资格，不代表这一轮一定浮现。</p>
       </div>
       <div class="memo-header-mark">
         {{ totalCount }}
@@ -571,11 +682,11 @@ function formatTime(value?: string | null) {
         :key="tab.value"
         class="tab-btn"
         :class="{ active: noteStatus === tab.value }"
-        @click="noteStatus = tab.value; loadNotes()"
+        @click="noteStatus = tab.value"
       >
         {{ tab.label }}
       </button>
-      <span class="memo-count">{{ notes.length }} / {{ totalCount }}</span>
+      <span class="memo-count">可自动想起 {{ eligibleCount }} · 已收起 {{ storedCount }} · 全部 {{ totalCount }}</span>
     </div>
 
     <!-- ─── filters ─── -->
@@ -589,18 +700,19 @@ function formatTime(value?: string | null) {
         <NButton size="tiny" @click="clearSelectedNotes">取消选择</NButton>
         <NButton size="tiny" @click="applySuggestionsToSelection">套用建议</NButton>
         <NButton size="tiny" :loading="bulkSaving" @click="saveSelectedNotes()">批量保存</NButton>
-        <NButton size="tiny" type="primary" :loading="bulkSaving" :disabled="Boolean(selectedActivationMissing)" @click="saveSelectedNotes('active')">批量激活</NButton>
+        <NButton size="tiny" type="primary" :loading="bulkSaving" :disabled="Boolean(selectedActivationMissing)" @click="saveSelectedNotes('active')">批量放回来</NButton>
+        <NButton size="tiny" :loading="bulkSaving" @click="saveSelectedNotes('archived')">批量收起来</NButton>
         <NPopconfirm positive-text="确认" negative-text="取消" @positive-click="activateSelectedWithSuggestions">
           <template #trigger>
-            <NButton size="tiny" :loading="bulkSaving" :disabled="!selectedNoteIds.length">建议并激活</NButton>
+            <NButton size="tiny" :loading="bulkSaving" :disabled="!selectedNoteIds.length">整理并放回来</NButton>
           </template>
-          会用系统建议补齐缺失的分类和触发条件，然后激活所选便签。
+          会用系统建议补齐缺失的分类和触发条件，然后把所选便签放回自动召回池。
         </NPopconfirm>
       </template>
     </div>
 
     <!-- ─── card grid ─── -->
-    <div v-if="!notes.length && !loadingNotes" class="memo-empty">
+    <div v-if="!visibleNotes.length && !loadingNotes" class="memo-empty">
       <div class="empty-note">
         <span>暂时没有便签</span>
         <small>换个状态或关键词再看一次。</small>
@@ -608,7 +720,7 @@ function formatTime(value?: string | null) {
     </div>
     <div v-else class="memo-grid">
       <div
-        v-for="item in notes"
+        v-for="item in visibleNotes"
         :key="item.id"
         class="memo-card"
         :class="{ 'is-recent': isRecent(item) }"
@@ -621,7 +733,8 @@ function formatTime(value?: string | null) {
             @update:checked="(c) => toggleSelected(item.id, c)"
             @click.stop
           />
-          <span class="card-status" :class="`st-${item.status}`">{{ statusDot(item.status) }}</span>
+          <span class="card-status" :class="isAutoSurfaceEligible(item) ? 'st-active' : 'st-stored'">{{ statusDot(item) }}</span>
+          <span v-if="isShenyuWritten(item)" class="card-author">沈予写的</span>
           <span v-if="item.memory_kind" class="card-kind">{{ kindLabel(item.memory_kind) }}</span>
         </div>
         <div class="card-body">{{ cardPreview(item) }}</div>
@@ -633,8 +746,8 @@ function formatTime(value?: string | null) {
     </div>
 
     <!-- ─── bulk tools for select-all ─── -->
-    <div v-if="notes.length" class="memo-bulk-bar">
-      <NButton size="tiny" quaternary @click="selectVisibleNotes">全选本页</NButton>
+    <div v-if="visibleNotes.length" class="memo-bulk-bar">
+      <NButton size="tiny" quaternary @click="selectVisibleNotes">全选当前列表</NButton>
     </div>
 
     <!-- ─── drawer for editing ─── -->
@@ -643,7 +756,7 @@ function formatTime(value?: string | null) {
         <template #header>
           <div class="drawer-title">
             <span>便签详情</span>
-            <small>{{ activeNote.mem_type || '未分类' }}</small>
+            <small>{{ activeNote.mem_type || '未分类' }} · {{ statusDot(activeNote) }}<template v-if="isShenyuWritten(activeNote)"> · 沈予写的</template></small>
           </div>
         </template>
         <div class="drawer-form">
@@ -662,9 +775,39 @@ function formatTime(value?: string | null) {
               <NFormItem label="种类">
                 <NSelect v-model:value="activeNote.memory_kind" :options="memoryKindOptions.slice(1)" clearable placeholder="可选" />
               </NFormItem>
-              <NFormItem label="状态">
-                <NSelect v-model:value="activeNote.status" :options="editStatusOptions" />
+            </div>
+
+            <div class="eligibility-box" :class="{ eligible: isAutoSurfaceEligible(activeNote) }">
+              <b>{{ statusDot(activeNote) }}</b>
+              <span>{{ eligibilityText(activeNote) }}</span>
+            </div>
+
+            <div v-if="graphAvailable" class="anchor-box">
+              <NFormItem label="关联锚点">
+                <NSelect
+                  v-model:value="manualAnchorIds"
+                  multiple
+                  filterable
+                  clearable
+                  :loading="loadingAnchors"
+                  :options="graphAnchorOptions"
+                  placeholder="选择已确认的人、地方、物件或主题"
+                />
               </NFormItem>
+              <NFormItem label="新建锚点">
+                <div class="new-anchor-inline">
+                  <NSelect v-model:value="newAnchorType" :options="graphEntityTypeOptions" aria-label="新建锚点类型" />
+                  <NInput v-model:value="newAnchorName" placeholder="名称" @keyup.enter="createAnchorForActiveNote" />
+                  <NInput v-model:value="newAnchorAliases" placeholder="别名，逗号分开" @keyup.enter="createAnchorForActiveNote" />
+                  <NButton :loading="creatingAnchor" :disabled="!newAnchorName.trim()" @click="createAnchorForActiveNote">新建并选中</NButton>
+                </div>
+              </NFormItem>
+              <div v-if="automaticAnchors.length" class="automatic-anchors">
+                <span>精确别名自动连上</span>
+                <NTag v-for="mention in automaticAnchors" :key="mention.id" size="small" :bordered="false">
+                  {{ mention.entity?.canonical_name || mention.matched_alias }}
+                </NTag>
+              </div>
             </div>
 
             <!-- suggestion banner -->
@@ -807,23 +950,22 @@ function formatTime(value?: string | null) {
 
           <!-- meta info -->
           <div class="drawer-meta">
-            <span>反上来过 {{ activeNote.trigger_count || 0 }} 次</span>
+            <span>浮现过 {{ activeNote.trigger_count || 0 }} 次</span>
             <span v-if="activeNote.last_triggered_at">· 上次 {{ formatTime(activeNote.last_triggered_at) }}</span>
             <span v-if="activeNote.created_at">· 创建于 {{ formatTime(activeNote.created_at) }}</span>
           </div>
 
           <!-- activation hint -->
-          <div v-if="activationMissing(activeNote)" class="activation-hint">
-            {{ activationMissing(activeNote) }}
+          <div v-if="restoreMissing(activeNote)" class="activation-hint">
+            {{ restoreMissing(activeNote) }}
           </div>
         </div>
 
         <template #footer>
           <div class="drawer-actions">
             <NButton type="primary" :loading="savingNoteId === activeNote.id" @click="saveNote(activeNote!)">保存</NButton>
-            <NButton :disabled="!canActivate(activeNote)" @click="saveNote(activeNote!, 'active')">激活</NButton>
-            <NButton @click="saveNote(activeNote!, 'paused')">暂停</NButton>
-            <NButton @click="saveNote(activeNote!, 'archived')">归档</NButton>
+            <NButton v-if="!isAutoSurfaceEligible(activeNote)" :disabled="!canActivate(activeNote)" @click="saveNote(activeNote!, 'active')">放回来</NButton>
+            <NButton v-else @click="saveNote(activeNote!, 'archived')">收起来</NButton>
             <NPopconfirm positive-text="确认删除" negative-text="取消" @positive-click="removeNote(activeNote!)">
               <template #trigger>
                 <NButton type="error" ghost :loading="deletingNoteId === activeNote.id">删除</NButton>
@@ -846,15 +988,7 @@ function formatTime(value?: string | null) {
             <div class="cfg-row">
               <NFormItem label="便签参与对话">
                 <NSwitch v-model:value="config.inject_mem_notes" />
-                <span class="cfg-hint">开了之后，聊天时会自动想起相关便签</span>
-              </NFormItem>
-              <NFormItem label="旧版 inline 提示">
-                <NSwitch v-model:value="config.inject_inline_memory_prompt" />
-                <span class="cfg-hint">旧记忆提示是否注入对话</span>
-              </NFormItem>
-              <NFormItem label="旧版 inline 捕获">
-                <NSwitch v-model:value="config.enable_inline_memory_capture" />
-                <span class="cfg-hint">是否自动捕获旧版轻记忆</span>
+                <span class="cfg-hint">开了之后，相关便签才有机会参加自动召回</span>
               </NFormItem>
               <NFormItem label="网关工具">
                 <NSwitch v-model:value="config.enable_gateway_tools" />
@@ -1149,6 +1283,11 @@ function formatTime(value?: string | null) {
   background: #edf6ef;
 }
 
+.card-status.st-stored {
+  color: #6f6860;
+  background: #eeeeeb;
+}
+
 .card-status.st-captured {
   color: #775f25;
   background: #fff6dd;
@@ -1170,6 +1309,35 @@ function formatTime(value?: string | null) {
   background: rgba(255, 255, 255, 0.58);
   padding: 2px 7px;
   border-radius: 999px;
+}
+
+.card-author {
+  font-size: 11px;
+  color: #75536f;
+  background: #f4eaf2;
+  border: 1px solid rgba(117, 83, 111, 0.14);
+  padding: 2px 7px;
+  border-radius: 999px;
+}
+
+.eligibility-box {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 2px 0 14px;
+  padding: 10px 12px;
+  border: 1px solid #dedbd3;
+  border-radius: 7px;
+  color: #6f6860;
+  background: #f4f2ed;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.eligibility-box.eligible {
+  color: #39634c;
+  border-color: #cfe0d3;
+  background: #edf6ef;
 }
 
 .card-body {
@@ -1265,6 +1433,28 @@ function formatTime(value?: string | null) {
 .drawer-form {
   max-width: 660px;
   padding-bottom: 20px;
+}
+
+.anchor-box {
+  padding: 12px;
+  border: 1px solid #eadbd6;
+  background: #fffdfc;
+}
+
+.new-anchor-inline {
+  display: grid;
+  grid-template-columns: 112px minmax(100px, 1fr) minmax(140px, 1.2fr) auto;
+  gap: 8px;
+  width: 100%;
+}
+
+.automatic-anchors {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  color: #927f7a;
+  font-size: 12px;
 }
 
 .drawer-row {
@@ -1433,7 +1623,8 @@ function formatTime(value?: string | null) {
   .drawer-row,
   .drawer-row.two,
   .cfg-row,
-  .settings-group .cfg-row {
+  .settings-group .cfg-row,
+  .new-anchor-inline {
     grid-template-columns: 1fr;
   }
 

@@ -86,6 +86,52 @@ class FailingSupabase:
         raise RuntimeError("query failed")
 
 
+class ChatSupabase:
+    def __init__(self, content):
+        self.content = content
+
+    async def query(self, table, params):
+        if table == "shenyu_chat_archive":
+            return [{
+                "id": "chat-1",
+                "session_tag": "old",
+                "thread": "old",
+                "role": "assistant",
+                "content": self.content,
+                "event_at": "2026-05-01T00:00:00+00:00",
+                "archived_at": "2026-05-01T00:00:00+00:00",
+            }]
+        return []
+
+
+class HeartbeatStore:
+    def __init__(self, content):
+        self.content = content
+
+    def read_heartbeats(self, *args, **kwargs):
+        return [{"id": "heartbeat-1", "content": self.content, "created_at": "2026-05-01T00:00:00+00:00"}]
+
+
+def test_verbatim_recall_returns_the_full_archived_message():
+    content = "原话。" * 300
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=ChatSupabase(content), store=None)
+
+    result = asyncio.run(service.recall("原话", mode="verbatim"))
+
+    assert result["items"][0]["content"] == content
+    assert result["items"][0]["has_more"] is False
+
+
+def test_live_heartbeat_recall_returns_full_content():
+    content = "心跳。" * 300
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=None, store=HeartbeatStore(content))
+
+    result = asyncio.run(service._recall_live_heartbeats("心跳", limit=1))
+
+    assert result["items"][0]["content"] == content
+    assert result["items"][0]["has_more"] is False
+
+
 def test_ask_memory_returns_standard_ok_field():
     service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
 
@@ -180,9 +226,11 @@ def test_search_primary_texts_returns_standard_ok_field():
 
 def test_recall_federation_keeps_internal_scores_out_of_tool_output(monkeypatch):
     service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
+    recall_kwargs = {}
 
     class FakeRecallIndex:
         async def recall(self, **kwargs):
+            recall_kwargs.update(kwargs)
             return {
                 "ok": True,
                 "count": 3,
@@ -235,6 +283,7 @@ def test_recall_federation_keeps_internal_scores_out_of_tool_output(monkeypatch)
     assert result["count"] == 4
     assert [item["source_type"] for item in result["items"]] == ["journal", "journal", "journal", "heartbeat"]
     assert all("score" not in item and "matched_by" not in item for item in result["items"])
+    assert recall_kwargs["include_trace"] is True
 
 
 def test_exact_recall_does_not_add_a_weak_companion(monkeypatch):

@@ -14,6 +14,7 @@ const daysTogether = computed(() => {
 const modules = [
   { icon: '♡', title: '档案', desc: '我们说过的每一句话', path: '/archive', size: 'full' },
   { icon: '☾', title: '便签', desc: 'little things we keep', path: '/mem0', size: 'half' },
+  { icon: '⌘', title: '记忆网络', desc: '人 / 地方 / 关系', path: '/memory-graph', size: 'half' },
   { icon: '✧', title: '星星', desc: '评分 / 星图', path: '/stars', size: 'half' },
   { icon: '▥', title: '书架', desc: '我是谁 / 家现在 / 家里地图 / 来历书', path: '/conflict', size: 'half' },
   { icon: '○', title: '日志', desc: '调试', path: '/logs', size: 'half' },

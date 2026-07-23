@@ -8,6 +8,8 @@ from fastapi.responses import JSONResponse
 
 from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
+from .memory_graph import MemoryGraphService
+from .recall import RecallIndexService
 from .request_logs import (
     _finalize_stale_tool_stream_logs,
     _http_request_diagnostics,
@@ -24,6 +26,14 @@ from .schemas import (
     HeartbeatDeleteRequest,
     MemNoteBulkPatch,
     MemNotePatch,
+    MemoryGraphAliasCreate,
+    MemoryGraphBackfillRequest,
+    MemoryGraphEntityCreate,
+    MemoryGraphEntityPatch,
+    MemoryGraphRecallPreviewRequest,
+    MemoryGraphRelationCreate,
+    MemoryGraphRelationPatch,
+    MemoryGraphSourceEntitiesPut,
     StarConnectRequest,
     StarConstantRequest,
     StarCreateRequest,
@@ -417,6 +427,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
     async def list_mem_notes(
         status: str = "captured",
         limit: int = 50,
+        all_rows: bool = False,
         session_tag: Optional[str] = None,
         q: str = "",
         mem_type: Optional[str] = None,
@@ -429,6 +440,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             q=q,
             mem_type=mem_type,
             memory_kind=memory_kind,
+            all_rows=all_rows,
         )
         if not result.get("ok"):
             raise HTTPException(status_code=400, detail=result.get("error") or "mem note query failed")
@@ -436,7 +448,11 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
 
     @router.patch("/api/gateway/mem-notes/bulk")
     async def bulk_update_mem_notes(body: MemNoteBulkPatch):
-        return await MemNoteService(cfg, deps.get_supabase_client()).bulk_update_notes(
+        return await GatewayToolService(
+            runtime_config=cfg,
+            supabase=deps.get_supabase_client(),
+            store=None,
+        ).bulk_update_mem_notes(
             ids=body.ids,
             patch=body.patch,
             updates=body.updates,
@@ -449,17 +465,109 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             key: getattr(body, key)
             for key in body.model_fields_set
         }
-        result = await MemNoteService(cfg, deps.get_supabase_client()).update_note(note_id, patch)
+        result = await GatewayToolService(
+            runtime_config=cfg,
+            supabase=deps.get_supabase_client(),
+            store=None,
+        ).update_mem_note(note_id, patch)
         if not result.get("ok"):
             raise HTTPException(status_code=400, detail=result.get("error") or "mem note update failed")
         return result
 
     @router.delete("/api/gateway/mem-notes/{note_id}")
     async def delete_mem_note(note_id: str):
-        result = await MemNoteService(cfg, deps.get_supabase_client()).delete_note(note_id)
+        result = await GatewayToolService(
+            runtime_config=cfg,
+            supabase=deps.get_supabase_client(),
+            store=None,
+        ).delete_mem_note(note_id)
         if not result.get("ok"):
             raise HTTPException(status_code=400, detail=result.get("error") or "mem note delete failed")
         return result
+
+    def memory_graph_service() -> MemoryGraphService:
+        return MemoryGraphService(deps.get_supabase_client())
+
+    async def graph_mutation(awaitable):
+        try:
+            result = await awaitable
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail=f"memory graph is not ready: {exc}") from exc
+        if not result.get("ok"):
+            raise HTTPException(status_code=400, detail=result.get("error") or "memory graph operation failed")
+        return result
+
+    @router.get("/api/gateway/memory-graph")
+    async def get_memory_graph(
+        q: str = "",
+        entity_type: Optional[str] = None,
+        include_archived: bool = False,
+    ):
+        return await memory_graph_service().snapshot(
+            query=q,
+            entity_type=entity_type,
+            include_archived=include_archived,
+        )
+
+    @router.post("/api/gateway/memory-graph/entities")
+    async def create_memory_graph_entity(body: MemoryGraphEntityCreate):
+        return await graph_mutation(memory_graph_service().create_entity(**body.model_dump()))
+
+    @router.patch("/api/gateway/memory-graph/entities/{entity_id}")
+    async def update_memory_graph_entity(entity_id: str, body: MemoryGraphEntityPatch):
+        return await graph_mutation(
+            memory_graph_service().update_entity(entity_id, body.model_dump(exclude_unset=True))
+        )
+
+    @router.post("/api/gateway/memory-graph/entities/{entity_id}/aliases")
+    async def create_memory_graph_alias(entity_id: str, body: MemoryGraphAliasCreate):
+        return await graph_mutation(
+            memory_graph_service().add_alias(entity_id, **body.model_dump())
+        )
+
+    @router.delete("/api/gateway/memory-graph/aliases/{alias_id}")
+    async def delete_memory_graph_alias(alias_id: str):
+        return await graph_mutation(memory_graph_service().delete_alias(alias_id))
+
+    @router.post("/api/gateway/memory-graph/relations")
+    async def create_memory_graph_relation(body: MemoryGraphRelationCreate):
+        return await graph_mutation(memory_graph_service().create_relation(**body.model_dump()))
+
+    @router.patch("/api/gateway/memory-graph/relations/{relation_id}")
+    async def update_memory_graph_relation(relation_id: str, body: MemoryGraphRelationPatch):
+        return await graph_mutation(
+            memory_graph_service().update_relation(relation_id, body.model_dump(exclude_unset=True))
+        )
+
+    @router.get("/api/gateway/memory-graph/sources/{source_table}/{source_id}")
+    async def get_memory_graph_source_entities(source_table: str, source_id: str):
+        return await graph_mutation(memory_graph_service().source_entities(source_table, source_id))
+
+    @router.put("/api/gateway/memory-graph/sources")
+    async def replace_memory_graph_source_entities(body: MemoryGraphSourceEntitiesPut):
+        return await graph_mutation(
+            memory_graph_service().replace_manual_source_entities(**body.model_dump())
+        )
+
+    @router.post("/api/gateway/memory-graph/backfill")
+    async def backfill_memory_graph(body: MemoryGraphBackfillRequest):
+        return await graph_mutation(
+            memory_graph_service().backfill_from_recall_index(max_sources=body.max_sources)
+        )
+
+    @router.post("/api/gateway/memory-graph/recall-preview")
+    async def preview_memory_graph_recall(body: MemoryGraphRecallPreviewRequest):
+        query = body.query.strip()
+        if not query:
+            raise HTTPException(status_code=400, detail="query is required")
+        # This intentionally bypasses GatewayToolService: no Mem counters,
+        # context state, auto-sync, or graph backfill may change in preview.
+        return await RecallIndexService(deps.get_supabase_client(), cfg=cfg).recall(
+            query,
+            limit=body.limit,
+            auto_sync=False,
+            include_trace=True,
+        )
 
     @router.get("/api/gateway/stars")
     async def list_stars(

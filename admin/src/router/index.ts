@@ -29,6 +29,11 @@ const router = createRouter({
       component: () => import('@/views/Mem0View.vue'),
     },
     {
+      path: '/memory-graph',
+      name: 'memory-graph',
+      component: () => import('@/views/MemoryGraphView.vue'),
+    },
+    {
       path: '/stars',
       name: 'stars',
       component: () => import('@/views/StarsView.vue'),

@@ -9,6 +9,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from shenyu_gateway.embeddings import EmbeddingClient
+from shenyu_gateway.memory_graph import MemoryGraphService
 from shenyu_gateway.runtime import logger
 from shenyu_gateway.utils import normalize_text as _normalize_text
 
@@ -31,6 +32,7 @@ PUBLIC_RECALL_SOURCE_TYPES = [
     "room",
     "board",
     "calendar",
+    "mem_note",
     "notebook",
 ]
 
@@ -129,97 +131,8 @@ def _json_dict(value: Any) -> dict[str, Any]:
     return {"value": value}
 
 
-_MEM_NOTE_KEYWORD_STOP_TERMS = {
-    "0",
-    "mem",
-    "note",
-    "一下",
-    "可以",
-    "东西",
-    "为什么",
-    "什么",
-    "现在",
-    "到底",
-    "还是",
-    "不是",
-    "自己",
-    "我们",
-    "你们",
-    "他们",
-    "她们",
-    "怎么",
-    "没有",
-    "不会",
-    "知道",
-    "觉得",
-    "一些",
-    "所以",
-    "因为",
-    "如果",
-    "已经",
-    "这样",
-    "那样",
-    "然后",
-    "关于",
-    "但是",
-    "今天",
-    "昨天",
-    "明天",
-    "以后",
-    "之前",
-    "之后",
-    "时候",
-    "感觉",
-    "需要",
-    "真的",
-    "可能",
-    "一点",
-    "这种",
-    "那个",
-    "这个",
-    "工具",
-    "便签",
-    "命中",
-    "逻辑",
-    "对话",
-    "回答",
-    "情绪",
-    "心情",
-    "喜欢",
-    "帮我",
-    "我把",
-    "你的",
-    "我的",
-}
-_MEM_NOTE_KEYWORD_JUNK_TERMS = {
-    "tool_call_id",
-    "tool_call",
-    "tool_use",
-    "tool_use_id",
-    "tool",
-    "name",
-    "arguments",
-    "function",
-    "type",
-    "content",
-    "role",
-    "assistant",
-    "user",
-    "system",
-    "id",
-    "ok",
-    "error",
-    "status",
-    "null",
-    "true",
-    "false",
-}
-
-
-# Single source of truth for "generic Chinese fragment" detection, shared by the
-# recall-tag filter here and mem_notes_relevance._generic_chinese_semantic_fragment.
-# Keeping the prefix/suffix tuples in one place stops the two copies drifting
-# (they previously disagreed on '它').
+# Single source of truth for "generic Chinese fragment" detection, shared by
+# mem_notes_relevance._generic_chinese_semantic_fragment.
 _GENERIC_CN_PREFIXES = ("是", "在", "有", "我", "你", "他", "她", "它", "这", "那", "不", "没")
 _GENERIC_CN_SUFFIXES = ("的", "了", "个", "吗", "呢", "吧", "啊", "呀", "嘛")
 
@@ -241,8 +154,23 @@ def is_generic_chinese_fragment(text: str) -> bool:
     return False
 
 
+_MEM_NOTE_KEYWORD_STOP_TERMS = {
+    "0", "mem", "note", "一下", "可以", "东西", "为什么", "什么", "现在", "到底", "还是",
+    "不是", "自己", "我们", "你们", "他们", "她们", "怎么", "没有", "不会", "知道",
+    "觉得", "一些", "所以", "因为", "如果", "已经", "这样", "那样", "然后", "关于",
+    "但是", "今天", "昨天", "明天", "以后", "之前", "之后", "时候", "感觉", "需要",
+    "真的", "可能", "一点", "这种", "那个", "这个", "工具", "便签", "命中", "逻辑",
+    "对话", "回答", "情绪", "心情", "喜欢", "帮我", "我把", "你的", "我的",
+}
+_MEM_NOTE_KEYWORD_JUNK_TERMS = {
+    "tool_call_id", "tool_call", "tool_use", "tool_use_id", "tool", "name", "arguments",
+    "function", "type", "content", "role", "assistant", "user", "system", "id", "ok",
+    "error", "status", "null", "true", "false",
+}
+
+
 def _mem_note_keyword_anchor_is_specific(value: Any) -> bool:
-    """Filter noisy v2 auto keywords before indexing them as recall tags."""
+    """Shared keyword predicate retained outside the unified Recall corpus."""
     text = _normalize_text(value).strip()
     normalized = text.lower()
     if not normalized or len(normalized) < 2:
@@ -478,6 +406,7 @@ def _make_documents(
     tag_items = [str(item).strip() for item in _json_list(tags) if item is not None and str(item).strip()]
     entity_items = [str(item).strip() for item in _json_list(entities) if item is not None and str(item).strip()]
     metadata_obj = _json_dict(metadata)
+    metadata_text = _normalize_text(metadata_obj) if metadata_obj else ""
     chunks = split_recall_chunks(body_text) if chunk else [body_text]
     if not chunks:
         chunks = [body_text or title_text]
@@ -491,7 +420,7 @@ def _make_documents(
                 chunk_text,
                 " ".join(tag_items),
                 " ".join(entity_items),
-                _normalize_text(metadata_obj),
+                metadata_text,
             ]
             if part
         )
@@ -612,12 +541,8 @@ class RecallIndexService:
             return list(PUBLIC_RECALL_SOURCE_TYPES)
         types = []
         for source_type in self._requested_source_types(source_types):
-            if source_type in {"note", "mem_note"}:
-                if allow_mem_note:
-                    for alias in ("mem_note", "note"):
-                        if alias not in types:
-                            types.append(alias)
-                continue
+            if source_type in {"note", "mem"}:
+                source_type = "mem_note"
             if source_type in {"atomic", "meta"}:
                 continue
             aliases = {"memories": "memory", "message_board": "board"}
@@ -644,6 +569,7 @@ class RecallIndexService:
                 docs = await self._load_documents(name)
                 await self._upsert_documents(docs)
                 await self._mark_stale_source_deleted(name, docs)
+                await self._sync_graph_documents_fail_soft(docs)
                 total_docs += len(docs)
                 source_counts[name] = len(docs)
             except Exception as exc:
@@ -663,6 +589,7 @@ class RecallIndexService:
         if not docs:
             return {"ok": False, "indexed": 0, "error": "windowsill row has no content."}
         await self._upsert_documents(docs)
+        await self._sync_graph_documents_fail_soft(docs)
         return {"ok": True, "indexed": len(docs)}
 
     async def index_mem_note_row(self, row: dict[str, Any]) -> dict[str, Any]:
@@ -676,7 +603,16 @@ class RecallIndexService:
         if not docs:
             return {"ok": False, "indexed": 0, "error": "mem note row has no content."}
         await self._upsert_documents(docs)
+        await self._sync_graph_documents_fail_soft(docs)
         return {"ok": True, "indexed": len(docs)}
+
+    async def _sync_graph_documents_fail_soft(self, docs: list[RecallDocument]) -> None:
+        try:
+            result = await MemoryGraphService(self.supabase).sync_recall_documents(docs)
+            if not result.get("ok"):
+                logger.warning("Memory graph mention sync was partial: %s", result.get("errors"))
+        except Exception as exc:
+            logger.info("Memory graph is not ready; recall indexing continues without it: %s", exc)
 
     async def mark_source_row_deleted(self, source_table: str, source_id: str) -> None:
         await self.supabase.update(
@@ -765,6 +701,7 @@ class RecallIndexService:
         include_undated: bool = True,
         limit: int = DEFAULT_RECALL_LIMIT,
         auto_sync: Optional[bool] = None,
+        include_trace: bool = False,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "query": query, "count": 0, "items": [], "error": "Supabase is not configured."}
@@ -798,8 +735,14 @@ class RecallIndexService:
                 "sync": sync_result,
             }
 
+        graph_rows = await MemoryGraphService(self.supabase).recall_rows(
+            query_text,
+            source_types=self._source_type_filter(source_types),
+            max_mentions=self._candidate_limit(),
+        )
         vector_rows, _vector_meta = await self._vector_rows(query_text, source_types=source_types)
-        rows = self._merge_candidate_rows(keyword_rows, vector_rows)
+        rows = self._merge_candidate_rows(keyword_rows, graph_rows)
+        rows = self._merge_candidate_rows(rows, vector_rows)
         if not rows and should_auto_sync:
             sync_result = sync_result or await self.rebuild(source_types=source_types, embed=False)
             if not sync_result.get("ok") and not sync_result.get("indexed"):
@@ -829,8 +772,14 @@ class RecallIndexService:
                     "error": f"recall index table is not ready: {exc}",
                     "sync": sync_result,
                 }
+            graph_rows = await MemoryGraphService(self.supabase).recall_rows(
+                query_text,
+                source_types=self._source_type_filter(source_types),
+                max_mentions=self._candidate_limit(),
+            )
             vector_rows, _vector_meta = await self._vector_rows(query_text, source_types=source_types)
-            rows = self._merge_candidate_rows(keyword_rows, vector_rows)
+            rows = self._merge_candidate_rows(keyword_rows, graph_rows)
+            rows = self._merge_candidate_rows(rows, vector_rows)
 
         start_dt = _parse_date_bound(date_from)
         end_dt = _parse_date_bound(date_to, end_of_day=True)
@@ -854,6 +803,7 @@ class RecallIndexService:
                 tokens
                 and not self._has_direct_match(reasons)
                 and not row.get("_vector_score")
+                and not row.get("_graph_score")
                 and not exact_date_candidate
             ):
                 continue
@@ -869,8 +819,12 @@ class RecallIndexService:
         elif resolved_mode == "mood":
             requested_limit = min(requested_limit, 3)
         selected = self._dedupe(scored, requested_limit)
-        rows_by_source = self._rows_by_source(rows)
-        items = [self._public_item(row, rows_by_source) for _, _, row in selected]
+        items = await asyncio.gather(
+            *(self._hydrate_selected_item(row, session_tag=session_tag) for _, _, row in selected)
+        )
+        if include_trace:
+            for item, (_, reasons, row) in zip(items, selected):
+                item["recall_match"] = self._public_recall_match(row, reasons)
         logger.info(
             "[RecallTrace] mode=%s candidates=%s scored=%s visibility_filtered=%s selected=%s",
             resolved_mode,
@@ -899,6 +853,7 @@ class RecallIndexService:
         source_type: str,
         source_id: str,
         *,
+        source_table: Optional[str] = None,
         session_tag: Optional[str] = None,
     ) -> dict[str, Any]:
         if not self.supabase:
@@ -919,8 +874,19 @@ class RecallIndexService:
         }
         if allowed_types:
             params["source_type"] = "in.(" + ",".join(allowed_types) + ")"
+        normalized_table = str(source_table or "").strip()
+        if normalized_table:
+            params["source_table"] = f"eq.{normalized_table}"
         rows = await self.supabase.query(RECALL_INDEX_TABLE, params)
-        rows = [row for row in rows if self._row_visible_for_session(row, session_tag)]
+        rows = [
+            row
+            for row in rows
+            if str(row.get("source_id") or "") == normalized_id
+            and (not allowed_types or str(row.get("source_type") or "") in allowed_types)
+            and (not normalized_table or str(row.get("source_table") or "") == normalized_table)
+            and self._row_visible_for_session(row, session_tag)
+        ]
+        rows.sort(key=lambda item: int(item.get("chunk_index") or 0))
         if not rows:
             return {"ok": False, "error": "Recall source not found."}
         first = rows[0]
@@ -982,6 +948,11 @@ class RecallIndexService:
             existing = merged.get(key)
             if existing:
                 existing["_vector_score"] = max(float(existing.get("_vector_score") or 0.0), float(row.get("_vector_score") or 0.0))
+                existing["_graph_score"] = max(float(existing.get("_graph_score") or 0.0), float(row.get("_graph_score") or 0.0))
+                if row.get("_graph_reason") == "direct" or not existing.get("_graph_reason"):
+                    existing["_graph_reason"] = row.get("_graph_reason")
+                    if row.get("_graph_info"):
+                        existing["_graph_info"] = row.get("_graph_info")
             else:
                 merged[key] = dict(row)
         return list(merged.values())
@@ -1130,12 +1101,15 @@ class RecallIndexService:
         keyword_score = min(1.0, token_score + phrase_bonus)
         field_score = min(1.0, title_score * 0.62 + tag_score * 0.38)
         vector_score = max(0.0, min(float(row.get("_vector_score") or 0.0), 1.0))
+        graph_score = max(0.0, min(float(row.get("_graph_score") or 0.0), 1.0))
         importance = self._importance_score(row.get("importance"))
         recency = _recency_score(row.get("event_date") or row.get("source_updated_at"))
         if vector_score > 0:
             score = keyword_score * 0.40 + vector_score * 0.35 + field_score * 0.12 + importance * 0.08 + recency * 0.05
         else:
             score = keyword_score * 0.58 + field_score * 0.22 + importance * 0.10 + recency * 0.10
+        if graph_score > 0:
+            score += 0.72 if row.get("_graph_reason") == "direct" else 0.24
         reasons = []
         if token_hits:
             reasons.append("keyword:" + ",".join(token_hits[:6]))
@@ -1147,11 +1121,15 @@ class RecallIndexService:
             reasons.append("phrase")
         if vector_score > 0:
             reasons.append("semantic")
+        if graph_score > 0:
+            reasons.append(f"graph:{row.get('_graph_reason') or 'related'}")
         if importance >= 0.75:
             reasons.append("important")
         return min(score, 1.0), reasons or ["soft-recall"]
 
     def _match_tier(self, row: dict, query: str, reasons: list[str]) -> int:
+        if "graph:direct" in reasons:
+            return 5
         title = normalize_recall_title(row.get("title"))
         if title and title in _exact_title_query_values(query):
             return 4
@@ -1160,6 +1138,8 @@ class RecallIndexService:
             return 3
         if "phrase" in reasons:
             return 2
+        if "graph:related" in reasons:
+            return 1
         if self._has_direct_match(reasons):
             return 1
         return 0
@@ -1175,6 +1155,43 @@ class RecallIndexService:
 
     def _has_direct_match(self, reasons: list[str]) -> bool:
         return any(reason.startswith("keyword:") or reason in {"title", "tag/entity", "phrase"} for reason in reasons)
+
+    def _public_recall_match(self, row: dict[str, Any], reasons: list[str]) -> dict[str, Any]:
+        """Expose a human-readable route for the read-only Admin preview only."""
+        graph_reason = str(row.get("_graph_reason") or "")
+        graph_info = row.get("_graph_info") if isinstance(row.get("_graph_info"), dict) else {}
+        if graph_reason == "direct":
+            anchor = graph_info.get("anchor") if isinstance(graph_info.get("anchor"), dict) else {}
+            name = str(anchor.get("name") or "已确认锚点")
+            return {
+                "group": "direct",
+                "label": f"直达：已确认锚点「{name}」",
+                "anchor": anchor,
+            }
+        if graph_reason == "related":
+            path = graph_info.get("path") if isinstance(graph_info.get("path"), dict) else {}
+            source = path.get("from") if isinstance(path.get("from"), dict) else {}
+            target = path.get("to") if isinstance(path.get("to"), dict) else {}
+            relation = str(path.get("relation_type") or "已确认关系")
+            source_name = str(source.get("name") or "已确认锚点")
+            target_name = str(target.get("name") or "关联锚点")
+            return {
+                "group": "related",
+                "label": f"关联：{source_name} - {relation} - {target_name}",
+                "anchor": graph_info.get("anchor") or {},
+                "path": path,
+            }
+        if "semantic" in reasons:
+            label = "其他联想：原文语义相近"
+        elif "phrase" in reasons:
+            label = "其他联想：原文出现完整短语"
+        elif "title" in reasons:
+            label = "其他联想：标题匹配"
+        elif any(reason.startswith("keyword:") for reason in reasons):
+            label = "其他联想：原文关键词匹配"
+        else:
+            label = "其他联想"
+        return {"group": "other", "label": label}
 
     def _public_item(self, row: dict, rows_by_source: dict[tuple[str, str], list[dict]]) -> dict[str, Any]:
         key = (str(row.get("source_table") or ""), str(row.get("source_id") or ""))
@@ -1207,6 +1224,28 @@ class RecallIndexService:
         item["event_date"] = row.get("event_date") or row.get("source_updated_at") or ""
         item["has_more"] = len(source_rows) > 1 or len(matched_content) > len(content)
         return item
+
+    async def _hydrate_selected_item(
+        self,
+        row: dict[str, Any],
+        *,
+        session_tag: Optional[str],
+    ) -> dict[str, Any]:
+        try:
+            result = await self.read_source(
+                str(row.get("source_type") or ""),
+                str(row.get("source_id") or ""),
+                source_table=str(row.get("source_table") or ""),
+                session_tag=session_tag,
+            )
+            if result.get("ok") and isinstance(result.get("item"), dict):
+                return result["item"]
+            raise RuntimeError(result.get("error") or "source hydration failed")
+        except Exception as exc:
+            item = self._public_item(row, self._rows_by_source([row]))
+            item["content_complete"] = False
+            item["content_error"] = str(exc)[:300]
+            return item
 
     async def _mark_stale_source_deleted(self, source_table: str, docs: list[RecallDocument]) -> None:
         live_keys = {(doc.source_id, doc.chunk_index) for doc in docs}
@@ -1594,55 +1633,18 @@ class RecallIndexService:
         return docs
 
     def _mem_note_documents(self, row: dict[str, Any]) -> list[RecallDocument]:
-        keywords = _json_list(row.get("trigger_keywords"))
-        v2_people = _json_list(row.get("people"))
-        v2_places = _json_list(row.get("places"))
-        v2_objects = _json_list(row.get("objects"))
-        v2_keywords = [
-            item for item in _json_list(row.get("keywords")) if _mem_note_keyword_anchor_is_specific(item)
-        ]
-        v2_scene_tags = _json_list(row.get("scene_tags"))
-        v2_trigger_scenarios = _json_list(row.get("trigger_scenarios"))
-        body_parts = [
-            row.get("content"),
-            row.get("summary"),
-            row.get("trigger_text"),
-            " ".join(keywords),
-            row.get("review_note"),
-            row.get("promise_text"),
-            row.get("joke_text"),
-            row.get("topic"),
-            row.get("last_position"),
-            row.get("next_prompt"),
-            row.get("routine_domain"),
-            row.get("pattern"),
-            " ".join(v2_people + v2_places + v2_objects + v2_keywords + v2_scene_tags + v2_trigger_scenarios),
-        ]
-        body = "\n\n".join(str(part) for part in body_parts if part and str(part).strip())
-        tags = [
-            row.get("mem_type"),
-            row.get("memory_kind"),
-        ] + keywords + v2_people + v2_places + v2_objects + v2_keywords + v2_scene_tags + v2_trigger_scenarios
-        metadata: dict[str, Any] = {
-            "trigger_count": row.get("trigger_count"),
-            "source_model": row.get("source_model"),
-        }
-        if row.get("memory_kind"):
-            metadata["memory_kind"] = row["memory_kind"]
         return _make_documents(
             source_table="shenyu_mem_notes",
             source_id=row.get("id"),
             source_type="mem_note",
-            title=row.get("mem_type") or _shorten(row.get("content") or "", 60),
-            body=body,
+            title="",
+            body=row.get("content"),
             session_tag=row.get("session_tag"),
-            tags=[tag for tag in tags if tag],
-            metadata=metadata,
-            event_date=row.get("updated_at"),
+            event_date=row.get("event_time") or row.get("updated_at"),
             created_at=row.get("created_at"),
             updated_at=row.get("updated_at"),
             status=row.get("status"),
-            importance=0.82,
+            importance=0.5,
             chunk=False,
         )
 

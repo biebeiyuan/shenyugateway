@@ -314,7 +314,7 @@ function reasonText(value: unknown): string {
     direct_star_id: '用户直接点名了这颗星的 ID',
     direct_exact_phrase: '用户复述了只属于这颗星的原句',
     direct_recall_unique: '回忆意图唯一指向一颗星，且已过冷却期',
-    inactive_item: '旧岛里有星已归档，需要重新整理',
+    inactive_item: '旧岛里有内容已收起，需要重新整理',
     history_branch: '历史分支改变，按当前对话重新整理',
     message_high_water: '消息窗口触发裁剪，按当前窗口重新整理',
     empty_transition: '内容从有到无，或从无到有',

@@ -86,7 +86,8 @@ The codebase is partly layered already:
 - `shenyu_gateway/stars/`: Star memory service (package split into mixins: `_helpers`, `_chord`, `_scene`, `_weights`, `_crud`, `_recall`, `_activity`, `_review`, `_feedback`, `_logging`, `_render`, `_embedding`). ACT-R activation, chord/content/harmony scoring, review candidates, feedback logging, and constellation links.
 - `shenyu_gateway/mem_notes/`: note service package (mixin pattern, like stars/): `_helpers` (constants), `_validation` (field validation), `_suggestions` (auto mem_type/keyword inference), `_search` (keyword/semantic/entity matching, scoring, cooldown, rendering), `_crud` (create/update/delete/list/legacy-atomic). `__init__.py` assembles `MemNoteService` and re-exports backward-compat symbols.
 - `shenyu_gateway/mem_notes_relevance.py`: pure-function helpers for mem-note recall scoring, anchor matching, auto-extraction (people/places/objects/keywords/summary/memory_kind inference), `compute_heat()`, and `running_joke_serendipity_rate()`.
-- `shenyu_gateway/recall.py`: unified recall index — keyword + vector hybrid search across 7 data sources.
+- `shenyu_gateway/memory_graph.py`: temporal personal memory graph service for confirmed entities, aliases, source mentions, typed relationships, exact-alias backfill, and one-hop Recall candidates.
+- `shenyu_gateway/recall.py`: unified recall index — keyword + vector + memory-graph hybrid search across registered sources, with complete selected-source hydration.
 - `shenyu_gateway/embeddings.py`: embedding client (SiliconFlow / BAAI/bge-m3).
 
 ### Capture & private content
@@ -151,6 +152,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/api/http.ts`: shared HTTP client (axios instance, auth token).
 - `admin/src/api/config.ts`: gateway and upstream configuration.
 - `admin/src/api/mem0.ts`: Mem config, mem-note review APIs, and old atomic read-only lookup.
+- `admin/src/api/memoryGraph.ts`: entity, alias, relation, source-anchor, and historical-backfill APIs.
 - `admin/src/api/stars.ts`: Star list/search/create/review/feedback/connect APIs.
 - `admin/src/api/sessions.ts`: local SQLite session browser.
 - `admin/src/api/logs.ts`: request log list and detail APIs.
@@ -162,7 +164,8 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/api/toolErrors.ts`: tool error log APIs.
 - `admin/src/views/HomeView.vue`: admin landing/dashboard page.
 - `admin/src/views/ConfigView.vue`: configuration page.
-- `admin/src/views/Mem0View.vue`: Mem prompt/capture/injection/tool controls, mem-note attribute workflow, and old atomic read-only lookup.
+- `admin/src/views/Mem0View.vue`: Mem injection/tool controls, full-set two-state recall-eligibility management, Shenyu-write provenance badges, mem-note attributes, and old atomic read-only lookup.
+- `admin/src/views/MemoryGraphView.vue`: personal memory-graph management for entities, confirmed aliases, source counts, typed relations, historical exact-alias backfill, and read-only Recall preview with explicit source-anchor linking.
 - `admin/src/views/StarsView.vue`: standalone Star entry shell at `/stars`, with split Star panels under `admin/src/views/stars/`.
 - `admin/src/views/stars/StarsLabelsPanel.vue`: manual relationship-label review, small-batch backfill, per-item results, and recent batch history.
 - `admin/src/views/stars/StarsReviewPanel.vue`: admin review scoring, missed recording, and candidate constellation feedback.
@@ -203,6 +206,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 | Memory Island | Stars + Mem 当前岛 | `memory_island.py`、`context_builder.py` | `admin/src/api/logs.ts`、`LogsView.vue` | `REQUEST_CONTEXT.md`、`MEMORY_ROOM.md` |
 | Stars | 星星 / 关联记忆 | `shenyu_gateway/stars/` | `admin/src/api/stars.ts`、`StarsView.vue`、`views/stars/` | `MEMORY_ROOM.md` § Star Memory Layer |
 | Mem | Mem Notes / 便签 | `shenyu_gateway/mem_notes/`、`mem_notes_relevance.py` | `admin/src/api/mem0.ts`、`Mem0View.vue` | `MEMORY_ROOM.md` § Mem Note Layer |
+| 记忆网络 | 人物 / 地点 / 物件 / 主题锚点 | `memory_graph.py`、`recall.py` | `admin/src/api/memoryGraph.ts`、`MemoryGraphView.vue`、`Mem0View.vue` | `MEMORY_ROOM.md` § Personal Memory Graph |
 | Room | 房间 / 窗台 | `room_context.py`、`room_tools.py`、`room_newspaper.py` | `admin/src/api/room.ts`、`RoomView.vue`、`views/room/` | `MEMORY_ROOM.md` § Room Mode |
 | 请求日志 / 工具报错 | 日志页、工具报错页 | `request_logs.py`、`tool_loop.py`、`store/_admin.py` | `admin/src/api/logs.ts`、`toolErrors.ts`、`LogsView.vue`、`ToolErrorsView.vue` | `DEBUGGING_GUIDE.md`、`LOGS_GUIDE.md` |
 | Calendar | 日历 / 日周月页 | `calendar_service.py`、`calendar_sources.py` | `admin/src/api/calendar.ts`、`CalendarView.vue` | `REQUEST_CONTEXT.md` § Calendar |
@@ -355,6 +359,8 @@ cd admin && npm ci && npm run build && cd ..
 python gateway.py
 ```
 
+Supabase schema migrations are deliberately not run by gateway startup. Before deploying a feature that adds a table, index, or RPC, apply its named file from `supabase/migrations/` in the project's Supabase migration workflow, then deploy the code that depends on it. Verify the new table/RPC and its Admin/API route before using the feature with resident data.
+
 UI routes:
 
 ```text
@@ -367,13 +373,15 @@ http://localhost:8010/admin
 
 - `admin/src/api/config.ts`: gateway and upstream configuration.
 - `admin/src/api/mem0.ts`: Mem config, mem-note review APIs, and old atomic read-only lookup.
+- `admin/src/api/memoryGraph.ts`: personal memory-graph management and source-anchor APIs.
 - `admin/src/api/stars.ts`: Star list/search/create/review/feedback/connect APIs.
 - `admin/src/api/sessions.ts`: local SQLite session browser.
 - `admin/src/api/logs.ts`: request log list and detail APIs.
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
 - `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
 - `admin/src/views/ConfigView.vue`: configuration page.
-- `admin/src/views/Mem0View.vue`: Mem prompt/capture/injection/tool controls, mem-note attribute workflow, and old atomic read-only lookup. The "静音但保留工具" preset turns off mem prompt/capture/injection while leaving gateway tools available.
+- `admin/src/views/Mem0View.vue`: Mem injection/tool controls, full-set two-state recall-eligibility management, Shenyu-write provenance badges, mem-note attributes, and old atomic read-only lookup. The "静音但保留工具" preset turns off automatic Mem injection while leaving gateway tools available.
+- `admin/src/views/MemoryGraphView.vue`: entity/alias/relation management, historical source-link backfill, and read-only Recall preview at `/memory-graph`.
 - `admin/src/views/StarsView.vue`: standalone Star entry shell at `/stars`, with split Star panels under `admin/src/views/stars/` and a lazy-loaded memory star map at `/stars/map`.
 - `admin/src/views/SessionsView.vue`: session inspection page.
 - `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, and cache-structure evidence.

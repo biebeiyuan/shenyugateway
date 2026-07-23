@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from shenyu_gateway.runtime import logger
+from shenyu_gateway.memory_graph import MemoryGraphService
 from shenyu_gateway.utils import normalize_text as _normalize_text
 from ..mem_notes_relevance import (
     _auto_extract_entities,
@@ -19,6 +20,7 @@ from ._helpers import (
     MEM_NOTE_BULK_UPDATE_MAX,
     MEM_NOTE_MEMORY_KINDS,
     MEM_NOTE_PATCH_FIELDS,
+    MEM_NOTE_STATUSES,
     MEM_NOTE_TYPES,
     _MEM_NOTE_SELECT_FIELDS,
     _normalize_note_id,
@@ -222,6 +224,7 @@ class CrudMixin:
             return {"ok": False, "error": active_error}
 
         row = await self.supabase.insert("shenyu_mem_notes", payload)
+        await self._sync_note_graph_fail_soft(row)
 
         archived_ids: list[str] = []
         if replaces:
@@ -263,6 +266,8 @@ class CrudMixin:
         if error:
             return {"ok": False, "error": error}
         rows = await self.supabase.update("shenyu_mem_notes", {"id": note_id}, update)
+        if rows and isinstance(rows[0], dict):
+            await self._sync_note_graph_fail_soft(rows[0])
         return {"ok": True, "note_id": note_id, "updated": rows}
 
     async def bulk_update_notes(
@@ -337,7 +342,9 @@ class CrudMixin:
                 failures.append({"id": note_id, "error": error})
                 continue
             try:
-                await self.supabase.update("shenyu_mem_notes", {"id": note_id}, update)
+                changed_rows = await self.supabase.update("shenyu_mem_notes", {"id": note_id}, update)
+                if changed_rows and isinstance(changed_rows[0], dict):
+                    await self._sync_note_graph_fail_soft(changed_rows[0])
                 updated.append(note_id)
                 rows_by_id[note_id] = {**current, **update}
             except Exception as exc:
@@ -359,7 +366,36 @@ class CrudMixin:
         if not note_id:
             return {"ok": False, "error": "note_id is required."}
         rows = await self.supabase.delete("shenyu_mem_notes", {"id": note_id})
+        try:
+            await MemoryGraphService(self.supabase).delete_source_mentions("shenyu_mem_notes", note_id)
+        except Exception as exc:
+            logger.info("[MemNote] Memory graph cleanup unavailable; note delete continues: %s", exc)
         return {"ok": True, "note_id": note_id, "deleted": rows}
+
+    async def _sync_note_graph_fail_soft(self, row: dict[str, Any]) -> None:
+        source_id = _normalize_note_id(row.get("id"))
+        if not source_id:
+            return
+        text_parts = [
+            row.get("content"),
+            row.get("summary"),
+            row.get("trigger_text"),
+            *(row.get("trigger_keywords") or []),
+            *(row.get("entities") or []),
+            *(row.get("people") or []),
+            *(row.get("places") or []),
+            *(row.get("objects") or []),
+            *(row.get("keywords") or []),
+        ]
+        try:
+            await MemoryGraphService(self.supabase).sync_source_alias_mentions(
+                source_table="shenyu_mem_notes",
+                source_type="mem_note",
+                source_id=source_id,
+                text="\n".join(_normalize_text(part) for part in text_parts if part),
+            )
+        except Exception as exc:
+            logger.info("[MemNote] Memory graph is not ready; note write continues: %s", exc)
 
     async def list_notes(
         self,
@@ -369,13 +405,13 @@ class CrudMixin:
         q: str = "",
         mem_type: Optional[str] = None,
         memory_kind: Optional[str] = None,
+        all_rows: bool = False,
     ) -> dict[str, Any]:
         if not self.supabase:
             return {"ok": False, "items": [], "error": "Supabase is not configured."}
         status = self._status(status, fallback="captured", allow_all=True)
         params: dict[str, str] = {
             "order": "updated_at.desc",
-            "limit": str(max(1, min(int(limit or 50), 200))),
             "select": _MEM_NOTE_SELECT_FIELDS,
         }
         if status != "all":
@@ -386,7 +422,24 @@ class CrudMixin:
             params["mem_type"] = f"eq.{mem_type}"
         if memory_kind and memory_kind in MEM_NOTE_MEMORY_KINDS:
             params["memory_kind"] = f"eq.{memory_kind}"
-        rows = await self.supabase.query("shenyu_mem_notes", params)
+        if all_rows:
+            rows: list[dict[str, Any]] = []
+            offset = 0
+            page_size = 1000
+            while True:
+                page = await self.supabase.query(
+                    "shenyu_mem_notes",
+                    {**params, "limit": str(page_size), "offset": str(offset)},
+                )
+                if not isinstance(page, list) or not page:
+                    break
+                rows.extend(page)
+                if len(page) < page_size:
+                    break
+                offset += len(page)
+        else:
+            params["limit"] = str(max(1, min(int(limit or 50), 200)))
+            rows = await self.supabase.query("shenyu_mem_notes", params)
 
         terms = _terms(q)
         if terms:
@@ -396,7 +449,21 @@ class CrudMixin:
                 if any(term in self._search_text(row).lower() for term in terms)
             ]
         items = [self._public_list_item(row) for row in rows]
-        return {"ok": True, "items": items, "status": status, "count": len(items)}
+        status_counts = {item_status: 0 for item_status in MEM_NOTE_STATUSES}
+        for item in items:
+            item_status = str(item.get("status") or "")
+            if item_status in status_counts:
+                status_counts[item_status] += 1
+        eligible_count = sum(1 for item in items if item.get("auto_surface_eligible"))
+        return {
+            "ok": True,
+            "items": items,
+            "status": status,
+            "count": len(items),
+            "status_counts": status_counts,
+            "eligible_count": eligible_count,
+            "stored_count": len(items) - eligible_count,
+        }
 
     async def legacy_atomic_memories(
         self,

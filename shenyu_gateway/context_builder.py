@@ -161,6 +161,11 @@ class ContextBuilder:
             for item in (previous_island_state or {}).get("stars") or []
             if str(item.get("id") or "").strip()
         }
+        previous_mem_note_ids = {
+            str(item.get("id") or "").strip()
+            for item in (previous_island_state or {}).get("mem_notes") or []
+            if str(item.get("id") or "").strip()
+        }
 
         calendar_task = self.calendar_context_pages()
         bookshelf_task = self._bookshelf_overview() if want_bookshelf else asyncio.sleep(0, result={})
@@ -188,6 +193,8 @@ class ContextBuilder:
             notes_result = {"ok": True, "items": []}
             stars_result = {"ok": True, "items": []}
         else:
+            mem_note_service = MemNoteService(self.cfg, self.supabase_client)
+
             async def fail_soft_recall(coro, source: str) -> dict[str, Any]:
                 try:
                     return await coro
@@ -202,7 +209,7 @@ class ContextBuilder:
                 )
             elif inject_mem_notes:
                 notes_task = fail_soft_recall(
-                    MemNoteService(self.cfg, self.supabase_client).search_notes_contextual(
+                    mem_note_service.search_notes_contextual(
                         current_user_text,
                         session_tag=session["session_tag"],
                         limit=self.cfg.mem_note_limit,
@@ -215,6 +222,22 @@ class ContextBuilder:
                 )
             else:
                 notes_task = asyncio.sleep(0, result={"ok": True, "items": []})
+
+            async def validate_previous_mem_notes() -> dict[str, Any]:
+                if not inject_mem_notes or not previous_mem_note_ids:
+                    return {"ok": True, "ids": []}
+                if not self.supabase_client:
+                    return {"ok": False, "ids": [], "error": "Supabase is not configured."}
+                try:
+                    active_ids = await mem_note_service.auto_surface_active_ids(
+                        sorted(previous_mem_note_ids)
+                    )
+                    return {"ok": True, "ids": sorted(active_ids)}
+                except Exception as exc:
+                    logger.warning("[Context] mem note active validation failed: %s", exc)
+                    return {"ok": False, "ids": [], "error": str(exc)}
+
+            mem_active_task = validate_previous_mem_notes()
 
             if reuse_previous_island:
                 stars_task = asyncio.sleep(
@@ -238,8 +261,8 @@ class ContextBuilder:
             else:
                 stars_task = asyncio.sleep(0, result={"ok": True, "items": []})
 
-            calendar_context, book_overview, notes_result, stars_result = await asyncio.gather(
-                calendar_task, bookshelf_task, notes_task, stars_task
+            calendar_context, book_overview, notes_result, stars_result, mem_active_result = await asyncio.gather(
+                calendar_task, bookshelf_task, notes_task, stars_task, mem_active_task
             )
             package["calendar_context"] = calendar_context
             package["mem_notes"] = notes_result.get("items") or []
@@ -262,6 +285,13 @@ class ContextBuilder:
                     for item in stars_result.get("_active_required_ids") or []
                     if str(item or "").strip()
                 }
+            active_mem_note_ids = None
+            if mem_active_result.get("ok"):
+                active_mem_note_ids = {
+                    str(item or "").strip()
+                    for item in mem_active_result.get("ids") or []
+                    if str(item or "").strip()
+                }
             island_state, entering, island_meta = resolve_memory_island(
                 previous_island_state,
                 proposed_stars,
@@ -269,6 +299,7 @@ class ContextBuilder:
                 force=force_island_rewrite,
                 force_reason=force_island_reason,
                 active_star_ids=active_star_ids,
+                active_mem_note_ids=active_mem_note_ids,
                 advance_human_turn=event_class in {"initial", "new_user", "branch"},
                 soft_direct_cooldown_turns=getattr(
                     self.cfg, "star_soft_direct_cooldown_turns", 8

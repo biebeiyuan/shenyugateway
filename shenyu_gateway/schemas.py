@@ -232,6 +232,73 @@ class MemNoteBulkPatch(BaseModel):
     use_suggestions: bool = False
 
 
+class MemoryGraphEntityCreate(BaseModel):
+    entity_type: str
+    canonical_name: str
+    description: str = ""
+    aliases: list[str] = Field(default_factory=list)
+    metadata: dict[str, Any] = Field(default_factory=dict)
+
+
+class MemoryGraphEntityPatch(BaseModel):
+    entity_type: Optional[str] = None
+    canonical_name: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None
+    merged_into: Optional[str] = None
+    metadata: Optional[dict[str, Any]] = None
+
+
+class MemoryGraphAliasCreate(BaseModel):
+    alias: str
+    status: str = "confirmed"
+    evidence: str = ""
+    provenance: str = "manual"
+
+
+class MemoryGraphRelationCreate(BaseModel):
+    source_entity_id: str
+    target_entity_id: str
+    relation_type: str
+    status: str = "confirmed"
+    evidence: str = ""
+    provenance: str = "manual"
+    evidence_source_table: Optional[str] = None
+    evidence_source_type: Optional[str] = None
+    evidence_source_id: Optional[str] = None
+    valid_from: Optional[str] = None
+    valid_to: Optional[str] = None
+
+
+class MemoryGraphRelationPatch(BaseModel):
+    relation_type: Optional[str] = None
+    status: Optional[str] = None
+    evidence: Optional[str] = None
+    provenance: Optional[str] = None
+    evidence_source_table: Optional[str] = None
+    evidence_source_type: Optional[str] = None
+    evidence_source_id: Optional[str] = None
+    valid_from: Optional[str] = None
+    valid_to: Optional[str] = None
+
+
+class MemoryGraphSourceEntitiesPut(BaseModel):
+    source_table: str
+    source_type: str
+    source_id: str
+    entity_ids: list[str] = Field(default_factory=list)
+    evidence: str = ""
+
+
+class MemoryGraphBackfillRequest(BaseModel):
+    max_sources: Optional[int] = Field(default=None, ge=1, le=100000)
+
+
+class MemoryGraphRecallPreviewRequest(BaseModel):
+    query: str = Field(min_length=1, max_length=500)
+    limit: int = Field(default=8, ge=1, le=8)
+
+
 class StarCreateRequest(BaseModel):
     content: str
     chord: Optional[str] = None

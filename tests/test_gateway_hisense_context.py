@@ -212,6 +212,54 @@ def test_context_recall_failure_preserves_previous_island(monkeypatch, tmp_path)
     assert package["memory_island_decision"]["mem_recall_ok"] is False
 
 
+def test_context_retry_removes_mem_note_that_is_no_longer_auto_surface_eligible(
+    monkeypatch, tmp_path
+):
+    class RecheckingMemService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def search_notes_contextual(self, *_args, **_kwargs):
+            raise AssertionError("retry should reuse the previous proposal")
+
+        async def auto_surface_active_ids(self, note_ids):
+            assert set(note_ids) == {"mem-a", "mem-b", "mem-c"}
+            return {"mem-a", "mem-b"}
+
+        async def mark_context_items_triggered(self, *_args, **_kwargs):
+            raise AssertionError("removing an old note must not mark another note triggered")
+
+    monkeypatch.setattr(context_builder_module, "MemNoteService", RecheckingMemService)
+    monkeypatch.setattr(cfg, "inject_mem_notes", True)
+    monkeypatch.setattr(cfg, "inject_stars", False, raising=False)
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("mem-recheck", "operit")
+    previous = {
+        "version": "island-previous",
+        "stars": [],
+        "mem_notes": [
+            {"id": "mem-a", "content": "first"},
+            {"id": "mem-b", "content": "second"},
+            {"id": "mem-c", "content": "archived"},
+        ],
+        "rendered_text": "old island",
+    }
+
+    package = asyncio.run(
+        _context_builder(store, supabase=object()).build_context_package(
+            session,
+            current_user_text="重试上一轮",
+            is_first_turn=False,
+            client_name="operit",
+            context_event={"event_class": "retry"},
+            previous_island_state=previous,
+        )
+    )
+
+    assert [item["id"] for item in package["mem_notes"]] == ["mem-a", "mem-b"]
+    assert package["memory_island_decision"]["mem"]["reason"] == "inactive_item"
+
+
 def test_context_builder_rechecks_previous_star_ids_and_advances_real_user_turn(monkeypatch, tmp_path):
     captured: dict[str, Any] = {}
     previous_stars = [
