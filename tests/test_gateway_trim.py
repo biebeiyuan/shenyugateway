@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from shenyu_gateway.context_layers import (
@@ -10,7 +12,11 @@ from shenyu_gateway.context_layers import (
     trim_client_messages,
     trim_client_tool_system_messages,
 )
-from shenyu_gateway.prepare_messages import _assistant_lineage, _memory_island_force_reason
+from shenyu_gateway.prepare_messages import (
+    _assistant_lineage,
+    _memory_island_force_reason,
+    _resolve_client_profile,
+)
 from shenyu_gateway.context_window import (
     classify_history_event,
     compact_history_event_messages,
@@ -59,6 +65,18 @@ def test_memory_island_force_reason_covers_branch_and_message_high_water():
     assert _memory_island_force_reason(
         {"event_class": "new_user"}, {"reset_reason": ""}
     ) == ""
+
+
+def test_pwa_client_profile_hides_client_tools_and_enables_tool_events():
+    profile = _resolve_client_profile(
+        SimpleNamespace(headers={}),
+        "shenyu-pwa",
+        SimpleNamespace(client_tool_surface="all"),
+    )
+
+    assert profile["client_tool_surface"] == "none"
+    assert profile["emit_tool_events"] is True
+    assert profile["tool_event_protocol"] == "sse+json"
 
 
 def test_context_overflow_defaults_to_20_percent_with_bounds():

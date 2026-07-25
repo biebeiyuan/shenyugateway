@@ -2198,6 +2198,21 @@ def test_none_client_surface_keeps_gateway_tools_only():
     assert [tool["function"]["name"] for tool in merged] == ["shenyu_gateway_tool"]
 
 
+def test_client_profile_can_hide_client_tools_without_hiding_gateway_tools():
+    cfg = _cfg(client_tool_surface="all")
+    client_tools = [
+        {"type": "function", "function": {"name": "read_file", "parameters": {"type": "object"}}},
+    ]
+
+    merged = merge_tools(
+        client_tools,
+        cfg,
+        meta={"client_profile": {"client_tool_surface": "none"}},
+    )
+
+    assert [tool["function"]["name"] for tool in merged] == ["shenyu_gateway_tool"]
+
+
 def test_room_mode_exposes_room_tools_directly_without_broker():
     cfg = _cfg()
     client_tool = {

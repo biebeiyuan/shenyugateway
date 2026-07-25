@@ -51,12 +51,16 @@ class ContextBuilder:
         self.stable_charter_block = stable_charter_block
         self.is_hisense_client = is_hisense_client
 
-    def _layer_settings(self) -> ContextLayerSettings:
+    def _layer_settings(self, *, client_tool_surface: Optional[str] = None) -> ContextLayerSettings:
         return ContextLayerSettings(
             enable_gateway_tools=bool(getattr(self.cfg, "enable_upstream_tools", True))
             and bool(getattr(self.cfg, "enable_gateway_tools", True)),
             heartbeat_prompt=_HEARTBEAT_PROMPT,
-            client_tool_surface=getattr(self.cfg, "client_tool_surface", "all"),
+            client_tool_surface=(
+                client_tool_surface
+                if client_tool_surface is not None
+                else getattr(self.cfg, "client_tool_surface", "all")
+            ),
         )
 
     async def calendar_context_pages(self) -> dict[str, list[dict[str, Any]]]:
@@ -447,11 +451,27 @@ class ContextBuilder:
             return hbs[0]["content"]
         return ""
 
-    def render_layered_additions(self, package: dict) -> dict:
-        return _render_layered_additions(package, self._layer_settings())
+    def render_layered_additions(
+        self,
+        package: dict,
+        *,
+        client_tool_surface: Optional[str] = None,
+    ) -> dict:
+        return _render_layered_additions(
+            package,
+            self._layer_settings(client_tool_surface=client_tool_surface),
+        )
 
-    def render_system_additions(self, package: dict) -> str:
-        return _render_system_additions(package, self._layer_settings())
+    def render_system_additions(
+        self,
+        package: dict,
+        *,
+        client_tool_surface: Optional[str] = None,
+    ) -> str:
+        return _render_system_additions(
+            package,
+            self._layer_settings(client_tool_surface=client_tool_surface),
+        )
 
     async def preview(self, session_tag: Optional[str]) -> dict:
         session = self.store.get_session_by_tag(session_tag or "default") if session_tag else None

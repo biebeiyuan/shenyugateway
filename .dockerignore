@@ -7,5 +7,7 @@ data/
 
 admin/node_modules/
 admin/dist/
+pwa/node_modules/
+pwa/dist/
 
 *.log

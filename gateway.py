@@ -351,12 +351,16 @@ app.add_middleware(
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type"],
+    allow_headers=["Authorization", "Content-Type", "X-Shenyu-Client", "X-Shenyu-Session-Tag", "X-Shenyu-Tool-Events"],
 )
 
 ADMIN_DIST_DIR = Path(__file__).parent / "admin" / "dist"
 if (ADMIN_DIST_DIR / "assets").exists():
     app.mount("/admin/assets", StaticFiles(directory=ADMIN_DIST_DIR / "assets"), name="admin-assets")
+
+PWA_DIST_DIR = Path(__file__).parent / "pwa" / "dist"
+if PWA_DIST_DIR.exists():
+    app.mount("/chat", StaticFiles(directory=PWA_DIST_DIR, html=True), name="pwa-chat")
 
 
 from shenyu_gateway.middleware import register_middlewares

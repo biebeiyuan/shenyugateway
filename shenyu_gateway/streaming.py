@@ -87,6 +87,25 @@ def _stream_keepalive_event(model: str, *, chunk_id: Optional[str] = None, creat
     return _stream_content_event(model, "", finish_reason=None, chunk_id=chunk_id, created=created)
 
 
+def _stream_tool_event(
+    model: str,
+    event: dict[str, Any],
+    *,
+    chunk_id: Optional[str] = None,
+    created: Optional[int] = None,
+) -> str:
+    """Emit a client-opt-in SSE event without changing OpenAI chat chunks."""
+    body = {
+        "type": "shenyu.tool_event",
+        "object": "shenyu.tool_event",
+        "id": chunk_id or _new_stream_chunk_id(),
+        "created": created if created is not None else _now_ts(),
+        "model": model,
+        "event": event,
+    }
+    return f"event: shenyu_tool\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+
 def _sse_response(generator) -> StreamingResponse:
     return StreamingResponse(
         generator,

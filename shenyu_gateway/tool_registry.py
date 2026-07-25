@@ -174,7 +174,9 @@ def _gateway_tool_surface(cfg: Any) -> str:
     return value if value in {"full", "daily"} else "full"
 
 
-def _client_tool_surface(cfg: Any) -> str:
+def _client_tool_surface(cfg: Any, override: Any = None) -> str:
+    if override is not None:
+        return normalize_client_tool_surface(override)
     return normalize_client_tool_surface(getattr(cfg, "client_tool_surface", "all"))
 
 
@@ -209,9 +211,14 @@ def _is_daily_client_tool(name: str) -> bool:
     return any(lowered.startswith(prefix) for prefix in DAILY_CLIENT_TOOL_PREFIXES)
 
 
-def _filter_client_tools_for_surface(client_tools: Optional[list[dict]], cfg: Any) -> list[dict]:
+def _filter_client_tools_for_surface(
+    client_tools: Optional[list[dict]],
+    cfg: Any,
+    *,
+    surface_override: Any = None,
+) -> list[dict]:
     tools = list(client_tools or [])
-    surface = _client_tool_surface(cfg)
+    surface = _client_tool_surface(cfg, surface_override)
     if surface == "all":
         return tools
     if surface == "none":
@@ -288,7 +295,13 @@ def gateway_native_tools(cfg: Any) -> list[dict]:
 def merge_tools(client_tools: Optional[list[dict]], cfg: Any, *, meta: Optional[dict] = None) -> list[dict]:
     if not _upstream_tools_enabled(cfg):
         return []
-    filtered_client_tools = _filter_client_tools_for_surface(client_tools, cfg)
+    profile = meta.get("client_profile") if isinstance(meta, dict) else None
+    surface_override = profile.get("client_tool_surface") if isinstance(profile, dict) else None
+    filtered_client_tools = _filter_client_tools_for_surface(
+        client_tools,
+        cfg,
+        surface_override=surface_override,
+    )
 
     # Room mode: keep client tools + direct room tools, drop normal gateway tools
     if meta and meta.get("is_room"):

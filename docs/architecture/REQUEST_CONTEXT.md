@@ -420,6 +420,34 @@ Preserve browser access behavior:
 - `OPTIONS` requests must bypass auth so CORS preflight is not rejected.
 - CORS must continue to allow `https://home.yuanuwuclaude.uk`, `https://yuanuwuclaude.uk`, `http://localhost:8005`, `http://127.0.0.1:8005`, `http://localhost:5500`, `http://127.0.0.1:5500`, and `null`.
 
+The PWA client profile uses `X-Shenyu-Client: shenyu-pwa`. That profile hides client-provided tool
+schemas while keeping gateway-native tools (`shenyu_*`, `supabase_*`, and `room_*`) available. It also
+emits a client-neutral tool execution event for UI mapping. Other clients may opt into the same event
+stream with `X-Shenyu-Tool-Events: 1`. The PWA reads the same-origin `shenyu_upstream_presets` entries
+used by the Admin Config page and applies a selected preset through `POST /api/config`; this changes
+the fixed default upstream configuration, not the PWA client identity, session semantics, memory
+surface, or tool event contract.
+
+Cross-client conversation continuity is keyed by `X-Shenyu-Session-Tag`, not by `X-Shenyu-Client`.
+`X-Shenyu-Client` only selects the client capability profile. Operit and PWA can therefore share one
+conversation by sending the same session tag; the gateway updates the session's last client name but
+does not create a second session. PWA also accepts `/chat/?session_tag=<tag>` for an explicit handoff and
+offers an explicit `接入线程` action that loads a selected existing session before sending. A new or
+different tag intentionally starts a separate session, so a client must preserve its original tag when
+switching back.
+
+For streaming chat, tool events are separate SSE events and do not alter OpenAI-compatible chat chunks:
+
+```text
+event: shenyu_tool
+data: {"type":"shenyu.tool_event","event":{"phase":"tool_start",...}}
+```
+
+The event payload contains `phase` (`tool_start` or `tool_end`), `tool_call_id`, `name`, `target_tool`,
+`round`, and completion metadata such as `ok`, `cached`, `duration_ms`, and `error_kind`. Arguments and
+tool results are intentionally omitted. Non-streaming responses expose the same list under
+`shenyu.tool_events`. A client should treat a tool round as complete only after its `tool_end` event.
+
 Preserve these response contracts:
 
 - `GET /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal|hisense` returns `heartbeats`; each item must include at least `content` and `created_at`. `scope=normal` reads `heartbeat_entries`; `scope=hisense` reads `hisense_heartbeat`.

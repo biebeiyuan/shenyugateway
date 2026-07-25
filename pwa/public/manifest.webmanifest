@@ -1,0 +1,17 @@
+{
+  "name": "Claude",
+  "short_name": "Claude",
+  "start_url": "/chat/",
+  "display": "standalone",
+  "background_color": "#f8f8f6",
+  "theme_color": "#f8f8f6",
+  "lang": "en",
+  "icons": [
+    {
+      "src": "/chat/brand-mark.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ]
+}

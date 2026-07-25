@@ -8,6 +8,16 @@ RUN npm ci
 COPY admin ./
 RUN npm run build
 
+FROM node:20-slim AS pwa-builder
+
+WORKDIR /pwa
+
+COPY pwa/package*.json ./
+RUN npm ci
+
+COPY pwa ./
+RUN npm run build
+
 FROM python:3.12-slim
 
 WORKDIR /app
@@ -32,6 +42,7 @@ COPY docs/architecture/SYSTEM_ZONES.md ./docs/architecture/SYSTEM_ZONES.md
 COPY scripts/backfill_chat_archive.py ./scripts/backfill_chat_archive.py
 COPY scripts/resident_home.py ./scripts/resident_home.py
 COPY --from=admin-builder /admin/dist ./admin/dist
+COPY --from=pwa-builder /pwa/dist ./pwa/dist
 
 EXPOSE 8010
 

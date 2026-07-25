@@ -9,6 +9,8 @@ admin/node_modules/
 admin/dist/
 admin/playwright-report/
 admin/test-results/
+pwa/node_modules/
+pwa/dist/
 
 *.log
 tmp_gateway_log_*.json

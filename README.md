@@ -17,7 +17,7 @@ Coding agent 先遵守 **`AGENTS.md`**，再读 **`START_HERE.md`**；人直接�
 ## Current Architecture
 
 ```text
-Operit
+Operit / PWA chat
   -> Shenyu Gateway
        -> ContextBuilder
        -> GatewayStore (SQLite runtime state)
@@ -195,6 +195,17 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/playwright.config.ts`: isolated local gateway, temporary SQLite, authentication, and browser settings for Admin smoke tests.
 - `scripts/admin_preview.py`: isolated built-Admin preview launcher that disables repository `.env`, external stores, archives, and background workers.
 
+### PWA chat frontend
+
+- `pwa/src/App.vue`: ChatNest-inspired mobile chat surface, Claude-style Projects/Artifacts/Memory/Diary workspace shells, gateway-backed Recents with local fallback, edit/retry actions, image previews, Console-synced model/preset selector, and warm tool/thinking trace copy.
+- `pwa/src/markdown.ts`: sanitized Markdown rendering with Highlight.js code highlighting.
+- `pwa/src/toolLanguage.ts`: gateway tool-name normalization and resident-facing warm action copy.
+- `pwa/src/styles.css`: responsive chat layout, bottom sheets, message actions, and tool trace states.
+- `pwa/public/manifest.webmanifest` / `pwa/public/sw.js`: installable PWA shell; the service worker never caches `/v1/` or `/api/` responses.
+- `pwa/vite.config.ts`: isolated development server on port `5174` with `/v1`, `/api`, and `/admin` proxies to the gateway.
+- `Dockerfile` + `gateway.py`: production PWA build and static `/chat/` mount served by the same gateway origin as `/admin/`.
+- Cross-client handoff uses the existing `X-Shenyu-Session-Tag`: `X-Shenyu-Client` identifies the surface, while the session tag keeps Operit and PWA on one gateway thread. PWA's `接入线程` action loads a selected existing thread before sending, and `/chat/?session_tag=<tag>` supports an exact handoff.
+
 ### 按产品对象反查
 
 `Maintenance Map` 解决“文件在哪里”；这张小表解决“我看到产品里的哪个东西，应该从哪里进去”。它是反查索引，不替代路径地图，也不要求为每个私有 helper 再建一条记录。
@@ -203,6 +214,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 |----------|-----------------|----------|-----------|----------|
 | 共享书架 | `家现在`、`我是谁`、`来历书`（旧内部名：矛盾书） | `resident_books.py`、`conflict_books.py` | `admin/src/api/books.ts`、`ConflictView.vue`、`bookshelf/HomeBookModal.vue` | `REQUEST_CONTEXT.md` § Generated home and living identity / Origin books |
 | 家里地图 | 给圆圆的项目地图、Owner map | `project_map.py` | `GET /api/project-map`、`admin/src/api/books.ts`、`bookshelf/ProjectMapBookModal.vue` | `SYSTEM_ZONES.md`、`REQUEST_CONTEXT.md` § Owner-only project map |
+| PWA 聊天端 | 手机聊天、独立 PWA、`shenyu-pwa` 客户端 | `pwa/src/App.vue`、`shenyu_gateway/chat_pipeline.py`、`streaming.py` | `GET /v1/models`、`POST /v1/chat/completions`、`X-Shenyu-Tool-Events`、`shenyu_upstream_presets` | `SYSTEM_ZONES.md` § 客户端表面、`REQUEST_CONTEXT.md` § External Frontend Contracts |
 | Memory Island | Stars + Mem 当前岛 | `memory_island.py`、`context_builder.py` | `admin/src/api/logs.ts`、`LogsView.vue` | `REQUEST_CONTEXT.md`、`MEMORY_ROOM.md` |
 | Stars | 星星 / 关联记忆 | `shenyu_gateway/stars/` | `admin/src/api/stars.ts`、`StarsView.vue`、`views/stars/` | `MEMORY_ROOM.md` § Star Memory Layer |
 | Mem | Mem Notes / 便签 | `shenyu_gateway/mem_notes/`、`mem_notes_relevance.py` | `admin/src/api/mem0.ts`、`Mem0View.vue` | `MEMORY_ROOM.md` § Mem Note Layer |
@@ -352,10 +364,11 @@ Open `http://localhost:5173` for frontend dev — Vite proxies `/api` and `/heal
 # Install backend dependencies
 pip install -r requirements.txt
 
-# Build the admin frontend
+# Build both browser frontends
 cd admin && npm ci && npm run build && cd ..
+cd pwa && npm ci && npm run build && cd ..
 
-# Start the gateway (serves built admin from dist/)
+# Start the gateway (serves built Admin and PWA frontends)
 python gateway.py
 ```
 
@@ -365,11 +378,14 @@ UI routes:
 
 ```text
 http://localhost:8010/admin
+http://localhost:8010/chat/
 ```
 
 `/` redirects to `/admin`, so the admin login is the single main browser entrypoint. The same gateway key protects `/admin` and `/api/*`.
 
-`/admin` is the formal Vue/Vite admin app. It is organized by feature:
+`/admin` is the formal Vue/Vite admin app. `/chat/` is the installable PWA client. They share the gateway origin, so the PWA can reuse the Admin login cookie/token and the Admin Config page's `shenyu_upstream_presets` localStorage entries.
+
+`/admin` is organized by feature:
 
 - `admin/src/api/config.ts`: gateway and upstream configuration.
 - `admin/src/api/mem0.ts`: Mem config, mem-note review APIs, and old atomic read-only lookup.
@@ -450,16 +466,17 @@ If local sessions, context snapshots, pending tool turns, persisted request-log 
 | Environment | Command | URL |
 |---|---|---|
 | Local dev | `cd admin && npm run dev` | `http://localhost:5173` (hot reload) |
+| PWA dev | `cd pwa && npm run dev -- --host 0.0.0.0` | `http://localhost:5174/chat/` (gateway proxy on `8010`) |
 | Isolated full preview | `cd admin && npm run preview:isolated` | `http://127.0.0.1:18112/admin/` (no `.env`, Supabase, archives, or workers) |
-| Production | `cd admin && npm run build` → served by Python from `dist/` | `https://your-domain/admin` |
+| Production | Docker builds `admin` + `pwa` → served by Python from `dist/` | `https://your-domain/admin/`, `https://your-domain/chat/` |
 
 **Before each deploy to Coolify:**
-1. Make frontend changes in `.vue` files.
-2. Run `cd admin && npm run build` to update `dist/`.
-3. Commit and push — Coolify picks up the new built assets.
+1. Make frontend changes in `admin/` or `pwa/`.
+2. Run the matching frontend build locally (`npm run build`) before handoff.
+3. Commit and push the reviewed change. Coolify rebuilds the Dockerfile when its Git service has auto-deploy/webhooks enabled for the tracked branch; the Dockerfile now runs both frontend builds, so no `dist/` directory needs to be committed.
+4. After the deployment is healthy, open `/admin/` once to log in, then open `/chat/` on the same domain. The PWA's preset selector reads the same-origin Admin preset store.
 
 ### Future improvements (when needed)
 
-- GitHub Action to auto-build `admin/` on push, so `dist/` doesn't need to be committed.
-- Coolify build step to run `npm ci && npm run build` inside the Dockerfile instead of committing `dist/`.
+- Keep the Dockerfile's Admin/PWA build stages aligned with their `package-lock.json` files.
 - Add `CALENDAR_UPSTREAM_URL` etc. env var passthrough to the admin config page.

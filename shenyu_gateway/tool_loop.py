@@ -30,6 +30,7 @@ from .streaming import (
     _stream_keepalive_event,
     _stream_reasoning_event,
     _stream_role_event,
+    _stream_tool_event,
     close_stream_reader,
     read_next_stream_chunk,
 )
@@ -224,6 +225,55 @@ def _tool_call_cache_key(name: str, args: dict) -> str:
     return f"{name}:{args_text}"
 
 
+def _tool_events_enabled(ctx: InternalToolLoopContext) -> bool:
+    profile = ctx.meta.get("client_profile") if isinstance(ctx.meta, dict) else None
+    return bool(isinstance(profile, dict) and profile.get("emit_tool_events"))
+
+
+def _record_tool_event(
+    ctx: InternalToolLoopContext,
+    *,
+    phase: str,
+    tool_call: dict,
+    name: str,
+    round_index: int,
+    cached: Optional[bool] = None,
+    result: Optional[dict] = None,
+    duration_ms: Optional[int] = None,
+) -> Optional[dict]:
+    if not _tool_events_enabled(ctx):
+        return None
+    args = _tool_call_arguments(tool_call)
+    event = {
+        "phase": phase,
+        "tool_call_id": str(tool_call.get("id") or ""),
+        "name": name,
+        "target_tool": _target_tool_name(name, args),
+        "round": round_index + 1,
+    }
+    if cached is not None:
+        event["cached"] = bool(cached)
+    if duration_ms is not None:
+        event["duration_ms"] = max(0, int(duration_ms))
+    if result is not None:
+        raw_ok = result.get("ok") if isinstance(result, dict) else None
+        event["ok"] = raw_ok if isinstance(raw_ok, bool) else None
+        if isinstance(result, dict) and result.get("error_kind"):
+            event["error_kind"] = str(result["error_kind"])
+    ctx.meta.setdefault("tool_events", []).append(event)
+    if ctx.log_entry is not None:
+        ctx.log_entry.setdefault("tool_events", []).append(event)
+    return event
+
+
+def _attach_tool_events(completion: dict, ctx: InternalToolLoopContext) -> dict:
+    events = ctx.meta.get("tool_events") if isinstance(ctx.meta, dict) else None
+    if not events:
+        return completion
+    completion.setdefault("shenyu", {})["tool_events"] = json.loads(_json_dumps(events))
+    return completion
+
+
 async def _execute_mixed_gateway_tool_calls(
     ctx: InternalToolLoopContext,
     completion: dict,
@@ -360,15 +410,32 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
                 round_log,
                 latest_user_text=latest_user_text,
             )
-            return completion
+            return _attach_tool_events(completion, ctx)
 
         _append_assistant_tool_call_message(working_messages, completion, tool_calls, round_log)
         for tool_call in tool_calls:
+            _record_tool_event(
+                ctx,
+                phase="tool_start",
+                tool_call=tool_call,
+                name=_tool_call_name(tool_call),
+                round_index=round_index,
+            )
             result, args, name, cached, duration_ms = await _execute_internal_tool_call(
                 ctx,
                 tool_call,
                 tool_result_cache,
                 log_label="Internal tool call failed",
+            )
+            _record_tool_event(
+                ctx,
+                phase="tool_end",
+                tool_call=tool_call,
+                name=name,
+                round_index=round_index,
+                cached=cached,
+                result=result,
+                duration_ms=duration_ms,
             )
             _append_tool_round_log(round_log, name, args, cached, result, duration_ms=duration_ms)
             working_messages.append(_tool_result_message(tool_call, name, result))
@@ -545,11 +612,35 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
 
         _append_assistant_tool_call_message(working_messages, completion, tool_calls, round_log)
         for tool_call in tool_calls:
+            started_event = _record_tool_event(
+                ctx,
+                phase="tool_start",
+                tool_call=tool_call,
+                name=_tool_call_name(tool_call),
+                round_index=round_index,
+            )
+            if started_event:
+                yield _stream_tool_event(
+                    ctx.body.model,
+                    started_event,
+                    chunk_id=stream_chunk_id,
+                    created=stream_created,
+                )
             result, args, name, cached, duration_ms = await _execute_internal_tool_call(
                 ctx,
                 tool_call,
                 tool_result_cache,
                 log_label="Internal stream tool call failed",
+            )
+            finished_event = _record_tool_event(
+                ctx,
+                phase="tool_end",
+                tool_call=tool_call,
+                name=name,
+                round_index=round_index,
+                cached=cached,
+                result=result,
+                duration_ms=duration_ms,
             )
             _append_tool_round_log(round_log, name, args, cached, result, duration_ms=duration_ms)
             working_messages.append(_tool_result_message(tool_call, name, result))
@@ -558,6 +649,13 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                     ctx.log_entry["status"] = "client_disconnected"
                     ctx.log_entry["error"] = "Client disconnected during native internal gateway tool execution."
                 return
+            if finished_event:
+                yield _stream_tool_event(
+                    ctx.body.model,
+                    finished_event,
+                    chunk_id=stream_chunk_id,
+                    created=stream_created,
+                )
             yield _stream_keepalive_event(ctx.body.model, chunk_id=stream_chunk_id, created=stream_created)
 
     raise HTTPException(status_code=500, detail="Exceeded internal gateway tool rounds.")

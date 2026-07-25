@@ -330,6 +330,10 @@ _PASSTHROUGH_RESERVED_HEADERS = {
 }
 
 
+def _is_passthrough_reserved_header(normalized: str) -> bool:
+    return normalized in _PASSTHROUGH_RESERVED_HEADERS or normalized.startswith("x-shenyu-")
+
+
 def forwarded_client_headers(request: Any, cfg: Any) -> dict[str, str]:
     """Return whitelisted client headers to forward to the upstream.
 
@@ -348,7 +352,7 @@ def forwarded_client_headers(request: Any, cfg: Any) -> dict[str, str]:
     seen: set[str] = set()
     for name in whitelist:
         normalized = str(name or "").strip().lower()
-        if not normalized or normalized in seen or normalized in _PASSTHROUGH_RESERVED_HEADERS:
+        if not normalized or normalized in seen or _is_passthrough_reserved_header(normalized):
             continue
         seen.add(normalized)
         value = request.headers.get(normalized)

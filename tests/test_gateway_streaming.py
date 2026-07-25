@@ -57,6 +57,7 @@ from shenyu_gateway.tool_loop import (
     InternalToolLoopContext,
     _execute_mixed_gateway_tool_calls,
     _extract_tool_calls,
+    _attach_tool_events,
     _record_round_usage,
     _tool_call_name,
     run_internal_tool_loop_stream,
@@ -2228,7 +2229,10 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
             request=_DisconnectProbe(),
             body=Body(),
             prepared_messages=[{"role": "user", "content": "list mem"}],
-            meta={"session": {"id": "session-1", "session_tag": "5.15"}},
+            meta={
+                "session": {"id": "session-1", "session_tag": "5.15"},
+                "client_profile": {"emit_tool_events": True},
+            },
             log_entry={},
             cfg=Cfg(),
             store=None,
@@ -2250,11 +2254,12 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
             record_response_text=lambda log_entry, text: log_entry.__setitem__("response_text", text),
         )
 
-        events = [
+        all_events = [
             event
             async for event in run_internal_tool_loop_stream(ctx)
-            if isinstance(event, str) and event.startswith("data: ")
+            if isinstance(event, str)
         ]
+        events = [event for event in all_events if event.startswith("data: ")]
 
         assert executed_tools == [
             ("shenyu_gateway_tool", {"tool": "shenyu_list_mem_notes", "arguments": {}})
@@ -2273,6 +2278,10 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
         assert "upstream_duration_ms" in rounds[1]
         assert any('"content": "done"' in event for event in events)
         assert not any('"function": {"name": ""' in event for event in events)
+        tool_events = [event for event in all_events if event.startswith("event: shenyu_tool")]
+        assert len(tool_events) == 2
+        assert '"phase": "tool_start"' in tool_events[0]
+        assert '"phase": "tool_end"' in tool_events[1]
 
     asyncio.run(run_case())
 
@@ -2816,6 +2825,20 @@ def test_execute_mixed_gateway_tool_calls_stores_hidden_result_and_returns_only_
             assert "<gateway_tool_results>" not in response_text
 
     asyncio.run(run_case())
+
+
+def test_tool_events_are_attached_to_nonstream_completion():
+    ctx = SimpleNamespace(
+        meta={
+            "tool_events": [
+                {"phase": "tool_end", "name": "shenyu_list_mem_notes", "ok": True},
+            ]
+        }
+    )
+
+    completion = _attach_tool_events({"choices": []}, ctx)
+
+    assert completion["shenyu"]["tool_events"][0]["name"] == "shenyu_list_mem_notes"
 
 
 def test_execute_mixed_gateway_tool_calls_keeps_client_call_when_gateway_call_fails():

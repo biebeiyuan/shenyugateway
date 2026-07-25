@@ -44,6 +44,21 @@ from .tool_registry import is_gateway_native_tool
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
+def _resolve_client_profile(request: Request, client_name: str, cfg: Any) -> dict[str, Any]:
+    """Resolve client-facing capabilities without changing provider behavior."""
+    normalized_name = (client_name or "").strip().casefold()
+    pwa_client = normalized_name in {"shenyu-pwa", "pwa", "shenyu-web"}
+    requested_events = (request.headers.get("X-Shenyu-Tool-Events") or "").strip().casefold()
+    emit_tool_events = pwa_client or requested_events in {"1", "true", "yes", "on"}
+    configured_surface = str(getattr(cfg, "client_tool_surface", "all") or "all").strip().lower()
+    return {
+        "name": client_name or "unknown-client",
+        "client_tool_surface": "none" if pwa_client else configured_surface,
+        "emit_tool_events": emit_tool_events,
+        "tool_event_protocol": "sse+json" if emit_tool_events else "none",
+    }
+
+
 def _assistant_lineage(messages: list[dict], stored_messages: list[dict]) -> dict[str, Any]:
     client_text = next(
         (
@@ -354,6 +369,7 @@ async def prepare_messages(
 
     client_name = deps.client_name_from_request(request)
     session_tag = deps.session_tag_from_request(request, client_name=client_name)
+    client_profile = _resolve_client_profile(request, client_name, cfg)
     session = sessions.open_session(session_tag=session_tag, client_name=client_name)
     _mark_request_log_phase(
         log_entry,
@@ -429,7 +445,7 @@ async def prepare_messages(
             int(window_state.get("window_start_index") or 0) - len(bridge_messages),
         )
         cold_start_snapshot = None
-    client_tool_surface = str(getattr(cfg, "client_tool_surface", "all") or "all").strip().lower()
+    client_tool_surface = client_profile["client_tool_surface"]
     messages, tool_system_trim_meta = _trim_client_tool_system_messages(
         messages,
         surface=client_tool_surface,
@@ -546,6 +562,7 @@ async def prepare_messages(
             "context_event": event_meta,
             "is_hisense": False,
             "is_room": True,
+            "client_profile": client_profile,
             "upstream": upstream,
         }
 
@@ -584,7 +601,10 @@ async def prepare_messages(
             "calendar_days": len((package.get("calendar_context") or {}).get("day") or []),
         },
     )
-    layers = builder.render_layered_additions(package)
+    layers = builder.render_layered_additions(
+        package,
+        client_tool_surface=client_profile["client_tool_surface"],
+    )
     window_state["island_state"] = package.get("memory_island_state") or {}
     _mark_request_log_phase(
         log_entry,
@@ -632,5 +652,6 @@ async def prepare_messages(
         "context_window_state": window_state,
         "context_event": event_meta,
         "is_hisense": is_hisense,
+        "client_profile": client_profile,
         "upstream": upstream,
     }
