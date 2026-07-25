@@ -232,6 +232,10 @@ function modelDescription(model?: ModelOption): string {
   return currentPreset.value ? `${currentPreset.value.name} model` : 'Default gateway model'
 }
 
+function modelUpstreamId(model?: ModelOption): string {
+  return model?.id || selectedModel.value
+}
+
 function loadMessages(): UiMessage[] {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_MESSAGES) || '[]')
@@ -1129,6 +1133,7 @@ onMounted(async () => {
                 <span class="model-info">
                   <span class="model-name">{{ modelLabel(model) }}</span>
                   <span class="model-desc">{{ modelDescription(model) }}</span>
+                  <code v-if="model.id !== 'default'" class="model-upstream-id">上游：{{ modelUpstreamId(model) }}</code>
                 </span>
                 <Check v-if="model.id === selectedModel" class="model-check" :size="18" />
               </button>
@@ -1198,6 +1203,7 @@ onMounted(async () => {
                 <span class="model-info">
                   <span class="model-name">{{ modelLabel(model) }}</span>
                   <span class="model-desc">{{ modelDescription(model) }}</span>
+                  <code v-if="model.id !== 'default'" class="model-upstream-id">上游：{{ modelUpstreamId(model) }}</code>
                 </span>
                 <Check v-if="model.id === selectedModel" class="model-check" :size="18" />
               </button>

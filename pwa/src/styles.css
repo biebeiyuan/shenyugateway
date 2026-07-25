@@ -267,6 +267,7 @@ button:disabled { cursor: default; }
 .model-info { display: flex; min-width: 0; flex: 1; flex-direction: column; }
 .model-name { font: 400 16px/1.25 var(--font-sans); }
 .model-desc, .effort-option-desc { margin-top: 3px; color: var(--text-secondary); font: 400 13px/1.35 var(--font-sans); }
+.model-upstream-id { display: block; max-width: 100%; margin-top: 5px; overflow: hidden; color: var(--text-faint); font: 400 11px/1.3 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
 .model-check { flex: none; color: var(--accent); }
 .model-nav-right { display: inline-flex; align-items: center; gap: 8px; color: var(--text-secondary); font: 400 15px/1 var(--font-sans); }
 .effort-option-name { display: inline-flex; align-items: center; gap: 8px; font: 400 16px/1.25 var(--font-sans); }
