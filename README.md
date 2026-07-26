@@ -77,7 +77,7 @@ The codebase is partly layered already:
 
 ### Tools
 
-- `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations (`GatewayToolService`), including Supabase table tools, recall compatibility helpers, heartbeats, notebook, and memory helpers.
+- `shenyu_gateway/gateway_tools/`: gateway-native tool implementations (`GatewayToolService`, package split into mixins like stars/: `_supabase`, `_recall`, `_mem_notes`, `_stars`, `_books`, `_calendar`, `_sessions`, `_windowsill`, `_notebook`, `_compat`, plus shared `_runtime`/`_helpers`/`_base`). `__init__.py` assembles the service and re-exports `configure_gateway_tools` / `get_runtime`.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/tool_schemas.py`: tool JSON schema definitions (separated from registry logic).
 
@@ -239,7 +239,7 @@ When cleaning or refactoring, preserve behavior first and move code by boundary:
 3. Supabase HTTP mechanics belong in `SupabaseClient`; table-specific behavior can live in service classes.
 4. Context data fetching belongs around `ContextBuilder`; layer rendering and message-window assembly belong in `shenyu_gateway/context_layers.py`.
 5. Private response tag filtering and capture helpers belong in `shenyu_gateway/response_capture.py` and `shenyu_gateway/private_capture.py`. When adding a new private block type, update both parser paths and the empty-reply fallback wording.
-6. Gateway-native tool behavior belongs in `shenyu_gateway/gateway_tools.py`; tool schemas, merge logic, and name dispatch belong in `shenyu_gateway/tool_registry.py`. Keep tool descriptions short: one-line purpose plus backing table/pool.
+6. Gateway-native tool behavior belongs in `shenyu_gateway/gateway_tools/` (one mixin per tool category); tool schemas, merge logic, and name dispatch belong in `shenyu_gateway/tool_registry.py`. Keep tool descriptions short: one-line purpose plus backing table/pool.
 7. Star memory ranking and learning behavior belongs in `shenyu_gateway/stars/`; tool exposure belongs in `tool_registry.py`; admin-only API routes belong in `gateway_admin_routes.py`; frontend controls belong in `admin/src/views/StarsView.vue` and `admin/src/views/stars/`.
 8. Upstream protocol conversion belongs in `shenyu_gateway/upstream_adapter.py`; request routing, HTTP calls, and streaming iteration belong in `shenyu_gateway/upstream_client.py`.
 9. External frontend contracts below are not dead code just because admin UI does not import them.

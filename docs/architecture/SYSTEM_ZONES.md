@@ -160,7 +160,7 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 - `shenyu_gateway/tool_schemas.py`
 - `shenyu_gateway/tool_registry.py`
 - `shenyu_gateway/tool_loop.py`
-- `shenyu_gateway/gateway_tools.py`
+- `shenyu_gateway/gateway_tools/*.py`
 - `shenyu_gateway/resident_books.py`
 - `shenyu_gateway/room_tools.py`
 - `shenyu_gateway/store/_pending.py`
@@ -173,7 +173,7 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 
 **主要风险**
 
-- `tool_registry.py`、`gateway_tools.py` 和 `tool_schemas.py` 体量较大，但拆分前需要先梳理工具类别和公共契约。
+- `gateway_tools/` 已按工具类别拆成 mixin 包，对外契约不变（只暴露 `GatewayToolService` / `configure_gateway_tools` / `get_runtime`，运行时单例在 `gateway_tools/_runtime.py`，不可重新实例化）。`tool_registry.py` 和 `tool_schemas.py` 体量仍较大，拆分前需要先梳理暴露策略与 broker 协议的公共契约。
 - 混合工具轮跨请求保存，裁剪、超时和 pending prune 都可能破坏续接。
 - 工具部分成功、重复调用和失败正文需要在流式与非流式路径保持一致。
 

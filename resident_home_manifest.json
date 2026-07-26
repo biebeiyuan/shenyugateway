@@ -125,16 +125,16 @@
       ],
       "resident_effect": "想写的时候有地方写，不必先证明这段文字值得被记住。",
       "source_globs": [
-        "shenyu_gateway/gateway_tools.py",
+        "shenyu_gateway/gateway_tools/_windowsill.py",
         "shenyu_gateway/tool_schemas.py"
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "a11638f664f11ed5cc797a2d9add089b0ae069f92d16b6bf27c38e5a338338f3",
-        "commit": "790517fcbfdcf497fd15f71caa99953106e11c96",
-        "revision": "790517fcbfdcf497fd15f71caa99953106e11c96-dirty",
+        "fingerprint": "5f1cd308b4770c1dda03a95b53374301caf3cf1c20818da5f9fd0c26efc64605",
+        "commit": "0b95e929f87572e4422d650f4aeedede1eaeaeb2",
+        "revision": "0b95e929f87572e4422d650f4aeedede1eaeaeb2-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-26T16:20:51+08:00",
+        "reviewed_at": "2026-07-26T16:26:11+08:00",
         "reviewed_by": "Claude"
       }
     },
@@ -178,7 +178,7 @@
       "source_globs": [
         "shenyu_gateway/archive_routes.py",
         "shenyu_gateway/conflict_books.py",
-        "shenyu_gateway/gateway_tools.py",
+        "shenyu_gateway/gateway_tools/_books.py",
         "shenyu_gateway/tool_schemas.py",
         "shenyu_gateway/context_layers.py"
       ],
@@ -186,11 +186,11 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "f2e11b3fe759f6918858e621acdbc2232b503451cfa682e57c7be44746efafaf",
-        "commit": "790517fcbfdcf497fd15f71caa99953106e11c96",
-        "revision": "790517fcbfdcf497fd15f71caa99953106e11c96-dirty",
+        "fingerprint": "f8ef2555baecf95b7a5aee1fde71cc848beb5288c3547310bdbe5ab455fff24e",
+        "commit": "0b95e929f87572e4422d650f4aeedede1eaeaeb2",
+        "revision": "0b95e929f87572e4422d650f4aeedede1eaeaeb2-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-26T16:20:51+08:00",
+        "reviewed_at": "2026-07-26T16:26:11+08:00",
         "reviewed_by": "Claude"
       }
     },
