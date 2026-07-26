@@ -3,7 +3,6 @@ from __future__ import annotations
 from ._base import GatewayToolServiceBase
 from ._books import BooksToolsMixin
 from ._calendar import CalendarToolsMixin
-from ._compat import CompatToolsMixin
 from ._mem_notes import MemNoteToolsMixin
 from ._notebook import NotebookToolsMixin
 from ._recall import RecallToolsMixin
@@ -37,7 +36,6 @@ class GatewayToolService(
     SessionToolsMixin,
     WindowsillToolsMixin,
     NotebookToolsMixin,
-    CompatToolsMixin,
     GatewayToolServiceBase,
 ):
     pass

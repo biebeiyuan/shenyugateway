@@ -22,13 +22,13 @@ _logger = logging.getLogger(__name__)
 MEM_NOTE_TYPE_ENUM = list(MEM_NOTE_TYPES)
 MEM_NOTE_PATCH_KEYS = MEM_NOTE_PATCH_FIELDS
 HIDDEN_COMPAT_TOOL_NAMES = {
-    "shenyu_surface_passages",
     "shenyu_conflict_list",
     "shenyu_conflict_read",
     "shenyu_conflict_annotate",
 }
 DEPRECATED_COMPAT_TOOL_MESSAGES = {
     "shenyu_ask_memory": "Deprecated gateway tool: shenyu_ask_memory. Use shenyu_recall instead.",
+    "shenyu_surface_passages": "Deprecated gateway tool: shenyu_surface_passages. Use shenyu_recall instead.",
     "shenyu_get_meta_summaries": "Deprecated gateway tool: shenyu_get_meta_summaries.",
     "shenyu_search_primary_texts": "Deprecated gateway tool: shenyu_search_primary_texts. Use shenyu_recall instead.",
 }
@@ -589,15 +589,6 @@ async def _handle_merge_stars(ctx: ToolContext) -> dict:
         chord=ctx.arguments.get("chord", ""),
         is_constant=_bool_arg(ctx.arguments, "is_constant", False),
         metadata=ctx.arguments.get("metadata") if isinstance(ctx.arguments.get("metadata"), dict) else None,
-    )
-
-
-@_tool_handler("shenyu_surface_passages")
-async def _handle_surface_passages(ctx: ToolContext) -> dict:
-    return await ctx.service.surface_passages(
-        query=_query_arg(ctx.arguments),
-        session_tag=ctx.resolved_session_tag,
-        limit=_int_arg(ctx.arguments, "limit", ctx.cfg.default_surface_limit),
     )
 
 

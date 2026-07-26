@@ -8,53 +8,6 @@ from typing import Any, Optional
 from shenyu_gateway.recall import recall_terms
 
 
-def _clamp(value: float, min_value: float, max_value: float) -> float:
-    return max(min_value, min(value, max_value))
-
-
-def _split_paragraph_chunks(text: str, min_len: int = 80, max_len: int = 420) -> list[str]:
-    text = (text or "").strip()
-    if not text:
-        return []
-
-    paragraphs = [part.strip() for part in text.split("\n\n") if part.strip()]
-    chunks: list[str] = []
-    buffer = ""
-
-    for paragraph in paragraphs:
-        candidate = f"{buffer}\n\n{paragraph}".strip() if buffer else paragraph
-        if len(candidate) <= max_len:
-            buffer = candidate
-            continue
-
-        if buffer:
-            chunks.append(buffer)
-            buffer = ""
-
-        if len(paragraph) <= max_len:
-            buffer = paragraph
-            continue
-
-        start_idx = 0
-        while start_idx < len(paragraph):
-            end_idx = min(len(paragraph), start_idx + max_len)
-            piece = paragraph[start_idx:end_idx].strip()
-            if piece:
-                chunks.append(piece)
-            start_idx = end_idx
-
-    if buffer:
-        chunks.append(buffer)
-
-    merged: list[str] = []
-    for chunk in chunks:
-        if merged and len(merged[-1]) < min_len and len(merged[-1]) + len(chunk) + 2 <= max_len:
-            merged[-1] = merged[-1] + "\n\n" + chunk
-        else:
-            merged.append(chunk)
-    return merged
-
-
 def _keyword_terms(query: str) -> list[str]:
     return recall_terms(query)
 

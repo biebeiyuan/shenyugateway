@@ -107,7 +107,6 @@ class ConfigUpdate(BaseModel):
     max_client_messages: Optional[int] = None
     cold_start_message_limit: Optional[int] = None
     cold_start_idle_minutes: Optional[int] = None
-    default_surface_limit: Optional[int] = None
     mem_note_limit: Optional[int] = None
     mem_note_min_score: Optional[float] = None
     mem_note_context_keyword_min_score: Optional[float] = None

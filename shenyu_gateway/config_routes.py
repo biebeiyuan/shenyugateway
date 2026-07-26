@@ -116,7 +116,6 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "max_client_messages": cfg.max_client_messages,
         "cold_start_message_limit": cfg.cold_start_message_limit,
         "cold_start_idle_minutes": cfg.cold_start_idle_minutes,
-        "default_surface_limit": cfg.default_surface_limit,
         "mem_note_limit": cfg.mem_note_limit,
         "mem_note_min_score": cfg.mem_note_min_score,
         "mem_note_context_keyword_min_score": cfg.mem_note_context_keyword_min_score,
@@ -236,7 +235,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "max_client_messages": "MAX_CLIENT_MESSAGES",
             "cold_start_message_limit": "COLD_START_MESSAGE_LIMIT",
             "cold_start_idle_minutes": "COLD_START_IDLE_MINUTES",
-            "default_surface_limit": "DEFAULT_SURFACE_LIMIT",
             "mem_note_limit": "MEM_NOTE_LIMIT",
             "mem_note_min_score": "MEM_NOTE_MIN_SCORE",
             "mem_note_context_keyword_min_score": "MEM_NOTE_CONTEXT_KEYWORD_MIN_SCORE",
@@ -477,10 +475,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.cold_start_idle_minutes = max(1, min(body.cold_start_idle_minutes, 10080))
             changed.append("cold_start_idle_minutes")
             env_updates[env_names["cold_start_idle_minutes"]] = cfg.cold_start_idle_minutes
-        if body.default_surface_limit is not None:
-            cfg.default_surface_limit = max(1, min(body.default_surface_limit, 8))
-            changed.append("default_surface_limit")
-            env_updates[env_names["default_surface_limit"]] = cfg.default_surface_limit
         if body.mem_note_limit is not None:
             cfg.mem_note_limit = max(1, min(body.mem_note_limit, 5))
             changed.append("mem_note_limit")

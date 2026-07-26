@@ -157,7 +157,7 @@
 
 **两个可抽出的内聚子系统**（均经 grep 确认边界）：
 1. **Supabase 过滤 DSL**：`_build_supabase_filter_params`(:1299)、`_build_supabase_operator_params`(:1309)、`_normalize_operator_shape`(:1321)、`_parse_operator_condition`(:1329)、`_looks_like_operator_map`(:1347) —— 纯字符串解析，**无外部调用方**，只被本类的 supabase_query/insert/update/delete 用。
-2. **主文本排序引擎**：`_collect_primary_text_candidates`(:1129)、`_row_to_chunks`(:1189)、`_score_passage`(:1223)、`_why_passage`(:1230)、`_base_salience_for_source`(:1247)、`_body_bonus_for_item`(:1262)、`_recency_score`(:1274) + 模块常量 `_split_paragraph_chunks`/`_keyword_overlap_score`(:51/:98) —— 纯打分。公开入口 `surface_passages`(:740)、`search_primary_texts`(:767) 经 tool_registry handler 和 `calendar_service.py` 到达。（2026-07-26 更新：日历生成链路整体移除后 `calendar_service.py` 不再调用这两个入口；`search_primary_texts` 已随 Phase F 作为死代码删除；`shenyu_surface_passages` 保留为沈予仍可调用的隐藏兼容工具。）
+2. **主文本排序引擎**：`_collect_primary_text_candidates`(:1129)、`_row_to_chunks`(:1189)、`_score_passage`(:1223)、`_why_passage`(:1230)、`_base_salience_for_source`(:1247)、`_body_bonus_for_item`(:1262)、`_recency_score`(:1274) + 模块常量 `_split_paragraph_chunks`/`_keyword_overlap_score`(:51/:98) —— 纯打分。公开入口 `surface_passages`(:740)、`search_primary_texts`(:767) 经 tool_registry handler 和 `calendar_service.py` 到达。（2026-07-26 更新：日历生成链路整体移除后 `calendar_service.py` 不再调用这两个入口；`search_primary_texts` 已随 Phase F 作为死代码删除；`shenyu_surface_passages` 同日随后移除——整个主文本排序引擎（`_compat.py`）已删，此子系统条目作废。）
 
 **改法**（mixin 包，同 `stars/`、`mem_notes/`）：
 ```

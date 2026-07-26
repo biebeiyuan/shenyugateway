@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import random
 from types import SimpleNamespace
 
 from shenyu_gateway.gateway_tools import GatewayToolService
@@ -126,36 +125,6 @@ def test_live_heartbeat_recall_returns_full_content():
 
     assert result["items"][0]["content"] == content
     assert result["items"][0]["has_more"] is False
-
-
-def test_surface_passages_returns_standard_ok_field(monkeypatch):
-    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
-
-    async def fake_collect(session_tag, categories):
-        return [
-            {
-                "source_table": "room",
-                "source_id": "room_1",
-                "title": "海洋馆",
-                "full_text": "长隆海洋馆里有企鹅和海獭。",
-                "excerpt": "长隆海洋馆里有企鹅和海獭。",
-                "created_at": "2026-05-01",
-                "chunk_index": 0,
-                "content_kind": "room",
-                "base_salience": 0.9,
-                "novelty_modifier": 1.0,
-            }
-        ]
-
-    monkeypatch.setattr(service, "_collect_primary_text_candidates", fake_collect)
-    monkeypatch.setattr(random, "random", lambda: 0.0)
-
-    result = asyncio.run(service.surface_passages(query="长隆 海獭", session_tag="5.29", limit=3))
-
-    assert result["ok"] is True
-    assert result["query"] == "长隆 海獭"
-    assert result["count"] == 1
-    assert result["passages"][0]["source_table"] == "room"
 
 
 def test_recall_federation_keeps_internal_scores_out_of_tool_output(monkeypatch):

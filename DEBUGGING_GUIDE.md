@@ -282,7 +282,7 @@ Useful boundary map:
 - `shenyu_list_mem_notes`: visible mem-note browse/review tool; reads Supabase `shenyu_mem_notes`.
 - `shenyu_ask_memory`: deprecated compatibility name; direct or broker calls are rejected with `error_kind=validation`. Use `shenyu_recall` with `source_types=["memory"]`.
 - `shenyu_search_primary_texts`: deprecated compatibility name; direct or broker calls are rejected with `error_kind=validation`. Use `shenyu_recall` with the matching source types.
-- `shenyu_surface_passages`: hidden/internal compatibility handler retained as a compat tool 沈予 can still call; it has no internal gateway consumers and is not part of the visible model tool schema.
+- `shenyu_surface_passages`: removed 2026-07-26 (it was never in the visible tool schema and lost its last consumer with the calendar-generation removal); calling it now returns the deprecation message pointing to `shenyu_recall`.
 - `shenyu_search_mem_notes`: visible mem-note search tool; reads Supabase `shenyu_mem_notes`.
 - `shenyu_read_heartbeat`: gateway tool; reads SQLite `heartbeat_entries`.
 - `supabase_*`: gateway fallback tools for direct Supabase table operations.

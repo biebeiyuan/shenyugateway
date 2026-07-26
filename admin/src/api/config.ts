@@ -99,7 +99,6 @@ export interface GatewayConfig {
   gateway_tool_surface?: string
   client_tool_surface?: string
   max_internal_tool_rounds?: number
-  default_surface_limit?: number
   heartbeat_inject_every?: number
   gateway_message_retention?: number
   gateway_context_snapshot_retention?: number

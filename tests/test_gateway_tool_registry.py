@@ -32,17 +32,6 @@ class FakeToolService:
     def __init__(self):
         self.calls = []
 
-    async def surface_passages(self, query: str, session_tag: str, limit: int):
-        self.calls.append(
-            {
-                "tool": "shenyu_surface_passages",
-                "query": query,
-                "session_tag": session_tag,
-                "limit": limit,
-            }
-        )
-        return {"ok": True, "limit": limit, "session_tag": session_tag}
-
     async def search_mem_notes(
         self,
         query: str,
@@ -561,7 +550,6 @@ def _cfg(
         gateway_tool_mode="broker",
         gateway_tool_surface=gateway_tool_surface,
         client_tool_surface=client_tool_surface,
-        default_surface_limit=3,
         mem_note_limit=3,
         enable_recall_auto_sync=False,
     )
@@ -1241,7 +1229,7 @@ def test_execute_gateway_tool_uses_default_for_invalid_integer_arg():
 
     result = asyncio.run(
         execute_gateway_tool(
-            "shenyu_surface_passages",
+            "shenyu_search_mem_notes",
             {"query": "home", "limit": "not-a-number"},
             session_tag="default",
             cfg=_cfg(),
@@ -1249,8 +1237,8 @@ def test_execute_gateway_tool_uses_default_for_invalid_integer_arg():
         )
     )
 
-    assert result["limit"] == 3
-    assert service.calls[0]["limit"] == 3
+    assert result["limit"] == 20
+    assert service.calls[0]["limit"] == 20
 
 
 def test_execute_gateway_tool_routes_write_mem_note():
@@ -1373,7 +1361,7 @@ def test_execute_gateway_tool_rejects_hidden_primary_text_search_broker_target()
     assert service.calls == []
 
 
-def test_execute_gateway_tool_routes_hidden_surface_passages_for_compat():
+def test_execute_gateway_tool_rejects_deprecated_surface_passages_broker_target():
     service = FakeToolService()
 
     result = asyncio.run(
@@ -1386,15 +1374,12 @@ def test_execute_gateway_tool_routes_hidden_surface_passages_for_compat():
         )
     )
 
-    assert result == {"ok": True, "limit": 2, "session_tag": "5.15"}
-    assert service.calls == [
-        {
-            "tool": "shenyu_surface_passages",
-            "query": "海獭",
-            "session_tag": "5.15",
-            "limit": 2,
-        }
-    ]
+    assert result == {
+        "ok": False,
+        "error": "Deprecated gateway tool: shenyu_surface_passages. Use shenyu_recall instead.",
+        "error_kind": "validation",
+    }
+    assert service.calls == []
 
 
 def test_execute_gateway_tool_rejects_hidden_meta_summaries_broker_target():
@@ -1787,30 +1772,6 @@ def test_execute_gateway_tool_rejects_hidden_primary_text_search_direct_call():
         "error_kind": "validation",
     }
     assert service.calls == []
-
-
-def test_execute_gateway_tool_accepts_q_alias_for_surface_passages():
-    service = FakeToolService()
-
-    result = asyncio.run(
-        execute_gateway_tool(
-            "shenyu_surface_passages",
-            {"q": "海獭", "limit": 2},
-            session_tag="5.15",
-            cfg=_cfg(),
-            service=service,
-        )
-    )
-
-    assert result == {"ok": True, "limit": 2, "session_tag": "5.15"}
-    assert service.calls == [
-        {
-            "tool": "shenyu_surface_passages",
-            "query": "海獭",
-            "session_tag": "5.15",
-            "limit": 2,
-        }
-    ]
 
 
 def test_execute_gateway_tool_accepts_mem_note_id_alias_for_update():

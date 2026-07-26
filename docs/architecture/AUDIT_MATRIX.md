@@ -137,7 +137,7 @@
 - client tool 不由网关执行。
 - 混合调用会保存 pending transcript，下一次客户端带回 tool results 后重建完整消息序列。
 - 内部工具流有最大轮数、重复调用缓存、工具错误分类、keepalive 和断连检查。
-- 当前 34 个公开 gateway tool schema 全部存在 handler；唯一未公开 handler 是明确隐藏的兼容工具 `shenyu_surface_passages`。
+- 当前 34 个公开 gateway tool schema 全部存在 handler；曾经唯一未公开的兼容 handler `shenyu_surface_passages` 已于 2026-07-26 移除（转入废弃提示，指向 `shenyu_recall`）。
 - expanded full/daily 与 broker full/daily surface 的公开集合已运行时对账；broker 只公开统一入口 `shenyu_gateway_tool`。
 
 ### 待验证风险

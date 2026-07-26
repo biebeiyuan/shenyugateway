@@ -162,7 +162,6 @@ class RuntimeConfig:
         self.max_client_messages: Optional[int] = _env_optional_int("MAX_CLIENT_MESSAGES", 75)
         self.cold_start_message_limit: Optional[int] = _env_optional_int("COLD_START_MESSAGE_LIMIT")
         self.cold_start_idle_minutes: int = _env_int("COLD_START_IDLE_MINUTES", 120, 1, 10080)
-        self.default_surface_limit: int = _env_int("DEFAULT_SURFACE_LIMIT", 3, 1, 8)
         self.mem_note_limit: int = _env_int("MEM_NOTE_LIMIT", 3, 1, 5)
         self.mem_note_min_score: float = _env_float("MEM_NOTE_MIN_SCORE", 0.45, 0.0, 1.0)
         self.mem_note_context_keyword_min_score: float = _env_float("MEM_NOTE_CONTEXT_KEYWORD_MIN_SCORE", 0.25, 0.05, 0.9)
@@ -286,7 +285,6 @@ class RuntimeConfig:
             "max_client_messages": self.max_client_messages,
             "cold_start_message_limit": self.cold_start_message_limit,
             "cold_start_idle_minutes": self.cold_start_idle_minutes,
-            "default_surface_limit": self.default_surface_limit,
             "mem_note_limit": self.mem_note_limit,
             "mem_note_min_score": self.mem_note_min_score,
             "mem_note_context_keyword_min_score": self.mem_note_context_keyword_min_score,
