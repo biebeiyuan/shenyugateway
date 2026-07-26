@@ -59,6 +59,8 @@ New features are allowed — encouraged — to start life in one file. Do not pr
 
 When a file settles and grows past roughly 800–1000 lines, split it along its proven seams following the existing mixin-package pattern (`stars/` is the reference: per-domain `_*.py` mixins, one facade class assembled in `__init__.py`, every externally imported symbol re-exported so callers need no changes). Before moving code, grep for import sites, monkeypatch paths, and `resident_home_manifest.json` globs; after moving, run the map checklist above. Splitting is mechanical maintenance, not a design phase — do it when the seams are obvious, not before.
 
+Shared literal contracts — a regex, wire-format string, or config key set that must stay byte-identical across modules or across client/server — live in exactly one home module that every other site imports; `shenyu_gateway/client_extra.py` is the reference (kept free of package-internal imports so importing it can never create a cycle). This rule is deliberately narrow: it covers only literals that must agree verbatim. Code that is merely similar stays where it is, a contract with a single consumer needs no home yet, and such a home must not grow into a general util module.
+
 ### Resident home synchronization
 
 When a runtime, configuration, or architecture change may alter what a resident experiences, run:
@@ -68,6 +70,8 @@ python scripts/resident_home.py check
 ```
 
 For every `review_required` component, record a short resident-facing summary and impact with `review <component> --summary ... --impact ...`, or explicitly acknowledge that the change has no resident impact with `--no-impact`. Write `impact` from the resident's perspective (preferably starting with `你...`); the human report renders it on a fixed `影响：...` line. The command records the current source fingerprint, commit, author, and Asia/Shanghai timestamp itself; do not hand-write those fields. The structured source of truth is `resident_home_manifest.json`, and the weekly ledger is `resident_home_changes.jsonl`.
+
+`check` marks changed files that belong to more than one component with `*`. When every changed file of a flagged component is shared, `python scripts/resident_home.py ack-shared` records the no-impact acknowledgements for all such components in one pass and prints which shared files changed and who consumes them — read that output instead of rubber-stamping components one by one. Components with changes in files they own exclusively still require a full `review`. Register reviews once per work session, after the final fix round; when sub-agents split an implementation, the orchestrating agent records the reviews.
 
 For every new runtime configuration field that is editable in Admin, inspect and update all of these locations before handoff:
 

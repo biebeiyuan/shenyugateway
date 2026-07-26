@@ -97,11 +97,18 @@ def _source_files(component: dict[str, Any], root: Path) -> list[tuple[str, Path
     return sorted(matches.items())
 
 
-def component_fingerprint(component: dict[str, Any], root: Path = ROOT) -> str:
+def _source_state(component: dict[str, Any], root: Path = ROOT) -> tuple[str, dict[str, str]]:
+    """Return (component fingerprint, per-file hashes) in one pass.
+
+    The combined digest must stay byte-identical to the historical
+    ``component_fingerprint`` algorithm — changing it would flag every
+    component as review_required on upgrade.
+    """
     files = _source_files(component, root)
     if not files:
         raise ResidentHomeError("source_globs did not match any files")
     digest = hashlib.sha256()
+    file_hashes: dict[str, str] = {}
     for relative, path in files:
         digest.update(relative.encode("utf-8"))
         digest.update(b"\0")
@@ -111,7 +118,21 @@ def component_fingerprint(component: dict[str, Any], root: Path = ROOT) -> str:
         normalized = path.read_bytes().replace(b"\r\n", b"\n").replace(b"\r", b"\n")
         digest.update(normalized)
         digest.update(b"\0")
-    return digest.hexdigest()
+        file_hashes[relative] = hashlib.sha256(normalized).hexdigest()
+    return digest.hexdigest(), file_hashes
+
+
+def component_fingerprint(component: dict[str, Any], root: Path = ROOT) -> str:
+    return _source_state(component, root)[0]
+
+
+def source_owner_map(manifest: dict[str, Any], root: Path = ROOT) -> dict[str, list[str]]:
+    """Map each mapped source file to the components that claim it."""
+    owners: dict[str, list[str]] = {}
+    for component_id, component in manifest["components"].items():
+        for relative, _ in _source_files(component, root):
+            owners.setdefault(relative, []).append(component_id)
+    return owners
 
 
 def component_status(
@@ -129,9 +150,20 @@ def component_status(
             "error": "source_globs did not match any files",
             "files": [],
         }
-    fingerprint = component_fingerprint(component, root)
+    fingerprint, file_hashes = _source_state(component, root)
     reviewed = component.get("reviewed") or {}
     reviewed_fingerprint = str(reviewed.get("fingerprint") or "")
+    recorded_hashes = reviewed.get("file_hashes")
+    changed_files: list[str] | None = None
+    if isinstance(recorded_hashes, dict) and recorded_hashes:
+        changed_files = sorted(
+            {
+                relative
+                for relative, value in file_hashes.items()
+                if recorded_hashes.get(relative) != value
+            }
+            | (set(recorded_hashes) - set(file_hashes))
+        )
     return {
         "id": component_id,
         "title": component.get("title") or component_id,
@@ -139,6 +171,10 @@ def component_status(
         "fingerprint": fingerprint,
         "reviewed_fingerprint": reviewed_fingerprint,
         "files": [relative for relative, _ in files],
+        "file_hashes": file_hashes,
+        # None means the last review predates per-file baselines and the
+        # change cannot be attributed to specific files.
+        "changed_files": changed_files,
         "reviewed": reviewed,
     }
 
@@ -149,10 +185,17 @@ def check_manifest(
     root: Path = ROOT,
 ) -> list[dict[str, Any]]:
     data = manifest or load_manifest(root / "resident_home_manifest.json")
-    return [
-        component_status(component_id, component, root=root)
-        for component_id, component in data["components"].items()
-    ]
+    owners = source_owner_map(data, root)
+    statuses = []
+    for component_id, component in data["components"].items():
+        status = component_status(component_id, component, root=root)
+        changed = status.get("changed_files")
+        if changed is not None:
+            status["shared_changed_files"] = [
+                relative for relative in changed if len(owners.get(relative) or []) >= 2
+            ]
+        statuses.append(status)
+    return statuses
 
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
@@ -188,6 +231,7 @@ def bootstrap_manifest(
             raise ResidentHomeError(f"{component_id}: {status['error']}")
         component["reviewed"] = {
             "fingerprint": status["fingerprint"],
+            "file_hashes": status["file_hashes"],
             "commit": commit,
             "revision": f"{commit}-dirty" if dirty and commit else commit,
             "worktree_dirty": dirty,
@@ -224,6 +268,7 @@ def review_component(
     reviewer = actor or current_actor(root)
     component["reviewed"] = {
         "fingerprint": status["fingerprint"],
+        "file_hashes": status["file_hashes"],
         "commit": commit,
         "revision": f"{commit}-dirty" if dirty and commit else commit,
         "worktree_dirty": dirty,
@@ -247,6 +292,85 @@ def review_component(
         }
         _append_change(changes_path, event)
     return {"component": component_id, "reviewed": component["reviewed"], "event": event}
+
+
+def ack_shared_components(
+    *,
+    manifest_path: Path = MANIFEST_PATH,
+    root: Path = ROOT,
+    actor: str | None = None,
+) -> dict[str, Any]:
+    """Acknowledge components whose only changes live in shared source files.
+
+    A file is "shared" when at least two components claim it: touching it
+    fans review_required out to every owner even though most of them saw no
+    behavior change of their own. This records the no-impact reviews for all
+    such components in one pass and reports what was acknowledged, so the
+    caller confirms one informed summary instead of rubber-stamping each
+    component blind. Components with changes in files they own exclusively
+    keep requiring a full ``review``.
+    """
+    data = load_manifest(manifest_path)
+    owners = source_owner_map(data, root)
+    stamp = _now().isoformat()
+    commit = current_commit(root)
+    dirty = worktree_dirty(root)
+    reviewer = actor or current_actor(root)
+    acked: list[dict[str, Any]] = []
+    skipped: list[dict[str, Any]] = []
+    shared_files: dict[str, list[str]] = {}
+    for component_id, component in data["components"].items():
+        status = component_status(component_id, component, root=root)
+        if status["status"] == "error":
+            raise ResidentHomeError(f"{component_id}: {status['error']}")
+        if status["status"] == "ok":
+            continue
+        changed = status.get("changed_files")
+        if changed is None:
+            skipped.append(
+                {
+                    "id": component_id,
+                    "reason": "last review has no per-file baseline; use review once to record it",
+                }
+            )
+            continue
+        exclusive = [
+            relative for relative in changed if len(owners.get(relative) or []) < 2
+        ]
+        if not changed or exclusive:
+            skipped.append(
+                {
+                    "id": component_id,
+                    "reason": "changes in files owned by this component need a full review",
+                    "exclusive_files": exclusive,
+                }
+            )
+            continue
+        component["reviewed"] = {
+            "fingerprint": status["fingerprint"],
+            "file_hashes": status["file_hashes"],
+            "commit": commit,
+            "revision": f"{commit}-dirty" if dirty and commit else commit,
+            "worktree_dirty": dirty,
+            "reviewed_at": stamp,
+            "reviewed_by": reviewer,
+        }
+        for relative in changed:
+            shared_files.setdefault(relative, list(owners.get(relative) or []))
+        acked.append({"id": component_id, "changed_files": changed})
+    if acked:
+        _write_json(manifest_path, data)
+    return {"acked": acked, "skipped": skipped, "shared_files": shared_files}
+
+
+def _describe_working_change(relative: str, root: Path = ROOT) -> str:
+    """Best-effort one-line context for what changed in a file."""
+    numstat = _git("diff", "HEAD", "--numstat", "--", relative, root=root)
+    if numstat:
+        added, removed, _ = numstat.split("\t", 2)
+        return f"+{added}/-{removed} uncommitted"
+    last = _git("log", "-1", "--format=%h %s", "--", relative, root=root)
+    return f"committed · {last}" if last else "changed"
 
 
 def load_changes(path: Path = CHANGES_PATH) -> list[dict[str, Any]]:
@@ -351,7 +475,12 @@ def home_snapshot(
                     for key in manifest["components"][status["id"]].get("config_keys", [])
                     if runtime_config is not None and hasattr(runtime_config, key)
                 },
-                "reviewed": status.get("reviewed", {}),
+                # file_hashes is maintenance bookkeeping, not resident-facing.
+                "reviewed": {
+                    key: value
+                    for key, value in (status.get("reviewed") or {}).items()
+                    if key != "file_hashes"
+                },
             }
             for status in statuses
         ],
@@ -370,10 +499,21 @@ def _print_check(statuses: Iterable[dict[str, Any]], *, as_json: bool = False) -
             elif record["status"] == "error":
                 print(f"[error] {record['id']}: {record['error']}")
             else:
-                print(
-                    f"[review required] {record['id']} / {record['title']} "
-                    f"({len(record.get('files') or [])} source files changed)"
-                )
+                changed = record.get("changed_files")
+                if changed is None:
+                    detail = "sources changed since last review"
+                else:
+                    shared = set(record.get("shared_changed_files") or [])
+                    names = [
+                        f"{relative}*" if relative in shared else relative
+                        for relative in changed
+                    ]
+                    detail = f"{len(changed)} changed: " + ", ".join(names[:6])
+                    if len(names) > 6:
+                        detail += f" … +{len(names) - 6}"
+                    if shared:
+                        detail += " (*=shared, ack-shared applies if all are *)"
+                print(f"[review required] {record['id']} / {record['title']} ({detail})")
     return 1 if any(record["status"] != "ok" for record in records) else 0
 
 
@@ -393,6 +533,12 @@ def _build_parser() -> argparse.ArgumentParser:
     review.add_argument("--impact", default="")
     review.add_argument("--no-impact", action="store_true")
     review.add_argument("--actor", default="")
+
+    ack_shared = subparsers.add_parser(
+        "ack-shared",
+        help="No-impact ack for every component whose only changes are in shared source files.",
+    )
+    ack_shared.add_argument("--actor", default="")
 
     report = subparsers.add_parser("report", help="Print the weekly resident change ledger.")
     report.add_argument("--week", default="")
@@ -419,6 +565,20 @@ def main(argv: list[str] | None = None) -> int:
             )
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
+        if args.command == "ack-shared":
+            result = ack_shared_components(actor=args.actor or None)
+            for relative, owner_ids in sorted(result["shared_files"].items()):
+                print(f"[shared] {relative} ← {'/'.join(owner_ids)} · {_describe_working_change(relative)}")
+            for item in result["acked"]:
+                print(f"[acked] {item['id']} ({len(item['changed_files'])} shared file(s))")
+            for item in result["skipped"]:
+                extra = ""
+                if item.get("exclusive_files"):
+                    extra = " — " + ", ".join(item["exclusive_files"])
+                print(f"[needs review] {item['id']}: {item['reason']}{extra}")
+            if not result["acked"] and not result["skipped"]:
+                print("nothing to acknowledge — all components ok")
+            return 1 if result["skipped"] else 0
         grouped = changes_by_week()
         if args.week:
             grouped = {args.week: grouped.get(args.week, [])}

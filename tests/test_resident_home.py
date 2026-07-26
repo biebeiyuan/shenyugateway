@@ -8,6 +8,7 @@ import pytest
 
 from shenyu_gateway.resident_home import (
     ResidentHomeError,
+    ack_shared_components,
     bootstrap_manifest,
     changes_by_week,
     check_manifest,
@@ -156,6 +157,83 @@ def test_review_without_impact_requires_explicit_no_impact(tmp_path):
     )
     assert result["event"] is None
     assert not changes_path.exists()
+
+
+def _write_shared_manifest(tmp_path: Path) -> tuple[Path, Path]:
+    (tmp_path / "shared.py").write_text("SHARED = 1\n", encoding="utf-8")
+    (tmp_path / "own_a.py").write_text("A = 1\n", encoding="utf-8")
+    (tmp_path / "own_b.py").write_text("B = 1\n", encoding="utf-8")
+    manifest_path = tmp_path / "resident_home_manifest.json"
+    manifest_path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "components": {
+                    "alpha": {"title": "甲", "source_globs": ["shared.py", "own_a.py"]},
+                    "beta": {"title": "乙", "source_globs": ["shared.py", "own_b.py"]},
+                },
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return manifest_path, tmp_path
+
+
+def test_ack_shared_acknowledges_fanout_from_shared_files_only(tmp_path):
+    manifest_path, root = _write_shared_manifest(tmp_path)
+    bootstrap_manifest(manifest_path=manifest_path, root=root, actor="test")
+
+    (root / "shared.py").write_text("SHARED = 2\n", encoding="utf-8")
+
+    statuses = {status["id"]: status for status in check_manifest(load_manifest(manifest_path), root=root)}
+    assert statuses["alpha"]["status"] == "review_required"
+    assert statuses["alpha"]["changed_files"] == ["shared.py"]
+    assert statuses["alpha"]["shared_changed_files"] == ["shared.py"]
+
+    result = ack_shared_components(manifest_path=manifest_path, root=root, actor="fable")
+
+    assert {item["id"] for item in result["acked"]} == {"alpha", "beta"}
+    assert result["skipped"] == []
+    assert result["shared_files"] == {"shared.py": ["alpha", "beta"]}
+    after = {status["id"]: status["status"] for status in check_manifest(load_manifest(manifest_path), root=root)}
+    assert set(after.values()) == {"ok"}
+
+
+def test_ack_shared_skips_components_with_exclusive_changes(tmp_path):
+    manifest_path, root = _write_shared_manifest(tmp_path)
+    bootstrap_manifest(manifest_path=manifest_path, root=root, actor="test")
+
+    (root / "shared.py").write_text("SHARED = 2\n", encoding="utf-8")
+    (root / "own_a.py").write_text("A = 2\n", encoding="utf-8")
+
+    result = ack_shared_components(manifest_path=manifest_path, root=root, actor="fable")
+
+    assert [item["id"] for item in result["acked"]] == ["beta"]
+    assert result["skipped"][0]["id"] == "alpha"
+    assert result["skipped"][0]["exclusive_files"] == ["own_a.py"]
+    statuses = {status["id"]: status["status"] for status in check_manifest(load_manifest(manifest_path), root=root)}
+    assert statuses == {"alpha": "review_required", "beta": "ok"}
+
+
+def test_ack_shared_requires_per_file_baseline_from_older_reviews(tmp_path):
+    manifest_path, root = _write_shared_manifest(tmp_path)
+    bootstrap_manifest(manifest_path=manifest_path, root=root, actor="test")
+    data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    for component in data["components"].values():
+        component["reviewed"].pop("file_hashes")
+    manifest_path.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+
+    (root / "shared.py").write_text("SHARED = 2\n", encoding="utf-8")
+
+    statuses = {status["id"]: status for status in check_manifest(load_manifest(manifest_path), root=root)}
+    assert statuses["alpha"]["changed_files"] is None
+
+    result = ack_shared_components(manifest_path=manifest_path, root=root, actor="fable")
+
+    assert result["acked"] == []
+    assert {item["id"] for item in result["skipped"]} == {"alpha", "beta"}
+    assert "baseline" in result["skipped"][0]["reason"]
 
 
 def test_weekly_report_keeps_impact_on_a_stable_resident_line():
