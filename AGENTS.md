@@ -36,6 +36,7 @@
 - Before pushing or handing off a meaningful change, consider whether `README.md`, `DESIGN.md`, the owning `docs/architecture/*.md` reference, `DEBUGGING_GUIDE.md`, `LOGS_GUIDE.md`, or `DOCS_MAP.md` must be updated. Update only documentation whose current truth changed; do not create a new design document by default.
 - When a feature develops a clear, independently maintained boundary, extract the smallest coherent module or frontend component and follow the project-map synchronization checklist below in the same change. Structure-only extraction must preserve user-visible behavior, and small features should not each receive a duplicate standalone design document.
 - Preserve unrelated working-tree changes. Never stage or commit the whole tree without reviewing the exact diff.
+- When more than one agent works this repository at the same time, at most one agent works directly in the master working tree; every other concurrent agent uses its own git worktree (or clone) on a short-lived branch and merges back promptly — same-day, not week-long branches. The owner should announce concurrent work when they know about it, but agents must not rely on that: before starting, check `git status` for foreign uncommitted changes, and treat their presence as proof another agent may be active. In a shared tree, stage only your own files, attribute test failures via `git status` before assuming they are yours, and never run `git stash` or other whole-tree operations for diagnostics.
 
 ## Mechanical Change Checklists
 
