@@ -177,24 +177,51 @@ class AdminMixin:
             "heartbeats": self.get_all_heartbeats(session_id),
         }
 
-    def filter_unseen_archive_hashes(self, session_tag: str, content_hashes: list[str]) -> set[str]:
-        """Return the subset of hashes not yet archived for this session_tag."""
+    def filter_unseen_archive_hashes(self, content_hashes: list[str], *, touch: bool = True) -> set[str]:
+        """Return the subset of hashes not yet archived under any session.
+
+        The lookup is deliberately global: a window handed over into a new
+        session (PWA history handoff, cold-start bridge) carries the old
+        session's messages, and those must not be archived a second time.
+
+        Seen hashes found here get their created_at refreshed (LRU touch):
+        a hash still circulating in some client window never ages out, while
+        one that stopped appearing is eventually trimmed by
+        mark_archive_hashes_seen — at which point the same text said again
+        really is a new event and archives again. Pass touch=False for
+        read-only probes (backfill --dry-run) that must not write.
+        """
         hashes = [item for item in dict.fromkeys(content_hashes or []) if item]
         if not hashes:
             return set()
         unseen = set(hashes)
+        timestamp = iso_now()
         with self._connect() as conn:
             for start in range(0, len(hashes), 200):
                 chunk = hashes[start : start + 200]
                 placeholders = ",".join("?" for _ in chunk)
                 rows = conn.execute(
-                    f"SELECT content_hash FROM chat_archive_seen WHERE session_tag = ? AND content_hash IN ({placeholders})",
-                    (session_tag, *chunk),
+                    f"SELECT content_hash FROM chat_archive_seen WHERE content_hash IN ({placeholders})",
+                    chunk,
                 ).fetchall()
-                unseen -= {row["content_hash"] for row in rows}
+                found = {row["content_hash"] for row in rows}
+                if found and touch:
+                    touch = list(found)
+                    touch_placeholders = ",".join("?" for _ in touch)
+                    conn.execute(
+                        f"UPDATE chat_archive_seen SET created_at = ? WHERE content_hash IN ({touch_placeholders})",
+                        (timestamp, *touch),
+                    )
+                unseen -= found
         return unseen
 
     def mark_archive_hashes_seen(self, session_tag: str, content_hashes: list[str], keep_recent: int = 2000):
+        """Record archived hashes (session_tag kept for provenance only).
+
+        Trimming is global by recency, paired with the LRU touch in
+        filter_unseen_archive_hashes: dormant session epochs age out instead
+        of pinning their texts as seen forever.
+        """
         hashes = [item for item in dict.fromkeys(content_hashes or []) if item]
         if not hashes:
             return
@@ -207,14 +234,13 @@ class AdminMixin:
             conn.execute(
                 """
                 DELETE FROM chat_archive_seen
-                WHERE session_tag = ? AND content_hash NOT IN (
-                    SELECT content_hash FROM chat_archive_seen
-                    WHERE session_tag = ?
+                WHERE rowid NOT IN (
+                    SELECT rowid FROM chat_archive_seen
                     ORDER BY created_at DESC
                     LIMIT ?
                 )
                 """,
-                (session_tag, session_tag, max(int(keep_recent or 2000), 100)),
+                (max(int(keep_recent or 2000), 100),),
             )
 
     def save_config_overrides(self, updates: dict[str, str]) -> None:

@@ -1,21 +1,17 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch, nextTick } from 'vue'
-import { NButton, NCheckbox, NInput, NModal, NPopconfirm, NSelect, NSpin, useMessage } from 'naive-ui'
+import { NButton, NCheckbox, NInput, NModal, NPopconfirm, NSpin, useMessage } from 'naive-ui'
 import {
   createConflictBook,
   fetchArchiveDays,
   fetchArchiveMessages,
-  fetchArchiveThreads,
   softDeleteArchiveMessage,
   type ArchiveDay,
   type ArchiveMessage,
-  type ArchiveThread,
 } from '@/api/archive'
 
 const message = useMessage()
 
-const threads = ref<ArchiveThread[]>([])
-const thread = ref('')
 const month = ref(localDateStr().slice(0, 7))
 const days = ref<ArchiveDay[]>([])
 const selectedDate = ref('')
@@ -31,13 +27,6 @@ const showClipModal = ref(false)
 const clipTitle = ref('')
 const clipNotes = ref('')
 const clipSaving = ref(false)
-
-const threadOptions = computed(() =>
-  threads.value.map((t) => ({
-    label: t.thread === 'main' ? '主聊天' : t.thread,
-    value: t.thread,
-  })),
-)
 
 function toLocalHHMM(iso: string): string {
   if (!iso) return ''
@@ -59,6 +48,38 @@ function localDateStr(): string {
 const selectedMessages = computed(() =>
   messages.value.filter((m) => selectedIds.value.has(m.id)),
 )
+
+// Chat flow: a quiet centered time divider when the conversation pauses,
+// tighter spacing inside a same-speaker run.
+const DIVIDER_GAP_MS = 10 * 60 * 1000
+
+type ChatItem =
+  | { kind: 'divider'; key: string; label: string }
+  | { kind: 'message'; key: string; msg: ArchiveMessage; grouped: boolean }
+
+const chatItems = computed<ChatItem[]>(() => {
+  const items: ChatItem[] = []
+  let prevTime: number | null = null
+  let prevRole = ''
+  for (const msg of messages.value) {
+    const time = msg.event_at ? new Date(msg.event_at).getTime() : null
+    const needDivider =
+      prevTime === null || (time !== null && time - prevTime >= DIVIDER_GAP_MS)
+    if (needDivider && time !== null) {
+      items.push({ kind: 'divider', key: `d-${msg.id}`, label: toLocalHHMM(msg.event_at || '') })
+      prevRole = ''
+    }
+    items.push({
+      kind: 'message',
+      key: msg.id,
+      msg,
+      grouped: msg.role === prevRole,
+    })
+    prevRole = msg.role
+    if (time !== null) prevTime = time
+  }
+  return items
+})
 
 const daySet = computed(() => {
   const map = new Map<string, number>()
@@ -97,25 +118,13 @@ const selectedDateLabel = computed(() => {
 
 const totalThisMonth = computed(() => days.value.reduce((sum, d) => sum + d.count, 0))
 
-onMounted(async () => {
-  try {
-    threads.value = await fetchArchiveThreads()
-    if (threads.value.length) {
-      const sorted = [...threads.value].sort((a, b) => b.count - a.count)
-      thread.value = sorted[0].thread
-    }
-  } catch {
-    message.error('加载线程列表失败')
-  }
-  await loadDays()
-})
+onMounted(loadDays)
 
-watch([thread, month], loadDays)
+watch(month, loadDays)
 
 async function loadDays() {
-  if (!thread.value) return
   try {
-    days.value = await fetchArchiveDays(thread.value, month.value)
+    days.value = await fetchArchiveDays(month.value)
     if (days.value.length && !days.value.some((d) => d.date === selectedDate.value)) {
       selectedDate.value = days.value[days.value.length - 1].date
       await loadMessages()
@@ -139,7 +148,7 @@ async function loadMessages() {
   if (!selectedDate.value) return
   loading.value = true
   try {
-    messages.value = await fetchArchiveMessages({ thread: thread.value, date: selectedDate.value, limit: 500 })
+    messages.value = await fetchArchiveMessages({ date: selectedDate.value, limit: 1000 })
     await nextTick()
     if (msgListRef.value) msgListRef.value.scrollTop = msgListRef.value.scrollHeight
   } catch {
@@ -209,7 +218,6 @@ async function saveClip() {
     const result = await createConflictBook({
       title: clipTitle.value.trim(),
       original_text: buildOriginalText(items),
-      thread: thread.value,
       span_start: items[0]?.event_at ?? undefined,
       span_end: items[items.length - 1]?.event_at ?? undefined,
       message_refs: items.map((m) => m.id),
@@ -232,7 +240,7 @@ async function saveClip() {
 
 <template>
   <div class="archive-view" data-testid="page-archive">
-    <!-- Control Panel (calendar + thread + tools) -->
+    <!-- Control Panel (calendar + tools) -->
     <div class="control-panel" :class="{ collapsed: !calendarOpen }">
       <!-- Collapsed bar -->
       <div class="control-bar">
@@ -276,9 +284,9 @@ async function saveClip() {
             </div>
           </div>
 
-          <!-- Thread + tools row -->
+          <!-- Tools row -->
           <div class="control-tools">
-            <NSelect v-model:value="thread" :options="threadOptions" class="thread-select" size="small" />
+            <span class="tools-hint">全部对话，一条时间线</span>
             <div class="tools-right">
               <NButton size="small" :type="selecting ? 'warning' : 'default'" @click="toggleSelecting">
                 {{ selecting ? '取消' : '选取' }}
@@ -300,31 +308,30 @@ async function saveClip() {
           <div>{{ selectedDate ? '这天很安静' : '选一天看看' }}</div>
         </div>
 
-        <div
-          v-for="msg in messages"
-          :key="msg.id"
-          class="bubble-row"
-          :class="msg.role"
-        >
-          <NCheckbox
-            v-if="selecting"
-            class="bubble-check"
-            :checked="selectedIds.has(msg.id)"
-            @update:checked="(checked: boolean) => toggleMessage(msg.id, checked)"
-          />
-          <div class="bubble" :class="msg.role">
-            <div class="bubble-content">{{ msg.content }}</div>
-            <div class="bubble-meta">
-              <span class="bubble-time">{{ toLocalHHMM(msg.event_at || '') }}</span>
+        <template v-for="item in chatItems" :key="item.key">
+          <div v-if="item.kind === 'divider'" class="time-divider">{{ item.label }}</div>
+          <div
+            v-else
+            class="bubble-row"
+            :class="[item.msg.role, { grouped: item.grouped }]"
+          >
+            <NCheckbox
+              v-if="selecting"
+              class="bubble-check"
+              :checked="selectedIds.has(item.msg.id)"
+              @update:checked="(checked: boolean) => toggleMessage(item.msg.id, checked)"
+            />
+            <div class="bubble" :class="item.msg.role" :title="toLocalDateTime(item.msg.event_at || '')">
+              <div class="bubble-content">{{ item.msg.content }}</div>
+              <NPopconfirm @positive-click="deleteMessage(item.msg.id)">
+                <template #trigger>
+                  <button class="bubble-delete">&times;</button>
+                </template>
+                删除这条记录？
+              </NPopconfirm>
             </div>
-            <NPopconfirm @positive-click="deleteMessage(msg.id)">
-              <template #trigger>
-                <button class="bubble-delete">&times;</button>
-              </template>
-              删除这条记录？
-            </NPopconfirm>
           </div>
-        </div>
+        </template>
       </NSpin>
     </section>
 
@@ -560,8 +567,10 @@ async function saveClip() {
   border-top: 1px solid #f5ece9;
 }
 
-.thread-select {
-  width: 120px;
+.tools-hint {
+  font-size: 11px;
+  color: #c4b0ab;
+  font-style: italic;
 }
 
 .tools-right {
@@ -610,11 +619,32 @@ async function saveClip() {
 }
 
 /* ── Bubble Messages ── */
+.time-divider {
+  text-align: center;
+  font-size: 11px;
+  color: #c9b6b1;
+  margin: 16px 0 10px;
+  user-select: none;
+}
+
+.time-divider:first-child {
+  margin-top: 4px;
+}
+
 .bubble-row {
   display: flex;
   align-items: flex-end;
-  margin-bottom: 6px;
+  margin-bottom: 2px;
   gap: 6px;
+}
+
+/* A new speaker starts a run: breathe a little. */
+.bubble-row:not(.grouped) {
+  margin-top: 10px;
+}
+
+.time-divider + .bubble-row {
+  margin-top: 0;
 }
 
 .bubble-row.user {
@@ -632,11 +662,11 @@ async function saveClip() {
 
 .bubble {
   position: relative;
-  max-width: 78%;
-  padding: 10px 14px;
+  max-width: 80%;
+  padding: 9px 13px;
   border-radius: 18px;
   font-size: 13.5px;
-  line-height: 1.7;
+  line-height: 1.65;
   word-break: break-word;
   white-space: pre-wrap;
   transition: 0.15s;
@@ -657,25 +687,6 @@ async function saveClip() {
 
 .bubble:hover {
   box-shadow: 0 2px 12px rgba(139, 112, 130, 0.08);
-}
-
-.bubble-content {
-  /* text content */
-}
-
-.bubble-meta {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 4px;
-}
-
-.bubble-time {
-  font-size: 10px;
-  color: #c4b0ab;
-}
-
-.bubble.user .bubble-time {
-  color: #bba89e;
 }
 
 .bubble-delete {

@@ -204,6 +204,9 @@ class BaseStoreMixin:
                 CREATE INDEX IF NOT EXISTS idx_chat_archive_seen_tag_created
                     ON chat_archive_seen(session_tag, created_at);
 
+                CREATE INDEX IF NOT EXISTS idx_chat_archive_seen_hash
+                    ON chat_archive_seen(content_hash);
+
                 CREATE TABLE IF NOT EXISTS request_log_history (
                     id TEXT PRIMARY KEY,
                     request_id TEXT,

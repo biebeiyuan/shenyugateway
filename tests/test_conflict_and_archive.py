@@ -305,30 +305,186 @@ def test_chat_archive_strips_pwa_status_suffix_from_content():
     asyncio.run(run())
 
 
+def test_chat_archive_uses_pwa_suffix_time_and_replay_order():
+    async def run():
+        supabase = FakeSupabase()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            store = GatewayStore(str(Path(tmp) / "test.db"))
+            service = ChatArchiveService(store, supabase, Cfg())
+
+            # 第140天 = 2026-03-09 + 139 天 = 2026-07-26（北京时间）
+            window = [
+                {"role": "user", "content": "在看星星【26/07 周日 22:24 · 第140天 · 🔋52%】"},
+                {"role": "assistant", "content": "西274°，是大角星。"},
+                {"role": "assistant", "content": "认对了。"},
+                {"role": "user", "content": "予予晚安【26/07 周日 23:53 · 第140天 · 🔋84%⚡】"},
+            ]
+            result = await service.archive_window(
+                session_tag="pwa-abc123", client_name="shenyu-pwa", messages=window
+            )
+            assert result["archived"] == 4, result
+            rows = supabase.tables["shenyu_chat_archive"]
+            # 用户消息取后缀里的真实时间，助手回复继承上一条用户消息的时间
+            assert rows[0]["event_at"] == "2026-07-26T14:24:00+00:00"
+            assert rows[1]["event_at"] == "2026-07-26T14:24:00+00:00"
+            assert rows[2]["event_at"] == "2026-07-26T14:24:00+00:00"
+            assert rows[3]["event_at"] == "2026-07-26T15:53:00+00:00"
+            # archived_at 批内逐行递增：同一继承时间下仍能按窗口顺序回放
+            archived = [row["archived_at"] for row in rows]
+            assert archived == sorted(archived) and len(set(archived)) == 4
+
+    asyncio.run(run())
+
+
+def test_chat_archive_assistant_quote_does_not_move_clock():
+    async def run():
+        supabase = FakeSupabase()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            store = GatewayStore(str(Path(tmp) / "test.db"))
+            service = ChatArchiveService(store, supabase, Cfg())
+
+            window = [
+                {"role": "user", "content": "看到了吗【26/07 周日 22:16 · 第140天】"},
+                # 助手引用了一个旧后缀作为消息结尾——不能把时钟拖去引用的时刻
+                {"role": "assistant", "content": "看到了。你上一条是【25/07 周六 09:00 · 第139天】"},
+            ]
+            result = await service.archive_window(
+                session_tag="pwa-abc123", client_name="shenyu-pwa", messages=window
+            )
+            assert result["archived"] == 2, result
+            rows = supabase.tables["shenyu_chat_archive"]
+            assert rows[0]["event_at"] == "2026-07-26T14:16:00+00:00"
+            assert rows[1]["event_at"] == "2026-07-26T14:16:00+00:00"
+
+    asyncio.run(run())
+
+
+def test_chat_archive_global_dedup_across_session_handoff():
+    async def run():
+        supabase = FakeSupabase()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            store = GatewayStore(str(Path(tmp) / "test.db"))
+            service = ChatArchiveService(store, supabase, Cfg())
+
+            window = [
+                {"role": "user", "content": "老会话里说过的话"},
+                {"role": "assistant", "content": "老会话里的回答"},
+            ]
+            first = await service.archive_window(
+                session_tag="7.18", client_name="shenyu-pwa", messages=window
+            )
+            assert first["archived"] == 2, first
+
+            # 换了一个新 session 接上旧历史：旧消息不能再归档一遍
+            handoff = window + [{"role": "user", "content": "新会话里的新消息"}]
+            second = await service.archive_window(
+                session_tag="pwa-new111", client_name="shenyu-pwa", messages=handoff
+            )
+            assert second["archived"] == 1, second
+            rows = supabase.tables["shenyu_chat_archive"]
+            assert len(rows) == 3
+            assert rows[2]["content"] == "新会话里的新消息"
+            assert rows[2]["thread"] == "pwa-new111"
+
+    asyncio.run(run())
+
+
+def test_chat_archive_seen_ages_out_globally_with_lru_touch():
+    with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+        store = GatewayStore(str(Path(tmp) / "test.db"))
+        store.mark_archive_hashes_seen("old-epoch", ["h-alive", "h-dormant"], keep_recent=100)
+
+        # h-alive 还在某个客户端窗口里流通：filter 命中即刷新（LRU touch）
+        assert store.filter_unseen_archive_hashes(["h-alive"]) == set()
+
+        # 新纪元继续归档并触发全局修剪（下限 100 条）：休眠纪元最老的被挤出，
+        # 刚 touch 过的 h-alive 留下
+        fresh = [f"h-new-{i}" for i in range(99)]
+        store.mark_archive_hashes_seen("new-epoch", fresh, keep_recent=100)
+        assert store.filter_unseen_archive_hashes(["h-dormant"]) == {"h-dormant"}
+        # 流通中的和新写入的都还被认得
+        assert store.filter_unseen_archive_hashes(["h-alive", "h-new-0"]) == set()
+
+
 def test_derive_thread():
     assert derive_thread("default") == "main"
     assert derive_thread("") == "main"
     assert derive_thread("tech") == "tech"
 
 
-def test_archive_routes_page_threads_and_days():
+def test_archive_routes_merge_sessions_and_page_days():
     async def run():
         supabase = FakeSupabase()
+        # 两个"线程"各一半，合并成一条时间线；行数超过一页验证分页
         for idx in range(1205):
             await supabase.insert(
                 "shenyu_chat_archive",
                 {
-                    "thread": "5.15",
+                    "thread": "5.15" if idx % 2 else "7.18",
+                    "content_hash": f"hash-{idx}",
                     "event_at": "2026-06-14T00:00:00+00:00",
                     "deleted_at": None,
                 },
             )
         router = build_archive_router(ArchiveRouteDeps(get_supabase_client=lambda: supabase))
         endpoints = {route.path: route.endpoint for route in router.routes}
-        threads = await endpoints["/api/archive/threads"]()
-        days = await endpoints["/api/archive/days"](thread="5.15", month="2026-06")
-        assert threads["threads"] == [{"thread": "5.15", "count": 1205}]
+        assert "/api/archive/threads" not in endpoints
+        days = await endpoints["/api/archive/days"](month="2026-06")
         assert days["days"] == [{"date": "2026-06-14", "count": 1205}]
+
+    asyncio.run(run())
+
+
+def test_archive_routes_fold_handoff_copies_and_twin_delete():
+    async def run():
+        supabase = FakeSupabase()
+        # 同一句话被历史交接归档了两次（两个 session_tag，同日同 hash）
+        for thread, event_at in (
+            ("6.20", "2026-07-11T03:46:00+00:00"),
+            ("7.18", "2026-07-11T03:46:00+00:00"),
+        ):
+            await supabase.insert(
+                "shenyu_chat_archive",
+                {
+                    "thread": thread,
+                    "session_tag": thread,
+                    "role": "user",
+                    "content": "同一句话",
+                    "content_hash": "dup-hash",
+                    "event_at": event_at,
+                    "archived_at": event_at,
+                    "deleted_at": None,
+                },
+            )
+        await supabase.insert(
+            "shenyu_chat_archive",
+            {
+                "thread": "7.18",
+                "session_tag": "7.18",
+                "role": "assistant",
+                "content": "独一份的回答",
+                "content_hash": "solo-hash",
+                "event_at": "2026-07-11T03:47:00+00:00",
+                "archived_at": "2026-07-11T03:47:01+00:00",
+                "deleted_at": None,
+            },
+        )
+        router = build_archive_router(ArchiveRouteDeps(get_supabase_client=lambda: supabase))
+        endpoints = {route.path: route.endpoint for route in router.routes}
+
+        days = await endpoints["/api/archive/days"](month="2026-07")
+        assert days["days"] == [{"date": "2026-07-11", "count": 2}]
+
+        messages = await endpoints["/api/archive/messages"](date="2026-07-11")
+        assert [row["content"] for row in messages["messages"]] == ["同一句话", "独一份的回答"]
+        assert all("content_hash" not in row for row in messages["messages"])
+
+        # 删掉可见的那条，隐藏的孪生副本必须一起消失
+        visible_id = messages["messages"][0]["id"]
+        deleted = await endpoints["/api/archive/messages/{message_id}"](visible_id)
+        assert deleted["deleted"] == 2
+        after = await endpoints["/api/archive/messages"](date="2026-07-11")
+        assert [row["content"] for row in after["messages"]] == ["独一份的回答"]
 
     asyncio.run(run())
 
@@ -357,8 +513,8 @@ def test_archive_routes_use_cst_day_boundaries():
         router = build_archive_router(ArchiveRouteDeps(get_supabase_client=lambda: supabase))
         endpoints = {route.path: route.endpoint for route in router.routes}
 
-        days = await endpoints["/api/archive/days"](thread="main", month="2026-06")
-        messages = await endpoints["/api/archive/messages"](thread="main", date="2026-06-14")
+        days = await endpoints["/api/archive/days"](month="2026-06")
+        messages = await endpoints["/api/archive/messages"](date="2026-06-14")
 
         assert days["days"] == [
             {"date": "2026-06-13", "count": 1},
@@ -432,7 +588,11 @@ if __name__ == "__main__":
     test_chat_archive_uses_client_attachment_time()
     test_chat_archive_backfill_uses_client_attachment_time()
     test_chat_archive_skips_numbered_transcript_messages()
+    test_chat_archive_uses_pwa_suffix_time_and_replay_order()
+    test_chat_archive_assistant_quote_does_not_move_clock()
+    test_chat_archive_global_dedup_across_session_handoff()
     test_derive_thread()
-    test_archive_routes_page_threads_and_days()
+    test_archive_routes_merge_sessions_and_page_days()
+    test_archive_routes_fold_handoff_copies_and_twin_delete()
     test_archive_routes_use_cst_day_boundaries()
     print("ALL_OK")

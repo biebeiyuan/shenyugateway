@@ -462,8 +462,10 @@ Recall 是跨历史的**统一捞取入口**。普通文档来源包括 journal�
 `shenyu_chat_archive` 是逐条归档的用户/助手消息，是整个系统的 **L0 事实源**（source of truth）。
 
 - 在 `_prepare_messages()` 时 fire-and-forget 归档当前窗口的新消息
-- 用 SQLite `chat_archive_seen`（recent hash per session）去重，同一条消息只归档一次
+- 用 SQLite `chat_archive_seen`（recent hash，跨 session 全局查）去重，同一条消息只归档一次；换 session 接上旧历史（PWA 交接、冷启动桥）不会把旧消息再归档一遍
+- `event_at` 是客户端本地发送时刻：用户消息从 PWA 尾部状态后缀解析（第N天段锚定年份，锚点 2026-03-09），旧数据走 Operit 时间标记；助手回复继承窗口里前一条用户消息的时间。`archived_at` 批内逐行 +1μs，保证同批消息按窗口顺序回放
 - 重新生成（re-roll）的回复不会回到客户端窗口，因此自然排除
+- `thread` 列只是来源标注（每个 session 纪元一条），档案读取端合并为一条时间线，按（自然日, content_hash）折叠历史交接产生的重复副本
 
 ### 7.2 Conflict Books（矛盾书）
 

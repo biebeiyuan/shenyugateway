@@ -16,6 +16,8 @@ It must stay free of package-internal imports (regex + helpers only).
 """
 
 import re
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
     r"\s*<attachment\b"
@@ -26,10 +28,57 @@ CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
 
 # Cross-client contract: the PWA appends the status suffix to the very end of
 # the user text, so the pattern is tail-anchored on purpose — ordinary
-# 【...】 usage mid-message must never match.
+# 【...】 usage mid-message must never match. The named groups only capture;
+# matching stays byte-identical to the JS twin in pwa/src/meta/statusSuffix.ts.
 PWA_STATUS_SUFFIX_RE = re.compile(
-    r"\s*【\d{1,2}/\d{1,2}\s*周[一二三四五六日]\s*\d{1,2}:\d{2}[^【】]*】\s*$"
+    r"\s*【(?P<day>\d{1,2})/(?P<month>\d{1,2})\s*周[一二三四五六日]\s*"
+    r"(?P<hour>\d{1,2}):(?P<minute>\d{2})(?P<rest>[^【】]*)】\s*$"
 )
+
+# 第N天 segment inside the suffix. 第1天 = 2026-03-09 (Asia/Shanghai natural
+# day) — twin of DAY_ONE_UTC in pwa/src/meta/days.ts / admin/src/utils/days.ts.
+PWA_STATUS_DAY_SEGMENT_RE = re.compile(r"第(?P<n>\d+)天")
+PWA_DAY_ONE = (2026, 3, 9)
+
+_CST = timezone(timedelta(hours=8))
+
+
+def parse_pwa_status_suffix_time(text: str, *, now: Optional[datetime] = None) -> Optional[datetime]:
+    """Recover the client-local send time from a PWA status suffix.
+
+    The 第N天 segment carries the year (DD/MM alone does not), so the date is
+    anchored on it. When 第N天 is missing — the contract says it never is, but
+    old or hand-edited messages may drift — fall back to DD/MM with the year
+    that lands the date closest to ``now``. Returns an aware UTC datetime,
+    or None when there is no suffix or its fields are not a real moment.
+    """
+    match = PWA_STATUS_SUFFIX_RE.search(text or "")
+    if not match:
+        return None
+    hour = int(match.group("hour"))
+    minute = int(match.group("minute"))
+    day_seg = PWA_STATUS_DAY_SEGMENT_RE.search(match.group("rest") or "")
+    try:
+        if day_seg:
+            base = datetime(*PWA_DAY_ONE, tzinfo=_CST) + timedelta(days=int(day_seg.group("n")) - 1)
+            stamped = base.replace(hour=hour, minute=minute)
+        else:
+            reference = (now or datetime.now(timezone.utc)).astimezone(_CST)
+            day = int(match.group("day"))
+            month = int(match.group("month"))
+            candidates = []
+            for year in (reference.year - 1, reference.year, reference.year + 1):
+                try:
+                    candidates.append(datetime(year, month, day, hour, minute, tzinfo=_CST))
+                except ValueError:
+                    continue
+            if not candidates:
+                return None
+            stamped = min(candidates, key=lambda item: abs(item - reference))
+    except (ValueError, OverflowError):
+        # OverflowError: a corrupted/hand-edited 第N天 far beyond year 9999.
+        return None
+    return stamped.astimezone(timezone.utc)
 
 
 def has_client_extra_text(text: str) -> bool:

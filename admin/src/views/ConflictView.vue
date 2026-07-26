@@ -578,7 +578,7 @@ function spineChars(title: string, limit = 5): string[] {
               <NInput v-model:value="editEpilogue" type="textarea" :rows="3" placeholder="后记：后来怎么和好的、聊出了什么结论" />
               <div class="origin-meta-row">
                 <NSelect v-model:value="editStatus" :options="statusOptions" style="width: 140px" />
-                <NTag size="small">{{ threadLabel(originDetail.thread) }}</NTag>
+                <NTag v-if="originDetail.thread" size="small">{{ threadLabel(originDetail.thread) }}</NTag>
                 <span>{{ fmtDate(originDetail.span_start) }}</span>
               </div>
             </div>

@@ -13,7 +13,9 @@ Usage:
 
 import argparse
 import asyncio
+import itertools
 import sys
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -35,9 +37,20 @@ from shenyu_gateway.chat_archive import (
 )
 from shenyu_gateway.context_layers import _strip_client_extra_bundle_text
 from shenyu_gateway.config import RuntimeConfig
-from shenyu_gateway.runtime import iso_now
+from shenyu_gateway.runtime import dt_to_iso, iso_now, parse_ts
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.supabase import SupabaseClient
+
+# Mirror the live archiver's replay invariant: rows that tie on an inherited
+# event_at must still sort in window order via archived_at, so every emitted
+# row gets a strictly increasing archived_at across the whole run (the table
+# default now() is statement-stable and would collapse a 250-row batch).
+_ARCHIVED_AT_BASE = datetime.now(timezone.utc)
+_ARCHIVED_AT_COUNTER = itertools.count()
+
+
+def _next_archived_at() -> str:
+    return dt_to_iso(_ARCHIVED_AT_BASE + timedelta(microseconds=next(_ARCHIVED_AT_COUNTER)))
 
 
 def parse_args() -> argparse.Namespace:
@@ -102,12 +115,13 @@ async def _load_existing_archive_hashes_by_tag(
     session_tag_filter: str,
     page_size: int = 1000,
 ) -> dict[str, set[str]]:
+    # Soft-deleted rows are included on purpose: their text WAS archived once,
+    # and a deliberately deleted message must never be resurrected by a re-run.
     existing: dict[str, set[str]] = {}
     start = 0
     while True:
         params = {
             "select": "session_tag,content_hash",
-            "deleted_at": "is.null",
             "order": "id.asc",
             "limit": str(page_size),
             "offset": str(start),
@@ -126,12 +140,13 @@ async def _load_existing_archive_hashes_by_tag(
     return existing
 
 
-def _flatten_existing(existing_by_tag: dict[str, set[str]]) -> set[tuple[str, str]]:
-    return {
-        (tag, digest)
-        for tag, hashes in existing_by_tag.items()
-        for digest in hashes
-    }
+def _flatten_existing(existing_by_tag: dict[str, set[str]]) -> set[str]:
+    """Global digest set, matching the archiver's global dedup.
+
+    Held in memory for the whole run, so seen-table trims mid-run can never
+    drop the shield and re-insert content that already lives in Supabase.
+    """
+    return {digest for hashes in existing_by_tag.values() for digest in hashes}
 
 
 def _seed_seen_from_existing(store: GatewayStore, cfg: RuntimeConfig, existing_by_tag: dict[str, set[str]]) -> int:
@@ -151,7 +166,7 @@ def _candidate_rows(
     client_name: str | None,
     messages: list[dict],
     created_at: str | None,
-    existing: set[tuple[str, str]],
+    existing: set[str],
 ) -> list[dict]:
     rows: list[dict] = []
     event_at = created_at or iso_now()
@@ -165,7 +180,13 @@ def _candidate_rows(
         text = _message_text(msg.get("content"))
         if not text:
             continue
-        client_event_at = _client_time_from_text(text)
+        # Mirror the live archiver: only user messages move the clock,
+        # assistant replies inherit the preceding user message's time.
+        # Year inference for suffixes without 第N天 anchors on the window's
+        # own historical time, not on when this backfill happens to run.
+        client_event_at = (
+            _client_time_from_text(text, now=parse_ts(created_at)) if role == "user" else None
+        )
         if client_event_at:
             latest_client_event_at = client_event_at
         text, _ = _strip_client_extra_bundle_text(text)
@@ -174,8 +195,7 @@ def _candidate_rows(
         if _looks_like_numbered_transcript(text):
             continue
         digest = _content_hash(role, text)
-        key = (tag, digest)
-        if digest in taken or key in existing:
+        if digest in taken or digest in existing:
             continue
         taken.add(digest)
         rows.append(
@@ -187,6 +207,7 @@ def _candidate_rows(
                 "content": text,
                 "content_hash": digest,
                 "event_at": client_event_at or latest_client_event_at,
+                "archived_at": _next_archived_at(),
             }
         )
     return rows
@@ -241,17 +262,18 @@ async def main() -> None:
                 existing=existing,
             )
             if args.dry_run:
+                # touch=False: a count-only run must not rewrite seen recency.
                 hashes = [row["content_hash"] for row in rows]
-                unseen = store.filter_unseen_archive_hashes(tag, hashes)
+                unseen = store.filter_unseen_archive_hashes(hashes, touch=False)
                 total += len(unseen)
                 for row in rows:
                     if row["content_hash"] in unseen:
-                        existing.add((row["session_tag"], row["content_hash"]))
+                        existing.add(row["content_hash"])
                 continue
-            unseen = store.filter_unseen_archive_hashes(tag, [row["content_hash"] for row in rows])
+            unseen = store.filter_unseen_archive_hashes([row["content_hash"] for row in rows])
             rows = [row for row in rows if row["content_hash"] in unseen]
             for row in rows:
-                existing.add((row["session_tag"], row["content_hash"]))
+                existing.add(row["content_hash"])
             pending.extend(rows)
             if len(pending) >= batch_size:
                 total += await _insert_batch(service, pending)

@@ -1,10 +1,5 @@
 import { api } from './http'
 
-export interface ArchiveThread {
-  thread: string
-  count: number
-}
-
 export interface ArchiveDay {
   date: string
   count: number
@@ -46,17 +41,12 @@ export interface ConflictBookDetail extends ConflictBookSummary {
   annotations: ConflictAnnotation[]
 }
 
-export async function fetchArchiveThreads() {
-  const { data } = await api.get<{ threads: ArchiveThread[] }>('/api/archive/threads')
-  return data.threads
-}
-
-export async function fetchArchiveDays(thread: string, month?: string) {
-  const { data } = await api.get<{ days: ArchiveDay[] }>('/api/archive/days', { params: { thread, month } })
+export async function fetchArchiveDays(month?: string) {
+  const { data } = await api.get<{ days: ArchiveDay[] }>('/api/archive/days', { params: { month } })
   return data.days
 }
 
-export async function fetchArchiveMessages(params: { thread: string; date?: string; before?: string; limit?: number }) {
+export async function fetchArchiveMessages(params: { date?: string; before?: string; limit?: number }) {
   const { data } = await api.get<{ messages: ArchiveMessage[]; count: number }>('/api/archive/messages', { params })
   return data.messages
 }

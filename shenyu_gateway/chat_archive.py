@@ -10,9 +10,18 @@ client sends it back as history — so re-rolled assistant replies, which never
 return in the window, are naturally excluded. The surviving reply of a re-roll
 is archived on the next request.
 
-Dedup uses a per-session_tag seen-hash table in SQLite (recent hashes only),
-so the same sliding window resent on every request archives each message once,
-while a genuinely repeated message months later is archived again as a new event.
+Dedup consults the seen-hash table in SQLite globally (recent hashes only,
+recorded per session_tag for provenance): the same sliding window resent on
+every request archives each message once, and a window handed over into a new
+session — PWA history handoff, cold-start bridge — does not re-archive the
+carried history. A genuinely repeated message months later is archived again
+as a new event once its hash ages out of the retention window.
+
+event_at is the client-local send time. User messages carry it themselves:
+the PWA tail status suffix (第N天 anchors the year) or the legacy Operit time
+markers. Assistant replies inherit the time of the user message right before
+them in the window. The stored `thread` column is provenance only — the
+archive reader shows one merged timeline.
 """
 
 import asyncio
@@ -21,6 +30,7 @@ import re
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
+from .client_extra import parse_pwa_status_suffix_time
 from .context_layers import _strip_client_extra_bundle_text
 from .runtime import dt_to_iso, iso_now, logger
 
@@ -53,10 +63,18 @@ def _content_hash(role: str, text: str) -> str:
     return hashlib.sha256(f"{role}\n{text}".encode("utf-8")).hexdigest()
 
 
-def _client_time_from_text(text: str) -> Optional[str]:
-    """Extract Operit-injected local time and return UTC ISO when present."""
+def _client_time_from_text(text: str, *, now: Optional[datetime] = None) -> Optional[str]:
+    """Extract the client-stamped local time and return UTC ISO when present.
+
+    PWA tail status suffix first (the live client), then the legacy Operit
+    markers for old windows. ``now`` anchors the no-第N天 year-inference
+    fallback — the backfill passes the window's own historical time.
+    """
     if not text:
         return None
+    stamped = parse_pwa_status_suffix_time(text, now=now)
+    if stamped is not None:
+        return dt_to_iso(stamped)
     match = _CLIENT_CURRENT_TIME_RE.search(text)
     if match:
         raw = f"{match.group('date')}T{match.group('time')}"
@@ -128,7 +146,11 @@ class ChatArchiveService:
             text = _message_text(msg.get("content"))
             if not text:
                 continue
-            client_event_at = _client_time_from_text(text)
+            # Only user messages move the clock: the stamps are client-injected
+            # into user text, and an assistant reply merely *quoting* an old
+            # suffix must not drag its neighbours to that quoted moment.
+            # Assistant replies inherit the preceding user message's time.
+            client_event_at = _client_time_from_text(text) if role == "user" else None
             if client_event_at:
                 latest_client_event_at = client_event_at
             text, _ = _strip_client_extra_bundle_text(text)
@@ -148,15 +170,19 @@ class ChatArchiveService:
             return {"archived": 0}
 
         unseen = self.store.filter_unseen_archive_hashes(
-            session_tag, [item["content_hash"] for item in candidates]
+            [item["content_hash"] for item in candidates]
         )
         if not unseen:
             return {"archived": 0}
 
         # Keep first occurrence per unseen hash, preserving window order.
+        # archived_at gets one microsecond per row on top of the batch time so
+        # that (event_at, archived_at) sorting replays the window order even
+        # when several rows share one inherited event_at.
         rows: list[dict] = []
         taken: set[str] = set()
         event_at = event_at or iso_now()
+        archived_base = datetime.now(timezone.utc)
         for item in candidates:
             digest = item["content_hash"]
             if digest not in unseen or digest in taken:
@@ -171,6 +197,7 @@ class ChatArchiveService:
                     "content": item["content"],
                     "content_hash": digest,
                     "event_at": item.get("event_at") or event_at,
+                    "archived_at": dt_to_iso(archived_base + timedelta(microseconds=len(rows))),
                 }
             )
 
