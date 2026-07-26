@@ -135,6 +135,24 @@ export async function deleteMemoryEntityAlias(aliasId: string): Promise<void> {
   await api.delete(`/api/gateway/memory-graph/aliases/${encodeURIComponent(aliasId)}`)
 }
 
+export async function updateMemoryEntityAlias(
+  aliasId: string,
+  patch: { status?: MemoryFactStatus; evidence?: string },
+): Promise<void> {
+  await api.patch(`/api/gateway/memory-graph/aliases/${encodeURIComponent(aliasId)}`, patch)
+}
+
+export interface MemoryGraphNameCandidate {
+  name: string
+  kind: 'person' | 'place' | 'object'
+  count: number
+}
+
+export async function fetchMemoryGraphNameCandidates(limit = 30): Promise<MemoryGraphNameCandidate[]> {
+  const { data } = await api.get(`/api/gateway/memory-graph/name-candidates?limit=${limit}`)
+  return data.candidates || []
+}
+
 export async function createMemoryEntityRelation(payload: {
   source_entity_id: string
   target_entity_id: string
@@ -148,10 +166,15 @@ export async function createMemoryEntityRelation(payload: {
   })
 }
 
+export async function updateMemoryEntityRelation(
+  relationId: string,
+  patch: { status?: MemoryFactStatus | 'archived'; relation_type?: string; evidence?: string },
+): Promise<void> {
+  await api.patch(`/api/gateway/memory-graph/relations/${encodeURIComponent(relationId)}`, patch)
+}
+
 export async function archiveMemoryEntityRelation(relationId: string): Promise<void> {
-  await api.patch(`/api/gateway/memory-graph/relations/${encodeURIComponent(relationId)}`, {
-    status: 'archived',
-  })
+  await updateMemoryEntityRelation(relationId, { status: 'archived' })
 }
 
 export async function fetchSourceEntityMentions(

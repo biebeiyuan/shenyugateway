@@ -135,12 +135,16 @@ test('memory graph page loads and exposes anchor management', async ({ page }) =
   await page.route('**/api/gateway/memory-graph/sources/**', async (route) => {
     await route.fulfill({ json: { ok: true, mentions: [] } })
   })
+  await page.route('**/api/gateway/memory-graph/name-candidates*', async (route) => {
+    await route.fulfill({ json: { ok: true, candidates: [] } })
+  })
   await openAdminRoute(page, '/memory-graph', async () => {
     await expect(page.getByTestId('page-memory-graph')).toBeVisible()
     const search = page.getByTestId('memory-graph-search').locator('input')
     await search.fill('老周')
     await expect(search).toHaveValue('老周')
     await expect(page.getByRole('button', { name: '建立锚点' })).toBeVisible()
+    await page.getByTestId('memory-graph-tab-recall').click()
     const recall = page.getByTestId('memory-graph-recall-input').locator('input')
     await recall.fill('老周')
     await page.getByRole('button', { name: '想起', exact: true }).click()

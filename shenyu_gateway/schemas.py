@@ -240,6 +240,11 @@ class MemoryGraphAliasCreate(BaseModel):
     provenance: str = "manual"
 
 
+class MemoryGraphAliasPatch(BaseModel):
+    status: Optional[str] = None
+    evidence: Optional[str] = None
+
+
 class MemoryGraphRelationCreate(BaseModel):
     source_entity_id: str
     target_entity_id: str

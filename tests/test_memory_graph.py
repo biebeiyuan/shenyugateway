@@ -333,3 +333,43 @@ def test_renaming_entity_keeps_old_name_as_alias_and_promotes_new_name():
         ("小李", False),
         ("李心", True),
     }
+
+
+def test_update_alias_confirms_suggested_alias_and_validates_status():
+    supabase = GraphSupabase({
+        ALIAS_TABLE: [{**alias("a1", "person-a", "周周"), "status": "suggested", "confidence": 0.5}],
+    })
+    service = MemoryGraphService(supabase)
+
+    bad = asyncio.run(service.update_alias("a1", {"status": "nonsense"}))
+    missing = asyncio.run(service.update_alias("nope", {"status": "confirmed"}))
+    result = asyncio.run(service.update_alias("a1", {"status": "confirmed"}))
+
+    assert bad["ok"] is False
+    assert missing["ok"] is False
+    assert result["ok"] is True
+    row = supabase.tables[ALIAS_TABLE][0]
+    assert row["status"] == "confirmed"
+    assert row["confidence"] == 1.0
+
+
+def test_name_candidates_come_from_mem_note_fields_and_skip_existing_aliases():
+    supabase = GraphSupabase({
+        ALIAS_TABLE: [alias("a1", "person-a", "老周")],
+        "shenyu_mem_notes": [
+            {"status": "active", "people": ["老周", "阿茉"], "places": ["蛋糕店"], "objects": []},
+            {"status": "captured", "people": ["阿茉"], "places": [], "objects": ["风铃"]},
+            {"status": "archived", "people": ["旧名字"], "places": [], "objects": []},
+        ],
+    })
+
+    result = asyncio.run(MemoryGraphService(supabase).name_candidates(limit=10))
+
+    assert result["ok"] is True
+    ranked = {(item["name"], item["kind"]): item["count"] for item in result["candidates"]}
+    assert ranked[("阿茉", "person")] == 2
+    assert ranked[("蛋糕店", "place")] == 1
+    assert ranked[("风铃", "object")] == 1
+    names = {item["name"] for item in result["candidates"]}
+    assert "老周" not in names
+    assert "旧名字" not in names

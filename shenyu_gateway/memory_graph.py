@@ -14,6 +14,7 @@ ALIAS_TABLE = "shenyu_entity_aliases"
 MENTION_TABLE = "shenyu_entity_mentions"
 RELATION_TABLE = "shenyu_entity_relations"
 RECALL_INDEX_TABLE = "shenyu_recall_index"
+MEM_NOTES_TABLE = "shenyu_mem_notes"
 
 ENTITY_TYPES = {"person", "place", "object", "topic"}
 ENTITY_STATUSES = {"active", "archived", "merged"}
@@ -363,6 +364,55 @@ class MemoryGraphService:
         if not rows:
             return {"ok": False, "error": "alias not found or primary alias cannot be deleted."}
         return {"ok": True, "deleted": rows}
+
+    async def update_alias(self, alias_id: str, patch: dict[str, Any]) -> dict[str, Any]:
+        allowed = {"status", "evidence"}
+        update = {key: value for key, value in (patch or {}).items() if key in allowed}
+        if "status" in update:
+            update["status"] = _clean_id(update["status"]).lower()
+            if update["status"] not in FACT_STATUSES:
+                return {"ok": False, "error": "invalid alias status."}
+            if update["status"] == "confirmed":
+                update["confidence"] = 1.0
+        if "evidence" in update:
+            update["evidence"] = _clean_text(update["evidence"])
+        if not update:
+            return {"ok": False, "error": "no supported fields to update."}
+        rows = await self.supabase.update(ALIAS_TABLE, {"id": _clean_id(alias_id)}, update)
+        if not rows:
+            return {"ok": False, "error": "alias not found."}
+        return {"ok": True, "alias": rows[0]}
+
+    async def name_candidates(self, *, limit: int = 30) -> dict[str, Any]:
+        """Names already extracted into mem-note people/places/objects but not yet anchored."""
+        aliases = await self.supabase.query(
+            ALIAS_TABLE,
+            {"select": "normalized_alias", "limit": "2000"},
+        )
+        known = {_clean_id(row.get("normalized_alias")) for row in aliases}
+        notes = await self.supabase.query(
+            MEM_NOTES_TABLE,
+            {
+                "select": "people,places,objects,status",
+                "status": "in.(captured,active)",
+                "limit": "1000",
+            },
+        )
+        counts: dict[str, dict[str, Any]] = {}
+        for note in notes:
+            for field, kind in (("people", "person"), ("places", "place"), ("objects", "object")):
+                values = note.get(field) or []
+                if not isinstance(values, list):
+                    continue
+                for value in values:
+                    name = _clean_text(value, limit=80)
+                    normalized = normalize_alias(name)
+                    if len(normalized) < 2 or normalized in known:
+                        continue
+                    slot = counts.setdefault(normalized, {"name": name, "kind": kind, "count": 0})
+                    slot["count"] += 1
+        ranked = sorted(counts.values(), key=lambda item: (-item["count"], item["name"]))
+        return {"ok": True, "candidates": ranked[: max(1, min(int(limit or 30), 100))]}
 
     async def create_relation(
         self,

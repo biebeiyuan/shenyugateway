@@ -27,6 +27,7 @@ from .schemas import (
     MemNoteBulkPatch,
     MemNotePatch,
     MemoryGraphAliasCreate,
+    MemoryGraphAliasPatch,
     MemoryGraphBackfillRequest,
     MemoryGraphEntityCreate,
     MemoryGraphEntityPatch,
@@ -522,6 +523,16 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
     @router.delete("/api/gateway/memory-graph/aliases/{alias_id}")
     async def delete_memory_graph_alias(alias_id: str):
         return await graph_mutation(memory_graph_service().delete_alias(alias_id))
+
+    @router.patch("/api/gateway/memory-graph/aliases/{alias_id}")
+    async def update_memory_graph_alias(alias_id: str, body: MemoryGraphAliasPatch):
+        return await graph_mutation(
+            memory_graph_service().update_alias(alias_id, body.model_dump(exclude_unset=True))
+        )
+
+    @router.get("/api/gateway/memory-graph/name-candidates")
+    async def get_memory_graph_name_candidates(limit: int = 30):
+        return await graph_mutation(memory_graph_service().name_candidates(limit=limit))
 
     @router.post("/api/gateway/memory-graph/relations")
     async def create_memory_graph_relation(body: MemoryGraphRelationCreate):
