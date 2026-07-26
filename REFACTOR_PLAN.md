@@ -7,6 +7,20 @@
 
 ---
 
+## 状态核对（2026-07-26，Claude）
+
+- Phase 0.1 ✅（`MEM_NOTE_PATCH_KEYS` 已改为从 mem_notes 导入别名）
+- Phase 1.1/1.2/1.3 ✅（`stream_proxy.py`、`prepare_messages.py`、`middleware.py` 均已拆出）
+- Phase 2.1 ✅（`tool_schemas.py` 已从 tool_registry 拆出）
+- Phase 3 ✅（mem_notes 包，见下方原状态标记）
+- Phase 4 ⬜ 未做：gateway.py 兼容 wrapper 清理仍欠前置的 import/monkeypatch 契约清单（AUDIT_MATRIX 区域一 P3）
+- Phase 5 ⬜ 未做：`Mem0View.vue` 仍是前端大文件
+- 本计划之外：`gateway_tools.py` 已于 2026-07-26 按 `OPTIMIZATION_PLAN.md` Phase F 拆成 `shenyu_gateway/gateway_tools/` mixin 包（拆前先删除了三个已弃用工具的死代码）
+
+下方原文保留作历史参考；行数均为 2026-07-01 快照，执行剩余项时以函数名为锚。
+
+---
+
 ## 当前现状（2026-07-01 更新）
 
 - `gateway.py`：~740 行（从 1157 行大幅缩减）。chat pipeline、streaming、tool loop、routes 等已拆出。
