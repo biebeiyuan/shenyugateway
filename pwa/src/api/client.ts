@@ -69,6 +69,26 @@ export async function fetchSessionDetail(ctx: RequestContext, sessionTag: string
   return await response.json()
 }
 
+export async function renameSession(ctx: RequestContext, sessionTag: string, displayName: string): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(sessionTag)}`), {
+    method: 'PATCH',
+    headers: requestHeaders(ctx),
+    body: JSON.stringify({ display_name: displayName }),
+  })
+  if (!response.ok) throw new Error('改名没有成功')
+  return await response.json()
+}
+
+export async function deleteSession(ctx: RequestContext, sessionTag: string): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(sessionTag)}`), {
+    method: 'DELETE',
+    headers: requestHeaders(ctx),
+    body: JSON.stringify({ confirm: sessionTag }),
+  })
+  if (!response.ok) throw new Error('删除没有成功')
+  return await response.json()
+}
+
 export async function fetchWeather(ctx: RequestContext): Promise<Record<string, unknown>> {
   const response = await fetch(apiUrl(ctx, '/api/gateway/weather'), { headers: requestHeaders(ctx) })
   if (!response.ok) throw new Error('weather unavailable')

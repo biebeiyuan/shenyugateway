@@ -94,7 +94,7 @@ button:disabled { cursor: default; }
 .sidebar-section-title { margin: 24px 0 10px; padding: 0 12px; color: var(--sidebar-secondary); font-size: 15px; line-height: 20px; }
 .sidebar-empty { padding: 8px 12px; color: var(--sidebar-secondary); font-size: 15px; line-height: 1.45; }
 .session-list { display: flex; flex-direction: column; gap: 2px; padding: 0 4px; }
-.session-item { display: flex; min-height: 52px; flex-direction: column; justify-content: center; width: 100%; padding: 6px 12px; border-radius: 18px; color: var(--sidebar-text); text-align: left; }
+.session-item { display: flex; min-height: 52px; flex-direction: column; justify-content: center; width: 100%; padding: 6px 12px; border-radius: 18px; color: var(--sidebar-text); text-align: left; touch-action: pan-y; -webkit-touch-callout: none; -webkit-user-select: none; user-select: none; }
 .session-item:hover, .session-item.active { background: rgba(0, 0, 0, 0.045); }
 .session-title { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 17px; line-height: 22px; }
 .session-item small { display: block; margin-top: 2px; color: var(--sidebar-secondary); font-size: 12px; line-height: 1.2; }
@@ -299,6 +299,14 @@ button:disabled { cursor: default; }
 .settings-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 20px; }
 .quiet-button, .primary-button { display: inline-flex; align-items: center; gap: 6px; padding: 10px 13px; border-radius: var(--radius-md); font-size: 13px; }
 .quiet-button { border: 1px solid var(--border); color: var(--text-secondary); }
+
+/* 最近对话长按操作单 */
+.session-action-sheet .session-action-tag code { font-size: 12px; word-break: break-all; }
+.session-action-list { display: flex; gap: 10px; margin: 12px 0 6px; }
+.session-action-list .quiet-button { flex: 1; justify-content: center; }
+.session-action-danger { color: #c0392b; border-color: rgba(192, 57, 43, 0.35); }
+.session-action-danger:disabled { opacity: 0.4; }
+.session-action-error { color: #c0392b; }
 .primary-button { background: var(--accent); color: var(--accent-fg); }
 
 .visually-hidden { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; clip-path: inset(50%); }

@@ -102,6 +102,13 @@ The script separates `tools_offered` from `gateway_tools_executed`. If tools wer
 
 Do not put gateway tokens, VPS hosts, SSH keys, or API keys into repo files. Use shell environment variables or ask the user for the missing value.
 
+### VPS deployment layout (Coolify)
+
+- The gateway container's NAME changes on every deployment (`<coolify-app-id>-<deploy-stamp>`); its image tag is the git commit sha. Never hardcode a container name — find the live one with `docker ps --format '{{.Names}} {{.Image}}'` (match the sha or the app-id prefix), or let the helper's `container_match` resolve it.
+- The production SQLite lives on the named Docker volume `shenyu-gateway-data`, host path `/var/lib/docker/volumes/shenyu-gateway-data/_data/shenyu_gateway.db` (mounted at `/data` in the container). This file survives deployments and container replacement; host-side `python3` can read it directly for read-only probes.
+- `/opt/shenyuwangguan` and `/opt/shenyuwangguan-data` on the VPS are stale leftovers of a pre-Coolify deployment. The `.env` and the SQLite there are NOT what the live container uses (that SQLite stopped updating in May 2026) — do not read or edit them when debugging the live gateway. The Supabase credentials in that `.env` do still match production.
+- Effective runtime config = container env vars overlaid by SQLite `config_overrides` at startup (overrides win — see the GATEWAY_API_KEY autopsy row). When Coolify env and Admin config disagree, trust `config_overrides`; and keep the Coolify env aligned so a fresh database does not silently flip behavior.
+
 ## Context Window Observation
 
 The chunked-window implementation persists content-free observations in SQLite. After the new gateway has handled normal chat, retries, rolls, and tool continuations, summarize the events with:

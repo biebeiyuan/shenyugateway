@@ -66,6 +66,7 @@ export type ModelOption = {
 export type GatewaySession = {
   session_tag: string
   client_name?: string
+  display_name?: string | null
   last_active_at?: string
   latest_user_text?: string
   message_count?: number

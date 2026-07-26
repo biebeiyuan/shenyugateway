@@ -321,6 +321,9 @@ class BaseStoreMixin:
                 """
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")
+            # Owner-facing alias for a conversation. The session_tag stays the
+            # immutable wire identity; renaming only changes what lists show.
+            self._ensure_column(conn, "gateway_sessions", "display_name", "TEXT")
             self._ensure_column(
                 conn,
                 "tool_error_log",

@@ -967,3 +967,15 @@ def test_runtime_prune_keeps_active_pending_tool_turns_and_removes_terminal_ones
     assert remaining_ids == {active["id"]}
     assert consumed["id"] not in remaining_ids
     assert expired["id"] not in remaining_ids
+
+
+def test_session_display_name_round_trip(tmp_path):
+    store = GatewayStore(str(tmp_path / "display.db"))
+    session = store.get_or_create_session("7.18", "shenyu-pwa")
+
+    updated = store.set_session_display_name(session["id"], "  和予予看星星  ")
+    assert updated is not None and updated["display_name"] == "和予予看星星"
+    assert store.list_sessions(limit=10)[0]["display_name"] == "和予予看星星"
+
+    cleared = store.set_session_display_name(session["id"], "   ")
+    assert cleared is not None and cleared["display_name"] is None

@@ -113,6 +113,20 @@ class SessionsMixin:
             ).fetchall()
             return [dict(row) for row in rows]
 
+    def set_session_display_name(self, session_id: str, display_name: Optional[str]) -> Optional[dict]:
+        """Set or clear (None/empty) the owner-facing alias of a session."""
+        value = (display_name or "").strip() or None
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE gateway_sessions SET display_name = ? WHERE id = ?",
+                (value, session_id),
+            )
+            row = conn.execute(
+                "SELECT * FROM gateway_sessions WHERE id = ?",
+                (session_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
     def get_session_by_tag(self, session_tag: str) -> Optional[dict]:
         with self._connect() as conn:
             row = conn.execute(

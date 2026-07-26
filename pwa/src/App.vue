@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, ref, watch } from 'vue'
 import {
   ArrowLeft,
   ArrowLeftRight,
@@ -42,12 +42,14 @@ import type {
 } from './types'
 import { createId } from './utils'
 import {
+  deleteSession,
   fetchModels,
   fetchRuntimeConfig,
   fetchSessionDetail,
   fetchSessions,
   postChatStream,
   postUpstreamConfig,
+  renameSession,
   wireMessages,
   type RequestContext,
 } from './api/client'
@@ -331,12 +333,100 @@ async function loadSessions() {
 }
 
 function sessionTitle(session: GatewaySession): string {
-  return session.latest_user_text?.trim() || session.session_tag || '未命名对话'
+  return session.display_name?.trim() || session.latest_user_text?.trim() || session.session_tag || '未命名对话'
 }
 
 function sessionMeta(session: GatewaySession): string {
   const count = Number(session.user_message_count || session.message_count || 0)
   return count ? `${count} 轮` : '还没有消息'
+}
+
+// ---- 最近对话的长按操作（改名/删除） ----------------------------------------
+// 长按（或桌面右键）弹出操作单；滑动列表时移动超过阈值就取消判定。
+
+const sessionActionTarget = ref<GatewaySession | null>(null)
+// 错误必须显示在操作单里：底下的 errorNotice 会被侧栏和面板盖住，等于没提示。
+const sessionActionError = ref('')
+watch(sessionActionTarget, () => { sessionActionError.value = '' })
+let sessionPressTimer: number | null = null
+let sessionPressMoved = false
+let sessionLongPressFired = false
+let sessionPressStartX = 0
+let sessionPressStartY = 0
+
+function sessionPressStart(session: GatewaySession, event: PointerEvent) {
+  if (event.pointerType === 'mouse' && event.button !== 0) return
+  sessionPressCancel()
+  sessionLongPressFired = false
+  sessionPressMoved = false
+  sessionPressStartX = event.clientX
+  sessionPressStartY = event.clientY
+  sessionPressTimer = window.setTimeout(() => {
+    sessionLongPressFired = true
+    sessionActionTarget.value = session
+  }, 550)
+}
+
+function sessionPressMove(event: PointerEvent) {
+  if (sessionPressTimer === null) return
+  if (Math.abs(event.clientX - sessionPressStartX) > 10 || Math.abs(event.clientY - sessionPressStartY) > 10) {
+    sessionPressMoved = true
+    sessionPressCancel()
+  }
+}
+
+function sessionPressCancel() {
+  if (sessionPressTimer !== null) {
+    window.clearTimeout(sessionPressTimer)
+    sessionPressTimer = null
+  }
+}
+
+function sessionItemClick(session: GatewaySession) {
+  sessionPressCancel()
+  if (sessionLongPressFired || sessionPressMoved) {
+    sessionLongPressFired = false
+    sessionPressMoved = false
+    return
+  }
+  void openSession(session)
+}
+
+function openSessionActions(session: GatewaySession) {
+  sessionActionTarget.value = session
+}
+
+async function renameSessionAction(session: GatewaySession) {
+  const name = window.prompt('给这条对话起个名字（留空恢复默认标题）', session.display_name?.trim() || '')
+  if (name === null) return
+  const trimmed = name.trim()
+  if (trimmed.length > 60) {
+    sessionActionError.value = '名字太长了，60 个字以内。'
+    return
+  }
+  try {
+    await renameSession(clientContext(), session.session_tag, trimmed)
+    session.display_name = trimmed || null
+    sessionActionTarget.value = null
+    status.value = trimmed ? `已改名：${trimmed}` : '已恢复默认标题'
+    await loadSessions()
+  } catch (error) {
+    sessionActionError.value = error instanceof Error ? error.message : '改名没有成功。'
+  }
+}
+
+async function deleteSessionAction(session: GatewaySession) {
+  if (session.session_tag === sessionTag.value) return
+  const label = sessionTitle(session)
+  if (!window.confirm(`删除「${label}」？\n只清掉网关里这条对话的快照和心跳，Supabase 档案（我们说过的话）不受影响。`)) return
+  try {
+    await deleteSession(clientContext(), session.session_tag)
+    recentSessions.value = recentSessions.value.filter((item) => item.session_tag !== session.session_tag)
+    sessionActionTarget.value = null
+    status.value = `已删除 ${label}`
+  } catch (error) {
+    sessionActionError.value = error instanceof Error ? error.message : '删除没有成功。'
+  }
 }
 
 async function openSession(session: GatewaySession): Promise<boolean> {
@@ -914,7 +1004,13 @@ onMounted(async () => {
           class="session-item"
           :class="{ active: session.session_tag === sessionTag }"
           type="button"
-          @click="openSession(session)"
+          @click="sessionItemClick(session)"
+          @pointerdown="sessionPressStart(session, $event)"
+          @pointermove="sessionPressMove($event)"
+          @pointerup="sessionPressCancel()"
+          @pointercancel="sessionPressCancel()"
+          @pointerleave="sessionPressCancel()"
+          @contextmenu.prevent="openSessionActions(session)"
         >
           <span class="session-title">{{ sessionTitle(session) }}</span>
           <small>{{ sessionMeta(session) }}</small>
@@ -1098,6 +1194,31 @@ onMounted(async () => {
             </div>
           </template>
         </div>
+      </section>
+    </div>
+
+    <div v-if="sessionActionTarget" class="sheet-layer" @click.self="sessionActionTarget = null">
+      <section class="bottom-sheet session-action-sheet">
+        <div class="sheet-handle" />
+        <div class="sheet-heading">
+          <div>
+            <span class="sheet-eyebrow">最近对话</span>
+            <h2>{{ sessionTitle(sessionActionTarget) }}</h2>
+          </div>
+          <button class="icon-button" aria-label="关闭" title="关闭" @click="sessionActionTarget = null"><X :size="18" /></button>
+        </div>
+        <p class="settings-note session-action-tag"><code>{{ sessionActionTarget.session_tag }}</code></p>
+        <div class="session-action-list">
+          <button class="quiet-button" @click="renameSessionAction(sessionActionTarget)">改名</button>
+          <button
+            class="quiet-button session-action-danger"
+            :disabled="sessionActionTarget.session_tag === sessionTag"
+            @click="deleteSessionAction(sessionActionTarget)"
+          >删除</button>
+        </div>
+        <p v-if="sessionActionError" class="settings-note session-action-error">{{ sessionActionError }}</p>
+        <p v-else-if="sessionActionTarget.session_tag === sessionTag" class="settings-note">正在聊的这条不能删，换到别的对话再回来删它。</p>
+        <p v-else class="settings-note">删除只清网关里的快照和心跳，档案里我们说过的话都还在。</p>
       </section>
     </div>
 

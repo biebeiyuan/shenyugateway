@@ -129,6 +129,10 @@ class SessionDeleteRequest(BaseModel):
     confirm: str
 
 
+class SessionRenameRequest(BaseModel):
+    display_name: Optional[str] = None
+
+
 class HeartbeatCreateRequest(BaseModel):
     content: str
     turn_number: Optional[int] = None

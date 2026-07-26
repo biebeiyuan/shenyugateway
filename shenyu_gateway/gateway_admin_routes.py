@@ -41,6 +41,7 @@ from .schemas import (
     StarSceneBackfillRequest,
     StarScenesRequest,
     SessionDeleteRequest,
+    SessionRenameRequest,
 )
 from .sessions import SessionManager
 from .stars import StarService
@@ -745,6 +746,20 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             "recent_messages": messages,
             "heartbeats": heartbeats,
         }
+
+    @router.patch("/api/gateway/sessions/{session_tag}")
+    async def rename_gateway_session(session_tag: str, body: SessionRenameRequest):
+        """Set/clear the owner-facing alias. The session_tag itself never changes —
+        it is the wire identity clients resend, so renaming it would fork the session."""
+        store = deps.require_session_store()
+        session = store.get_session_by_tag(session_tag)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        display_name = (body.display_name or "").strip()
+        if len(display_name) > 60:
+            raise HTTPException(status_code=400, detail="Display name is too long (max 60 chars).")
+        updated = store.set_session_display_name(session["id"], display_name or None)
+        return {"ok": True, "session": updated}
 
     @router.post("/api/gateway/sessions/{session_tag}/heartbeats")
     async def create_gateway_heartbeat(session_tag: str, body: HeartbeatCreateRequest):
