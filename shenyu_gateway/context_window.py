@@ -184,6 +184,38 @@ def _has_tool_continuation(messages: list[dict[str, Any]]) -> bool:
     return False
 
 
+# A long-lived client with a bounded local window (the PWA) trims its oldest
+# messages and keeps sending the tail. That head slide is normal rolling-window
+# behavior, not a conversation edit, and must not reset the context epoch.
+# The minimum overlap keeps a coincidental repeated message from disguising a
+# real branch as a slide.
+_MIN_HEAD_SLIDE_OVERLAP = 8
+
+
+def _head_slide_alignment(
+    previous: list[dict[str, Any]],
+    current: list[dict[str, Any]],
+    min_overlap: int = _MIN_HEAD_SLIDE_OVERLAP,
+) -> Optional[tuple[int, int]]:
+    """Detect current == previous minus its first `slide` messages, plus an
+    optional appended tail. Returns (slide, overlap) for the smallest slide
+    whose entire remainder of previous reappears at the start of current."""
+    if len(previous) <= min_overlap or not current:
+        return None
+    previous_fps = [message_fingerprint(message) for message in previous]
+    current_fps = [message_fingerprint(message) for message in current]
+    first = current_fps[0]
+    for slide in range(1, len(previous_fps) - min_overlap + 1):
+        if previous_fps[slide] != first:
+            continue
+        overlap = len(previous_fps) - slide
+        if overlap > len(current_fps):
+            continue
+        if previous_fps[slide:] == current_fps[:overlap]:
+            return slide, overlap
+    return None
+
+
 def classify_history_event(
     previous_messages: Optional[list[dict[str, Any]]],
     current_messages: list[dict[str, Any]],
@@ -220,6 +252,24 @@ def classify_history_event(
     if prefix == len(current) and len(current) < len(previous):
         detail.update(event_class="roll", new_human_turn=False)
         return detail
+    if prefix == 0:
+        slide_alignment = _head_slide_alignment(previous, current)
+        if slide_alignment:
+            slide, overlap = slide_alignment
+            appended = current[overlap:]
+            detail.update(
+                head_slide_messages=slide,
+                head_slide_overlap_messages=overlap,
+            )
+            if any(message.get("role") == "user" for message in appended):
+                detail.update(event_class="new_user", new_human_turn=True)
+            elif _has_tool_continuation(appended):
+                detail.update(event_class="client_tool_continuation", new_human_turn=False)
+            elif appended:
+                detail.update(event_class="continuation", new_human_turn=False)
+            else:
+                detail.update(event_class="retry", new_human_turn=False)
+            return detail
 
     previous_tail_start = _last_group_start(previous)
     current_tail_start = _last_group_start(current)
@@ -257,6 +307,7 @@ def select_chunked_window(
     limit: Optional[int],
     previous_state: Optional[dict[str, Any]],
     event_class: str,
+    head_slide_messages: int = 0,
     island_tail_messages: int = DEFAULT_ISLAND_TAIL_MESSAGES,
     raw_tool_protection_turns: int = DEFAULT_RAW_TOOL_PROTECTION_TURNS,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
@@ -276,7 +327,11 @@ def select_chunked_window(
         and event_class not in {"initial", "branch"}
     )
     if state_compatible:
-        start = max(0, int(previous_state.get("window_start_index") or 0))
+        # A client head slide shifts every absolute history index; move the
+        # stored window start with it so the retained window keeps the same
+        # messages and the epoch survives.
+        slide = max(0, int(head_slide_messages or 0))
+        start = max(0, int(previous_state.get("window_start_index") or 0) - slide)
         if start > len(history):
             state_compatible = False
             reset_reason = "history_shorter_than_window_start"

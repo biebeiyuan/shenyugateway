@@ -185,6 +185,7 @@ def test_history_event_table(previous, current, expected_class, new_human_turn):
         ("edit_tail", True),
         ("client_tool_continuation", True),
         ("continuation", True),
+        ("new_user", True),
         ("branch", False),
     ],
 )
@@ -209,6 +210,108 @@ def test_history_event_epoch_contract(event_class, keeps_epoch):
     assert meta["context_epoch_reset"] is (not keeps_epoch)
     if event_class == "branch":
         assert meta["context_epoch_reset_reason"] == "history_branch"
+
+
+def _alternating_history(count: int) -> list[dict]:
+    return [
+        {"role": "user" if index % 2 == 0 else "assistant", "content": f"m{index}"}
+        for index in range(count)
+    ]
+
+
+def test_history_event_head_slide_is_append_not_branch():
+    previous = _alternating_history(12)
+    current = previous[2:] + [{"role": "user", "content": "u-new"}]
+
+    event = classify_history_event(previous, current)
+
+    assert event["event_class"] == "new_user"
+    assert event["new_human_turn"] is True
+    assert event["head_slide_messages"] == 2
+    assert event["head_slide_overlap_messages"] == 10
+
+
+def test_history_event_head_slide_without_new_tail_is_retry():
+    previous = _alternating_history(12)
+
+    event = classify_history_event(previous, previous[2:])
+
+    assert event["event_class"] == "retry"
+    assert event["new_human_turn"] is False
+    assert event["head_slide_messages"] == 2
+
+
+def test_history_event_short_head_slide_still_branches():
+    previous = _alternating_history(8)
+    current = previous[2:] + [{"role": "user", "content": "u-new"}]
+
+    event = classify_history_event(previous, current)
+
+    assert event["event_class"] == "branch"
+    assert "head_slide_messages" not in event
+
+
+def test_history_event_head_slide_with_inner_edit_still_branches():
+    previous = _alternating_history(12)
+    slid = [dict(message) for message in previous[2:]]
+    slid[4]["content"] = "edited mid-history"
+    current = slid + [{"role": "user", "content": "u-new"}]
+
+    event = classify_history_event(previous, current)
+
+    assert event["event_class"] == "branch"
+    assert "head_slide_messages" not in event
+
+
+def test_chunked_window_keeps_epoch_and_content_across_head_slide():
+    messages = _alternating_history(170)
+    _first, state, _meta = select_chunked_window(
+        messages,
+        limit=168,
+        previous_state=None,
+        event_class="initial",
+    )
+
+    slid = messages[2:] + [{"role": "user", "content": "m170"}]
+    event = classify_history_event(messages, slid)
+    assert event["event_class"] == "new_user"
+
+    retained, next_state, meta = select_chunked_window(
+        slid,
+        limit=168,
+        previous_state=state,
+        event_class=event["event_class"],
+        head_slide_messages=event["head_slide_messages"],
+    )
+
+    assert next_state["epoch_id"] == state["epoch_id"]
+    assert meta["context_epoch_reset"] is False
+    assert next_state["window_start_index"] == state["window_start_index"] - 2
+    assert retained[0]["content"] == f"m{state['window_start_index']}"
+
+
+def test_chunked_window_head_slide_clamps_start_to_zero():
+    history = _alternating_history(76)
+    previous_state = {
+        "epoch_id": "epoch_existing",
+        "base_limit": 75,
+        "window_start_index": 166,
+        "island_anchor_offset": 40,
+        "island_state": {"rendered_text": "old island"},
+    }
+
+    retained, state, meta = select_chunked_window(
+        history,
+        limit=75,
+        previous_state=previous_state,
+        event_class="new_user",
+        head_slide_messages=166,
+    )
+
+    assert state["epoch_id"] == "epoch_existing"
+    assert meta["context_epoch_reset"] is False
+    assert state["window_start_index"] == 0
+    assert len(retained) == 76
 
 
 def test_cold_start_bridge_deduplicates_exact_tail_against_client_history_prefix():

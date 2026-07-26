@@ -442,6 +442,7 @@ async def prepare_messages(
         limit=cfg.max_client_messages,
         previous_state=previous_window_state,
         event_class=event_meta["event_class"],
+        head_slide_messages=int(event_meta.get("head_slide_messages") or 0),
     )
     trim_meta.update(event_meta)
     trim_meta["assistant_lineage"] = lineage_meta
