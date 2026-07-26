@@ -53,6 +53,13 @@ import {
 } from './api/client'
 import { readUpstreamPresets } from './api/presets'
 import {
+  initBatteryWatch,
+  initWeatherWatch,
+  splitStatusSuffix,
+  stampStatusSuffix,
+  stripStatusSuffix,
+} from './meta/statusSuffix'
+import {
   coldStartHistoryRows,
   dedupeUiMessagesForRecovery,
   hasExactDuplicateRows,
@@ -66,6 +73,7 @@ import {
   loadStoredMessages,
   persistStoredMessages,
 } from './session/persistence'
+import { hydrateToolEvents } from './session/toolHydration'
 import {
   applyVariant,
   canSwitchMessageVariant,
@@ -348,6 +356,9 @@ async function openSession(session: GatewaySession): Promise<boolean> {
         events: [],
         streaming: false,
       }))
+    // 快照只带正文；用 recent_messages 里的 tool 原始行补回工具事件，
+    // 随后的 persistMessages 会把补好的 events 一起落盘。
+    hydrateToolEvents(messages.value, payload.recent_messages)
     sessionTag.value = session.session_tag
     localStorage.setItem(STORAGE_SESSION, sessionTag.value)
     persistMessages()
@@ -381,6 +392,7 @@ async function recoverSessionFromColdStart(session: GatewaySession = { session_t
         events: [],
         streaming: false,
       }))
+      hydrateToolEvents(messages.value, payload.recent_messages)
     }
     sessionTag.value = session.session_tag
     localStorage.setItem(STORAGE_SESSION, sessionTag.value)
@@ -689,7 +701,8 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
 
 async function submit() {
   if (busy.value || !hasContent.value) return
-  const text = draft.value.trim()
+  // 尾部状态后缀：先剥旧再追新，编辑重发换新不叠加（跨端契约第1条）。
+  const text = stampStatusSuffix(draft.value.trim())
   if (editId.value) {
     const index = messages.value.findIndex((message) => message.id === editId.value)
     if (index >= 0 && messages.value[index].role === 'user') {
@@ -732,7 +745,7 @@ function cancelGeneration() {
 function beginEdit(message: UiMessage) {
   if (message.role !== 'user' || busy.value) return
   editId.value = message.id
-  draft.value = message.content
+  draft.value = stripStatusSuffix(message.content)
   pendingAttachments.value = [...message.attachments]
   nextTick(() => {
     resizeInput()
@@ -804,6 +817,15 @@ function backToProcessSummary() {
   processSheet.value = { ...processSheet.value, view: 'summary', thinkingKey: undefined, toolKey: undefined }
 }
 
+// 渲染层切分：气泡里正文与尾部状态后缀分开、后缀淡化展示（数据本身不变）。
+function userBubbleBody(message: UiMessage): string {
+  return splitStatusSuffix(message.content).body
+}
+
+function userBubbleSuffix(message: UiMessage): string {
+  return splitStatusSuffix(message.content).suffix
+}
+
 function statusSpriteMode(message: UiMessage): SpriteMode {
   const hasActiveTool = traceRows(message).some((event) => event.phase === 'tool_start' || event.ok === undefined)
   if (hasActiveTool) return 'shimmer'
@@ -822,6 +844,8 @@ function runQuickPrompt(prompt: string) {
 
 onMounted(async () => {
   localStorage.setItem(STORAGE_SESSION, sessionTag.value)
+  initBatteryWatch()
+  initWeatherWatch(clientContext)
   loadPresets()
   await loadRuntimeUpstream()
   await loadModels()
@@ -958,7 +982,9 @@ onMounted(async () => {
               <img v-for="attachment in message.attachments" :key="attachment.id" :src="attachment.dataUrl" :alt="attachment.name" />
             </div>
             <div v-if="message.role === 'user'" class="user-bubble">
-              {{ message.content || '（一张图片）' }}
+              <template v-if="userBubbleBody(message)">{{ userBubbleBody(message) }}</template>
+              <template v-else-if="!userBubbleSuffix(message)">{{ '（一张图片）' }}</template>
+              <span v-if="userBubbleSuffix(message)" class="msg-suffix">{{ userBubbleSuffix(message) }}</span>
             </div>
             <div v-else class="assistant-body">
               <template v-for="part in assistantParts(message)" :key="part.key">

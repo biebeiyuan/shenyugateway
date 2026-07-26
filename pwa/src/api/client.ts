@@ -69,6 +69,12 @@ export async function fetchSessionDetail(ctx: RequestContext, sessionTag: string
   return await response.json()
 }
 
+export async function fetchWeather(ctx: RequestContext): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl(ctx, '/api/gateway/weather'), { headers: requestHeaders(ctx) })
+  if (!response.ok) throw new Error('weather unavailable')
+  return await response.json()
+}
+
 export async function postUpstreamConfig(ctx: RequestContext, body: Record<string, unknown>): Promise<void> {
   const response = await fetch(apiUrl(ctx, '/api/config'), {
     method: 'POST',

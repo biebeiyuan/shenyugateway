@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { FALLBACK_SESSION_MESSAGE_LIMIT, STORAGE_MESSAGES, loadStoredMessages, persistStoredMessages } from '../src/session/persistence'
 import type { UiMessage } from '../src/types'
 
@@ -71,6 +71,99 @@ describe('message persistence round-trip', () => {
     localStorage.setItem(STORAGE_MESSAGES, JSON.stringify([{ role: 'system', content: 'x' }, { role: 'user', content: 'keep' }]))
     expect(loadStoredMessages().map((message) => message.content)).toEqual(['keep'])
     localStorage.setItem(STORAGE_MESSAGES, 'not json')
+    expect(loadStoredMessages()).toEqual([])
+  })
+})
+
+describe('tool event persistence', () => {
+  it('round-trips events and thinking segments with their offsets', () => {
+    const message = uiMessage('assistant', 'answer', {
+      thinking: 'deep',
+      thinkingSegments: [{ id: 't1', content: 'deep', textOffset: 4, streamOrder: 2 }],
+      events: [
+        { phase: 'tool_start', tool_call_id: 'c1', name: 'shenyu_recall', input: { query: 'x' }, text_offset: 3, stream_order: 0 },
+        { phase: 'tool_end', tool_call_id: 'c1', name: 'shenyu_recall', ok: true, output: 'found it', text_offset: 3, stream_order: 1 },
+      ],
+    })
+    persistStoredMessages([message], FALLBACK_SESSION_MESSAGE_LIMIT)
+    const [restored] = loadStoredMessages()
+    expect(restored.events).toHaveLength(2)
+    expect(restored.events[0].input).toEqual({ query: 'x' })
+    expect(restored.events[1].output).toBe('found it')
+    expect(restored.events[1].ok).toBe(true)
+    expect(restored.thinkingSegments).toEqual([{ id: 't1', content: 'deep', textOffset: 4, streamOrder: 2 }])
+  })
+
+  it('keeps legacy rows without events readable', () => {
+    localStorage.setItem(STORAGE_MESSAGES, JSON.stringify([{ id: 'a1', role: 'assistant', content: 'old', thinking: 'why' }]))
+    const [restored] = loadStoredMessages()
+    expect(restored.events).toEqual([])
+    expect(restored.thinkingSegments).toHaveLength(1)
+    expect(restored.thinkingSegments[0].content).toBe('why')
+  })
+})
+
+describe('quota degradation', () => {
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.restoreAllMocks()
+  })
+
+  // happy-dom's localStorage does not dispatch through Storage.prototype, so the
+  // quota is simulated with a stubbed global storage instead of a method spy.
+  function withQuotaLimit(maxLength: number): () => number {
+    const store = new Map<string, string>()
+    let rejected = 0
+    vi.stubGlobal('localStorage', {
+      getItem: (key: string) => (store.has(key) ? store.get(key)! : null),
+      setItem: (key: string, value: string) => {
+        if (value.length > maxLength) {
+          rejected++
+          throw new DOMException('quota', 'QuotaExceededError')
+        }
+        store.set(key, value)
+      },
+      removeItem: (key: string) => { store.delete(key) },
+      clear: () => { store.clear() },
+    })
+    return () => rejected
+  }
+
+  it('truncates long event outputs when the first write overflows', () => {
+    const rejectedCount = withQuotaLimit(30000)
+    const message = uiMessage('assistant', 'a', {
+      events: [
+        { phase: 'tool_start', tool_call_id: 'c1', name: 'shenyu_recall', input: {} },
+        { phase: 'tool_end', tool_call_id: 'c1', name: 'shenyu_recall', ok: true, output: 'x'.repeat(60000) },
+      ],
+    })
+    expect(() => persistStoredMessages([message], FALLBACK_SESSION_MESSAGE_LIMIT)).not.toThrow()
+    expect(rejectedCount()).toBe(1)
+    const [restored] = loadStoredMessages()
+    expect(restored.events).toHaveLength(2)
+    expect(restored.events[1].output).toHaveLength(2000)
+  })
+
+  it('drops events entirely when truncation still overflows', () => {
+    const rejectedCount = withQuotaLimit(300)
+    const message = uiMessage('assistant', 'kept content', {
+      events: [
+        { phase: 'tool_start', tool_call_id: 'c1', name: 'shenyu_recall', input: {} },
+        { phase: 'tool_end', tool_call_id: 'c1', name: 'shenyu_recall', ok: true, output: 'x'.repeat(60000) },
+      ],
+    })
+    expect(() => persistStoredMessages([message], FALLBACK_SESSION_MESSAGE_LIMIT)).not.toThrow()
+    expect(rejectedCount()).toBe(2)
+    const [restored] = loadStoredMessages()
+    expect(restored.content).toBe('kept content')
+    expect(restored.events).toEqual([])
+  })
+
+  it('gives up quietly when storage keeps overflowing', () => {
+    withQuotaLimit(0)
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    expect(() => persistStoredMessages([uiMessage('user', 'hello')], FALLBACK_SESSION_MESSAGE_LIMIT)).not.toThrow()
+    expect(warn).toHaveBeenCalledOnce()
     expect(loadStoredMessages()).toEqual([])
   })
 })

@@ -146,6 +146,7 @@ button:disabled { cursor: default; }
 .message-row.assistant .message-column { width: 100%; }
 .assistant-avatar { display: none; }
 .user-bubble { width: max-content; max-width: 85%; padding: 12px 18px; border-radius: var(--radius-bubble); background: var(--bubble-user); color: var(--text-primary); font: var(--text-read)/1.65 var(--font-serif); white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; }
+.msg-suffix { display: block; margin-top: 4px; opacity: .55; font-size: .85em; line-height: 1.5; }
 .message-images { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 6px; }
 .message-images img { max-width: 220px; max-height: 180px; border-radius: 14px; object-fit: cover; }
 .assistant-body { min-width: 0; color: var(--text-primary); }
