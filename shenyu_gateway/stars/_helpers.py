@@ -4,8 +4,10 @@ import json
 import re
 from typing import Any, Optional
 
+from ..embeddings import vector_literal as _vector_literal
 from ..recall import recall_terms
 from ..runtime import logger
+from ..utils import json_dict as _json_dict
 from ..utils import normalize_text as _normalize_text
 
 # ---------------------------------------------------------------------------
@@ -162,25 +164,9 @@ def _safe_float(value: Any, default: float = 0.0) -> float:
         return default
 
 
-def _vector_literal(vector: list[float]) -> str:
-    return "[" + ",".join(f"{float(value):.9g}" for value in vector) + "]"
-
-
-def _json_dict(value: Any) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return {}
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            return {"value": text}
-        return parsed if isinstance(parsed, dict) else {"value": parsed}
-    return {"value": value}
+# _vector_literal and _json_dict are shared implementations imported above
+# (embeddings.vector_literal / utils.json_dict) - keep recall and stars on the
+# same pgvector precision and JSON coercion contracts.
 
 
 def _node_id(value: Any) -> str:

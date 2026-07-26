@@ -23,12 +23,12 @@
         "star_ranker_version"
       ],
       "reviewed": {
-        "fingerprint": "d05a0bdd30e2d483c23c8205c709c18fe8599a1b0d02f5412f89f16310cd2309",
-        "commit": "f8764bbaa769bb14cced5fca460789ba05442552",
-        "revision": "f8764bbaa769bb14cced5fca460789ba05442552-dirty",
+        "fingerprint": "f09b85f19f4b9c6216b5e3116fb5071fb119832b1504c1d3d665c5aaa1279a62",
+        "commit": "bb798a2b033a8569669c298379ec1d233e72f156",
+        "revision": "bb798a2b033a8569669c298379ec1d233e72f156-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-25T18:13:37+08:00",
-        "reviewed_by": "codex"
+        "reviewed_at": "2026-07-26T17:18:43+08:00",
+        "reviewed_by": "Claude"
       }
     },
     "mem": {

@@ -53,3 +53,9 @@ class EmbeddingClient:
         except (TypeError, ValueError):
             return None, "Embedding contains non-numeric values."
         return vector, None
+
+
+def vector_literal(vector: list[float]) -> str:
+    # pgvector serialization contract: recall and stars write the same Supabase
+    # vector columns, so the .9g precision must stay identical for both.
+    return "[" + ",".join(f"{float(value):.9g}" for value in vector) + "]"

@@ -35,7 +35,7 @@
 > | A 场景向量缓存 | ✅ 已完成 | `stars/_scene.py` 的 `_DESC_VECTOR_CACHE` |
 > | B context build 并行化 | ✅ 已完成 | `context_builder.py` 合并 gather（AUDIT_MATRIX 区域五已确认） |
 > | C 中文停用词统一 | ✅ 已完成 | `recall.py::is_generic_chinese_fragment` 为单一来源，`mem_notes_relevance.py` 复用 |
-> | D 配置 fallback / 去重 | ⬜ 未做 | D1 `stars/_crud.py` 死 fallback 仍在；D4 `_vector_literal` 在 recall 与 stars 仍各一份 |
+> | D 配置 fallback / 去重 | ◐ D4 已完成（2026-07-26） | D4：`_vector_literal` 收敛到 `embeddings.vector_literal`、`_json_dict` 收敛到 `utils.json_dict`，recall 与 stars 共享单一实现；D1 `stars/_crud.py` 死 fallback 仍未处理 |
 > | E 测试硬化 | ✅ 已完成 | 硬化测试文件均已存在；全仓测试早已超过 283 基线（2026-07-26 为 550+） |
 > | F 拆 gateway_tools.py | ✅ 已完成（2026-07-26） | `shenyu_gateway/gateway_tools/` mixin 包；拆前删除了 ask_memory / search_primary_texts / meta_summaries 死代码，并新增 broker 描述与 daily 名单守护测试 |
 > | G 并发竞态加固 | ⬜ 未做 | `chat_archive.py` 仍是 insert_many；`store/_heartbeats.py` 无 claim |

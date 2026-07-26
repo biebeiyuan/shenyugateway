@@ -30,6 +30,25 @@ def coerce_json_object(value: Any, *, max_depth: int = 3) -> dict[str, Any] | No
     return current if isinstance(current, dict) else None
 
 
+def json_dict(value: Any) -> dict[str, Any]:
+    # Total variant: always returns a dict (wrapping scalars under "value"),
+    # unlike coerce_json_object which returns None on failure. Do not merge.
+    if value is None:
+        return {}
+    if isinstance(value, dict):
+        return value
+    if isinstance(value, str):
+        text = value.strip()
+        if not text:
+            return {}
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {"value": text}
+        return parsed if isinstance(parsed, dict) else {"value": parsed}
+    return {"value": value}
+
+
 def normalize_text(value: Any) -> str:
     if value is None:
         return ""

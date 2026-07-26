@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
+from shenyu_gateway.embeddings import vector_literal as _vector_literal
+from shenyu_gateway.utils import json_dict as _json_dict
 from shenyu_gateway.utils import normalize_text as _normalize_text
 
 
@@ -102,21 +104,7 @@ def _json_list(value: Any) -> list[Any]:
     return [value]
 
 
-def _json_dict(value: Any) -> dict[str, Any]:
-    if value is None:
-        return {}
-    if isinstance(value, dict):
-        return value
-    if isinstance(value, str):
-        text = value.strip()
-        if not text:
-            return {}
-        try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
-            return {"value": text}
-        return parsed if isinstance(parsed, dict) else {"value": parsed}
-    return {"value": value}
+# _json_dict is the shared total variant re-exported from utils.json_dict above.
 
 
 _GENERIC_CN_PREFIXES = ("是", "在", "有", "我", "你", "他", "她", "它", "这", "那", "不", "没")
@@ -312,8 +300,8 @@ def _iso_dt(value: Any) -> Optional[str]:
     return dt.isoformat() if dt else None
 
 
-def _vector_literal(vector: list[float]) -> str:
-    return "[" + ",".join(f"{float(value):.9g}" for value in vector) + "]"
+# _vector_literal is the shared pgvector serializer re-exported from
+# embeddings.vector_literal above (single .9g-precision contract with stars/).
 
 
 def _recency_score(value: Any) -> float:
