@@ -1514,3 +1514,23 @@ def test_contextual_entity_match_ignores_relation_names_as_standalone_anchors():
     result = asyncio.run(service.search_notes_contextual("圆圆今天状态怎么样", session_tag="6.29", mark_triggered=False))
 
     assert result["count"] == 0
+
+
+def test_recall_private_search_contract_for_mem_note_search():
+    import inspect
+
+    from shenyu_gateway.recall import RecallIndexService
+
+    # mem_notes/_search.py calls these private RecallIndexService methods inside
+    # except-Exception blocks, so a rename would silently turn mem-note semantic
+    # search into empty results instead of a failing test.
+    for name in (
+        "_query_index",
+        "_vector_rows",
+        "_merge_candidate_rows",
+        "_row_visible_for_session",
+        "_score_row",
+        "_has_direct_match",
+    ):
+        assert callable(getattr(RecallIndexService, name, None)), name
+    assert "allow_mem_note" in inspect.signature(RecallIndexService._query_index).parameters
