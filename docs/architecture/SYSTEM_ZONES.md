@@ -392,6 +392,20 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 
 Hisense（海信）专用线程——独立客户端识别与上游、独立 heartbeat 池、notebook 注入、`/api/hisense/*` 与 HisenseView——已于 2026-07-26 从代码库整体移除。此前本节记录的“暂时不用、完整保留”决定同日废止；旧的请求流与各区触点见 git 历史中本节的早期版本。
 
+### 功能归属速查
+
+动大手术（删线程、改签名、拆功能）前先查这张表，确认目标是共享底座还是某条路径的专属件；海信移除时这条边界靠现场考古敲定，以后直接查表。
+
+| 功能 | 归属 | 依据 |
+|------|------|------|
+| 心跳（`heartbeat_entries` 单池） | **共享**：所有线程经 `store_heartbeat` 写、上下文注入读同一池 | `store/_heartbeats.py`、`response_capture.py` |
+| `GET /api/gateway/heartbeats`、`GET /api/calendar/month` / `page` | **外部只读契约**（home-frontend，token 查询参数鉴权）；未知 `scope`（含退役的 `hisense`）返回 200 + 空列表 | `REQUEST_CONTEXT.md` 契约清单、`tests/test_external_contracts.py` |
+| notebook（`shenyu_notebook` + `notebook_write/list/update`） | **共享工具**：无条件注册给所有线程；不做上下文注入 | `tool_registry.py` 注册逻辑 |
+| stars / mem / 日历 / 书架·来历书 / 窗台 / recall | **共享**：普通上下文路径统一注入或按工具取用 | `context_builder.build_context_package` |
+| Room 模式（`room_tools`、`room_notebook` 门、窗边报纸） | **Room 专属分支**：由消息文本触发，不是独立客户端 | `prepare_messages.py` room 分支 |
+| 冷启动交接（cold start snapshot / bridge） | **PWA 专属契约**：`pwa_history_ready` 门控 | `prepare_messages.py`（`pwa_history_ready_for_cold_start`） |
+| client_extra 剥离（Operit 附件、PWA 状态后缀） | **共享预处理**：对所有客户端状态尾巴生效，正则单一源 | `client_extra.py` |
+
 ## 跨区关键桥梁
 
 | 桥梁 | 连接区域 | 审计重点 |
