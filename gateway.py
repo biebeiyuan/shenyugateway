@@ -92,8 +92,6 @@ from shenyu_gateway.upstream_client import (
     validate_http_url as _validate_http_url_impl,
     validate_protocol as _validate_protocol_impl,
     connect_error_detail as _connect_error_detail_impl,
-    detect_protocol_for as _detect_protocol_for,
-    chat_url_for as _chat_url_for,
     resolve_upstream as _resolve_upstream_impl,
     mapped_model_name as _mapped_model_name_impl,
     make_upstream_http_client as _make_upstream_http_client_impl,
@@ -223,16 +221,8 @@ def _chat_pipeline(store: GatewayStore) -> ChatPipeline:
     )
 
 
-def _calendar_service(request: Optional[Request] = None) -> CalendarService:
-    return CalendarService(
-        cfg=cfg,
-        supabase_client=supabase_client,
-        session_store=session_store,
-        call_upstream_json_at=_call_upstream_json_at,
-        detect_protocol_for=_detect_protocol_for,
-        chat_url_for=_chat_url_for,
-        request=request,
-    )
+def _calendar_service() -> CalendarService:
+    return CalendarService(supabase_client=supabase_client)
 
 
 def _context_builder(store: GatewayStore, sessions: SessionManager, tools: GatewayToolService) -> ContextBuilder:
@@ -679,7 +669,6 @@ app.include_router(
 app.include_router(
     build_calendar_router(
         CalendarRouteDeps(
-            require_session_store=_require_session_store,
             calendar_service=_calendar_service,
         )
     )

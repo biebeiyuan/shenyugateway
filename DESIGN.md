@@ -483,15 +483,11 @@ Recall 是跨历史的**统一捞取入口**。普通文档来源包括 journal�
 
 ### 8.1 它是什么
 
-日历层是**周期性生成的记忆摘要**——日页、周页、月页。由管理员从 admin UI 手动触发生成（不是自动的）。
+日历层是**周期性的记忆日记页**——日页、周页、月页，全部由沈予通过 `shenyu_add_calendar` 工具亲手写（versioned append/replace 进 `calendar_pages`）。网关侧的生成管线（prompt 配置、来源收集、上游 LLM 调用）已于 2026-07-26 整体移除；不存在自动或管理员触发的生成路径。
 
-### 8.2 生成源
+### 8.2 读取路径
 
-| 页面类型 | 输入源 |
-|---------|--------|
-| Day | 最近 10 个 context snapshots + 最近 8 条心跳 + 已有日/周/月页 |
-| Week | 最近 8 个 context snapshots + 最近 5 条心跳 + 已有日/周/月页 |
-| Month | 最近 6 个 context snapshots + 最近 5 条心跳 + 已有日/周/月页 |
+`calendar_service.py` 现在是一个只读的瘦服务（month_status + page_detail），支撑两个对外 READ 端点：`GET /api/calendar/month` 和 `GET /api/calendar/page/{page_id}`（home-frontend 的外部契约，由 `tests/test_external_contracts.py` 钉住）。Admin 的 CalendarView 也只是纯阅读视图。
 
 ### 8.3 注入方式
 
@@ -601,8 +597,8 @@ notes_result, stars_result = await asyncio.gather(
 | Cold Start | `prepare_messages.py` | 桥接快照注入 |
 | Cold Start | `store/_cold_start.py` | SQLite 快照存储 |
 | Conflict Books | `conflict_books.py` | 矛盾书 CRUD + 不变量 |
-| Calendar | `calendar_service.py` | 日历页生成 |
-| Calendar | `calendar_sources.py` | 生成源收集 |
+| Calendar | `calendar_service.py` | 只读服务：month_status + page_detail |
+| Calendar | `gateway_tools/_calendar.py` | `shenyu_add_calendar`：沈予手写日历页 |
 | Context Assembly | `context_builder.py` | 并行收集所有记忆源 |
 | Context Assembly | `context_layers.py` | 渲染为文本层 + 消息组装 |
 | Room Mode | `room_context.py` | charge 计算 + 层渲染 |

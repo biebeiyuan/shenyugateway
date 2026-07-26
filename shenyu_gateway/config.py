@@ -81,10 +81,6 @@ class RuntimeConfig:
         self.anthropic_default_max_tokens: int = _env_int("ANTHROPIC_DEFAULT_MAX_TOKENS", 128000, 1)
         self.upstream_extra_body: dict[str, Any] = self._load_upstream_extra_body()
         self.upstream_passthrough_headers: list[str] = self._load_passthrough_headers()
-        self.calendar_upstream_url: str = os.getenv("CALENDAR_UPSTREAM_URL", "").strip()
-        self.calendar_api_key: str = os.getenv("CALENDAR_API_KEY", "").strip()
-        self.calendar_protocol: str = os.getenv("CALENDAR_PROTOCOL", "auto").strip().lower()
-        self.calendar_model: str = os.getenv("CALENDAR_MODEL", "claude-opus-4-7").strip()
         self.wake_welcome_message: str = os.getenv("WAKE_WELCOME_MESSAGE", "").strip()
         self.enable_inline_memory_capture: bool = _env_bool("ENABLE_INLINE_MEMORY_CAPTURE", True)
         self.inject_inline_memory_prompt: bool = _env_bool(
@@ -225,10 +221,6 @@ class RuntimeConfig:
             "anthropic_default_max_tokens": self.anthropic_default_max_tokens,
             "upstream_extra_body": self.upstream_extra_body,
             "upstream_passthrough_headers": self.upstream_passthrough_headers,
-            "calendar_upstream_url": self.calendar_upstream_url,
-            "calendar_api_key": mask(self.calendar_api_key),
-            "calendar_protocol": self.calendar_protocol,
-            "calendar_model": self.calendar_model,
             "wake_welcome_message": self.wake_welcome_message,
             "inject_inline_memory_prompt": self.inject_inline_memory_prompt,
             "enable_inline_memory_capture": self.enable_inline_memory_capture,

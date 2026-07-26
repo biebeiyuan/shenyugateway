@@ -296,7 +296,6 @@ async function doSave() {
       anthropic_auto_thinking_effort: config.value.anthropic_auto_thinking_effort || '',
       upstream_extra_body: upstreamExtraBody,
       upstream_passthrough_headers: config.value.upstream_passthrough_headers || [],
-      calendar_api_key: config.value.calendar_api_key,
       weather_city: config.value.weather_city,
       qweather_api_host: config.value.qweather_api_host,
       supabase_url: config.value.supabase_url,

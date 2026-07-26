@@ -212,8 +212,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 - `shenyu_gateway/store/`: SQLite runtime state (mixin package). Routes and services should call `GatewayStore` instead of writing SQL directly.
 - `shenyu_gateway/supabase.py`: low-level Supabase REST mechanics.
 - `shenyu_gateway/sessions.py`: session and message logging facade.
-- `shenyu_gateway/calendar.py`: calendar date/key helpers and JSON parsing.
-- `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
+- `shenyu_gateway/calendar.py`: calendar date/key helpers (period bounds, period keys, month grid, latest-page lookup).
 - `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, tool-safe trimming, and cold-start bridge insertion.
 - `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations. Look here for Supabase table tools, recall compatibility helpers, heartbeat reads, notebook helpers, and memory helper behavior.
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
@@ -283,7 +282,7 @@ Useful boundary map:
 - `shenyu_list_mem_notes`: visible mem-note browse/review tool; reads Supabase `shenyu_mem_notes`.
 - `shenyu_ask_memory`: deprecated compatibility name; direct or broker calls are rejected with `error_kind=validation`. Use `shenyu_recall` with `source_types=["memory"]`.
 - `shenyu_search_primary_texts`: deprecated compatibility name; direct or broker calls are rejected with `error_kind=validation`. Use `shenyu_recall` with the matching source types.
-- `shenyu_surface_passages`: hidden/internal compatibility handler. Calendar generation still uses its random room/message-board surfacing, but it is not part of the visible model tool schema.
+- `shenyu_surface_passages`: hidden/internal compatibility handler retained as a compat tool 沈予 can still call; it has no internal gateway consumers and is not part of the visible model tool schema.
 - `shenyu_search_mem_notes`: visible mem-note search tool; reads Supabase `shenyu_mem_notes`.
 - `shenyu_read_heartbeat`: gateway tool; reads SQLite `heartbeat_entries`.
 - `supabase_*`: gateway fallback tools for direct Supabase table operations.
@@ -298,7 +297,7 @@ When context looks wrong, inspect in this order:
 2. `_prepare_messages()` metadata: `client_message_window`, `cache_layers`, `cold_start_snapshot`, `upstream`.
 3. SQLite tables:
    - `raw_request_windows`: original client payload before trimming.
-   - `request_context_snapshots`: trimmed client window before gateway layers; used by cold start and calendar generation.
+   - `request_context_snapshots`: trimmed client window before gateway layers; used by cold start.
    - `cold_start_snapshots`: bounded bridge packages.
    - `heartbeat_entries`: global heartbeat pool.
 4. `ContextBuilder.build_context_package()` to confirm which sources were fetched.
@@ -323,15 +322,9 @@ Prompt-cache markers target request tools, `stable`, `slow`, and `format` when t
 
 ## Calendar Debugging
 
-Calendar generation uses `CalendarService` in `gateway.py`, but source collection lives in `calendar_sources.py`.
+Calendar diary pages are handwritten by 沈予 through the `shenyu_add_calendar` gateway tool (`gateway_tools/_calendar.py`, versioned append/replace into Supabase `calendar_pages`); there is no gateway-side generation pipeline. `CalendarService` is a slim read-only service (month_status + page_detail) backing the `GET /api/calendar/month` and `GET /api/calendar/page/{page_id}` read endpoints.
 
-Current source rules:
-
-- Day: latest 10 `request_context_snapshots`, latest 8 normal heartbeats, recent day/week/month pages, and a small surface pass.
-- Week: latest 8 context snapshots, latest 5 normal heartbeats, and recent day/week/month pages.
-- Month: latest 6 context snapshots, latest 5 normal heartbeats, and recent day/week/month pages.
-
-If generated pages look empty, check `request_context_snapshots` first, then `heartbeat_entries`, then Supabase `calendar_pages`.
+If a page looks wrong, check the tool-error chain for `shenyu_add_calendar` first, then Supabase `calendar_pages` directly. For context injection of calendar memory, check the `calendar_inject_day/week/month` and `calendar_context_*_limit` config keys and the `## Calendar Memory` slow layer.
 
 ## Response Capture Debugging
 
@@ -378,7 +371,7 @@ Permanent test coverage for these contracts is in `tests/test_external_contracts
 After Python changes:
 
 ```bash
-python -m py_compile gateway.py shenyu_gateway/store/__init__.py shenyu_gateway/stars/__init__.py shenyu_gateway/calendar_sources.py shenyu_gateway/context_layers.py shenyu_gateway/response_capture.py shenyu_gateway/upstream_adapter.py tests/test_external_contracts.py tests/test_gateway_context.py tests/test_gateway_tags.py tests/test_gateway_trim.py
+python -m py_compile gateway.py shenyu_gateway/store/__init__.py shenyu_gateway/stars/__init__.py shenyu_gateway/context_layers.py shenyu_gateway/response_capture.py shenyu_gateway/upstream_adapter.py tests/test_external_contracts.py tests/test_gateway_context.py tests/test_gateway_tags.py tests/test_gateway_trim.py
 git diff --check
 rg -n '淇|閺|鈹|銆|锛|紝|娌堜簣' README.md DEBUGGING_GUIDE.md gateway.py shenyu_gateway tests
 ```

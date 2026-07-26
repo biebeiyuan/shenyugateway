@@ -143,7 +143,7 @@ SQLite stores only gateway runtime state:
 
 - `gateway_sessions`
 - `gateway_messages`: local message stream for inspection only. It is not the cold-start source of truth.
-- `request_context_snapshots`: recent client context windows. Calendar generation and cold-start both depend on this.
+- `request_context_snapshots`: recent client context windows. Cold-start is now the only consumer.
 - `raw_request_windows`: recent untrimmed client request windows for backup/export/debugging.
 - `cold_start_snapshots`: bounded bridge packages created from recent context snapshots.
 - `pending_gateway_tool_turns`: short-lived hidden mixed tool transcripts. It stores the original mixed assistant tool-call message, gateway tool result messages, client tool-call ids, and consumed/expiry timestamps.
@@ -151,7 +151,7 @@ SQLite stores only gateway runtime state:
 - `request_log_history`: bounded, versioned safe request summaries used by the Admin log page and helper across process/container replacement. Full request/response payload fields are excluded before storage.
 - `heartbeat_entries`: global private heartbeat notes captured from `<heartbeat>...</heartbeat>` or written manually in admin. `session_id` is retained as the source session, but runtime injection reads the shared global pool.
 
-`request_context_snapshots` is the replacement for the old rolling/frozen context path. Each request stores the trimmed client window before gateway layers are inserted. Calendar generation and cold-start bridge both read these snapshots. `raw_request_windows` stores the original client payload window before any gateway-side trimming and is kept separate so cold-start stays bounded.
+`request_context_snapshots` is the replacement for the old rolling/frozen context path. Each request stores the trimmed client window before gateway layers are inserted. The cold-start bridge reads these snapshots (calendar generation, formerly a second consumer, was removed on 2026-07-26). `raw_request_windows` stores the original client payload window before any gateway-side trimming and is kept separate so cold-start stays bounded.
 
 ### SQLite Retention And Cleanup
 
@@ -167,7 +167,7 @@ Admin configuration updates currently store secret values in both `.env` and SQL
 |---|---|---|---|---|
 | `gateway_messages` | prepared user/assistant text, tool args and result summaries | newest 1500 rows per session | local inspection, lineage and export | deleted |
 | `raw_request_windows` | compacted original client history; image bytes replaced by fingerprints | newest 3 windows per session | history event classification, backup/debug | deleted |
-| `request_context_snapshots` | trimmed client-visible history before pending transcript reinjection | newest 3 snapshots per session | cold start and calendar source | deleted |
+| `request_context_snapshots` | trimmed client-visible history before pending transcript reinjection | newest 3 snapshots per session | cold start source | deleted |
 | `cold_start_snapshots` | copied source snapshot messages | newest 20 completed snapshots; active preserved | bounded cross-thread bridge | deleted |
 | `pending_gateway_tool_turns` | original mixed assistant call and gateway tool result messages | active until consumed or 24h expiry | reconstruct gateway/client mixed turns | deleted |
 | `tool_error_log` / `room_trace` | tool args/errors or Room diagnostic text | explicit table-specific limits/cleanup | diagnostics | deleted |
@@ -176,12 +176,12 @@ Admin configuration updates currently store secret values in both `.env` and SQL
 | helper `--save` JSON | one explicitly exported redacted log detail | operator-managed file | offline debugging | independent local file |
 | Supabase `shenyu_chat_archive` | deduplicated visible user/assistant text | durable; no automatic session-delete coupling | long-term recall/archive | not deleted |
 
-These copies are not interchangeable: raw windows classify client history, snapshots feed cold start/calendar, pending rows preserve tool protocol, and the archive is the durable recall source. Reducing copies requires replacing those responsibilities first, not deleting tables based only on duplicate text.
+These copies are not interchangeable: raw windows classify client history, snapshots feed cold start, pending rows preserve tool protocol, and the archive is the durable recall source. Reducing copies requires replacing those responsibilities first, not deleting tables based only on duplicate text.
 
 Default online retention:
 
 - `GATEWAY_MESSAGE_RETENTION=1500`: keep the newest local message rows per session. These rows are for admin inspection and export, not for cold-start injection.
-- `GATEWAY_CONTEXT_SNAPSHOT_RETENTION=3`: keep the newest context snapshots per session. Do not set this to `0`; cold-start and calendar source collection need recent snapshots.
+- `GATEWAY_CONTEXT_SNAPSHOT_RETENTION=3`: keep the newest context snapshots per session. Do not set this to `0`; cold-start needs recent snapshots.
 - `GATEWAY_COLD_START_RETENTION=20`: keep recent cold-start snapshots per session. Cleanup only removes old inactive snapshots; an active bridge remains available until the normal window trim retires it.
 - `GATEWAY_REQUEST_LOG_RETENTION=200`: keep the newest safe request-log summaries globally. The Admin/API list merges them with the live 30-entry deque and prefers the live copy when both exist. A startup pass marks rows left in `preparing`, `pending`, or streaming states as `interrupted`.
 - Consumed or expired `pending_gateway_tool_turns` are removed during cleanup. Unconsumed pending rows are kept until expiry so a client can return its tool result in the next request.
@@ -205,7 +205,7 @@ Safe cleanup boundaries:
 - It is safe to prune/dedupe `gateway_messages`; cold-start does not read this table.
 - It is safe to prune/dedupe `raw_request_windows`; they are backup/debug records and are not used for cold-start injection.
 - It is safe to prune consumed or expired `pending_gateway_tool_turns`; do not delete fresh unconsumed pending rows while a client tool turn may still be in flight.
-- Be conservative with `request_context_snapshots`; cold-start and calendar generation read this table.
+- Be conservative with `request_context_snapshots`; cold-start reads this table.
 - Do not delete active `cold_start_snapshots`; the retention cleanup already avoids active snapshots.
 - Heartbeats are independent from message cleanup and are only changed by explicit heartbeat actions.
 
@@ -222,9 +222,9 @@ Supabase remains the durable fact and content source:
 - `system_docs`
 - `memory_tags`
 - `memory_links`
-- `calendar_prompt_configs`
 - `calendar_pages`
-- `calendar_generation_runs`
+- `calendar_prompt_configs` (orphaned since the 2026-07-26 calendar-generation removal; no code reads or writes it, and it never had a migration)
+- `calendar_generation_runs` (orphaned, same as above)
 - `windowsill`
 - `shenyu_mem_notes`
 - `shenyu_stars`
@@ -366,23 +366,17 @@ Inspection endpoints:
 
 ## Calendar Layer
 
-The calendar layer writes private day/week/month memory pages. It is manually triggered from the admin UI.
-Before ordinary chat replies, the gateway also injects a compact calendar memory block when Supabase is configured:
+The calendar layer holds private day/week/month diary pages. Since 2026-07-26 the gateway-side generation
+pipeline is removed: Shenyu handwrites every page herself through the `shenyu_add_calendar` gateway tool
+(versioned append/replace into `calendar_pages`), and the admin CalendarView is a pure reading view.
+Before ordinary chat replies, the gateway injects a compact calendar memory block when Supabase is configured:
 by default latest 3 day pages, latest 1 week page, and latest 1 month page. Day/week/month injection can be
 enabled or disabled independently, and each period has its own injected-page limit. Chat context injection includes
 the stored `content` body only, without the listing `summary` or short `digest`.
 
 Tables:
 
-- `calendar_prompt_configs`: active prompt versions for day/week/month.
-- `calendar_pages`: versioned generated pages.
-- `calendar_generation_runs`: generation logs and source refs.
-
-Source collection:
-
-- Day pages read the latest 10 `request_context_snapshots`, latest 8 normal heartbeats, recent day/week/month pages, and a small surface pass.
-- Week pages read the latest 8 context snapshots, latest 5 normal heartbeats, and recent day/week/month pages.
-- Month pages read the latest 6 context snapshots, latest 5 normal heartbeats, and recent day/week/month pages.
+- `calendar_pages`: versioned handwritten pages. The only live calendar table; `calendar_prompt_configs` and `calendar_generation_runs` are orphaned (see the Supabase list above).
 
 Chat injection:
 
@@ -393,21 +387,12 @@ Chat injection:
 - The rendered block uses labels: `recent days`, `this week`, `this month`.
 - Missing Supabase or empty pages are skipped silently.
 
-The active source renderer is snapshot-based. It no longer injects the retired summary/window blocks.
-
 For `shenyu_add_calendar`, `date` is always the natural `YYYY-MM-DD` alias. The gateway converts it to `YYYY-Www` for week pages and `YYYY-MM` for month pages before calling the calendar service; callers that already know the canonical key can pass `period_key` directly.
 
-Endpoints:
+Endpoints (read-only; both are external contracts with `home-frontend`, pinned by `tests/test_external_contracts.py`):
 
-- `GET /api/calendar/prompts`
-- `POST /api/calendar/prompts`
-- `POST /api/calendar/prompts/{prompt_id}/activate`
 - `GET /api/calendar/month`
 - `GET /api/calendar/page/{page_id}`
-- `GET /api/calendar/context-snapshots`
-- `GET /api/calendar/preview-sources`
-- `GET /api/calendar/send-preview`
-- `POST /api/calendar/generate`
 
 ## External Frontend Contracts
 

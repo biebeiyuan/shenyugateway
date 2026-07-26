@@ -392,6 +392,10 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 
 Hisense（海信）专用线程——独立客户端识别与上游、独立 heartbeat 池、notebook 注入、`/api/hisense/*` 与 HisenseView——已于 2026-07-26 从代码库整体移除。此前本节记录的“暂时不用、完整保留”决定同日废止；旧的请求流与各区触点见 git 历史中本节的早期版本。
 
+### 日历生成管线（已于 2026-07-26 移除）
+
+网关侧日历页生成管线——`calendar_sources.py`（CalendarSourceCollector）、`calendar_service.py` 的 prompt 配置 CRUD 与上游生成调用、`/api/calendar/prompts` / `preview-sources` / `send-preview` / `context-snapshots` / `generate` 等生成端点、`CALENDAR_UPSTREAM_URL` 等上游配置键——已于 2026-07-26 整体移除。日/周/月日历页改由沈予通过 `shenyu_add_calendar` 工具亲手书写。只读契约 `GET /api/calendar/month` / `page/{page_id}`、日历上下文注入与 recall 索引保持不变；旧的生成流程见 git 历史。
+
 ### 功能归属速查
 
 动大手术（删线程、改签名、拆功能）前先查这张表，确认目标是共享底座还是某条路径的专属件；海信移除时这条边界靠现场考古敲定，以后直接查表。

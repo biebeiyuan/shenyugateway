@@ -42,11 +42,6 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "anthropic_default_max_tokens": cfg.anthropic_default_max_tokens,
         "upstream_extra_body": cfg.upstream_extra_body,
         "upstream_passthrough_headers": cfg.upstream_passthrough_headers,
-        "calendar_upstream_url": cfg.calendar_upstream_url,
-        "calendar_api_key": cfg.calendar_api_key,
-        "calendar_api_key_configured": bool(cfg.calendar_api_key),
-        "calendar_protocol": cfg.calendar_protocol,
-        "calendar_model": cfg.calendar_model,
         "wake_welcome_message": cfg.wake_welcome_message,
         "inject_inline_memory_prompt": cfg.inject_inline_memory_prompt,
         "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
@@ -170,10 +165,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "anthropic_default_max_tokens": "ANTHROPIC_DEFAULT_MAX_TOKENS",
             "upstream_extra_body": "UPSTREAM_EXTRA_BODY",
             "upstream_passthrough_headers": "UPSTREAM_PASSTHROUGH_HEADERS",
-            "calendar_upstream_url": "CALENDAR_UPSTREAM_URL",
-            "calendar_api_key": "CALENDAR_API_KEY",
-            "calendar_protocol": "CALENDAR_PROTOCOL",
-            "calendar_model": "CALENDAR_MODEL",
             "wake_welcome_message": "WAKE_WELCOME_MESSAGE",
             "inject_inline_memory_prompt": "INJECT_INLINE_MEMORY_PROMPT",
             "enable_inline_memory_capture": "ENABLE_INLINE_MEMORY_CAPTURE",
@@ -272,10 +263,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "enable_anthropic_auto_thinking",
             "anthropic_auto_thinking_effort",
             "anthropic_default_max_tokens",
-            "calendar_upstream_url",
-            "calendar_api_key",
-            "calendar_protocol",
-            "calendar_model",
             "wake_welcome_message",
             "inject_inline_memory_prompt",
             "enable_inline_memory_capture",
@@ -338,7 +325,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                         continue
                 if field in {
                     "upstream_url",
-                    "calendar_upstream_url",
                     "star_scene_llm_url",
                     "room_newspaper_llm_url",
                 }:
@@ -347,7 +333,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                     value = deps.validate_http_url(env_names[field], value, allow_empty=True)
                 elif field in {
                     "upstream_protocol",
-                    "calendar_protocol",
                     "star_scene_llm_protocol",
                     "room_newspaper_llm_protocol",
                 }:

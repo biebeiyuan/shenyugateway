@@ -41,10 +41,6 @@ class ConfigUpdate(BaseModel):
     anthropic_default_max_tokens: Optional[int] = Field(default=None, ge=1)
     upstream_extra_body: Optional[dict[str, Any] | str] = None
     upstream_passthrough_headers: Optional[list[str] | str] = None
-    calendar_upstream_url: Optional[str] = None
-    calendar_api_key: Optional[str] = None
-    calendar_protocol: Optional[str] = None
-    calendar_model: Optional[str] = None
     wake_welcome_message: Optional[str] = None
     clear_wake_welcome_message: Optional[bool] = None
     inject_inline_memory_prompt: Optional[bool] = None
@@ -159,21 +155,6 @@ class ColdStartPreviewRequest(BaseModel):
     current_message_count: Optional[int] = None
     message_limit: Optional[int] = Field(default=None, ge=1, le=500)
     persist: bool = True
-
-
-class CalendarPromptUpdate(BaseModel):
-    prompt_type: str
-    name: Optional[str] = None
-    content: str
-    note: Optional[str] = None
-    is_active: bool = True
-
-
-class CalendarGenerateRequest(BaseModel):
-    period_type: str
-    period_key: Optional[str] = None
-    model: Optional[str] = None
-    session_tag: Optional[str] = None
 
 
 class MemNotePatch(BaseModel):

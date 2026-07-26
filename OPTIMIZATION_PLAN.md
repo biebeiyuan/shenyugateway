@@ -157,7 +157,7 @@
 
 **两个可抽出的内聚子系统**（均经 grep 确认边界）：
 1. **Supabase 过滤 DSL**：`_build_supabase_filter_params`(:1299)、`_build_supabase_operator_params`(:1309)、`_normalize_operator_shape`(:1321)、`_parse_operator_condition`(:1329)、`_looks_like_operator_map`(:1347) —— 纯字符串解析，**无外部调用方**，只被本类的 supabase_query/insert/update/delete 用。
-2. **主文本排序引擎**：`_collect_primary_text_candidates`(:1129)、`_row_to_chunks`(:1189)、`_score_passage`(:1223)、`_why_passage`(:1230)、`_base_salience_for_source`(:1247)、`_body_bonus_for_item`(:1262)、`_recency_score`(:1274) + 模块常量 `_split_paragraph_chunks`/`_keyword_overlap_score`(:51/:98) —— 纯打分。公开入口 `surface_passages`(:740)、`search_primary_texts`(:767) 经 tool_registry handler 和 `calendar_service.py` 到达。
+2. **主文本排序引擎**：`_collect_primary_text_candidates`(:1129)、`_row_to_chunks`(:1189)、`_score_passage`(:1223)、`_why_passage`(:1230)、`_base_salience_for_source`(:1247)、`_body_bonus_for_item`(:1262)、`_recency_score`(:1274) + 模块常量 `_split_paragraph_chunks`/`_keyword_overlap_score`(:51/:98) —— 纯打分。公开入口 `surface_passages`(:740)、`search_primary_texts`(:767) 经 tool_registry handler 和 `calendar_service.py` 到达。（2026-07-26 更新：日历生成链路整体移除后 `calendar_service.py` 不再调用这两个入口；`search_primary_texts` 已随 Phase F 作为死代码删除；`shenyu_surface_passages` 保留为沈予仍可调用的隐藏兼容工具。）
 
 **改法**（mixin 包，同 `stars/`、`mem_notes/`）：
 ```
@@ -167,7 +167,7 @@ gateway_tools/
   _primary_text.py   ← PrimaryTextMixin（上面第 2 组 + 两个模块常量）
   （其余薄委托 + GatewayToolRuntime 留在 __init__.py 或 _service.py）
 ```
-- 7 个调用方全走 `from .gateway_tools import GatewayToolService`（+ tool_registry 的一个 `_runtime` import）。包级 re-export 后**零影响**。
+- 7 个调用方全走 `from .gateway_tools import GatewayToolService`（+ tool_registry 的一个 `_runtime` import）。包级 re-export 后**零影响**。（2026-07-26：日历生成移除后 `calendar_service.py` 已不再是调用方，现存调用方为 tool_registry、context_builder、prepare_messages、gateway_admin_routes。）
 - 这是纯机械搬运，落地后 facade ~550-600 行。
 - **如果嫌全拆重**：只抽这两个子系统进 mixin、其余不动，单这一步就把主文件降到 ~550-600 行。
 
@@ -176,7 +176,7 @@ gateway_tools/
 - [ ] `git diff` 除 import/函数位置/mixin 组装外，无业务逻辑变化。
 - [ ] 无 `from module import *`，无新 import cycle。
 - [ ] `pytest` 全绿（283）。
-- [ ] 7 个调用方（tool_registry、calendar_service 等）import 不变。
+- [ ] 7 个调用方（tool_registry 等；2026-07-26 起 calendar_service 已随日历生成移除而不再依赖 gateway_tools）import 不变。
 
 ---
 

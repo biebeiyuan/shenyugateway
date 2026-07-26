@@ -25,11 +25,6 @@ export interface GatewayConfig {
   cold_start_message_limit: number | null
   cold_start_idle_minutes: number
   model_mapping: Record<string, string>
-  calendar_upstream_url?: string
-  calendar_api_key?: string
-  calendar_api_key_configured?: boolean
-  calendar_protocol?: string
-  calendar_model?: string
   wake_welcome_message?: string
   // weather (status suffix / /api/gateway/weather)
   weather_city?: string

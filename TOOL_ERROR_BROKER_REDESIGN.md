@@ -208,7 +208,7 @@ self._ensure_column(conn, "tool_error_log", "error_kind", "TEXT NOT NULL DEFAULT
 
 **④ 隐藏兼容工具：`HIDDEN_COMPAT_TOOL_NAMES`（`:23-28`）——已拍板**
 - `shenyu_ask_memory` / `shenyu_search_primary_texts` / `shenyu_get_meta_summaries`：从 broker 隐藏兼容入口移除；direct handler 也不再静默转发，旧直连会得到明确的 `validation` 拒绝。
-- `shenyu_surface_passages`：单独保留为内部兼容，因为日历内部仍在用（`DEBUGGING_GUIDE.md:115`）。
+- `shenyu_surface_passages`：单独保留为隐藏兼容工具，沈予仍可调用；日历生成管线移除（2026-07-26）后已无内部消费方。
 - 不采用"如实露出"。如实露出会把旧坑重新摆到模型面前；这里直接填掉 broker 入口。
 
 **不改什么**：`_coerce_broker_arguments`（`:339`）嵌套解包、`_broker_target_name` 的服务端别名/补前缀继续保留，保证旧参数形状仍能跑。会改的是模型可见 schema/描述、broker hidden allowed 集合，以及三个废弃直连 handler 的静默转发行为。
@@ -304,7 +304,7 @@ self._ensure_column(conn, "tool_error_log", "error_kind", "TEXT NOT NULL DEFAULT
 
 1. **第一步报错分类**：没意见，直接做。`TOOL_ERROR_CONFIG_PHRASES` 常量表放到 `store/_admin.py` 顶部，分类函数保持纯函数。
 2. **第二步 schema 收敛**：broker schema 只露 `tool` + `params`；`arguments` 从 schema 删除，但服务端继续兼容；描述删除"省略前缀也行"。
-3. **隐藏兼容工具**：`shenyu_ask_memory` / `shenyu_search_primary_texts` / `shenyu_get_meta_summaries` 从 broker 隐藏兼容入口移除，direct handler 也停止静默转发；`shenyu_surface_passages` 因日历内部仍在用，单独保留为内部兼容。不做"如实露出"。
+3. **隐藏兼容工具**：`shenyu_ask_memory` / `shenyu_search_primary_texts` / `shenyu_get_meta_summaries` 从 broker 隐藏兼容入口移除，direct handler 也停止静默转发；`shenyu_surface_passages` 单独保留为隐藏兼容工具（沈予仍可调用；日历生成移除后已无内部消费方）。不做"如实露出"。
 4. **第三步**：选 A，后续切 `full`。等第一、二步跑稳后再动。
 5. **`error_source` 旧列**：保留。新旧双写，等前端完全切到 `error_kind` 后再考虑废弃。
 6. **报错页自动刷新**：5s 调到 15s。

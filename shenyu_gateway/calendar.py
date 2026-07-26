@@ -1,10 +1,9 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
-from .runtime import iso_now, parse_ts
+from .runtime import parse_ts
 
 
 def _utc_day_bounds(day_key: str) -> tuple[datetime, datetime]:
@@ -82,105 +81,6 @@ def month_grid(month_key: str) -> list[dict[str, Any]]:
             }
         )
         current += timedelta(days=1)
-    return items
-
-
-def fill_template(template: str, *, today_date: str, days_since_last: int) -> str:
-    return (
-        (template or "")
-        .replace("{{today_date}}", today_date)
-        .replace("{{days_since_last}}", str(days_since_last))
-    )
-
-
-def extract_json_object(text: str) -> dict[str, Any]:
-    import json
-
-    raw = (text or "").strip()
-    if not raw:
-        return {"title": "未写下标题", "content": "今天还没有写下具体内容。", "summary": "", "digest": "今天还没有写下具体内容。"}
-    if raw.startswith("```"):
-        lines = raw.splitlines()
-        if lines and lines[0].strip().startswith("```"):
-            lines = lines[1:]
-        if lines and lines[-1].strip().startswith("```"):
-            lines = lines[:-1]
-        raw = "\n".join(lines).strip()
-
-    candidates = [raw]
-    start_obj = raw.find("{")
-    end_obj = raw.rfind("}")
-    if start_obj >= 0 and end_obj > start_obj:
-        candidates.append(raw[start_obj : end_obj + 1])
-    start_arr = raw.find("[")
-    end_arr = raw.rfind("]")
-    if start_arr >= 0 and end_arr > start_arr:
-        candidates.append(raw[start_arr : end_arr + 1])
-
-    decoder = json.JSONDecoder()
-    for candidate in candidates:
-        try:
-            parsed = json.loads(candidate)
-        except Exception:
-            try:
-                parsed, _ = decoder.raw_decode(candidate)
-            except Exception:
-                continue
-        if isinstance(parsed, list) and parsed and isinstance(parsed[0], dict):
-            parsed = parsed[0]
-        if isinstance(parsed, dict):
-            return _normalize_calendar_json(parsed)
-    return {"title": "日历记忆", "content": raw, "summary": "", "digest": raw[:220]}
-
-
-def _normalize_calendar_json(value: dict[str, Any]) -> dict[str, Any]:
-    import json
-
-    nested = value.get("content")
-    if isinstance(nested, str) and nested.strip().startswith("{"):
-        try:
-            nested_value = json.loads(nested)
-            if isinstance(nested_value, dict):
-                value = {**value, **nested_value}
-        except Exception:
-            pass
-    return {
-        "title": str(value.get("title") or "日历记忆"),
-        "content": str(value.get("content") or ""),
-        "summary": str(value.get("summary") or ""),
-        "digest": str(value.get("digest") or ""),
-    }
-
-
-@dataclass
-class CalendarPromptConfig:
-    id: str
-    prompt_type: str
-    name: str
-    content: str
-    version: int
-    is_default: bool
-    is_active: bool
-    note: str
-    updated_at: str
-
-
-def rows_to_prompt_configs(rows: list[dict[str, Any]]) -> list[CalendarPromptConfig]:
-    items: list[CalendarPromptConfig] = []
-    for row in rows:
-        items.append(
-            CalendarPromptConfig(
-                id=row.get("id", ""),
-                prompt_type=row.get("prompt_type", ""),
-                name=row.get("name", ""),
-                content=row.get("content", ""),
-                version=int(row.get("version") or 1),
-                is_default=bool(row.get("is_default")),
-                is_active=bool(row.get("is_active")),
-                note=row.get("note", "") or "",
-                updated_at=row.get("updated_at", "") or row.get("created_at", "") or iso_now(),
-            )
-        )
     return items
 
 

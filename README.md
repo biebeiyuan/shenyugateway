@@ -22,7 +22,7 @@ Operit / PWA chat
        -> ContextBuilder
        -> GatewayStore (SQLite runtime state)
        -> GatewayToolService (Supabase tools, surface, memory)
-       -> CalendarService (day/week/month pages)
+       -> CalendarService (read-only day/week/month pages)
        -> MemNoteService (small personal notes)
        -> StarService (small chord/association memories)
        -> Upstream adapter (Anthropic / OpenAI-compatible)
@@ -65,7 +65,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/resident_home.py`: resident-facing component manifest, source fingerprints, review acknowledgements, and weekly change records.
 - `shenyu_gateway/resident_books.py`: unified bookshelf facade for the generated read-only home snapshot, the revisioned `我是谁` document, append-only annotations, and legacy origin-book storage.
 - `shenyu_gateway/resident_profile.py`: stable wake/profile text for memory practice and the origin book.
-- `shenyu_gateway/context_snapshots.py`: context snapshot creation and helpers for calendar/cold-start sources.
+- `shenyu_gateway/context_snapshots.py`: context snapshot creation and helpers for cold-start sources.
 - `shenyu_gateway/context_window.py`: semantic history-event classification, chunk-safe client-history windowing with high-water/epoch/anchor state, and cold-start bridge overlap deduplication.
 - `shenyu_gateway/client_extra.py`: shared recognition/stripping of client-injected per-message extras (Operit `message_insert_extra_bundle` attachments and the PWA tail status suffix), imported by trimming, archiving, history normalization, and recall-query cleaning.
 - `shenyu_gateway/memory_island.py`: Stars/Mem island rendering and per-lane retain/rewrite state, including overlap decisions and current/added/updated/removed log summaries.
@@ -104,9 +104,8 @@ The codebase is partly layered already:
 
 ### Calendar
 
-- `shenyu_gateway/calendar.py`: date/key helpers and calendar JSON parsing.
-- `shenyu_gateway/calendar_service.py`: `CalendarService` — calendar page generation orchestration.
-- `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
+- `shenyu_gateway/calendar.py`: date/period-key helpers and month grid construction.
+- `shenyu_gateway/calendar_service.py`: `CalendarService` — read-only month status and page detail. Page content is handwritten by 沈予 via the `shenyu_add_calendar` gateway tool (`gateway_tools/_calendar.py`); there is no gateway-side generation pipeline.
 
 ### Weather
 
@@ -128,7 +127,7 @@ The codebase is partly layered already:
 ### Route modules (extracted from gateway.py)
 
 - `shenyu_gateway/gateway_admin_routes.py`: admin API routes (stars, mem notes, room, overview, prune, etc.).
-- `shenyu_gateway/calendar_routes.py`: calendar API routes (prompts, month grid, generation, preview).
+- `shenyu_gateway/calendar_routes.py`: read-only calendar API routes (month grid, page detail).
 - `shenyu_gateway/archive_routes.py`: archive reader, origin-book, shared resident-book, and owner-only project-map API routes.
 - `shenyu_gateway/config_routes.py`: configuration API routes (get/set runtime config).
 - `shenyu_gateway/admin_shell_routes.py`: admin shell/UI routes (static file serving, login page).
@@ -160,7 +159,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/api/stars.ts`: Star list/search/create/review/feedback/connect APIs.
 - `admin/src/api/sessions.ts`: local SQLite session browser.
 - `admin/src/api/logs.ts`: request log list and detail APIs.
-- `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
+- `admin/src/api/calendar.ts`: read-only calendar month grid and page detail.
 - `admin/src/api/archive.ts`: chat archive reader and frozen origin-book APIs.
 - `admin/src/api/books.ts`: resident-shelf APIs plus the separate owner-only live project-map contract.
 - `admin/src/api/room.ts`: room mode APIs (traces, drawer notes, scribbles, pins, newspapers).
@@ -180,7 +179,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/stars/starUi.ts`: shared Star UI formatting and link-order helpers.
 - `admin/src/views/SessionsView.vue`: session inspection page.
 - `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, and cache-structure evidence.
-- `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
+- `admin/src/views/CalendarView.vue`: day/week/month diary reading view (month grid, entry lists, reading pane, collapsed context-injection settings).
 - `admin/src/views/ArchiveView.vue`: chat archive reader and origin-book clip flow.
 - `admin/src/views/ConflictView.vue`: three-tier bookshelf for revisioned `我是谁`, generated read-only `家现在`, owner-only `家里地图`, and frozen origin books; keeps their distinct visibility and write boundaries explicit.
 - `admin/src/views/bookshelf/HomeBookModal.vue`: generated-home reader for live commit/confirmation state, resident components, weekly impacts, and append-only annotations.
@@ -231,7 +230,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 | 记忆网络 | 人物 / 地点 / 物件 / 主题锚点 | `memory_graph.py`、`shenyu_gateway/recall/` | `admin/src/api/memoryGraph.ts`、`MemoryGraphView.vue`、`Mem0View.vue` | `MEMORY_ROOM.md` § Personal Memory Graph |
 | Room | 房间 / 窗台 | `room_context.py`、`room_tools.py`、`room_newspaper.py` | `admin/src/api/room.ts`、`RoomView.vue`、`views/room/` | `MEMORY_ROOM.md` § Room Mode |
 | 请求日志 / 工具报错 | 日志页、工具报错页 | `request_logs.py`、`tool_loop.py`、`store/_admin.py` | `admin/src/api/logs.ts`、`toolErrors.ts`、`LogsView.vue`、`ToolErrorsView.vue` | `DEBUGGING_GUIDE.md`、`LOGS_GUIDE.md` |
-| Calendar | 日历 / 日周月页 | `calendar_service.py`、`calendar_sources.py` | `admin/src/api/calendar.ts`、`CalendarView.vue` | `REQUEST_CONTEXT.md` § Calendar |
+| Calendar | 日历 / 日周月页 | `calendar_service.py`、`gateway_tools/_calendar.py` | `admin/src/api/calendar.ts`、`CalendarView.vue` | `REQUEST_CONTEXT.md` § Calendar |
 
 When cleaning or refactoring, preserve behavior first and move code by boundary:
 
@@ -275,11 +274,6 @@ ENABLE_ANTHROPIC_AUTO_THINKING=false
 ANTHROPIC_AUTO_THINKING_EFFORT=
 UPSTREAM_EXTRA_BODY=
 UPSTREAM_PASSTHROUGH_HEADERS=
-
-CALENDAR_UPSTREAM_URL=
-CALENDAR_API_KEY=
-CALENDAR_PROTOCOL=auto
-CALENDAR_MODEL=claude-opus-4-7
 
 ENABLE_COLD_START=true
 COLD_START_MESSAGE_LIMIT=
@@ -399,14 +393,14 @@ http://localhost:8010/chat/
 - `admin/src/api/stars.ts`: Star list/search/create/review/feedback/connect APIs.
 - `admin/src/api/sessions.ts`: local SQLite session browser.
 - `admin/src/api/logs.ts`: request log list and detail APIs.
-- `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
+- `admin/src/api/calendar.ts`: read-only calendar month grid and page detail.
 - `admin/src/views/ConfigView.vue`: configuration page.
 - `admin/src/views/Mem0View.vue`: Mem injection/tool controls, full-set two-state recall-eligibility management, Shenyu-write provenance badges, mem-note attributes, and old atomic read-only lookup. The "静音但保留工具" preset turns off automatic Mem injection while leaving gateway tools available.
 - `admin/src/views/MemoryGraphView.vue`: entity/alias/relation management, historical source-link backfill, and read-only Recall preview at `/memory-graph`.
 - `admin/src/views/StarsView.vue`: standalone Star entry shell at `/stars`, with split Star panels under `admin/src/views/stars/` and a lazy-loaded memory star map at `/stars/map`.
 - `admin/src/views/SessionsView.vue`: session inspection page.
 - `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, and cache-structure evidence.
-- `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
+- `admin/src/views/CalendarView.vue`: day/week/month diary reading view.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.
 
 The old single-file `/debug` console has been retired. User-facing admin features should go into `admin/src/views/*` and `admin/src/api/*`.
@@ -433,7 +427,6 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 - Search the active code paths for retired summary/window env vars and the removed short-lived notes table; they should not appear.
 - `GET /api/gateway/context/preview` should show `stable`, optional `slow`, optional `mem`, `heartbeat`, `tool_policy`, and `format`.
 - When `INJECT_STARS=true`, relevant stars that clear `STAR_RELATED_MIN_SCORE` and `STAR_MIN_SCORE` should appear in the `mem` layer before mem notes; `STAR_INJECT_LIMIT` is an upper bound, not a promise to always inject that many.
-- `GET /api/calendar/send-preview?...` should show `Current Client Context Snapshots`, not rolling/frozen blocks.
 - `GET /api/gateway/logs` should show prompt cache breakpoints and cold-start metadata.
 - `GET /api/gateway/logs/{id}` should show `response_full` for retained payloads; the list view should keep using short previews.
 - `GET /api/books` should expose the lightweight unified overview; `/api/books/home` reads the generated home snapshot, `/api/books/identity` owns revisioned writes, and origin books stay behind the frozen conflict-book service.
@@ -483,4 +476,3 @@ If local sessions, context snapshots, pending tool turns, persisted request-log 
 ### Future improvements (when needed)
 
 - Keep the Dockerfile's Admin/PWA build stages aligned with their `package-lock.json` files.
-- Add `CALENDAR_UPSTREAM_URL` etc. env var passthrough to the admin config page.

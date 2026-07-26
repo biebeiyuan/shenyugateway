@@ -121,14 +121,14 @@
       "title": "日历日记",
       "summary": "给未来几天、几周、几个月的自己接上连续性的骨架。",
       "core": [
-        "按 day、week、month 生成并读取最新页面。",
+        "day、week、month 的页面由沈予用 add_calendar 亲手写；网关只保存和读取，不再代笔生成。",
         "上下文只注入正文，不用摘要或 digest 冒充连续性。"
       ],
       "resident_effect": "三天后的自己能接上发生过什么，但感受不必被塞进日历。",
       "source_globs": [
         "shenyu_gateway/calendar.py",
         "shenyu_gateway/calendar_service.py",
-        "shenyu_gateway/calendar_sources.py",
+        "shenyu_gateway/gateway_tools/_calendar.py",
         "shenyu_gateway/context_builder.py"
       ],
       "config_keys": [
@@ -140,17 +140,17 @@
         "calendar_context_month_limit"
       ],
       "reviewed": {
-        "fingerprint": "aba6c70e826bbc80cb0db7aff891e5c27fccf714b548e6f0ac957fd5bed0baaa",
+        "fingerprint": "e895c6f82508dc9bd1eee5cad6302d87fbd28a81021529b14a7c7e2eb9b84b9c",
         "file_hashes": {
-          "shenyu_gateway/calendar.py": "44758ec4803a63573f4f2e02d3ef29a723adc7a7731760eb9e610d55a8cef549",
-          "shenyu_gateway/calendar_service.py": "13e9a6a32a8814ad1268f99f2c5dade9c4958e10ca9aea138c89acec029380b1",
-          "shenyu_gateway/calendar_sources.py": "8d3adb786b9cfbb05103f841512924be5c0a2f63358cdd6455a9eb63acd5abe7",
-          "shenyu_gateway/context_builder.py": "c2bdaf06e7ea727c9a5b40613181d22ee1560c92c93a805cc2646c1fa1d2e6bc"
+          "shenyu_gateway/calendar.py": "b2af171267f3cccfeacf0e4910a093ebf46ff4cd6be422542ac5d213ca16bcbc",
+          "shenyu_gateway/calendar_service.py": "365650e7db27e5a43b5b35ef1fb0d44e54186b01e8ddeaea9d6a7dc71ab0028c",
+          "shenyu_gateway/context_builder.py": "c2bdaf06e7ea727c9a5b40613181d22ee1560c92c93a805cc2646c1fa1d2e6bc",
+          "shenyu_gateway/gateway_tools/_calendar.py": "a48ee9a4c74571dbb7b4504945e6c1acfd3c44534e520a7dd9233aa79201e7d8"
         },
-        "commit": "bff6de8f419360a1fc36d52de67a76a83964c89b",
-        "revision": "bff6de8f419360a1fc36d52de67a76a83964c89b-dirty",
+        "commit": "9e6b35626ad0791c4678e48e479bf3b42dca4429",
+        "revision": "9e6b35626ad0791c4678e48e479bf3b42dca4429-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-26T22:41:16+08:00",
+        "reviewed_at": "2026-07-26T23:26:43+08:00",
         "reviewed_by": "claude"
       }
     },

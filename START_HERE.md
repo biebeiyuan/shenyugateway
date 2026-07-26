@@ -29,7 +29,7 @@
 
 ### Gateway tool
 
-网关自己会执行的工具，例如读取心跳、搜索记忆、查询日历或访问 Supabase 数据。模型发出调用后，Shenyu Gateway 执行它，把结果送回模型，再让模型继续回答。
+网关自己会执行的工具，例如读取心跳、搜索记忆、手写日历手记（`shenyu_add_calendar`）或访问 Supabase 数据。模型发出调用后，Shenyu Gateway 执行它，把结果送回模型，再让模型继续回答。
 
 普通线程默认使用一个节省提示词的入口 `shenyu_gateway_tool`。它像总机：参数中的 `tool` 指定真正要调用的 `shenyu_*` 或 `supabase_*` 工具，`params` 放参数。
 

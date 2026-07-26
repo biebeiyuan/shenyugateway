@@ -250,7 +250,7 @@
 
 - 不把 request logs 直接完整持久化到 SQLite。
 - 不扩大正文保存范围来改善可观察性。
-- 不仅因为正文重复就删除 raw window、snapshot 或 pending 数据；它们分别承担事件分类、cold start/calendar 和工具协议恢复职责。
+- 不仅因为正文重复就删除 raw window、snapshot 或 pending 数据；它们分别承担事件分类、cold start 和工具协议恢复职责。
 
 ## 区域八：管理、日志、运维与文档
 

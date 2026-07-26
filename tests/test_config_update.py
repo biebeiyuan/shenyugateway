@@ -125,7 +125,6 @@ def test_full_config_only_hides_supabase_key(monkeypatch):
     visible_secrets = {
         "gateway_key": "gateway-secret",
         "upstream_api_key": "upstream-secret",
-        "calendar_api_key": "calendar-secret",
     }
     for field, value in visible_secrets.items():
         monkeypatch.setattr(gateway.cfg, field, value)
@@ -268,13 +267,13 @@ def test_upstream_extra_body_env_accepts_json_object(monkeypatch):
 def test_blank_wake_welcome_message_preserves_existing_value(monkeypatch):
     client, persisted = _config_client(monkeypatch)
     monkeypatch.setattr(gateway.cfg, "wake_welcome_message", "上一次的欢迎词")
-    monkeypatch.setattr(gateway.cfg, "calendar_model", "old-calendar-model")
+    monkeypatch.setattr(gateway.cfg, "star_scene_llm_model", "old-scene-model")
 
     try:
         response = client.post(
             "/api/config",
             json={
-                "calendar_model": "new-calendar-model",
+                "star_scene_llm_model": "new-scene-model",
                 "wake_welcome_message": "",
             },
         )
@@ -284,7 +283,7 @@ def test_blank_wake_welcome_message_preserves_existing_value(monkeypatch):
     assert response.status_code == 200
     payload = response.json()
     assert payload["config"]["wake_welcome_message"] == "上一次的欢迎词"
-    assert "calendar_model" in payload["changed"]
+    assert "star_scene_llm_model" in payload["changed"]
     assert "wake_welcome_message" not in payload["changed"]
     assert gateway.cfg.wake_welcome_message == "上一次的欢迎词"
     assert all("WAKE_WELCOME_MESSAGE" not in update for update in persisted)
