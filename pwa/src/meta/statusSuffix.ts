@@ -2,7 +2,7 @@ import { fetchWeather, type RequestContext } from '../api/client'
 import { companionDay } from './days'
 
 // 用户消息尾部的状态后缀（跨端契约第1条）：
-// 【{DD}/{MM} 周{W} {HH}:{mm} · 第{N}天 · 🔋{P}%⚡ · {城市} {天气} {温度}℃】
+// 【{DD}/{MM} 周{W} {HH}:{mm} · 第{N}天 · 🔋{P}%⚡ · {城市} {天气} {温度}°C】
 // 时间与第N天两段永远存在；电量、天气两段各自可缺省。
 // 快照的采集（电池事件、天气轮询）全部在后台维护，绝不阻塞发消息路径。
 
@@ -38,7 +38,7 @@ export function buildStatusSuffix(parts: StatusParts = {}): string {
     segments.push(`🔋${Math.round(battery.level * 100)}%${battery.charging ? '⚡' : ''}`)
   }
   if (weather && weather.city && weather.text) {
-    const temp = weather.tempC !== null && Number.isFinite(weather.tempC) ? ` ${Math.round(weather.tempC)}℃` : ''
+    const temp = weather.tempC !== null && Number.isFinite(weather.tempC) ? ` ${Math.round(weather.tempC)}°C` : ''
     segments.push(`${weather.city} ${weather.text}${temp}`)
   }
   return `【${segments.join(' · ')}】`

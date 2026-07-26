@@ -823,7 +823,8 @@ function userBubbleBody(message: UiMessage): string {
 }
 
 function userBubbleSuffix(message: UiMessage): string {
-  return splitStatusSuffix(message.content).suffix
+  // 展示层去掉机器锚点【】，消息数据本身保持跨端契约不变。
+  return splitStatusSuffix(message.content).suffix.replace(/^【|】$/gu, '')
 }
 
 function statusSpriteMode(message: UiMessage): SpriteMode {

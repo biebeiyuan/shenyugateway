@@ -7,7 +7,7 @@ Two client shapes carry device/state context inside user messages:
 - Operit appends ``<attachment id="message_insert_extra_bundle_...">`` XML
   blocks with device state.
 - The PWA appends a tail status suffix such as
-  ``【26/07 周日 14:30 · 第140天 · 🔋80%⚡ · 邵阳 霾 25℃】`` (time and day
+  ``【26/07 周日 14:30 · 第140天 · 🔋80%⚡ · 邵阳 霾 25°C】`` (time and day
   segments always present, battery/weather segments optional).
 
 This module is the single home for both patterns so trimming, archiving,

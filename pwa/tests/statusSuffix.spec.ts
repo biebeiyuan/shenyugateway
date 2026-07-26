@@ -32,20 +32,20 @@ describe('buildStatusSuffix', () => {
 
   it('appends the weather segment with an integer temperature', () => {
     const suffix = buildStatusSuffix({ now: fixedNow(), battery: null, weather: { city: '邵阳', text: '霾', tempC: 25.6 } })
-    expect(suffix).toContain(' · 邵阳 霾 26℃】')
+    expect(suffix).toContain(' · 邵阳 霾 26°C】')
   })
 
   it('keeps city and condition but omits the temperature when tempC is null', () => {
     const suffix = buildStatusSuffix({ now: fixedNow(), battery: null, weather: { city: '邵阳', text: '霾', tempC: null } })
     expect(suffix).toContain(' · 邵阳 霾】')
-    expect(suffix).not.toContain('℃')
+    expect(suffix).not.toContain('°C')
     expect(CONTRACT_RE.test(suffix)).toBe(true)
   })
 
   it('omits optional segments independently and matches the contract regex', () => {
     const timeOnly = buildStatusSuffix({ now: fixedNow(), battery: null, weather: null })
     expect(timeOnly).not.toContain('🔋')
-    expect(timeOnly).not.toContain('℃')
+    expect(timeOnly).not.toContain('°C')
     const full = buildStatusSuffix({ now: fixedNow(), battery: { level: 1, charging: true }, weather: { city: '邵阳', text: '晴', tempC: 30 } })
     for (const suffix of [timeOnly, full]) {
       expect(CONTRACT_RE.test(suffix)).toBe(true)
