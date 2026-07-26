@@ -24,6 +24,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import { CHATNEST_STATUS_SPRITES } from './chatnestSprite'
+import ChatNestSprite from './ChatNestSprite.vue'
 import { renderMarkdown } from './markdown'
 import { toolName, toolState, toolWarmCopy, type ToolEvent } from './toolLanguage'
 
@@ -1061,23 +1062,7 @@ function statusSpriteMode(message: UiMessage): SpriteMode {
   if (hasActiveTool) return 'shimmer'
   if (message.thinking && !message.content) return 'thinking'
   if (message.content) return 'writing'
-  // ChatNest plays entrance once and then settles into its slower tickle loop.
-  return 'tickle'
-}
-
-function statusSpriteMarkup(message: UiMessage): string {
-  return CHATNEST_STATUS_SPRITES[statusSpriteMode(message)].svg
-}
-
-function statusSpriteStyle(message: UiMessage): Record<string, string> {
-  const sprite = CHATNEST_STATUS_SPRITES[statusSpriteMode(message)]
-  const lastFrameOffset = -100 * (sprite.frameCount - 1) / sprite.frameCount
-  return {
-    '--sprite-duration': `${sprite.speed * sprite.frameCount}ms`,
-    '--sprite-frames': String(sprite.frameCount),
-    '--sprite-offset': `${lastFrameOffset}%`,
-    '--sprite-iterations': sprite.loop ? 'infinite' : '1',
-  }
+  return 'entrance'
 }
 
 function formatToolInput(event?: ToolEvent): string {
@@ -1263,11 +1248,7 @@ onMounted(async () => {
                   <ChevronRight :size="16" />
                 </button>
               </template>
-              <div v-if="message.streaming" class="assistant-trail" :data-mode="statusSpriteMode(message)">
-                <span class="assistant-sprite-viewport">
-                  <span class="assistant-sprite-track" :style="statusSpriteStyle(message)" v-html="statusSpriteMarkup(message)" />
-                </span>
-              </div>
+              <ChatNestSprite v-if="message.streaming" :mode="statusSpriteMode(message)" />
               <div v-if="message.error" class="message-error">这次没有顺利接上：{{ message.error }}</div>
               <div v-if="!message.streaming && (message.content || message.error)" class="message-actions">
                 <button title="复制" aria-label="复制" @click="copyText(message.content)"><Clipboard :size="15" /></button>
