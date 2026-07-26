@@ -27,126 +27,82 @@ import {
 import { CHATNEST_STATUS_SPRITES } from './chatnestSprite'
 import ChatNestSprite from './ChatNestSprite.vue'
 import { renderMarkdown } from './markdown'
-import { toolName, toolState, toolWarmCopy, type ToolEvent } from './toolLanguage'
-
-type Role = 'user' | 'assistant'
-
-type Attachment = {
-  id: string
-  name: string
-  mime: string
-  dataUrl: string
-}
-
-type UiMessage = {
-  id: string
-  role: Role
-  content: string
-  attachments: Attachment[]
-  thinking: string
-  thinkingSegments: ThinkingSegment[]
-  events: ToolEvent[]
-  streaming?: boolean
-  error?: string
-  expanded?: boolean
-  variants?: MessageVariant[]
-  selectedVariantIndex?: number
-}
-
-type MessageVariant = {
-  content: string
-  thinking: string
-  thinkingSegments: ThinkingSegment[]
-  events: ToolEvent[]
-  error?: string
-}
-
-type ThinkingSegment = {
-  id: string
-  content: string
-  textOffset: number
-  streamOrder: number
-}
-
-type ProcessGroup = {
-  textOffset: number
-  thinking: ThinkingSegment[]
-  tools: ToolEvent[]
-}
-
-type ProcessTimelineItem =
-  | { kind: 'thinking'; key: string; thinking: ThinkingSegment; streamOrder: number }
-  | { kind: 'tool'; key: string; tool: ToolEvent; streamOrder: number }
-
-type AssistantPart =
-  | { kind: 'content'; key: string; content: string }
-  | { kind: 'process'; key: string; group: ProcessGroup }
-
-type ModelOption = {
-  id: string
-  object?: string
-  owned_by?: string
-  label?: string
-  desc?: string
-  thinking?: string
-  primary?: boolean
-}
-
-type GatewaySession = {
-  session_tag: string
-  client_name?: string
-  last_active_at?: string
-  latest_user_text?: string
-  message_count?: number
-  user_message_count?: number
-}
-
-type WorkspaceId = 'chats' | 'projects' | 'artifacts' | 'memory' | 'diary'
-
-type UpstreamPreset = {
-  name: string
-  url: string
-  key: string
-  protocol: string
-  proto?: string
-  extra_body?: string
-  passthrough_headers?: string[]
-}
-
-type ProcessSheet = {
-  messageId: string
-  view: 'summary' | 'thinking' | 'tool'
-  textOffset?: number
-  thinkingKey?: string
-  toolKey?: string
-}
+import { toolState, toolWarmCopy, type ToolEvent } from './toolLanguage'
+import type {
+  Attachment,
+  GatewaySession,
+  ModelOption,
+  ProcessGroup,
+  ProcessSheet,
+  Role,
+  ThinkingSegment,
+  UiMessage,
+  UpstreamPreset,
+  WorkspaceId,
+} from './types'
+import { createId } from './utils'
+import {
+  fetchModels,
+  fetchRuntimeConfig,
+  fetchSessionDetail,
+  fetchSessions,
+  postChatStream,
+  postUpstreamConfig,
+  wireMessages,
+  type RequestContext,
+} from './api/client'
+import { readUpstreamPresets } from './api/presets'
+import {
+  coldStartHistoryRows,
+  dedupeUiMessagesForRecovery,
+  hasExactDuplicateRows,
+  sessionHistoryRows,
+  sessionMessageContent,
+  sessionTagFromLocation,
+} from './session/history'
+import {
+  FALLBACK_SESSION_MESSAGE_LIMIT,
+  STORAGE_SESSION,
+  loadStoredMessages,
+  persistStoredMessages,
+} from './session/persistence'
+import {
+  applyVariant,
+  canSwitchMessageVariant,
+  emptyVariant,
+  ensureVariants,
+  selectedVariantIndex,
+  syncCurrentVariant,
+  variantCount,
+} from './session/variants'
+import { parseSseFrame, pumpSseStream, toolEventKey } from './stream/sse'
+import {
+  assistantParts,
+  formatToolInput,
+  formatToolOutput,
+  groupHasThinking,
+  processGroups,
+  processSummary,
+  processTimeline,
+  thinkingPreview,
+  toolLabel,
+  toolResultPreview,
+  traceRows,
+} from './stream/timeline'
 
 type SpriteMode = keyof typeof CHATNEST_STATUS_SPRITES
 
-const STORAGE_MESSAGES = 'shenyu_pwa_messages'
-const STORAGE_SESSION = 'shenyu_pwa_session'
 const STORAGE_TOKEN = 'shenyu_pwa_gateway_token'
 const STORAGE_GATEWAY = 'shenyu_pwa_gateway_url'
 const STORAGE_MODEL = 'shenyu_pwa_model'
 const STORAGE_EFFORT = 'shenyu_pwa_effort'
 const STORAGE_EXTENDED = 'shenyu_pwa_extended'
 const STORAGE_PRESET = 'shenyu_pwa_preset'
-const PRESETS_KEY = 'shenyu_upstream_presets'
-const FALLBACK_SESSION_MESSAGE_LIMIT = 75
-
-function sessionTagFromLocation(): string {
-  try {
-    const params = new URLSearchParams(window.location.search)
-    return (params.get('session_tag') || params.get('session') || params.get('thread') || '').trim()
-  } catch {
-    return ''
-  }
-}
 
 const requestedSessionTag = sessionTagFromLocation()
 const storedSessionTag = localStorage.getItem(STORAGE_SESSION) || ''
 
-const messages = ref<UiMessage[]>(loadMessages())
+const messages = ref<UiMessage[]>(loadStoredMessages())
 const draft = ref('')
 const pendingAttachments = ref<Attachment[]>([])
 const models = ref<ModelOption[]>([])
@@ -277,92 +233,6 @@ const quickPrompts = [
   '把这段文字改得更自然一点',
 ]
 
-function createId(prefix: string): string {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
-}
-
-function cloneVariant(variant: Partial<MessageVariant>): MessageVariant {
-  return {
-    content: String(variant.content || ''),
-    thinking: String(variant.thinking || ''),
-    thinkingSegments: Array.isArray(variant.thinkingSegments)
-      ? variant.thinkingSegments.map((item) => ({
-          id: String(item?.id || createId('thinking')),
-          content: String(item?.content || ''),
-          textOffset: Number(item?.textOffset || 0),
-          streamOrder: Number(item?.streamOrder || 0),
-        }))
-      : [],
-    events: Array.isArray(variant.events) ? variant.events.map((item) => ({ ...item })) : [],
-    error: variant.error ? String(variant.error) : undefined,
-  }
-}
-
-function snapshotMessage(message: UiMessage): MessageVariant {
-  return cloneVariant(message)
-}
-
-function selectedVariantIndex(message: UiMessage): number {
-  const count = message.variants?.length || 1
-  return Math.max(0, Math.min(Number(message.selectedVariantIndex || 0), count - 1))
-}
-
-function variantCount(message: UiMessage): number {
-  return message.variants?.length || 1
-}
-
-function syncCurrentVariant(message: UiMessage) {
-  if (message.role !== 'assistant' || !message.variants?.length) return
-  const index = selectedVariantIndex(message)
-  message.selectedVariantIndex = index
-  message.variants[index] = snapshotMessage(message)
-}
-
-function applyVariant(message: UiMessage, variant: MessageVariant, index: number) {
-  message.selectedVariantIndex = index
-  message.content = variant.content
-  message.thinking = variant.thinking
-  message.thinkingSegments = variant.thinkingSegments.map((item) => ({ ...item }))
-  message.events = variant.events.map((item) => ({ ...item }))
-  message.error = variant.error
-}
-
-function emptyVariant(): MessageVariant {
-  return { content: '', thinking: '', thinkingSegments: [], events: [] }
-}
-
-function ensureVariants(message: UiMessage): MessageVariant[] {
-  if (!message.variants?.length) {
-    message.variants = [snapshotMessage(message)]
-    message.selectedVariantIndex = 0
-  } else {
-    message.selectedVariantIndex = selectedVariantIndex(message)
-    syncCurrentVariant(message)
-  }
-  return message.variants
-}
-
-function hasExactDuplicateRows(rows: Record<string, unknown>[]): boolean {
-  const seen = new Set<string>()
-  for (const row of rows) {
-    if (row.role !== 'user' && row.role !== 'assistant') continue
-    const key = `${String(row.role)}\u0000${sessionMessageContent(row.content)}`
-    if (seen.has(key)) return true
-    seen.add(key)
-  }
-  return false
-}
-
-function dedupeUiMessagesForRecovery(source: UiMessage[]): UiMessage[] {
-  const seen = new Set<string>()
-  return source.filter((message) => {
-    const key = `${message.role}\u0000${message.content}`
-    if (seen.has(key)) return false
-    seen.add(key)
-    return true
-  })
-}
-
 function modelLabel(model?: ModelOption): string {
   if (!model) return selectedModel.value === 'default' ? 'Sonnet 4.6' : selectedModel.value
   if (model.label) return model.label
@@ -391,96 +261,21 @@ function modelUpstreamId(model?: ModelOption): string {
   return model?.id || selectedModel.value
 }
 
-function loadMessages(): UiMessage[] {
-  try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_MESSAGES) || '[]')
-    if (!Array.isArray(raw)) return []
-    return raw.filter((item) => item && (item.role === 'user' || item.role === 'assistant'))
-      .map((item) => {
-        const message: UiMessage = {
-          id: String(item.id || createId('message')),
-          role: item.role as Role,
-          content: String(item.content || ''),
-          attachments: [],
-          thinking: String(item.thinking || ''),
-          thinkingSegments: item.thinking
-            ? [{ id: createId('thinking'), content: String(item.thinking), textOffset: 0, streamOrder: 0 }]
-            : [],
-          events: [],
-          streaming: false,
-          error: item.error ? String(item.error) : undefined,
-        }
-        if (message.role === 'assistant' && Array.isArray(item.variants) && item.variants.length) {
-          const variants = item.variants.map((variant: Partial<MessageVariant>) => cloneVariant(variant))
-          message.variants = variants
-          message.selectedVariantIndex = selectedVariantIndex({ ...message, variants })
-          applyVariant(message, variants[message.selectedVariantIndex], message.selectedVariantIndex)
-        }
-        return message
-      })
-  } catch {
-    return []
-  }
-}
-
 function persistMessages() {
-  messages.value.forEach(syncCurrentVariant)
-  const safe = messages.value.map((message) => ({
-    id: message.id,
-    role: message.role,
-    content: message.content,
-    thinking: message.thinking,
-    error: message.error,
-    variants: message.variants,
-    selectedVariantIndex: message.selectedVariantIndex,
-  }))
-  // Keep a little more than the gateway high-water window so a resident PWA
-  // can stop relying on a temporary cold-start handoff.
-  const storageLimit = Math.max(240, sessionMessageLimit() + 72)
-  localStorage.setItem(STORAGE_MESSAGES, JSON.stringify(safe.slice(-storageLimit)))
+  persistStoredMessages(messages.value, sessionMessageLimit())
 }
 
-function apiUrl(path: string): string {
-  const base = gatewayUrl.value.trim().replace(/\/$/, '')
-  return `${base}${path}`
-}
-
-function requestHeaders(): Record<string, string> {
-  const headers: Record<string, string> = {
-    'Content-Type': 'application/json',
-    'X-Shenyu-Client': 'shenyu-pwa',
-    'X-Shenyu-Tool-Events': 'true',
-    'X-Shenyu-Tool-Details': 'true',
-    'X-Shenyu-Session-Tag': sessionTag.value,
-  }
-  if (authToken.value.trim()) headers.Authorization = `Bearer ${authToken.value.trim()}`
-  return headers
+function clientContext(): RequestContext {
+  return { gatewayUrl: gatewayUrl.value, authToken: authToken.value, sessionTag: sessionTag.value }
 }
 
 function loadPresets() {
-  try {
-    const raw = JSON.parse(localStorage.getItem(PRESETS_KEY) || '{}')
-    presets.value = Object.entries(raw).map(([name, value]) => {
-      const preset = value as Partial<UpstreamPreset>
-      return {
-        name,
-        url: preset.url || '',
-        key: preset.key || '',
-        protocol: preset.protocol || preset.proto || 'auto',
-        extra_body: preset.extra_body || '',
-        passthrough_headers: preset.passthrough_headers || [],
-      }
-    })
-  } catch {
-    presets.value = []
-  }
+  presets.value = readUpstreamPresets()
 }
 
 async function loadRuntimeUpstream() {
   try {
-    const response = await fetch(apiUrl('/api/config'), { headers: requestHeaders() })
-    if (!response.ok) throw new Error('config unavailable')
-    const payload = await response.json()
+    const payload = await fetchRuntimeConfig(clientContext())
     const configuredMessageLimit = Number(payload.max_client_messages)
     maxClientMessages.value = Number.isFinite(configuredMessageLimit) && configuredMessageLimit > 0
       ? Math.floor(configuredMessageLimit)
@@ -506,9 +301,7 @@ function sessionMessageLimit(): number {
 
 async function loadModels() {
   try {
-    const response = await fetch(apiUrl('/v1/models'), { headers: requestHeaders() })
-    if (!response.ok) throw new Error('模型列表暂时拿不到')
-    const payload = await response.json()
+    const payload = await fetchModels(clientContext())
     models.value = Array.isArray(payload.data)
       ? payload.data.filter((model: unknown): model is ModelOption => Boolean(model && typeof model === 'object' && (model as ModelOption).id))
       : []
@@ -522,9 +315,7 @@ async function loadModels() {
 
 async function loadSessions() {
   try {
-    const response = await fetch(apiUrl('/api/gateway/sessions?limit=24'), { headers: requestHeaders() })
-    if (!response.ok) throw new Error('session list unavailable')
-    const payload = await response.json()
+    const payload = await fetchSessions(clientContext(), 24)
     recentSessions.value = Array.isArray(payload.sessions) ? payload.sessions : []
   } catch {
     recentSessions.value = []
@@ -540,64 +331,10 @@ function sessionMeta(session: GatewaySession): string {
   return count ? `${count} 轮` : '还没有消息'
 }
 
-function sessionHistoryRows(payload: Record<string, unknown>): Record<string, unknown>[] {
-  // Context snapshots are the trimmed client transcript. `recent_messages` is
-  // an inspection stream and is only a compatibility fallback for old data.
-  const snapshotCollections = [payload.context_snapshots, payload.request_context_snapshots]
-  for (const candidate of snapshotCollections) {
-    if (!Array.isArray(candidate)) continue
-    const latest = candidate[0]
-    if (!latest || typeof latest !== 'object') continue
-    const rows = (latest as Record<string, unknown>).messages
-    if (!Array.isArray(rows)) continue
-    return rows.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
-  }
-  const fallback = payload.recent_messages
-  return Array.isArray(fallback)
-    ? fallback.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
-    : []
-}
-
-function coldStartHistoryRows(payload: Record<string, unknown>, targetTag: string): Record<string, unknown>[] {
-  const snapshots = payload.cold_start_snapshots
-  if (!Array.isArray(snapshots)) return []
-  const latest = snapshots.find((item) => item && typeof item === 'object' && (item as Record<string, unknown>).active !== false) as Record<string, unknown> | undefined
-  const sources = latest?.sources
-  if (!Array.isArray(sources)) return []
-  const source = sources.find((item) => {
-    if (!item || typeof item !== 'object') return false
-    const row = item as Record<string, unknown>
-    return !targetTag || String(row.session_tag || '') === targetTag
-  }) || sources[0]
-  if (!source || typeof source !== 'object') return []
-  const rows = (source as Record<string, unknown>).messages
-  if (!Array.isArray(rows)) return []
-  return rows
-    .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
-    .filter((row) => row.role === 'user' || row.role === 'assistant')
-}
-
-function sessionMessageContent(value: unknown): string {
-  if (typeof value === 'string') return value
-  if (Array.isArray(value)) {
-    return value.map((block) => {
-      if (typeof block === 'string') return block
-      if (!block || typeof block !== 'object') return ''
-      const item = block as Record<string, unknown>
-      return item.type === 'text' ? String(item.text || '') : ''
-    }).join('')
-  }
-  return value == null ? '' : String(value)
-}
-
 async function openSession(session: GatewaySession): Promise<boolean> {
   if (busy.value || !session.session_tag) return false
   try {
-    const response = await fetch(apiUrl(`/api/gateway/sessions/${encodeURIComponent(session.session_tag)}?messages_limit=${sessionMessageLimit()}`), {
-      headers: requestHeaders(),
-    })
-    if (!response.ok) throw new Error('session unavailable')
-    const payload = await response.json() as Record<string, unknown>
+    const payload = await fetchSessionDetail(clientContext(), session.session_tag, sessionMessageLimit())
     const rows = sessionHistoryRows(payload)
     messages.value = rows
       .filter((row: Record<string, unknown>) => row.role === 'user' || row.role === 'assistant')
@@ -629,11 +366,7 @@ async function recoverSessionFromColdStart(session: GatewaySession = { session_t
   if (busy.value || !session.session_tag) return false
   if (!window.confirm('将保留当前 PWA 新消息，只移除完全相同的重复历史，并让下一次请求使用干净冷启动源。继续吗？')) return false
   try {
-    const response = await fetch(apiUrl(`/api/gateway/sessions/${encodeURIComponent(session.session_tag)}?messages_limit=${sessionMessageLimit()}`), {
-      headers: requestHeaders(),
-    })
-    if (!response.ok) throw new Error('session unavailable')
-    const payload = await response.json() as Record<string, unknown>
+    const payload = await fetchSessionDetail(clientContext(), session.session_tag, sessionMessageLimit())
     const cleanRows = coldStartHistoryRows(payload, session.session_tag)
     if (!cleanRows.length || hasExactDuplicateRows(cleanRows)) throw new Error('没有找到干净的冷启动源')
     if (messages.value.length) messages.value = dedupeUiMessagesForRecovery(messages.value)
@@ -722,12 +455,7 @@ async function selectPreset(preset: UpstreamPreset) {
   switchingPreset.value = preset.name
   errorNotice.value = ''
   try {
-    const response = await fetch(apiUrl('/api/config'), {
-      method: 'POST',
-      headers: requestHeaders(),
-      body: JSON.stringify(body),
-    })
-    if (!response.ok) throw new Error((await response.text()) || `网关返回 ${response.status}`)
+    await postUpstreamConfig(clientContext(), body)
     runtimeUpstream.value = { url: preset.url, protocol: preset.protocol || 'auto', extraBody: JSON.stringify(extraBody) }
     selectedPresetName.value = preset.name
     localStorage.setItem(STORAGE_PRESET, preset.name)
@@ -884,109 +612,6 @@ function removeAttachment(id: string) {
   pendingAttachments.value = pendingAttachments.value.filter((item) => item.id !== id)
 }
 
-function wireContent(message: UiMessage): string | Array<Record<string, unknown>> {
-  if (!message.attachments.length) return message.content
-  const blocks: Array<Record<string, unknown>> = []
-  if (message.content.trim()) blocks.push({ type: 'text', text: message.content })
-  for (const attachment of message.attachments) {
-    blocks.push({ type: 'image_url', image_url: { url: attachment.dataUrl } })
-  }
-  return blocks
-}
-
-function wireMessages(source: UiMessage[]) {
-  return source.map((message) => ({
-    role: message.role,
-    content: wireContent(message),
-  }))
-}
-
-function textLength(value: string): number {
-  return Array.from(value).length
-}
-
-function textSlice(value: string, start: number, end?: number): string {
-  return Array.from(value).slice(start, end).join('')
-}
-
-function nextProcessOrder(message: UiMessage): number {
-  const thoughtOrder = message.thinkingSegments.reduce((max, item) => Math.max(max, item.streamOrder), -1)
-  const toolOrder = message.events.reduce((max, item) => Math.max(max, item.stream_order || -1), -1)
-  return Math.max(thoughtOrder, toolOrder) + 1
-}
-
-function appendToolEvent(message: UiMessage, event: ToolEvent) {
-  const key = `${event.phase}:${event.tool_call_id || event.name}`
-  const existingIndex = message.events.findIndex((item) => `${item.phase}:${item.tool_call_id || item.name}` === key)
-  const existing = existingIndex >= 0 ? message.events[existingIndex] : undefined
-  const relatedStart = message.events.find((item) => item.phase === 'tool_start' && toolEventKey(item) === toolEventKey(event))
-  const stored = {
-    ...event,
-    text_offset: existing?.text_offset ?? relatedStart?.text_offset ?? textLength(message.content),
-    stream_order: existing?.stream_order ?? relatedStart?.stream_order ?? nextProcessOrder(message),
-  }
-  if (existingIndex >= 0) message.events.splice(existingIndex, 1, stored)
-  else message.events.push(stored)
-}
-
-function appendThinking(message: UiMessage, delta: string) {
-  if (!delta) return
-  message.thinking += delta
-  const textOffset = textLength(message.content)
-  const last = message.thinkingSegments[message.thinkingSegments.length - 1]
-  if (last && last.textOffset === textOffset) {
-    last.content += delta
-    return
-  }
-  message.thinkingSegments.push({
-    id: createId('thinking'),
-    content: delta,
-    textOffset,
-    streamOrder: nextProcessOrder(message),
-  })
-}
-
-function toolLabel(event: ToolEvent): string {
-  return toolName(event).replace(/[_-]+/g, ' ')
-}
-
-function toolResultPreview(event: ToolEvent): string {
-  if (event.phase === 'tool_start' || event.ok === undefined) return '正在执行…'
-  const output = String(event.output || '').replace(/\s+/g, ' ').trim()
-  if (output) return output.length > 72 ? `${output.slice(0, 72)}…` : output
-  return event.ok === false ? '执行失败' : '执行成功'
-}
-
-function parseSseFrame(frame: string, assistant: UiMessage) {
-  let eventName = ''
-  const dataLines: string[] = []
-  for (const line of frame.split(/\r?\n/)) {
-    if (line.startsWith('event:')) eventName = line.slice(6).trim()
-    if (line.startsWith('data:')) dataLines.push(line.slice(5).trimStart())
-  }
-  const data = dataLines.join('\n')
-  if (!data) return false
-  if (data === '[DONE]') return true
-  try {
-    const payload = JSON.parse(data)
-    if (eventName === 'shenyu_tool' || payload.type === 'shenyu.tool_event') {
-      const event = payload.event as ToolEvent
-      if (event) appendToolEvent(assistant, event)
-      return false
-    }
-    if (payload.error) throw new Error(String(payload.error.message || payload.error))
-    const delta = payload.choices?.[0]?.delta || {}
-    if (typeof delta.content === 'string') assistant.content += delta.content
-    if (typeof delta.reasoning_content === 'string') appendThinking(assistant, delta.reasoning_content)
-    if (typeof delta.reasoning === 'string') appendThinking(assistant, delta.reasoning)
-    const message = payload.choices?.[0]?.message
-    if (message && typeof message.content === 'string') assistant.content += message.content
-  } catch (error) {
-    if (error instanceof Error && error.message) throw error
-  }
-  return false
-}
-
 async function sendConversation(source: UiMessage[], target?: UiMessage) {
   let assistant: UiMessage
   let previousVariantIndex: number | null = null
@@ -1024,40 +649,13 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
   scrollToBottom()
 
   try {
-    const response = await fetch(apiUrl('/v1/chat/completions'), {
-      method: 'POST',
-      headers: requestHeaders(),
-      body: JSON.stringify({
-        model: selectedModel.value,
-        messages: wireMessages(source.filter((message) => message.id !== assistant.id)),
-        stream: true,
-        reasoning_effort: effectiveEffort.value,
-      }),
-      signal: activeController.signal,
-    })
-    if (!response.ok) {
-      const detail = await response.text()
-      throw new Error(detail || `网关返回 ${response.status}`)
-    }
-    if (!response.body) throw new Error('没有收到流式回应')
-    const reader = response.body.getReader()
-    const decoder = new TextDecoder()
-    let buffer = ''
-    let done = false
-    while (!done) {
-      const chunk = await reader.read()
-      buffer += decoder.decode(chunk.value || new Uint8Array(), { stream: !chunk.done })
-      const frames = buffer.split(/\r?\n\r?\n/)
-      buffer = frames.pop() || ''
-      for (const frame of frames) {
-        if (parseSseFrame(frame, assistant)) done = true
-      }
-      if (chunk.done) {
-        if (buffer.trim()) parseSseFrame(buffer, assistant)
-        done = true
-      }
-      scrollToBottom()
-    }
+    const stream = await postChatStream(clientContext(), {
+      model: selectedModel.value,
+      messages: wireMessages(source.filter((message) => message.id !== assistant.id)),
+      stream: true,
+      reasoning_effort: effectiveEffort.value,
+    }, activeController.signal)
+    await pumpSseStream(stream, (frame) => parseSseFrame(frame, assistant), scrollToBottom)
     assistant.streaming = false
     if (!assistant.content && !assistant.thinking && !assistant.events.length) assistant.content = '这次没有收到可显示的回应。'
     syncCurrentVariant(assistant)
@@ -1173,12 +771,6 @@ function switchMessageVariant(index: number, direction: -1 | 1) {
   persistMessages()
 }
 
-function canSwitchMessageVariant(message: UiMessage, direction: -1 | 1): boolean {
-  const count = variantCount(message)
-  const current = selectedVariantIndex(message)
-  return count > 1 && current + direction >= 0 && current + direction < count
-}
-
 async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text)
@@ -1187,108 +779,6 @@ async function copyText(text: string) {
   } catch {
     errorNotice.value = '剪贴板没有打开，长按文字也可以复制。'
   }
-}
-
-function traceRows(message: UiMessage): ToolEvent[] {
-  const rows: ToolEvent[] = []
-  const byId = new Map<string, ToolEvent>()
-  for (const event of message.events) {
-    if (event.phase === 'tool_start') {
-      const row = { ...event }
-      rows.push(row)
-      byId.set(event.tool_call_id || event.name, row)
-    } else if (event.phase === 'tool_end') {
-      const row = byId.get(event.tool_call_id || event.name)
-      if (row) Object.assign(row, event)
-      else rows.push({ ...event })
-    }
-  }
-  return rows
-}
-
-function toolEventKey(event: ToolEvent): string {
-  return event.tool_call_id || `${event.name}:${event.round || 0}`
-}
-
-function processGroups(message: UiMessage): ProcessGroup[] {
-  const groups = new Map<number, ProcessGroup>()
-  const ensure = (textOffset: number) => {
-    const normalized = Math.max(0, Math.min(textLength(message.content), textOffset))
-    const existing = groups.get(normalized)
-    if (existing) return existing
-    const created: ProcessGroup = { textOffset: normalized, thinking: [], tools: [] }
-    groups.set(normalized, created)
-    return created
-  }
-
-  const thinking = message.thinkingSegments.length
-    ? message.thinkingSegments
-    : message.thinking
-      ? [{ id: `${message.id}-thinking`, content: message.thinking, textOffset: 0, streamOrder: 0 }]
-      : []
-  for (const item of thinking) ensure(item.textOffset).thinking.push(item)
-  for (const event of traceRows(message)) ensure(event.text_offset || 0).tools.push(event)
-
-  return [...groups.values()]
-    .sort((left, right) => left.textOffset - right.textOffset)
-    .map((group) => ({
-      ...group,
-      thinking: [...group.thinking].sort((left, right) => left.streamOrder - right.streamOrder),
-      tools: [...group.tools].sort((left, right) => (left.stream_order || 0) - (right.stream_order || 0)),
-    }))
-}
-
-function assistantParts(message: UiMessage): AssistantPart[] {
-  const parts: AssistantPart[] = []
-  let cursor = 0
-  for (const group of processGroups(message)) {
-    if (group.textOffset > cursor) {
-      parts.push({ kind: 'content', key: `content-${cursor}`, content: textSlice(message.content, cursor, group.textOffset) })
-    }
-    parts.push({ kind: 'process', key: `process-${group.textOffset}`, group })
-    cursor = group.textOffset
-  }
-  if (cursor < textLength(message.content) || !parts.length) {
-    parts.push({ kind: 'content', key: `content-${cursor}`, content: textSlice(message.content, cursor) })
-  }
-  return parts
-}
-
-function processSummary(group: ProcessGroup): string {
-  const active = group.tools.find((event) => event.phase === 'tool_start' || event.ok === undefined)
-  if (active) return `正在${toolWarmCopy(active)} · ${toolLabel(active)}…`
-  const thought = group.thinking[group.thinking.length - 1]
-  if (thought) return thinkingPreview(thought.content) || '想了一会儿'
-  const tool = group.tools[group.tools.length - 1]
-  return tool ? `${toolWarmCopy(tool)} · ${toolLabel(tool)}` : '想了一会儿'
-}
-
-function groupHasThinking(group: ProcessGroup): boolean {
-  return group.thinking.length > 0
-}
-
-function processTimeline(group?: ProcessGroup): ProcessTimelineItem[] {
-  if (!group) return []
-  return [
-    ...group.thinking.map((thinking) => ({
-      kind: 'thinking' as const,
-      key: `thinking-${thinking.id}`,
-      thinking,
-      streamOrder: thinking.streamOrder,
-    })),
-    ...group.tools.map((tool) => ({
-      kind: 'tool' as const,
-      key: `tool-${toolEventKey(tool)}`,
-      tool,
-      streamOrder: tool.stream_order || 0,
-    })),
-  ].sort((left, right) => left.streamOrder - right.streamOrder)
-}
-
-function thinkingPreview(thinking: string): string {
-  const compact = thinking.replace(/\s+/g, ' ').trim()
-  const first = compact.match(/^[^。！？.!?]+[。！？.!?]?/)?.[0] || compact
-  return first.length > 30 ? `${first.slice(0, 30)}…` : first
 }
 
 function openProcessSheet(message: UiMessage, group: ProcessGroup) {
@@ -1320,29 +810,6 @@ function statusSpriteMode(message: UiMessage): SpriteMode {
   if (message.thinking && !message.content) return 'thinking'
   if (message.content) return 'writing'
   return 'entrance'
-}
-
-function formatToolInput(event?: ToolEvent): string {
-  if (!event || event.input === undefined) return '（这条旧的工具记录没有保留参数）'
-  if (typeof event.input === 'string') {
-    try {
-      return JSON.stringify(JSON.parse(event.input), null, 2)
-    } catch {
-      return event.input
-    }
-  }
-  try {
-    return JSON.stringify(event.input, null, 2)
-  } catch {
-    return String(event.input)
-  }
-}
-
-function formatToolOutput(event?: ToolEvent): string {
-  if (!event) return '（找不到这一步工具记录）'
-  if (event.phase === 'tool_start' || event.ok === undefined) return '正在执行…'
-  if (event.output !== undefined) return event.output || '（工具没有返回正文）'
-  return '（这条旧的工具记录没有保留结果）'
 }
 
 function runQuickPrompt(prompt: string) {

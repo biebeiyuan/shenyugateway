@@ -197,7 +197,13 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 
 ### PWA chat frontend
 
-- `pwa/src/App.vue`: ChatNest-inspired mobile chat surface with real-time response rendering, chronological inline Thinking/tool traces positioned between streamed text segments, per-trace detail sheet, Claude-style Projects/Artifacts/Memory/Diary workspace shells, gateway-backed Recents, edit/retry actions, local assistant roll variants with arrow switching, clean cold-start recovery, image previews, and Console-synced model/preset selector.
+- `pwa/src/App.vue`: ChatNest-inspired mobile chat surface with real-time response rendering, chronological inline Thinking/tool traces positioned between streamed text segments, per-trace detail sheet, Claude-style Projects/Artifacts/Memory/Diary workspace shells, gateway-backed Recents, edit/retry actions, local assistant roll variants with arrow switching, clean cold-start recovery, image previews, and Console-synced model/preset selector. The Vue shell owns UI state and orchestration only; protocol, history, and persistence logic live in the modules below.
+- `pwa/src/types.ts` / `pwa/src/utils.ts`: shared domain types (messages, variants, sessions, process timeline, presets) and id/Unicode-safe text-offset helpers.
+- `pwa/src/api/client.ts` / `pwa/src/api/presets.ts`: gateway HTTP layer — PWA identity headers, models/sessions/config/chat-stream fetchers, outbound message wiring — plus reading the Console-shared `shenyu_upstream_presets` storage.
+- `pwa/src/session/history.ts`: thread-handoff history source selection (context snapshots → legacy snapshot field → inspection-stream fallback), cold-start clean baseline rows, exact-duplicate detection, and recovery dedupe.
+- `pwa/src/session/variants.ts` / `pwa/src/session/persistence.ts`: local assistant roll-variant state machine and the localStorage transcript window save/restore.
+- `pwa/src/stream/sse.ts` / `pwa/src/stream/timeline.ts`: SSE frame parsing (OpenAI deltas plus `shenyu.tool_event`), thinking/tool offset bookkeeping and stream pump, and grouping of streamed process events into inline strips and detail timelines.
+- `pwa/tests/` + `pwa/vitest.config.ts`: Vitest unit suite (`cd pwa && npm test`) covering history source priority, dedupe recovery, roll variants, persistence window limits, SSE parsing, and timeline grouping.
 - `pwa/src/ChatNestSprite.vue`: ChatNest status-sprite player using the demo's Web Animations API and per-mode frame loop configuration.
 - `pwa/src/chatnestSprite.ts`: user-supplied private ChatNest status sprite set for the personal PWA deployment.
 - `pwa/src/markdown.ts`: sanitized Markdown rendering with Highlight.js code highlighting.
