@@ -749,6 +749,17 @@ function appendThinking(message: UiMessage, delta: string) {
   })
 }
 
+function toolLabel(event: ToolEvent): string {
+  return toolName(event).replace(/[_-]+/g, ' ')
+}
+
+function toolResultPreview(event: ToolEvent): string {
+  if (event.phase === 'tool_start' || event.ok === undefined) return '正在执行…'
+  const output = String(event.output || '').replace(/\s+/g, ' ').trim()
+  if (output) return output.length > 72 ? `${output.slice(0, 72)}…` : output
+  return event.ok === false ? '执行失败' : '执行成功'
+}
+
 function parseSseFrame(frame: string, assistant: UiMessage) {
   let eventName = ''
   const dataLines: string[] = []
@@ -780,7 +791,7 @@ function parseSseFrame(frame: string, assistant: UiMessage) {
 }
 
 async function sendConversation(source: UiMessage[]) {
-  const assistant: UiMessage = {
+  const assistantDraft: UiMessage = {
     id: createId('assistant'),
     role: 'assistant',
     content: '',
@@ -790,7 +801,10 @@ async function sendConversation(source: UiMessage[]) {
     events: [],
     streaming: true,
   }
-  messages.value.push(assistant)
+  messages.value.push(assistantDraft)
+  // Read the object back through Vue's proxy. Mutating the detached draft would
+  // leave the template unaware until another top-level ref changes.
+  const assistant = messages.value[messages.value.length - 1]
   activeAssistantId = assistant.id
   activeController = new AbortController()
   busy.value = true
@@ -999,11 +1013,11 @@ function assistantParts(message: UiMessage): AssistantPart[] {
 
 function processSummary(group: ProcessGroup): string {
   const active = group.tools.find((event) => event.phase === 'tool_start' || event.ok === undefined)
-  if (active) return `${toolWarmCopy(active)}…`
+  if (active) return `正在${toolWarmCopy(active)} · ${toolLabel(active)}…`
   const thought = group.thinking[group.thinking.length - 1]
   if (thought) return thinkingPreview(thought.content) || '想了一会儿'
   const tool = group.tools[group.tools.length - 1]
-  return tool ? toolWarmCopy(tool) : '想了一会儿'
+  return tool ? `${toolWarmCopy(tool)} · ${toolLabel(tool)}` : '想了一会儿'
 }
 
 function groupHasThinking(group: ProcessGroup): boolean {
@@ -1319,8 +1333,8 @@ onMounted(async () => {
                   <span class="process-timeline-line" />
                 </span>
                 <span class="process-timeline-copy">
-                  <strong>{{ item.kind === 'thinking' ? '思考片段' : item.tool.phase === 'tool_start' ? `正在${toolWarmCopy(item.tool)}…` : toolWarmCopy(item.tool) }}</strong>
-                  <small>{{ item.kind === 'thinking' ? thinkingPreview(item.thinking.content) || '正在整理想法…' : toolState(item.tool) }}</small>
+                  <strong>{{ item.kind === 'thinking' ? '思考片段' : toolLabel(item.tool) }}</strong>
+                  <small>{{ item.kind === 'thinking' ? thinkingPreview(item.thinking.content) || '正在整理想法…' : `${toolState(item.tool)} · ${toolResultPreview(item.tool)}` }}</small>
                 </span>
                 <ChevronRight :size="17" />
               </button>
