@@ -54,6 +54,11 @@ def configure_gateway_tools(*, runtime_config: Any = _UNSET, supabase: Any = _UN
         _runtime.session_store = store
 
 
+def get_runtime() -> GatewayToolRuntime:
+    """Public accessor for the shared runtime singleton (do not re-instantiate it)."""
+    return _runtime
+
+
 def _clamp(value: float, min_value: float, max_value: float) -> float:
     return max(min_value, min(value, max_value))
 
@@ -112,10 +117,6 @@ def _keyword_overlap_score(query: str, text: str) -> float:
     hay = (text or "").lower()
     hits = sum(1 for term in terms if term in hay)
     return hits / max(len(terms), 1)
-
-
-def _today_utc_key() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%d")
 
 
 _LOCAL_DAY_TZ = timezone(timedelta(hours=8))
@@ -1033,54 +1034,6 @@ class GatewayToolService:
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
-    async def ask_memory(
-        self,
-        query: str,
-        session_tag: Optional[str],
-        limit: int = 8,
-        date: Optional[str] = None,
-        date_from: Optional[str] = None,
-        date_to: Optional[str] = None,
-    ) -> dict:
-        if date:
-            date_from = date_to = date
-        has_date_filter = bool(date_from or date_to)
-        try:
-            safe_limit = int(limit or 8)
-        except (TypeError, ValueError):
-            safe_limit = 8
-        result = await self.recall(
-            query=query,
-            source_types=["memory"],
-            session_tag=session_tag,
-            date_from=date_from,
-            date_to=date_to,
-            include_undated=not has_date_filter,
-            limit=max(1, min(safe_limit, 20)),
-        )
-        items = result.get("items") if isinstance(result.get("items"), list) else []
-        if not result.get("ok"):
-            return {
-                "ok": False,
-                "error": result.get("error", "memory recall failed"),
-                "query": query,
-                "count": 0,
-                "items": [],
-                "memories": [],
-                "source": "shenyu_recall",
-                "source_types": ["memory"],
-            }
-        return {
-            **result,
-            "query": query,
-            "count": len(items),
-            "items": items,
-            "memories": items,
-            "source": "shenyu_recall",
-            "source_types": ["memory"],
-            "compat_note": "shenyu_ask_memory now delegates to shenyu_recall with source_types=['memory'].",
-        }
-
     async def read_heartbeat(
         self,
         session_tag: Optional[str],
@@ -1171,43 +1124,6 @@ class GatewayToolService:
         scored.sort(key=lambda row: row["score"], reverse=True)
         passages = scored[: max(1, min(limit, 8))]
         return {"ok": True, "query": query, "count": len(passages), "passages": passages}
-
-    async def search_primary_texts(
-        self,
-        query: str,
-        categories: Any = None,
-        session_tag: Optional[str] = None,
-        limit: int = 5,
-    ) -> dict:
-        selected = self._normalize_primary_categories(categories, default={"diary", "letter", "paper"})
-        source_types = self._primary_categories_to_recall_source_types(selected)
-        try:
-            safe_limit = int(limit or 5)
-        except (TypeError, ValueError):
-            safe_limit = 5
-        result = await self.recall(
-            query=query,
-            source_types=source_types,
-            session_tag=session_tag,
-            limit=max(1, min(max(safe_limit * 3, safe_limit), 30)),
-        )
-        items = result.get("items") if isinstance(result.get("items"), list) else []
-        requested_limit = max(1, min(safe_limit, 20))
-        passages = [
-            passage
-            for passage in (self._recall_item_to_primary_passage(item) for item in items)
-            if self._primary_passage_matches_categories(passage, selected)
-        ][:requested_limit]
-        return {
-            "ok": bool(result.get("ok")),
-            "query": query,
-            "categories": sorted(selected),
-            "source": "shenyu_recall",
-            "source_types": source_types,
-            "count": len(passages),
-            "passages": passages,
-            **({"error": result.get("error")} if not result.get("ok") and result.get("error") else {}),
-        }
 
     async def add_calendar(
         self,
@@ -1322,14 +1238,6 @@ class GatewayToolService:
             return {"ok": False, "error": "Supabase is not configured."}
         try:
             return await self.supabase.rpc("last_seen")
-        except Exception as exc:
-            return {"ok": False, "error": str(exc)}
-
-    async def meta_summaries(self) -> Any:
-        if not self.supabase:
-            return []
-        try:
-            return await self.supabase.rpc("get_meta_summaries")
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
 
@@ -1526,62 +1434,6 @@ class GatewayToolService:
             return {"ok": True, "data": result}
         except Exception as exc:
             return {"ok": False, "error": str(exc)}
-
-    def _primary_categories_to_recall_source_types(self, categories: set[str]) -> list[str]:
-        source_types: list[str] = []
-        if categories & {"diary", "letter", "paper", "lock", "annotation", "life_tick"}:
-            source_types.append("journal")
-        if "room" in categories:
-            source_types.append("room")
-        if "message_board" in categories:
-            source_types.append("board")
-        return source_types or ["journal"]
-
-    def _recall_item_to_primary_passage(self, item: dict) -> dict:
-        content = item.get("content") or ""
-        event_date = item.get("event_date") or ""
-        return {
-            "source_table": item.get("source_table") or "",
-            "title": item.get("title") or "untitled",
-            "excerpt": _shorten(content, 260),
-            "full_text": content,
-            "created_at": event_date,
-            "chunk_index": 0,
-            "content_kind": item.get("content_kind") or item.get("source_type") or item.get("source_table") or "",
-        }
-
-    def _primary_passage_matches_categories(self, passage: dict, categories: set[str]) -> bool:
-        journal_categories = {"diary", "letter", "paper", "lock", "annotation", "life_tick"}
-        source_table = str(passage.get("source_table") or "").strip()
-        content_kind = str(passage.get("content_kind") or "").strip()
-        if source_table == "journal" or content_kind in journal_categories or content_kind == "journal":
-            journal_kind = content_kind if content_kind in journal_categories else "diary"
-            return journal_kind in categories
-        if source_table == "room" or content_kind == "room":
-            return "room" in categories
-        if source_table == "message_board" or content_kind in {"board", "message"}:
-            return "message_board" in categories
-        return True
-
-    def _normalize_primary_categories(self, categories: Any, default: set[str]) -> set[str]:
-        supported = {"diary", "letter", "paper", "lock", "annotation", "life_tick", "room", "message_board"}
-        if categories is None:
-            return set(default)
-        if isinstance(categories, str):
-            raw_items = re.split(r"[,，\s]+", categories.strip())
-        elif isinstance(categories, list):
-            raw_items = [str(item) for item in categories]
-        else:
-            raw_items = []
-        normalized = {item.strip().lower() for item in raw_items if item and item.strip()}
-        if not normalized:
-            return set(default)
-        if "all" in normalized:
-            return set(supported)
-        if "journal" in normalized:
-            normalized.update({"diary", "letter", "paper", "lock", "annotation", "life_tick"})
-            normalized.discard("journal")
-        return {item for item in normalized if item in supported} or set(default)
 
     async def _collect_primary_text_candidates(self, session_tag: Optional[str], categories: Optional[set[str]] = None) -> list[dict]:
         if not self.supabase:
@@ -1859,11 +1711,3 @@ class GatewayToolService:
                 return hint
             return f"Supabase table '{table}' was not found. Check the table name with shenyu_supabase_guide, or use a dedicated shenyu_* tool if this data lives in the gateway store."
         return raw
-
-    async def _boost_memory(self, memory_id: str):
-        if not self.supabase:
-            return
-        try:
-            await self.supabase.rpc("boost_memory", {"memory_uuid": memory_id})
-        except Exception:
-            return

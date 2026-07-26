@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import random
 from types import SimpleNamespace
 
 from shenyu_gateway.gateway_tools import GatewayToolService
@@ -81,11 +82,6 @@ class FakeSupabase:
         return {"table": table, "match": match, **data}
 
 
-class FailingSupabase:
-    async def query(self, table, params):
-        raise RuntimeError("query failed")
-
-
 class ChatSupabase:
     def __init__(self, content):
         self.content = content
@@ -132,45 +128,6 @@ def test_live_heartbeat_recall_returns_full_content():
     assert result["items"][0]["has_more"] is False
 
 
-def test_ask_memory_returns_standard_ok_field():
-    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
-
-    result = asyncio.run(service.ask_memory(query="长隆", session_tag="5.29"))
-
-    assert result["ok"] is True
-    assert result["query"] == "长隆"
-    assert result["count"] == 1
-    assert result["memories"][0]["title"] == "长隆"
-    assert result["memories"][0]["source_type"] == "memory"
-    assert result["memories"][0]["source_table"] == "memories"
-    assert result["memories"][0]["source_id"] == "mem_1"
-    assert result["source"] == "shenyu_recall"
-
-
-def test_ask_memory_without_supabase_returns_standard_error_shape():
-    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=None, store=None)
-
-    result = asyncio.run(service.ask_memory(query="长隆", session_tag="5.29"))
-
-    assert result["ok"] is False
-    assert result["error"] == "Supabase is not configured."
-    assert result["query"] == "长隆"
-    assert result["count"] == 0
-    assert result["memories"] == []
-
-
-def test_ask_memory_query_error_returns_standard_error_shape():
-    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FailingSupabase(), store=None)
-
-    result = asyncio.run(service.ask_memory(query="长隆", session_tag="5.29"))
-
-    assert result["ok"] is False
-    assert "query failed" in result["error"]
-    assert result["query"] == "长隆"
-    assert result["count"] == 0
-    assert result["memories"] == []
-
-
 def test_surface_passages_returns_standard_ok_field(monkeypatch):
     service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
 
@@ -191,7 +148,7 @@ def test_surface_passages_returns_standard_ok_field(monkeypatch):
         ]
 
     monkeypatch.setattr(service, "_collect_primary_text_candidates", fake_collect)
-    monkeypatch.setattr("shenyu_gateway.gateway_tools.random.random", lambda: 0.0)
+    monkeypatch.setattr(random, "random", lambda: 0.0)
 
     result = asyncio.run(service.surface_passages(query="长隆 海獭", session_tag="5.29", limit=3))
 
@@ -199,29 +156,6 @@ def test_surface_passages_returns_standard_ok_field(monkeypatch):
     assert result["query"] == "长隆 海獭"
     assert result["count"] == 1
     assert result["passages"][0]["source_table"] == "room"
-
-
-def test_search_primary_texts_returns_standard_ok_field():
-    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
-
-    result = asyncio.run(
-        service.search_primary_texts(
-            query="长隆 海獭",
-            categories=["journal"],
-            session_tag="5.29",
-            limit=5,
-        )
-    )
-
-    assert result["ok"] is True
-    assert result["query"] == "长隆 海獭"
-    assert result["categories"] == ["annotation", "diary", "letter", "life_tick", "lock", "paper"]
-    assert result["source"] == "shenyu_recall"
-    assert result["source_types"] == ["journal"]
-    assert result["count"] == 1
-    assert result["passages"][0]["source_table"] == "journal"
-    assert result["passages"][0]["full_text"] == "长隆海洋馆里有企鹅和海獭。"
-    assert result["passages"][0]["content_kind"] == "diary"
 
 
 def test_recall_federation_keeps_internal_scores_out_of_tool_output(monkeypatch):
@@ -481,23 +415,3 @@ def test_bulk_mem_note_reindex_failure_does_not_block_other_updates(monkeypatch)
 
     assert result["ok"] is True
     assert indexed == ["note-b"]
-
-
-def test_search_primary_texts_keeps_journal_category_filter_after_recall_delegate():
-    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
-
-    result = asyncio.run(
-        service.search_primary_texts(
-            query="信件关键词",
-            categories=["letter"],
-            session_tag="5.29",
-            limit=5,
-        )
-    )
-
-    assert result["ok"] is True
-    assert result["categories"] == ["letter"]
-    assert result["source_types"] == ["journal"]
-    assert result["count"] == 1
-    assert result["passages"][0]["title"] == "信件"
-    assert result["passages"][0]["content_kind"] == "letter"

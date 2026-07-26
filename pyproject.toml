@@ -17,8 +17,8 @@ dev = [
     "pytest-asyncio>=0.23",
 ]
 
-[tool.setuptools]
-packages = ["shenyu_gateway"]
+[tool.setuptools.packages.find]
+include = ["shenyu_gateway*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

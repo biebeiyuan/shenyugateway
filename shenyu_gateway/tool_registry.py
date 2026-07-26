@@ -952,8 +952,9 @@ async def execute_gateway_tool(
 
     if name.startswith("room_"):
         from .room_tools import execute_room_tool
-        from .gateway_tools import _runtime
-        store = _runtime.session_store
+        from .gateway_tools import get_runtime
+        runtime = get_runtime()
+        store = runtime.session_store
         _session = store.get_session_by_tag(session_tag) if session_tag else None
         _session_id = _session["id"] if _session else ""
         _logger.info("[Room] tool=%s session_tag=%s", name, session_tag or "")
@@ -962,7 +963,7 @@ async def execute_gateway_tool(
             arguments,
             store=store,
             cfg=cfg,
-            supabase_client=_runtime.supabase_client,
+            supabase_client=runtime.supabase_client,
             session_id=_session_id,
             session_tag=session_tag,
         )

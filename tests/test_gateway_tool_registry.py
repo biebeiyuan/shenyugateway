@@ -79,18 +79,6 @@ class FakeToolService:
         )
         return {"ok": True, "q": q, "status": status, "limit": limit}
 
-    async def search_primary_texts(self, query: str, categories=None, session_tag=None, limit: int = 5):
-        self.calls.append(
-            {
-                "tool": "shenyu_search_primary_texts",
-                "query": query,
-                "categories": categories,
-                "session_tag": session_tag,
-                "limit": limit,
-            }
-        )
-        return {"ok": True, "query": query, "limit": limit}
-
     async def recall(
         self,
         query: str,
@@ -129,28 +117,6 @@ class FakeToolService:
             }
         )
         return {"ok": True, "source_type": source_type, "source_id": source_id}
-
-    async def ask_memory(
-        self,
-        query: str,
-        session_tag: str | None,
-        limit: int = 8,
-        date=None,
-        date_from=None,
-        date_to=None,
-    ):
-        self.calls.append(
-            {
-                "tool": "shenyu_ask_memory",
-                "query": query,
-                "session_tag": session_tag,
-                "limit": limit,
-                "date": date,
-                "date_from": date_from,
-                "date_to": date_to,
-            }
-        )
-        return {"ok": True, "query": query, "limit": limit}
 
     async def add_calendar(
         self,
@@ -415,10 +381,6 @@ class FakeToolService:
             }
         )
         return {"ok": True, "limit": limit, "scope": scope}
-
-    async def meta_summaries(self):
-        self.calls.append({"tool": "shenyu_get_meta_summaries"})
-        return [{"summary": "meta"}]
 
     async def last_seen(self):
         self.calls.append({"tool": "shenyu_last_seen"})

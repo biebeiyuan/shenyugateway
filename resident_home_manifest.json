@@ -130,12 +130,12 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "6fbe089267465d74791d1fc77c4a500ebe500d9ce80c1a75ca9ac855968fde47",
-        "commit": "e247ea70d01cf448402576ab9c6f5e45a1b348ca",
-        "revision": "e247ea70d01cf448402576ab9c6f5e45a1b348ca-dirty",
+        "fingerprint": "a11638f664f11ed5cc797a2d9add089b0ae069f92d16b6bf27c38e5a338338f3",
+        "commit": "790517fcbfdcf497fd15f71caa99953106e11c96",
+        "revision": "790517fcbfdcf497fd15f71caa99953106e11c96-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-23T21:38:39+08:00",
-        "reviewed_by": "Codex"
+        "reviewed_at": "2026-07-26T16:20:51+08:00",
+        "reviewed_by": "Claude"
       }
     },
     "room": {
@@ -186,12 +186,12 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "52ca669dffa27c525066dc03949103119a1cb07297514753de8bb9f6860d4843",
-        "commit": "e247ea70d01cf448402576ab9c6f5e45a1b348ca",
-        "revision": "e247ea70d01cf448402576ab9c6f5e45a1b348ca-dirty",
+        "fingerprint": "f2e11b3fe759f6918858e621acdbc2232b503451cfa682e57c7be44746efafaf",
+        "commit": "790517fcbfdcf497fd15f71caa99953106e11c96",
+        "revision": "790517fcbfdcf497fd15f71caa99953106e11c96-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-23T21:38:49+08:00",
-        "reviewed_by": "Codex"
+        "reviewed_at": "2026-07-26T16:20:51+08:00",
+        "reviewed_by": "Claude"
       }
     },
     "home": {
