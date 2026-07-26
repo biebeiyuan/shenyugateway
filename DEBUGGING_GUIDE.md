@@ -201,6 +201,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 | `shenyu_add_calendar` 按说明传 `period_type=week` 和 `date=YYYY-MM-DD`，工具页出现 `not enough values to unpack` 真异常 | `shenyu_gateway/tool_registry.py`、`shenyu_gateway/calendar.py`：自然日期别名未经转换就送进只接受 `YYYY-Www` 的周键解析器 | 先查 schema 承诺的自然输入是否在 handler 边界归一化，再查周期解析器；不要让调用方替内部键格式兜底 |
 | 前端翻开“家现在”时，同时出现自动家况和一份空白可写正文，看起来像两本重叠的书 | `shenyu_gateway/resident_books.py`、`supabase/migrations/20260719_shenyu_books.sql`、`admin/src/views/ConflictView.vue`：`home` 被误建成可写 living book，自动快照只作为附加字段挂在空正文旁边 | 遇到“自动视图旁又多一份可编辑正文”，先确认对象的唯一事实来源，再查数据库类型、工具 write 权限和前端编辑控件是否都服从同一边界 |
 | PWA 流式回答在完成前不逐字出现，像最后一次性弹出；工具进度也只在结束时出现 | `pwa/src/App.vue`：assistant 入数组后继续修改脱离 Vue 代理的草稿对象，SSE 增量和 `shenyu_tool` 事件没有触发渲染 | 先确认每个 SSE 增量是否写回响应式消息状态，再查上游或代理是否真的分块发送 |
+| 拉日志感觉最近的 PWA 聊天没拼进请求，Messages 列表比实际发送条数短且每条被截短 | `shenyu_gateway/request_logs.py`、`admin/src/views/LogsView.vue`：持久化快照对消息预览做头部切片只留最早 100 条，默认又不保留完整 payload，Messages 页对列表截断没有任何提示 | 先对比 `prepared_messages_count` 与预览条数，再看 `persisted`/`persistence_truncated`，别把持久化预览当完整请求；要全文就开「保留完整请求内容」再看之后的新请求 |
 
 ## Module Map
 
