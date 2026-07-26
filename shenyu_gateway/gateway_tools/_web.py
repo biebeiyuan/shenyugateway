@@ -25,6 +25,14 @@ WEB_USER_AGENT = "ShenyuGatewayWeb/1.0"
 SNIPPET_MAX_CHARS = 320
 SEARCH_RESULT_DEFAULT = 5
 SEARCH_RESULT_MAX = 8
+# Outside failures are a normal operating condition for these two tools, not
+# house trouble. The tool_loop decorator only fills `ps` when absent, so these
+# replace its "又抓到一个家里的bug" line on the upstream-failure paths; missing keys
+# (config) and bad arguments (validation) keep the household wording, because
+# those really are ours to fix.
+SEARCH_OUTSIDE_PS = "圆儿ps:外面的路没通，不是家里的事，等会儿再试试。"
+READ_OUTSIDE_PS = "圆儿ps:外面这页没打开，不是家里的事，换一条看看就好。"
+
 PAGE_PART_CHARS = 6000
 PAGE_MAX_CHARS = 150_000  # ~25 parts; keeps one huge asset from pinning memory
 PAGE_CACHE_TTL_SECONDS = 10 * 60
@@ -142,6 +150,7 @@ class WebToolsMixin:
                     "ok": False,
                     "error": f"Serper search failed with HTTP {resp.status_code}.",
                     "error_kind": "exception",
+                    "ps": SEARCH_OUTSIDE_PS,
                 }
             data = resp.json() if resp.content else {}
             organic = data.get("organic") if isinstance(data, dict) else None
@@ -166,10 +175,20 @@ class WebToolsMixin:
                     break
             return {"ok": True, "query": text, "count": len(results), "results": results}
         except httpx.TimeoutException:
-            return {"ok": False, "error": "Web search timed out.", "error_kind": "exception"}
+            return {
+                "ok": False,
+                "error": "Web search timed out.",
+                "error_kind": "exception",
+                "ps": SEARCH_OUTSIDE_PS,
+            }
         except Exception as exc:
             logger.warning("[Web] search failed: %s", exc)
-            return {"ok": False, "error": f"Web search failed: {exc}", "error_kind": "exception"}
+            return {
+                "ok": False,
+                "error": f"Web search failed: {exc}",
+                "error_kind": "exception",
+                "ps": SEARCH_OUTSIDE_PS,
+            }
         finally:
             if own_client:
                 await http.aclose()
@@ -191,17 +210,37 @@ class WebToolsMixin:
         try:
             title, text, truncated = await self._fetch_page(target, client)
         except httpx.TimeoutException:
-            return {"ok": False, "error": "Page fetch timed out.", "error_kind": "exception"}
+            return {
+                "ok": False,
+                "error": "Page fetch timed out.",
+                "error_kind": "exception",
+                "ps": READ_OUTSIDE_PS,
+            }
         except _ReaderAuthError as exc:
             return {"ok": False, "error": str(exc), "error_kind": "config"}
         except _PageFetchError as exc:
-            return {"ok": False, "error": str(exc), "error_kind": "exception"}
+            return {
+                "ok": False,
+                "error": str(exc),
+                "error_kind": "exception",
+                "ps": READ_OUTSIDE_PS,
+            }
         except Exception as exc:
             logger.warning("[Web] read failed for %s: %s", target, exc)
-            return {"ok": False, "error": f"Page fetch failed: {exc}", "error_kind": "exception"}
+            return {
+                "ok": False,
+                "error": f"Page fetch failed: {exc}",
+                "error_kind": "exception",
+                "ps": READ_OUTSIDE_PS,
+            }
 
         if not text.strip():
-            return {"ok": False, "error": "The page came back empty.", "error_kind": "exception"}
+            return {
+                "ok": False,
+                "error": "The page came back empty.",
+                "error_kind": "exception",
+                "ps": READ_OUTSIDE_PS,
+            }
         parts = _split_page_parts(text)
         total = len(parts)
         if wanted > total:

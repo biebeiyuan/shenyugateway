@@ -11,11 +11,14 @@ import pytest
 from shenyu_gateway.gateway_tools._web import (
     PAGE_MAX_CHARS,
     PAGE_PART_CHARS,
+    READ_OUTSIDE_PS,
+    SEARCH_OUTSIDE_PS,
     _parse_jina_page,
     _reset_web_caches,
     _split_page_parts,
 )
 from shenyu_gateway.gateway_tools import GatewayToolService
+from shenyu_gateway.tool_loop import _decorate_tool_error_result
 
 
 @pytest.fixture(autouse=True)
@@ -132,7 +135,10 @@ def test_web_search_reports_http_error():
             return await _service().web_search(query="q", client=client)
 
     result = asyncio.run(run())
-    assert result == {"ok": False, "error": "Serper search failed with HTTP 429.", "error_kind": "exception"}
+    assert result["ok"] is False
+    assert result["error"] == "Serper search failed with HTTP 429."
+    assert result["error_kind"] == "exception"
+    assert result["ps"] == SEARCH_OUTSIDE_PS
 
 
 @pytest.mark.parametrize("status", [401, 403])
@@ -159,7 +165,10 @@ def test_web_search_timeout_degrades_to_error_result():
             return await _service().web_search(query="q", client=client)
 
     result = asyncio.run(run())
-    assert result == {"ok": False, "error": "Web search timed out.", "error_kind": "exception"}
+    assert result["ok"] is False
+    assert result["error"] == "Web search timed out."
+    assert result["error_kind"] == "exception"
+    assert result["ps"] == SEARCH_OUTSIDE_PS
 
 
 # --- read -----------------------------------------------------------------
@@ -290,7 +299,10 @@ def test_web_read_reports_http_error_and_empty_page():
             return await _service().web_read(url="https://example.com/a", client=client)
 
     result = asyncio.run(run_error())
-    assert result == {"ok": False, "error": "Page fetch failed with HTTP 451.", "error_kind": "exception"}
+    assert result["ok"] is False
+    assert result["error"] == "Page fetch failed with HTTP 451."
+    assert result["error_kind"] == "exception"
+    assert result["ps"] == READ_OUTSIDE_PS
 
     _reset_web_caches()
 
@@ -302,7 +314,38 @@ def test_web_read_reports_http_error_and_empty_page():
             return await _service().web_read(url="https://example.com/a", client=client)
 
     result = asyncio.run(run_empty())
-    assert result == {"ok": False, "error": "The page came back empty.", "error_kind": "exception"}
+    assert result["ok"] is False
+    assert result["error"] == "The page came back empty."
+    assert result["error_kind"] == "exception"
+    assert result["ps"] == READ_OUTSIDE_PS
+
+
+def test_outside_failures_do_not_blame_the_house_but_our_own_faults_still_do():
+    """A dead link is a normal outside condition, not a bug 沈予 should report."""
+    house_line = "圆儿ps:予予你又抓到一个家里的bug^ ^"
+
+    def dead_link(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(403, text="forbidden")
+
+    async def run_outside():
+        async with _client(dead_link) as client:
+            return await _service().web_read(url="https://example.com/a", client=client)
+
+    outside = _decorate_tool_error_result(asyncio.run(run_outside()))
+    assert outside["ps"] == READ_OUTSIDE_PS
+    assert outside["ps"] != house_line
+
+    # A missing key really is ours to fix, so the household wording stays.
+    missing_key = _decorate_tool_error_result(
+        asyncio.run(_service(serper_api_key="").web_search(query="邵阳"))
+    )
+    assert missing_key["error_kind"] == "config"
+    assert missing_key["ps"] == house_line
+
+    # A malformed call from 沈予 keeps the "check the exposed arguments" wording.
+    bad_args = _decorate_tool_error_result(asyncio.run(_service().web_read(url="ftp://x")))
+    assert bad_args["error_kind"] == "validation"
+    assert "仔细看有没有暴露给你正确的方法" in bad_args["ps"]
 
 
 def test_web_read_does_not_cache_an_empty_render_so_a_retry_can_succeed():
