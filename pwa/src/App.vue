@@ -4,6 +4,7 @@ import {
   ArrowLeft,
   ArrowLeftRight,
   Check,
+  ChevronLeft,
   Clock3,
   ChevronDown,
   ChevronRight,
@@ -48,6 +49,16 @@ type UiMessage = {
   streaming?: boolean
   error?: string
   expanded?: boolean
+  variants?: MessageVariant[]
+  selectedVariantIndex?: number
+}
+
+type MessageVariant = {
+  content: string
+  thinking: string
+  thinkingSegments: ThinkingSegment[]
+  events: ToolEvent[]
+  error?: string
 }
 
 type ThinkingSegment = {
@@ -270,6 +281,88 @@ function createId(prefix: string): string {
   return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`
 }
 
+function cloneVariant(variant: Partial<MessageVariant>): MessageVariant {
+  return {
+    content: String(variant.content || ''),
+    thinking: String(variant.thinking || ''),
+    thinkingSegments: Array.isArray(variant.thinkingSegments)
+      ? variant.thinkingSegments.map((item) => ({
+          id: String(item?.id || createId('thinking')),
+          content: String(item?.content || ''),
+          textOffset: Number(item?.textOffset || 0),
+          streamOrder: Number(item?.streamOrder || 0),
+        }))
+      : [],
+    events: Array.isArray(variant.events) ? variant.events.map((item) => ({ ...item })) : [],
+    error: variant.error ? String(variant.error) : undefined,
+  }
+}
+
+function snapshotMessage(message: UiMessage): MessageVariant {
+  return cloneVariant(message)
+}
+
+function selectedVariantIndex(message: UiMessage): number {
+  const count = message.variants?.length || 1
+  return Math.max(0, Math.min(Number(message.selectedVariantIndex || 0), count - 1))
+}
+
+function variantCount(message: UiMessage): number {
+  return message.variants?.length || 1
+}
+
+function syncCurrentVariant(message: UiMessage) {
+  if (message.role !== 'assistant' || !message.variants?.length) return
+  const index = selectedVariantIndex(message)
+  message.selectedVariantIndex = index
+  message.variants[index] = snapshotMessage(message)
+}
+
+function applyVariant(message: UiMessage, variant: MessageVariant, index: number) {
+  message.selectedVariantIndex = index
+  message.content = variant.content
+  message.thinking = variant.thinking
+  message.thinkingSegments = variant.thinkingSegments.map((item) => ({ ...item }))
+  message.events = variant.events.map((item) => ({ ...item }))
+  message.error = variant.error
+}
+
+function emptyVariant(): MessageVariant {
+  return { content: '', thinking: '', thinkingSegments: [], events: [] }
+}
+
+function ensureVariants(message: UiMessage): MessageVariant[] {
+  if (!message.variants?.length) {
+    message.variants = [snapshotMessage(message)]
+    message.selectedVariantIndex = 0
+  } else {
+    message.selectedVariantIndex = selectedVariantIndex(message)
+    syncCurrentVariant(message)
+  }
+  return message.variants
+}
+
+function hasExactDuplicateRows(rows: Record<string, unknown>[]): boolean {
+  const seen = new Set<string>()
+  for (const row of rows) {
+    if (row.role !== 'user' && row.role !== 'assistant') continue
+    const key = `${String(row.role)}\u0000${sessionMessageContent(row.content)}`
+    if (seen.has(key)) return true
+    seen.add(key)
+  }
+  return false
+}
+
+function dedupeUiMessagesForRecovery(source: UiMessage[]): UiMessage[] {
+  const seen = new Set<string>()
+  return source.filter((message) => {
+    const key = `${message.role}\u0000${message.content}`
+    if (seen.has(key)) return false
+    seen.add(key)
+    return true
+  })
+}
+
 function modelLabel(model?: ModelOption): string {
   if (!model) return selectedModel.value === 'default' ? 'Sonnet 4.6' : selectedModel.value
   if (model.label) return model.label
@@ -303,31 +396,43 @@ function loadMessages(): UiMessage[] {
     const raw = JSON.parse(localStorage.getItem(STORAGE_MESSAGES) || '[]')
     if (!Array.isArray(raw)) return []
     return raw.filter((item) => item && (item.role === 'user' || item.role === 'assistant'))
-      .map((item) => ({
-        id: String(item.id || createId('message')),
-        role: item.role as Role,
-        content: String(item.content || ''),
-        attachments: [],
-        thinking: String(item.thinking || ''),
-        thinkingSegments: item.thinking
-          ? [{ id: createId('thinking'), content: String(item.thinking), textOffset: 0, streamOrder: 0 }]
-          : [],
-        events: [],
-        streaming: false,
-        error: item.error ? String(item.error) : undefined,
-      }))
+      .map((item) => {
+        const message: UiMessage = {
+          id: String(item.id || createId('message')),
+          role: item.role as Role,
+          content: String(item.content || ''),
+          attachments: [],
+          thinking: String(item.thinking || ''),
+          thinkingSegments: item.thinking
+            ? [{ id: createId('thinking'), content: String(item.thinking), textOffset: 0, streamOrder: 0 }]
+            : [],
+          events: [],
+          streaming: false,
+          error: item.error ? String(item.error) : undefined,
+        }
+        if (message.role === 'assistant' && Array.isArray(item.variants) && item.variants.length) {
+          const variants = item.variants.map((variant: Partial<MessageVariant>) => cloneVariant(variant))
+          message.variants = variants
+          message.selectedVariantIndex = selectedVariantIndex({ ...message, variants })
+          applyVariant(message, variants[message.selectedVariantIndex], message.selectedVariantIndex)
+        }
+        return message
+      })
   } catch {
     return []
   }
 }
 
 function persistMessages() {
-  const safe = messages.value.map(({ id, role, content, thinking, error }) => ({
-    id,
-    role,
-    content,
-    thinking,
-    error,
+  messages.value.forEach(syncCurrentVariant)
+  const safe = messages.value.map((message) => ({
+    id: message.id,
+    role: message.role,
+    content: message.content,
+    thinking: message.thinking,
+    error: message.error,
+    variants: message.variants,
+    selectedVariantIndex: message.selectedVariantIndex,
   }))
   localStorage.setItem(STORAGE_MESSAGES, JSON.stringify(safe.slice(-120)))
 }
@@ -450,6 +555,25 @@ function sessionHistoryRows(payload: Record<string, unknown>): Record<string, un
     : []
 }
 
+function coldStartHistoryRows(payload: Record<string, unknown>, targetTag: string): Record<string, unknown>[] {
+  const snapshots = payload.cold_start_snapshots
+  if (!Array.isArray(snapshots)) return []
+  const latest = snapshots.find((item) => item && typeof item === 'object' && (item as Record<string, unknown>).active !== false) as Record<string, unknown> | undefined
+  const sources = latest?.sources
+  if (!Array.isArray(sources)) return []
+  const source = sources.find((item) => {
+    if (!item || typeof item !== 'object') return false
+    const row = item as Record<string, unknown>
+    return !targetTag || String(row.session_tag || '') === targetTag
+  }) || sources[0]
+  if (!source || typeof source !== 'object') return []
+  const rows = (source as Record<string, unknown>).messages
+  if (!Array.isArray(rows)) return []
+  return rows
+    .filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
+    .filter((row) => row.role === 'user' || row.role === 'assistant')
+}
+
 function sessionMessageContent(value: unknown): string {
   if (typeof value === 'string') return value
   if (Array.isArray(value)) {
@@ -494,6 +618,45 @@ async function openSession(session: GatewaySession): Promise<boolean> {
     return true
   } catch {
     errorNotice.value = '这页对话暂时拿不到，当前页面还在。'
+    return false
+  }
+}
+
+async function recoverSessionFromColdStart(session: GatewaySession = { session_tag: sessionTag.value }): Promise<boolean> {
+  if (busy.value || !session.session_tag) return false
+  if (!window.confirm('将保留当前 PWA 新消息，只移除完全相同的重复历史，并让下一次请求使用干净冷启动源。继续吗？')) return false
+  try {
+    const response = await fetch(apiUrl(`/api/gateway/sessions/${encodeURIComponent(session.session_tag)}?messages_limit=${sessionMessageLimit()}`), {
+      headers: requestHeaders(),
+    })
+    if (!response.ok) throw new Error('session unavailable')
+    const payload = await response.json() as Record<string, unknown>
+    const cleanRows = coldStartHistoryRows(payload, session.session_tag)
+    if (!cleanRows.length || hasExactDuplicateRows(cleanRows)) throw new Error('没有找到干净的冷启动源')
+    if (messages.value.length) messages.value = dedupeUiMessagesForRecovery(messages.value)
+    else {
+      messages.value = cleanRows.map((row) => ({
+        id: createId('message'),
+        role: row.role as Role,
+        content: sessionMessageContent(row.content),
+        attachments: [],
+        thinking: '',
+        thinkingSegments: [],
+        events: [],
+        streaming: false,
+      }))
+    }
+    sessionTag.value = session.session_tag
+    localStorage.setItem(STORAGE_SESSION, sessionTag.value)
+    persistMessages()
+    handoffOpen.value = false
+    errorNotice.value = ''
+    status.value = `已清理重复历史，保留 PWA 新消息；下一次请求将使用干净基线 ${session.session_tag}`
+    await nextTick()
+    scrollToBottom()
+    return true
+  } catch (error) {
+    errorNotice.value = error instanceof Error ? error.message : '干净恢复失败。'
     return false
   }
 }
@@ -821,21 +984,35 @@ function parseSseFrame(frame: string, assistant: UiMessage) {
   return false
 }
 
-async function sendConversation(source: UiMessage[]) {
-  const assistantDraft: UiMessage = {
-    id: createId('assistant'),
-    role: 'assistant',
-    content: '',
-    attachments: [],
-    thinking: '',
-    thinkingSegments: [],
-    events: [],
-    streaming: true,
+async function sendConversation(source: UiMessage[], target?: UiMessage) {
+  let assistant: UiMessage
+  let previousVariantIndex: number | null = null
+  let generatedVariantIndex: number | null = null
+  if (target) {
+    const variants = ensureVariants(target)
+    previousVariantIndex = selectedVariantIndex(target)
+    variants.push(emptyVariant())
+    generatedVariantIndex = variants.length - 1
+    applyVariant(target, variants[generatedVariantIndex], generatedVariantIndex)
+    target.error = undefined
+    target.streaming = true
+    assistant = target
+  } else {
+    const assistantDraft: UiMessage = {
+      id: createId('assistant'),
+      role: 'assistant',
+      content: '',
+      attachments: [],
+      thinking: '',
+      thinkingSegments: [],
+      events: [],
+      streaming: true,
+    }
+    messages.value.push(assistantDraft)
+    // Read the object back through Vue's proxy. Mutating the detached draft would
+    // leave the template unaware until another top-level ref changes.
+    assistant = messages.value[messages.value.length - 1]
   }
-  messages.value.push(assistantDraft)
-  // Read the object back through Vue's proxy. Mutating the detached draft would
-  // leave the template unaware until another top-level ref changes.
-  const assistant = messages.value[messages.value.length - 1]
   activeAssistantId = assistant.id
   activeController = new AbortController()
   busy.value = true
@@ -880,9 +1057,19 @@ async function sendConversation(source: UiMessage[]) {
     }
     assistant.streaming = false
     if (!assistant.content && !assistant.thinking && !assistant.events.length) assistant.content = '这次没有收到可显示的回应。'
+    syncCurrentVariant(assistant)
   } catch (error) {
     assistant.streaming = false
-    if (error instanceof DOMException && error.name === 'AbortError') {
+    if (target && generatedVariantIndex !== null && previousVariantIndex !== null) {
+      const variants = target.variants || []
+      variants.splice(generatedVariantIndex, 1)
+      const restoredIndex = Math.max(0, Math.min(previousVariantIndex, variants.length - 1))
+      if (variants[restoredIndex]) applyVariant(target, variants[restoredIndex], restoredIndex)
+      target.streaming = false
+      if (!(error instanceof DOMException && error.name === 'AbortError')) {
+        errorNotice.value = error instanceof Error ? error.message : '请求没有完成'
+      }
+    } else if (error instanceof DOMException && error.name === 'AbortError') {
       assistant.content = assistant.content || '这次先停在这里。'
     } else {
       assistant.error = error instanceof Error ? error.message : '请求没有完成'
@@ -963,8 +1150,30 @@ async function retryMessage(index: number) {
   if (busy.value) return
   const assistant = messages.value[index]
   if (!assistant || assistant.role !== 'assistant') return
-  messages.value = messages.value.slice(0, index)
-  await sendConversation(messages.value)
+  syncCurrentVariant(assistant)
+  messages.value = messages.value.slice(0, index + 1)
+  await sendConversation(messages.value.slice(0, index), assistant)
+}
+
+function switchMessageVariant(index: number, direction: -1 | 1) {
+  if (busy.value) return
+  const message = messages.value[index]
+  if (!message || message.role !== 'assistant' || variantCount(message) < 2) return
+  syncCurrentVariant(message)
+  const count = message.variants?.length || 0
+  const current = selectedVariantIndex(message)
+  const next = current + direction
+  if (next < 0 || next >= count) return
+  const variant = message.variants?.[next]
+  if (!variant) return
+  applyVariant(message, variant, next)
+  persistMessages()
+}
+
+function canSwitchMessageVariant(message: UiMessage, direction: -1 | 1): boolean {
+  const count = variantCount(message)
+  const current = selectedVariantIndex(message)
+  return count > 1 && current + direction >= 0 && current + direction < count
 }
 
 async function copyText(text: string) {
@@ -1298,6 +1507,11 @@ onMounted(async () => {
               <div v-if="!message.streaming && (message.content || message.error)" class="message-actions">
                 <button title="复制" aria-label="复制" @click="copyText(message.content)"><Clipboard :size="15" /></button>
                 <button title="重新生成" aria-label="重新生成" @click="retryMessage(index)"><RotateCcw :size="15" /></button>
+                <span v-if="variantCount(message) > 1" class="variant-switcher">
+                  <button title="上一版回答" aria-label="上一版回答" :disabled="!canSwitchMessageVariant(message, -1)" @click="switchMessageVariant(index, -1)"><ChevronLeft :size="15" /></button>
+                  <span>{{ selectedVariantIndex(message) + 1 }} / {{ variantCount(message) }}</span>
+                  <button title="下一版回答" aria-label="下一版回答" :disabled="!canSwitchMessageVariant(message, 1)" @click="switchMessageVariant(index, 1)"><ChevronRight :size="15" /></button>
+                </span>
               </div>
             </div>
             <div v-if="message.role === 'user'" class="user-actions">
@@ -1403,6 +1617,7 @@ onMounted(async () => {
           <code>{{ sessionTag }}</code>
           <button class="icon-button" aria-label="复制当前线程标识" title="复制当前线程标识" @click="copyCurrentSessionTag"><Clipboard :size="16" /></button>
         </div>
+        <button class="quiet-button recovery-button" :disabled="busy" @click="recoverSessionFromColdStart()">清理重复并保留 PWA 新消息</button>
         <div v-if="handoffLoading" class="preset-empty"><p>正在读取网关线程…</p></div>
         <div v-else-if="handoffSessions.length" class="session-list handoff-list">
           <button
