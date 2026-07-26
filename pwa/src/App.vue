@@ -432,6 +432,37 @@ function sessionMeta(session: GatewaySession): string {
   return count ? `${count} 轮` : '还没有消息'
 }
 
+function sessionHistoryRows(payload: Record<string, unknown>): Record<string, unknown>[] {
+  // Context snapshots are the trimmed client transcript. `recent_messages` is
+  // an inspection stream and is only a compatibility fallback for old data.
+  const snapshotCollections = [payload.context_snapshots, payload.request_context_snapshots]
+  for (const candidate of snapshotCollections) {
+    if (!Array.isArray(candidate)) continue
+    const latest = candidate[0]
+    if (!latest || typeof latest !== 'object') continue
+    const rows = (latest as Record<string, unknown>).messages
+    if (!Array.isArray(rows)) continue
+    return rows.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
+  }
+  const fallback = payload.recent_messages
+  return Array.isArray(fallback)
+    ? fallback.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
+    : []
+}
+
+function sessionMessageContent(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) {
+    return value.map((block) => {
+      if (typeof block === 'string') return block
+      if (!block || typeof block !== 'object') return ''
+      const item = block as Record<string, unknown>
+      return item.type === 'text' ? String(item.text || '') : ''
+    }).join('')
+  }
+  return value == null ? '' : String(value)
+}
+
 async function openSession(session: GatewaySession): Promise<boolean> {
   if (busy.value || !session.session_tag) return false
   try {
@@ -439,14 +470,14 @@ async function openSession(session: GatewaySession): Promise<boolean> {
       headers: requestHeaders(),
     })
     if (!response.ok) throw new Error('session unavailable')
-    const payload = await response.json()
-    const rows = Array.isArray(payload.recent_messages) ? payload.recent_messages : []
+    const payload = await response.json() as Record<string, unknown>
+    const rows = sessionHistoryRows(payload)
     messages.value = rows
       .filter((row: Record<string, unknown>) => row.role === 'user' || row.role === 'assistant')
       .map((row: Record<string, unknown>) => ({
         id: String(row.id || createId('message')),
         role: row.role as Role,
-        content: String(row.content || ''),
+        content: sessionMessageContent(row.content),
         attachments: [],
         thinking: '',
         thinkingSegments: [],

@@ -206,7 +206,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `pwa/public/manifest.webmanifest` / `pwa/public/sw.js`: installable PWA shell; the service worker never caches `/v1/` or `/api/` responses.
 - `pwa/vite.config.ts`: isolated development server on port `5174` with `/v1`, `/api`, and `/admin` proxies to the gateway.
 - `Dockerfile` + `gateway.py`: production PWA build and static `/chat/` mount served by the same gateway origin as `/admin/`.
-- Cross-client handoff uses the existing `X-Shenyu-Session-Tag`: `X-Shenyu-Client` identifies the surface, while the session tag keeps Operit and PWA on one gateway thread. PWA's `接入线程` action loads a selected existing thread before sending, using the Admin `客户端上下文保留` value for its history request, and `/chat/?session_tag=<tag>` supports an exact handoff.
+- Cross-client handoff uses the existing `X-Shenyu-Session-Tag`: `X-Shenyu-Client` identifies the surface, while the session tag keeps Operit and PWA on one gateway thread. PWA's `接入线程` action loads the newest trimmed client transcript from `context_snapshots` before sending (falling back to the legacy inspection stream only when no snapshot exists), using the Admin `客户端上下文保留` value for its history request, and `/chat/?session_tag=<tag>` supports an exact handoff.
 
 ### 按产品对象反查
 

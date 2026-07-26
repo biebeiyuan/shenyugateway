@@ -436,9 +436,11 @@ conversation by sending the same session tag; the gateway updates the session's 
 does not create a second session. PWA also accepts `/chat/?session_tag=<tag>` for an explicit handoff and
 offers an explicit `接入线程` action that loads a selected existing session before sending. The PWA
 uses the Admin `客户端上下文保留` value for that history load, so the handoff window stays aligned
-with the gateway's configured client context window. A new or different tag intentionally starts a
-separate session, so a client must preserve its original tag when
-switching back.
+with the gateway's configured client context window. The handoff reads the newest `context_snapshots[0].messages`
+(`request_context_snapshots` is accepted as an equivalent response key) because it is the trimmed client-visible
+transcript; `recent_messages` is only a compatibility fallback for sessions without a snapshot and must not be
+treated as a complete chat history. A new or different tag intentionally starts a separate session, so a client
+must preserve its original tag when switching back.
 
 For streaming chat, tool events are separate SSE events and do not alter OpenAI-compatible chat chunks:
 
