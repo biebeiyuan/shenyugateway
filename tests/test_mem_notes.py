@@ -120,6 +120,52 @@ def test_clean_context_query_removes_urls_and_code_blocks():
     assert "tool_call_id" not in clean
 
 
+def test_clean_context_query_strips_pwa_status_suffix_with_content():
+    query = "今晚想吃火锅【26/07 周日 21:08 · 第140天 · 🔋80%⚡ · 邵阳 雾霾 25℃】"
+
+    clean = _clean_context_query(query)
+
+    assert clean == "今晚想吃火锅"
+    for leaked in ("邵阳", "雾霾", "周日", "第140天", "21:08"):
+        assert leaked not in clean
+
+
+def test_clean_context_query_keeps_plain_bracket_titles():
+    query = "我们聊聊【小王子】那一段【26/07 周日 21:08 · 第140天 · 邵阳 霾 25℃】"
+
+    clean = _clean_context_query(query)
+
+    assert "小王子" in clean
+    assert "邵阳" not in clean
+    assert "霾" not in clean
+
+
+def test_clean_context_query_strips_suffix_hidden_by_trailing_attachment():
+    query = (
+        "混合形态的消息【26/07 周日 14:30 · 第140天 · 🔋80%⚡ · 邵阳 霾 25℃】"
+        "<attachment id=\"message_insert_extra_bundle_mix\">state</attachment>"
+    )
+
+    clean = _clean_context_query(query)
+
+    assert clean == "混合形态的消息"
+    assert "邵阳" not in clean
+    assert "第140天" not in clean
+
+
+def test_auto_extract_keywords_ignore_pwa_status_suffix_terms():
+    from shenyu_gateway.mem_notes_relevance import _auto_extract_keywords
+
+    content = "圆圆答应明天去图书馆写毕业论文【26/07 周日 21:08 · 第140天 · 🔋80% · 邵阳 雾霾 25℃】"
+
+    keywords = _auto_extract_keywords(content)
+
+    joined = " ".join(keywords)
+    assert "邵阳" not in joined
+    assert "雾霾" not in joined
+    assert "周日" not in joined
+
+
 def test_list_notes_filters_query_without_crashing():
     rows = [
         {

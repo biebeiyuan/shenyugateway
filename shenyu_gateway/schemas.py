@@ -94,6 +94,9 @@ class ConfigUpdate(BaseModel):
     room_newspaper_llm_url: Optional[str] = None
     room_newspaper_llm_api_key: Optional[str] = None
     room_newspaper_llm_protocol: Optional[str] = None
+    weather_city: Optional[str] = None
+    qweather_api_key: Optional[str] = None
+    qweather_api_host: Optional[str] = None
     enable_cold_start: Optional[bool] = None
     enable_upstream_tools: Optional[bool] = None
     enable_gateway_tools: Optional[bool] = None

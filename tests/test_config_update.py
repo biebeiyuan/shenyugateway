@@ -172,6 +172,50 @@ def test_blank_max_client_messages_still_means_unlimited(monkeypatch):
     assert cfg.max_client_messages is None
 
 
+def test_weather_config_defaults(monkeypatch):
+    for key in ("WEATHER_CITY", "QWEATHER_API_KEY", "QWEATHER_API_HOST"):
+        monkeypatch.delenv(key, raising=False)
+
+    cfg = RuntimeConfig()
+
+    assert cfg.weather_city == "邵阳"
+    assert cfg.qweather_api_key == ""
+    assert cfg.qweather_api_host == ""
+
+
+def test_update_weather_config_persists_and_masks_key(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "weather_city", gateway.cfg.weather_city)
+    monkeypatch.setattr(gateway.cfg, "qweather_api_key", gateway.cfg.qweather_api_key)
+    monkeypatch.setattr(gateway.cfg, "qweather_api_host", gateway.cfg.qweather_api_host)
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={
+                "weather_city": "长沙",
+                "qweather_api_key": "qw-secret",
+                "qweather_api_host": "https://abc123.qweatherapi.com",
+            },
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {"weather_city", "qweather_api_key", "qweather_api_host"} <= set(payload["changed"])
+    assert gateway.cfg.weather_city == "长沙"
+    assert gateway.cfg.qweather_api_key == "qw-secret"
+    assert gateway.cfg.qweather_api_host == "https://abc123.qweatherapi.com"
+    assert persisted[-1]["WEATHER_CITY"] == "长沙"
+    assert persisted[-1]["QWEATHER_API_KEY"] == "qw-secret"
+    assert persisted[-1]["QWEATHER_API_HOST"] == "https://abc123.qweatherapi.com"
+    # key is sensitive: the config payload only reports configured state
+    assert payload["config"]["qweather_api_key"] == ""
+    assert payload["config"]["qweather_api_key_configured"] is True
+    assert "qw-secret" not in response.text
+
+
 def test_legacy_provider_order_migrates_into_extra_body_string(monkeypatch):
     monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER_ENABLED", "true")
     monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER", '["Amazon Bedrock", "Amazon Bedrock", "OpenAI"]')
@@ -541,6 +585,17 @@ def test_config_update_treats_empty_gateway_key_as_unchanged(monkeypatch):
     assert response.status_code == 200
     assert all("GATEWAY_API_KEY" not in updates for updates in persisted)
     assert any("INJECT_MEM_NOTES" in updates for updates in persisted)
+
+
+def test_config_update_treats_empty_weather_city_as_unchanged(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "weather_city", "邵阳")
+
+    response = client.post("/api/config", json={"weather_city": "", "inject_mem_notes": True})
+
+    assert response.status_code == 200
+    assert gateway.cfg.weather_city == "邵阳"
+    assert all("WEATHER_CITY" not in updates for updates in persisted)
 
 
 def test_restore_overrides_ignores_empty_gateway_key(tmp_path, monkeypatch):

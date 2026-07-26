@@ -5,6 +5,10 @@ import math
 import re
 from typing import Any
 
+from shenyu_gateway.client_extra import (
+    CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE as _CONTEXT_QUERY_ATTACHMENT_RE,
+    strip_pwa_status_suffix as _strip_pwa_status_suffix,
+)
 from shenyu_gateway.recall import is_generic_chinese_fragment, recall_terms
 from shenyu_gateway.utils import normalize_text as _normalize_text
 from .runtime import now as _now, parse_ts as _parse_ts
@@ -12,10 +16,6 @@ from .runtime import now as _now, parse_ts as _parse_ts
 
 # ── Regex patterns ────────────────────────────────────────────────────────────
 
-_CONTEXT_QUERY_ATTACHMENT_RE = re.compile(
-    r"\s*<attachment\b(?=[^>]*\bid\s*=\s*['\"]?message_insert_extra_bundle_[^'\"\s>]+['\"]?)[^>]*>.*?</attachment>",
-    re.IGNORECASE | re.DOTALL,
-)
 _PROXY_SENDER_RE = re.compile(r"<proxy_sender\b[^>]*/?>", re.IGNORECASE)
 _TOOL_RESULT_BLOCK_RE = re.compile(
     r"<gateway_tool_results>.*?</gateway_tool_results>",
@@ -392,6 +392,10 @@ def _clean_context_query(query: Any) -> str:
     text = _strip_tool_result_blocks(text)
     text = _PROXY_SENDER_RE.sub(" ", text)
     text = _CONTEXT_QUERY_ATTACHMENT_RE.sub(" ", text)
+    # Drop the PWA status suffix whole (time/day/battery/city/weather words
+    # would otherwise leak into recall). Runs after the block passes above:
+    # a trailing attachment would hide the suffix from the tail anchor.
+    text, _ = _strip_pwa_status_suffix(text)
     text = _URL_RE.sub(" ", text)
     text = re.sub(r"<attachment\b[^>]*>", " ", text, flags=re.IGNORECASE)
     text = text.replace("</attachment>", " ")

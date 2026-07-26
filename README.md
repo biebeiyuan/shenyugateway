@@ -67,6 +67,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/resident_profile.py`: stable wake/profile text for memory practice, the origin book, and the Hisense home note.
 - `shenyu_gateway/context_snapshots.py`: context snapshot creation and helpers for calendar/cold-start sources.
 - `shenyu_gateway/context_window.py`: semantic history-event classification, chunk-safe client-history windowing with high-water/epoch/anchor state, and cold-start bridge overlap deduplication.
+- `shenyu_gateway/client_extra.py`: shared recognition/stripping of client-injected per-message extras (Operit `message_insert_extra_bundle` attachments and the PWA tail status suffix), imported by trimming, archiving, history normalization, and recall-query cleaning.
 - `shenyu_gateway/memory_island.py`: Stars/Mem island rendering and per-lane retain/rewrite state, including overlap decisions and current/added/updated/removed log summaries.
 - `shenyu_gateway/prepare_messages.py`: cold-start snapshot preparation, runtime state pruning, pending gateway tool turn injection, and message/tool-call helpers.
 
@@ -106,6 +107,10 @@ The codebase is partly layered already:
 - `shenyu_gateway/calendar.py`: date/key helpers and calendar JSON parsing.
 - `shenyu_gateway/calendar_service.py`: `CalendarService` — calendar page generation orchestration.
 - `shenyu_gateway/calendar_sources.py`: day/week/month source collection for calendar generation.
+
+### Weather
+
+- `shenyu_gateway/weather.py`: QWeather client behind `GET /api/gateway/weather` for the PWA status suffix — call-time config reads, in-process city (24h) and weather (15min) caches, and unconditional degradation to `available:false`.
 
 ### Room mode
 

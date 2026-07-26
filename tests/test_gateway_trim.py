@@ -832,6 +832,135 @@ def test_trim_client_extra_bundle_attachments_preserves_images_and_user_text_blo
     assert "message_insert_extra_bundle_new" in trimmed[2]["content"]
 
 
+_PWA_STATUS_SUFFIX = "【26/07 周日 14:30 · 第140天 · 🔋80%⚡ · 邵阳 霾 25℃】"
+
+
+def test_trim_keeps_latest_three_pwa_status_suffix_messages():
+    messages = [
+        {"role": "user", "content": f"晚安 {idx} {_PWA_STATUS_SUFFIX}"} for idx in range(5)
+    ]
+
+    trimmed, meta = trim_client_extra_bundle_attachments(messages, keep_recent_messages=3)
+
+    assert meta["client_attachment_messages_seen"] == 5
+    assert meta["client_attachment_messages_trimmed"] == 2
+    assert meta["client_attachment_blocks_trimmed"] == 2
+    assert trimmed[0]["content"] == "晚安 0"
+    assert trimmed[1]["content"] == "晚安 1"
+    for idx in (2, 3, 4):
+        assert trimmed[idx]["content"] == f"晚安 {idx} {_PWA_STATUS_SUFFIX}"
+
+
+def test_trim_counts_attachment_and_pwa_suffix_messages_together():
+    messages = [
+        {"role": "user", "content": f"我在读【小王子】呢 {_PWA_STATUS_SUFFIX}"},
+        {
+            "role": "user",
+            "content": "带附件 <attachment id=\"message_insert_extra_bundle_a\">state</attachment>"
+            f" {_PWA_STATUS_SUFFIX}",
+        },
+        {"role": "user", "content": f"第三条 {_PWA_STATUS_SUFFIX}"},
+        {
+            "role": "user",
+            "content": "第四条 <attachment id=\"message_insert_extra_bundle_b\">state</attachment>",
+        },
+    ]
+
+    trimmed, meta = trim_client_extra_bundle_attachments(messages, keep_recent_messages=2)
+
+    assert meta["client_attachment_messages_seen"] == 4
+    assert meta["client_attachment_messages_trimmed"] == 2
+    # message 0 loses only its suffix (ordinary 【书名】 stays); message 1 loses
+    # its attachment block and its suffix in the same pass.
+    assert meta["client_attachment_blocks_trimmed"] == 3
+    assert trimmed[0]["content"] == "我在读【小王子】呢"
+    assert trimmed[1]["content"] == "带附件"
+    assert trimmed[2]["content"] == f"第三条 {_PWA_STATUS_SUFFIX}"
+    assert "message_insert_extra_bundle_b" in trimmed[3]["content"]
+
+
+def test_trim_ignores_plain_brackets_and_non_tail_status_text():
+    messages = [
+        {"role": "user", "content": "我在读【小王子】这本书，很好看"},
+        {"role": "user", "content": f"{_PWA_STATUS_SUFFIX} 后面还有正文，所以这不算状态后缀"},
+        {"role": "user", "content": "第三条普通消息"},
+        {"role": "user", "content": "第四条普通消息"},
+    ]
+
+    trimmed, meta = trim_client_extra_bundle_attachments(messages, keep_recent_messages=3)
+
+    assert meta["client_attachment_messages_seen"] == 0
+    assert meta["client_attachment_messages_trimmed"] == 0
+    assert trimmed == messages
+
+
+def test_trim_strips_stacked_pwa_suffixes_from_older_messages():
+    messages = [
+        {"role": "user", "content": f"早安 {_PWA_STATUS_SUFFIX}{_PWA_STATUS_SUFFIX}"},
+        *[
+            {"role": "user", "content": f"晚安 {idx} {_PWA_STATUS_SUFFIX}"}
+            for idx in range(3)
+        ],
+    ]
+
+    trimmed, meta = trim_client_extra_bundle_attachments(messages, keep_recent_messages=3)
+
+    assert meta["client_attachment_messages_seen"] == 4
+    assert meta["client_attachment_messages_trimmed"] == 1
+    assert meta["client_attachment_blocks_trimmed"] == 2
+    assert trimmed[0]["content"] == "早安"
+
+
+def test_strip_client_extra_text_clears_stacked_suffixes():
+    from shenyu_gateway.client_extra import strip_client_extra_text
+
+    cleaned, removed = strip_client_extra_text(
+        f"早安 {_PWA_STATUS_SUFFIX} {_PWA_STATUS_SUFFIX}"
+    )
+
+    assert cleaned == "早安"
+    assert removed == 2
+
+
+def test_trim_pwa_suffix_leaves_assistant_messages_alone():
+    messages = [
+        {"role": "user", "content": f"用户 0 {_PWA_STATUS_SUFFIX}"},
+        {"role": "assistant", "content": f"助手也带着 {_PWA_STATUS_SUFFIX}"},
+        {"role": "user", "content": f"用户 1 {_PWA_STATUS_SUFFIX}"},
+        {"role": "user", "content": f"用户 2 {_PWA_STATUS_SUFFIX}"},
+        {"role": "user", "content": f"用户 3 {_PWA_STATUS_SUFFIX}"},
+    ]
+
+    trimmed, meta = trim_client_extra_bundle_attachments(messages, keep_recent_messages=3)
+
+    assert meta["client_attachment_messages_seen"] == 4
+    assert meta["client_attachment_messages_trimmed"] == 1
+    assert trimmed[0]["content"] == "用户 0"
+    assert trimmed[1]["content"] == f"助手也带着 {_PWA_STATUS_SUFFIX}"
+    assert trimmed[2]["content"] == f"用户 1 {_PWA_STATUS_SUFFIX}"
+
+
+def test_trim_pwa_suffix_strips_tail_of_text_blocks():
+    messages = [
+        {
+            "role": "user",
+            "content": [
+                {"type": "image_url", "image_url": {"url": "data:image/png;base64,abc"}},
+                {"type": "text", "text": f"看这张照片 {_PWA_STATUS_SUFFIX}"},
+            ],
+        },
+        {"role": "user", "content": f"新的一条 {_PWA_STATUS_SUFFIX}"},
+    ]
+
+    trimmed, meta = trim_client_extra_bundle_attachments(messages, keep_recent_messages=1)
+
+    assert meta["client_attachment_messages_seen"] == 2
+    assert meta["client_attachment_messages_trimmed"] == 1
+    assert trimmed[0]["content"][0]["type"] == "image_url"
+    assert trimmed[0]["content"][1]["text"] == "看这张照片"
+    assert trimmed[1]["content"] == f"新的一条 {_PWA_STATUS_SUFFIX}"
+
+
 def test_trim_client_image_blocks_keeps_latest_two_image_messages():
     messages = [
         {

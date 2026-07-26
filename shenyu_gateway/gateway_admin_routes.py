@@ -46,6 +46,7 @@ from .sessions import SessionManager
 from .stars import StarService
 from .store import NEXT_REQUEST_COLD_START_TAG
 from .tool_registry import gateway_native_tools
+from .weather import QWeatherService
 
 
 @dataclass(frozen=True)
@@ -704,6 +705,12 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         if not result.get("ok"):
             raise HTTPException(status_code=400, detail=result.get("error") or "legacy atomic query failed")
         return result
+
+    @router.get("/api/gateway/weather")
+    async def gateway_weather():
+        # Shape is a cross-client contract with the PWA: always 200, and
+        # available:false with null fields when unconfigured or degraded.
+        return await QWeatherService(cfg).current()
 
     @router.get("/api/gateway/sessions")
     async def list_gateway_sessions(limit: int = 100, q: str = ""):

@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-import re
 import uuid
 from typing import Any, Optional
+
+# Only the dynamic Operit bundle is normalized away for event comparison; the
+# PWA status suffix is a stable part of the stored message text, so it stays.
+from .client_extra import CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE as _CLIENT_EXTRA_BUNDLE_RE
 
 
 MEMORY_ISLAND_LAYER = "memory_island"
@@ -13,12 +16,6 @@ DEFAULT_ISLAND_TAIL_MESSAGES = 32
 DEFAULT_RAW_TOOL_PROTECTION_TURNS = 18
 _IMAGE_SEEN_PLACEHOLDER = "圆圆发来的照片我已经看过。"
 _IMAGE_LINEAGE_MARKER = "shenyu_history_image"
-_CLIENT_EXTRA_BUNDLE_RE = re.compile(
-    r"\s*<attachment\b"
-    r"(?=[^>]*\bid\s*=\s*['\"]?message_insert_extra_bundle_[^'\"\s>]+['\"]?)"
-    r"[^>]*>.*?</attachment>",
-    re.IGNORECASE | re.DOTALL,
-)
 
 
 def _stable_json(value: Any) -> str:

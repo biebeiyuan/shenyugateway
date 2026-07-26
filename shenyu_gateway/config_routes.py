@@ -99,6 +99,10 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "room_newspaper_llm_api_key": "",
         "room_newspaper_llm_api_key_configured": bool(cfg.room_newspaper_llm_api_key),
         "room_newspaper_llm_protocol": cfg.room_newspaper_llm_protocol,
+        "weather_city": cfg.weather_city,
+        "qweather_api_key": "",
+        "qweather_api_key_configured": bool(cfg.qweather_api_key),
+        "qweather_api_host": cfg.qweather_api_host,
         "enable_cold_start": cfg.enable_cold_start,
         "enable_upstream_tools": cfg.enable_upstream_tools,
         "enable_gateway_tools": cfg.enable_gateway_tools,
@@ -224,6 +228,9 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "room_newspaper_llm_url": "ROOM_NEWSPAPER_LLM_URL",
             "room_newspaper_llm_api_key": "ROOM_NEWSPAPER_LLM_API_KEY",
             "room_newspaper_llm_protocol": "ROOM_NEWSPAPER_LLM_PROTOCOL",
+            "weather_city": "WEATHER_CITY",
+            "qweather_api_key": "QWEATHER_API_KEY",
+            "qweather_api_host": "QWEATHER_API_HOST",
             "enable_cold_start": "ENABLE_COLD_START",
             "enable_upstream_tools": "ENABLE_UPSTREAM_TOOLS",
             "enable_gateway_tools": "ENABLE_GATEWAY_TOOLS",
@@ -305,6 +312,9 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "room_newspaper_llm_url",
             "room_newspaper_llm_api_key",
             "room_newspaper_llm_protocol",
+            "weather_city",
+            "qweather_api_key",
+            "qweather_api_host",
             "enable_cold_start",
             "enable_upstream_tools",
             "enable_gateway_tools",
@@ -328,6 +338,11 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                 if field == "gateway_key" and isinstance(value, str) and not value.strip():
                     # A persisted empty key silently disables auth after the next
                     # restart; treat an empty form field as "unchanged" instead.
+                    continue
+                if field == "weather_city" and isinstance(value, str) and not value.strip():
+                    # A persisted empty city disables weather at runtime but the
+                    # config default revives it on restart replay; treat an empty
+                    # form field as "unchanged" to keep both states consistent.
                     continue
                 if field == "wake_welcome_message":
                     if body.clear_wake_welcome_message:

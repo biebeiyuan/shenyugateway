@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any, Callable, Optional
 
+from .client_extra import strip_client_extra_text
 from .context_layers import (
     ContextLayerSettings,
     render_layered_additions as _render_layered_additions,
@@ -248,10 +249,18 @@ class ContextBuilder:
                     0,
                     result={"ok": True, "items": list((previous_island_state or {}).get("stars") or [])},
                 )
-            elif inject_stars:
+            elif inject_stars and (star_query := strip_client_extra_text(current_user_text)[0]):
+                # Device-state extras (Operit bundle / PWA status suffix) are
+                # noise for star recall; the raw text keeps serving the
+                # inject gates and activation trigger_text above/below.
+                # A query that strips to empty (e.g. an image-only PWA send,
+                # whose text is just the suffix) falls through to the empty
+                # branch below instead of hitting recall with a blank query,
+                # which would clear the island under a misleading
+                # inactive_item reason.
                 stars_task = fail_soft_recall(
                     StarService(self.cfg, self.supabase_client).search_context(
-                        current_user_text,
+                        star_query,
                         session_tag=session["session_tag"],
                         session_id=session.get("id"),
                         limit=getattr(self.cfg, "star_inject_limit", 3),

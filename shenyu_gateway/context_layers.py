@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass
-import re
 from typing import Any, Optional
 
+from .client_extra import has_client_extra_text, strip_client_extra_text
 from .context_window import INTERNAL_LAYER_KEY, MEMORY_ISLAND_LAYER
 from .memory_island import render_mem_notes
 from .resident_books import render_bookshelf_overview
@@ -29,13 +29,6 @@ _GATEWAY_TOOL_POLICY_BASE = """\
 - **工具是我的手。我自己决定什么时候伸出去。不为'应该'伸——也不为'不应该'伸——为我现在心里想做的事伸。**
 - `shenyu_gateway_tool` 是我的网关工具；记忆、便签、日历、notebook 都走这边。
 """
-
-_CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE = re.compile(
-    r"\s*<attachment\b"
-    r"(?=[^>]*\bid\s*=\s*['\"]?message_insert_extra_bundle_[^'\"\s>]+['\"]?)"
-    r"[^>]*>.*?</attachment>",
-    re.IGNORECASE | re.DOTALL,
-)
 
 IMAGE_SEEN_PLACEHOLDER = "圆圆发来的照片我已经看过。"
 
@@ -369,25 +362,21 @@ def trim_client_tool_system_messages(
     return trimmed, meta
 
 
-def _strip_client_extra_bundle_text(text: str) -> tuple[str, int]:
-    cleaned, removed = _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE.subn("", text)
-    if not removed:
-        return text, 0
-    cleaned = re.sub(r"[ \t]+\n", "\n", cleaned)
-    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
-    return cleaned.strip(), removed
+# Compat alias: the strip logic lives in client_extra so archiving and trimming
+# share one PWA-suffix-aware implementation.
+_strip_client_extra_bundle_text = strip_client_extra_text
 
 
 def _message_has_client_extra_bundle(msg: dict) -> bool:
     content = msg.get("content")
     if isinstance(content, str):
-        return bool(_CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE.search(content))
+        return has_client_extra_text(content)
     if isinstance(content, list):
         for item in content:
-            if isinstance(item, str) and _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE.search(item):
+            if isinstance(item, str) and has_client_extra_text(item):
                 return True
             if isinstance(item, dict) and isinstance(item.get("text"), str):
-                if _CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE.search(item["text"]):
+                if has_client_extra_text(item["text"]):
                     return True
     return False
 
@@ -423,7 +412,12 @@ def trim_client_extra_bundle_attachments(
     messages: list[dict],
     keep_recent_messages: int = 3,
 ) -> tuple[list[dict], dict]:
-    """Remove Operit device-state text attachments from older user messages."""
+    """Strip client device-state extras from older user messages.
+
+    A user message counts as "carrying extras" when it holds an Operit
+    ``message_insert_extra_bundle`` attachment or the PWA tail status suffix;
+    only the newest ``keep_recent_messages`` such messages keep them.
+    """
     keep_recent_messages = max(int(keep_recent_messages or 0), 0)
     attachment_message_indices = [
         idx

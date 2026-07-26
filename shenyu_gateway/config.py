@@ -208,6 +208,10 @@ class RuntimeConfig:
         self.room_newspaper_llm_api_key: str = os.getenv("ROOM_NEWSPAPER_LLM_API_KEY", "").strip()
         self.room_newspaper_llm_protocol: str = os.getenv("ROOM_NEWSPAPER_LLM_PROTOCOL", "").strip().lower()
 
+        self.weather_city: str = (os.getenv("WEATHER_CITY") or "").strip() or "邵阳"
+        self.qweather_api_key: str = os.getenv("QWEATHER_API_KEY", "").strip()
+        self.qweather_api_host: str = os.getenv("QWEATHER_API_HOST", "").strip()
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "supabase_url": mask(self.supabase_url, 30),
@@ -333,6 +337,9 @@ class RuntimeConfig:
             "room_newspaper_llm_url": self.room_newspaper_llm_url,
             "room_newspaper_llm_api_key": mask(self.room_newspaper_llm_api_key) if self.room_newspaper_llm_api_key else "",
             "room_newspaper_llm_protocol": self.room_newspaper_llm_protocol,
+            "weather_city": self.weather_city,
+            "qweather_api_key": mask(self.qweather_api_key) if self.qweather_api_key else "",
+            "qweather_api_host": self.qweather_api_host,
         }
 
     def _load_model_mapping(self) -> dict[str, str]:

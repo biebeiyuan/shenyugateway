@@ -280,6 +280,32 @@ def test_chat_archive_skips_numbered_transcript_messages():
     asyncio.run(run())
 
 
+def test_chat_archive_strips_pwa_status_suffix_from_content():
+    async def run():
+        supabase = FakeSupabase()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            store = GatewayStore(str(Path(tmp) / "test.db"))
+            service = ChatArchiveService(store, supabase, Cfg())
+
+            window = [
+                {
+                    "role": "user",
+                    "content": "予予晚安【26/07 周日 23:40 · 第140天 · 🔋64% · 邵阳 多云 24℃】",
+                },
+                {"role": "assistant", "content": "晚安，圆圆。"},
+            ]
+            result = await service.archive_window(
+                session_tag="5.15", client_name="shenyu-pwa", messages=window, is_hisense=False
+            )
+            assert result["archived"] == 2, result
+            rows = supabase.tables["shenyu_chat_archive"]
+            assert rows[0]["content"] == "予予晚安"
+            assert "邵阳" not in rows[0]["content"]
+            assert rows[1]["content"] == "晚安，圆圆。"
+
+    asyncio.run(run())
+
+
 def test_derive_thread():
     assert derive_thread("default", False) == "main"
     assert derive_thread("", False) == "main"
