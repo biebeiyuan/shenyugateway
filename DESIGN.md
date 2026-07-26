@@ -571,6 +571,8 @@ notes_result, stars_result = await asyncio.gather(
 
 ## 12. 文件-子系统快速索引
 
+> 文件级"这是什么"的正本是 `README.md` § Maintenance Map（由 `tests/test_project_map.py` 看守：覆盖全部顶层模块与前端文件，路径失效会挂 CI）。本表只做 README 刻意不做的事——按子系统归组、深入包内部文件。若顶层文件的描述与 README 不一致，以 README 为准并修这里。
+
 | 子系统 | 核心文件 | 一句话 |
 |--------|---------|--------|
 | Stars | `stars/_recall.py` | RRF 排序 + 注入筛选的全部逻辑 |
@@ -592,7 +594,7 @@ notes_result, stars_result = await asyncio.gather(
 | Heartbeats | `response_capture.py` | 从回复中截取 `<heartbeat>` |
 | Heartbeats | `private_capture.py` | 私有内容终结 + 空回复兜底 |
 | Heartbeats | `heartbeat_archive.py` | Supabase 灾备归档 |
-| Recall | `recall.py` | 统一索引：keyword + vector 混合检索 |
+| Recall | `recall/`（包） | 统一召回索引：`_sources` 收集源文档、`_query`/`_ranking` 检索与排序、`_embedding` 向量通道 |
 | Recall | `embeddings.py` | Embedding 客户端 |
 | Cold Start | `prepare_messages.py` | 桥接快照注入 |
 | Cold Start | `store/_cold_start.py` | SQLite 快照存储 |

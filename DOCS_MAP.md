@@ -16,6 +16,7 @@
 
 | 内容 | 主要文档 | 不应重复放置 |
 |------|----------|--------------|
+| 文件级模块清单（路径 + 一句话职责）的唯一正本 | `README.md` § Maintenance Map（由 `tests/test_project_map.py` 看守） | 其他文档不再自建顶层文件清单，只放指向正本的路标；保留的仅限本职视角的补充——`DESIGN.md` §12 的包内部子系统映射、`docs/architecture/SYSTEM_ZONES.md` 的分区核心文件（路径存在性同样被测试看守） |
 | 项目入口、维护地图、配置、运行、部署 | `README.md` | 子系统完整设计和阶段性审计结论 |
 | 请求、流式、工具、缓存、上下文、SQLite、归档 | `docs/architecture/REQUEST_CONTEXT.md` | README 长篇章节 |
 | Mem、Stars、Room、private capture | `docs/architecture/MEMORY_ROOM.md` | README 或运维排障指南中的完整设计 |

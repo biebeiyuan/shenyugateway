@@ -205,21 +205,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 
 ## Module Map
 
-- `gateway.py`: FastAPI app composition, runtime wiring, route registration, and public HTTP contracts.
-- `shenyu_gateway/chat_pipeline.py`: chat request orchestration across message preparation, upstream selection, gateway-tool/plain paths, streaming, capture, and request-log finalization.
-- `shenyu_gateway/prepare_messages.py`: session opening, raw-window/history handling, client-window trimming, cold-start and pending-tool restoration, context package construction, and layered-message assembly.
-- `shenyu_gateway/config.py`: environment-backed runtime config.
-- `shenyu_gateway/store/`: SQLite runtime state (mixin package). Routes and services should call `GatewayStore` instead of writing SQL directly.
-- `shenyu_gateway/supabase.py`: low-level Supabase REST mechanics.
-- `shenyu_gateway/sessions.py`: session and message logging facade.
-- `shenyu_gateway/calendar.py`: calendar date/key helpers (period bounds, period keys, month grid, latest-page lookup).
-- `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, tool-safe trimming, and cold-start bridge insertion.
-- `shenyu_gateway/gateway_tools.py`: gateway-native tool implementations. Look here for Supabase table tools, recall compatibility helpers, heartbeat reads, notebook helpers, and memory helper behavior.
-- `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
-- `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, heartbeat persistence helper.
-- `shenyu_gateway/mem_notes/`: note CRUD, validation, suggestions, search, memory_kind alias resolution, heat exposure, and old atomic read-only lookup.
-- `shenyu_gateway/mem_notes_relevance.py`: pure helpers for recall scoring, anchor matching, auto-extraction (people/places/objects/keywords/summary/memory_kind), `compute_heat()`, and `running_joke_serendipity_rate()`.
-- `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic payload, cache, stream, and model URL conversion helpers.
+The canonical file inventory is `README.md` § Maintenance Map — it is guarded by `tests/test_project_map.py` (full coverage of top-level modules, packages, and frontend files; stale paths fail CI), so this guide does not keep its own copy. When you need "which file does X", read the map there. Debugging-specific ownership rules live in this file's Refactor Boundaries section; the tool dispatch order (registry first, then implementation) is described under Chat Request Flow.
 
 ## Chat Request Flow
 
@@ -253,7 +239,7 @@ When Anthropic Thinking or tool continuation looks wrong, inspect one request in
 
 Never treat opaque signature or redacted Thinking data as readable chain-of-thought, and never add it to request logs. A sent `thinking` parameter without `anthropic_thinking.preserved=true` usually means the request asked for Thinking but the gateway did not receive native blocks that needed preservation.
 
-Tool schemas and name dispatch live in `shenyu_gateway/tool_registry.py`; implementation methods live in `shenyu_gateway/gateway_tools.py`. If a tool is visible but behaves wrong, check `tool_registry.py` dispatch first, then the matching method in `gateway_tools.py`.
+Tool schemas and name dispatch live in `shenyu_gateway/tool_registry.py`; implementation methods live in the `shenyu_gateway/gateway_tools/` mixin package. If a tool is visible but behaves wrong, check `tool_registry.py` dispatch first, then the matching mixin method in `gateway_tools/`.
 
 ### Gateway tool error log chain
 
