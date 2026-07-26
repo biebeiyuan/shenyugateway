@@ -8,6 +8,8 @@ export type ToolEvent = {
   duration_ms?: number
   ok?: boolean | null
   error_kind?: string
+  input?: unknown
+  output?: string
 }
 
 export function toolName(event: ToolEvent): string {

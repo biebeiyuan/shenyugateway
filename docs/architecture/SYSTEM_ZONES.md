@@ -14,7 +14,7 @@
 
 Operit、PWA 聊天端以及未来的其他聊天客户端都属于请求链两端的客户端表面，不是网关内部的第九个代码区。客户端负责输入、展示、Markdown/代码渲染、工具过程的友好映射和客户端请求头；上下文、会话、工具真实执行、上游适配与持久状态仍由下面八个区域各自拥有。
 
-PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它使用 `X-Shenyu-Client: shenyu-pwa` 和 `X-Shenyu-Tool-Events: true` 接入现有聊天契约，并读取 Admin Config 页面同源保存的 `shenyu_upstream_presets`，通过 `POST /api/config` 切换固定默认上游预设。这个选择不改变 PWA 的客户端身份、会话、记忆或工具事件契约。只有当客户端开始拥有独立的服务端状态、业务规则或持久化责任时，才需要重新评估是否形成新的架构区。
+PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它使用 `X-Shenyu-Client: shenyu-pwa` 和 `X-Shenyu-Tool-Events: true` 接入现有聊天契约，并以 `X-Shenyu-Tool-Details: true` 仅为当前响应请求工具的实际输入与传回模型的结果。详情绝不进入请求日志或持久历史。PWA 还读取 Admin Config 页面同源保存的 `shenyu_upstream_presets`，通过 `POST /api/config` 切换固定默认上游预设。这个选择不改变 PWA 的客户端身份、会话、记忆或工具事件契约。只有当客户端开始拥有独立的服务端状态、业务规则或持久化责任时，才需要重新评估是否形成新的架构区。
 
 ## 住户数据注意事项
 

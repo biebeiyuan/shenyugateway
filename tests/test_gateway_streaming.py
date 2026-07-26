@@ -58,6 +58,7 @@ from shenyu_gateway.tool_loop import (
     _execute_mixed_gateway_tool_calls,
     _extract_tool_calls,
     _attach_tool_events,
+    _record_tool_event,
     _record_round_usage,
     _tool_call_name,
     run_internal_tool_loop_stream,
@@ -69,6 +70,33 @@ from shenyu_gateway.upstream_adapter import (
     _openai_to_anthropic,
 )
 from shenyu_gateway.upstream_client import _cache_prefix_fingerprints, _cache_tail_guard_user_turns
+
+
+def test_tool_event_details_are_opt_in_and_not_written_to_request_logs():
+    tool_call = {
+        "id": "call_1",
+        "function": {"name": "shenyu_gateway_tool", "arguments": '{"tool":"shenyu_list_mem_notes","arguments":{"limit":3}}'},
+    }
+    result = {"ok": True, "items": [{"content": "private note"}]}
+    ctx = SimpleNamespace(
+        meta={"client_profile": {"emit_tool_events": True, "emit_tool_event_details": True}},
+        log_entry={},
+    )
+
+    event = _record_tool_event(
+        ctx,
+        phase="tool_end",
+        tool_call=tool_call,
+        name="shenyu_gateway_tool",
+        round_index=0,
+        result=result,
+    )
+
+    assert event is not None
+    assert event["input"] == {"tool": "shenyu_list_mem_notes", "arguments": {"limit": 3}}
+    assert event["output"] == json.dumps(result, ensure_ascii=False)
+    assert "input" not in ctx.log_entry["tool_events"][0]
+    assert "output" not in ctx.log_entry["tool_events"][0]
 
 
 class _FakeStore:

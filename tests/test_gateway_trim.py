@@ -76,7 +76,19 @@ def test_pwa_client_profile_hides_client_tools_and_enables_tool_events():
 
     assert profile["client_tool_surface"] == "none"
     assert profile["emit_tool_events"] is True
+    assert profile["emit_tool_event_details"] is False
     assert profile["tool_event_protocol"] == "sse+json"
+
+
+def test_client_profile_only_emits_tool_details_when_explicitly_requested():
+    profile = _resolve_client_profile(
+        SimpleNamespace(headers={"X-Shenyu-Tool-Events": "true", "X-Shenyu-Tool-Details": "true"}),
+        "another-client",
+        SimpleNamespace(client_tool_surface="all"),
+    )
+
+    assert profile["emit_tool_events"] is True
+    assert profile["emit_tool_event_details"] is True
 
 
 def test_context_overflow_defaults_to_20_percent_with_bounds():

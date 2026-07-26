@@ -230,6 +230,11 @@ def _tool_events_enabled(ctx: InternalToolLoopContext) -> bool:
     return bool(isinstance(profile, dict) and profile.get("emit_tool_events"))
 
 
+def _tool_event_details_enabled(ctx: InternalToolLoopContext) -> bool:
+    profile = ctx.meta.get("client_profile") if isinstance(ctx.meta, dict) else None
+    return bool(isinstance(profile, dict) and profile.get("emit_tool_event_details"))
+
+
 def _record_tool_event(
     ctx: InternalToolLoopContext,
     *,
@@ -260,9 +265,17 @@ def _record_tool_event(
         event["ok"] = raw_ok if isinstance(raw_ok, bool) else None
         if isinstance(result, dict) and result.get("error_kind"):
             event["error_kind"] = str(result["error_kind"])
+    if _tool_event_details_enabled(ctx):
+        event["input"] = args
+        if result is not None:
+            # This is the exact JSON string appended to the next upstream tool-result message.
+            event["output"] = _json_dumps(result)
     ctx.meta.setdefault("tool_events", []).append(event)
     if ctx.log_entry is not None:
-        ctx.log_entry.setdefault("tool_events", []).append(event)
+        # Tool details are for the current opted-in client only. Request logs retain the
+        # existing compact diagnostic metadata and must not persist raw resident data.
+        log_event = {key: value for key, value in event.items() if key not in {"input", "output"}}
+        ctx.log_entry.setdefault("tool_events", []).append(log_event)
     return event
 
 

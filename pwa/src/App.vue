@@ -3,11 +3,10 @@ import { computed, nextTick, onMounted, ref } from 'vue'
 import {
   ArrowLeft,
   ArrowLeftRight,
-  Brain,
   Check,
+  Clock3,
   ChevronDown,
   ChevronRight,
-  ChevronUp,
   CircleStop,
   Clipboard,
   ExternalLink,
@@ -24,6 +23,7 @@ import {
   Trash2,
   X,
 } from 'lucide-vue-next'
+import { CHATNEST_STATUS_SPRITES } from './chatnestSprite'
 import { renderMarkdown } from './markdown'
 import { toolName, toolState, toolWarmCopy, type ToolEvent } from './toolLanguage'
 
@@ -79,6 +79,14 @@ type UpstreamPreset = {
   passthrough_headers?: string[]
 }
 
+type ProcessSheet = {
+  messageId: string
+  view: 'summary' | 'thinking' | 'tool'
+  toolKey?: string
+}
+
+type SpriteMode = keyof typeof CHATNEST_STATUS_SPRITES
+
 const STORAGE_MESSAGES = 'shenyu_pwa_messages'
 const STORAGE_SESSION = 'shenyu_pwa_session'
 const STORAGE_TOKEN = 'shenyu_pwa_gateway_token'
@@ -120,7 +128,7 @@ const handoffOpen = ref(false)
 const handoffLoading = ref(false)
 const modelOpen = ref(false)
 const modelSheetPage = ref<'main' | 'effort' | 'more' | 'preset'>('main')
-const traceOpen = ref<Record<string, boolean>>({})
+const processSheet = ref<ProcessSheet | null>(null)
 const editId = ref<string | null>(null)
 const busy = ref(false)
 const status = ref('')
@@ -152,6 +160,21 @@ const handoffSessions = computed(() => recentSessions.value.filter((session) => 
   const messageCount = Number(session.user_message_count || session.message_count || 0)
   return messageCount > 0
 }))
+const processSheetMessage = computed(() => {
+  const messageId = processSheet.value?.messageId
+  return messageId ? messages.value.find((message) => message.id === messageId) : undefined
+})
+const processSheetEvent = computed(() => {
+  const current = processSheet.value
+  const message = processSheetMessage.value
+  if (!current || current.view !== 'tool' || !message || !current.toolKey) return undefined
+  return traceRows(message).find((event) => toolEventKey(event) === current.toolKey)
+})
+const processSheetTitle = computed(() => {
+  if (processSheet.value?.view === 'thinking') return '思考片段'
+  if (processSheet.value?.view === 'tool') return toolWarmCopy(processSheetEvent.value || { phase: '', tool_call_id: '', name: '' })
+  return '沈予刚才做了什么'
+})
 
 const workspaceContent: Record<WorkspaceId, { eyebrow: string; title: string; description: string; action: string; detail: string }> = {
   chats: {
@@ -277,6 +300,7 @@ function requestHeaders(): Record<string, string> {
     'Content-Type': 'application/json',
     'X-Shenyu-Client': 'shenyu-pwa',
     'X-Shenyu-Tool-Events': 'true',
+    'X-Shenyu-Tool-Details': 'true',
     'X-Shenyu-Session-Tag': sessionTag.value,
   }
   if (authToken.value.trim()) headers.Authorization = `Bearer ${authToken.value.trim()}`
@@ -816,10 +840,6 @@ async function copyText(text: string) {
   }
 }
 
-function toggleTrace(messageId: string) {
-  traceOpen.value[messageId] = !traceOpen.value[messageId]
-}
-
 function traceRows(message: UiMessage): ToolEvent[] {
   const rows: ToolEvent[] = []
   const byId = new Map<string, ToolEvent>()
@@ -837,20 +857,95 @@ function traceRows(message: UiMessage): ToolEvent[] {
   return rows
 }
 
+function toolEventKey(event: ToolEvent): string {
+  return event.tool_call_id || `${event.name}:${event.round || 0}`
+}
+
 function processSummary(message: UiMessage): string {
   const rows = traceRows(message)
   const active = rows.find((event) => event.phase === 'tool_start' || event.ok === undefined)
   if (active) return `${toolWarmCopy(active)}…`
-  if (rows.length) return `${rows.length} 个小动作已经收好`
-  return '想了一会儿'
+  if (rows.length === 1) return toolWarmCopy(rows[0])
+  if (rows.length) return `做完了 ${rows.length} 件小事`
+  return thinkingPreview(message.thinking) || '想了一会儿'
 }
 
 function assistantHasProcess(message: UiMessage): boolean {
   return Boolean(message.thinking || message.events.length)
 }
 
-function formatDuration(value?: number): string {
-  return value ? `${value} ms` : ''
+function thinkingPreview(thinking: string): string {
+  const compact = thinking.replace(/\s+/g, ' ').trim()
+  const first = compact.match(/^[^。！？.!?]+[。！？.!?]?/)?.[0] || compact
+  return first.length > 30 ? `${first.slice(0, 30)}…` : first
+}
+
+function openProcessSheet(message: UiMessage) {
+  processSheet.value = { messageId: message.id, view: 'summary' }
+}
+
+function closeProcessSheet() {
+  processSheet.value = null
+}
+
+function showThinkingDetail() {
+  if (!processSheet.value) return
+  processSheet.value = { ...processSheet.value, view: 'thinking' }
+}
+
+function showToolDetail(event: ToolEvent) {
+  if (!processSheet.value) return
+  processSheet.value = { ...processSheet.value, view: 'tool', toolKey: toolEventKey(event) }
+}
+
+function backToProcessSummary() {
+  if (!processSheet.value) return
+  processSheet.value = { ...processSheet.value, view: 'summary', toolKey: undefined }
+}
+
+function statusSpriteMode(message: UiMessage): SpriteMode {
+  const hasActiveTool = traceRows(message).some((event) => event.phase === 'tool_start' || event.ok === undefined)
+  if (hasActiveTool) return 'tool'
+  if (message.thinking && !message.content) return 'thinking'
+  if (message.content) return 'writing'
+  return 'entrance'
+}
+
+function statusSpriteMarkup(message: UiMessage): string {
+  return CHATNEST_STATUS_SPRITES[statusSpriteMode(message)].svg
+}
+
+function statusSpriteStyle(message: UiMessage): Record<string, string> {
+  const sprite = CHATNEST_STATUS_SPRITES[statusSpriteMode(message)]
+  const lastFrameOffset = -100 * (sprite.frameCount - 1) / sprite.frameCount
+  return {
+    '--sprite-duration': `${sprite.speed * sprite.frameCount}ms`,
+    '--sprite-frames': String(sprite.frameCount),
+    '--sprite-offset': `${lastFrameOffset}%`,
+  }
+}
+
+function formatToolInput(event?: ToolEvent): string {
+  if (!event || event.input === undefined) return '（这条旧的工具记录没有保留参数）'
+  if (typeof event.input === 'string') {
+    try {
+      return JSON.stringify(JSON.parse(event.input), null, 2)
+    } catch {
+      return event.input
+    }
+  }
+  try {
+    return JSON.stringify(event.input, null, 2)
+  } catch {
+    return String(event.input)
+  }
+}
+
+function formatToolOutput(event?: ToolEvent): string {
+  if (!event) return '（找不到这一步工具记录）'
+  if (event.phase === 'tool_start' || event.ok === undefined) return '正在执行…'
+  if (event.output !== undefined) return event.output || '（工具没有返回正文）'
+  return '（这条旧的工具记录没有保留结果）'
 }
 
 function runQuickPrompt(prompt: string) {
@@ -1002,36 +1097,18 @@ onMounted(async () => {
               {{ message.content || '（一张图片）' }}
             </div>
             <div v-else class="assistant-body">
-              <button v-if="assistantHasProcess(message)" class="process-strip" @click="toggleTrace(message.id)">
+              <button v-if="assistantHasProcess(message)" class="process-strip" type="button" @click="openProcessSheet(message)">
                 <span class="process-icon">
-                  <img v-if="message.streaming" class="process-mark" :class="{ tool: message.events.length > 0 }" :src="brandMarkUrl" alt="" />
-                  <Brain v-else :size="16" />
+                  <Clock3 :size="16" />
                 </span>
-                <span class="process-copy">{{ message.streaming ? processSummary(message) : processSummary(message) }}</span>
-                <ChevronUp v-if="traceOpen[message.id]" :size="16" />
-                <ChevronDown v-else :size="16" />
+                <span class="process-copy">{{ processSummary(message) }}</span>
+                <ChevronRight :size="16" />
               </button>
-              <div v-if="traceOpen[message.id]" class="process-detail">
-                <div v-if="message.thinking" class="thinking-detail">
-                  <div class="detail-heading"><Brain :size="14" /> 思考过程</div>
-                  <p>{{ message.thinking }}</p>
-                </div>
-                <div v-for="event in traceRows(message)" :key="`${message.id}-${event.tool_call_id}-${event.name}`" class="tool-detail">
-                  <div class="tool-detail-main">
-                    <span class="tool-state-dot" :class="{ done: event.ok !== undefined && event.ok !== false, failed: event.ok === false }" />
-                    <span>{{ event.phase === 'tool_start' ? `正在${toolWarmCopy(event)}…` : toolWarmCopy(event) }}</span>
-                    <span class="tool-state">{{ toolState(event) }}</span>
-                  </div>
-                  <div class="tool-detail-meta">
-                    <code>{{ toolName(event) }}</code>
-                    <span v-if="event.round">第 {{ event.round }} 轮</span>
-                    <span v-if="formatDuration(event.duration_ms)">{{ formatDuration(event.duration_ms) }}</span>
-                  </div>
-                </div>
-              </div>
               <div v-if="message.content" class="markdown-content" v-html="renderMarkdown(message.content)" />
-              <div v-if="message.streaming" class="assistant-trail" :class="{ tool: message.events.length > 0 }">
-                <img :src="brandMarkUrl" alt="" />
+              <div v-if="message.streaming" class="assistant-trail" :data-mode="statusSpriteMode(message)">
+                <span class="assistant-sprite-viewport">
+                  <span class="assistant-sprite-track" :style="statusSpriteStyle(message)" v-html="statusSpriteMarkup(message)" />
+                </span>
               </div>
               <div v-if="message.error" class="message-error">这次没有顺利接上：{{ message.error }}</div>
               <div v-if="!message.streaming && (message.content || message.error)" class="message-actions">
@@ -1082,6 +1159,56 @@ onMounted(async () => {
         </div>
       </footer>
     </main>
+
+    <div v-if="processSheetMessage" class="sheet-layer" @click.self="closeProcessSheet">
+      <section class="bottom-sheet process-sheet">
+        <div class="sheet-handle" />
+        <header class="sheet-head">
+          <button class="sheet-back" :aria-label="processSheet?.view === 'summary' ? '关闭' : '返回过程列表'" :title="processSheet?.view === 'summary' ? '关闭' : '返回过程列表'" @click="processSheet?.view === 'summary' ? closeProcessSheet() : backToProcessSummary()">
+            <X v-if="processSheet?.view === 'summary'" :size="19" />
+            <ArrowLeft v-else :size="20" />
+          </button>
+          <h2 class="sheet-title">{{ processSheetTitle }}</h2>
+        </header>
+
+        <div class="sheet-content process-sheet-content">
+          <template v-if="processSheet?.view === 'summary'">
+            <div class="process-timeline">
+              <button v-if="processSheetMessage.thinking" class="process-timeline-item" type="button" @click="showThinkingDetail">
+                <span class="process-timeline-rail"><span class="process-timeline-icon"><Clock3 :size="16" /></span></span>
+                <span class="process-timeline-copy"><strong>思考片段</strong><small>{{ thinkingPreview(processSheetMessage.thinking) || '正在整理想法…' }}</small></span>
+                <ChevronRight :size="17" />
+              </button>
+              <button v-for="event in traceRows(processSheetMessage)" :key="`${processSheetMessage.id}-${toolEventKey(event)}`" class="process-timeline-item" type="button" @click="showToolDetail(event)">
+                <span class="process-timeline-rail">
+                  <span class="process-timeline-icon"><Sparkles :size="15" /></span>
+                  <span class="process-timeline-line" />
+                </span>
+                <span class="process-timeline-copy"><strong>{{ event.phase === 'tool_start' ? `正在${toolWarmCopy(event)}…` : toolWarmCopy(event) }}</strong><small>{{ toolState(event) }}</small></span>
+                <ChevronRight :size="17" />
+              </button>
+            </div>
+          </template>
+
+          <template v-else-if="processSheet?.view === 'thinking'">
+            <p class="process-disclosure">这是上游在流里公开返回的思考片段。</p>
+            <pre class="process-text">{{ processSheetMessage.thinking }}</pre>
+          </template>
+
+          <template v-else>
+            <p class="process-disclosure">下面是这次工具调用实际传给沈予的内容，不会保存在聊天历史里。</p>
+            <div class="process-code-section">
+              <span class="process-code-label">调用参数</span>
+              <pre class="process-code">{{ formatToolInput(processSheetEvent) }}</pre>
+            </div>
+            <div class="process-code-section">
+              <span class="process-code-label">沈予看到的结果</span>
+              <pre class="process-code">{{ formatToolOutput(processSheetEvent) }}</pre>
+            </div>
+          </template>
+        </div>
+      </section>
+    </div>
 
     <div v-if="handoffOpen" class="sheet-layer" @click.self="handoffOpen = false">
       <section class="bottom-sheet settings-sheet">

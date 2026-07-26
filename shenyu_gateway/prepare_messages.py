@@ -49,12 +49,15 @@ def _resolve_client_profile(request: Request, client_name: str, cfg: Any) -> dic
     normalized_name = (client_name or "").strip().casefold()
     pwa_client = normalized_name in {"shenyu-pwa", "pwa", "shenyu-web"}
     requested_events = (request.headers.get("X-Shenyu-Tool-Events") or "").strip().casefold()
+    requested_details = (request.headers.get("X-Shenyu-Tool-Details") or "").strip().casefold()
     emit_tool_events = pwa_client or requested_events in {"1", "true", "yes", "on"}
+    emit_tool_event_details = emit_tool_events and requested_details in {"1", "true", "yes", "on"}
     configured_surface = str(getattr(cfg, "client_tool_surface", "all") or "all").strip().lower()
     return {
         "name": client_name or "unknown-client",
         "client_tool_surface": "none" if pwa_client else configured_surface,
         "emit_tool_events": emit_tool_events,
+        "emit_tool_event_details": emit_tool_event_details,
         "tool_event_protocol": "sse+json" if emit_tool_events else "none",
     }
 

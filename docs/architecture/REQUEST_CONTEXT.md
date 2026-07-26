@@ -423,10 +423,12 @@ Preserve browser access behavior:
 The PWA client profile uses `X-Shenyu-Client: shenyu-pwa`. That profile hides client-provided tool
 schemas while keeping gateway-native tools (`shenyu_*`, `supabase_*`, and `room_*`) available. It also
 emits a client-neutral tool execution event for UI mapping. Other clients may opt into the same event
-stream with `X-Shenyu-Tool-Events: 1`. The PWA reads the same-origin `shenyu_upstream_presets` entries
-used by the Admin Config page and applies a selected preset through `POST /api/config`; this changes
-the fixed default upstream configuration, not the PWA client identity, session semantics, memory
-surface, or tool event contract.
+stream with `X-Shenyu-Tool-Events: 1`. A client must additionally send `X-Shenyu-Tool-Details: 1` to
+receive raw tool input and the exact tool-result JSON passed to the model; PWA uses this only for the
+active response detail sheet. The PWA reads the same-origin `shenyu_upstream_presets` entries used by
+the Admin Config page and applies a selected preset through `POST /api/config`; this changes the fixed
+default upstream configuration, not the PWA client identity, session semantics, memory surface, or tool
+event contract.
 
 Cross-client conversation continuity is keyed by `X-Shenyu-Session-Tag`, not by `X-Shenyu-Client`.
 `X-Shenyu-Client` only selects the client capability profile. Operit and PWA can therefore share one
@@ -443,10 +445,13 @@ event: shenyu_tool
 data: {"type":"shenyu.tool_event","event":{"phase":"tool_start",...}}
 ```
 
-The event payload contains `phase` (`tool_start` or `tool_end`), `tool_call_id`, `name`, `target_tool`,
-`round`, and completion metadata such as `ok`, `cached`, `duration_ms`, and `error_kind`. Arguments and
-tool results are intentionally omitted. Non-streaming responses expose the same list under
-`shenyu.tool_events`. A client should treat a tool round as complete only after its `tool_end` event.
+The standard event payload contains `phase` (`tool_start` or `tool_end`), `tool_call_id`, `name`,
+`target_tool`, `round`, and completion metadata such as `ok`, `cached`, `duration_ms`, and `error_kind`.
+Arguments and tool results remain omitted unless the client explicitly requests `X-Shenyu-Tool-Details: 1`.
+That opt-in adds `input` and, after completion, `output`: the exact JSON string that the gateway appends
+to the following upstream tool-result message. Those detail fields are current-response data only and
+must never be persisted in request logs or SQLite history. Non-streaming responses expose the same list
+under `shenyu.tool_events`. A client should treat a tool round as complete only after its `tool_end` event.
 
 Preserve these response contracts:
 
