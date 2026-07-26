@@ -124,3 +124,19 @@ def test_calendar_page_contract_for_home_frontend(external_contract_client):
     assert payload["title"] == "Day title"
     assert payload["summary"] == "Day summary"
     assert payload["content"] == "Full day content"
+
+
+def test_chat_client_is_login_gated_but_installability_assets_stay_public(external_contract_client):
+    page = external_contract_client.get("/chat", headers={"Accept": "text/html"})
+    assert page.status_code == 401
+    assert "管理密钥" in page.text
+
+    external_contract_client.cookies.set("shenyu_token", "secret")
+    with_cookie = external_contract_client.get("/chat", headers={"Accept": "text/html"})
+    assert with_cookie.status_code != 401
+
+    external_contract_client.cookies.delete("shenyu_token")
+    manifest = external_contract_client.get("/chat/manifest.webmanifest")
+    assert manifest.status_code != 401
+    icon = external_contract_client.get("/chat/icon.svg")
+    assert icon.status_code != 401

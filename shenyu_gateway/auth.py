@@ -7,6 +7,10 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 
 ADMIN_PROTECTED_PREFIXES = ("/api/",)
+# Installability assets under /chat must stay public: browsers fetch the web
+# app manifest (and the icons it references) without credentials, so gating
+# them would break add-to-home-screen while protecting nothing sensitive.
+PWA_PUBLIC_SUFFIXES = ("manifest.webmanifest", "sw.js", ".svg", ".png", ".ico")
 
 
 async def admin_auth_middleware_handler(request: Request, call_next, *, cfg: Any):
@@ -17,6 +21,11 @@ async def admin_auth_middleware_handler(request: Request, call_next, *, cfg: Any
     needs_auth = any(path.startswith(p) for p in ADMIN_PROTECTED_PREFIXES)
     if path.startswith("/admin"):
         needs_auth = True
+    if path.startswith("/chat"):
+        # The chat client gets the same login page as Admin: one key entry per
+        # device sets the cookie plus the shenyu_token localStorage value the
+        # PWA reads, so a fresh device is onboarded in a single step.
+        needs_auth = not path.endswith(PWA_PUBLIC_SUFFIXES)
 
     if needs_auth and cfg.gateway_key:
         auth = request.headers.get("Authorization", "")
