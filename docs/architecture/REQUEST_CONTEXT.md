@@ -441,7 +441,10 @@ with the gateway's configured client context window. The handoff reads the newes
 transcript; `recent_messages` is only a compatibility fallback for sessions without a snapshot and must not be
 treated as a complete chat history. The handoff sheet also exposes an explicit clean cold-start recovery action;
 it removes exact duplicate rows from the local PWA transcript while retaining newer PWA messages, then lets the
-next request use the non-duplicated cold-start source to rebind the gateway epoch. Assistant rolls stay client-side:
+next request use the non-duplicated cold-start source to rebind the gateway epoch. The PWA persists roughly the
+gateway high-water window locally; once a `shenyu-pwa` request contains a full configured client window, the gateway
+retires any active temporary cold-start snapshot and sends no bridge for that session. The recovery action is therefore
+only a short-history handoff path. Assistant rolls stay client-side:
 each regenerated answer is a variant of the same assistant turn,
 the selected variant is the only one sent on the next request, and switching variants does not rewrite gateway
 history until a new request is sent. A new or different tag intentionally starts a separate session, so a client

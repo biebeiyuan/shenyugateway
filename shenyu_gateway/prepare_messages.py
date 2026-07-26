@@ -44,6 +44,16 @@ from .tool_registry import is_gateway_native_tool
 _BACKGROUND_TASKS: set[asyncio.Task] = set()
 
 
+def pwa_history_ready_for_cold_start(client_name: str, message_count: int, cfg: Any) -> bool:
+    """Once PWA owns a full client window, stop re-injecting handoff history."""
+    if (client_name or "").strip().casefold() not in {"shenyu-pwa", "pwa", "shenyu-web"}:
+        return False
+    limit = int(getattr(cfg, "max_client_messages", 0) or 0)
+    if limit <= 0:
+        limit = int(getattr(cfg, "cold_start_message_limit", 0) or 0)
+    return limit > 0 and int(message_count or 0) >= limit
+
+
 def _resolve_client_profile(request: Request, client_name: str, cfg: Any) -> dict[str, Any]:
     """Resolve client-facing capabilities without changing provider behavior."""
     normalized_name = (client_name or "").strip().casefold()
@@ -411,15 +421,22 @@ async def prepare_messages(
     is_hisense = deps.is_hisense_client(client_name)
     raw_message_count = _non_system_message_count(raw_messages)
     cold_start_snapshot = None
-    if not is_hisense:
+    pwa_handoff_retired = False
+    pwa_history_ready = pwa_history_ready_for_cold_start(client_name, raw_message_count, cfg)
+    if not is_hisense and not pwa_history_ready:
         cold_start_snapshot = deps.maybe_prepare_cold_start_snapshot(session, is_first_turn, raw_message_count)
+    elif pwa_history_ready:
+        active_snapshot = store.latest_active_cold_start_snapshot(session["id"])
+        if active_snapshot:
+            store.complete_cold_start_snapshot(active_snapshot["id"])
+            pwa_handoff_retired = True
     bridge_messages = bridge_messages_from_snapshot(cold_start_snapshot)
     deduplicated_bridge_messages, bridge_overlap_messages = deduplicate_bridge_messages(
         raw_messages,
         bridge_messages,
     )
     window_input = insert_bridge_messages(raw_messages, bridge_messages)
-    previous_window_state = store.get_context_window_state(session["id"])
+    previous_window_state = None if pwa_handoff_retired else store.get_context_window_state(session["id"])
     messages, window_state, trim_meta = select_chunked_window(
         window_input,
         limit=cfg.max_client_messages,

@@ -12,7 +12,7 @@ from shenyu_gateway.gateway_admin_routes import (
     _public_log_detail,
     build_gateway_admin_router,
 )
-from shenyu_gateway.prepare_messages import maybe_prepare_cold_start_snapshot
+from shenyu_gateway.prepare_messages import maybe_prepare_cold_start_snapshot, pwa_history_ready_for_cold_start
 from shenyu_gateway.store import GatewayStore, NEXT_REQUEST_COLD_START_TAG
 
 
@@ -582,6 +582,15 @@ def test_cold_start_uses_active_preview_snapshot_before_auto_source(tmp_path):
         "main a1",
         "main latest",
     ]
+
+
+def test_pwa_history_ready_disables_cold_start_at_client_window(tmp_path):
+    cfg = SimpleNamespace(max_client_messages=168, cold_start_message_limit=75)
+
+    assert not pwa_history_ready_for_cold_start("shenyu-pwa", 167, cfg)
+    assert pwa_history_ready_for_cold_start("shenyu-pwa", 168, cfg)
+    assert pwa_history_ready_for_cold_start("pwa", 200, cfg)
+    assert not pwa_history_ready_for_cold_start("operit", 200, cfg)
 
 
 def test_new_session_automatically_uses_latest_context_source(tmp_path):

@@ -434,7 +434,10 @@ function persistMessages() {
     variants: message.variants,
     selectedVariantIndex: message.selectedVariantIndex,
   }))
-  localStorage.setItem(STORAGE_MESSAGES, JSON.stringify(safe.slice(-120)))
+  // Keep a little more than the gateway high-water window so a resident PWA
+  // can stop relying on a temporary cold-start handoff.
+  const storageLimit = Math.max(240, sessionMessageLimit() + 72)
+  localStorage.setItem(STORAGE_MESSAGES, JSON.stringify(safe.slice(-storageLimit)))
 }
 
 function apiUrl(path: string): string {
