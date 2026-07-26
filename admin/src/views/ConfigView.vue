@@ -63,6 +63,9 @@ const config = ref<GatewayConfig>({
   hisense_api_key: '',
   hisense_protocol: '',
   wake_welcome_message: '',
+  weather_city: '',
+  qweather_api_key: '',
+  qweather_api_host: '',
   supabase_url: '',
   supabase_key: '',
   max_client_messages: 75,
@@ -299,6 +302,8 @@ async function doSave() {
       hisense_api_key: config.value.hisense_api_key,
       hisense_protocol: config.value.hisense_protocol,
       calendar_api_key: config.value.calendar_api_key,
+      weather_city: config.value.weather_city,
+      qweather_api_host: config.value.qweather_api_host,
       supabase_url: config.value.supabase_url,
       max_client_messages: config.value.max_client_messages || null,
       enable_cold_start: config.value.enable_cold_start,
@@ -316,6 +321,9 @@ async function doSave() {
       room_newspaper_llm_protocol: config.value.room_newspaper_llm_protocol,
     }
     if (config.value.supabase_key?.trim()) body.supabase_key = config.value.supabase_key.trim()
+    if (config.value.qweather_api_key?.trim()) {
+      body.qweather_api_key = config.value.qweather_api_key.trim()
+    }
     if (config.value.room_newspaper_llm_api_key?.trim()) {
       body.room_newspaper_llm_api_key = config.value.room_newspaper_llm_api_key.trim()
     }
@@ -780,6 +788,28 @@ async function copyColdHeader(sessionTag: string) {
               :placeholder="config.room_newspaper_llm_api_key_configured ? '已配置；留空保持不变' : '留空继承全局 Key'"
             />
           </NFormItem>
+        </NForm>
+      </NCard>
+
+      <NCard title="天气" size="small">
+        <NForm label-placement="top">
+          <NFormItem label="城市">
+            <NInput v-model:value="config.weather_city" placeholder="邵阳" />
+          </NFormItem>
+          <NFormItem label="和风 API Key">
+            <NInput
+              v-model:value="config.qweather_api_key"
+              type="password"
+              show-password-on="click"
+              :placeholder="config.qweather_api_key_configured ? '已配置；留空保持不变' : '留空则天气功能关闭'"
+            />
+          </NFormItem>
+          <NFormItem label="和风 API Host">
+            <NInput v-model:value="config.qweather_api_host" placeholder="abcxyz.qweatherapi.com（账号专属 host）" />
+          </NFormItem>
+          <div class="provider-order-hint">
+            Key 或 Host 未配置、上游失败时，状态后缀与 /api/gateway/weather 的天气段自动省略，不影响其他功能。
+          </div>
         </NForm>
       </NCard>
 

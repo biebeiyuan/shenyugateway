@@ -35,6 +35,11 @@ export interface GatewayConfig {
   calendar_protocol?: string
   calendar_model?: string
   wake_welcome_message?: string
+  // weather (status suffix / /api/gateway/weather)
+  weather_city?: string
+  qweather_api_key?: string
+  qweather_api_key_configured?: boolean
+  qweather_api_host?: string
   // mem notes
   inject_inline_memory_prompt?: boolean
   enable_inline_memory_capture?: boolean

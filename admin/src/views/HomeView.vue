@@ -1,15 +1,11 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRouter } from 'vue-router'
+import { companionDay } from '@/utils/days'
 
 const router = useRouter()
 
-const START_DATE = new Date('2026-03-07')
-const daysTogether = computed(() => {
-  const now = new Date()
-  const diff = now.getTime() - START_DATE.getTime()
-  return Math.floor(diff / (1000 * 60 * 60 * 24)) + 1
-})
+const daysTogether = computed(() => companionDay())
 
 const modules = [
   { icon: '♡', title: '档案', desc: '我们说过的每一句话', path: '/archive', size: 'full' },
