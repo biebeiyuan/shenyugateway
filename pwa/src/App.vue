@@ -1058,10 +1058,11 @@ function backToProcessSummary() {
 
 function statusSpriteMode(message: UiMessage): SpriteMode {
   const hasActiveTool = traceRows(message).some((event) => event.phase === 'tool_start' || event.ok === undefined)
-  if (hasActiveTool) return 'tool'
+  if (hasActiveTool) return 'shimmer'
   if (message.thinking && !message.content) return 'thinking'
   if (message.content) return 'writing'
-  return 'entrance'
+  // ChatNest plays entrance once and then settles into its slower tickle loop.
+  return 'tickle'
 }
 
 function statusSpriteMarkup(message: UiMessage): string {
@@ -1075,6 +1076,7 @@ function statusSpriteStyle(message: UiMessage): Record<string, string> {
     '--sprite-duration': `${sprite.speed * sprite.frameCount}ms`,
     '--sprite-frames': String(sprite.frameCount),
     '--sprite-offset': `${lastFrameOffset}%`,
+    '--sprite-iterations': sprite.loop ? 'infinite' : '1',
   }
 }
 

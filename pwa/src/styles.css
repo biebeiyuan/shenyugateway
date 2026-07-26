@@ -175,7 +175,7 @@ button:disabled { cursor: default; }
 .process-copy { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", system-ui, sans-serif; }
 .assistant-trail { display: block; width: 26px; height: 26px; margin-top: 13px; color: var(--accent); }
 .assistant-sprite-viewport { display: block; width: 100%; height: 100%; overflow: hidden; }
-.assistant-sprite-track { display: block; width: 100%; line-height: 0; animation: chatnest-sprite var(--sprite-duration) steps(var(--sprite-frames), jump-none) infinite; will-change: transform; }
+.assistant-sprite-track { display: block; width: 100%; line-height: 0; animation-name: chatnest-sprite; animation-duration: var(--sprite-duration); animation-timing-function: steps(var(--sprite-frames), jump-none); animation-iteration-count: var(--sprite-iterations); animation-fill-mode: both; will-change: transform; }
 .assistant-sprite-track svg { display: block; width: 100%; height: auto; fill: currentColor; }
 @keyframes chatnest-sprite { to { transform: translateY(var(--sprite-offset)); } }
 .message-error { margin-top: 10px; padding: 9px 11px; border-radius: 10px; color: #ef4b45; background: rgba(239, 75, 69, .1); font-size: 13px; line-height: 1.5; }
