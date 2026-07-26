@@ -362,7 +362,6 @@ class FakeToolService:
         limit: int = 10,
         state="all",
         order="desc",
-        scope="auto",
         date=None,
         date_from=None,
         date_to=None,
@@ -376,7 +375,6 @@ class FakeToolService:
                 "limit": limit,
                 "state": state,
                 "order": order,
-                "scope": scope,
                 "date": date,
                 "date_from": date_from,
                 "date_to": date_to,
@@ -384,7 +382,7 @@ class FakeToolService:
                 "created_to": created_to,
             }
         )
-        return {"ok": True, "limit": limit, "scope": scope}
+        return {"ok": True, "limit": limit}
 
     async def last_seen(self):
         self.calls.append({"tool": "shenyu_last_seen"})
@@ -499,7 +497,7 @@ class FakeToolService:
         )
         return {"ok": True, "limit": limit}
 
-    async def notebook_list(self, type_filter=None, status="active", limit: int = 10, tag=None, scope=None):
+    async def notebook_list(self, type_filter=None, status="active", limit: int = 10, tag=None):
         self.calls.append(
             {
                 "tool": "shenyu_notebook_list",
@@ -507,12 +505,11 @@ class FakeToolService:
                 "status": status,
                 "limit": limit,
                 "tag": tag,
-                "scope": scope,
             }
         )
         return {"ok": True, "limit": limit}
 
-    async def notebook_write(self, type_=None, content="", tags=None, metadata=None, session_tag=None, scope=None):
+    async def notebook_write(self, type_=None, content="", tags=None, metadata=None, session_tag=None):
         self.calls.append(
             {
                 "tool": "shenyu_notebook_write",
@@ -521,7 +518,6 @@ class FakeToolService:
                 "tags": tags,
                 "metadata": metadata,
                 "session_tag": session_tag,
-                "scope": scope,
             }
         )
         return {"ok": True, "content": content}
@@ -676,7 +672,6 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "limit": 5,
             "state": "pending",
             "order": "asc",
-            "scope": "normal",
             "date": "2026-06-03",
             "date_from": "2026-06-01",
             "date_to": "2026-06-03",
@@ -727,15 +722,13 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "type": "handoff",
             "status": "all",
             "limit": 4,
-            "tag": "hisense",
-            "scope": "handoff",
+            "tag": "handoff",
         },
         "shenyu_notebook_write": {
             "type": "note",
             "content": "待办",
-            "tags": ["hisense"],
+            "tags": ["release"],
             "metadata": {"source": "test"},
-            "scope": "hisense",
         },
         "shenyu_notebook_update": {
             "id": "nb-1",
@@ -906,7 +899,6 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "limit": 5,
             "state": "pending",
             "order": "asc",
-            "scope": "normal",
             "date": "2026-06-03",
             "date_from": "2026-06-01",
             "date_to": "2026-06-03",
@@ -982,17 +974,15 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "type_filter": "handoff",
             "status": "all",
             "limit": 4,
-            "tag": "hisense",
-            "scope": "handoff",
+            "tag": "handoff",
         },
         "shenyu_notebook_write": {
             "tool": "shenyu_notebook_write",
             "type": "note",
             "content": "待办",
-            "tags": ["hisense"],
+            "tags": ["release"],
             "metadata": {"source": "test"},
             "session_tag": "default",
-            "scope": "hisense",
         },
         "shenyu_notebook_update": {
             "tool": "shenyu_notebook_update",
@@ -1188,7 +1178,7 @@ def test_execute_gateway_tool_accepts_action_alias_and_adds_shenyu_prefix():
     result = asyncio.run(
         execute_gateway_tool(
             "shenyu_gateway_tool",
-            {"action": "notebook_list", "params": {"scope": "hisense", "limit": 4}},
+            {"action": "notebook_list", "params": {"tag": "handoff", "limit": 4}},
             session_tag="default",
             cfg=_cfg(),
             service=service,
@@ -1202,8 +1192,7 @@ def test_execute_gateway_tool_accepts_action_alias_and_adds_shenyu_prefix():
             "type_filter": None,
             "status": "active",
             "limit": 4,
-            "tag": None,
-            "scope": "hisense",
+            "tag": "handoff",
         }
     ]
 
@@ -1470,7 +1459,7 @@ def test_execute_gateway_tool_accepts_broker_params_json_string_for_notebook_wri
             "shenyu_gateway_tool",
             {
                 "tool": "shenyu_notebook_write",
-                "params": "{\"content\":\"给海信那边留一句。\",\"scope\":\"hisense\",\"tags\":[\"handoff\"]}",
+                "params": "{\"content\":\"留一句待办。\",\"tags\":[\"handoff\"]}",
             },
             session_tag="5.29",
             cfg=_cfg(),
@@ -1478,16 +1467,15 @@ def test_execute_gateway_tool_accepts_broker_params_json_string_for_notebook_wri
         )
     )
 
-    assert result == {"ok": True, "content": "给海信那边留一句。"}
+    assert result == {"ok": True, "content": "留一句待办。"}
     assert service.calls == [
         {
             "tool": "shenyu_notebook_write",
             "type": None,
-            "content": "给海信那边留一句。",
+            "content": "留一句待办。",
             "tags": ["handoff"],
             "metadata": None,
             "session_tag": "5.29",
-            "scope": "hisense",
         }
     ]
 
@@ -1934,7 +1922,7 @@ def test_execute_bulk_mem_note_tool_ignores_source_status_argument():
     ]
 
 
-def test_execute_gateway_tool_routes_notebook_scope_arguments():
+def test_execute_gateway_tool_routes_notebook_arguments():
     service = FakeToolService()
 
     write_result = asyncio.run(
@@ -1943,8 +1931,7 @@ def test_execute_gateway_tool_routes_notebook_scope_arguments():
             {
                 "tool": "shenyu_notebook_write",
                 "arguments": {
-                    "content": "给海信那边留一条交接。",
-                    "scope": "handoff",
+                    "content": "留一条交接。",
                     "tags": ["release"],
                 },
             },
@@ -1958,7 +1945,7 @@ def test_execute_gateway_tool_routes_notebook_scope_arguments():
             "shenyu_gateway_tool",
             {
                 "tool": "shenyu_notebook_list",
-                "arguments": {"scope": "hisense", "limit": 4},
+                "arguments": {"tag": "handoff", "limit": 4},
             },
             session_tag="5.29",
             cfg=_cfg(),
@@ -1966,25 +1953,23 @@ def test_execute_gateway_tool_routes_notebook_scope_arguments():
         )
     )
 
-    assert write_result == {"ok": True, "content": "给海信那边留一条交接。"}
+    assert write_result == {"ok": True, "content": "留一条交接。"}
     assert list_result == {"ok": True, "limit": 4}
     assert service.calls[-2:] == [
         {
             "tool": "shenyu_notebook_write",
             "type": None,
-            "content": "给海信那边留一条交接。",
+            "content": "留一条交接。",
             "tags": ["release"],
             "metadata": None,
             "session_tag": "5.29",
-            "scope": "handoff",
         },
         {
             "tool": "shenyu_notebook_list",
             "type_filter": None,
             "status": "active",
             "limit": 4,
-            "tag": None,
-            "scope": "hisense",
+            "tag": "handoff",
         },
     ]
 

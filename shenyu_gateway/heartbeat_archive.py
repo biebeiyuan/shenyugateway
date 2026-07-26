@@ -2,12 +2,12 @@ from __future__ import annotations
 
 """Heartbeat disaster-recovery backup into Supabase.
 
-SQLite heartbeat pools stay the live read path. This service copies rows into
-the Supabase `shenyu_heartbeat_archive` table after a settle window, so manual
-cleanup (re-roll duplicates, runaway heartbeats) done in SQLite before the
-window closes never reaches the archive. Optional deletion reconciliation is
-kept behind an explicit production guard because it treats one SQLite store as
-the authority for remote archive visibility.
+The SQLite heartbeat pool stays the live read path. This service copies rows
+into the Supabase `shenyu_heartbeat_archive` table after a settle window, so
+manual cleanup (re-roll duplicates, runaway heartbeats) done in SQLite before
+the window closes never reaches the archive. Optional deletion reconciliation
+is kept behind an explicit production guard because it treats one SQLite store
+as the authority for remote archive visibility.
 """
 
 from typing import Any, Optional
@@ -16,7 +16,9 @@ from .runtime import iso_now, logger
 
 ARCHIVE_TABLE = "shenyu_heartbeat_archive"
 
-_SCOPES = (("normal", False), ("hisense", True))
+# The archive table keeps a scope column (CHECK constraint admits it); only the
+# normal pool is written since the hisense pool was removed.
+_SCOPE = "normal"
 
 
 class HeartbeatArchiveService:
@@ -38,29 +40,27 @@ class HeartbeatArchiveService:
         result: dict[str, Any] = {"archived": 0, "soft_deleted": 0, "errors": []}
         if not self.supabase or not self.store:
             return result
-        for scope, hisense in _SCOPES:
-            try:
-                result["archived"] += await self._sync_settled(scope, hisense)
-            except Exception as exc:
-                result["errors"].append(f"sync {scope}: {exc}")
-            try:
-                result["soft_deleted"] += await self._reconcile_deleted(scope, hisense)
-            except Exception as exc:
-                result["errors"].append(f"reconcile {scope}: {exc}")
+        try:
+            result["archived"] += await self._sync_settled()
+        except Exception as exc:
+            result["errors"].append(f"sync {_SCOPE}: {exc}")
+        try:
+            result["soft_deleted"] += await self._reconcile_deleted()
+        except Exception as exc:
+            result["errors"].append(f"reconcile {_SCOPE}: {exc}")
         return result
 
-    async def _sync_settled(self, scope: str, hisense: bool) -> int:
+    async def _sync_settled(self) -> int:
         rows = self.store.get_settled_unsynced_heartbeats(
             settle_hours=self._settle_hours(),
             limit=self._batch_size(),
-            hisense=hisense,
         )
         if not rows:
             return 0
         payload = [
             {
                 "id": row["id"],
-                "scope": scope,
+                "scope": _SCOPE,
                 "session_id": row.get("session_id"),
                 "content": row.get("content") or "",
                 "turn_number": int(row.get("turn_number") or 0),
@@ -72,24 +72,24 @@ class HeartbeatArchiveService:
         ]
         if payload:
             await self.supabase.upsert(ARCHIVE_TABLE, payload, on_conflict="id")
-        self.store.mark_heartbeats_synced([row["id"] for row in rows], hisense=hisense)
+        self.store.mark_heartbeats_synced([row["id"] for row in rows])
         return len(payload)
 
-    async def _reconcile_deleted(self, scope: str, hisense: bool) -> int:
+    async def _reconcile_deleted(self) -> int:
         """Soft-delete archive rows whose SQLite source row was removed after archiving."""
         if not self._reconcile_deletions_enabled():
             return 0
         archived = await self.supabase.query(
             ARCHIVE_TABLE,
-            params={"select": "id", "scope": f"eq.{scope}", "deleted_at": "is.null", "limit": "10000"},
+            params={"select": "id", "scope": f"eq.{_SCOPE}", "deleted_at": "is.null", "limit": "10000"},
         )
         archived_ids = {str(row.get("id")) for row in archived or [] if row.get("id")}
         if not archived_ids:
             return 0
-        live_ids = self.store.get_all_heartbeat_ids(hisense=hisense)
+        live_ids = self.store.get_all_heartbeat_ids()
         if not live_ids:
             raise RuntimeError(
-                f"refusing to reconcile {len(archived_ids)} {scope} archive rows "
+                f"refusing to reconcile {len(archived_ids)} {_SCOPE} archive rows "
                 "against an empty local heartbeat pool"
             )
         missing = sorted(archived_ids - live_ids)

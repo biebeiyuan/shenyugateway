@@ -273,12 +273,6 @@ test('logs page exposes per-round cache structure', async ({ page }) => {
   })
 })
 
-test('Hisense page loads', async ({ page }) => {
-  await openAdminRoute(page, '/hisense', async () => {
-    await expect(page.getByTestId('page-hisense')).toBeVisible()
-  })
-})
-
 test('archive page loads', async ({ page }) => {
   await openAdminRoute(page, '/archive', async () => {
     await expect(page.getByTestId('page-archive')).toBeVisible()

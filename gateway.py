@@ -34,11 +34,9 @@ from shenyu_gateway.context_snapshots import write_completion_context_snapshot a
 from shenyu_gateway.gateway_tools import (
     GatewayToolService,
     configure_gateway_tools,
-    _is_hisense_client as _shared_is_hisense_client,
 )
 from shenyu_gateway.heartbeat_archive import HeartbeatArchiveService, heartbeat_archive_worker
 from shenyu_gateway.gateway_admin_routes import GatewayAdminRouteDeps, build_gateway_admin_router
-from shenyu_gateway.hisense_routes import HisenseRouteDeps, build_hisense_router
 from shenyu_gateway.recall import RecallIndexService
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
@@ -52,7 +50,6 @@ from shenyu_gateway.response_capture import (
     store_heartbeat,
 )
 from shenyu_gateway.resident_profile import (
-    HISENSE_HOME_NOTE,
     MEMORY_PRACTICE_PROFILE,
     ORIGIN_BOOK_PROFILE,
 )
@@ -97,7 +94,7 @@ from shenyu_gateway.upstream_client import (
     connect_error_detail as _connect_error_detail_impl,
     detect_protocol_for as _detect_protocol_for,
     chat_url_for as _chat_url_for,
-    upstream_for_hisense as _upstream_for_hisense_impl,
+    resolve_upstream as _resolve_upstream_impl,
     mapped_model_name as _mapped_model_name_impl,
     make_upstream_http_client as _make_upstream_http_client_impl,
     fetch_upstream_models as _fetch_upstream_models_impl,
@@ -215,7 +212,7 @@ def _chat_pipeline(store: GatewayStore) -> ChatPipeline:
         run_internal_tool_loop_stream=_run_internal_tool_loop_stream,
         stream_chat=_stream_chat,
         nonstream_chat=_nonstream_chat,
-        upstream_for_hisense=_upstream_for_hisense,
+        resolve_upstream=_resolve_upstream,
         mapped_model_name=_mapped_model_name,
         private_capture_fallback_text=_private_capture_fallback_text,
         private_capture_kinds=_private_capture_kinds,
@@ -246,7 +243,6 @@ def _context_builder(store: GatewayStore, sessions: SessionManager, tools: Gatew
         cfg=cfg,
         supabase_client=supabase_client,
         stable_charter_block=_stable_charter_block,
-        is_hisense_client=_is_hisense_client,
     )
 
 
@@ -380,8 +376,8 @@ from shenyu_gateway.middleware import register_middlewares
 register_middlewares(app, cfg)
 
 
-def _upstream_for_hisense(is_hisense=False):
-    return _upstream_for_hisense_impl(cfg, is_hisense)
+def _resolve_upstream():
+    return _resolve_upstream_impl(cfg)
 
 
 def _mapped_model_name(model_name):
@@ -397,21 +393,11 @@ def _session_tag_from_request(request: Request, client_name: Optional[str] = Non
     header = request.headers.get("X-Shenyu-Session-Tag") or request.headers.get("X-Session-Tag")
     if header:
         return header.strip()
-    if _is_hisense_client(client_name):
-        return "hisense"
     return "default"
 
 
 def _client_name_from_request(request: Request) -> str:
     return (request.headers.get("X-Shenyu-Client") or request.headers.get("X-Client-Name") or "unknown-client").strip()
-
-
-def _is_hisense_client(client_name: Optional[str]) -> bool:
-    return _shared_is_hisense_client(client_name, runtime_config=cfg)
-
-
-def _is_hisense_session(session: Optional[dict]) -> bool:
-    return bool(session) and _is_hisense_client(session.get("client_name"))
 
 
 def _stable_charter_block() -> str:
@@ -428,7 +414,6 @@ def _stable_charter_block() -> str:
         [
             MEMORY_PRACTICE_PROFILE,
             ORIGIN_BOOK_PROFILE,
-            HISENSE_HOME_NOTE,
         ]
     )
     return "\n\n".join(block.rstrip() for block in blocks if block.strip()) + "\n"
@@ -499,8 +484,7 @@ def _aggregate_cache_usage(usages: list[dict], protocol: str = "") -> dict:
 
 
 async def _fetch_upstream_models(request):
-    client_name = _client_name_from_request(request)
-    upstream = _upstream_for_hisense(_is_hisense_client(client_name))
+    upstream = _resolve_upstream()
     return await _fetch_upstream_models_impl(request, cfg=cfg, upstream=upstream)
 
 
@@ -529,8 +513,7 @@ async def _prepare_messages(request: Request, body: ChatRequest) -> tuple[list[d
             context_builder_factory=_context_builder,
             client_name_from_request=_client_name_from_request,
             session_tag_from_request=_session_tag_from_request,
-            is_hisense_client=_is_hisense_client,
-            upstream_for_hisense=_upstream_for_hisense,
+            resolve_upstream=_resolve_upstream,
             maybe_prepare_cold_start_snapshot=_maybe_prepare_cold_start_snapshot,
             prune_runtime_state=_prune_runtime_state,
         ),
@@ -555,7 +538,6 @@ def _store_heartbeat(session_id: str, session: dict, content: str):
         session_id=session_id,
         session=session,
         content=content,
-        is_hisense_session=_is_hisense_session,
     )
 
 
@@ -686,10 +668,9 @@ app.include_router(
             get_session_store=lambda: session_store,
             require_session_store=_require_session_store,
             context_builder=_context_builder,
-            upstream_for_hisense=_upstream_for_hisense,
+            resolve_upstream=_resolve_upstream,
             prune_runtime_state=_prune_runtime_state,
             cold_start_idle_minutes=_cold_start_idle_minutes,
-            is_hisense_session=_is_hisense_session,
             now=_now,
             request_logs=_request_logs,
         )
@@ -700,17 +681,6 @@ app.include_router(
         CalendarRouteDeps(
             require_session_store=_require_session_store,
             calendar_service=_calendar_service,
-        )
-    )
-)
-app.include_router(
-    build_hisense_router(
-        HisenseRouteDeps(
-            cfg=cfg,
-            get_supabase_client=lambda: supabase_client,
-            require_session_store=_require_session_store,
-            context_builder=_context_builder,
-            is_hisense_session=_is_hisense_session,
         )
     )
 )
@@ -769,8 +739,7 @@ async def chat_completions(request: Request, body: ChatRequest):
 
 @app.get("/health")
 async def health():
-    default_upstream = _upstream_for_hisense(False)
-    hisense_upstream = _upstream_for_hisense(True)
+    default_upstream = _resolve_upstream()
     return {
         "status": "ok",
         "supabase": supabase_client is not None,
@@ -779,10 +748,6 @@ async def health():
         "upstream_chat_url": default_upstream["chat_url"],
         "upstream_host": urlsplit(default_upstream["chat_url"] or "").hostname or "",
         "protocol": default_upstream["protocol"],
-        "hisense_upstream": hisense_upstream["base_url"],
-        "hisense_upstream_chat_url": hisense_upstream["chat_url"],
-        "hisense_upstream_scope": hisense_upstream["scope"],
-        "hisense_protocol": hisense_upstream["protocol"],
         "upstream_proxy_configured": bool(cfg.upstream_proxy),
         "upstream_trust_env": cfg.upstream_trust_env,
         "enable_openai_cache_control": cfg.enable_openai_cache_control,

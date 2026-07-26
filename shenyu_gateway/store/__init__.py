@@ -2,7 +2,6 @@ from __future__ import annotations
 
 from ._base import (
     HEARTBEAT_ENTRIES_TABLE,
-    HISENSE_HEARTBEAT_TABLE,
     NEXT_REQUEST_COLD_START_TAG,
     BaseStoreMixin,
 )
@@ -40,5 +39,4 @@ __all__ = [
     "GatewayStore",
     "NEXT_REQUEST_COLD_START_TAG",
     "HEARTBEAT_ENTRIES_TABLE",
-    "HISENSE_HEARTBEAT_TABLE",
 ]

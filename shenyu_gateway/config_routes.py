@@ -42,10 +42,6 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "anthropic_default_max_tokens": cfg.anthropic_default_max_tokens,
         "upstream_extra_body": cfg.upstream_extra_body,
         "upstream_passthrough_headers": cfg.upstream_passthrough_headers,
-        "hisense_upstream_url": cfg.hisense_upstream_url,
-        "hisense_api_key": cfg.hisense_api_key,
-        "hisense_api_key_configured": bool(cfg.hisense_api_key),
-        "hisense_protocol": cfg.hisense_protocol,
         "calendar_upstream_url": cfg.calendar_upstream_url,
         "calendar_api_key": cfg.calendar_api_key,
         "calendar_api_key_configured": bool(cfg.calendar_api_key),
@@ -136,9 +132,6 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "mem_note_dedupe_turns": cfg.mem_note_dedupe_turns,
         "mem_note_soft_cooldown_hours": cfg.mem_note_soft_cooldown_hours,
         "mem_note_default_cooldown_hours": cfg.mem_note_default_cooldown_hours,
-        "hisense_client_name": cfg.hisense_client_name,
-        "hisense_heartbeat_limit": cfg.hisense_heartbeat_limit,
-        "hisense_notebook_limit": cfg.hisense_notebook_limit,
     }
     return result
 
@@ -177,9 +170,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "anthropic_default_max_tokens": "ANTHROPIC_DEFAULT_MAX_TOKENS",
             "upstream_extra_body": "UPSTREAM_EXTRA_BODY",
             "upstream_passthrough_headers": "UPSTREAM_PASSTHROUGH_HEADERS",
-            "hisense_upstream_url": "HISENSE_UPSTREAM_URL",
-            "hisense_api_key": "HISENSE_API_KEY",
-            "hisense_protocol": "HISENSE_PROTOCOL",
             "calendar_upstream_url": "CALENDAR_UPSTREAM_URL",
             "calendar_api_key": "CALENDAR_API_KEY",
             "calendar_protocol": "CALENDAR_PROTOCOL",
@@ -266,9 +256,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "mem_note_dedupe_turns": "MEM_NOTE_DEDUPE_TURNS",
             "mem_note_soft_cooldown_hours": "MEM_NOTE_SOFT_COOLDOWN_HOURS",
             "mem_note_default_cooldown_hours": "MEM_NOTE_DEFAULT_COOLDOWN_HOURS",
-            "hisense_client_name": "HISENSE_CLIENT_NAME",
-            "hisense_heartbeat_limit": "HISENSE_HEARTBEAT_LIMIT",
-            "hisense_notebook_limit": "HISENSE_NOTEBOOK_LIMIT",
         }
 
         simple_fields = [
@@ -285,9 +272,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "enable_anthropic_auto_thinking",
             "anthropic_auto_thinking_effort",
             "anthropic_default_max_tokens",
-            "hisense_upstream_url",
-            "hisense_api_key",
-            "hisense_protocol",
             "calendar_upstream_url",
             "calendar_api_key",
             "calendar_protocol",
@@ -328,7 +312,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "client_tool_surface",
             "gateway_db_path",
             "gateway_log_full_payloads",
-            "hisense_client_name",
         ]
         if body.clear_wake_welcome_message:
             cfg.wake_welcome_message = ""
@@ -355,7 +338,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                         continue
                 if field in {
                     "upstream_url",
-                    "hisense_upstream_url",
                     "calendar_upstream_url",
                     "star_scene_llm_url",
                     "room_newspaper_llm_url",
@@ -365,7 +347,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                     value = deps.validate_http_url(env_names[field], value, allow_empty=True)
                 elif field in {
                     "upstream_protocol",
-                    "hisense_protocol",
                     "calendar_protocol",
                     "star_scene_llm_protocol",
                     "room_newspaper_llm_protocol",
@@ -373,7 +354,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                     value = deps.validate_protocol(
                         env_names[field],
                         value,
-                        allow_empty=(field in {"hisense_protocol", "star_scene_llm_protocol", "room_newspaper_llm_protocol"}),
+                        allow_empty=(field in {"star_scene_llm_protocol", "room_newspaper_llm_protocol"}),
                     )
                 elif field == "gateway_tool_mode":
                     value = str(value or "").strip().lower()
@@ -646,14 +627,6 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.star_rrf_constant_boost = deps.clamp(float(body.star_rrf_constant_boost), 1.0, 3.0)
             changed.append("star_rrf_constant_boost")
             env_updates[env_names["star_rrf_constant_boost"]] = cfg.star_rrf_constant_boost
-        if body.hisense_heartbeat_limit is not None:
-            cfg.hisense_heartbeat_limit = max(1, min(body.hisense_heartbeat_limit, 30))
-            changed.append("hisense_heartbeat_limit")
-            env_updates[env_names["hisense_heartbeat_limit"]] = cfg.hisense_heartbeat_limit
-        if body.hisense_notebook_limit is not None:
-            cfg.hisense_notebook_limit = max(1, min(body.hisense_notebook_limit, 20))
-            changed.append("hisense_notebook_limit")
-            env_updates[env_names["hisense_notebook_limit"]] = cfg.hisense_notebook_limit
         if body.model_mapping is not None:
             cfg.model_mapping = {
                 str(key).strip(): str(value).strip()

@@ -34,12 +34,10 @@ const clipSaving = ref(false)
 
 const threadOptions = computed(() =>
   threads.value.map((t) => ({
-    label: t.thread === 'main' ? '主聊天' : t.thread === 'hisense' ? '海信' : t.thread,
+    label: t.thread === 'main' ? '主聊天' : t.thread,
     value: t.thread,
   })),
 )
-
-const threadLabel = (key: string) => (key === 'main' ? '主聊天' : key === 'hisense' ? '海信' : key)
 
 function toLocalHHMM(iso: string): string {
   if (!iso) return ''

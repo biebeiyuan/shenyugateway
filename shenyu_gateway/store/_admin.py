@@ -38,7 +38,6 @@ class AdminMixin:
             raw_window_count = conn.execute("SELECT COUNT(*) AS count FROM raw_request_windows").fetchone()
             window_event_count = conn.execute("SELECT COUNT(*) AS count FROM context_window_events").fetchone()
             heartbeat_count = conn.execute("SELECT COUNT(*) AS count FROM heartbeat_entries").fetchone()
-            hisense_heartbeat_count = conn.execute("SELECT COUNT(*) AS count FROM hisense_heartbeat").fetchone()
             pending_count = conn.execute(
                 "SELECT COUNT(*) AS count FROM pending_gateway_tool_turns WHERE consumed_at IS NULL"
             ).fetchone()
@@ -54,7 +53,6 @@ class AdminMixin:
             "raw_request_windows": int(raw_window_count["count"] or 0),
             "context_window_events": int(window_event_count["count"] or 0),
             "heartbeats": int(heartbeat_count["count"] or 0),
-            "hisense_heartbeats": int(hisense_heartbeat_count["count"] or 0),
             "pending_gateway_tool_turns": int(pending_count["count"] or 0),
             "cache_entries": int(cache_count["count"] or 0),
         }
@@ -177,7 +175,6 @@ class AdminMixin:
             "cold_start_snapshots": self.all_cold_start_snapshots(session_id),
             "pending_gateway_tool_turns": self.get_pending_gateway_tool_turns(session_id),
             "heartbeats": self.get_all_heartbeats(session_id),
-            "hisense_heartbeats": self.get_all_heartbeats(session_id, hisense=True),
         }
 
     def filter_unseen_archive_hashes(self, session_tag: str, content_hashes: list[str]) -> set[str]:

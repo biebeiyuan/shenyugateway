@@ -41,9 +41,6 @@ class ConfigUpdate(BaseModel):
     anthropic_default_max_tokens: Optional[int] = Field(default=None, ge=1)
     upstream_extra_body: Optional[dict[str, Any] | str] = None
     upstream_passthrough_headers: Optional[list[str] | str] = None
-    hisense_upstream_url: Optional[str] = None
-    hisense_api_key: Optional[str] = None
-    hisense_protocol: Optional[str] = None
     calendar_upstream_url: Optional[str] = None
     calendar_api_key: Optional[str] = None
     calendar_protocol: Optional[str] = None
@@ -131,9 +128,6 @@ class ConfigUpdate(BaseModel):
     gateway_cold_start_retention: Optional[int] = None
     gateway_request_log_retention: Optional[int] = None
     gateway_log_full_payloads: Optional[bool] = None
-    hisense_client_name: Optional[str] = None
-    hisense_heartbeat_limit: Optional[int] = None
-    hisense_notebook_limit: Optional[int] = None
 
 
 class SessionDeleteRequest(BaseModel):

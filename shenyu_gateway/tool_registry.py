@@ -108,8 +108,8 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   windowsill_list(mood?, limit?)
 
 手边
-  notebook_write(content*, scope?: shared|hisense|handoff)
-  notebook_list(scope?: shared|hisense|handoff, limit?)
+  notebook_write(content*)
+  notebook_list(limit?)
   notebook_update(id*, content?, status?)
 
 来历书
@@ -146,8 +146,8 @@ _BROKER_DAILY_DESCRIPTION = """\
   windowsill_list(mood?, limit?)
 
 手边
-  notebook_write(content*, scope?: shared|hisense|handoff)
-  notebook_list(scope?: shared|hisense|handoff, limit?)
+  notebook_write(content*)
+  notebook_list(limit?)
 
 来历书
   books(action: read|write|annotate, book?: identity|home|origin, book_id/title?, content?, expected_revision?)"""
@@ -704,7 +704,6 @@ async def _handle_read_heartbeat(ctx: ToolContext) -> dict:
         limit=_int_arg(ctx.arguments, "limit", 10),
         state=ctx.arguments.get("state", "all"),
         order=ctx.arguments.get("order", "desc"),
-        scope=ctx.arguments.get("scope", "auto"),
         date=ctx.arguments.get("date"),
         date_from=ctx.arguments.get("date_from"),
         date_to=ctx.arguments.get("date_to"),
@@ -852,7 +851,6 @@ async def _handle_notebook_list(ctx: ToolContext) -> dict:
         status=ctx.arguments.get("status", "active"),
         limit=_int_arg(ctx.arguments, "limit", 10),
         tag=ctx.arguments.get("tag"),
-        scope=ctx.arguments.get("scope"),
     )
 
 
@@ -881,7 +879,6 @@ async def _handle_notebook_write(ctx: ToolContext) -> dict:
         tags=ctx.arguments.get("tags"),
         metadata=ctx.arguments.get("metadata"),
         session_tag=ctx.arguments.get("session_tag") or ctx.session_tag,
-        scope=ctx.arguments.get("scope"),
     )
 
 

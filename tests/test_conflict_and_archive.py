@@ -189,20 +189,20 @@ def test_chat_archive_dedup():
                 {"role": "assistant", "content": "那就早点休息，我陪着你"},
             ]
             result1 = await service.archive_window(
-                session_tag="default", client_name="operit", messages=window1, is_hisense=False
+                session_tag="default", client_name="operit", messages=window1
             )
             assert result1["archived"] == 2, result1
 
             # same window resent (sliding window) plus one new message
             window2 = window1 + [{"role": "user", "content": "嗯，晚安"}]
             result2 = await service.archive_window(
-                session_tag="default", client_name="operit", messages=window2, is_hisense=False
+                session_tag="default", client_name="operit", messages=window2
             )
             assert result2["archived"] == 1, result2
 
             # third resend archives nothing
             result3 = await service.archive_window(
-                session_tag="default", client_name="operit", messages=window2, is_hisense=False
+                session_tag="default", client_name="operit", messages=window2
             )
             assert result3["archived"] == 0, result3
 
@@ -228,7 +228,7 @@ def test_chat_archive_uses_client_attachment_time():
                 {"role": "assistant", "content": "我在。"},
             ]
             result = await service.archive_window(
-                session_tag="5.15", client_name="operit", messages=window, is_hisense=False
+                session_tag="5.15", client_name="operit", messages=window
             )
             assert result["archived"] == 2, result
             rows = supabase.tables["shenyu_chat_archive"]
@@ -251,7 +251,6 @@ def test_chat_archive_backfill_uses_client_attachment_time():
             {"role": "assistant", "content": "我在。"},
         ],
         created_at="2026-06-14T10:00:00+00:00",
-        is_hisense=False,
         existing=set(),
     )
     assert [row["event_at"] for row in rows] == [
@@ -272,7 +271,7 @@ def test_chat_archive_skips_numbered_transcript_messages():
                 {"role": "assistant", "content": "#2: 看到了。"},
             ]
             result = await service.archive_window(
-                session_tag="5.15", client_name="operit", messages=window, is_hisense=False
+                session_tag="5.15", client_name="operit", messages=window
             )
             assert result["archived"] == 0, result
             assert supabase.tables.get("shenyu_chat_archive", []) == []
@@ -295,7 +294,7 @@ def test_chat_archive_strips_pwa_status_suffix_from_content():
                 {"role": "assistant", "content": "晚安，圆圆。"},
             ]
             result = await service.archive_window(
-                session_tag="5.15", client_name="shenyu-pwa", messages=window, is_hisense=False
+                session_tag="5.15", client_name="shenyu-pwa", messages=window
             )
             assert result["archived"] == 2, result
             rows = supabase.tables["shenyu_chat_archive"]
@@ -307,10 +306,9 @@ def test_chat_archive_strips_pwa_status_suffix_from_content():
 
 
 def test_derive_thread():
-    assert derive_thread("default", False) == "main"
-    assert derive_thread("", False) == "main"
-    assert derive_thread("tech", False) == "tech"
-    assert derive_thread("anything", True) == "hisense"
+    assert derive_thread("default") == "main"
+    assert derive_thread("") == "main"
+    assert derive_thread("tech") == "tech"
 
 
 def test_archive_routes_page_threads_and_days():

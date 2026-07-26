@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from typing import Any, Callable
+from typing import Any
 
 from .runtime import logger
 
@@ -106,19 +106,15 @@ def store_heartbeat(
     session_id: str,
     session: dict,
     content: str,
-    is_hisense_session: Callable[[dict], bool],
 ) -> bool:
     heartbeat_content = (content or "").strip()
     if not heartbeat_content or store is None:
         return False
     msg_count = int(session.get("message_count") or 0)
-    is_hisense = is_hisense_session(session)
     store.append_heartbeat(
         session_id,
         heartbeat_content,
         turn_number=msg_count,
-        hisense=is_hisense,
     )
-    log_tag = "HisenseHeartbeat" if is_hisense else "Heartbeat"
-    logger.info("[%s] 写入心跳 (%d chars) session=%s", log_tag, len(heartbeat_content), session_id[:8])
+    logger.info("[Heartbeat] 写入心跳 (%d chars) session=%s", len(heartbeat_content), session_id[:8])
     return True

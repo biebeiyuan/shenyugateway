@@ -85,9 +85,7 @@ def _looks_like_numbered_transcript(text: str) -> bool:
     return bool(_NUMBERED_TRANSCRIPT_RE.match(stripped))
 
 
-def derive_thread(session_tag: str, is_hisense: bool) -> str:
-    if is_hisense:
-        return "hisense"
+def derive_thread(session_tag: str) -> str:
     tag = (session_tag or "").strip()
     if not tag or tag in {"default", "main"}:
         return "main"
@@ -113,14 +111,13 @@ class ChatArchiveService:
         session_tag: str,
         client_name: Optional[str],
         messages: list[dict],
-        is_hisense: bool,
         event_at: Optional[str] = None,
     ) -> dict[str, Any]:
         """Archive unseen user/assistant messages from one client window."""
         if not self.enabled():
             return {"archived": 0}
 
-        thread = derive_thread(session_tag, is_hisense)
+        thread = derive_thread(session_tag)
         candidates: list[dict] = []
         latest_client_event_at = event_at
         for msg in messages or []:

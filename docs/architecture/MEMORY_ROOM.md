@@ -257,7 +257,7 @@ Maintenance notes:
 
 ## Room Mode
 
-Room mode is the third context path (alongside normal and hisense). When a free-time auto-wake trigger fires, the gateway renders a spatial room by the sea where Shenyu wakes up and chooses what to do through "doors" — tools presented as places in a room, not a menu.
+Room mode is the second context path (alongside normal chat). When a free-time auto-wake trigger fires, the gateway renders a spatial room by the sea where Shenyu wakes up and chooses what to do through "doors" — tools presented as places in a room, not a menu.
 
 Core philosophy: **room mode offers doors (choices), normal chat injects content (decisions made by algorithm).** Charge only adjusts which doors are visible and sort order, never decides for Shenyu.
 
@@ -273,7 +273,7 @@ Core and bridge files, separated by concern:
 
 | File | Responsibility |
 |------|---------------|
-| `shenyu_gateway/prepare_messages.py` | Detects the Room trigger and selects the Room package instead of the normal/Hisense context path. |
+| `shenyu_gateway/prepare_messages.py` | Detects the Room trigger and selects the Room package instead of the normal context path. |
 | `shenyu_gateway/context_builder.py` | Assembles the complete Room package: charge signals, door state, scene layers, conditional bookshelf overview, and visible tool schemas. |
 | `shenyu_gateway/room_text.py` | All room copy: charter, scenes, doors, trace phrases. Change text here only. |
 | `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |

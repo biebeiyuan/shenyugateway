@@ -12,7 +12,6 @@ from ..runtime import dt_to_iso, iso_now, json_dumps, now, parse_ts
 
 
 HEARTBEAT_ENTRIES_TABLE = "heartbeat_entries"
-HISENSE_HEARTBEAT_TABLE = "hisense_heartbeat"
 NEXT_REQUEST_COLD_START_TAG = "__next_request__"
 
 
@@ -81,16 +80,6 @@ class BaseStoreMixin:
                 );
 
                 CREATE TABLE IF NOT EXISTS heartbeat_entries (
-                    id TEXT PRIMARY KEY,
-                    session_id TEXT NOT NULL,
-                    content TEXT NOT NULL,
-                    turn_number INTEGER NOT NULL DEFAULT 0,
-                    created_at TEXT NOT NULL,
-                    injected_at TEXT,
-                    FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
-                );
-
-                CREATE TABLE IF NOT EXISTS hisense_heartbeat (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
                     content TEXT NOT NULL,
@@ -329,7 +318,6 @@ class BaseStoreMixin:
                 """
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")
-            self._ensure_column(conn, HISENSE_HEARTBEAT_TABLE, "synced_at", "TEXT")
             self._ensure_column(
                 conn,
                 "tool_error_log",

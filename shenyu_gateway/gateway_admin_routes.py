@@ -56,10 +56,9 @@ class GatewayAdminRouteDeps:
     get_session_store: Callable[[], Any]
     require_session_store: Callable[[], Any]
     context_builder: Callable[[Any, SessionManager, GatewayToolService], Any]
-    upstream_for_hisense: Callable[[bool], dict[str, str]]
+    resolve_upstream: Callable[[], dict[str, str]]
     prune_runtime_state: Callable[..., dict[str, int]]
     cold_start_idle_minutes: Callable[[dict], float]
-    is_hisense_session: Callable[[Optional[dict]], bool]
     now: Callable[[], Any]
     request_logs: Any
 
@@ -202,8 +201,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
     @router.get("/api/gateway/debug")
     async def gateway_debug():
         store = deps.require_session_store()
-        default_upstream = deps.upstream_for_hisense(False)
-        hisense_upstream = deps.upstream_for_hisense(True)
+        default_upstream = deps.resolve_upstream()
         tools = gateway_native_tools(cfg)
         logs = list(deps.request_logs)
         latest_log = logs[0] if logs else None
@@ -223,12 +221,6 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                     "chat_url": default_upstream["chat_url"],
                     "protocol": default_upstream["protocol"],
                     "api_key_configured": bool(default_upstream["api_key"]),
-                },
-                "hisense": {
-                    "scope": hisense_upstream["scope"],
-                    "chat_url": hisense_upstream["chat_url"],
-                    "protocol": hisense_upstream["protocol"],
-                    "api_key_configured": bool(hisense_upstream["api_key"]),
                 },
             },
             "tools": {
@@ -736,17 +728,13 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         context_snapshots = store.get_recent_context_snapshots(session["id"], limit=5)
         cold_start = store.latest_cold_start_snapshot(session["id"])
         cold_start_snapshots = store.recent_cold_start_snapshots(session["id"], limit=8)
-        is_hisense = deps.is_hisense_session(session)
         heartbeats = store.read_heartbeats(
             None,
             state="all",
             limit=max(1, min(int(heartbeat_limit or 500), 500)),
             order="desc",
-            hisense=is_hisense,
         )
         stats = store.get_session_stats(session["id"])
-        if is_hisense:
-            stats["heartbeats"] = stats.get("hisense_heartbeats", 0)
         return {
             "session": session,
             "stats": stats,
@@ -756,7 +744,6 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             "cold_start_snapshots": cold_start_snapshots,
             "recent_messages": messages,
             "heartbeats": heartbeats,
-            "hisense_heartbeats": heartbeats if is_hisense else [],
         }
 
     @router.post("/api/gateway/sessions/{session_tag}/heartbeats")
@@ -776,7 +763,6 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             session["id"],
             content,
             turn_number=max(0, int(turn_number or 0)),
-            hisense=deps.is_hisense_session(session),
         )
         return {"ok": True, "heartbeat": item}
 
@@ -792,22 +778,20 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             None,
             heartbeat_ids=body.ids,
             delete_all=body.delete_all,
-            hisense=deps.is_hisense_session(session),
         )
         return {"ok": True, "deleted": deleted}
 
     @router.get("/api/gateway/heartbeats")
     async def list_gateway_heartbeats(limit: int = 500, order: str = "asc", scope: str = "normal"):
         # External contract: home-frontend reads
-        # /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal|hisense.
+        # /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal.
         # Preserve query-token auth, limit/order/scope, and heartbeats[].content/created_at.
+        # Unknown scopes (including the retired "hisense") return an empty list.
         store = deps.require_session_store()
         order_key = "desc" if str(order or "").lower() == "desc" else "asc"
         max_limit = max(1, min(int(limit or 500), 2000))
-        scope_key = (scope or "normal").strip().lower()
-        hisense = scope_key in {"hisense", "海信"}
-        scope_key = "hisense" if hisense else "normal"
-        heartbeats = store.get_all_heartbeats(hisense=hisense)
+        scope_key = (scope or "normal").strip().lower() or "normal"
+        heartbeats = store.get_all_heartbeats() if scope_key == "normal" else []
         if order_key == "desc":
             heartbeats = list(reversed(heartbeats))
         return {

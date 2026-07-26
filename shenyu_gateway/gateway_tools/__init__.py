@@ -17,8 +17,6 @@ from ._runtime import (
     WINDOWSILL_TABLE,
     GatewayToolRuntime,
     _UNSET,
-    _is_hisense_client,
-    _is_hisense_session,
     _runtime,
     configure_gateway_tools,
     get_runtime,

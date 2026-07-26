@@ -59,9 +59,6 @@ const config = ref<GatewayConfig>({
   anthropic_auto_thinking_effort: '',
   upstream_extra_body: {},
   upstream_passthrough_headers: ['x-api-key'],
-  hisense_upstream_url: '',
-  hisense_api_key: '',
-  hisense_protocol: '',
   wake_welcome_message: '',
   weather_city: '',
   qweather_api_key: '',
@@ -299,9 +296,6 @@ async function doSave() {
       anthropic_auto_thinking_effort: config.value.anthropic_auto_thinking_effort || '',
       upstream_extra_body: upstreamExtraBody,
       upstream_passthrough_headers: config.value.upstream_passthrough_headers || [],
-      hisense_upstream_url: config.value.hisense_upstream_url,
-      hisense_api_key: config.value.hisense_api_key,
-      hisense_protocol: config.value.hisense_protocol,
       calendar_api_key: config.value.calendar_api_key,
       weather_city: config.value.weather_city,
       qweather_api_host: config.value.qweather_api_host,
@@ -674,15 +668,6 @@ async function copyColdHeader(sessionTag: string) {
                 <NTag v-for="h in protectedHeaders" :key="h" size="tiny" round>{{ h }}</NTag>
               </div>
             </div>
-            <NFormItem label="海信专用接口地址">
-              <NInput v-model:value="config.hisense_upstream_url" placeholder="留空继承全局上游" />
-            </NFormItem>
-            <NFormItem label="海信专用 API Key">
-              <NInput v-model:value="config.hisense_api_key" type="password" show-password-on="click" placeholder="留空继承全局 Key" />
-            </NFormItem>
-            <NFormItem label="海信专用协议">
-              <NSelect v-model:value="config.hisense_protocol" :options="inheritedProtocolOptions" />
-            </NFormItem>
           </NForm>
         </NSpace>
       </NCard>

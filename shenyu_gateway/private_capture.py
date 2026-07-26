@@ -26,11 +26,6 @@ def mark_context_consumed(meta: dict, *, store: Any):
                 str(session.get("id") or "")[:8],
             )
 
-        hisense_heartbeat_ids = [str(item) for item in package.get("hisense_heartbeat_pending_ids") or [] if item]
-        if hisense_heartbeat_ids:
-            store.mark_heartbeats_injected(heartbeat_ids=hisense_heartbeat_ids, hisense=True)
-            logger.info("[HisenseHeartbeat] 标记 %d 条海信心跳已注入", len(hisense_heartbeat_ids))
-
         cold_start_snapshot = meta.get("cold_start_snapshot")
         bridge_count = int((meta.get("client_message_window") or {}).get("cold_start_bridge_messages") or 0)
         if cold_start_snapshot and bridge_count > 0:

@@ -27,9 +27,7 @@ class FakeSupabaseClient:
 def external_contract_client(monkeypatch, tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     normal_session = store.get_or_create_session("main", "operit")
-    hisense_session = store.get_or_create_session("hisense", "hisense")
     store.append_heartbeat(normal_session["id"], "normal heartbeat")
-    store.append_heartbeat(hisense_session["id"], "hisense heartbeat", hisense=True)
 
     calendar_pages = [
         {
@@ -65,22 +63,31 @@ def test_query_token_auth_allows_external_heartbeat_reads(external_contract_clie
     normal = external_contract_client.get(
         "/api/gateway/heartbeats?token=secret&limit=2000&order=asc&scope=normal"
     )
-    hisense = external_contract_client.get(
+
+    assert normal.status_code == 200
+
+    normal_payload = normal.json()
+
+    assert normal_payload["ok"] is True
+    assert normal_payload["scope"] == "normal"
+    assert [item["content"] for item in normal_payload["heartbeats"]] == ["normal heartbeat"]
+    assert normal_payload["heartbeats"][0]["created_at"][:10]
+
+
+def test_retired_heartbeat_scope_still_returns_ok_with_empty_list(external_contract_client):
+    # Backward-compat tolerance for external callers that still request the
+    # retired "hisense" scope: the endpoint answers 200 with an empty pool.
+    legacy = external_contract_client.get(
         "/api/gateway/heartbeats?token=secret&limit=2000&order=asc&scope=hisense"
     )
 
-    assert normal.status_code == 200
-    assert hisense.status_code == 200
+    assert legacy.status_code == 200
 
-    normal_payload = normal.json()
-    hisense_payload = hisense.json()
+    payload = legacy.json()
 
-    assert normal_payload["scope"] == "normal"
-    assert hisense_payload["scope"] == "hisense"
-    assert [item["content"] for item in normal_payload["heartbeats"]] == ["normal heartbeat"]
-    assert [item["content"] for item in hisense_payload["heartbeats"]] == ["hisense heartbeat"]
-    assert normal_payload["heartbeats"][0]["created_at"][:10]
-    assert hisense_payload["heartbeats"][0]["created_at"][:10]
+    assert payload["ok"] is True
+    assert payload["scope"] == "hisense"
+    assert payload["heartbeats"] == []
 
 
 def test_options_preflight_is_not_blocked_by_api_auth(external_contract_client):

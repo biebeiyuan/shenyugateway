@@ -384,32 +384,13 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 
 ## 跨区归属规则
 
-- `*_routes.py` 是 HTTP 边界：统一由 `gateway.py` 装配，但行为、数据和测试仍跟随 Calendar、Hisense、archive、config 或 Admin 等对应功能区。
+- `*_routes.py` 是 HTTP 边界：统一由 `gateway.py` 装配，但行为、数据和测试仍跟随 Calendar、archive、config 或 Admin 等对应功能区。
 - `admin/src/views/` 和 `admin/src/api/` 归区域八的展示与交互边界；页面背后的记忆、存储、配置或日志语义仍回到对应后端区域判断。
 - `sessions.py` 是请求与 SQLite 的桥梁：请求区通过它记录输入、工具结果和输出，持久化区通过 `GatewayStore` 保存实际数据。
 
-### Hisense 专用路径（当前暂时不用，完整保留）
+### Hisense 专用路径（已于 2026-07-26 移除）
 
-当前产品状态是“暂时不使用”，不是 legacy、死代码或删除决定。普通请求不会自动进入这条路径，只有客户端名称匹配 `HISENSE_CLIENT_NAME` 时才激活；默认配置名为 `hisense`，并兼容客户端名 `海信`。
-
-```text
-客户端名称匹配
-  -> gateway.py 识别 Hisense，并在无 session tag 时使用 hisense tag
-  -> prepare_messages.py 选择 Hisense 分支
-       -> 不准备普通 cold-start bridge
-       -> 不进入 Room mode
-       -> 选择 Hisense 上游配置；未单独配置时回落到默认上游
-  -> ContextBuilder
-       -> 保留 Calendar 和普通稳定层
-       -> 从独立 Hisense heartbeat 池读取；不消费普通 heartbeat pending
-       -> 读取 Supabase shenyu_notebook 和上次唤醒内容
-       -> 不召回 Mem、Stars，也不注入共享书架概览
-  -> ChatPipeline 调用已选择的上游
-  -> SQLite 保存 session、messages、Hisense heartbeat
-  -> /api/hisense/* 与 HisenseView 提供预览、notebook 和 session 查看
-```
-
-各区触点：区域一负责配置、识别、路由装配和可选独立上游；区域二负责消息准备与上游选择；区域五负责专用上下文组装；区域六连接 Calendar 和 Supabase notebook；区域七保存 session/message/heartbeat；区域八提供 Admin/API。恢复日常使用前应优先运行 `tests/test_gateway_hisense_context.py`，而不是先重构或删除这条分支。
+Hisense（海信）专用线程——独立客户端识别与上游、独立 heartbeat 池、notebook 注入、`/api/hisense/*` 与 HisenseView——已于 2026-07-26 从代码库整体移除。此前本节记录的“暂时不用、完整保留”决定同日废止；旧的请求流与各区触点见 git 历史中本节的早期版本。
 
 ## 跨区关键桥梁
 
@@ -423,8 +404,7 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 | `tool_loop.py` | 工具、流式、上游、pending 状态 | 多轮正文、断连、资源关闭 |
 | `gateway_admin_routes.py` | Admin、存储、记忆、日志 | API 重量、隐私、领域拆分 |
 | `project_map.py` | Admin、现行文档、住户组件映射与变化记录 | 权威源解析、组件连线、部署内可读性、不得进入模型上下文 |
-| `sessions.py` | 请求、持久化、Admin/Hisense 会话 | 消息计数、写入时机、读取范围 |
-| Hisense 专用路径 | 入口、请求、上游、上下文、外部数据、存储、Admin | 触发条件、默认上游回落、上下文隔离、恢复前回归 |
+| `sessions.py` | 请求、持久化、Admin 会话 | 消息计数、写入时机、读取范围 |
 
 这些桥梁应优先做契约测试和观测，不应优先做大规模文件重排。
 

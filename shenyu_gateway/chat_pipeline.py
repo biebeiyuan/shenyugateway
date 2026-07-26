@@ -52,7 +52,7 @@ class ChatPipeline:
     run_internal_tool_loop_stream: Callable[..., Any]
     stream_chat: Callable[..., Awaitable[Any]]
     nonstream_chat: Callable[..., Awaitable[dict]]
-    upstream_for_hisense: Callable[[bool], dict[str, str]]
+    resolve_upstream: Callable[[], dict[str, str]]
     mapped_model_name: Callable[[str], str]
     private_capture_fallback_text: Callable[[str, list[str]], tuple[str, str]]
     private_capture_kinds: Callable[..., list[str]]
@@ -233,7 +233,7 @@ class ChatPipeline:
         merged_tools: list[dict],
         has_gateway_managed_tools: bool,
     ) -> None:
-        request_upstream = meta.get("upstream") or self.upstream_for_hisense(meta.get("is_hisense", False))
+        request_upstream = meta.get("upstream") or self.resolve_upstream()
         sys_parts = [
             msg.get("content", "")
             for msg in prepared_messages

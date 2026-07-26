@@ -303,7 +303,7 @@ def _test_pipeline(*, prepare_messages, nonstream_chat=None) -> ChatPipeline:
         run_internal_tool_loop_stream=lambda *args, **kwargs: None,
         stream_chat=lambda *args, **kwargs: None,
         nonstream_chat=nonstream_chat or (lambda *args, **kwargs: None),
-        upstream_for_hisense=lambda is_hisense=False: {
+        resolve_upstream=lambda: {
             "chat_url": "https://example.test/v1/chat/completions",
             "scope": "default",
             "protocol": "openai",
@@ -377,7 +377,6 @@ def test_chat_pipeline_updates_single_early_log_on_success(monkeypatch):
                 "is_first_turn": True,
                 "client_message_window": {},
                 "cache_layers": {},
-                "is_hisense": False,
                 "upstream": {
                     "chat_url": "https://example.test/v1/chat/completions",
                     "scope": "default",
@@ -447,7 +446,6 @@ def test_chat_pipeline_writes_completion_context_snapshot_after_assistant_reply(
                 "snapshot_latest_user_text": "最新一问",
                 "client_message_window": {},
                 "cache_layers": {},
-                "is_hisense": False,
                 "upstream": {
                     "chat_url": "https://example.test/v1/chat/completions",
                     "scope": "default",
@@ -509,7 +507,6 @@ def test_chat_pipeline_does_not_commit_context_for_interrupted_plain_stream(monk
                 "client_message_window": {},
                 "cache_layers": {},
                 "pending_gateway_tool_turn_ids": ["pending-1"],
-                "is_hisense": False,
                 "upstream": {
                     "chat_url": "https://example.test/v1/chat/completions",
                     "scope": "default",

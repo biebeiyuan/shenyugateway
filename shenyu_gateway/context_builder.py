@@ -42,7 +42,6 @@ class ContextBuilder:
         cfg: Any,
         supabase_client: Any,
         stable_charter_block: Callable[[], str],
-        is_hisense_client: Callable[[Optional[str]], bool],
     ):
         self.store = store
         self.sessions = sessions
@@ -50,7 +49,6 @@ class ContextBuilder:
         self.cfg = cfg
         self.supabase_client = supabase_client
         self.stable_charter_block = stable_charter_block
-        self.is_hisense_client = is_hisense_client
 
     def _layer_settings(self, *, client_tool_surface: Optional[str] = None) -> ContextLayerSettings:
         return ContextLayerSettings(
@@ -120,31 +118,20 @@ class ContextBuilder:
     ) -> dict:
         _mark_request_log_phase(trace_log, "context.start")
         session_id = session["id"]
-        is_hisense = self.is_hisense_client(client_name)
 
         heartbeat_digest, heartbeat_pending_ids = self._normal_heartbeat_context(
             session_id=session_id,
-            consume_pending=consume_heartbeat_pending and not is_hisense,
-        )
-        hisense_heartbeat_digest, hisense_heartbeat_pending_ids = (
-            self._hisense_heartbeat_context(consume_pending=consume_heartbeat_pending)
-            if is_hisense
-            else ("", [])
+            consume_pending=consume_heartbeat_pending,
         )
 
         package = {
-            "is_hisense": is_hisense,
             "stable_charter": self.stable_charter_block(),
             "heartbeat_digest": heartbeat_digest,
             "heartbeat_pending_ids": heartbeat_pending_ids,
-            "hisense_heartbeat_digest": hisense_heartbeat_digest,
-            "hisense_heartbeat_pending_ids": hisense_heartbeat_pending_ids,
             "cold_start_snapshot": cold_start_snapshot,
             "calendar_context": {"day": [], "week": [], "month": []},
             "mem_notes": [],
             "stars": [],
-            "notebook_items": [],
-            "last_wake_recap": "",
             "book_overview": {},
             "memory_island_state": previous_island_state or {},
             "memory_island_decision": {},
@@ -153,7 +140,7 @@ class ContextBuilder:
         # Collect independent context sources concurrently. Each source is normalized
         # to a fail-soft result below so a recall outage does not discard the previous
         # memory island or block an otherwise valid chat request.
-        want_bookshelf = (not is_hisense) and getattr(self.cfg, "inject_conflict_shelf", True)
+        want_bookshelf = getattr(self.cfg, "inject_conflict_shelf", True)
         event_class = str((context_event or {}).get("event_class") or "new_user")
         reuse_previous_island = bool(
             previous_island_state
@@ -179,167 +166,154 @@ class ContextBuilder:
             trace_log,
             "context.sources_start",
             detail={
-                "is_hisense": is_hisense,
                 "want_bookshelf": want_bookshelf,
                 "inject_mem_notes": inject_mem_notes,
                 "inject_stars": inject_stars,
             },
         )
 
-        if is_hisense:
-            notebook_task = self._hisense_notebook_items()
-            wake_task = self._hisense_last_wake_recap(session)
-            calendar_context, book_overview, notebook_items, last_wake_recap = await asyncio.gather(
-                calendar_task, bookshelf_task, notebook_task, wake_task
+        mem_note_service = MemNoteService(self.cfg, self.supabase_client)
+
+        async def fail_soft_recall(coro, source: str) -> dict[str, Any]:
+            try:
+                return await coro
+            except Exception as exc:
+                logger.warning("[Context] %s recall failed: %s", source, exc)
+                return {"ok": False, "items": [], "error": str(exc)}
+
+        if reuse_previous_island:
+            notes_task = asyncio.sleep(
+                0,
+                result={"ok": True, "items": list((previous_island_state or {}).get("mem_notes") or [])},
             )
-            package["calendar_context"] = calendar_context
-            package["notebook_items"] = notebook_items
-            package["last_wake_recap"] = last_wake_recap
-            notes_result = {"ok": True, "items": []}
-            stars_result = {"ok": True, "items": []}
-        else:
-            mem_note_service = MemNoteService(self.cfg, self.supabase_client)
-
-            async def fail_soft_recall(coro, source: str) -> dict[str, Any]:
-                try:
-                    return await coro
-                except Exception as exc:
-                    logger.warning("[Context] %s recall failed: %s", source, exc)
-                    return {"ok": False, "items": [], "error": str(exc)}
-
-            if reuse_previous_island:
-                notes_task = asyncio.sleep(
-                    0,
-                    result={"ok": True, "items": list((previous_island_state or {}).get("mem_notes") or [])},
-                )
-            elif inject_mem_notes:
-                notes_task = fail_soft_recall(
-                    mem_note_service.search_notes_contextual(
-                        current_user_text,
-                        session_tag=session["session_tag"],
-                        limit=self.cfg.mem_note_limit,
-                        session_id=session.get("id"),
-                        store=self.store,
-                        mark_triggered=False,
-                        ignore_retrigger_limits=True,
-                    ),
-                    "mem note",
-                )
-            else:
-                notes_task = asyncio.sleep(0, result={"ok": True, "items": []})
-
-            async def validate_previous_mem_notes() -> dict[str, Any]:
-                if not inject_mem_notes or not previous_mem_note_ids:
-                    return {"ok": True, "ids": []}
-                if not self.supabase_client:
-                    return {"ok": False, "ids": [], "error": "Supabase is not configured."}
-                try:
-                    active_ids = await mem_note_service.auto_surface_active_ids(
-                        sorted(previous_mem_note_ids)
-                    )
-                    return {"ok": True, "ids": sorted(active_ids)}
-                except Exception as exc:
-                    logger.warning("[Context] mem note active validation failed: %s", exc)
-                    return {"ok": False, "ids": [], "error": str(exc)}
-
-            mem_active_task = validate_previous_mem_notes()
-
-            if reuse_previous_island:
-                stars_task = asyncio.sleep(
-                    0,
-                    result={"ok": True, "items": list((previous_island_state or {}).get("stars") or [])},
-                )
-            elif inject_stars and (star_query := strip_client_extra_text(current_user_text)[0]):
-                # Device-state extras (Operit bundle / PWA status suffix) are
-                # noise for star recall; the raw text keeps serving the
-                # inject gates and activation trigger_text above/below.
-                # A query that strips to empty (e.g. an image-only PWA send,
-                # whose text is just the suffix) falls through to the empty
-                # branch below instead of hitting recall with a blank query,
-                # which would clear the island under a misleading
-                # inactive_item reason.
-                stars_task = fail_soft_recall(
-                    StarService(self.cfg, self.supabase_client).search_context(
-                        star_query,
-                        session_tag=session["session_tag"],
-                        session_id=session.get("id"),
-                        limit=getattr(self.cfg, "star_inject_limit", 3),
-                        mark_activation=False,
-                        ignore_recent_fatigue=True,
-                        required_star_ids=previous_star_ids,
-                        trace_log=trace_log,
-                    ),
-                    "star",
-                )
-            else:
-                stars_task = asyncio.sleep(0, result={"ok": True, "items": []})
-
-            calendar_context, book_overview, notes_result, stars_result, mem_active_result = await asyncio.gather(
-                calendar_task, bookshelf_task, notes_task, stars_task, mem_active_task
-            )
-            package["calendar_context"] = calendar_context
-            package["mem_notes"] = notes_result.get("items") or []
-            package["stars"] = stars_result.get("items") or []
-
-            proposed_stars = (
-                package["stars"]
-                if inject_stars and stars_result.get("ok")
-                else list((previous_island_state or {}).get("stars") or []) if inject_stars else []
-            )
-            proposed_mem_notes = (
-                package["mem_notes"]
-                if inject_mem_notes and notes_result.get("ok")
-                else list((previous_island_state or {}).get("mem_notes") or []) if inject_mem_notes else []
-            )
-            active_star_ids = None
-            if stars_result.get("ok") and "_active_required_ids" in stars_result:
-                active_star_ids = {
-                    str(item or "").strip()
-                    for item in stars_result.get("_active_required_ids") or []
-                    if str(item or "").strip()
-                }
-            active_mem_note_ids = None
-            if mem_active_result.get("ok"):
-                active_mem_note_ids = {
-                    str(item or "").strip()
-                    for item in mem_active_result.get("ids") or []
-                    if str(item or "").strip()
-                }
-            island_state, entering, island_meta = resolve_memory_island(
-                previous_island_state,
-                proposed_stars,
-                proposed_mem_notes,
-                force=force_island_rewrite,
-                force_reason=force_island_reason,
-                active_star_ids=active_star_ids,
-                active_mem_note_ids=active_mem_note_ids,
-                advance_human_turn=event_class in {"initial", "new_user", "branch"},
-                soft_direct_cooldown_turns=getattr(
-                    self.cfg, "star_soft_direct_cooldown_turns", 8
+        elif inject_mem_notes:
+            notes_task = fail_soft_recall(
+                mem_note_service.search_notes_contextual(
+                    current_user_text,
+                    session_tag=session["session_tag"],
+                    limit=self.cfg.mem_note_limit,
+                    session_id=session.get("id"),
+                    store=self.store,
+                    mark_triggered=False,
+                    ignore_retrigger_limits=True,
                 ),
+                "mem note",
             )
-            island_meta["star_recall_ok"] = bool(stars_result.get("ok"))
-            island_meta["mem_recall_ok"] = bool(notes_result.get("ok"))
-            package["memory_island_state"] = island_state
-            package["memory_island_decision"] = island_meta
-            package["memory_island_log_content"] = memory_island_log_content(
-                previous_island_state,
-                island_state,
+        else:
+            notes_task = asyncio.sleep(0, result={"ok": True, "items": []})
+
+        async def validate_previous_mem_notes() -> dict[str, Any]:
+            if not inject_mem_notes or not previous_mem_note_ids:
+                return {"ok": True, "ids": []}
+            if not self.supabase_client:
+                return {"ok": False, "ids": [], "error": "Supabase is not configured."}
+            try:
+                active_ids = await mem_note_service.auto_surface_active_ids(
+                    sorted(previous_mem_note_ids)
+                )
+                return {"ok": True, "ids": sorted(active_ids)}
+            except Exception as exc:
+                logger.warning("[Context] mem note active validation failed: %s", exc)
+                return {"ok": False, "ids": [], "error": str(exc)}
+
+        mem_active_task = validate_previous_mem_notes()
+
+        if reuse_previous_island:
+            stars_task = asyncio.sleep(
+                0,
+                result={"ok": True, "items": list((previous_island_state or {}).get("stars") or [])},
             )
-            package["stars"] = island_state.get("stars") or []
-            package["mem_notes"] = island_state.get("mem_notes") or []
-            if entering["stars"]:
-                await StarService(self.cfg, self.supabase_client).activate_context_items(
-                    entering["stars"],
-                    trigger_text=current_user_text,
+        elif inject_stars and (star_query := strip_client_extra_text(current_user_text)[0]):
+            # Device-state extras (Operit bundle / PWA status suffix) are
+            # noise for star recall; the raw text keeps serving the
+            # inject gates and activation trigger_text above/below.
+            # A query that strips to empty (e.g. an image-only PWA send,
+            # whose text is just the suffix) falls through to the empty
+            # branch below instead of hitting recall with a blank query,
+            # which would clear the island under a misleading
+            # inactive_item reason.
+            stars_task = fail_soft_recall(
+                StarService(self.cfg, self.supabase_client).search_context(
+                    star_query,
                     session_tag=session["session_tag"],
                     session_id=session.get("id"),
+                    limit=getattr(self.cfg, "star_inject_limit", 3),
+                    mark_activation=False,
+                    ignore_recent_fatigue=True,
+                    required_star_ids=previous_star_ids,
                     trace_log=trace_log,
-                )
-            if entering["mem_notes"]:
-                await MemNoteService(self.cfg, self.supabase_client).mark_context_items_triggered(
-                    entering["mem_notes"]
-                )
+                ),
+                "star",
+            )
+        else:
+            stars_task = asyncio.sleep(0, result={"ok": True, "items": []})
+
+        calendar_context, book_overview, notes_result, stars_result, mem_active_result = await asyncio.gather(
+            calendar_task, bookshelf_task, notes_task, stars_task, mem_active_task
+        )
+        package["calendar_context"] = calendar_context
+        package["mem_notes"] = notes_result.get("items") or []
+        package["stars"] = stars_result.get("items") or []
+
+        proposed_stars = (
+            package["stars"]
+            if inject_stars and stars_result.get("ok")
+            else list((previous_island_state or {}).get("stars") or []) if inject_stars else []
+        )
+        proposed_mem_notes = (
+            package["mem_notes"]
+            if inject_mem_notes and notes_result.get("ok")
+            else list((previous_island_state or {}).get("mem_notes") or []) if inject_mem_notes else []
+        )
+        active_star_ids = None
+        if stars_result.get("ok") and "_active_required_ids" in stars_result:
+            active_star_ids = {
+                str(item or "").strip()
+                for item in stars_result.get("_active_required_ids") or []
+                if str(item or "").strip()
+            }
+        active_mem_note_ids = None
+        if mem_active_result.get("ok"):
+            active_mem_note_ids = {
+                str(item or "").strip()
+                for item in mem_active_result.get("ids") or []
+                if str(item or "").strip()
+            }
+        island_state, entering, island_meta = resolve_memory_island(
+            previous_island_state,
+            proposed_stars,
+            proposed_mem_notes,
+            force=force_island_rewrite,
+            force_reason=force_island_reason,
+            active_star_ids=active_star_ids,
+            active_mem_note_ids=active_mem_note_ids,
+            advance_human_turn=event_class in {"initial", "new_user", "branch"},
+            soft_direct_cooldown_turns=getattr(
+                self.cfg, "star_soft_direct_cooldown_turns", 8
+            ),
+        )
+        island_meta["star_recall_ok"] = bool(stars_result.get("ok"))
+        island_meta["mem_recall_ok"] = bool(notes_result.get("ok"))
+        package["memory_island_state"] = island_state
+        package["memory_island_decision"] = island_meta
+        package["memory_island_log_content"] = memory_island_log_content(
+            previous_island_state,
+            island_state,
+        )
+        package["stars"] = island_state.get("stars") or []
+        package["mem_notes"] = island_state.get("mem_notes") or []
+        if entering["stars"]:
+            await StarService(self.cfg, self.supabase_client).activate_context_items(
+                entering["stars"],
+                trigger_text=current_user_text,
+                session_tag=session["session_tag"],
+                session_id=session.get("id"),
+                trace_log=trace_log,
+            )
+        if entering["mem_notes"]:
+            await MemNoteService(self.cfg, self.supabase_client).mark_context_items_triggered(
+                entering["mem_notes"]
+            )
 
         if want_bookshelf:
             package["book_overview"] = book_overview
@@ -356,7 +330,6 @@ class ContextBuilder:
                 "stars": len(stars_result.get("items") or []),
                 "stars_ok": bool(stars_result.get("ok")),
                 "island_decision": (package.get("memory_island_decision") or {}).get("decision"),
-                "notebook_items": len(package.get("notebook_items") or []),
             },
         )
         _mark_request_log_phase(trace_log, "context.done")
@@ -388,77 +361,25 @@ class ContextBuilder:
             if len(pending_hbs) >= heartbeat_batch_size:
                 return "\n".join(hb["content"] for hb in pending_hbs), [hb["id"] for hb in pending_hbs]
             return self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size), []
-        return self._heartbeat_digest(hisense=False, limit=heartbeat_batch_size), []
+        return self._heartbeat_digest(limit=heartbeat_batch_size), []
 
-    def _heartbeat_digest(self, hisense: bool, limit: int, state: str = "all") -> str:
+    def _heartbeat_digest(self, limit: int, state: str = "all") -> str:
         hbs = self.store.read_heartbeats(
             session_id=None,
             state=state,
             limit=max(1, int(limit or 10)),
             order="desc",
-            hisense=hisense,
         )
         if not hbs:
             return ""
         return "\n".join(hb["content"] for hb in reversed(hbs))
 
-    def _hisense_heartbeat_digest(self, consume_pending: bool = True) -> str:
-        digest, _ = self._hisense_heartbeat_context(consume_pending=consume_pending)
-        return digest
-
-    def _hisense_heartbeat_context(self, consume_pending: bool = True) -> tuple[str, list[str]]:
-        heartbeat_batch_size = max(int(self.cfg.hisense_heartbeat_limit or 3), 1)
-        if consume_pending:
-            pending_hbs = self.store.get_pending_heartbeats(limit=heartbeat_batch_size, hisense=True)
-            if len(pending_hbs) >= heartbeat_batch_size:
-                return "\n".join(hb["content"] for hb in pending_hbs), [hb["id"] for hb in pending_hbs]
-            return self.store.get_latest_heartbeat_digest(limit=heartbeat_batch_size, hisense=True), []
-        return self._heartbeat_digest(hisense=True, limit=self.cfg.hisense_heartbeat_limit), []
-
     def _preview_normal_heartbeat_digest(self) -> str:
         heartbeat_batch_size = max(int(self.cfg.heartbeat_inject_every or 5), 1)
-        digest = self._heartbeat_digest(hisense=False, limit=heartbeat_batch_size, state="pending")
+        digest = self._heartbeat_digest(limit=heartbeat_batch_size, state="pending")
         if digest:
             return digest
-        return self._heartbeat_digest(hisense=False, limit=heartbeat_batch_size, state="injected")
-
-    async def _hisense_notebook_items(self) -> list[dict]:
-        if not self.supabase_client:
-            return []
-        try:
-            rows = await self.supabase_client.query(
-                "shenyu_notebook",
-                {
-                    "status": "eq.active",
-                    "order": "pinned.desc,updated_at.desc",
-                    "limit": str(self.cfg.hisense_notebook_limit),
-                    "select": "id,type,content,tags,status,pinned,updated_at",
-                },
-            )
-            return rows or []
-        except Exception:
-            return []
-
-    async def _hisense_last_wake_recap(self, session: dict) -> str:
-        if self.supabase_client:
-            try:
-                rows = await self.supabase_client.query(
-                    "shenyu_notebook",
-                    {
-                        "tags": "cs.{handoff}",
-                        "order": "updated_at.desc",
-                        "limit": "1",
-                        "select": "content,updated_at",
-                    },
-                )
-                if rows:
-                    return rows[0].get("content") or ""
-            except Exception:
-                pass
-        hbs = self.store.read_heartbeats(session_id=None, state="injected", limit=1, order="desc", hisense=True)
-        if hbs:
-            return hbs[0]["content"]
-        return ""
+        return self._heartbeat_digest(limit=heartbeat_batch_size, state="injected")
 
     def render_layered_additions(
         self,
@@ -604,12 +525,10 @@ class ContextBuilder:
 
         return {
             "is_room": True,
-            "is_hisense": False,
             "charge": charge,
             "layers": layers,
             "room_tools": room_tools,
             "heartbeat_pending_ids": [],
-            "hisense_heartbeat_pending_ids": [],
             "cold_start_snapshot": None,
         }
 

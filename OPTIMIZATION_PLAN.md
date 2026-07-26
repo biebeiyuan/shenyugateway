@@ -75,7 +75,7 @@
 **注意**：合并后 `trace_log` 的分阶段计时（`calendar_start/done`、`conflict_shelf_start/done`、`memory_tasks_start/done`）会失去粒度。取舍：要么保留一个合并的 start/done 标记，要么接受更粗的 tracing。
 
 **验证**：
-- [ ] `pytest tests/test_gateway_hisense_context.py tests/test_calendar.py` 通过。
+- [ ] `pytest tests/test_gateway_context.py tests/test_calendar.py` 通过。
 - [ ] 手测一轮非海信请求，确认上下文内容与改前一致（顺序/内容不变，只是更快）。
 
 ---
@@ -187,7 +187,6 @@ gateway_tools/
 **G1. 心跳 read-then-mark 非原子**（`context_builder.py` 读 + `private_capture.py` 标记 + `store/_heartbeats.py`）：
 - 真实窗口是"读到标记之间"跨越了整个 LLM 回复。请求 A 读了 NULL 行还没标记，请求 B 进来又读到同一批 → 同一批心跳被注入两次（模型看到自己的私密心跳重复，非数据丢失）。
 - 改法：read-and-claim 原子化——`get_pending_heartbeats` 同时盖一个短期 claim（`UPDATE ... SET injected_at=now WHERE id IN (SELECT ... LIMIT n) RETURNING *`，一个连接/事务内），一行只能交给一个请求。顺带崩溃安全。
-- 海信路径（`context_builder.py` 海信分支）同理，如果那个池将来出现并发。
 
 **G2. chat_archive 去重竞态**（`chat_archive.py::archive_window`，约 :152-184）：
 - 同 session 两个近乎同时的轮次都通过 step1 的"未见"检查 → 都 POST → Supabase 出现重复 L0 行（归档浏览页显示重复）。注意这是**唯一**不带 upsert 的归档写入路径（heartbeat_archive、recall、stars/_crud 都 upsert）。

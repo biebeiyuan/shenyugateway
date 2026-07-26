@@ -19,7 +19,7 @@ insert / update / delete 会尽量返回写入或影响到的行。
 几条旧的揉成一条新的，写的时候传 replaces=[旧id]，旧的自动归档。
 整理 captured 便签时先列出来，只改明确选中的 id；不要按状态一口气全量改。
 星星记忆用 `shenyu_create_star` / `shenyu_star_review` / `shenyu_star_feedback` / `shenyu_connect_constellation`。missed 反馈也走 `shenyu_star_feedback`。
-notebook 是共享手边事项；海信那边或跨窗口要留事用 `shenyu_notebook_write` / `shenyu_notebook_list`。
+notebook 是共享手边事项；跨窗口要留事用 `shenyu_notebook_write` / `shenyu_notebook_list`。
 随笔和当下心情放窗台，用 `shenyu_windowsill_write`；想回去翻一翻用 `shenyu_windowsill_list`。
 翻某天心跳用 `shenyu_read_heartbeat`，一般只填 date，比如 2026-05-11。
 

@@ -229,10 +229,10 @@ The chat route is wired in `gateway.py`; `ChatPipeline` owns the request orchest
 1. Auth middleware allows `OPTIONS` and accepts both `Authorization` and `?token=...`.
 2. The chat route calls `_chat_pipeline(store).run()`; `gateway.py` supplies the pipeline's runtime dependencies.
 3. `ChatPipeline` calls `shenyu_gateway.prepare_messages.prepare_messages()` through the thin `_prepare_messages()` wiring adapter.
-4. `prepare_messages()` opens the gateway session, stores the raw request window, classifies history, restores eligible cold-start and pending-tool context, trims client messages, writes a request context snapshot, and builds the mode-specific context package. `ContextBuilder` supplies Calendar, heartbeat, Memory Island, Room, or Hisense data as appropriate.
+4. `prepare_messages()` opens the gateway session, stores the raw request window, classifies history, restores eligible cold-start and pending-tool context, trims client messages, writes a request context snapshot, and builds the mode-specific context package. `ContextBuilder` supplies Calendar, heartbeat, Memory Island, or Room data as appropriate.
 5. `shenyu_gateway.context_layers` renders the package into:
    - `stable`: charter and optional wake welcome message.
-   - `slow`: calendar memory, the unified bookshelf overview in normal/Room contexts, Hisense notebook, wake recap.
+   - `slow`: calendar memory and the unified bookshelf overview in normal/Room contexts.
    - `mem`: active mem notes headed by `## 我之前写下的便签，可能用的到。`, after `slow` and before heartbeat.
    - `heartbeat`: independent `## 我之前的心跳` block after `mem`.
    - `tool_policy`: compact `## 工具怎么用` reminder after heartbeat.
@@ -285,7 +285,7 @@ Useful boundary map:
 - `shenyu_search_primary_texts`: deprecated compatibility name; direct or broker calls are rejected with `error_kind=validation`. Use `shenyu_recall` with the matching source types.
 - `shenyu_surface_passages`: hidden/internal compatibility handler. Calendar generation still uses its random room/message-board surfacing, but it is not part of the visible model tool schema.
 - `shenyu_search_mem_notes`: visible mem-note search tool; reads Supabase `shenyu_mem_notes`.
-- `shenyu_read_heartbeat`: gateway tool; reads SQLite `heartbeat_entries` or `hisense_heartbeat`.
+- `shenyu_read_heartbeat`: gateway tool; reads SQLite `heartbeat_entries`.
 - `supabase_*`: gateway fallback tools for direct Supabase table operations.
 - `GATEWAY_TOOL_MODE=broker`: exposes one compact `shenyu_gateway_tool` that dispatches to the same gateway-native tools. Use `full` when the model needs stricter per-tool parameter schemas.
 - `query_memory` and `get_memory_by_title`, when visible, are client-provided tools from outside the gateway; inspect the client/Operit tool definitions for their backing pool.
@@ -295,13 +295,12 @@ Useful boundary map:
 When context looks wrong, inspect in this order:
 
 1. `cfg` flags: `MAX_CLIENT_MESSAGES`, `ENABLE_COLD_START`, `CALENDAR_INJECT_*`, `INJECT_MEM_NOTES`, `ENABLE_GATEWAY_TOOLS`, `GATEWAY_TOOL_MODE`.
-2. `_prepare_messages()` metadata: `client_message_window`, `cache_layers`, `cold_start_snapshot`, `is_hisense`, `upstream`.
+2. `_prepare_messages()` metadata: `client_message_window`, `cache_layers`, `cold_start_snapshot`, `upstream`.
 3. SQLite tables:
    - `raw_request_windows`: original client payload before trimming.
    - `request_context_snapshots`: trimmed client window before gateway layers; used by cold start and calendar generation.
    - `cold_start_snapshots`: bounded bridge packages.
-   - `heartbeat_entries`: normal/global heartbeat pool.
-   - `hisense_heartbeat`: Hisense heartbeat pool.
+   - `heartbeat_entries`: global heartbeat pool.
 4. `ContextBuilder.build_context_package()` to confirm which sources were fetched.
 5. `context_layers.render_layered_additions()` and `context_layers.assemble_layered_messages()` to confirm layer placement.
 
@@ -340,11 +339,11 @@ Private assistant tags are parsed in `response_capture.py`:
 
 - `AssistantTagFilter` supports chunked streaming input. It withholds partial `<heartbeat>` tags until they close or are flushed. Inline `[mem]` and `[star]` tags are left visible in assistant output (capture is now via tool calls only).
 - `split_private_assistant_tags()` is the non-streaming helper.
-- `store_heartbeat()` writes normal or Hisense heartbeat rows through `GatewayStore`.
+- `store_heartbeat()` writes heartbeat rows through `GatewayStore`.
 
 Visible output should never include closed private blocks:
 
-- `<heartbeat>...</heartbeat>` is removed and written to `heartbeat_entries` or `hisense_heartbeat`.
+- `<heartbeat>...</heartbeat>` is removed and written to `heartbeat_entries`.
 - `[mem]` and `[star]` tags are left visible in assistant output; mem notes and stars are created exclusively via tool calls (`shenyu_write_mem_note`, `shenyu_create_star`).
 - Incomplete heartbeat is captured and hidden on flush.
 
@@ -354,12 +353,12 @@ When this area breaks, check `test_gateway_tags.py` and `test_response_capture.p
 
 These are hard contracts with `home-frontend`; do not remove or reshape them during cleanup:
 
-- `GET /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal|hisense`
+- `GET /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal`
   - Query token auth must work.
   - Keep `limit`, `order`, and `scope`.
   - Return JSON with `heartbeats`.
   - Each heartbeat must include at least `content` and `created_at`.
-  - `scope=normal` reads `heartbeat_entries`; `scope=hisense` reads `hisense_heartbeat`.
+  - `scope=normal` reads `heartbeat_entries`; unknown scopes (including the retired `hisense`) return 200 with an empty list.
 - `GET /api/calendar/month?token=...&month=YYYY-MM`
   - Return `grid`.
   - Each day item must keep `date`, `day`, `in_month`, `has_day`, `has_week`, and `day_page.id/title/summary/status` when present.
@@ -379,7 +378,7 @@ Permanent test coverage for these contracts is in `tests/test_external_contracts
 After Python changes:
 
 ```bash
-python -m py_compile gateway.py shenyu_gateway/store/__init__.py shenyu_gateway/stars/__init__.py shenyu_gateway/calendar_sources.py shenyu_gateway/context_layers.py shenyu_gateway/response_capture.py shenyu_gateway/upstream_adapter.py tests/test_external_contracts.py tests/test_gateway_hisense_context.py tests/test_gateway_tags.py tests/test_gateway_trim.py
+python -m py_compile gateway.py shenyu_gateway/store/__init__.py shenyu_gateway/stars/__init__.py shenyu_gateway/calendar_sources.py shenyu_gateway/context_layers.py shenyu_gateway/response_capture.py shenyu_gateway/upstream_adapter.py tests/test_external_contracts.py tests/test_gateway_context.py tests/test_gateway_tags.py tests/test_gateway_trim.py
 git diff --check
 rg -n '淇|閺|鈹|銆|锛|紝|娌堜簣' README.md DEBUGGING_GUIDE.md gateway.py shenyu_gateway tests
 ```
@@ -387,7 +386,7 @@ rg -n '淇|閺|鈹|銆|锛|紝|娌堜簣' README.md DEBUGGING_GUIDE.md gateway.p
 If the local environment has `pytest` available:
 
 ```bash
-python -m pytest tests/test_gateway_trim.py tests/test_gateway_tags.py tests/test_gateway_hisense_context.py tests/test_external_contracts.py
+python -m pytest tests/test_gateway_trim.py tests/test_gateway_tags.py tests/test_gateway_context.py tests/test_external_contracts.py
 ```
 
 If `pytest` is unavailable, install/use the WSL Python environment or run a no-file `TestClient` smoke test with a temporary SQLite database. Do not route ordinary work through WindowsApps Python and do not leave one-off smoke scripts in the repo.

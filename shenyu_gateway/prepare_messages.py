@@ -122,8 +122,7 @@ class PrepareMessagesDeps:
     context_builder_factory: Callable[..., Any]
     client_name_from_request: Callable[[Request], str]
     session_tag_from_request: Callable[..., str]
-    is_hisense_client: Callable[[Optional[str]], bool]
-    upstream_for_hisense: Callable[..., dict]
+    resolve_upstream: Callable[[], dict]
     maybe_prepare_cold_start_snapshot: Callable[..., Optional[dict]]
     prune_runtime_state: Callable[..., dict]
 
@@ -418,12 +417,11 @@ async def prepare_messages(
         now_iso=_iso_now(),
         detail={"raw_messages": len(raw_messages_for_event)},
     )
-    is_hisense = deps.is_hisense_client(client_name)
     raw_message_count = _non_system_message_count(raw_messages)
     cold_start_snapshot = None
     pwa_handoff_retired = False
     pwa_history_ready = pwa_history_ready_for_cold_start(client_name, raw_message_count, cfg)
-    if not is_hisense and not pwa_history_ready:
+    if not pwa_history_ready:
         cold_start_snapshot = deps.maybe_prepare_cold_start_snapshot(session, is_first_turn, raw_message_count)
     elif pwa_history_ready:
         active_snapshot = store.latest_active_cold_start_snapshot(session["id"])
@@ -490,7 +488,7 @@ async def prepare_messages(
     )
     user_text = _latest_user_text(messages)
     current_message_count = _non_system_message_count(messages)
-    upstream = deps.upstream_for_hisense(is_hisense)
+    upstream = deps.resolve_upstream()
     archive_service = ChatArchiveService(store, deps.supabase_client, cfg)
     if archive_service.enabled():
         _spawn_background_task(
@@ -499,7 +497,6 @@ async def prepare_messages(
                 session_tag=session_tag,
                 client_name=client_name,
                 messages=raw_messages_for_archive,
-                is_hisense=is_hisense,
             )
         )
     _mark_request_log_phase(
@@ -545,7 +542,6 @@ async def prepare_messages(
     # ── Room Mode Branch ───────────────────────────────────────────
     is_room = bool(
         getattr(cfg, "enable_room_mode", True)
-        and not is_hisense
         and _is_room_mode(user_text)
     )
 
@@ -581,13 +577,12 @@ async def prepare_messages(
             "cold_start_snapshot": None,
             "context_window_state": window_state,
             "context_event": event_meta,
-            "is_hisense": False,
             "is_room": True,
             "client_profile": client_profile,
             "upstream": upstream,
         }
 
-    # ── Normal / Hisense Path ──────────────────────────────────────
+    # ── Normal Path ────────────────────────────────────────────────
     previous_island_state = window_state.get("island_state") or {}
     if not previous_island_state and cold_start_snapshot:
         for source in reversed(cold_start_snapshot.get("sources") or []):
@@ -672,7 +667,6 @@ async def prepare_messages(
         "cold_start_snapshot": cold_start_snapshot,
         "context_window_state": window_state,
         "context_event": event_meta,
-        "is_hisense": is_hisense,
         "client_profile": client_profile,
         "upstream": upstream,
     }

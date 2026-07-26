@@ -184,11 +184,10 @@ class RecallToolsMixin:
         if source in {"chat", "conversation", "archive"}:
             return await self._read_chat_archive_item(item_id)
         if source == "heartbeat" and self.store is not None:
-            for hisense in (False, True):
-                rows = self.store.read_heartbeats(None, limit=500, order="desc", hisense=hisense)
-                match = next((row for row in rows if str(row.get("id") or "") == item_id), None)
-                if match:
-                    return {"ok": True, "item": self._recall_heartbeat_item(match, full=True)}
+            rows = self.store.read_heartbeats(None, limit=500, order="desc")
+            match = next((row for row in rows if str(row.get("id") or "") == item_id), None)
+            if match:
+                return {"ok": True, "item": self._recall_heartbeat_item(match, full=True)}
         return await self._recall_index().read_source(source, item_id, session_tag=session_tag)
 
     async def rebuild_recall_index(self, source_types: Any = None) -> dict:
@@ -255,7 +254,7 @@ class RecallToolsMixin:
     async def _recall_live_heartbeats(self, query: str, limit: int = 1) -> dict[str, Any]:
         if self.store is None:
             return {"ok": True, "count": 0, "items": []}
-        rows = self.store.read_heartbeats(None, state="all", limit=100, order="desc", hisense=False)
+        rows = self.store.read_heartbeats(None, state="all", limit=100, order="desc")
         scored: list[tuple[float, dict[str, Any]]] = []
         query_lower = (query or "").strip().lower()
         for row in rows:

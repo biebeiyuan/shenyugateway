@@ -3,7 +3,6 @@ from __future__ import annotations
 from typing import Any, Optional
 
 from ._helpers import _date_range_bounds
-from ._runtime import _is_hisense_session
 
 
 class SessionToolsMixin:
@@ -13,7 +12,6 @@ class SessionToolsMixin:
         limit: int = 10,
         state: str = "all",
         order: str = "desc",
-        scope: str = "auto",
         date: Optional[str] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
@@ -33,17 +31,6 @@ class SessionToolsMixin:
         created_from = date_from or created_from
         created_to = date_to or created_to
         created_start, created_end = _date_range_bounds(created_from, created_to)
-        target_session = self.store.get_session_by_tag(resolved_tag)
-        scope_key = (scope or "auto").strip().lower()
-        if scope_key in {"hisense", "海信"}:
-            read_hisense = True
-            resolved_scope = "hisense"
-        elif scope_key in {"normal", "global", "default", "普通", "默认"}:
-            read_hisense = False
-            resolved_scope = "normal"
-        else:
-            read_hisense = _is_hisense_session(target_session, runtime_config=self.cfg)
-            resolved_scope = "hisense" if read_hisense else "normal"
         items = self.store.read_heartbeats(
             None,
             state=state,
@@ -51,7 +38,6 @@ class SessionToolsMixin:
             order=order,
             created_from=created_start,
             created_to=created_end,
-            hisense=read_hisense,
         )
         # Resident contract: heartbeats come back as time + original text only;
         # injection/sync bookkeeping columns stay inside the store.
@@ -62,7 +48,6 @@ class SessionToolsMixin:
         return {
             "ok": True,
             "session_tag": resolved_tag,
-            "scope": resolved_scope,
             "count": len(clean_items),
             "items": clean_items,
         }
@@ -80,10 +65,9 @@ class SessionToolsMixin:
             return {"ok": False, "error": "Store not available"}
         limit = max(1, min(int(limit or 10), 30))
         all_sessions = self.store.list_sessions(limit=50)
-        non_hisense = [s for s in all_sessions if not _is_hisense_session(s, runtime_config=self.cfg)]
-        if not non_hisense:
+        if not all_sessions:
             return {"ok": True, "count": 0, "data": []}
-        target = non_hisense[0]
+        target = all_sessions[0]
         msgs = self.store.get_recent_dialogue_messages(target["id"], limit=limit * 3)
         if since:
             msgs = [m for m in msgs if (m.get("created_at") or "") >= since]

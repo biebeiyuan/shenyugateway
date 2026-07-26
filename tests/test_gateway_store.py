@@ -239,10 +239,9 @@ def test_gateway_logs_api_reads_persisted_history_after_memory_is_empty(tmp_path
                 get_session_store=lambda: store,
                 require_session_store=lambda: store,
                 context_builder=lambda *_args, **_kwargs: None,
-                upstream_for_hisense=lambda _is_hisense: {},
+                resolve_upstream=lambda: {},
                 prune_runtime_state=lambda **_kwargs: {},
                 cold_start_idle_minutes=lambda _session: 0,
-                is_hisense_session=lambda _session: False,
                 now=lambda: None,
                 request_logs=[],
             )
@@ -265,44 +264,32 @@ def test_gateway_logs_api_reads_persisted_history_after_memory_is_empty(tmp_path
     assert detail.json()["response_full"] is None
 
 
-def test_hisense_heartbeats_are_stored_separately(tmp_path):
+def test_heartbeat_pool_append_pending_mark_digest_lifecycle(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
-    normal_session = store.get_or_create_session("main", "operit")
-    hisense_session = store.get_or_create_session("hisense", "hisense")
+    session = store.get_or_create_session("main", "operit")
 
-    normal_hb = store.append_heartbeat(normal_session["id"], "normal hb")
-    hisense_hb = store.append_heartbeat(hisense_session["id"], "hisense hb", hisense=True)
+    heartbeat = store.append_heartbeat(session["id"], "normal hb")
 
-    assert normal_hb["id"].startswith("hb_")
-    assert hisense_hb["id"].startswith("hhb_")
-    assert [item["content"] for item in store.read_heartbeats(None, order="asc")] == ["normal hb"]
-    assert [item["content"] for item in store.read_heartbeats(None, order="asc", hisense=True)] == ["hisense hb"]
-
-
-def test_hisense_heartbeat_injection_state_does_not_touch_normal_pool(tmp_path):
-    store = GatewayStore(str(tmp_path / "gateway.db"))
-    normal_session = store.get_or_create_session("main", "operit")
-    hisense_session = store.get_or_create_session("hisense", "hisense")
-
-    normal_hb = store.append_heartbeat(normal_session["id"], "normal hb")
-    hisense_hb = store.append_heartbeat(hisense_session["id"], "hisense hb", hisense=True)
-
-    store.mark_heartbeats_injected(heartbeat_ids=[hisense_hb["id"]], hisense=True)
-
-    assert [item["id"] for item in store.get_pending_heartbeats()] == [normal_hb["id"]]
+    assert heartbeat["id"].startswith("hb_")
+    assert [item["id"] for item in store.get_pending_heartbeats()] == [heartbeat["id"]]
     assert store.get_latest_heartbeat_digest() == ""
-    assert store.get_latest_heartbeat_digest(hisense=True) == "hisense hb"
+    assert [item["content"] for item in store.read_heartbeats(None, order="asc")] == ["normal hb"]
+
+    store.mark_heartbeats_injected(heartbeat_ids=[heartbeat["id"]])
+
+    assert store.get_pending_heartbeats() == []
+    assert store.get_latest_heartbeat_digest() == "normal hb"
 
 
 def test_get_or_create_session_refreshes_client_name(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
 
     first = store.get_or_create_session("shared", "debug")
-    second = store.get_or_create_session("shared", "hisense")
+    second = store.get_or_create_session("shared", "operit")
 
     assert second["id"] == first["id"]
-    assert second["client_name"] == "hisense"
-    assert store.get_session_by_tag("shared")["client_name"] == "hisense"
+    assert second["client_name"] == "operit"
+    assert store.get_session_by_tag("shared")["client_name"] == "operit"
 
 
 def test_tool_error_log_records_error_kind_and_filters(tmp_path):
@@ -853,7 +840,7 @@ def test_cold_start_preview_auto_source_uses_latest_old_thread_and_full_source_t
                 get_session_store=lambda: store,
                 require_session_store=lambda: store,
                 context_builder=lambda *_args, **_kwargs: None,
-                upstream_for_hisense=lambda _is_hisense: {
+                resolve_upstream=lambda: {
                     "scope": "default",
                     "chat_url": "",
                     "protocol": "openai",
@@ -861,7 +848,6 @@ def test_cold_start_preview_auto_source_uses_latest_old_thread_and_full_source_t
                 },
                 prune_runtime_state=lambda **_kwargs: {},
                 cold_start_idle_minutes=lambda _session: 0,
-                is_hisense_session=lambda _session: False,
                 now=lambda: None,
                 request_logs=[],
             )

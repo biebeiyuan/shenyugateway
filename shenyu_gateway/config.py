@@ -81,9 +81,6 @@ class RuntimeConfig:
         self.anthropic_default_max_tokens: int = _env_int("ANTHROPIC_DEFAULT_MAX_TOKENS", 128000, 1)
         self.upstream_extra_body: dict[str, Any] = self._load_upstream_extra_body()
         self.upstream_passthrough_headers: list[str] = self._load_passthrough_headers()
-        self.hisense_upstream_url: str = os.getenv("HISENSE_UPSTREAM_URL", "").strip()
-        self.hisense_api_key: str = os.getenv("HISENSE_API_KEY", "").strip()
-        self.hisense_protocol: str = os.getenv("HISENSE_PROTOCOL", "").strip().lower()
         self.calendar_upstream_url: str = os.getenv("CALENDAR_UPSTREAM_URL", "").strip()
         self.calendar_api_key: str = os.getenv("CALENDAR_API_KEY", "").strip()
         self.calendar_protocol: str = os.getenv("CALENDAR_PROTOCOL", "auto").strip().lower()
@@ -196,10 +193,6 @@ class RuntimeConfig:
         self.gateway_request_log_retention: int = _env_int("GATEWAY_REQUEST_LOG_RETENTION", 200, 30, 5000)
         self.gateway_log_full_payloads: bool = _env_bool("GATEWAY_LOG_FULL_PAYLOADS", False)
 
-        self.hisense_client_name: str = os.getenv("HISENSE_CLIENT_NAME", "hisense").strip()
-        self.hisense_heartbeat_limit: int = _env_int("HISENSE_HEARTBEAT_LIMIT", 3, 1, 30)
-        self.hisense_notebook_limit: int = _env_int("HISENSE_NOTEBOOK_LIMIT", 5, 1, 20)
-
         self.enable_room_mode: bool = _env_bool("ENABLE_ROOM_MODE", True)
         self.room_charge_refractory_hours: int = _env_int("ROOM_CHARGE_REFRACTORY_HOURS", 4, 1, 48)
         self.room_trace_limit: int = _env_int("ROOM_TRACE_LIMIT", 5, 1, 20)
@@ -232,9 +225,6 @@ class RuntimeConfig:
             "anthropic_default_max_tokens": self.anthropic_default_max_tokens,
             "upstream_extra_body": self.upstream_extra_body,
             "upstream_passthrough_headers": self.upstream_passthrough_headers,
-            "hisense_upstream_url": self.hisense_upstream_url,
-            "hisense_api_key": mask(self.hisense_api_key),
-            "hisense_protocol": self.hisense_protocol,
             "calendar_upstream_url": self.calendar_upstream_url,
             "calendar_api_key": mask(self.calendar_api_key),
             "calendar_protocol": self.calendar_protocol,
@@ -328,9 +318,6 @@ class RuntimeConfig:
             "gateway_cold_start_retention": self.gateway_cold_start_retention,
             "gateway_request_log_retention": self.gateway_request_log_retention,
             "gateway_log_full_payloads": self.gateway_log_full_payloads,
-            "hisense_client_name": self.hisense_client_name,
-            "hisense_heartbeat_limit": self.hisense_heartbeat_limit,
-            "hisense_notebook_limit": self.hisense_notebook_limit,
             "enable_room_mode": self.enable_room_mode,
             "room_charge_refractory_hours": self.room_charge_refractory_hours,
             "room_trace_limit": self.room_trace_limit,

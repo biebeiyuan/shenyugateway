@@ -445,7 +445,6 @@ def _gateway_core_tools() -> list[dict]:
                         "date_from": {"type": "string"},
                         "date_to": {"type": "string"},
                         "session_tag": {"type": "string"},
-                        "scope": {"type": "string", "enum": ["auto", "normal", "hisense"], "default": "auto"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 10},
                         "state": {"type": "string", "enum": ["all", "pending", "injected"], "default": "all"},
                         "order": {"type": "string", "enum": ["desc", "asc"], "default": "desc"},
@@ -623,7 +622,6 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
                         "type": {"type": "string"},
                         "status": {"type": "string", "default": "active"},
                         "tag": {"type": "string"},
-                        "scope": {"type": "string", "enum": ["shared", "hisense", "handoff"], "default": "shared"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
                     },
                 },
@@ -633,7 +631,7 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_notebook_write",
-                "description": "记一条手边的事。给海信那边留可以填 scope=hisense。",
+                "description": "记一条手边的事。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -641,7 +639,6 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
                         "content": {"type": "string"},
                         "tags": {"type": "array", "items": {"type": "string"}},
                         "metadata": {"type": "object"},
-                        "scope": {"type": "string", "enum": ["shared", "hisense", "handoff"], "default": "shared"},
                     },
                     "required": ["content"],
                 },

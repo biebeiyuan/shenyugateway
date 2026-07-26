@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 
 _UNSET = object()
@@ -33,18 +33,3 @@ def configure_gateway_tools(*, runtime_config: Any = _UNSET, supabase: Any = _UN
 def get_runtime() -> GatewayToolRuntime:
     """Public accessor for the shared runtime singleton (do not re-instantiate it)."""
     return _runtime
-
-
-def _is_hisense_client(client_name: Optional[str], runtime_config: Any = None) -> bool:
-    active_cfg = runtime_config or _runtime.cfg
-    target = (getattr(active_cfg, "hisense_client_name", "") or "").strip()
-    name = (client_name or "").strip()
-    if not target or not name:
-        return False
-    if name.casefold() == target.casefold():
-        return True
-    return target.casefold() == "hisense" and name == "海信"
-
-
-def _is_hisense_session(session: Optional[dict], runtime_config: Any = None) -> bool:
-    return bool(session) and _is_hisense_client(session.get("client_name"), runtime_config=runtime_config)

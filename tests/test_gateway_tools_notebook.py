@@ -20,42 +20,7 @@ class FakeSupabase:
         return []
 
 
-def test_notebook_write_marks_handoff_for_hisense():
-    supabase = FakeSupabase()
-    service = GatewayToolService(
-        runtime_config=SimpleNamespace(),
-        supabase=supabase,
-        store=None,
-    )
-
-    result = asyncio.run(
-        service.notebook_write(
-            type_=None,
-            content="给海信那边留一条交接。",
-            tags=["release"],
-            metadata={"source": "test"},
-            session_tag="5.29",
-            scope="handoff",
-        )
-    )
-
-    assert result["ok"] is True
-    assert supabase.inserts == [
-        (
-            "shenyu_notebook",
-            {
-                "type": "handoff",
-                "content": "给海信那边留一条交接。",
-                "status": "active",
-                "tags": ["release", "handoff", "hisense"],
-                "metadata": {"source": "test", "scope": "handoff"},
-                "session_tag": "5.29",
-            },
-        )
-    ]
-
-
-def test_notebook_list_filters_hisense_scope_by_tag():
+def test_notebook_list_filters_by_tag():
     supabase = FakeSupabase()
     service = GatewayToolService(
         runtime_config=SimpleNamespace(),
@@ -68,7 +33,7 @@ def test_notebook_list_filters_hisense_scope_by_tag():
             type_filter=None,
             status="active",
             limit=4,
-            scope="hisense",
+            tag="handoff",
         )
     )
 
@@ -81,7 +46,7 @@ def test_notebook_list_filters_hisense_scope_by_tag():
                 "limit": "4",
                 "select": "id,type,content,tags,status,pinned,created_at,updated_at",
                 "status": "eq.active",
-                "tags": "cs.{hisense}",
+                "tags": "cs.{handoff}",
             },
         )
     ]

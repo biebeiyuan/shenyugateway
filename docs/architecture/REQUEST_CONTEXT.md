@@ -10,8 +10,8 @@ Context is assembled in the order Shenyu should wake into it:
 |---|---|---|---|
 | request tools | request tools | client tools + `shenyu_*` / `supabase_*` tools | no dedicated breakpoint |
 | `stable` | start of the system prefix | stable charter, wake welcome message, and resident memory profile | covered by `system.end` |
-| `slow` | system prefix after `stable` | calendar memory, Hisense notebook/recap | covered by `system.end` |
-| `heartbeat` | system prefix after `slow` | `## 我之前的心跳` and optional Hisense heartbeat block | covered by `system.end` |
+| `slow` | system prefix after `stable` | calendar memory | covered by `system.end` |
+| `heartbeat` | system prefix after `slow` | `## 我之前的心跳` | covered by `system.end` |
 | `tool_policy` | system prefix after heartbeat | compact gateway/client tool reminder rendered as `## 工具怎么用` | covered by `system.end` |
 | `format` | end of the system prefix | heartbeat and star format instructions | `system.end` uses the last non-empty system layer |
 | `mem` | between fixed older history and the recent chat tail | stateful star/Mem memory island | breakpoint before and at the end of the island |
@@ -150,7 +150,6 @@ SQLite stores only gateway runtime state:
 - `cache_entries`: short-lived gateway cache.
 - `request_log_history`: bounded, versioned safe request summaries used by the Admin log page and helper across process/container replacement. Full request/response payload fields are excluded before storage.
 - `heartbeat_entries`: global private heartbeat notes captured from `<heartbeat>...</heartbeat>` or written manually in admin. `session_id` is retained as the source session, but runtime injection reads the shared global pool.
-- `hisense_heartbeat`: private heartbeat notes captured from Hisense sessions. These use the same parser as normal heartbeats but are stored and injected separately.
 
 `request_context_snapshots` is the replacement for the old rolling/frozen context path. Each request stores the trimmed client window before gateway layers are inserted. Calendar generation and cold-start bridge both read these snapshots. `raw_request_windows` stores the original client payload window before any gateway-side trimming and is kept separate so cold-start stays bounded.
 
@@ -186,7 +185,7 @@ Default online retention:
 - `GATEWAY_COLD_START_RETENTION=20`: keep recent cold-start snapshots per session. Cleanup only removes old inactive snapshots; an active bridge remains available until the normal window trim retires it.
 - `GATEWAY_REQUEST_LOG_RETENTION=200`: keep the newest safe request-log summaries globally. The Admin/API list merges them with the live 30-entry deque and prefers the live copy when both exist. A startup pass marks rows left in `preparing`, `pending`, or streaming states as `interrupted`.
 - Consumed or expired `pending_gateway_tool_turns` are removed during cleanup. Unconsumed pending rows are kept until expiry so a client can return its tool result in the next request.
-- `heartbeat_entries` and `hisense_heartbeat` are not removed by automatic cleanup. They can be manually written/deleted from the admin session page, and those actions affect their respective heartbeat pools.
+- `heartbeat_entries` is not removed by automatic cleanup. It can be manually written/deleted from the admin session page.
 - expired `cache_entries` are removed during cleanup.
 
 Runtime cleanup APIs:
@@ -470,7 +469,7 @@ gateway contract.
 
 Preserve these response contracts:
 
-- `GET /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal|hisense` returns `heartbeats`; each item must include at least `content` and `created_at`. `scope=normal` reads `heartbeat_entries`; `scope=hisense` reads `hisense_heartbeat`.
+- `GET /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal` returns `heartbeats`; each item must include at least `content` and `created_at`. `scope=normal` reads `heartbeat_entries`; unknown scopes (including the retired `hisense`) still return 200 with an empty list so stale external callers degrade gracefully.
 - `GET /api/calendar/month?token=...&month=YYYY-MM` returns `grid`; each day item must keep `date`, `day`, `in_month`, `has_day`, `has_week`, and when present `day_page.id/title/summary/status`.
 - `GET /api/calendar/page/{page_id}?token=...` returns at least `id`, `title`, `summary`, and `content`.
 
@@ -491,7 +490,7 @@ SQLite stays the live read path; injection behavior is unchanged. Enable deletio
 
 ### Chat archive (L0 source of truth)
 
-`shenyu_chat_archive` in Supabase stores verbatim user/assistant messages, message by message, archived from the client window in `_prepare_messages()` (fire-and-forget; failures never affect chat). Dedup uses `chat_archive_seen` in SQLite (recent hashes per session_tag), so resent sliding windows archive each message once while a genuinely repeated message months later is a new event. Re-rolled replies never return in the client window, so they are naturally excluded. Threads are derived as `main` / `hisense` / custom session tags.
+`shenyu_chat_archive` in Supabase stores verbatim user/assistant messages, message by message, archived from the client window in `_prepare_messages()` (fire-and-forget; failures never affect chat). Dedup uses `chat_archive_seen` in SQLite (recent hashes per session_tag), so resent sliding windows archive each message once while a genuinely repeated message months later is a new event. Re-rolled replies never return in the client window, so they are naturally excluded. Threads are derived as `main` / custom session tags; historical archive rows with the retired `hisense` thread value remain readable in the archive reader (the durable archive is soft-delete only).
 
 - Backfill from existing SQLite history: `python scripts/backfill_chat_archive.py` (idempotent; `--dry-run` to preview).
 - Admin reader: `/admin` → 档案 tab; API under `/api/archive/*`.

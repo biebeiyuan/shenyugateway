@@ -80,28 +80,9 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
     if heartbeat_digest:
         heartbeat_blocks.append("## 我之前的心跳\n" + heartbeat_digest)
 
-    hisense_heartbeat_digest = package.get("hisense_heartbeat_digest", "")
-    if package.get("is_hisense") and hisense_heartbeat_digest:
-        heartbeat_blocks.append("## 海信线程心跳\n" + hisense_heartbeat_digest)
-
-    notebook_items = package.get("notebook_items") or []
-    if notebook_items:
-        nb_lines = ["## 手边的事"]
-        for item in notebook_items:
-            prefix = f"[{item.get('type', 'note')}]"
-            tags = item.get("tags") or []
-            if tags:
-                prefix += f" ({', '.join(tags)})"
-            nb_lines.append(f"- {prefix} {item.get('content', '')}")
-        slow_blocks.append("\n".join(nb_lines))
-
     bookshelf = render_bookshelf_overview(package.get("book_overview") or {})
     if bookshelf:
         slow_blocks.append(bookshelf)
-
-    last_wake_recap = package.get("last_wake_recap") or ""
-    if last_wake_recap:
-        slow_blocks.append(f"## 上次醒来\n{last_wake_recap}")
 
     slow = "\n\n".join(slow_blocks)
 

@@ -102,7 +102,6 @@ class CalendarSourceCollector:
             state="all",
             limit=max(1, int(limit or 1)),
             order="desc",
-            hisense=False,
         )
         for row in rows:
             row["state"] = "injected" if row.get("injected_at") else "pending"

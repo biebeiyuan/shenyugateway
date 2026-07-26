@@ -119,7 +119,7 @@
 
 - `tests/test_upstream_adapter_stream.py`
 - `tests/test_upstream_passthrough_headers.py`
-- `tests/test_gateway_hisense_context.py`
+- `tests/test_gateway_context.py`
 - `tests/test_gateway_streaming.py`
 - `tests/test_gateway_store.py`
 

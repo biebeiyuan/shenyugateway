@@ -17,10 +17,6 @@ export interface GatewayConfig {
   anthropic_auto_thinking_effort?: '' | 'max' | 'xhigh'
   upstream_extra_body?: Record<string, unknown>
   upstream_passthrough_headers?: string[]
-  hisense_upstream_url?: string
-  hisense_api_key?: string
-  hisense_api_key_configured?: boolean
-  hisense_protocol?: string
   supabase_url: string
   supabase_key: string
   supabase_key_configured?: boolean
@@ -115,9 +111,6 @@ export interface GatewayConfig {
   gateway_cold_start_retention?: number
   gateway_request_log_retention?: number
   gateway_log_full_payloads?: boolean
-  hisense_client_name?: string
-  hisense_heartbeat_limit?: number
-  hisense_notebook_limit?: number
   // stats
   gateway_db_path?: string
 }
@@ -137,10 +130,6 @@ export interface HealthStatus {
   enable_anthropic_auto_thinking?: boolean
   anthropic_auto_thinking_effort?: '' | 'max' | 'xhigh'
   upstream_extra_body?: Record<string, unknown>
-  hisense_upstream?: string
-  hisense_upstream_chat_url?: string
-  hisense_upstream_scope?: string
-  hisense_protocol?: string
   models?: string[]
   protocol: string
   store?: boolean

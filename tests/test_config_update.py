@@ -125,7 +125,6 @@ def test_full_config_only_hides_supabase_key(monkeypatch):
     visible_secrets = {
         "gateway_key": "gateway-secret",
         "upstream_api_key": "upstream-secret",
-        "hisense_api_key": "hisense-secret",
         "calendar_api_key": "calendar-secret",
     }
     for field, value in visible_secrets.items():

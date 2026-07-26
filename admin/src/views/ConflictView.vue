@@ -311,7 +311,6 @@ function fmtShortDate(value: string | null | undefined): string {
 }
 
 function threadLabel(key: string | null): string {
-  if (key === 'hisense') return '海信'
   if (!key || key === 'main') return '主聊天'
   return key
 }

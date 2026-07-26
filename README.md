@@ -36,7 +36,7 @@ The codebase is partly layered already:
 
 ### Core entrypoint
 
-- `gateway.py`: FastAPI app entrypoint, lifespan, CORS, route registration, and model listing. Chat, calendar, admin, hisense, archive, and config routes have been extracted into dedicated modules.
+- `gateway.py`: FastAPI app entrypoint, lifespan, CORS, route registration, and model listing. Chat, calendar, admin, archive, and config routes have been extracted into dedicated modules.
 
 ### Config & runtime
 
@@ -64,7 +64,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/project_map.py`: owner-only live project map assembled from the current system zones, maintenance/product indexes, resident component fingerprints, and change ledger; it also derives component links from shared mapped source files.
 - `shenyu_gateway/resident_home.py`: resident-facing component manifest, source fingerprints, review acknowledgements, and weekly change records.
 - `shenyu_gateway/resident_books.py`: unified bookshelf facade for the generated read-only home snapshot, the revisioned `我是谁` document, append-only annotations, and legacy origin-book storage.
-- `shenyu_gateway/resident_profile.py`: stable wake/profile text for memory practice, the origin book, and the Hisense home note.
+- `shenyu_gateway/resident_profile.py`: stable wake/profile text for memory practice and the origin book.
 - `shenyu_gateway/context_snapshots.py`: context snapshot creation and helpers for calendar/cold-start sources.
 - `shenyu_gateway/context_window.py`: semantic history-event classification, chunk-safe client-history windowing with high-water/epoch/anchor state, and cold-start bridge overlap deduplication.
 - `shenyu_gateway/client_extra.py`: shared recognition/stripping of client-injected per-message extras (Operit `message_insert_extra_bundle` attachments and the PWA tail status suffix), imported by trimming, archiving, history normalization, and recall-query cleaning.
@@ -129,12 +129,11 @@ The codebase is partly layered already:
 
 - `shenyu_gateway/gateway_admin_routes.py`: admin API routes (stars, mem notes, room, overview, prune, etc.).
 - `shenyu_gateway/calendar_routes.py`: calendar API routes (prompts, month grid, generation, preview).
-- `shenyu_gateway/hisense_routes.py`: retained Hisense API routes (preview, notebook, session); this dedicated path is currently not in daily use.
 - `shenyu_gateway/archive_routes.py`: archive reader, origin-book, shared resident-book, and owner-only project-map API routes.
 - `shenyu_gateway/config_routes.py`: configuration API routes (get/set runtime config).
 - `shenyu_gateway/admin_shell_routes.py`: admin shell/UI routes (static file serving, login page).
 
-Route modules are HTTP adapters, not a separate business zone. `gateway.py` mounts them, while each endpoint's behavior remains owned by its feature area. The exact Hisense cross-zone path is documented in `docs/architecture/SYSTEM_ZONES.md`.
+Route modules are HTTP adapters, not a separate business zone. `gateway.py` mounts them, while each endpoint's behavior remains owned by its feature area.
 
 ### Request logging
 
@@ -162,7 +161,6 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/api/sessions.ts`: local SQLite session browser.
 - `admin/src/api/logs.ts`: request log list and detail APIs.
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
-- `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
 - `admin/src/api/archive.ts`: chat archive reader and frozen origin-book APIs.
 - `admin/src/api/books.ts`: resident-shelf APIs plus the separate owner-only live project-map contract.
 - `admin/src/api/room.ts`: room mode APIs (traces, drawer notes, scribbles, pins, newspapers).
@@ -183,7 +181,6 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/SessionsView.vue`: session inspection page.
 - `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, and cache-structure evidence.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
-- `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
 - `admin/src/views/ArchiveView.vue`: chat archive reader and origin-book clip flow.
 - `admin/src/views/ConflictView.vue`: three-tier bookshelf for revisioned `我是谁`, generated read-only `家现在`, owner-only `家里地图`, and frozen origin books; keeps their distinct visibility and write boundaries explicit.
 - `admin/src/views/bookshelf/HomeBookModal.vue`: generated-home reader for live commit/confirmation state, resident components, weekly impacts, and append-only annotations.
@@ -235,7 +232,6 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 | Room | 房间 / 窗台 | `room_context.py`、`room_tools.py`、`room_newspaper.py` | `admin/src/api/room.ts`、`RoomView.vue`、`views/room/` | `MEMORY_ROOM.md` § Room Mode |
 | 请求日志 / 工具报错 | 日志页、工具报错页 | `request_logs.py`、`tool_loop.py`、`store/_admin.py` | `admin/src/api/logs.ts`、`toolErrors.ts`、`LogsView.vue`、`ToolErrorsView.vue` | `DEBUGGING_GUIDE.md`、`LOGS_GUIDE.md` |
 | Calendar | 日历 / 日周月页 | `calendar_service.py`、`calendar_sources.py` | `admin/src/api/calendar.ts`、`CalendarView.vue` | `REQUEST_CONTEXT.md` § Calendar |
-| Hisense | Hisense 专用路径 | `hisense_routes.py`、`context_builder.py` | `admin/src/api/hisense.ts`、`HisenseView.vue` | `SYSTEM_ZONES.md` § Hisense 专用路径 |
 
 When cleaning or refactoring, preserve behavior first and move code by boundary:
 
@@ -279,9 +275,6 @@ ENABLE_ANTHROPIC_AUTO_THINKING=false
 ANTHROPIC_AUTO_THINKING_EFFORT=
 UPSTREAM_EXTRA_BODY=
 UPSTREAM_PASSTHROUGH_HEADERS=
-HISENSE_UPSTREAM_URL=
-HISENSE_API_KEY=
-HISENSE_PROTOCOL=
 
 CALENDAR_UPSTREAM_URL=
 CALENDAR_API_KEY=
@@ -407,7 +400,6 @@ http://localhost:8010/chat/
 - `admin/src/api/sessions.ts`: local SQLite session browser.
 - `admin/src/api/logs.ts`: request log list and detail APIs.
 - `admin/src/api/calendar.ts`: calendar prompts, month grid, previews, and generation.
-- `admin/src/api/hisense.ts`: Hisense preview, notebook CRUD, and session APIs.
 - `admin/src/views/ConfigView.vue`: configuration page.
 - `admin/src/views/Mem0View.vue`: Mem injection/tool controls, full-set two-state recall-eligibility management, Shenyu-write provenance badges, mem-note attributes, and old atomic read-only lookup. The "静音但保留工具" preset turns off automatic Mem injection while leaving gateway tools available.
 - `admin/src/views/MemoryGraphView.vue`: entity/alias/relation management, historical source-link backfill, and read-only Recall preview at `/memory-graph`.
@@ -415,7 +407,6 @@ http://localhost:8010/chat/
 - `admin/src/views/SessionsView.vue`: session inspection page.
 - `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, and cache-structure evidence.
 - `admin/src/views/CalendarView.vue`: day/week/month calendar memory workflow.
-- `admin/src/views/HisenseView.vue`: Hisense slow-layer preview, notebook management, and session history.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.
 
 The old single-file `/debug` console has been retired. User-facing admin features should go into `admin/src/views/*` and `admin/src/api/*`.

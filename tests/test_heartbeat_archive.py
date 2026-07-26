@@ -10,16 +10,16 @@ class FakeStore:
     def __init__(self, *, unsettled: list[dict] | None = None, live_ids: set[str] | None = None):
         self.unsettled = unsettled or []
         self.live_ids = live_ids or set()
-        self.marked: list[tuple[list[str], bool]] = []
+        self.marked: list[list[str]] = []
 
     def get_settled_unsynced_heartbeats(self, **_kwargs):
-        return [] if _kwargs.get("hisense") else list(self.unsettled)
+        return list(self.unsettled)
 
-    def mark_heartbeats_synced(self, heartbeat_ids, *, hisense=False):
-        self.marked.append((list(heartbeat_ids), hisense))
+    def mark_heartbeats_synced(self, heartbeat_ids):
+        self.marked.append(list(heartbeat_ids))
 
-    def get_all_heartbeat_ids(self, *, hisense=False):
-        return set() if hisense else set(self.live_ids)
+    def get_all_heartbeat_ids(self):
+        return set(self.live_ids)
 
 
 class FakeSupabase:
@@ -30,9 +30,9 @@ class FakeSupabase:
         self.updates: list[tuple[str, dict, dict]] = []
 
     async def query(self, table, params):
+        # _reconcile_deleted still filters on the archive table's scope column
+        # ("scope": "eq.normal"); the fake answers the same rows for it.
         self.queries.append((table, dict(params)))
-        if params.get("scope") == "eq.hisense":
-            return []
         return [{"id": value} for value in sorted(self.archived_ids)]
 
     async def upsert(self, table, payload, *, on_conflict):

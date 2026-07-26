@@ -48,9 +48,9 @@ def test_gateway_identification_headers_isolated():
         {
             "x-shenyu-session-tag": "6.20",
             "x-session-tag": "6.20",
-            "x-shenyu-client": "hisense",
+            "x-shenyu-client": "shenyu-pwa",
             "x-shenyu-tool-events": "1",
-            "x-client-name": "hisense",
+            "x-client-name": "shenyu-pwa",
             "x-api-key": "k",
         }
     )

@@ -49,11 +49,6 @@ const router = createRouter({
       component: () => import('@/views/LogsView.vue'),
     },
     {
-      path: '/hisense',
-      name: 'hisense',
-      component: () => import('@/views/HisenseView.vue'),
-    },
-    {
       path: '/archive',
       name: 'archive',
       component: () => import('@/views/ArchiveView.vue'),

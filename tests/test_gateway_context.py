@@ -14,7 +14,6 @@ from shenyu_gateway import room_context
 from shenyu_gateway import upstream_adapter
 from shenyu_gateway.context_builder import ContextBuilder
 from shenyu_gateway.gateway_tools import GatewayToolService
-from shenyu_gateway.gateway_tools import _is_hisense_client as _shared_is_hisense_client
 from shenyu_gateway.gateway_tools import configure_gateway_tools
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.tool_registry import gateway_native_tools
@@ -22,7 +21,7 @@ from shenyu_gateway.utils import normalize_text as _normalize_text, clean_config
 from shenyu_gateway.upstream_client import (
     detect_protocol_for as _detect_protocol_for,
     chat_url_for as _chat_url_for,
-    upstream_for_hisense as _upstream_for_hisense,
+    resolve_upstream as _resolve_upstream,
 )
 from shenyu_gateway.private_capture import (
     EMPTY_VISIBLE_ASSISTANT_REPLY as _EMPTY_VISIBLE_ASSISTANT_REPLY,
@@ -35,7 +34,6 @@ from shenyu_gateway.private_capture import (
 )
 from shenyu_gateway.response_capture import split_private_assistant_tags
 from shenyu_gateway.resident_profile import (
-    HISENSE_HOME_NOTE,
     MEMORY_PRACTICE_PROFILE,
     ORIGIN_BOOK_PROFILE,
 )
@@ -53,19 +51,12 @@ def _load_gateway_helpers():
     wanted_functions = {
         "_stable_charter_block",
         "_session_tag_from_request",
-        "_is_hisense_client",
-        "_is_hisense_session",
     }
     cfg = SimpleNamespace(
-        hisense_client_name="hisense",
-        hisense_upstream_url="",
-        hisense_api_key="",
-        hisense_protocol="",
         upstream_url="https://api.treegpt.cc",
         upstream_api_key="default-key",
         upstream_protocol="openai",
         heartbeat_inject_every=5,
-        hisense_heartbeat_limit=3,
         calendar_inject_day=False,
         calendar_context_day_limit=0,
         calendar_inject_week=False,
@@ -78,7 +69,6 @@ def _load_gateway_helpers():
         inject_mem_notes=False,
         inject_atomic_memories=False,
         default_atomic_memory_limit=3,
-        hisense_notebook_limit=5,
         wake_welcome_message="",
     )
     namespace = {
@@ -94,17 +84,15 @@ def _load_gateway_helpers():
         "session_store": None,
         "supabase_client": None,
         "cfg": cfg,
-        "_shared_is_hisense_client": _shared_is_hisense_client,
         "_detect_protocol_for": _detect_protocol_for,
         "_chat_url_for": _chat_url_for,
-        "_upstream_for_hisense": lambda is_hisense=False: _upstream_for_hisense(cfg, is_hisense),
+        "_resolve_upstream": lambda: _resolve_upstream(cfg),
         "_EMPTY_VISIBLE_ASSISTANT_REPLY": _EMPTY_VISIBLE_ASSISTANT_REPLY,
         "_is_free_time_fallback_context": _is_free_time_fallback_context,
         "_private_capture_kinds": _private_capture_kinds,
         "_private_capture_fallback_text": _private_capture_fallback_text,
         "_ensure_visible_assistant_content": _ensure_visible_assistant_content,
         "_finalize_assistant_private_content": _finalize_assistant_private_content,
-        "HISENSE_HOME_NOTE": HISENSE_HOME_NOTE,
         "MEMORY_PRACTICE_PROFILE": MEMORY_PRACTICE_PROFILE,
         "ORIGIN_BOOK_PROFILE": ORIGIN_BOOK_PROFILE,
     }
@@ -126,7 +114,6 @@ def test_stable_charter_orders_welcome_and_resident_profile(monkeypatch):
 
     assert rendered.index("醒来欢迎词") < rendered.index("## 我怎么记")
     assert rendered.index("## 我怎么记") < rendered.index("## 来历书")
-    assert rendered.index("## 来历书") < rendered.index("## 海信那边的我")
     assert "## 这些东西怎么读" not in rendered
     assert "几个名词，我大概会遇到" not in rendered
     assert "这里是家。先找到她，再看我留下的东西。" in rendered
@@ -141,7 +128,6 @@ def _context_builder(store, *, supabase=None):
         cfg=cfg,
         supabase_client=supabase,
         stable_charter_block=gateway_namespace["_stable_charter_block"],
-        is_hisense_client=gateway_namespace["_is_hisense_client"],
     )
 
 
@@ -325,36 +311,12 @@ def test_context_builder_rechecks_previous_star_ids_and_advances_real_user_turn(
     assert edited_package["memory_island_state"]["human_turn_index"] == 7
 
 
-def test_hisense_context_can_see_both_heartbeat_pools(tmp_path):
-    store = GatewayStore(str(tmp_path / "gateway.db"))
-    normal_session = store.get_or_create_session("main", "operit")
-    hisense_session = store.get_or_create_session("hisense", cfg.hisense_client_name)
-    store.append_heartbeat(normal_session["id"], "normal hb")
-    store.append_heartbeat(hisense_session["id"], "hisense hb", hisense=True)
-
-    builder = _context_builder(store)
-    package = asyncio.run(
-        builder.build_context_package(
-            hisense_session,
-            current_user_text="",
-            is_first_turn=True,
-            client_name=cfg.hisense_client_name,
-            consume_heartbeat_pending=False,
-        )
-    )
-    layers = builder.render_layered_additions(package)
-
-    assert "normal hb" in layers["heartbeat"]
-    assert "hisense hb" in layers["heartbeat"]
-
-
 def test_gateway_tool_policy_names_broker_call_shape_and_tool_list():
     layers = context_layers.render_layered_additions(
         {
             "stable_charter": "stable charter",
             "calendar_context": {},
             "heartbeat_digest": "",
-            "hisense_heartbeat_digest": "",
             "notebook_items": [],
             "last_wake_recap": "",
             "mem_notes": [],
@@ -380,7 +342,6 @@ def test_normal_slow_layer_exposes_unified_bookshelf_overview_without_book_bodie
             "stable_charter": "stable charter",
             "calendar_context": {},
             "heartbeat_digest": "",
-            "hisense_heartbeat_digest": "",
             "notebook_items": [],
             "last_wake_recap": "",
             "mem_notes": [],
@@ -412,7 +373,6 @@ def test_gateway_tool_policy_reflects_client_tool_surface():
         "stable_charter": "stable charter",
         "calendar_context": {},
         "heartbeat_digest": "",
-        "hisense_heartbeat_digest": "",
         "notebook_items": [],
         "last_wake_recap": "",
         "mem_notes": [],
@@ -458,7 +418,6 @@ def test_calendar_memory_renders_page_content_not_summary_or_digest():
                 "month": [],
             },
             "heartbeat_digest": "",
-            "hisense_heartbeat_digest": "",
             "notebook_items": [],
             "last_wake_recap": "",
             "mem_notes": [],
@@ -488,7 +447,6 @@ def test_mem_notes_render_between_calendar_and_heartbeat_not_volatile():
             "month": [],
         },
         "heartbeat_digest": "heartbeat content",
-        "hisense_heartbeat_digest": "",
         "notebook_items": [],
         "last_wake_recap": "",
         "mem_notes": [{"mem_type": "关于她的事实", "content": "她今天想早点睡。"}],
@@ -560,44 +518,14 @@ def test_calendar_context_pages_loads_and_filters_by_content():
     assert calendar_context["day"][0]["digest"] == "Digest stays out"
 
 
-def test_hisense_client_defaults_to_isolated_session_tag():
-    request = SimpleNamespace(headers={})
+def test_resolve_upstream_builds_default_chat_url_from_cfg():
+    upstream = gateway_namespace["_resolve_upstream"]()
 
-    session_tag = gateway_namespace["_session_tag_from_request"](
-        request,
-        client_name=cfg.hisense_client_name,
-    )
-
-    assert session_tag == "hisense"
-
-
-def test_hisense_client_detection_tolerates_case_and_chinese_alias():
-    assert gateway_namespace["_is_hisense_client"]("Hisense")
-    assert gateway_namespace["_is_hisense_client"]("海信")
-
-
-def test_hisense_upstream_can_use_dedicated_url():
-    cfg.upstream_url = "https://default.example"
-    cfg.upstream_api_key = "default-key"
-    cfg.upstream_protocol = "openai"
-    cfg.hisense_upstream_url = "https://hisense.example"
-    cfg.hisense_api_key = "hisense-key"
-    cfg.hisense_protocol = "openai"
-
-    upstream = gateway_namespace["_upstream_for_hisense"](True)
-    default_upstream = gateway_namespace["_upstream_for_hisense"](False)
-
-    assert upstream["scope"] == "hisense"
-    assert upstream["chat_url"] == "https://hisense.example/v1/chat/completions"
-    assert upstream["api_key"] == "hisense-key"
-    assert default_upstream["chat_url"] == "https://default.example/v1/chat/completions"
-
-    cfg.upstream_url = "https://api.treegpt.cc"
-    cfg.upstream_api_key = "default-key"
-    cfg.upstream_protocol = "openai"
-    cfg.hisense_upstream_url = ""
-    cfg.hisense_api_key = ""
-    cfg.hisense_protocol = ""
+    assert upstream["scope"] == "default"
+    assert upstream["base_url"] == "https://api.treegpt.cc"
+    assert upstream["chat_url"] == "https://api.treegpt.cc/v1/chat/completions"
+    assert upstream["protocol"] == "openai"
+    assert upstream["api_key"] == "default-key"
 
 
 def test_upstream_url_helpers_accept_v1_base_urls():
@@ -783,17 +711,15 @@ def test_empty_tool_call_assistant_content_does_not_get_fallback():
     assert message["content"] == ""
 
 
-def test_normal_context_does_not_see_hisense_heartbeat_pool(tmp_path):
+def test_normal_context_surfaces_store_heartbeats_end_to_end(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
-    normal_session = store.get_or_create_session("main", "operit")
-    hisense_session = store.get_or_create_session("hisense", cfg.hisense_client_name)
-    store.append_heartbeat(normal_session["id"], "normal hb")
-    store.append_heartbeat(hisense_session["id"], "hisense hb", hisense=True)
+    session = store.get_or_create_session("main", "operit")
+    pending = store.append_heartbeat(session["id"], "normal hb")
 
     builder = _context_builder(store)
     package = asyncio.run(
         builder.build_context_package(
-            normal_session,
+            session,
             current_user_text="",
             is_first_turn=True,
             client_name="operit",
@@ -803,81 +729,34 @@ def test_normal_context_does_not_see_hisense_heartbeat_pool(tmp_path):
     layers = builder.render_layered_additions(package)
 
     assert "normal hb" in layers["heartbeat"]
-    assert "hisense hb" not in layers["heartbeat"]
 
-
-def test_hisense_context_returns_three_pending_heartbeat_ids_for_deferred_marking(tmp_path):
-    store = GatewayStore(str(tmp_path / "gateway.db"))
-    hisense_session = store.get_or_create_session("hisense", cfg.hisense_client_name)
-    heartbeat_limit = int(cfg.hisense_heartbeat_limit)
-    for index in range(heartbeat_limit):
-        store.append_heartbeat(hisense_session["id"], f"hisense pending {index + 1}", hisense=True)
-
-    builder = _context_builder(store)
+    store.mark_heartbeats_injected(heartbeat_ids=[pending["id"]])
     package = asyncio.run(
         builder.build_context_package(
-            hisense_session,
+            session,
             current_user_text="",
             is_first_turn=True,
-            client_name=cfg.hisense_client_name,
+            client_name="operit",
             consume_heartbeat_pending=True,
         )
     )
     layers = builder.render_layered_additions(package)
 
-    assert "hisense pending 1" in layers["heartbeat"]
-    assert "hisense pending 2" in layers["heartbeat"]
-    assert f"hisense pending {heartbeat_limit}" in layers["heartbeat"]
-    assert len(package["hisense_heartbeat_pending_ids"]) == heartbeat_limit
-    assert len(store.read_heartbeats(None, state="pending", hisense=True)) == heartbeat_limit
-
-    store.mark_heartbeats_injected(heartbeat_ids=package["hisense_heartbeat_pending_ids"], hisense=True)
-
-    assert store.read_heartbeats(None, state="pending", hisense=True) == []
-    assert len(store.read_heartbeats(None, state="injected", hisense=True)) == heartbeat_limit
+    assert "normal hb" in layers["heartbeat"]
 
 
-def test_hisense_context_waits_for_three_pending_heartbeats(tmp_path):
+def test_read_heartbeat_returns_time_and_content_only(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
-    hisense_session = store.get_or_create_session("hisense", cfg.hisense_client_name)
-    injected = store.append_heartbeat(hisense_session["id"], "hisense injected", hisense=True)
-    store.mark_heartbeats_injected(heartbeat_ids=[injected["id"]], hisense=True)
-    heartbeat_limit = int(cfg.hisense_heartbeat_limit)
-    for index in range(heartbeat_limit - 1):
-        store.append_heartbeat(hisense_session["id"], f"hisense pending {index + 1}", hisense=True)
-
-    builder = _context_builder(store)
-    package = asyncio.run(
-        builder.build_context_package(
-            hisense_session,
-            current_user_text="",
-            is_first_turn=True,
-            client_name=cfg.hisense_client_name,
-            consume_heartbeat_pending=True,
-        )
-    )
-    layers = builder.render_layered_additions(package)
-
-    assert "hisense injected" in layers["heartbeat"]
-    assert "hisense pending 1" not in layers["heartbeat"]
-    assert f"hisense pending {heartbeat_limit - 1}" not in layers["heartbeat"]
-    assert len(store.read_heartbeats(None, state="pending", hisense=True)) == heartbeat_limit - 1
-
-
-def test_read_heartbeat_scope_can_override_hisense_default(tmp_path):
-    store = GatewayStore(str(tmp_path / "gateway.db"))
-    normal_session = store.get_or_create_session("default", "operit")
-    hisense_session = store.get_or_create_session("hisense", cfg.hisense_client_name)
-    store.append_heartbeat(normal_session["id"], "normal hb")
-    store.append_heartbeat(hisense_session["id"], "hisense hb", hisense=True)
-    gateway_namespace["session_store"] = store
+    session = store.get_or_create_session("default", "operit")
+    store.append_heartbeat(session["id"], "normal hb")
     configure_gateway_tools(store=store)
 
     service = GatewayToolService()
-    auto_result = asyncio.run(service.read_heartbeat(session_tag="hisense"))
-    normal_result = asyncio.run(service.read_heartbeat(session_tag="hisense", scope="normal"))
+    result = asyncio.run(service.read_heartbeat(session_tag="default"))
 
-    assert auto_result["scope"] == "hisense"
-    assert [item["content"] for item in auto_result["items"]] == ["hisense hb"]
-    assert normal_result["scope"] == "normal"
-    assert [item["content"] for item in normal_result["items"]] == ["normal hb"]
+    assert result["ok"] is True
+    assert result["session_tag"] == "default"
+    assert result["count"] == 1
+    assert "scope" not in result
+    assert [item["content"] for item in result["items"]] == ["normal hb"]
+    assert set(result["items"][0]) == {"content", "created_at"}

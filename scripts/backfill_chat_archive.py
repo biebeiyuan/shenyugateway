@@ -151,13 +151,12 @@ def _candidate_rows(
     client_name: str | None,
     messages: list[dict],
     created_at: str | None,
-    is_hisense: bool,
     existing: set[tuple[str, str]],
 ) -> list[dict]:
     rows: list[dict] = []
     event_at = created_at or iso_now()
     latest_client_event_at = event_at
-    thread = derive_thread(tag, is_hisense)
+    thread = derive_thread(tag)
     taken: set[str] = set()
     for msg in messages or []:
         role = msg.get("role")
@@ -220,7 +219,6 @@ async def main() -> None:
     service = ChatArchiveService(store, supabase, cfg)
     batch_size = max(1, min(int(args.batch_size or 250), 1000))
 
-    hisense_name = (cfg.hisense_client_name or "hisense").casefold()
     total = 0
     windows = 0
     pending: list[dict] = []
@@ -235,13 +233,11 @@ async def main() -> None:
                 print(f"Seeded {seeded} existing archive hashes into local chat_archive_seen.")
         for tag, client_name, messages, _created in _iter_windows(store, args.session_tag):
             windows += 1
-            is_hisense = (client_name or "").casefold() == hisense_name or (client_name or "") == "海信"
             rows = _candidate_rows(
                 tag=tag,
                 client_name=client_name,
                 messages=messages,
                 created_at=_created,
-                is_hisense=is_hisense,
                 existing=existing,
             )
             if args.dry_run:

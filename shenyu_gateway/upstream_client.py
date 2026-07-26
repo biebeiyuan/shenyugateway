@@ -196,25 +196,11 @@ def chat_url_for(base_url: str, protocol: str = "auto") -> str:
     return url
 
 
-def upstream_for_hisense(cfg: Any, is_hisense: bool = False) -> dict[str, str]:
+def resolve_upstream(cfg: Any) -> dict[str, str]:
     base_url = _clean_config_text(cfg.upstream_url)
     api_key = _clean_config_text(cfg.upstream_api_key)
     protocol = _clean_config_text(cfg.upstream_protocol) or "auto"
     scope = "default"
-
-    if is_hisense:
-        hisense_url = _clean_config_text(getattr(cfg, "hisense_upstream_url", ""))
-        hisense_key = _clean_config_text(getattr(cfg, "hisense_api_key", ""))
-        hisense_protocol = _clean_config_text(getattr(cfg, "hisense_protocol", ""))
-        if hisense_url:
-            base_url = hisense_url
-            scope = "hisense"
-        if hisense_key:
-            api_key = hisense_key
-            scope = "hisense"
-        if hisense_protocol:
-            protocol = hisense_protocol
-            scope = "hisense"
 
     resolved_protocol = detect_protocol_for(base_url, protocol)
     return {
@@ -444,9 +430,7 @@ async def build_upstream_request(
     cfg: Any,
 ) -> tuple[dict, dict, str, dict, dict]:
     model_name = mapped_model_name(cfg, body.model)
-    upstream = (meta or {}).get("upstream") or upstream_for_hisense(
-        cfg, bool(((meta or {}).get("package") or {}).get("is_hisense"))
-    )
+    upstream = (meta or {}).get("upstream") or resolve_upstream(cfg)
     proto = upstream["protocol"]
     raw_messages = messages_override or [message.model_dump(exclude_none=True) for message in body.messages]
     merged_tools = merge_tools(body.tools, cfg, meta=meta)

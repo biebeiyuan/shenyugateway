@@ -332,9 +332,7 @@ heat = initial_temp × decay + recall_bonus         # 最终温度 [0, 1]
 
 Heartbeats 注入到它**自己的 `heartbeat` 层**（不是 `slow`，也不是 `mem`），渲染为 `## 我之前的心跳`。在最终的消息序列里，这一层排在 `mem`（星星+便签）**之后**、`tool_policy` 之前。它们是沈予回顾自己之前内心活动的素材。
 
-> 实现细节：`context_layers.py::render_layered_additions` 把心跳收进独立的 `heartbeat_blocks`（与 `slow_blocks` 分开），返回独立的 `heartbeat` key；`assemble_layered_messages` 按 `stable → slow → mem → heartbeat → tool_policy → format` 顺序各自成一条 system message。海信线程心跳渲染为 `## 海信线程心跳`，同在这一层。
-
-Hisense（海信）线程有独立的 heartbeat 池，互不污染。
+> 实现细节：`context_layers.py::render_layered_additions` 把心跳收进独立的 `heartbeat_blocks`（与 `slow_blocks` 分开），返回独立的 `heartbeat` key；`assemble_layered_messages` 按 `stable → slow → mem → heartbeat → tool_policy → format` 顺序各自成一条 system message。
 
 ### 4.4 归档逻辑
 
@@ -531,17 +529,16 @@ Room Mode 不是记忆子系统，但它**消费所有记忆子系统的数据**
 
 ```python
 # 1) 心跳：同步计算，无 await（SQLite，本地快）
-heartbeat_digest = self._normal_heartbeat_context(...)        # 或 hisense 分支
+heartbeat_digest = self._normal_heartbeat_context(...)
 
 # 2) 日历：顺序 await（其内部对 day/week/month 三页另有一个小 gather）
 package["calendar_context"] = await self.calendar_context_pages()
 
-# 3) 矛盾书架：顺序 await，仅非 hisense 且 inject_conflict_shelf 开启时
-if not is_hisense and inject_conflict_shelf:
+# 3) 矛盾书架：顺序 await，仅 inject_conflict_shelf 开启时
+if inject_conflict_shelf:
     package["conflict_books"] = await self._conflict_shelf_books()
 
-# 4a) hisense 分支：顺序 await notebook + last_wake_recap
-# 4b) 非 hisense 分支：唯一的顶层并行点——mem_notes 与 stars 两路 gather
+# 4) 唯一的顶层并行点——mem_notes 与 stars 两路 gather
 notes_result, stars_result = await asyncio.gather(
     mem_note_search,   # Supabase shenyu_mem_notes（带排序）
     star_search,       # Supabase shenyu_stars（带 RRF 排序）
@@ -550,7 +547,7 @@ notes_result, stars_result = await asyncio.gather(
 
 所以真正并行的只有"便签 + 星星"这两路最重的检索；其余源是同步或顺序 await。每个源独立 try/except——一个源失败不影响其他源。
 
-> 为什么这样安排：心跳是本地 SQLite，同步取最省事；日历/矛盾书架是轻量 Supabase 读；而便签和星星各自带一整套排序/召回管线，是延迟大头，所以只把这两路放进 `asyncio.gather` 抢时间。hisense 线程不注入便签/星星，因此没有这个 gather。
+> 为什么这样安排：心跳是本地 SQLite，同步取最省事；日历/矛盾书架是轻量 Supabase 读；而便签和星星各自带一整套排序/召回管线，是延迟大头，所以只把这两路放进 `asyncio.gather` 抢时间。
 
 收集完成后，`render_layered_additions()` 把原始数据渲染为文本层，`assemble_layered_messages()` 把文本层注入到消息列表中。
 

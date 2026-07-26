@@ -66,7 +66,6 @@ class SessionsMixin:
                     COALESCE(rw.raw_request_window_count, 0) AS raw_request_window_count,
                     COALESCE(c.cold_start_snapshot_count, 0) AS cold_start_snapshot_count,
                     COALESCE(h.heartbeat_count, 0) AS heartbeat_count,
-                    COALESCE(hh.hisense_heartbeat_count, 0) AS hisense_heartbeat_count,
                     latest_user.content AS latest_user_text
                 FROM gateway_sessions s
                 LEFT JOIN (
@@ -100,11 +99,6 @@ class SessionsMixin:
                     FROM heartbeat_entries
                     GROUP BY session_id
                 ) h ON h.session_id = s.id
-                LEFT JOIN (
-                    SELECT session_id, COUNT(id) AS hisense_heartbeat_count
-                    FROM hisense_heartbeat
-                    GROUP BY session_id
-                ) hh ON hh.session_id = s.id
                 LEFT JOIN gateway_messages latest_user ON latest_user.id = (
                     SELECT id FROM gateway_messages
                     WHERE session_id = s.id AND role = 'user'
@@ -145,10 +139,6 @@ class SessionsMixin:
                 "SELECT COUNT(*) AS count FROM heartbeat_entries WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
-            hisense_heartbeat_count = conn.execute(
-                "SELECT COUNT(*) AS count FROM hisense_heartbeat WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
             cold_count = conn.execute(
                 "SELECT COUNT(*) AS count FROM cold_start_snapshots WHERE session_id = ?",
                 (session_id,),
@@ -175,7 +165,6 @@ class SessionsMixin:
                 "assistant_messages": int(message_counts["assistant_count"] or 0),
                 "tool_messages": int(message_counts["tool_count"] or 0),
                 "heartbeats": int(heartbeat_count["count"] or 0),
-                "hisense_heartbeats": int(hisense_heartbeat_count["count"] or 0),
                 "cold_start_snapshots": int(cold_count["count"] or 0),
                 "context_snapshots": int(snapshot_count["count"] or 0),
                 "raw_request_windows": int(raw_window_count["count"] or 0),
@@ -189,7 +178,6 @@ class SessionsMixin:
             "context_window_states",
             "tool_error_log",
             "room_trace",
-            "hisense_heartbeat",
             "heartbeat_entries",
             "pending_gateway_tool_turns",
             "cold_start_snapshots",
@@ -206,7 +194,7 @@ class SessionsMixin:
                     "SELECT name FROM sqlite_master WHERE type = 'table'"
                 ).fetchall()
             }
-            for legacy_table in ("frozen_windows", "conversation_summaries"):
+            for legacy_table in ("frozen_windows", "conversation_summaries", "hisense_heartbeat"):
                 if legacy_table in existing_tables:
                     cursor = conn.execute(f"DELETE FROM {legacy_table} WHERE session_id = ?", (session_id,))
                     deleted[legacy_table] = int(cursor.rowcount or 0)

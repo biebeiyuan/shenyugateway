@@ -123,7 +123,7 @@ class SearchMixin:
         target_limit = max(1, min(int(limit or 3), 5))
 
         # session_tag records provenance for normal mem notes; it is not a
-        # visibility boundary. Hisense skips this context path entirely.
+        # visibility boundary.
         active_rows = await self._load_active_rows(None)
 
         # --- Layer 0: running_joke serendipity (scene_tag match + random gate) ---
