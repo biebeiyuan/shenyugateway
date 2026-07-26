@@ -531,3 +531,30 @@ def test_restore_config_overrides_from_sqlite_feeds_runtime_config(tmp_path, mon
     assert cfg.enable_gateway_tools is False
     assert cfg.max_client_messages is None
     assert cfg.star_soft_direct_cooldown_turns == 12
+
+
+def test_config_update_treats_empty_gateway_key_as_unchanged(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+
+    response = client.post("/api/config", json={"gateway_key": "", "inject_mem_notes": True})
+
+    assert response.status_code == 200
+    assert all("GATEWAY_API_KEY" not in updates for updates in persisted)
+    assert any("INJECT_MEM_NOTES" in updates for updates in persisted)
+
+
+def test_restore_overrides_ignores_empty_gateway_key(tmp_path, monkeypatch):
+    import os
+
+    db_path = tmp_path / "overrides.db"
+    store = GatewayStore(str(db_path))
+    store.save_config_overrides({"GATEWAY_API_KEY": "", "WAKE_WELCOME_MESSAGE": ""})
+    monkeypatch.setenv("GATEWAY_API_KEY", "real-key")
+    monkeypatch.setenv("WAKE_WELCOME_MESSAGE", "hello")
+
+    gateway._restore_config_overrides_from_db(str(db_path))
+
+    # The empty key must not clobber the real one; ordinary empty overrides
+    # (like clearing the welcome message) still apply.
+    assert os.environ["GATEWAY_API_KEY"] == "real-key"
+    assert os.environ["WAKE_WELCOME_MESSAGE"] == ""

@@ -149,6 +149,15 @@ def _restore_config_overrides_from_db(db_path: str) -> None:
         if restored_db_path and Path(restored_db_path) != Path(initial_db_path):
             overrides.update(load_if_present(restored_db_path))
         for key, value in overrides.items():
+            if key == "GATEWAY_API_KEY" and not (value or "").strip():
+                # An empty override would erase a real key configured in the
+                # container environment and silently disable auth on a public
+                # deployment. Clearing auth must happen in the real environment
+                # on purpose, never via a leftover empty override row.
+                logger.warning(
+                    "Ignoring empty GATEWAY_API_KEY override from SQLite; delete the override row or save a real key to clear this warning."
+                )
+                continue
             os.environ[key] = value
         if overrides:
             logger.info(

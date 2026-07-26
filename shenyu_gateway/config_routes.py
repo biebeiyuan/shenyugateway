@@ -325,6 +325,10 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
         for field in simple_fields:
             value = getattr(body, field)
             if value is not None:
+                if field == "gateway_key" and isinstance(value, str) and not value.strip():
+                    # A persisted empty key silently disables auth after the next
+                    # restart; treat an empty form field as "unchanged" instead.
+                    continue
                 if field == "wake_welcome_message":
                     if body.clear_wake_welcome_message:
                         continue

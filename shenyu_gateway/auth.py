@@ -72,7 +72,7 @@ body{font-family:-apple-system,'Segoe UI',sans-serif;background:#0f1117;color:#e
 function doLogin(){
   const pw=document.getElementById('pw').value.trim();
   if(!pw) return;
-  document.cookie='shenyu_token='+encodeURIComponent(pw)+';path=/;max-age=86400;SameSite=Lax';
+  document.cookie='shenyu_token='+encodeURIComponent(pw)+';path=/;max-age=15552000;SameSite=Lax';
   localStorage.setItem('shenyu_token',pw);
   location.reload();
 }
