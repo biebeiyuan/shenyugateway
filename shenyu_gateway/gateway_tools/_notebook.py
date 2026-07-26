@@ -66,7 +66,7 @@ class NotebookToolsMixin:
         params: dict[str, str] = {
             "order": "pinned.desc,updated_at.desc",
             "limit": str(limit),
-            "select": "id,type,content,tags,status,pinned,metadata,created_at,updated_at",
+            "select": "id,type,content,tags,status,pinned,created_at,updated_at",
         }
         if status_key and status_key != "all":
             params["status"] = f"eq.{status_key}"

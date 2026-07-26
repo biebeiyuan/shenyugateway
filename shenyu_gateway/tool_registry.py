@@ -69,7 +69,7 @@ DAILY_CLIENT_TOOL_PREFIXES = ("coread_",)
 CLIENT_TOOL_SURFACES = {"all", "daily", "none"}
 
 _BROKER_CATEGORIZED_DESCRIPTION = """\
-记忆库总入口。tool=工具全名，params=参数对象（直接传对象，不要传 JSON 字符串）。
+记忆库总入口。tool=工具全名，params=参数对象（直接传对象，不要传 JSON 字符串；无参数时传 {}）。
 *=必填。查心跳/日历/便签等都有专用工具，不要用 supabase 系列代替。
 
 星星
@@ -118,7 +118,7 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
 Supabase 直接操作看 supabase_guide。"""
 
 _BROKER_DAILY_DESCRIPTION = """\
-记忆库日常入口。tool=工具全名，params=参数对象（直接传对象，不要传 JSON 字符串）。
+记忆库日常入口。tool=工具全名，params=参数对象（直接传对象，不要传 JSON 字符串；无参数时传 {}）。
 这里放沈予日常会碰的东西；后台管理和数据库工具收起来了。
 
 星星
@@ -268,7 +268,7 @@ def _gateway_broker_tool(cfg: Any) -> dict:
                     "params": {
                         "type": "object",
                         "additionalProperties": True,
-                        "description": "选中工具的参数对象。",
+                        "description": "选中工具的参数对象；无参数时传 {}。",
                     },
                 },
                 "required": ["tool"],
@@ -932,7 +932,8 @@ async def execute_gateway_tool(
                 "ok": False,
                 "error": (
                     f"Unsupported gateway broker target: {target_name}. "
-                    "Use `tool` with the full shenyu_ / supabase_ name, and put arguments in `params`."
+                    "Use `tool` with the full shenyu_ / supabase_ name, and put arguments in `params`. "
+                    "For tools with no parameters, pass params: {}."
                 ),
                 "available_tools": sorted(exposed),
             }

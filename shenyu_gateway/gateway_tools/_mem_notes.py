@@ -4,6 +4,68 @@ from typing import Any, Optional
 
 from shenyu_gateway.runtime import logger
 
+# Resident contract: tool results stay clean. The service layer keeps the full
+# rows for the Admin UI; the tool surface projects notes down to content-side
+# fields plus the ids later calls need. Scoring and trigger bookkeeping stay out.
+_MEM_NOTE_PUBLIC_FIELDS = (
+    "id",
+    "content",
+    "summary",
+    "mem_type",
+    "memory_kind",
+    "status",
+    "trigger_text",
+    "trigger_keywords",
+    "entities",
+    "people",
+    "places",
+    "objects",
+    "keywords",
+    "event_time",
+    "session_tag",
+    "created_at",
+    "updated_at",
+    "promise_text",
+    "trigger_scenarios",
+    "due_hint",
+    "resolved",
+    "next_action",
+    "privacy_level",
+    "joke_text",
+    "scene_tags",
+    "routine_domain",
+    "pattern",
+    "phase",
+    "constraints",
+    "topic",
+    "last_position",
+    "open_questions",
+    "next_prompt",
+    "thread_resolved",
+)
+
+
+def _clean_mem_note(note: Any) -> dict[str, Any]:
+    if not isinstance(note, dict):
+        return {}
+    item: dict[str, Any] = {}
+    for key in _MEM_NOTE_PUBLIC_FIELDS:
+        value = note.get(key)
+        if value is None or value == "" or value == []:
+            continue
+        item[key] = value
+    return item
+
+
+def _clean_mem_note_listing(result: Any) -> Any:
+    if not isinstance(result, dict) or not result.get("ok"):
+        return result
+    items = [_clean_mem_note(item) for item in result.get("items") or []]
+    out: dict[str, Any] = {"ok": True, "count": len(items), "items": items}
+    if result.get("status"):
+        out["status"] = result["status"]
+    return out
+
 
 class MemNoteToolsMixin:
     async def search_mem_notes(
@@ -15,7 +77,7 @@ class MemNoteToolsMixin:
         mem_type: Optional[str] = None,
         memory_kind: Optional[str] = None,
     ) -> dict:
-        return await self._mem_notes().list_notes(
+        result = await self._mem_notes().list_notes(
             status=status,
             limit=limit,
             session_tag=session_tag,
@@ -23,6 +85,7 @@ class MemNoteToolsMixin:
             mem_type=mem_type,
             memory_kind=memory_kind,
         )
+        return _clean_mem_note_listing(result)
 
     async def list_mem_notes(
         self,
@@ -33,7 +96,7 @@ class MemNoteToolsMixin:
         mem_type: Optional[str] = None,
         memory_kind: Optional[str] = None,
     ) -> dict:
-        return await self._mem_notes().list_notes(
+        result = await self._mem_notes().list_notes(
             status=status,
             limit=limit,
             session_tag=session_tag,
@@ -41,6 +104,7 @@ class MemNoteToolsMixin:
             mem_type=mem_type,
             memory_kind=memory_kind,
         )
+        return _clean_mem_note_listing(result)
 
     async def write_mem_note(
         self,
@@ -129,6 +193,14 @@ class MemNoteToolsMixin:
                 )
             except Exception as exc:
                 logger.warning("[MemNote] Replaced recall row cleanup failed: %s", exc)
+        if isinstance(result, dict) and result.get("ok"):
+            projected: dict[str, Any] = {"ok": True, "note_id": result.get("note_id")}
+            if isinstance(note, dict):
+                projected["note"] = _clean_mem_note(note)
+            for key in ("replaced_ids", "replaced_count"):
+                if result.get(key) is not None:
+                    projected[key] = result[key]
+            return projected
         return result
 
     async def update_mem_note(self, note_id: str, patch: dict[str, Any]) -> dict:
@@ -139,6 +211,11 @@ class MemNoteToolsMixin:
                 await self._recall_index().index_mem_note_row(updated[0])
             except Exception as exc:
                 logger.warning("[MemNote] Immediate recall reindex failed: %s", exc)
+        if isinstance(result, dict) and result.get("ok"):
+            projected: dict[str, Any] = {"ok": True, "note_id": note_id}
+            if isinstance(updated, list) and updated and isinstance(updated[0], dict):
+                projected["note"] = _clean_mem_note(updated[0])
+            return projected
         return result
 
     async def bulk_update_mem_notes(

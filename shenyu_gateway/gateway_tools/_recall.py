@@ -81,7 +81,6 @@ class RecallToolsMixin:
                 include_undated=include_undated,
                 limit=main_limit,
                 auto_sync=auto_sync,
-                include_trace=True,
             )
         if companion_slots and include_star:
             tasks["star"] = self._stars().search_recall(

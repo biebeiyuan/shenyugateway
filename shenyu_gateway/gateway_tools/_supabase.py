@@ -88,7 +88,7 @@ class SupabaseToolsMixin:
             return {"ok": False, "error": table_hint}
         try:
             result = await self.supabase.insert(table, data)
-            return {"ok": True, "table": table, "row": result, "result": result}
+            return {"ok": True, "table": table, "row": result}
         except Exception as exc:
             return {"ok": False, "error": self._friendly_supabase_error(table, exc)}
 

@@ -1093,7 +1093,8 @@ def test_execute_gateway_tool_reports_unsupported_broker_target():
     assert result["ok"] is False
     assert result["error"] == (
         "Unsupported gateway broker target: not_a_gateway_tool. "
-        "Use `tool` with the full shenyu_ / supabase_ name, and put arguments in `params`."
+        "Use `tool` with the full shenyu_ / supabase_ name, and put arguments in `params`. "
+        "For tools with no parameters, pass params: {}."
     )
     assert "shenyu_recall" in result["available_tools"]
 
@@ -1112,7 +1113,7 @@ def test_gateway_broker_description_matches_scan_friendly_sample():
     assert "windowsill_write" in description
     assert "windowsill_list" in description
     assert "shenyu_get_meta_summaries" not in description
-    assert properties["params"]["description"] == "选中工具的参数对象。"
+    assert properties["params"]["description"] == "选中工具的参数对象；无参数时传 {}。"
     assert "arguments" not in properties
     assert "省略 shenyu_ 前缀" not in description
     assert function["parameters"]["required"] == ["tool"]

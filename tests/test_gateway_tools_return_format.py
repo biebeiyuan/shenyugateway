@@ -216,8 +216,13 @@ def test_recall_federation_keeps_internal_scores_out_of_tool_output(monkeypatch)
 
     assert result["count"] == 4
     assert [item["source_type"] for item in result["items"]] == ["journal", "journal", "journal", "heartbeat"]
-    assert all("score" not in item and "matched_by" not in item for item in result["items"])
-    assert recall_kwargs["include_trace"] is True
+    assert all(
+        "score" not in item and "matched_by" not in item and "recall_match" not in item
+        for item in result["items"]
+    )
+    # Admin preview keeps include_trace; the resident-facing tool path must not
+    # request it, so recall_match never reaches the model.
+    assert recall_kwargs.get("include_trace", False) is False
 
 
 def test_exact_recall_does_not_add_a_weak_companion(monkeypatch):
@@ -415,3 +420,133 @@ def test_bulk_mem_note_reindex_failure_does_not_block_other_updates(monkeypatch)
 
     assert result["ok"] is True
     assert indexed == ["note-b"]
+
+
+def test_star_tool_results_stay_clean(monkeypatch):
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=None, store=None)
+
+    class FakeStars:
+        async def list_stars(self, **kwargs):
+            return {
+                "ok": True,
+                "count": 1,
+                "items": [
+                    {
+                        "id": "star-1",
+                        "content": "原文",
+                        "chord": "Am",
+                        "chord_sequence": ["Am"],
+                        "status": "active",
+                        "is_constant": False,
+                        "created_at": "2026-07-01T00:00:00+00:00",
+                        "updated_at": "2026-07-02T00:00:00+00:00",
+                        "session_tag": "7.1",
+                        "scenes": ["daily"],
+                        "activation_count": 3,
+                        "last_activated_at": "2026-07-03",
+                        "source_model": "m",
+                        "source_session_id": "s",
+                        "source_excerpt": "e",
+                        "chord_root": "A",
+                        "chord_quality": "m",
+                    }
+                ],
+            }
+
+        async def search_stars(self, **kwargs):
+            return {
+                "ok": True,
+                "count": 1,
+                "run_id": "run-1",
+                "items": [
+                    {
+                        "id": "star-1",
+                        "content": "原文",
+                        "chord": "Am",
+                        "created_at": "2026-07-01T00:00:00+00:00",
+                        "candidate_id": "cand-1",
+                        "score": 0.83,
+                        "scores": {"rrf_score": 0.5},
+                        "keyword_hits": ["原文"],
+                        "direct_reference_kind": "none",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(service, "_stars", lambda: FakeStars())
+
+    listing = asyncio.run(service.list_stars())
+    assert listing["items"][0] == {
+        "id": "star-1",
+        "content": "原文",
+        "chord": "Am",
+        "chord_sequence": ["Am"],
+        "status": "active",
+        "is_constant": False,
+        "created_at": "2026-07-01T00:00:00+00:00",
+        "updated_at": "2026-07-02T00:00:00+00:00",
+    }
+
+    search = asyncio.run(service.search_stars(query="原文"))
+    assert search["run_id"] == "run-1"
+    item = search["items"][0]
+    assert item["candidate_id"] == "cand-1"
+    assert "score" not in item and "scores" not in item
+    assert "keyword_hits" not in item and "direct_reference_kind" not in item
+
+
+def test_mem_note_listing_strips_internal_bookkeeping(monkeypatch):
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=None, store=None)
+
+    class FakeMemNotes:
+        async def list_notes(self, **kwargs):
+            return {
+                "ok": True,
+                "status": "active",
+                "count": 1,
+                "status_counts": {"active": 1},
+                "eligible_count": 1,
+                "stored_count": 1,
+                "items": [
+                    {
+                        "id": "note-1",
+                        "content": "圆圆睡前要热水",
+                        "summary": "热水",
+                        "mem_type": "habit",
+                        "status": "active",
+                        "created_at": "2026-07-01T00:00:00+00:00",
+                        "heat": 3,
+                        "importance": 0.7,
+                        "confidence": 0.9,
+                        "promotion_score": 0.4,
+                        "mention_count": 2,
+                        "trigger_count": 5,
+                        "cooldown_hours": 72,
+                        "last_triggered_at": "2026-07-20",
+                        "suggested_mem_type": "habit",
+                        "auto_surface_eligible": True,
+                        "written_by_shenyu": True,
+                        "source_model": "m",
+                    }
+                ],
+            }
+
+    monkeypatch.setattr(service, "_mem_notes", lambda: FakeMemNotes())
+
+    result = asyncio.run(service.list_mem_notes())
+
+    assert result == {
+        "ok": True,
+        "count": 1,
+        "status": "active",
+        "items": [
+            {
+                "id": "note-1",
+                "content": "圆圆睡前要热水",
+                "summary": "热水",
+                "mem_type": "habit",
+                "status": "active",
+                "created_at": "2026-07-01T00:00:00+00:00",
+            }
+        ],
+    }

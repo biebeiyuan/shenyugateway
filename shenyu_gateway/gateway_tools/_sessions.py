@@ -53,22 +53,18 @@ class SessionToolsMixin:
             created_to=created_end,
             hisense=read_hisense,
         )
-        for item in items:
-            item["state"] = "injected" if item.get("injected_at") else "pending"
-        latest_digest = "\n".join(reversed([item.get("content") or "" for item in items[:5]])) if order == "desc" else "\n".join(item.get("content") or "" for item in items[:5])
+        # Resident contract: heartbeats come back as time + original text only;
+        # injection/sync bookkeeping columns stay inside the store.
+        clean_items = [
+            {"content": item.get("content") or "", "created_at": item.get("created_at") or ""}
+            for item in items
+        ]
         return {
             "ok": True,
             "session_tag": resolved_tag,
             "scope": resolved_scope,
-            "scope_requested": scope_key,
-            "state": state,
-            "order": order,
-            "date": date,
-            "date_from": date_from,
-            "date_to": date_to,
-            "count": len(items),
-            "items": items,
-            "latest_digest": latest_digest,
+            "count": len(clean_items),
+            "items": clean_items,
         }
 
     async def last_seen(self) -> Any:

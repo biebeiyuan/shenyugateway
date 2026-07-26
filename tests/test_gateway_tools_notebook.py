@@ -79,7 +79,7 @@ def test_notebook_list_filters_hisense_scope_by_tag():
             {
                 "order": "pinned.desc,updated_at.desc",
                 "limit": "4",
-                "select": "id,type,content,tags,status,pinned,metadata,created_at,updated_at",
+                "select": "id,type,content,tags,status,pinned,created_at,updated_at",
                 "status": "eq.active",
                 "tags": "cs.{hisense}",
             },
