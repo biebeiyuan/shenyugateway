@@ -8,7 +8,10 @@ from types import SimpleNamespace
 from shenyu_gateway.room_context import render_room_layers, visible_room_tool_names
 from shenyu_gateway.room_tools import collect_door_counts, room_tool_definitions
 from shenyu_gateway.tool_registry import (
+    DAILY_GATEWAY_TOOL_NAMES,
     HIDDEN_COMPAT_TOOL_NAMES,
+    _BROKER_CATEGORIZED_DESCRIPTION,
+    _BROKER_DAILY_DESCRIPTION,
     _TOOL_HANDLERS,
     execute_gateway_tool,
     gateway_native_tools,
@@ -2354,3 +2357,43 @@ def test_every_gateway_tool_schema_has_a_handler_and_only_hidden_handlers_are_un
 
     assert schema_names - handler_names == set()
     assert handler_names - schema_names == HIDDEN_COMPAT_TOOL_NAMES
+
+
+def test_broker_descriptions_mention_every_exposed_tool_short_name():
+    # Broker prose lists tools by short name (shenyu_ prefix stripped). The four
+    # supabase CRUD tools are deliberately covered by the supabase_guide pointer
+    # instead of inline entries.
+    supabase_family = {"supabase_query", "supabase_insert", "supabase_update", "supabase_delete"}
+
+    full_tool = gateway_native_tools(_cfg(enable_mem0_management_tools=True, expose_supabase_tools=True))[0]
+    full_names = set(full_tool["function"]["parameters"]["properties"]["tool"]["enum"])
+    undocumented = {
+        name
+        for name in full_names - supabase_family
+        if name.removeprefix("shenyu_") not in _BROKER_CATEGORIZED_DESCRIPTION
+    }
+    assert not undocumented, f"broker categorized description is missing tools: {sorted(undocumented)}"
+
+    daily_tool = gateway_native_tools(
+        _cfg(enable_mem0_management_tools=True, expose_supabase_tools=True, gateway_tool_surface="daily")
+    )[0]
+    daily_names = set(daily_tool["function"]["parameters"]["properties"]["tool"]["enum"])
+    undocumented_daily = {
+        name for name in daily_names if name.removeprefix("shenyu_") not in _BROKER_DAILY_DESCRIPTION
+    }
+    assert not undocumented_daily, f"broker daily description is missing tools: {sorted(undocumented_daily)}"
+
+
+def test_daily_surface_names_all_exist_in_tool_schemas():
+    schema_names = {
+        tool["function"]["name"]
+        for tool in [
+            *_gateway_core_tools(),
+            _gateway_list_mem_notes_tool(),
+            *_gateway_mem0_management_tools(),
+            *_gateway_notebook_and_recall_tools(),
+            *_gateway_supabase_tools(),
+        ]
+    }
+    unknown = DAILY_GATEWAY_TOOL_NAMES - schema_names
+    assert not unknown, f"DAILY_GATEWAY_TOOL_NAMES has entries with no schema: {sorted(unknown)}"

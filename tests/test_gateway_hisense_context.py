@@ -14,6 +14,7 @@ from shenyu_gateway import room_context
 from shenyu_gateway import upstream_adapter
 from shenyu_gateway.context_builder import ContextBuilder
 from shenyu_gateway.gateway_tools import GatewayToolService
+from shenyu_gateway.gateway_tools import _is_hisense_client as _shared_is_hisense_client
 from shenyu_gateway.gateway_tools import configure_gateway_tools
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.tool_registry import gateway_native_tools
@@ -93,6 +94,7 @@ def _load_gateway_helpers():
         "session_store": None,
         "supabase_client": None,
         "cfg": cfg,
+        "_shared_is_hisense_client": _shared_is_hisense_client,
         "_detect_protocol_for": _detect_protocol_for,
         "_chat_url_for": _chat_url_for,
         "_upstream_for_hisense": lambda is_hisense=False: _upstream_for_hisense(cfg, is_hisense),

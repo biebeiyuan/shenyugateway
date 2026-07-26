@@ -31,7 +31,11 @@ from shenyu_gateway.config import RuntimeConfig
 from shenyu_gateway.config_routes import ConfigRouteDeps, build_config_router
 from shenyu_gateway.context_builder import ContextBuilder
 from shenyu_gateway.context_snapshots import write_completion_context_snapshot as _write_completion_context_snapshot
-from shenyu_gateway.gateway_tools import GatewayToolService, configure_gateway_tools
+from shenyu_gateway.gateway_tools import (
+    GatewayToolService,
+    configure_gateway_tools,
+    _is_hisense_client as _shared_is_hisense_client,
+)
 from shenyu_gateway.heartbeat_archive import HeartbeatArchiveService, heartbeat_archive_worker
 from shenyu_gateway.gateway_admin_routes import GatewayAdminRouteDeps, build_gateway_admin_router
 from shenyu_gateway.hisense_routes import HisenseRouteDeps, build_hisense_router
@@ -394,13 +398,7 @@ def _client_name_from_request(request: Request) -> str:
 
 
 def _is_hisense_client(client_name: Optional[str]) -> bool:
-    target = (cfg.hisense_client_name or "").strip()
-    name = (client_name or "").strip()
-    if not target or not name:
-        return False
-    if name.casefold() == target.casefold():
-        return True
-    return target.casefold() == "hisense" and name == "海信"
+    return _shared_is_hisense_client(client_name, runtime_config=cfg)
 
 
 def _is_hisense_session(session: Optional[dict]) -> bool:
