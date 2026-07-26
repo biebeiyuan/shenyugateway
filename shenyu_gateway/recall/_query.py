@@ -13,6 +13,14 @@ from ._documents import RecallDocument
 from ._text import _QUOTED_TITLE_RE, _parse_date_bound, _parse_dt, _shorten, _vector_literal, classify_recall_mode, infer_recall_date, recall_terms
 
 
+class _IndexNotReadyError(Exception):
+    """An index-table read channel failed; maps to the "recall index table is not ready" error."""
+
+    def __init__(self, original: BaseException):
+        super().__init__(str(original))
+        self.original = original
+
+
 class QueryMixin:
     async def recall(
         self,
@@ -42,32 +50,22 @@ class QueryMixin:
         should_auto_sync = self._auto_sync_enabled(auto_sync)
         sync_result = None
         try:
-            keyword_rows = await self._query_index(source_types=source_types, query_text=query_text, tokens=tokens)
-            title_rows = await self._query_title_candidates(source_types=source_types, query_text=query_text)
-            date_rows = await self._query_date_candidates(
+            rows, vector_meta = await self._collect_candidates(
                 source_types=source_types,
+                query_text=query_text,
+                tokens=tokens,
                 date_from=date_from,
                 date_to=date_to,
             )
-            keyword_rows = self._merge_candidate_rows(title_rows + date_rows, keyword_rows)
-        except Exception as exc:
+        except _IndexNotReadyError as exc:
             return {
                 "ok": False,
                 "query": query_text,
                 "count": 0,
                 "items": [],
-                "error": f"recall index table is not ready: {exc}",
+                "error": f"recall index table is not ready: {exc.original}",
                 "sync": sync_result,
             }
-
-        graph_rows = await MemoryGraphService(self.supabase).recall_rows(
-            query_text,
-            source_types=self._source_type_filter(source_types),
-            max_mentions=self._candidate_limit(),
-        )
-        vector_rows, _vector_meta = await self._vector_rows(query_text, source_types=source_types)
-        rows = self._merge_candidate_rows(keyword_rows, graph_rows)
-        rows = self._merge_candidate_rows(rows, vector_rows)
         if not rows and should_auto_sync:
             sync_result = sync_result or await self.rebuild(source_types=source_types, embed=False)
             if not sync_result.get("ok") and not sync_result.get("indexed"):
@@ -80,31 +78,22 @@ class QueryMixin:
                     "sync": sync_result,
                 }
             try:
-                keyword_rows = await self._query_index(source_types=source_types, query_text=query_text, tokens=tokens)
-                title_rows = await self._query_title_candidates(source_types=source_types, query_text=query_text)
-                date_rows = await self._query_date_candidates(
+                rows, vector_meta = await self._collect_candidates(
                     source_types=source_types,
+                    query_text=query_text,
+                    tokens=tokens,
                     date_from=date_from,
                     date_to=date_to,
                 )
-                keyword_rows = self._merge_candidate_rows(title_rows + date_rows, keyword_rows)
-            except Exception as exc:
+            except _IndexNotReadyError as exc:
                 return {
                     "ok": False,
                     "query": query_text,
                     "count": 0,
                     "items": [],
-                    "error": f"recall index table is not ready: {exc}",
+                    "error": f"recall index table is not ready: {exc.original}",
                     "sync": sync_result,
                 }
-            graph_rows = await MemoryGraphService(self.supabase).recall_rows(
-                query_text,
-                source_types=self._source_type_filter(source_types),
-                max_mentions=self._candidate_limit(),
-            )
-            vector_rows, _vector_meta = await self._vector_rows(query_text, source_types=source_types)
-            rows = self._merge_candidate_rows(keyword_rows, graph_rows)
-            rows = self._merge_candidate_rows(rows, vector_rows)
 
         start_dt = _parse_date_bound(date_from)
         end_dt = _parse_date_bound(date_to, end_of_day=True)
@@ -151,11 +140,12 @@ class QueryMixin:
             for item, (_, reasons, row) in zip(items, selected):
                 item["recall_match"] = self._public_recall_match(row, reasons)
         logger.info(
-            "[RecallTrace] mode=%s candidates=%s scored=%s visibility_filtered=%s selected=%s",
+            "[RecallTrace] mode=%s candidates=%s scored=%s visibility_filtered=%s vector=%s selected=%s",
             resolved_mode,
             len(rows),
             len(scored),
             filtered_by_visibility,
+            vector_meta,
             [
                 {
                     "source_type": row.get("source_type"),
@@ -172,6 +162,51 @@ class QueryMixin:
             "count": len(items),
             "items": items,
         }
+
+    async def _collect_candidates(
+        self,
+        *,
+        source_types: Optional[list[str]] = None,
+        query_text: str,
+        tokens: list[str],
+        date_from: Optional[str] = None,
+        date_to: Optional[str] = None,
+    ) -> tuple[list[dict], dict[str, Any]]:
+        # The five candidate channels are independent reads, so they run
+        # concurrently. Index-table failures must keep mapping to the
+        # "recall index table is not ready" error while graph/vector failures
+        # keep propagating raw, so exceptions are captured per channel and
+        # re-raised by origin instead of letting gather abort the siblings.
+        keyword_rows, title_rows, date_rows, graph_rows, vector_result = await asyncio.gather(
+            self._query_index(source_types=source_types, query_text=query_text, tokens=tokens),
+            self._query_title_candidates(source_types=source_types, query_text=query_text),
+            self._query_date_candidates(
+                source_types=source_types,
+                date_from=date_from,
+                date_to=date_to,
+            ),
+            MemoryGraphService(self.supabase).recall_rows(
+                query_text,
+                source_types=self._source_type_filter(source_types),
+                max_mentions=self._candidate_limit(),
+            ),
+            self._vector_rows(query_text, source_types=source_types),
+            return_exceptions=True,
+        )
+        for channel_result in (keyword_rows, title_rows, date_rows):
+            if isinstance(channel_result, Exception):
+                raise _IndexNotReadyError(channel_result) from channel_result
+            if isinstance(channel_result, BaseException):
+                raise channel_result
+        if isinstance(graph_rows, BaseException):
+            raise graph_rows
+        if isinstance(vector_result, BaseException):
+            raise vector_result
+        vector_rows, vector_meta = vector_result
+        rows = self._merge_candidate_rows(title_rows + date_rows, keyword_rows)
+        rows = self._merge_candidate_rows(rows, graph_rows)
+        rows = self._merge_candidate_rows(rows, vector_rows)
+        return rows, vector_meta
 
     async def read_source(
         self,
@@ -257,9 +292,14 @@ class QueryMixin:
         rows = self._filter_rows_by_source_types(rows, types)
         filtered_rows = []
         for row in rows:
-            row["_vector_score"] = float(row.get("vector_score") or 0.0)
-            if row["_vector_score"] >= self._vector_min_score():
-                filtered_rows.append(row)
+            # Annotate a copy: the channels run concurrently, so mutating the
+            # source dict would leak _vector_score into the same row object
+            # when another channel also returned it.
+            vector_score = float(row.get("vector_score") or 0.0)
+            if vector_score >= self._vector_min_score():
+                annotated = dict(row)
+                annotated["_vector_score"] = vector_score
+                filtered_rows.append(annotated)
         rows = filtered_rows
         return rows, {"enabled": True, "used": True, "count": len(rows)}
 
