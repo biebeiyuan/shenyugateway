@@ -454,6 +454,9 @@ That opt-in adds `input` and, after completion, `output`: the exact JSON string 
 to the following upstream tool-result message. Those detail fields are current-response data only and
 must never be persisted in request logs or SQLite history. Non-streaming responses expose the same list
 under `shenyu.tool_events`. A client should treat a tool round as complete only after its `tool_end` event.
+The PWA records its current streamed text length when each tool event arrives, so it can place that
+tool round between the corresponding text segments without adding a provider-specific field to the
+gateway contract.
 
 Preserve these response contracts:
 

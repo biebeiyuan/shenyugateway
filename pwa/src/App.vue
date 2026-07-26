@@ -42,11 +42,33 @@ type UiMessage = {
   content: string
   attachments: Attachment[]
   thinking: string
+  thinkingSegments: ThinkingSegment[]
   events: ToolEvent[]
   streaming?: boolean
   error?: string
   expanded?: boolean
 }
+
+type ThinkingSegment = {
+  id: string
+  content: string
+  textOffset: number
+  streamOrder: number
+}
+
+type ProcessGroup = {
+  textOffset: number
+  thinking: ThinkingSegment[]
+  tools: ToolEvent[]
+}
+
+type ProcessTimelineItem =
+  | { kind: 'thinking'; key: string; thinking: ThinkingSegment; streamOrder: number }
+  | { kind: 'tool'; key: string; tool: ToolEvent; streamOrder: number }
+
+type AssistantPart =
+  | { kind: 'content'; key: string; content: string }
+  | { kind: 'process'; key: string; group: ProcessGroup }
 
 type ModelOption = {
   id: string
@@ -82,6 +104,8 @@ type UpstreamPreset = {
 type ProcessSheet = {
   messageId: string
   view: 'summary' | 'thinking' | 'tool'
+  textOffset?: number
+  thinkingKey?: string
   toolKey?: string
 }
 
@@ -171,6 +195,18 @@ const processSheetEvent = computed(() => {
   const message = processSheetMessage.value
   if (!current || current.view !== 'tool' || !message || !current.toolKey) return undefined
   return traceRows(message).find((event) => toolEventKey(event) === current.toolKey)
+})
+const processSheetGroup = computed(() => {
+  const message = processSheetMessage.value
+  const offset = processSheet.value?.textOffset
+  if (!message || offset === undefined) return undefined
+  return processGroups(message).find((group) => group.textOffset === offset)
+})
+const processSheetThinking = computed(() => {
+  const current = processSheet.value
+  const group = processSheetGroup.value
+  if (!current || current.view !== 'thinking' || !group) return undefined
+  return group.thinking.find((item) => item.id === current.thinkingKey)
 })
 const processSheetTitle = computed(() => {
   if (processSheet.value?.view === 'thinking') return '思考片段'
@@ -272,6 +308,9 @@ function loadMessages(): UiMessage[] {
         content: String(item.content || ''),
         attachments: [],
         thinking: String(item.thinking || ''),
+        thinkingSegments: item.thinking
+          ? [{ id: createId('thinking'), content: String(item.thinking), textOffset: 0, streamOrder: 0 }]
+          : [],
         events: [],
         streaming: false,
         error: item.error ? String(item.error) : undefined,
@@ -409,6 +448,7 @@ async function openSession(session: GatewaySession): Promise<boolean> {
         content: String(row.content || ''),
         attachments: [],
         thinking: '',
+        thinkingSegments: [],
         events: [],
         streaming: false,
       }))
@@ -663,10 +703,49 @@ function wireMessages(source: UiMessage[]) {
   }))
 }
 
+function textLength(value: string): number {
+  return Array.from(value).length
+}
+
+function textSlice(value: string, start: number, end?: number): string {
+  return Array.from(value).slice(start, end).join('')
+}
+
+function nextProcessOrder(message: UiMessage): number {
+  const thoughtOrder = message.thinkingSegments.reduce((max, item) => Math.max(max, item.streamOrder), -1)
+  const toolOrder = message.events.reduce((max, item) => Math.max(max, item.stream_order || -1), -1)
+  return Math.max(thoughtOrder, toolOrder) + 1
+}
+
 function appendToolEvent(message: UiMessage, event: ToolEvent) {
   const key = `${event.phase}:${event.tool_call_id || event.name}`
-  if (message.events.some((item) => `${item.phase}:${item.tool_call_id || item.name}` === key)) return
-  message.events.push(event)
+  const existingIndex = message.events.findIndex((item) => `${item.phase}:${item.tool_call_id || item.name}` === key)
+  const existing = existingIndex >= 0 ? message.events[existingIndex] : undefined
+  const relatedStart = message.events.find((item) => item.phase === 'tool_start' && toolEventKey(item) === toolEventKey(event))
+  const stored = {
+    ...event,
+    text_offset: existing?.text_offset ?? relatedStart?.text_offset ?? textLength(message.content),
+    stream_order: existing?.stream_order ?? relatedStart?.stream_order ?? nextProcessOrder(message),
+  }
+  if (existingIndex >= 0) message.events.splice(existingIndex, 1, stored)
+  else message.events.push(stored)
+}
+
+function appendThinking(message: UiMessage, delta: string) {
+  if (!delta) return
+  message.thinking += delta
+  const textOffset = textLength(message.content)
+  const last = message.thinkingSegments[message.thinkingSegments.length - 1]
+  if (last && last.textOffset === textOffset) {
+    last.content += delta
+    return
+  }
+  message.thinkingSegments.push({
+    id: createId('thinking'),
+    content: delta,
+    textOffset,
+    streamOrder: nextProcessOrder(message),
+  })
 }
 
 function parseSseFrame(frame: string, assistant: UiMessage) {
@@ -689,8 +768,8 @@ function parseSseFrame(frame: string, assistant: UiMessage) {
     if (payload.error) throw new Error(String(payload.error.message || payload.error))
     const delta = payload.choices?.[0]?.delta || {}
     if (typeof delta.content === 'string') assistant.content += delta.content
-    if (typeof delta.reasoning_content === 'string') assistant.thinking += delta.reasoning_content
-    if (typeof delta.reasoning === 'string') assistant.thinking += delta.reasoning
+    if (typeof delta.reasoning_content === 'string') appendThinking(assistant, delta.reasoning_content)
+    if (typeof delta.reasoning === 'string') appendThinking(assistant, delta.reasoning)
     const message = payload.choices?.[0]?.message
     if (message && typeof message.content === 'string') assistant.content += message.content
   } catch (error) {
@@ -706,6 +785,7 @@ async function sendConversation(source: UiMessage[]) {
     content: '',
     attachments: [],
     thinking: '',
+    thinkingSegments: [],
     events: [],
     streaming: true,
   }
@@ -797,6 +877,7 @@ async function submit() {
     content: text,
     attachments: [...pendingAttachments.value],
     thinking: '',
+    thinkingSegments: [],
     events: [],
   }
   messages.value.push(user)
@@ -871,17 +952,79 @@ function toolEventKey(event: ToolEvent): string {
   return event.tool_call_id || `${event.name}:${event.round || 0}`
 }
 
-function processSummary(message: UiMessage): string {
-  const rows = traceRows(message)
-  const active = rows.find((event) => event.phase === 'tool_start' || event.ok === undefined)
-  if (active) return `${toolWarmCopy(active)}…`
-  if (rows.length === 1) return toolWarmCopy(rows[0])
-  if (rows.length) return `做完了 ${rows.length} 件小事`
-  return thinkingPreview(message.thinking) || '想了一会儿'
+function processGroups(message: UiMessage): ProcessGroup[] {
+  const groups = new Map<number, ProcessGroup>()
+  const ensure = (textOffset: number) => {
+    const normalized = Math.max(0, Math.min(textLength(message.content), textOffset))
+    const existing = groups.get(normalized)
+    if (existing) return existing
+    const created: ProcessGroup = { textOffset: normalized, thinking: [], tools: [] }
+    groups.set(normalized, created)
+    return created
+  }
+
+  const thinking = message.thinkingSegments.length
+    ? message.thinkingSegments
+    : message.thinking
+      ? [{ id: `${message.id}-thinking`, content: message.thinking, textOffset: 0, streamOrder: 0 }]
+      : []
+  for (const item of thinking) ensure(item.textOffset).thinking.push(item)
+  for (const event of traceRows(message)) ensure(event.text_offset || 0).tools.push(event)
+
+  return [...groups.values()]
+    .sort((left, right) => left.textOffset - right.textOffset)
+    .map((group) => ({
+      ...group,
+      thinking: [...group.thinking].sort((left, right) => left.streamOrder - right.streamOrder),
+      tools: [...group.tools].sort((left, right) => (left.stream_order || 0) - (right.stream_order || 0)),
+    }))
 }
 
-function assistantHasProcess(message: UiMessage): boolean {
-  return Boolean(message.thinking || message.events.length)
+function assistantParts(message: UiMessage): AssistantPart[] {
+  const parts: AssistantPart[] = []
+  let cursor = 0
+  for (const group of processGroups(message)) {
+    if (group.textOffset > cursor) {
+      parts.push({ kind: 'content', key: `content-${cursor}`, content: textSlice(message.content, cursor, group.textOffset) })
+    }
+    parts.push({ kind: 'process', key: `process-${group.textOffset}`, group })
+    cursor = group.textOffset
+  }
+  if (cursor < textLength(message.content) || !parts.length) {
+    parts.push({ kind: 'content', key: `content-${cursor}`, content: textSlice(message.content, cursor) })
+  }
+  return parts
+}
+
+function processSummary(group: ProcessGroup): string {
+  const active = group.tools.find((event) => event.phase === 'tool_start' || event.ok === undefined)
+  if (active) return `${toolWarmCopy(active)}…`
+  const thought = group.thinking[group.thinking.length - 1]
+  if (thought) return thinkingPreview(thought.content) || '想了一会儿'
+  const tool = group.tools[group.tools.length - 1]
+  return tool ? toolWarmCopy(tool) : '想了一会儿'
+}
+
+function groupHasThinking(group: ProcessGroup): boolean {
+  return group.thinking.length > 0
+}
+
+function processTimeline(group?: ProcessGroup): ProcessTimelineItem[] {
+  if (!group) return []
+  return [
+    ...group.thinking.map((thinking) => ({
+      kind: 'thinking' as const,
+      key: `thinking-${thinking.id}`,
+      thinking,
+      streamOrder: thinking.streamOrder,
+    })),
+    ...group.tools.map((tool) => ({
+      kind: 'tool' as const,
+      key: `tool-${toolEventKey(tool)}`,
+      tool,
+      streamOrder: tool.stream_order || 0,
+    })),
+  ].sort((left, right) => left.streamOrder - right.streamOrder)
 }
 
 function thinkingPreview(thinking: string): string {
@@ -890,17 +1033,17 @@ function thinkingPreview(thinking: string): string {
   return first.length > 30 ? `${first.slice(0, 30)}…` : first
 }
 
-function openProcessSheet(message: UiMessage) {
-  processSheet.value = { messageId: message.id, view: 'summary' }
+function openProcessSheet(message: UiMessage, group: ProcessGroup) {
+  processSheet.value = { messageId: message.id, view: 'summary', textOffset: group.textOffset }
 }
 
 function closeProcessSheet() {
   processSheet.value = null
 }
 
-function showThinkingDetail() {
+function showThinkingDetail(thinking: ThinkingSegment) {
   if (!processSheet.value) return
-  processSheet.value = { ...processSheet.value, view: 'thinking' }
+  processSheet.value = { ...processSheet.value, view: 'thinking', thinkingKey: thinking.id }
 }
 
 function showToolDetail(event: ToolEvent) {
@@ -910,7 +1053,7 @@ function showToolDetail(event: ToolEvent) {
 
 function backToProcessSummary() {
   if (!processSheet.value) return
-  processSheet.value = { ...processSheet.value, view: 'summary', toolKey: undefined }
+  processSheet.value = { ...processSheet.value, view: 'summary', thinkingKey: undefined, toolKey: undefined }
 }
 
 function statusSpriteMode(message: UiMessage): SpriteMode {
@@ -1107,14 +1250,17 @@ onMounted(async () => {
               {{ message.content || '（一张图片）' }}
             </div>
             <div v-else class="assistant-body">
-              <button v-if="assistantHasProcess(message)" class="process-strip" type="button" @click="openProcessSheet(message)">
-                <span class="process-icon">
-                  <Clock3 :size="16" />
-                </span>
-                <span class="process-copy">{{ processSummary(message) }}</span>
-                <ChevronRight :size="16" />
-              </button>
-              <div v-if="message.content" class="markdown-content" v-html="renderMarkdown(message.content)" />
+              <template v-for="part in assistantParts(message)" :key="part.key">
+                <div v-if="part.kind === 'content' && part.content" class="markdown-content" v-html="renderMarkdown(part.content)" />
+                <button v-else-if="part.kind === 'process'" class="process-strip" :class="{ thinking: groupHasThinking(part.group) }" type="button" @click="openProcessSheet(message, part.group)">
+                  <span class="process-icon">
+                    <Clock3 v-if="groupHasThinking(part.group)" :size="16" />
+                    <Sparkles v-else :size="15" />
+                  </span>
+                  <span class="process-copy">{{ processSummary(part.group) }}</span>
+                  <ChevronRight :size="16" />
+                </button>
+              </template>
               <div v-if="message.streaming" class="assistant-trail" :data-mode="statusSpriteMode(message)">
                 <span class="assistant-sprite-viewport">
                   <span class="assistant-sprite-track" :style="statusSpriteStyle(message)" v-html="statusSpriteMarkup(message)" />
@@ -1184,29 +1330,25 @@ onMounted(async () => {
         <div class="sheet-content process-sheet-content">
           <template v-if="processSheet?.view === 'summary'">
             <div class="process-timeline">
-              <button v-if="processSheetMessage.thinking" class="process-timeline-item" type="button" @click="showThinkingDetail">
-                <span class="process-timeline-rail"><span class="process-timeline-icon"><Clock3 :size="16" /></span></span>
-                <span class="process-timeline-copy"><strong>思考片段</strong><small>{{ thinkingPreview(processSheetMessage.thinking) || '正在整理想法…' }}</small></span>
-                <ChevronRight :size="17" />
-              </button>
-              <button v-for="event in traceRows(processSheetMessage)" :key="`${processSheetMessage.id}-${toolEventKey(event)}`" class="process-timeline-item" type="button" @click="showToolDetail(event)">
+              <button v-for="item in processTimeline(processSheetGroup)" :key="item.key" class="process-timeline-item" type="button" @click="item.kind === 'thinking' ? showThinkingDetail(item.thinking) : showToolDetail(item.tool)">
                 <span class="process-timeline-rail">
-                  <span class="process-timeline-icon"><Sparkles :size="15" /></span>
+                  <span class="process-timeline-icon"><Clock3 v-if="item.kind === 'thinking'" :size="16" /><Sparkles v-else :size="15" /></span>
                   <span class="process-timeline-line" />
                 </span>
-                <span class="process-timeline-copy"><strong>{{ event.phase === 'tool_start' ? `正在${toolWarmCopy(event)}…` : toolWarmCopy(event) }}</strong><small>{{ toolState(event) }}</small></span>
+                <span class="process-timeline-copy">
+                  <strong>{{ item.kind === 'thinking' ? '思考片段' : item.tool.phase === 'tool_start' ? `正在${toolWarmCopy(item.tool)}…` : toolWarmCopy(item.tool) }}</strong>
+                  <small>{{ item.kind === 'thinking' ? thinkingPreview(item.thinking.content) || '正在整理想法…' : toolState(item.tool) }}</small>
+                </span>
                 <ChevronRight :size="17" />
               </button>
             </div>
           </template>
 
           <template v-else-if="processSheet?.view === 'thinking'">
-            <p class="process-disclosure">这是上游在流里公开返回的思考片段。</p>
-            <pre class="process-text">{{ processSheetMessage.thinking }}</pre>
+            <pre class="process-text">{{ processSheetThinking?.content }}</pre>
           </template>
 
           <template v-else>
-            <p class="process-disclosure">下面是这次工具调用实际传给沈予的内容，不会保存在聊天历史里。</p>
             <div class="process-code-section">
               <span class="process-code-label">调用参数</span>
               <pre class="process-code">{{ formatToolInput(processSheetEvent) }}</pre>

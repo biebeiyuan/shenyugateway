@@ -168,7 +168,8 @@ button:disabled { cursor: default; }
 .markdown-content th, .markdown-content td { padding: 7px 9px; border: 1px solid var(--border); text-align: left; }
 .markdown-content th { background: var(--bg-surface); }
 
-.process-strip { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; margin: 0 0 18px; padding: 0; color: var(--text-secondary); text-align: left; }
+.process-strip { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; margin: 6px 0 20px; padding: 0; color: var(--text-secondary); text-align: left; }
+.process-strip.thinking { margin-top: 20px; }
 .process-strip:hover { color: var(--accent); }
 .process-icon { display: grid; width: 22px; height: 22px; flex: none; place-items: center; color: currentColor; }
 .process-copy { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", system-ui, sans-serif; }

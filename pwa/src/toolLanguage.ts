@@ -10,6 +10,8 @@ export type ToolEvent = {
   error_kind?: string
   input?: unknown
   output?: string
+  text_offset?: number
+  stream_order?: number
 }
 
 export function toolName(event: ToolEvent): string {

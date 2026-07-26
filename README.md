@@ -197,7 +197,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 
 ### PWA chat frontend
 
-- `pwa/src/App.vue`: ChatNest-inspired mobile chat surface with real-time response rendering, expandable thinking/tool timeline, current-response tool input/output detail sheet, Claude-style Projects/Artifacts/Memory/Diary workspace shells, gateway-backed Recents, edit/retry actions, image previews, and Console-synced model/preset selector.
+- `pwa/src/App.vue`: ChatNest-inspired mobile chat surface with real-time response rendering, chronological inline Thinking/tool traces positioned between streamed text segments, per-trace detail sheet, Claude-style Projects/Artifacts/Memory/Diary workspace shells, gateway-backed Recents, edit/retry actions, image previews, and Console-synced model/preset selector.
 - `pwa/src/chatnestSprite.ts`: user-supplied private ChatNest status sprite set for the personal PWA deployment.
 - `pwa/src/markdown.ts`: sanitized Markdown rendering with Highlight.js code highlighting.
 - `pwa/src/toolLanguage.ts`: gateway tool-name normalization and resident-facing warm action copy.
