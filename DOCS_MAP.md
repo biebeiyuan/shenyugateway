@@ -6,7 +6,7 @@
 
 权威的最短顺序只有三步：
 
-1. Coding agent 先遵守 `AGENTS.md`；这通常由工具自动加载，不要求人额外阅读。
+1. Coding agent 先遵守 `AGENTS.md`；Codex 自动加载它，Claude Code 自动加载根目录的 `CLAUDE.md` 并由它指过去，都不要求人额外阅读。
 2. 人和 agent 都从 `START_HERE.md` 选择当前任务入口。
 3. 只读该任务指向的现行专题文档和代码；不默认预读其他设计稿或 Debug 文档。
 
@@ -32,6 +32,7 @@
 | 文档 | 职责 | 什么时候更新 |
 |------|------|--------------|
 | `AGENTS.md` | 跨 Codex、Claude Code、GLM 的项目工作规则 | 环境、协作方式、验证要求或排障入口改变时 |
+| `CLAUDE.md` | Claude Code 自动加载的入口指针，只把 agent 指向 `AGENTS.md` | 几乎不动；只有 agent 入口文件的加载方式改变时 |
 | `README.md` | 当前项目入口、架构和维护地图 | 模块、配置、API、部署或主要行为改变时 |
 | `docs/architecture/SYSTEM_ZONES.md` | 现行代码分区、跨区桥梁和审计入口 | 模块责任、主要调用链或边界改变时 |
 | `docs/architecture/AUDIT_MATRIX.md` | 分区风险、证据、测试缺口和审计顺序 | 风险被证实、排除、修复或测试覆盖改变时 |
