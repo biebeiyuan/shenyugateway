@@ -16,7 +16,7 @@ _request_logs: deque = deque(maxlen=30)
 _http_request_events: deque = deque(maxlen=60)
 _active_http_requests: dict[str, dict[str, Any]] = {}
 _TOOL_STREAM_STALE_SECONDS = 30.0
-_PERSISTED_REQUEST_LOG_SCHEMA_VERSION = 1
+_PERSISTED_REQUEST_LOG_SCHEMA_VERSION = 2
 _PERSISTENT_LOG_MAX_DEPTH = 12
 _PERSISTENT_LOG_MAX_DICT_ITEMS = 200
 _PERSISTENT_LOG_MAX_LIST_ITEMS = 100
@@ -62,6 +62,7 @@ _PERSISTENT_LOG_EXCLUDED_KEYS = {
 }
 _SAFE_THINKING_SUMMARY_KEYS = {"type", "display", "budget_tokens"}
 _PERSISTENT_JSON_PREVIEW_KEYS = {"args_preview", "arguments_preview", "result_preview"}
+_PERSISTENT_LOG_TAIL_LIST_KEYS = {"prepared_messages_preview", "messages_preview"}
 
 
 def _normalized_log_key(value: Any) -> str:
@@ -161,9 +162,15 @@ def _persistent_log_value(
     if isinstance(value, (list, tuple)):
         if len(value) > _PERSISTENT_LOG_MAX_LIST_ITEMS:
             state["truncated"] = True
+        if normalized_key in _PERSISTENT_LOG_TAIL_LIST_KEYS:
+            # Chronological message previews keep the newest entries so the
+            # Admin Messages tab still shows the turns closest to the reply.
+            kept = value[-_PERSISTENT_LOG_MAX_LIST_ITEMS:]
+        else:
+            kept = value[:_PERSISTENT_LOG_MAX_LIST_ITEMS]
         return [
             _persistent_log_value(item, depth=depth + 1, state=state)
-            for item in value[:_PERSISTENT_LOG_MAX_LIST_ITEMS]
+            for item in kept
         ]
     if isinstance(value, str):
         if normalized_key in _PERSISTENT_JSON_PREVIEW_KEYS:
@@ -284,7 +291,9 @@ def _mark_request_log_phase(
     log_entry["slow_phases"] = _timeline_slow_phases(log_entry.get("timeline"))
 
 
-def _retain_request_log_payloads() -> bool:
+def _retain_request_log_payloads(cfg: Any = None) -> bool:
+    if cfg is not None and hasattr(cfg, "gateway_log_full_payloads"):
+        return bool(cfg.gateway_log_full_payloads)
     raw = os.getenv("GATEWAY_LOG_FULL_PAYLOADS", "false").strip().lower()
     return raw in {"1", "true", "yes", "on"}
 

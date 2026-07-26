@@ -194,6 +194,7 @@ class RuntimeConfig:
         self.gateway_context_snapshot_retention: int = _env_int("GATEWAY_CONTEXT_SNAPSHOT_RETENTION", 3, 1, 100)
         self.gateway_cold_start_retention: int = _env_int("GATEWAY_COLD_START_RETENTION", 20, 1, 1000)
         self.gateway_request_log_retention: int = _env_int("GATEWAY_REQUEST_LOG_RETENTION", 200, 30, 5000)
+        self.gateway_log_full_payloads: bool = _env_bool("GATEWAY_LOG_FULL_PAYLOADS", False)
 
         self.hisense_client_name: str = os.getenv("HISENSE_CLIENT_NAME", "hisense").strip()
         self.hisense_heartbeat_limit: int = _env_int("HISENSE_HEARTBEAT_LIMIT", 3, 1, 30)
@@ -326,6 +327,7 @@ class RuntimeConfig:
             "gateway_context_snapshot_retention": self.gateway_context_snapshot_retention,
             "gateway_cold_start_retention": self.gateway_cold_start_retention,
             "gateway_request_log_retention": self.gateway_request_log_retention,
+            "gateway_log_full_payloads": self.gateway_log_full_payloads,
             "hisense_client_name": self.hisense_client_name,
             "hisense_heartbeat_limit": self.hisense_heartbeat_limit,
             "hisense_notebook_limit": self.hisense_notebook_limit,

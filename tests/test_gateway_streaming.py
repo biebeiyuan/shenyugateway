@@ -27,6 +27,7 @@ from shenyu_gateway.request_logs import (
     _mark_http_request_event,
     _mark_request_log_phase,
     _payload_without_image_blocks,
+    _persistent_request_log_snapshot,
     _record_completion_finish_reason,
     _record_response_text,
     _retain_request_log_payloads,
@@ -132,6 +133,64 @@ def test_full_request_log_payloads_are_opt_in(monkeypatch):
 
     monkeypatch.setenv("GATEWAY_LOG_FULL_PAYLOADS", "false")
     assert _retain_request_log_payloads() is False
+
+
+def test_retain_request_log_payloads_prefers_runtime_config(monkeypatch):
+    class _Cfg:
+        gateway_log_full_payloads = True
+
+    monkeypatch.setenv("GATEWAY_LOG_FULL_PAYLOADS", "false")
+    assert _retain_request_log_payloads(_Cfg()) is True
+
+    _Cfg.gateway_log_full_payloads = False
+    monkeypatch.setenv("GATEWAY_LOG_FULL_PAYLOADS", "true")
+    assert _retain_request_log_payloads(_Cfg()) is False
+
+    class _LegacyCfg:
+        pass
+
+    assert _retain_request_log_payloads(_LegacyCfg()) is True
+
+
+def test_persistent_snapshot_keeps_newest_message_previews():
+    item = {
+        "id": "log1",
+        "timestamp": "2026-07-26T00:00:00+00:00",
+        "prepared_messages_preview": [
+            {"role": "user", "content_preview": f"m{i}", "content_chars": 4}
+            for i in range(150)
+        ],
+        "timeline": [{"phase": f"p{i}"} for i in range(150)],
+        "internal_tool_rounds": [
+            {
+                "round": 1,
+                "messages_count": 150,
+                "messages_preview": [
+                    {"role": "user", "content_preview": f"r{i}", "content_chars": 4}
+                    for i in range(150)
+                ],
+            }
+        ],
+    }
+
+    snapshot = _persistent_request_log_snapshot(item)
+
+    previews = snapshot["prepared_messages_preview"]
+    assert len(previews) == 100
+    assert previews[0]["content_preview"] == "m50"
+    assert previews[-1]["content_preview"] == "m149"
+
+    round_previews = snapshot["internal_tool_rounds"][0]["messages_preview"]
+    assert len(round_previews) == 100
+    assert round_previews[0]["content_preview"] == "r50"
+
+    timeline = snapshot["timeline"]
+    assert len(timeline) == 100
+    assert timeline[0]["phase"] == "p0"
+    assert timeline[-1]["phase"] == "p99"
+
+    assert snapshot["persistence_truncated"] is True
+    assert snapshot["persistence_schema_version"] == 2
 
 
 def test_gateway_error_text_passes_through_actual_json_reason_and_raw_response():

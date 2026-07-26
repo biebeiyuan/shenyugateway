@@ -65,6 +65,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.max_internal_tool_rounds == 15
     assert cfg.max_client_messages == 75
     assert cfg.gateway_request_log_retention == 200
+    assert cfg.gateway_log_full_payloads is False
     assert cfg.room_newspaper_qa_enabled is False
     assert cfg.room_newspaper_llm_model == ""
     assert cfg.star_soft_direct_cooldown_turns == 8
@@ -507,6 +508,40 @@ def test_config_update_saves_request_log_retention(monkeypatch):
     assert "gateway_request_log_retention" in payload["changed"]
     assert gateway.cfg.gateway_request_log_retention == 350
     assert persisted[-1]["GATEWAY_REQUEST_LOG_RETENTION"] == 350
+
+
+def test_config_update_saves_log_full_payloads_toggle(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "gateway_log_full_payloads", False)
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"gateway_log_full_payloads": True},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["gateway_log_full_payloads"] is True
+    assert "gateway_log_full_payloads" in payload["changed"]
+    assert gateway.cfg.gateway_log_full_payloads is True
+    assert persisted[-1]["GATEWAY_LOG_FULL_PAYLOADS"] == "true"
+
+    client2, persisted2 = _config_client(monkeypatch)
+    try:
+        response = client2.post(
+            "/api/config",
+            json={"gateway_log_full_payloads": False},
+        )
+    finally:
+        client2.close()
+
+    assert response.status_code == 200
+    assert response.json()["config"]["gateway_log_full_payloads"] is False
+    assert gateway.cfg.gateway_log_full_payloads is False
+    assert persisted2[-1]["GATEWAY_LOG_FULL_PAYLOADS"] == "false"
 
 
 def test_config_update_saves_and_clamps_star_soft_direct_cooldown(monkeypatch):

@@ -118,6 +118,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "gateway_context_snapshot_retention": cfg.gateway_context_snapshot_retention,
         "gateway_cold_start_retention": cfg.gateway_cold_start_retention,
         "gateway_request_log_retention": cfg.gateway_request_log_retention,
+        "gateway_log_full_payloads": cfg.gateway_log_full_payloads,
         "calendar_context_day_limit": cfg.calendar_context_day_limit,
         "calendar_context_week_limit": cfg.calendar_context_week_limit,
         "calendar_context_month_limit": cfg.calendar_context_month_limit,
@@ -250,6 +251,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "gateway_context_snapshot_retention": "GATEWAY_CONTEXT_SNAPSHOT_RETENTION",
             "gateway_cold_start_retention": "GATEWAY_COLD_START_RETENTION",
             "gateway_request_log_retention": "GATEWAY_REQUEST_LOG_RETENTION",
+            "gateway_log_full_payloads": "GATEWAY_LOG_FULL_PAYLOADS",
             "max_client_messages": "MAX_CLIENT_MESSAGES",
             "cold_start_message_limit": "COLD_START_MESSAGE_LIMIT",
             "cold_start_idle_minutes": "COLD_START_IDLE_MINUTES",
@@ -325,6 +327,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "gateway_tool_surface",
             "client_tool_surface",
             "gateway_db_path",
+            "gateway_log_full_payloads",
             "hisense_client_name",
         ]
         if body.clear_wake_welcome_message:

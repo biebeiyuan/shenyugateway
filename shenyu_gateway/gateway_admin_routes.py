@@ -215,7 +215,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
                 "config": cfg.to_dict(),
                 "store_ready": deps.get_session_store() is not None,
                 "supabase_ready": deps.get_supabase_client() is not None,
-                "request_payloads_retained": _retain_request_log_payloads(),
+                "request_payloads_retained": _retain_request_log_payloads(cfg),
             },
             "upstream": {
                 "default": {

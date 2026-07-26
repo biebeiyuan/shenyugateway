@@ -29,11 +29,11 @@
 - **Upstream**：默认看这一轮不含正文的 payload 摘要和缓存结构证据；临时开启完整 payload 保留后，才显示实际上游 payload。只在需要核对协议、工具或缓存断点时打开。
 - **Meta / Raw JSON**：工程排障备用。Raw JSON 是原始日志对象，不等于实际发给上游的请求 JSON；没有开启完整 payload 保留时，它只含预览、摘要和结构化证据。
 
-日志分两层保留：当前进程内有最近 30 条可继续更新的实时日志；SQLite 默认保留最近 200 条安全摘要（由 `GATEWAY_REQUEST_LOG_RETENTION` 调整），所以挂载数据库持久卷后，更新容器不会再清空前端最近日志。普通结构化诊断字段会随安全 JSON 摘要自动保存；完整 Messages、Upstream payload、Response、图片、原始 Thinking 和 signature 会被统一剔除。
+日志分两层保留：当前进程内有最近 30 条可继续更新的实时日志；SQLite 默认保留最近 200 条安全摘要（由 `GATEWAY_REQUEST_LOG_RETENTION` 调整），所以挂载数据库持久卷后，更新容器不会再清空前端最近日志。普通结构化诊断字段会随安全 JSON 摘要自动保存；完整 Messages、Upstream payload、Response、图片、原始 Thinking 和 signature 会被统一剔除。摘要里的消息预览最多保留**最新** 100 条、每条正文最多 500 字；超出时日志页 Messages 标签会标明省略了更早的多少条（2026-07-26 之前的旧记录是反方向保留最早 100 条，页面也会说明）。
 
 工具链的每个上游轮次都会单独保存 `prompt_cache` 结构证据：断点路径、前缀指纹、TTL、tail guard，以及最终 payload 中实际存在的 `cache_control` 数量。它们不含消息正文，可以随 SQLite 安全摘要保留；结合该轮的缓存 read/write，可以判断网关是否发出断点以及上游是否兑现。
 
-需要短期排查协议问题时，可以显式设置 `GATEWAY_LOG_FULL_PAYLOADS=true`。完整内容仍只存在于当前进程最近 30 条日志，重启后旧记录会退回摘要和预览；它们可能包含敏感对话，排查结束后应关闭。
+需要看完整请求内容时，在 Admin 配置页打开「请求日志 → 保留完整请求内容」（等价于环境变量 `GATEWAY_LOG_FULL_PAYLOADS=true`，开关会随配置覆盖持久化，无需重启，只对之后的新请求生效）。完整内容仍只存在于当前进程最近 30 条日志，重启后旧记录会退回摘要和预览；它们可能包含敏感对话，看完建议关闭。
 
 ## Anthropic Thinking 标签
 

@@ -81,6 +81,7 @@ const config = ref<GatewayConfig>({
   gateway_tool_surface: 'full',
   client_tool_surface: 'all',
   max_internal_tool_rounds: 15,
+  gateway_log_full_payloads: false,
   room_newspaper_qa_enabled: false,
   room_newspaper_llm_model: '',
   room_newspaper_llm_url: '',
@@ -315,6 +316,7 @@ async function doSave() {
       gateway_tool_surface: config.value.gateway_tool_surface,
       client_tool_surface: config.value.client_tool_surface,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
+      gateway_log_full_payloads: config.value.gateway_log_full_payloads,
       room_newspaper_qa_enabled: config.value.room_newspaper_qa_enabled,
       room_newspaper_llm_model: config.value.room_newspaper_llm_model,
       room_newspaper_llm_url: config.value.room_newspaper_llm_url,
@@ -746,6 +748,17 @@ async function copyColdHeader(sessionTag: string) {
           </NFormItem>
           <NFormItem label="普通线程客户端工具桌面">
             <NSelect v-model:value="config.client_tool_surface" :options="clientToolSurfaceOptions" />
+          </NFormItem>
+        </NForm>
+      </NCard>
+
+      <NCard title="请求日志" size="small">
+        <NForm label-placement="top">
+          <NFormItem label="保留完整请求内容">
+            <div class="switch-row">
+              <NSwitch v-model:value="config.gateway_log_full_payloads" />
+              <span class="switch-hint">开启后，新请求在进程内最近 30 条日志里保留完整 Messages、Upstream payload 和 Response；重启后退回预览，持久化历史始终只存安全摘要。这些内容是真实对话，看完建议关掉。</span>
+            </div>
           </NFormItem>
         </NForm>
       </NCard>

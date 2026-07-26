@@ -172,8 +172,8 @@ Admin configuration updates currently store secret values in both `.env` and SQL
 | `cold_start_snapshots` | copied source snapshot messages | newest 20 completed snapshots; active preserved | bounded cross-thread bridge | deleted |
 | `pending_gateway_tool_turns` | original mixed assistant call and gateway tool result messages | active until consumed or 24h expiry | reconstruct gateway/client mixed turns | deleted |
 | `tool_error_log` / `room_trace` | tool args/errors or Room diagnostic text | explicit table-specific limits/cleanup | diagnostics | deleted |
-| request-log deque | summaries by default; full messages/payload/response only with `GATEWAY_LOG_FULL_PAYLOADS=true` | 30 requests, process memory | live debugging | process restart clears it |
-| `request_log_history` | versioned safe summaries/previews; full messages/payload/response, images, raw Thinking/signatures excluded | newest 200 by default, SQLite | cross-deploy Admin/API/helper debugging | independent of session delete |
+| request-log deque | summaries by default; full messages/payload/response only with `GATEWAY_LOG_FULL_PAYLOADS=true` (env or Admin runtime toggle, applies per new request) | 30 requests, process memory | live debugging | process restart clears it |
+| `request_log_history` | versioned safe summaries/previews (message previews keep the newest 100 entries); full messages/payload/response, images, raw Thinking/signatures excluded | newest 200 by default, SQLite | cross-deploy Admin/API/helper debugging | independent of session delete |
 | helper `--save` JSON | one explicitly exported redacted log detail | operator-managed file | offline debugging | independent local file |
 | Supabase `shenyu_chat_archive` | deduplicated visible user/assistant text | durable; no automatic session-delete coupling | long-term recall/archive | not deleted |
 

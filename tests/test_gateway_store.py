@@ -120,7 +120,7 @@ def test_request_log_history_survives_reopen_prunes_and_excludes_full_payloads(t
     detail = reopened.get_request_log("req-3")
     assert detail is not None
     assert detail["persisted"] is True
-    assert detail["persistence_schema_version"] == 1
+    assert detail["persistence_schema_version"] == 2
     assert detail["request_payloads_retained"] is False
     assert detail["response_preview"] == "preview-3"
     assert detail["response_full"] is None

@@ -174,7 +174,7 @@ class ChatPipeline:
             "has_internal_tools": False,
             "upstream_url": "",
             "upstream_scope": "unknown",
-            "request_payloads_retained": _retain_request_log_payloads(),
+            "request_payloads_retained": _retain_request_log_payloads(self.cfg),
             "prepared_messages": None,
             "prepared_messages_preview": [],
             "upstream_payload": None,

@@ -42,7 +42,7 @@ For a multi-round tool request, inspect cache evidence in this order:
 1. `internal_tool_rounds[].prompt_cache.cache_control_marker_count` and `breakpoints`: prove how many markers were present in the final outbound payload and where the gateway inserted its breakpoints for that round.
 2. `internal_tool_rounds[].prompt_cache.prefix_fingerprints`: compare path/fingerprint pairs across requests or rounds to distinguish a gateway prefix change from an upstream miss.
 3. The same round's `cache_usage` or raw `usage`: compare provider-reported read, creation, and total input only after confirming the outbound structure.
-4. If these content-free fields still cannot resolve the dispute, temporarily enable `GATEWAY_LOG_FULL_PAYLOADS=true`, reproduce one small request, inspect the exact `cache_control` blocks, and disable it again.
+4. If these content-free fields still cannot resolve the dispute, temporarily enable full payload retention (Admin config「请求日志 → 保留完整请求内容」, or `GATEWAY_LOG_FULL_PAYLOADS=true`; the Admin toggle applies to new requests without a restart), reproduce one small request, inspect the exact `cache_control` blocks, and disable it again.
 
 The Admin **Raw JSON** tab shows the raw request-log object. Without full-payload retention it contains previews, payload summaries, and the per-round cache evidence above, not the complete JSON body sent upstream.
 
@@ -246,7 +246,7 @@ Pending tool context is restored only when the returned history still matches th
 
 When Anthropic Thinking or tool continuation looks wrong, inspect one request in this order:
 
-1. `upstream_payload_summary.thinking`: proves what Thinking mode the gateway requested, not what the model returned. To confirm the exact `output_config.effort` sent for that round, temporarily enable `GATEWAY_LOG_FULL_PAYLOADS=true` and inspect `upstream_payload.output_config.effort`.
+1. `upstream_payload_summary.thinking`: proves what Thinking mode the gateway requested, not what the model returned. To confirm the exact `output_config.effort` sent for that round, temporarily enable full payload retention (Admin toggle or `GATEWAY_LOG_FULL_PAYLOADS=true`) and inspect `upstream_payload.output_config.effort`.
 2. `internal_tool_rounds[].anthropic_thinking`: `preserved=true` proves native Thinking/redacted blocks were captured; `signature_present` and `redacted_present` are safe boolean evidence only.
 3. `pending_gateway_tool_turns_injected`: confirms whether a matching pending transcript was restored into the continuation.
 4. `pending_gateway_tool_lineage_mismatches`: a non-zero value means the saved transcript was deliberately rejected because the returned client history no longer matched.

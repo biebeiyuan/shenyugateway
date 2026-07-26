@@ -449,7 +449,16 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
     const msgs = round?.messages || detail.prepared_messages || []
     const previews = round?.messages_preview || detail.prepared_messages_preview || []
     if (!msgs.length && previews.length) {
-      return previews.map((m: any) => {
+      const expectedCount = round?.messages_count || detail.prepared_messages_count || 0
+      const omitted = expectedCount > previews.length ? expectedCount - previews.length : 0
+      let notice = '<div class="empty-soft">未保留完整消息正文，以下是每条最多 500 字的预览；需要全文时在设置页打开“保留完整请求内容”，再看之后的新请求。</div>'
+      if (omitted) {
+        const legacyHead = detail.persisted && (detail.persistence_schema_version || 1) < 2
+        notice += `<div class="empty-soft">${legacyHead
+          ? `这条是旧格式的持久化记录：只存了最早的 ${previews.length} 条预览，最新的 ${omitted} 条缺失。`
+          : `持久化历史只保留最新 ${previews.length} 条预览，更早的 ${omitted} 条已省略。`}</div>`
+      }
+      return notice + previews.map((m: any) => {
         const roleLabel = m.name ? `${m.role} (${m.name})` : m.role
         let extra = ''
         if (m.tool_calls && m.tool_calls.length) {

@@ -114,6 +114,7 @@ export interface GatewayConfig {
   gateway_context_snapshot_retention?: number
   gateway_cold_start_retention?: number
   gateway_request_log_retention?: number
+  gateway_log_full_payloads?: boolean
   hisense_client_name?: string
   hisense_heartbeat_limit?: number
   hisense_notebook_limit?: number
