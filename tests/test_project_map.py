@@ -108,3 +108,34 @@ def test_system_zones_core_paths_exist():
     assert "gateway.py" in paths, "SYSTEM_ZONES core-file sections were not parsed"
     missing = sorted(path for path in paths if not _path_or_glob_exists(path))
     assert not missing, f"SYSTEM_ZONES core paths are missing: {missing}"
+
+
+def test_readme_maintenance_map_covers_runtime_packages():
+    # Per-file coverage skips package internals, so every runtime package must
+    # at least have a directory-level entry or it silently leaves the map.
+    packages = {
+        f"shenyu_gateway/{path.name}/"
+        for path in (ROOT / "shenyu_gateway").iterdir()
+        if path.is_dir() and (path / "__init__.py").is_file() and path.name != "__pycache__"
+    }
+    entries = set(re.findall(r"`([^`]+)`", _maintenance_map()))
+    missing = sorted(pkg for pkg in packages if pkg not in entries)
+    assert not missing, f"README Maintenance Map is missing package entries: {missing}"
+
+
+def test_map_tier_docs_anchor_by_function_name_not_line_number():
+    # Line-number anchors rot on every refactor; map-tier documents must anchor
+    # by path or symbol name. Dated snapshots (docs/history/, review docs,
+    # AUDIT_MATRIX evidence records) are exempt.
+    offenders = {}
+    for doc in (
+        "README.md",
+        "DOCS_MAP.md",
+        "START_HERE.md",
+        "AGENTS.md",
+        "docs/architecture/SYSTEM_ZONES.md",
+    ):
+        hits = re.findall(r"\S+\.py:\d+", (ROOT / doc).read_text(encoding="utf-8"))
+        if hits:
+            offenders[doc] = hits[:5]
+    assert not offenders, f"map-tier docs contain line-number anchors: {offenders}"

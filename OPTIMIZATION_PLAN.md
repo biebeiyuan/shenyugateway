@@ -4,7 +4,7 @@
 > 共 17 条存活发现，其中 **#1 删死代码** 和 **#2 fire-and-forget 任务引用** 已在 commit `4562feb` 完成。
 > 本文档是剩余 15 条的可执行清单，按"先低风险高收益、后大重构"排序，供后续慢慢做。
 >
-> **总原则**（沿用 `REFACTOR_PLAN.md`）：
+> **总原则**（沿用 `docs/history/REFACTOR_PLAN_2026-07.md`）：
 > - 以**函数名**为锚，不按行号机械搬（行号仅作提示，会随改动漂移）。
 > - 每个 Phase 单独 commit，单独 review diff。
 > - 重构中**不**顺手改业务逻辑、文案、fallback、阈值、上下文层顺序。
@@ -39,6 +39,8 @@
 > | E 测试硬化 | ✅ 已完成 | 硬化测试文件均已存在；全仓测试早已超过 283 基线（2026-07-26 为 550+） |
 > | F 拆 gateway_tools.py | ✅ 已完成（2026-07-26） | `shenyu_gateway/gateway_tools/` mixin 包；拆前删除了 ask_memory / search_primary_texts / meta_summaries 死代码，并新增 broker 描述与 daily 名单守护测试 |
 > | G 并发竞态加固 | ⬜ 未做 | `chat_archive.py` 仍是 insert_many；`store/_heartbeats.py` 无 claim |
+> | REFACTOR 遗留：gateway.py 兼容 wrapper 清理 | ⬜ 未做 | 原 REFACTOR_PLAN Phase 4；前置的 import/monkeypatch 契约清单未整理（AUDIT_MATRIX 区域一 P3） |
+> | REFACTOR 遗留：Mem0View.vue 拆分 | ⬜ 未做 | 原 REFACTOR_PLAN Phase 5；前端大文件，单独一轮处理 |
 >
 > 下文行数与行号均为 2026-07-01 快照；执行剩余项（D、G）时以函数名为锚重新核对。
 
@@ -151,7 +153,7 @@
 
 ## Phase F：拆 `gateway_tools.py`（结构，最大一块，机械重构）
 
-**问题**：`gateway_tools.py`（1412 行，现已是最大源文件）里 `GatewayToolService`（:206 起）混了 ~40 个 1-3 行薄委托方法 + 两个自包含子系统。`REFACTOR_PLAN.md` 本就定了 ≤800 行目标。
+**问题**：`gateway_tools.py`（1412 行，现已是最大源文件）里 `GatewayToolService`（:206 起）混了 ~40 个 1-3 行薄委托方法 + 两个自包含子系统。`docs/history/REFACTOR_PLAN_2026-07.md` 本就定了 ≤800 行目标。
 
 **两个可抽出的内聚子系统**（均经 grep 确认边界）：
 1. **Supabase 过滤 DSL**：`_build_supabase_filter_params`(:1299)、`_build_supabase_operator_params`(:1309)、`_normalize_operator_shape`(:1321)、`_parse_operator_condition`(:1329)、`_looks_like_operator_map`(:1347) —— 纯字符串解析，**无外部调用方**，只被本类的 supabase_query/insert/update/delete 用。
@@ -169,7 +171,7 @@ gateway_tools/
 - 这是纯机械搬运，落地后 facade ~550-600 行。
 - **如果嫌全拆重**：只抽这两个子系统进 mixin、其余不动，单这一步就把主文件降到 ~550-600 行。
 
-**验证**（沿用 `REFACTOR_PLAN.md` 的 checklist）：
+**验证**（沿用 `docs/history/REFACTOR_PLAN_2026-07.md` 的 checklist）：
 - [ ] `python -c "from gateway import app"` 不报错。
 - [ ] `git diff` 除 import/函数位置/mixin 组装外，无业务逻辑变化。
 - [ ] 无 `from module import *`，无新 import cycle。

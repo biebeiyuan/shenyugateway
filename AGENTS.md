@@ -53,6 +53,12 @@ Before handing off a meaningful change:
 
 `DOCS_MAP.md` § 地图同步边界 is the authority for which map owns each kind of change.
 
+### New subsystem growth path
+
+New features are allowed — encouraged — to start life in one file. Do not pre-split a subsystem whose seams are still guesses; build it, get tests around it, and let the real boundaries show up in the code. This is how every current package grew (`stars/`, `mem_notes/`, `store/`, `gateway_tools/`, `recall/`, and the PWA's `App.vue` extraction).
+
+When a file settles and grows past roughly 800–1000 lines, split it along its proven seams following the existing mixin-package pattern (`stars/` is the reference: per-domain `_*.py` mixins, one facade class assembled in `__init__.py`, every externally imported symbol re-exported so callers need no changes). Before moving code, grep for import sites, monkeypatch paths, and `resident_home_manifest.json` globs; after moving, run the map checklist above. Splitting is mechanical maintenance, not a design phase — do it when the seams are obvious, not before.
+
 ### Resident home synchronization
 
 When a runtime, configuration, or architecture change may alter what a resident experiences, run:

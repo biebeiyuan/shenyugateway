@@ -79,8 +79,7 @@
 | `PROMPT_CACHE_WINDOW_REVIEW.md` | 上述实现的一次审查快照 | 用于理解当时验收，不作为持续状态页 |
 | `TOOL_ERROR_BROKER_REDESIGN.md` | 工具错误与 broker 设计 | 修改工具错误契约时参考 |
 | `TOOL_ERROR_REVIEW_v2.md` | 工具错误方案的一次审查快照 | 用于历史核对，不代表所有问题仍存在 |
-| `REFACTOR_PLAN.md` | 文件拆分重构计划 | 做结构重构时核对，完成状态以当前代码为准 |
-| `OPTIMIZATION_PLAN.md` | 代码审查后形成的待办 | 逐项重新验证后再实施，不直接视为现存缺陷 |
+| `OPTIMIZATION_PLAN.md` | 代码审查后形成的待办（含结构重构遗留项） | 逐项重新验证后再实施，不直接视为现存缺陷；完成一项就更新状态表 |
 
 ## 辅助与历史文档
 
@@ -88,6 +87,7 @@
 |------|------|
 | `docs/README.md` | GitHub 浏览 `docs/` 目录时使用的一行入口指针；不维护独立文档清单或事实 |
 | `SYSTEM_INVENTORY.md` | 旧 Windows 工作区清单，已被 README 的 Maintenance Map 和本文件取代；保留作历史参考，不作为当前入口 |
+| `docs/history/REFACTOR_PLAN_2026-07.md` | 2026-07 完成的结构重构计划（gateway.py、mem_notes、tool_schemas、gateway_tools、recall 拆分）；遗留 Phase 4/5 由 `OPTIMIZATION_PLAN.md` 状态表跟踪 |
 | `docs/history/CLAUDE_REVIEW_FOLLOW_UP.md` | 历史 code-review 执行清单；当前状态以 `docs/architecture/AUDIT_MATRIX.md` 为准 |
 | `docs/history/PROJECT_MAP_AUDIT_2026-07-14.md` | 2026-07-14 项目地图审查快照；部分建议已在后续文档维护中采纳或修正，不作为当前事实 |
 
