@@ -434,8 +434,10 @@ Cross-client conversation continuity is keyed by `X-Shenyu-Session-Tag`, not by 
 `X-Shenyu-Client` only selects the client capability profile. Operit and PWA can therefore share one
 conversation by sending the same session tag; the gateway updates the session's last client name but
 does not create a second session. PWA also accepts `/chat/?session_tag=<tag>` for an explicit handoff and
-offers an explicit `接入线程` action that loads a selected existing session before sending. A new or
-different tag intentionally starts a separate session, so a client must preserve its original tag when
+offers an explicit `接入线程` action that loads a selected existing session before sending. The PWA
+uses the Admin `客户端上下文保留` value for that history load, so the handoff window stays aligned
+with the gateway's configured client context window. A new or different tag intentionally starts a
+separate session, so a client must preserve its original tag when
 switching back.
 
 For streaming chat, tool events are separate SSE events and do not alter OpenAI-compatible chat chunks:

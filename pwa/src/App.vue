@@ -96,6 +96,7 @@ const STORAGE_EFFORT = 'shenyu_pwa_effort'
 const STORAGE_EXTENDED = 'shenyu_pwa_extended'
 const STORAGE_PRESET = 'shenyu_pwa_preset'
 const PRESETS_KEY = 'shenyu_upstream_presets'
+const FALLBACK_SESSION_MESSAGE_LIMIT = 75
 
 function sessionTagFromLocation(): string {
   try {
@@ -120,6 +121,7 @@ const extendedThinking = ref(localStorage.getItem(STORAGE_EXTENDED) !== 'false')
 const selectedPresetName = ref(localStorage.getItem(STORAGE_PRESET) || '')
 const authToken = ref(localStorage.getItem(STORAGE_TOKEN) || localStorage.getItem('shenyu_token') || '')
 const gatewayUrl = ref(localStorage.getItem(STORAGE_GATEWAY) || '')
+const maxClientMessages = ref<number | null>(null)
 const sessionTag = ref(requestedSessionTag || storedSessionTag || createId('pwa'))
 const activeWorkspace = ref<WorkspaceId>('chats')
 const menuOpen = ref(false)
@@ -331,6 +333,10 @@ async function loadRuntimeUpstream() {
     const response = await fetch(apiUrl('/api/config'), { headers: requestHeaders() })
     if (!response.ok) throw new Error('config unavailable')
     const payload = await response.json()
+    const configuredMessageLimit = Number(payload.max_client_messages)
+    maxClientMessages.value = Number.isFinite(configuredMessageLimit) && configuredMessageLimit > 0
+      ? Math.floor(configuredMessageLimit)
+      : null
     runtimeUpstream.value = {
       url: String(payload.upstream_url || ''),
       protocol: String(payload.upstream_protocol || 'auto'),
@@ -344,6 +350,10 @@ async function loadRuntimeUpstream() {
   } catch {
     // The preset selector remains usable even when config read access is protected.
   }
+}
+
+function sessionMessageLimit(): number {
+  return maxClientMessages.value || FALLBACK_SESSION_MESSAGE_LIMIT
 }
 
 async function loadModels() {
@@ -385,7 +395,7 @@ function sessionMeta(session: GatewaySession): string {
 async function openSession(session: GatewaySession): Promise<boolean> {
   if (busy.value || !session.session_tag) return false
   try {
-    const response = await fetch(apiUrl(`/api/gateway/sessions/${encodeURIComponent(session.session_tag)}?messages_limit=80`), {
+    const response = await fetch(apiUrl(`/api/gateway/sessions/${encodeURIComponent(session.session_tag)}?messages_limit=${sessionMessageLimit()}`), {
       headers: requestHeaders(),
     })
     if (!response.ok) throw new Error('session unavailable')
