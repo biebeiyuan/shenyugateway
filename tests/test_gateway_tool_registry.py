@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import pytest
 from types import SimpleNamespace
 
@@ -2359,6 +2360,12 @@ def test_every_gateway_tool_schema_has_a_handler_and_only_hidden_handlers_are_un
     assert handler_names - schema_names == HIDDEN_COMPAT_TOOL_NAMES
 
 
+def _mentioned_as_own_word(short_name: str, description: str) -> bool:
+    # Word-boundary match so e.g. losing the `recall(...)` entry is not masked
+    # by `recall` being a substring of `recall_read`.
+    return re.search(rf"(?<![a-z_]){re.escape(short_name)}(?![a-z_])", description) is not None
+
+
 def test_broker_descriptions_mention_every_exposed_tool_short_name():
     # Broker prose lists tools by short name (shenyu_ prefix stripped). The four
     # supabase CRUD tools are deliberately covered by the supabase_guide pointer
@@ -2370,7 +2377,7 @@ def test_broker_descriptions_mention_every_exposed_tool_short_name():
     undocumented = {
         name
         for name in full_names - supabase_family
-        if name.removeprefix("shenyu_") not in _BROKER_CATEGORIZED_DESCRIPTION
+        if not _mentioned_as_own_word(name.removeprefix("shenyu_"), _BROKER_CATEGORIZED_DESCRIPTION)
     }
     assert not undocumented, f"broker categorized description is missing tools: {sorted(undocumented)}"
 
@@ -2379,7 +2386,9 @@ def test_broker_descriptions_mention_every_exposed_tool_short_name():
     )[0]
     daily_names = set(daily_tool["function"]["parameters"]["properties"]["tool"]["enum"])
     undocumented_daily = {
-        name for name in daily_names if name.removeprefix("shenyu_") not in _BROKER_DAILY_DESCRIPTION
+        name
+        for name in daily_names
+        if not _mentioned_as_own_word(name.removeprefix("shenyu_"), _BROKER_DAILY_DESCRIPTION)
     }
     assert not undocumented_daily, f"broker daily description is missing tools: {sorted(undocumented_daily)}"
 
