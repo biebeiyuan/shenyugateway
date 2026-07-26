@@ -486,6 +486,26 @@ class FakeToolService:
         )
         return {"ok": True, "limit": limit}
 
+    async def web_search(self, query="", limit: int = 5):
+        self.calls.append(
+            {
+                "tool": "shenyu_web_search",
+                "query": query,
+                "limit": limit,
+            }
+        )
+        return {"ok": True, "query": query, "limit": limit}
+
+    async def web_read(self, url="", part: int = 1):
+        self.calls.append(
+            {
+                "tool": "shenyu_web_read",
+                "url": url,
+                "part": part,
+            }
+        )
+        return {"ok": True, "url": url, "part": part}
+
     async def notebook_list(self, type_filter=None, status="active", limit: int = 10, tag=None):
         self.calls.append(
             {
@@ -644,6 +664,8 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "mood": "安静",
         },
         "shenyu_windowsill_list": {"mood": "安静", "limit": 6},
+        "shenyu_web_search": {"q": "邵阳 明天 天气", "limit": 3},
+        "shenyu_web_read": {"url": "https://example.com/article", "part": 2},
         "shenyu_list_mem_notes": {"query": "list", "status": "all", "mem_type": "memory", "limit": 8},
         "shenyu_write_mem_note": {
             "content": "一条便签",
@@ -860,6 +882,16 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "tool": "shenyu_windowsill_list",
             "mood": "安静",
             "limit": 6,
+        },
+        "shenyu_web_search": {
+            "tool": "shenyu_web_search",
+            "query": "邵阳 明天 天气",
+            "limit": 3,
+        },
+        "shenyu_web_read": {
+            "tool": "shenyu_web_read",
+            "url": "https://example.com/article",
+            "part": 2,
         },
         "shenyu_list_mem_notes": {
             "tool": "shenyu_list_mem_notes",

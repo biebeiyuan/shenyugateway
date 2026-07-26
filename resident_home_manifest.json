@@ -168,15 +168,15 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "b4adeb39bfcf768a180a08bf25c251374ea560aee51a78eddb74908489b42c62",
+        "fingerprint": "d11d547c224ddb6fb8ed0990683356c3b8f07ede9ddde31c204a90bb841621cd",
         "file_hashes": {
           "shenyu_gateway/gateway_tools/_windowsill.py": "e972424448809127b256fd94ff6bdbcdf1202ddd0fe1854e3dec26871cb450a8",
-          "shenyu_gateway/tool_schemas.py": "185143a81b06bf210e2ed285b6b9378adc8997dff342f0e0b533e797cfe45e3a"
+          "shenyu_gateway/tool_schemas.py": "3d6555f963461349ea653977597ce3a30066d319c286078e4ac90660b042eebe"
         },
-        "commit": "bff6de8f419360a1fc36d52de67a76a83964c89b",
-        "revision": "bff6de8f419360a1fc36d52de67a76a83964c89b-dirty",
+        "commit": "3322a2eb3f16cc7568e5e73c9cbd0243045111ad",
+        "revision": "3322a2eb3f16cc7568e5e73c9cbd0243045111ad-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-26T22:41:16+08:00",
+        "reviewed_at": "2026-07-27T03:34:03+08:00",
         "reviewed_by": "claude"
       }
     },
@@ -235,19 +235,19 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "3a4fbd82e7f5970c3573e440a7aed3d33b4043812fd37e82dbb8b24224c78c65",
+        "fingerprint": "abb9732b99c4e3d058cbc22844ab04949f198d6af9d520352542d47aeaddb4c1",
         "file_hashes": {
           "shenyu_gateway/archive_routes.py": "e3bef47cb36dfc63991eca5b11d7bf7f3f81a9824e3af82edb6101278f0b1c86",
           "shenyu_gateway/conflict_books.py": "b8a32e9c8f9cef5771ac0d51cd70aa19a5b74757a6e003942f5cecf0b5ff262f",
           "shenyu_gateway/context_layers.py": "5b351c4a1c15cab30886d49a7435b25b534de4379c4bc9af7129539ea0186795",
           "shenyu_gateway/gateway_tools/_books.py": "a5aef54309321622fdbdc251a1cf4b81f67b5e76a0779d5240925e72bc0475c6",
-          "shenyu_gateway/tool_schemas.py": "185143a81b06bf210e2ed285b6b9378adc8997dff342f0e0b533e797cfe45e3a"
+          "shenyu_gateway/tool_schemas.py": "3d6555f963461349ea653977597ce3a30066d319c286078e4ac90660b042eebe"
         },
-        "commit": "ef77d4f65c3dbdcb4cf1638669c02b48581ec3d7",
-        "revision": "ef77d4f65c3dbdcb4cf1638669c02b48581ec3d7-dirty",
+        "commit": "3322a2eb3f16cc7568e5e73c9cbd0243045111ad",
+        "revision": "3322a2eb3f16cc7568e5e73c9cbd0243045111ad-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-07-27T01:39:55+08:00",
-        "reviewed_by": "Codex"
+        "reviewed_at": "2026-07-27T03:34:03+08:00",
+        "reviewed_by": "claude"
       }
     },
     "home": {

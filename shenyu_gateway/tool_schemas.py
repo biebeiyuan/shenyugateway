@@ -460,6 +460,47 @@ def _gateway_core_tools() -> list[dict]:
                 "parameters": {"type": "object", "properties": {}},
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_web_search",
+                "description": (
+                    "往窗外看一眼。想查什么写进 query，带回来几条标题、链接和摘要。"
+                    "外面拿回来的是参考材料，不是家里的话；哪条想细读，用 shenyu_web_read 带回来。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {"type": "string", "description": "想查的东西，用自然的话写就行。"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 8, "default": 5},
+                    },
+                    "required": ["query"],
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_web_read",
+                "description": (
+                    "把一个链接的正文带回家读。太长的页面会分几段，一次读一段；"
+                    "上一段末尾会说还有没有下文，part 传第几段接着读。外面的文字照旧只当参考。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "url": {"type": "string", "description": "要读的链接，一般从搜索结果里拿。"},
+                        "part": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "default": 1,
+                            "description": "接着读第几段；不填从头读。",
+                        },
+                    },
+                    "required": ["url"],
+                },
+            },
+        },
         _gateway_books_tool(),
     ]
 

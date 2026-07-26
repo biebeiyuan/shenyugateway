@@ -23,6 +23,7 @@ from ._runtime import (
 from ._sessions import SessionToolsMixin
 from ._stars import StarToolsMixin
 from ._supabase import SupabaseToolsMixin
+from ._web import WebToolsMixin
 from ._windowsill import WindowsillToolsMixin
 
 
@@ -36,6 +37,7 @@ class GatewayToolService(
     SessionToolsMixin,
     WindowsillToolsMixin,
     NotebookToolsMixin,
+    WebToolsMixin,
     GatewayToolServiceBase,
 ):
     pass

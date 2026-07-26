@@ -215,6 +215,45 @@ def test_update_weather_config_persists_and_masks_key(monkeypatch):
     assert "qw-secret" not in response.text
 
 
+def test_web_tool_key_defaults(monkeypatch):
+    for key in ("SERPER_API_KEY", "JINA_API_KEY"):
+        monkeypatch.delenv(key, raising=False)
+
+    cfg = RuntimeConfig()
+
+    assert cfg.serper_api_key == ""
+    assert cfg.jina_api_key == ""
+
+
+def test_update_web_tool_keys_persists_and_masks(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "serper_api_key", gateway.cfg.serper_api_key)
+    monkeypatch.setattr(gateway.cfg, "jina_api_key", gateway.cfg.jina_api_key)
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"serper_api_key": "serper-secret", "jina_api_key": "jina-secret"},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert {"serper_api_key", "jina_api_key"} <= set(payload["changed"])
+    assert gateway.cfg.serper_api_key == "serper-secret"
+    assert gateway.cfg.jina_api_key == "jina-secret"
+    assert persisted[-1]["SERPER_API_KEY"] == "serper-secret"
+    assert persisted[-1]["JINA_API_KEY"] == "jina-secret"
+    # keys are sensitive: the config payload only reports configured state
+    assert payload["config"]["serper_api_key"] == ""
+    assert payload["config"]["serper_api_key_configured"] is True
+    assert payload["config"]["jina_api_key"] == ""
+    assert payload["config"]["jina_api_key_configured"] is True
+    assert "serper-secret" not in response.text
+    assert "jina-secret" not in response.text
+
+
 def test_legacy_provider_order_migrates_into_extra_body_string(monkeypatch):
     monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER_ENABLED", "true")
     monkeypatch.setenv("UPSTREAM_PROVIDER_ORDER", '["Amazon Bedrock", "Amazon Bedrock", "OpenAI"]')

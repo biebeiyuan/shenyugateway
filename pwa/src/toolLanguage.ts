@@ -20,6 +20,8 @@ export function toolName(event: ToolEvent): string {
 
 export function toolWarmCopy(event: ToolEvent): string {
   const target = toolName(event).toLowerCase()
+  if (target.includes('web_read')) return '把那页带回来读了'
+  if (target.includes('web')) return '往窗外看了看'
   if (target.includes('write_mem') || target.includes('note')) return '在窗台写了点东西'
   if (target.includes('recall') || target.includes('memory') || target.includes('search')) return '翻了翻便签'
   if (target.includes('calendar') || target.includes('date')) return '看了看日历'

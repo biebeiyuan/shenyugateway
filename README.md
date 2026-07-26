@@ -78,7 +78,7 @@ The codebase is partly layered already:
 
 ### Tools
 
-- `shenyu_gateway/gateway_tools/`: gateway-native tool implementations (`GatewayToolService`, package split into mixins like stars/: `_supabase`, `_recall`, `_mem_notes`, `_stars`, `_books`, `_calendar`, `_sessions`, `_windowsill`, `_notebook`, `_compat`, plus shared `_runtime`/`_helpers`/`_base`). `__init__.py` assembles the service and re-exports `configure_gateway_tools` / `get_runtime`.
+- `shenyu_gateway/gateway_tools/`: gateway-native tool implementations (`GatewayToolService`, package split into mixins like stars/: `_supabase`, `_recall`, `_mem_notes`, `_stars`, `_books`, `_calendar`, `_sessions`, `_windowsill`, `_notebook`, `_web`, `_compat`, plus shared `_runtime`/`_helpers`/`_base`). `__init__.py` assembles the service and re-exports `configure_gateway_tools` / `get_runtime`. `_web` is the 窗外 pair: `shenyu_web_search` (Serper, `SERPER_API_KEY`) and `shenyu_web_read` (Jina Reader, `JINA_API_KEY` — required from datacenter IPs).
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/tool_schemas.py`: tool JSON schema definitions (separated from registry logic).
 

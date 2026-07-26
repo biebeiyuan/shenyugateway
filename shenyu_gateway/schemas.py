@@ -90,6 +90,8 @@ class ConfigUpdate(BaseModel):
     weather_city: Optional[str] = None
     qweather_api_key: Optional[str] = None
     qweather_api_host: Optional[str] = None
+    serper_api_key: Optional[str] = None
+    jina_api_key: Optional[str] = None
     enable_cold_start: Optional[bool] = None
     enable_upstream_tools: Optional[bool] = None
     enable_gateway_tools: Optional[bool] = None

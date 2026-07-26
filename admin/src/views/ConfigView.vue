@@ -63,6 +63,8 @@ const config = ref<GatewayConfig>({
   weather_city: '',
   qweather_api_key: '',
   qweather_api_host: '',
+  serper_api_key: '',
+  jina_api_key: '',
   supabase_url: '',
   supabase_key: '',
   max_client_messages: 75,
@@ -318,6 +320,12 @@ async function doSave() {
     if (config.value.supabase_key?.trim()) body.supabase_key = config.value.supabase_key.trim()
     if (config.value.qweather_api_key?.trim()) {
       body.qweather_api_key = config.value.qweather_api_key.trim()
+    }
+    if (config.value.serper_api_key?.trim()) {
+      body.serper_api_key = config.value.serper_api_key.trim()
+    }
+    if (config.value.jina_api_key?.trim()) {
+      body.jina_api_key = config.value.jina_api_key.trim()
     }
     if (config.value.room_newspaper_llm_api_key?.trim()) {
       body.room_newspaper_llm_api_key = config.value.room_newspaper_llm_api_key.trim()
@@ -806,6 +814,32 @@ async function copyColdHeader(sessionTag: string) {
           </NFormItem>
           <div class="provider-order-hint">
             Key 或 Host 未配置、上游失败时，状态后缀与 /api/gateway/weather 的天气段自动省略，不影响其他功能。
+          </div>
+        </NForm>
+      </NCard>
+
+      <NCard title="窗外（联网搜索）" size="small">
+        <NForm label-placement="top">
+          <NFormItem label="Serper API Key">
+            <NInput
+              v-model:value="config.serper_api_key"
+              type="password"
+              show-password-on="click"
+              :placeholder="config.serper_api_key_configured ? '已配置；留空保持不变' : '留空则 shenyu_web_search 返回未配置'"
+            />
+          </NFormItem>
+          <NFormItem label="Jina Reader API Key">
+            <NInput
+              v-model:value="config.jina_api_key"
+              type="password"
+              show-password-on="click"
+              :placeholder="config.jina_api_key_configured ? '已配置；留空保持不变' : '留空则 shenyu_web_read 会被 Jina 拒绝（机房 IP 不给匿名读）'"
+            />
+          </NFormItem>
+          <div class="provider-order-hint">
+            shenyu_web_search 走 Serper（Google 结果，gl=cn/hl=zh-cn）；shenyu_web_read 走 r.jina.ai 取正文。
+            Jina 对机房 IP 不开放匿名读，VPS 上必须配 Key（jina.ai 免费注册）。
+            Key 缺失或上游失败只影响这两个工具本身，不影响聊天。
           </div>
         </NForm>
       </NCard>

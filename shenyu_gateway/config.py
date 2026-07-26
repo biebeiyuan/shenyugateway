@@ -201,6 +201,9 @@ class RuntimeConfig:
         self.qweather_api_key: str = os.getenv("QWEATHER_API_KEY", "").strip()
         self.qweather_api_host: str = os.getenv("QWEATHER_API_HOST", "").strip()
 
+        self.serper_api_key: str = os.getenv("SERPER_API_KEY", "").strip()
+        self.jina_api_key: str = os.getenv("JINA_API_KEY", "").strip()
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "supabase_url": mask(self.supabase_url, 30),
@@ -319,6 +322,8 @@ class RuntimeConfig:
             "weather_city": self.weather_city,
             "qweather_api_key": mask(self.qweather_api_key) if self.qweather_api_key else "",
             "qweather_api_host": self.qweather_api_host,
+            "serper_api_key": mask(self.serper_api_key) if self.serper_api_key else "",
+            "jina_api_key": mask(self.jina_api_key) if self.jina_api_key else "",
         }
 
     def _load_model_mapping(self) -> dict[str, str]:

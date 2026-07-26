@@ -31,6 +31,11 @@ export interface GatewayConfig {
   qweather_api_key?: string
   qweather_api_key_configured?: boolean
   qweather_api_host?: string
+  // 窗外 (shenyu_web_search / shenyu_web_read)
+  serper_api_key?: string
+  serper_api_key_configured?: boolean
+  jina_api_key?: string
+  jina_api_key_configured?: boolean
   // mem notes
   inject_inline_memory_prompt?: boolean
   enable_inline_memory_capture?: boolean

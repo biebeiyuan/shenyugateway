@@ -252,6 +252,17 @@ The mem review UI reads and updates Supabase `shenyu_mem_notes`. The star review
 - Successful writes are indexed immediately; the periodic recall reconciliation worker repairs any missed write later.
 - The table is intentionally reached through these dedicated tools. Raw Supabase tools remain an explicit maintenance/debug surface rather than a daily Shenyu surface.
 
+## 窗外 (Web)
+
+The 窗外 pair gives Shenyu web reach from the PWA, implemented in `gateway_tools/_web.py` as ordinary gateway-native tools (both on the daily surface):
+
+- `shenyu_web_search(query, limit?)` posts to Serper (`google.serper.dev`, Google results with `gl=cn`/`hl=zh-cn`) and returns only `title`/`url`/`snippet` (+`date` when present); snippets are clipped, provider metadata (position, sitelinks, knowledge graph) never enters the result. Requires `SERPER_API_KEY`; without it the tool degrades to an `error_kind: config` result.
+- `shenyu_web_read(url, part?)` fetches page text through Jina Reader (`r.jina.ai`) with `x-return-format: text` — the default markdown is mostly image/link syntax (a weather page measured 30k chars of markdown for 3k of prose), and tool results enter context verbatim and pin into the prompt-cache prefix. Pages are split into ~6000-char parts cut at newline boundaries; part 1 is returned by default and a `rest` note tells the model how to continue. Fetched pages are cached in process memory for ~10 minutes so continuing to the next part does not re-download. `JINA_API_KEY` is required in practice: Jina refuses anonymous reads from datacenter ASNs (the VPS and the proxied dev box both hit `AuthenticationRequiredError`), so 401/402 is reported as `error_kind: config` naming the missing or exhausted key rather than a bare status code.
+- Both calls go to fixed public endpoints only — the gateway never fetches a model-supplied host directly. Results are framed in the tool descriptions as outside reference material, not household truth (prompt-injection posture). Failures (timeouts, non-200, empty pages) return standard `{ok: false, error, error_kind}` results and never fail the chat.
+- Outbound HTTP honors `UPSTREAM_PROXY` when set, otherwise `trust_env=True` for WSL-style mirrored proxies, matching the RSS client conventions.
+
+Both keys are editable at runtime from the Admin Config page (窗外 card), following the QWeather precedent.
+
 ## Recall Index
 
 `shenyu_recall` is the unified search entrypoint for old context. Every selected indexed source is hydrated from all its indexed chunks before returning, so the result contains its complete original content plus `source_type` and `source_id`. `shenyu_recall_read(source_type, source_id)` remains available for direct reads when those identifiers are already known. It never exposes rank scores, but a selected original may carry a compact `recall_match` structure: direct confirmed anchor, one confirmed relationship path, or another association. This tells Shenyu why an original is present without adding summaries, importance, or hidden ranking fields. The owner-only `/api/gateway/memory-graph/recall-preview` read path displays the same route label in Admin, calls Recall with auto-sync disabled, and does not mutate memory state. Full candidate and selection traces stay in gateway logs.
