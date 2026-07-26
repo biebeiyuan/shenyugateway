@@ -28,7 +28,12 @@ export function loadStoredMessages(): UiMessage[] {
         if (message.role === 'assistant' && Array.isArray(item.variants) && item.variants.length) {
           const variants = item.variants.map((variant: Partial<MessageVariant>) => cloneVariant(variant))
           message.variants = variants
-          message.selectedVariantIndex = selectedVariantIndex({ ...message, variants })
+          const storedIndex = Number(item.selectedVariantIndex)
+          message.selectedVariantIndex = selectedVariantIndex({
+            ...message,
+            variants,
+            selectedVariantIndex: Number.isFinite(storedIndex) ? storedIndex : 0,
+          })
           applyVariant(message, variants[message.selectedVariantIndex], message.selectedVariantIndex)
         }
         return message

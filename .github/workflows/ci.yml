@@ -11,6 +11,22 @@ jobs:
       - run: pip install -e ".[dev]"
       - run: pytest tests/ -x -q
 
+  pwa-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: pwa/package-lock.json
+      - run: npm ci
+        working-directory: pwa
+      - run: npm test
+        working-directory: pwa
+      - run: npm run build
+        working-directory: pwa
+
   admin-smoke:
     runs-on: ubuntu-latest
     steps:

@@ -61,11 +61,11 @@
 
 | 信号 | 当前检查 | 含义与处理 |
 |------|----------|------------|
-| 红灯：自动阻断 | Python 单测、Admin Playwright smoke、`tests/test_project_map.py` | 测试失败、浏览器运行时/同源资源失败或地图路径缺失时，先修复或明确解释，不能当作通过交付。 |
+| 红灯：自动阻断 | Python 单测、Admin Playwright smoke、PWA Vitest 单测与构建、`tests/test_project_map.py` | 测试失败、浏览器运行时/同源资源失败或地图路径缺失时，先修复或明确解释，不能当作通过交付。 |
 | 黄灯：人工复核提醒 | `python scripts/check_audit_freshness.py` | 只说明审计关联文件后来改过、正在修改或记录格式不完整；它不自动证明原审计结论失效，也不作为 CI 失败条件。 |
 | Agent / 人工判断 | 对照代码、测试、日志和用户可见行为 | 判断文档语义是否仍准确、产品边界是否改变，以及是否需要更新审计结论；自动路径检查不能替代这个判断。 |
 
-当前 CI 在 push 和 pull request 上运行 `pytest tests/ -x -q`，并在 `admin/` 工作目录运行 `npm run test:e2e`。Playwright smoke 负责页面可加载、核心交互、浏览器运行时错误和同源资源失败；它是活性护栏，不是视觉验收。
+当前 CI 在 push 和 pull request 上运行 `pytest tests/ -x -q`，在 `admin/` 工作目录运行 `npm run test:e2e`，并在 `pwa/` 工作目录运行 `npm test`（Vitest 单测：历史来源优先级、handoff 去重、roll 变体、SSE 解析、时间线分组）和 `npm run build`（`vue-tsc` 类型检查 + Vite 构建）。Playwright smoke 负责页面可加载、核心交互、浏览器运行时错误和同源资源失败；它是活性护栏，不是视觉验收。
 
 ## 专题设计与实施记录
 

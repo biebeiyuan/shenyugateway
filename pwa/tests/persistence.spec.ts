@@ -23,11 +23,7 @@ describe('message persistence round-trip', () => {
     expect(restored[1].thinkingSegments).toHaveLength(1)
   })
 
-  it('restores roll variants; the stored selected index is currently ignored', () => {
-    // Known pre-existing quirk: persistStoredMessages saves selectedVariantIndex,
-    // but loadStoredMessages never reads it back, so a reload always lands on the
-    // first roll. If that gets fixed, update these last two expectations to 1 /
-    // 'current'.
+  it('restores roll variants and lands on the previously selected roll', () => {
     const message = uiMessage('assistant', 'current', {
       variants: [
         { content: 'first roll', thinking: '', thinkingSegments: [], events: [] },
@@ -38,8 +34,27 @@ describe('message persistence round-trip', () => {
     persistStoredMessages([message], FALLBACK_SESSION_MESSAGE_LIMIT)
     const [restored] = loadStoredMessages()
     expect(restored.variants).toHaveLength(2)
-    expect(restored.selectedVariantIndex).toBe(0)
-    expect(restored.content).toBe('first roll')
+    expect(restored.selectedVariantIndex).toBe(1)
+    expect(restored.content).toBe('current')
+  })
+
+  it('clamps a corrupted stored index and defaults legacy rows to the first roll', () => {
+    localStorage.setItem(STORAGE_MESSAGES, JSON.stringify([
+      {
+        id: 'a1', role: 'assistant', content: 'x',
+        variants: [{ content: 'v0' }, { content: 'v1' }],
+        selectedVariantIndex: 9,
+      },
+      {
+        id: 'a2', role: 'assistant', content: 'y',
+        variants: [{ content: 'w0' }, { content: 'w1' }],
+      },
+    ]))
+    const [clamped, legacy] = loadStoredMessages()
+    expect(clamped.selectedVariantIndex).toBe(1)
+    expect(clamped.content).toBe('v1')
+    expect(legacy.selectedVariantIndex).toBe(0)
+    expect(legacy.content).toBe('w0')
   })
 
   it('syncs live edits into the selected variant before saving', () => {
