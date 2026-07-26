@@ -417,7 +417,7 @@ def _has_non_word_symbol(text: str) -> bool:
 
 
 def _generic_chinese_semantic_fragment(term: str) -> bool:
-    # Delegate to the single shared predicate in recall.py so the prefix/suffix
+    # Delegate to the single shared predicate in recall/_text.py so the prefix/suffix
     # generic-fragment logic cannot drift between the two subsystems.
     return is_generic_chinese_fragment(term)
 

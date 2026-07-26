@@ -87,7 +87,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/mem_notes/`: note service package (mixin pattern, like stars/): `_helpers` (constants), `_validation` (field validation), `_suggestions` (auto mem_type/keyword inference), `_search` (keyword/semantic/entity matching, scoring, cooldown, rendering), `_crud` (create/update/delete/list/legacy-atomic). `__init__.py` assembles `MemNoteService` and re-exports backward-compat symbols.
 - `shenyu_gateway/mem_notes_relevance.py`: pure-function helpers for mem-note recall scoring, anchor matching, auto-extraction (people/places/objects/keywords/summary/memory_kind inference), `compute_heat()`, and `running_joke_serendipity_rate()`.
 - `shenyu_gateway/memory_graph.py`: temporal personal memory graph service for confirmed entities, aliases, source mentions, typed relationships, exact-alias backfill, and one-hop Recall candidates.
-- `shenyu_gateway/recall.py`: unified recall index — keyword + vector + memory-graph hybrid search across registered sources, with complete selected-source hydration.
+- `shenyu_gateway/recall/`: unified recall index (package split into mixins like stars/: `_text` pure tokenize/query-parse functions shared by stars//mem_notes/, `_documents` corpus model, `_sources` per-table sync adapters, `_embedding` pending-embed worker, `_query` retrieval pipeline, `_ranking` scoring/fusion/presentation, `_base` constructor + config accessors). Keyword + vector + memory-graph hybrid search across registered sources, with complete selected-source hydration. `__init__.py` assembles `RecallIndexService` and re-exports backward-compat symbols.
 - `shenyu_gateway/embeddings.py`: embedding client (SiliconFlow / BAAI/bge-m3).
 
 ### Capture & private content
@@ -226,7 +226,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 | Memory Island | Stars + Mem 当前岛 | `memory_island.py`、`context_builder.py` | `admin/src/api/logs.ts`、`LogsView.vue` | `REQUEST_CONTEXT.md`、`MEMORY_ROOM.md` |
 | Stars | 星星 / 关联记忆 | `shenyu_gateway/stars/` | `admin/src/api/stars.ts`、`StarsView.vue`、`views/stars/` | `MEMORY_ROOM.md` § Star Memory Layer |
 | Mem | Mem Notes / 便签 | `shenyu_gateway/mem_notes/`、`mem_notes_relevance.py` | `admin/src/api/mem0.ts`、`Mem0View.vue` | `MEMORY_ROOM.md` § Mem Note Layer |
-| 记忆网络 | 人物 / 地点 / 物件 / 主题锚点 | `memory_graph.py`、`recall.py` | `admin/src/api/memoryGraph.ts`、`MemoryGraphView.vue`、`Mem0View.vue` | `MEMORY_ROOM.md` § Personal Memory Graph |
+| 记忆网络 | 人物 / 地点 / 物件 / 主题锚点 | `memory_graph.py`、`shenyu_gateway/recall/` | `admin/src/api/memoryGraph.ts`、`MemoryGraphView.vue`、`Mem0View.vue` | `MEMORY_ROOM.md` § Personal Memory Graph |
 | Room | 房间 / 窗台 | `room_context.py`、`room_tools.py`、`room_newspaper.py` | `admin/src/api/room.ts`、`RoomView.vue`、`views/room/` | `MEMORY_ROOM.md` § Room Mode |
 | 请求日志 / 工具报错 | 日志页、工具报错页 | `request_logs.py`、`tool_loop.py`、`store/_admin.py` | `admin/src/api/logs.ts`、`toolErrors.ts`、`LogsView.vue`、`ToolErrorsView.vue` | `DEBUGGING_GUIDE.md`、`LOGS_GUIDE.md` |
 | Calendar | 日历 / 日周月页 | `calendar_service.py`、`calendar_sources.py` | `admin/src/api/calendar.ts`、`CalendarView.vue` | `REQUEST_CONTEXT.md` § Calendar |

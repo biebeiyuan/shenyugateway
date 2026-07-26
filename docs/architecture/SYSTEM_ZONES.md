@@ -242,7 +242,7 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 
 **核心文件**
 
-- `shenyu_gateway/recall.py`
+- `shenyu_gateway/recall/*.py`
 - `shenyu_gateway/memory_graph.py`
 - `shenyu_gateway/embeddings.py`
 - `shenyu_gateway/supabase.py`
@@ -267,7 +267,7 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 
 - 多来源查询、embedding 和日志写入可能串行阻塞请求准备。
 - Supabase 查询失败的降级语义不完全一致。
-- `recall.py` 和 `mem_notes_relevance.py` 是较大的算法模块，应按数据流和测试拆解，而不是按行数直接切割。
+- `recall/` 已按数据流拆成 mixin 包（`_text` 纯函数层被 stars/、mem_notes/ 共享，`_sources` 写路径、`_query` 读路径、`_ranking` 排序呈现）；对外契约不变，`mem_notes/_search.py` 依赖的私有方法仍在 `RecallIndexService` 类上。`mem_notes_relevance.py` 仍是较大的算法模块，拆解时按数据流和测试，不按行数直接切割。
 - 召回性能优化不能暗中改变候选语义或编辑记忆正文。
 - 图谱只持有跨表连线和证据，来源正文仍由原表负责；新来源通过稳定 source key 和 Recall adapter 接入。
 
