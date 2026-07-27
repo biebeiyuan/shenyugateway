@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { appendThinking, appendToolEvent, parseSseFrame, pumpSseStream, toolEventKey } from '../src/stream/sse'
+import { MAX_THINKING_BUDGET_TOKENS, thinkingRequestForEffort } from '../src/api/client'
 import type { UiMessage } from '../src/types'
 
 function assistant(): UiMessage {
@@ -15,6 +16,16 @@ function streamOf(chunks: string[]): ReadableStream<Uint8Array> {
     },
   })
 }
+
+describe('thinking request contract', () => {
+  it('uses a bounded explicit Thinking budget instead of adaptive effort for Max', () => {
+    expect(thinkingRequestForEffort('max')).toEqual({
+      thinking: { type: 'enabled', budget_tokens: MAX_THINKING_BUDGET_TOKENS },
+    })
+    expect(MAX_THINKING_BUDGET_TOKENS).toBe(32768)
+    expect(thinkingRequestForEffort('high')).toEqual({ reasoning_effort: 'high' })
+  })
+})
 
 describe('parseSseFrame', () => {
   it('appends content deltas and returns done only for [DONE]', () => {
