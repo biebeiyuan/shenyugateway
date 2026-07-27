@@ -424,8 +424,7 @@ receive raw tool input and the exact tool-result JSON passed to the model; PWA u
 active response detail sheet. The PWA reads the same-origin `shenyu_upstream_presets` entries used by
 the Admin Config page and applies a selected preset through `POST /api/config`; this changes the fixed
 default upstream configuration, not the PWA client identity, session semantics, memory surface, or tool
-event contract. For Anthropic-compatible upstreams, PWA Max sends `thinking.type=enabled` with a 32768-token
-budget instead of adaptive `output_config.effort`; other effort tiers retain the adaptive gateway path.
+event contract.
 
 Cross-client conversation continuity is keyed by `X-Shenyu-Session-Tag`, not by `X-Shenyu-Client`.
 `X-Shenyu-Client` only selects the client capability profile. Operit and PWA can therefore share one

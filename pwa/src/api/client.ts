@@ -9,17 +9,6 @@ export type RequestContext = {
   sessionTag: string
 }
 
-export const MAX_THINKING_BUDGET_TOKENS = 32768
-
-export function thinkingRequestForEffort(effort: string): Record<string, unknown> {
-  if (effort === 'max') {
-    return {
-      thinking: { type: 'enabled', budget_tokens: MAX_THINKING_BUDGET_TOKENS },
-    }
-  }
-  return { reasoning_effort: effort }
-}
-
 export function apiUrl(ctx: RequestContext, path: string): string {
   const base = ctx.gatewayUrl.trim().replace(/\/$/, '')
   return `${base}${path}`

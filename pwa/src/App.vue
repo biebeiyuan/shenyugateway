@@ -50,7 +50,6 @@ import {
   postChatStream,
   postUpstreamConfig,
   renameSession,
-  thinkingRequestForEffort,
   wireMessages,
   type RequestContext,
 } from './api/client'
@@ -756,7 +755,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       model: selectedModel.value,
       messages: wireMessages(source.filter((message) => message.id !== assistant.id)),
       stream: true,
-      ...thinkingRequestForEffort(effectiveEffort.value),
+      reasoning_effort: effectiveEffort.value,
     }, activeController.signal)
     await pumpSseStream(stream, (frame) => parseSseFrame(frame, assistant), scrollToBottom)
     assistant.streaming = false
