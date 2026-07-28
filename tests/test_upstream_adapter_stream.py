@@ -402,6 +402,62 @@ def test_openai_to_anthropic_unwraps_double_encoded_tool_arguments():
     assert tool_block["input"] == {"path": "notes.txt"}
 
 
+def test_openai_to_anthropic_converts_data_url_images():
+    _system, messages = _openai_to_anthropic(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": "看这张图"},
+                    {
+                        "type": "image_url",
+                        "image_url": {"url": "data:image/jpeg;base64,abc123", "detail": "high"},
+                    },
+                ],
+            }
+        ],
+        max_breakpoints=0,
+    )
+
+    assert messages == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "看这张图"},
+                {
+                    "type": "image",
+                    "source": {
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": "abc123",
+                    },
+                },
+            ],
+        }
+    ]
+
+
+def test_openai_to_anthropic_converts_remote_image_urls():
+    _system, messages = _openai_to_anthropic(
+        [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": "https://example.test/photo.png"}},
+                ],
+            }
+        ],
+        max_breakpoints=0,
+    )
+
+    assert messages[0]["content"] == [
+        {
+            "type": "image",
+            "source": {"type": "url", "url": "https://example.test/photo.png"},
+        }
+    ]
+
+
 def test_anthropic_completion_unwraps_string_tool_input():
     completion = _anthropic_to_openai_completion(
         "test-model",

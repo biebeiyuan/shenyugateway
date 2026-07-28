@@ -491,6 +491,38 @@ def _content_blocks(content: Any) -> list[dict]:
                 continue
             block = dict(item)
             block_type = block.get("type")
+            if block_type == "image_url":
+                image_url = block.get("image_url")
+                url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                if isinstance(url, str) and url.strip():
+                    normalized_url = url.strip()
+                    if normalized_url.startswith("data:"):
+                        header, separator, data = normalized_url.partition(",")
+                        metadata = header[5:].split(";") if separator else []
+                        media_type = metadata[0].strip() if metadata else ""
+                        is_base64 = any(part.strip().lower() == "base64" for part in metadata[1:])
+                        if separator and is_base64 and media_type.startswith("image/") and data:
+                            blocks.append(
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": media_type,
+                                        "data": data,
+                                    },
+                                }
+                            )
+                            continue
+                    else:
+                        blocks.append(
+                            {
+                                "type": "image",
+                                "source": {"type": "url", "url": normalized_url},
+                            }
+                        )
+                        continue
+                # Do not send an invalid OpenAI image wrapper to Anthropic.
+                continue
             if block_type:
                 blocks.append(block)
             elif isinstance(block.get("text"), str):

@@ -115,6 +115,8 @@ Adding ordinary gateway-native tools should not require changes to the streaming
 
 `shenyu_gateway/upstream_adapter.py` normalizes upstream stream protocols. Anthropic `tool_use` / `input_json_delta` chunks are converted into OpenAI-compatible `tool_calls` deltas, and completion-to-SSE conversion can skip duplicate role chunks and split large final content into smaller events.
 
+The gateway's public `/v1/chat/completions` contract remains OpenAI-compatible, including multimodal `image_url` blocks from the PWA. `UPSTREAM_PROTOCOL` controls only the outbound provider format: the Anthropic adapter converts those blocks to Anthropic `image` sources (and converts Anthropic responses back to OpenAI-compatible responses). Clients do not need to switch wire formats when the configured upstream changes.
+
 ## Tool Error Log
 
 When a gateway-native tool call fails, the gateway records the failure in SQLite `tool_error_log` and surfaces it in the admin **工具报错** page (`/admin/#/tool-errors`). The point is to answer one question: *where is Shenyu's tool use going wrong, and is it our bug or a malformed call?*
