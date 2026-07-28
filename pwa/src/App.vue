@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   ArrowLeft,
   ArrowLeftRight,
@@ -664,7 +664,59 @@ function resizeInput() {
   const input = inputRef.value
   if (!input) return
   input.style.height = 'auto'
-  input.style.height = `${Math.min(input.scrollHeight, 180)}px`
+  input.style.height = `${Math.min(input.scrollHeight, 144)}px`
+  input.scrollTop = input.scrollHeight
+}
+
+function resetInputSize() {
+  nextTick(() => {
+    const input = inputRef.value
+    if (!input) return
+    input.style.height = 'auto'
+    input.scrollTop = 0
+  })
+}
+
+let keyboardTimers: number[] = []
+
+function clearKeyboardTimers() {
+  keyboardTimers.forEach((timer) => window.clearTimeout(timer))
+  keyboardTimers = []
+}
+
+function keyboardViewportBottom(): number {
+  const viewport = window.visualViewport
+  return viewport ? viewport.offsetTop + viewport.height : window.innerHeight
+}
+
+function keepComposerVisible() {
+  const input = inputRef.value
+  const stream = streamRef.value
+  const wrap = input?.closest<HTMLElement>('.composer-wrap')
+  if (!input || !stream || !wrap) return
+  if (document.activeElement !== input) {
+    wrap.style.transform = ''
+    stream.style.paddingBottom = ''
+    return
+  }
+  wrap.style.transform = ''
+  const lift = Math.max(0, Math.ceil(wrap.getBoundingClientRect().bottom - keyboardViewportBottom() + 8))
+  wrap.style.transform = lift ? `translateY(${-lift}px)` : ''
+  stream.style.paddingBottom = lift ? `calc(var(--space-6) + ${lift}px)` : ''
+  scrollToBottom()
+}
+
+function scheduleComposerVisible() {
+  clearKeyboardTimers()
+  for (const delay of [0, 80, 180, 320, 520, 800]) {
+    keyboardTimers.push(window.setTimeout(keepComposerVisible, delay))
+  }
+  window.requestAnimationFrame(keepComposerVisible)
+}
+
+function handleComposerBlur() {
+  clearKeyboardTimers()
+  keyboardTimers.push(window.setTimeout(keepComposerVisible, 80))
 }
 
 function onComposerKeydown(event: KeyboardEvent) {
@@ -818,7 +870,7 @@ async function submit() {
       draft.value = ''
       pendingAttachments.value = []
       editId.value = null
-      resizeInput()
+      resetInputSize()
       await sendConversation(messages.value)
     }
     return
@@ -836,7 +888,7 @@ async function submit() {
   messages.value.push(user)
   draft.value = ''
   pendingAttachments.value = []
-  resizeInput()
+  resetInputSize()
   await sendConversation(messages.value)
 }
 
@@ -863,7 +915,7 @@ function cancelEdit() {
   editId.value = null
   draft.value = ''
   pendingAttachments.value = []
-  resizeInput()
+  resetInputSize()
 }
 
 async function retryMessage(index: number) {
@@ -950,6 +1002,8 @@ function runQuickPrompt(prompt: string) {
 }
 
 onMounted(async () => {
+  window.visualViewport?.addEventListener('resize', scheduleComposerVisible)
+  window.visualViewport?.addEventListener('scroll', scheduleComposerVisible)
   localStorage.setItem(STORAGE_SESSION, sessionTag.value)
   initBatteryWatch()
   initWeatherWatch(clientContext)
@@ -959,6 +1013,12 @@ onMounted(async () => {
   await loadSessions()
   await adoptInitialSession()
   nextTick(() => inputRef.value?.focus())
+})
+
+onUnmounted(() => {
+  clearKeyboardTimers()
+  window.visualViewport?.removeEventListener('resize', scheduleComposerVisible)
+  window.visualViewport?.removeEventListener('scroll', scheduleComposerVisible)
 })
 </script>
 
@@ -1137,31 +1197,40 @@ onMounted(async () => {
       </div>
 
       <footer v-if="activeWorkspace === 'chats'" class="composer-wrap">
-        <div v-if="editId" class="edit-banner">
-          <Pencil :size="15" />
-          <span>正在改写这条消息，送出后后面的回答会重新长出来。</span>
-          <button aria-label="取消编辑" title="取消编辑" @click="cancelEdit"><X :size="15" /></button>
-        </div>
-        <div v-if="pendingAttachments.length" class="pending-attachments">
-          <div v-for="attachment in pendingAttachments" :key="attachment.id" class="pending-image">
-            <img :src="attachment.dataUrl" :alt="attachment.name" />
-            <button aria-label="移除图片" title="移除图片" @click="removeAttachment(attachment.id)"><X :size="13" /></button>
+        <div class="composer-box">
+          <div v-if="editId" class="edit-banner">
+            <Pencil :size="15" />
+            <span>正在改写这条消息，送出后后面的回答会重新长出来。</span>
+            <button aria-label="取消编辑" title="取消编辑" @click="cancelEdit"><X :size="15" /></button>
           </div>
-        </div>
-        <div class="composer">
-          <textarea
-            ref="inputRef"
-            :value="draft"
-            rows="1"
-            placeholder="Message Claude..."
-            @input="updateDraft"
-            @keydown="onComposerKeydown"
-          />
-          <div class="composer-tools">
-            <button class="composer-icon" aria-label="添加图片" title="添加图片" @click="fileRef?.click()"><ImagePlus :size="19" /></button>
+          <div v-if="pendingAttachments.length" class="pending-attachments">
+            <div v-for="attachment in pendingAttachments" :key="attachment.id" class="pending-image">
+              <img :src="attachment.dataUrl" :alt="attachment.name" />
+              <button aria-label="移除图片" title="移除图片" @click="removeAttachment(attachment.id)"><X :size="13" /></button>
+            </div>
+          </div>
+          <div class="composer">
             <input ref="fileRef" class="visually-hidden" type="file" accept="image/*" multiple @change="chooseImages" />
-            <button v-if="busy" class="send-button stop" aria-label="停止生成" title="停止生成" @click="cancelGeneration"><CircleStop :size="19" /></button>
-            <button v-else class="send-button" :class="{ ready: hasContent }" :disabled="!hasContent" aria-label="发送" title="发送" @click="submit"><Send :size="18" /></button>
+            <div class="composer-input-row">
+              <textarea
+                ref="inputRef"
+                class="composer-input"
+                :value="draft"
+                rows="1"
+                placeholder="Reply to Claude..."
+                enterkeyhint="send"
+                @blur="handleComposerBlur"
+                @focus="scheduleComposerVisible"
+                @input="updateDraft"
+                @keydown="onComposerKeydown"
+              />
+            </div>
+            <div class="composer-actions">
+              <button class="composer-icon" aria-label="添加图片" title="添加图片" @click="fileRef?.click()"><ImagePlus :size="19" /></button>
+              <span class="composer-spacer" />
+              <button v-if="busy" class="send-button stop" aria-label="停止生成" title="停止生成" @click="cancelGeneration"><CircleStop :size="19" /></button>
+              <button v-else class="send-button" :class="{ ready: hasContent }" :disabled="!hasContent" aria-label="发送" title="发送" @click="submit"><Send :size="18" /></button>
+            </div>
           </div>
         </div>
       </footer>

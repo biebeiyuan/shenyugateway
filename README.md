@@ -210,7 +210,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `pwa/src/chatnestSprite.ts`: user-supplied private ChatNest status sprite set for the personal PWA deployment.
 - `pwa/src/markdown.ts`: sanitized Markdown rendering with Highlight.js code highlighting.
 - `pwa/src/toolLanguage.ts`: gateway tool-name normalization and resident-facing warm action copy.
-- `pwa/src/styles.css`: responsive chat layout, ChatNest-style animated status mark, bottom sheets, message actions, and tool trace states.
+- `pwa/src/styles.css`: responsive chat layout, bundled Anthropic Sans/Serif typography, ChatNest-matched composer geometry, animated status mark, bottom sheets, message actions, Markdown typography, and tool trace states.
 - `pwa/public/manifest.webmanifest` / `pwa/public/sw.js`: installable PWA shell; the service worker never caches `/v1/` or `/api/` responses.
 - `pwa/vite.config.ts`: isolated development server on port `5174` with `/v1`, `/api`, and `/admin` proxies to the gateway.
 - `Dockerfile` + `gateway.py`: production PWA build and static `/chat/` mount served by the same gateway origin as `/admin/`.
