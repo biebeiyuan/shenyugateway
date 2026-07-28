@@ -744,6 +744,34 @@ def _error_hint(log: dict[str, Any]) -> list[str]:
     return hints
 
 
+def _response_evidence_summary(value: Any) -> str:
+    if not isinstance(value, dict):
+        return ""
+    upstream = value.get("upstream") if isinstance(value.get("upstream"), dict) else {}
+    normalized = value.get("normalized") if isinstance(value.get("normalized"), dict) else {}
+    return " | ".join(
+        [
+            f"mode={value.get('mode')}",
+            f"protocol={value.get('protocol')}",
+            f"thinking_requested={value.get('thinking_requested')}",
+            (
+                f"upstream={value.get('upstream_format')}"
+                f"(blocks={upstream.get('thinking_blocks', 0)},"
+                f"deltas={upstream.get('thinking_deltas', 0)},"
+                f"content={upstream.get('thinking_content_seen', False)})"
+            ),
+            (
+                f"normalized={value.get('normalized_format')}"
+                f"(blocks={normalized.get('thinking_blocks', 0)},"
+                f"deltas={normalized.get('thinking_deltas', 0)},"
+                f"content={normalized.get('thinking_content_seen', False)})"
+            ),
+            f"usage_seen={upstream.get('usage_seen', False)}",
+            f"finish_seen={upstream.get('finish_seen', False)}",
+        ]
+    )
+
+
 def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
     status = log.get("status") or "?"
     log_id = log.get("id") or "?"
@@ -825,6 +853,10 @@ def _print_log_summary(log: dict[str, Any], *, detail: bool = False) -> None:
                     if isinstance(item, dict)
                 )
             )
+
+    response_evidence = _response_evidence_summary(log.get("upstream_response_evidence"))
+    if response_evidence:
+        print(f"  upstream_response: {response_evidence}")
 
     names = _tool_names(log.get("tool_names_all") or log.get("tool_names"))
     if names:
@@ -963,6 +995,9 @@ def _print_detail_sections(log: dict[str, Any]) -> None:
                     + f"signature={thinking.get('signature_present')} "
                     + f"redacted={thinking.get('redacted_present')}"
                 )
+            response_evidence = _response_evidence_summary(item.get("upstream_response_evidence"))
+            if response_evidence:
+                print(f"      upstream_response: {response_evidence}")
             for call in item.get("tools") or []:
                 if isinstance(call, dict):
                     print(

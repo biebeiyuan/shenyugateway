@@ -2022,12 +2022,13 @@ def test_openai_plain_stream_adds_done_when_upstream_ends_without_sentinel():
         )
         completed: list[tuple] = []
 
+        upstream = {"protocol": "openai", "chat_url": "https://upstream.test/v1/chat/completions"}
         response = await stream_chat(
             request,
             {"model": "test-model", "messages": []},
             {},
             "test-model",
-            {"protocol": "openai", "chat_url": "https://upstream.test/v1/chat/completions"},
+            upstream,
             connect_error_detail=lambda _url, exc: str(exc),
             private_capture_fallback_text=lambda *_args, **_kwargs: ("fallback", ""),
             private_capture_kinds=lambda **_kwargs: [],
@@ -2041,6 +2042,10 @@ def test_openai_plain_stream_adds_done_when_upstream_ends_without_sentinel():
         assert chunks[-1] == "data: [DONE]\n\n"
         assert upstream_response.closed is True
         assert completed and completed[0][0] == "hello"
+        evidence = upstream["_shenyu_upstream_response_evidence"]
+        assert evidence["upstream"]["text_deltas"] == 1
+        assert evidence["upstream"]["finish_seen"] is True
+        assert evidence["normalized"]["text_deltas"] == 1
 
     asyncio.run(run_case())
 

@@ -75,6 +75,23 @@ def test_request_log_history_survives_reopen_prunes_and_excludes_full_payloads(t
                 "upstream_payload_summary": {
                     "thinking": {"type": "adaptive", "display": "summarized"},
                 },
+                "upstream_response_evidence": {
+                    "version": 1,
+                    "protocol": "anthropic",
+                    "mode": "nonstream",
+                    "thinking_requested": True,
+                    "upstream_format": "anthropic_message",
+                    "normalized_format": "openai_completion",
+                    "upstream": {
+                        "thinking_blocks": 1,
+                        "thinking_content_seen": True,
+                        "usage_seen": True,
+                    },
+                    "normalized": {
+                        "thinking_blocks": 1,
+                        "thinking_content_seen": True,
+                    },
+                },
                 "diagnostics": {
                     "new_counter": index,
                     "messages": 9,
@@ -106,6 +123,11 @@ def test_request_log_history_survives_reopen_prunes_and_excludes_full_payloads(t
                             "preserved": True,
                             "signature_present": True,
                         },
+                        "upstream_response_evidence": {
+                            "version": 1,
+                            "upstream": {"thinking_content_seen": True},
+                            "normalized": {"thinking_content_seen": True},
+                        },
                     }
                 ],
             },
@@ -133,11 +155,13 @@ def test_request_log_history_survives_reopen_prunes_and_excludes_full_payloads(t
     assert "thinking" not in detail["diagnostics"]
     assert "signature" not in detail["diagnostics"]
     assert detail["upstream_payload_summary"]["thinking"]["type"] == "adaptive"
+    assert detail["upstream_response_evidence"]["upstream"]["thinking_content_seen"] is True
     round_log = detail["internal_tool_rounds"][0]
     assert round_log["response_preview"] == "round preview"
     assert '"api_key": "<redacted>"' in round_log["args_preview"]
     assert round_log["result_preview"] == "<omitted:truncated-json-preview>"
     assert round_log["anthropic_thinking"]["signature_present"] is True
+    assert round_log["upstream_response_evidence"]["normalized"]["thinking_content_seen"] is True
     assert round_log["prompt_cache"]["breakpoints"] == ["system.end", "messages[4].content[0]"]
     assert round_log["prompt_cache"]["cache_control_marker_count"] == 2
     assert "response_full" not in round_log

@@ -33,7 +33,22 @@
 
 工具链的每个上游轮次都会单独保存 `prompt_cache` 结构证据：断点路径、前缀指纹、TTL、tail guard，以及最终 payload 中实际存在的 `cache_control` 数量。它们不含消息正文，可以随 SQLite 安全摘要保留；结合该轮的缓存 read/write，可以判断网关是否发出断点以及上游是否兑现。
 
+每次普通请求和工具轮次还会保存 `upstream_response_evidence`。它只统计固定的响应形状、事件数量和真假标记，不保存正文、Thinking 内容、signature、redacted 数据或任意原始字段名，因此默认就会进入 SQLite 安全摘要，不需要打开完整 payload。
+
 需要看完整请求内容时，在 Admin 配置页打开「请求日志 → 保留完整请求内容」（等价于环境变量 `GATEWAY_LOG_FULL_PAYLOADS=true`，开关会随配置覆盖持久化，无需重启，只对之后的新请求生效）。完整内容仍只存在于当前进程最近 30 条日志，重启后旧记录会退回摘要和预览；它们可能包含敏感对话，看完建议关闭。
+
+## 上游响应证据
+
+Response 标签里的响应证据按同一轮的真实顺序分成两层：
+
+- `上游`：网关刚收到、尚未转换的 Anthropic message/event 或 OpenAI-compatible completion/chunk。
+- `网关输出`：适配为 OpenAI-compatible、准备交给客户端的 completion/chunk。
+- `Thinking 已请求` 只证明请求 payload 开启了 Thinking；`正文 有` 才证明这一层见到了非空的标准 Thinking 内容。
+- `usage` 和 `完成信号` 用来识别假流或不完整尾包。它们只表示上游响应里是否出现对应结构，不替供应商补算 token，也不保证 relay 真正逐块发送。
+
+按结论定位即可：上游没有 Thinking，说明模型或 relay 没返回标准可显示内容；上游有而网关输出没有，是协议适配问题；两层都有而 PWA 没显示，才去查 PWA 的解析或展示。流式与非流式都记录同一套证据，关闭流式不会天然关闭 Thinking，也不会让网关工具失效；它只改变一次请求的传输和客户端消费方式。
+
+这份证据不是原始上游响应的副本。若 relay 把 Thinking 塞进未知私有字段，日志最多记录 `other_fields` 等固定计数，不记录字段名或值；此时只能确认“没有标准 Thinking”，不能据此宣称上游完全没有任何私有推理数据。
 
 ## Anthropic Thinking 标签
 
@@ -45,7 +60,7 @@
 
 这些标签不是可阅读的 raw 思维链，也不表示网关能够解码隐藏内容。日志只保存块数量和真假标记；即使临时开启完整 payload，Thinking、signature 和 redacted 内容也会被脱敏。
 
-没有显示“Thinking 已保留”也不等于请求没有开启 Thinking。先去 Upstream 摘要查看发出的 `thinking`；如果还要核对这一轮的实际 `output_config.effort`，需临时开启 `GATEWAY_LOG_FULL_PAYLOADS=true` 后查看完整 Upstream payload。然后再判断上游是否真的返回了可续接的原生内容块。
+没有显示“Thinking 已保留”也不等于请求没有开启 Thinking。先看 Upstream 摘要确认发出的 `thinking`，再看 `upstream_response_evidence` 判断上游和标准化输出是否出现 Thinking。`anthropic_thinking.preserved` 只回答未结束工具轮是否保留了可续接的 Anthropic 原生块，不是最终可见 Thinking 的通用指标。若还要核对这一轮实际发送的 `output_config.effort`，才临时开启 `GATEWAY_LOG_FULL_PAYLOADS=true` 查看完整 Upstream payload。
 
 ## 小岛与缓存
 

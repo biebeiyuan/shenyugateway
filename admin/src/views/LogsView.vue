@@ -1,7 +1,13 @@
 <script setup lang="ts">
 import { ref, onMounted, onUnmounted } from 'vue'
 import { NButton, NEmpty, NTag, useMessage } from 'naive-ui'
-import { fetchLogs, fetchLogDetail, type LogEntry, type LogDetail } from '@/api/logs'
+import {
+  fetchLogs,
+  fetchLogDetail,
+  type LogEntry,
+  type LogDetail,
+  type UpstreamResponseEvidence,
+} from '@/api/logs'
 
 const message = useMessage()
 
@@ -437,6 +443,27 @@ function selectedRound(detail: LogDetail, roundNumber?: number): any | null {
   return detail.internal_tool_rounds.find((round) => round.round === roundNumber) || null
 }
 
+function responseEvidenceText(evidence?: UpstreamResponseEvidence | null): string {
+  if (!evidence) return ''
+  const upstream = evidence.upstream || {}
+  const normalized = evidence.normalized || {}
+  const requested = evidence.thinking_requested ? 'Thinking 已请求' : 'Thinking 未请求'
+  const rawThinking = `上游 ${evidence.upstream_format || 'unknown'}：块 ${upstream.thinking_blocks || 0} / 增量 ${upstream.thinking_deltas || 0} / 正文 ${upstream.thinking_content_seen ? '有' : '无'}`
+  const normalizedThinking = `网关输出 ${evidence.normalized_format || 'unknown'}：块 ${normalized.thinking_blocks || 0} / 增量 ${normalized.thinking_deltas || 0} / 正文 ${normalized.thinking_content_seen ? '有' : '无'}`
+  const terminal = `usage ${upstream.usage_seen ? (upstream.usage_values_seen ? '有值' : '空') : '未见'} / 完成信号 ${upstream.finish_seen ? '有' : '未见'}`
+  let verdict = ''
+  if (!upstream.events) {
+    verdict = '结论：尚未收到可判断的上游响应事件'
+  } else if (!upstream.thinking_content_seen) {
+    verdict = '结论：上游标准响应里没有可显示的 Thinking'
+  } else if (!normalized.thinking_content_seen) {
+    verdict = '结论：上游有 Thinking，但网关转换后丢失'
+  } else {
+    verdict = '结论：网关已把 Thinking 交给客户端；若 PWA 未显示，应检查 PWA 解析或展示'
+  }
+  return [requested, rawThinking, normalizedThinking, terminal, verdict].join('\n')
+}
+
 function renderContent(detail: LogDetail, tab: string, roundNumber?: number): string {
   const round = selectedRound(detail, roundNumber)
   if (tab === 'overview') return renderOverview(detail)
@@ -563,6 +590,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
       note: '未保留完整 Upstream payload；下方缓存结构不含消息正文。',
       prompt_cache: round?.prompt_cache || detail.prompt_cache || null,
       upstream_payload_summary: payloadSummary,
+      upstream_response_evidence: round?.upstream_response_evidence || detail.upstream_response_evidence || null,
     }, null, 2))
   }
 
@@ -573,11 +601,15 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
     parts.push(`模型: ${detail.model}`)
     parts.push(`上游: ${detail.upstream_url}`)
     if (detail.stream) parts.push('流式')
+    const responseEvidence = responseEvidenceText(
+      round?.upstream_response_evidence || detail.upstream_response_evidence,
+    )
     if (round?.anthropic_thinking?.preserved) {
       const thinking = round.anthropic_thinking
       parts.push(`Thinking 已保留 ${thinking.blocks || 0} 块${thinking.signature_present ? ' · signature ✓' : ''}${thinking.redacted_present ? ' · redacted ✓' : ''}`)
     }
     let html = parts.join(' · ') + '\n\n'
+    if (responseEvidence) html += responseEvidence + '\n\n'
     const responseText = round
       ? (round.response_full ?? round.response_preview)
       : (detail.response_full ?? detail.response_preview)
@@ -607,6 +639,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
       request_payloads_retained: detail.request_payloads_retained,
       system_additions_chars: detail.system_additions_chars,
       upstream_payload_summary: detail.upstream_payload_summary,
+      upstream_response_evidence: detail.upstream_response_evidence,
       upstream_url: detail.upstream_url,
       status: detail.status,
       duration_ms: detail.duration_ms,

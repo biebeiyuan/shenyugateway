@@ -242,11 +242,12 @@ Pending tool context is restored only when the returned history still matches th
 When Anthropic Thinking or tool continuation looks wrong, inspect one request in this order:
 
 1. `upstream_payload_summary.thinking`: proves what Thinking mode the gateway requested, not what the model returned. To confirm the exact `output_config.effort` sent for that round, temporarily enable full payload retention (Admin toggle or `GATEWAY_LOG_FULL_PAYLOADS=true`) and inspect `upstream_payload.output_config.effort`.
-2. `internal_tool_rounds[].anthropic_thinking`: `preserved=true` proves native Thinking/redacted blocks were captured; `signature_present` and `redacted_present` are safe boolean evidence only.
-3. `pending_gateway_tool_turns_injected`: confirms whether a matching pending transcript was restored into the continuation.
-4. `pending_gateway_tool_lineage_mismatches`: a non-zero value means the saved transcript was deliberately rejected because the returned client history no longer matched.
+2. `upstream_response_evidence`: compare `upstream.thinking_content_seen` with `normalized.thinking_content_seen`. Raw false means no standard visible Thinking reached the gateway; raw true and normalized false identifies the adapter boundary; both true moves the investigation to the client parser/display. The same content-free counters exist for streaming, non-streaming, and each `internal_tool_rounds[]` entry.
+3. `internal_tool_rounds[].anthropic_thinking`: `preserved=true` proves native Thinking/redacted blocks were captured for an unfinished tool continuation; `signature_present` and `redacted_present` are safe boolean evidence only.
+4. `pending_gateway_tool_turns_injected`: confirms whether a matching pending transcript was restored into the continuation.
+5. `pending_gateway_tool_lineage_mismatches`: a non-zero value means the saved transcript was deliberately rejected because the returned client history no longer matched.
 
-Never treat opaque signature or redacted Thinking data as readable chain-of-thought, and never add it to request logs. A sent `thinking` parameter without `anthropic_thinking.preserved=true` usually means the request asked for Thinking but the gateway did not receive native blocks that needed preservation.
+Never treat opaque signature or redacted Thinking data as readable chain-of-thought, and never add it to request logs. `upstream_response_evidence` stores fixed counters and booleans only; it is not a raw-response capture and intentionally cannot name or expose a relay's unknown private fields. A sent `thinking` parameter without `anthropic_thinking.preserved=true` says nothing conclusive about a final visible reply; use the raw-versus-normalized response evidence instead.
 
 Tool schemas and name dispatch live in `shenyu_gateway/tool_registry.py`; implementation methods live in the `shenyu_gateway/gateway_tools/` mixin package. If a tool is visible but behaves wrong, check `tool_registry.py` dispatch first, then the matching mixin method in `gateway_tools/`.
 

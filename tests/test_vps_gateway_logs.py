@@ -100,6 +100,45 @@ def test_log_summary_prints_stage_and_last_activity(capsys):
     assert "prepare.client_messages_trimmed" in output
 
 
+def test_log_summary_prints_content_free_upstream_response_evidence(capsys):
+    logs._print_log_summary(
+        {
+            "id": "evidence-log",
+            "timestamp": "2026-07-28T00:00:00+00:00",
+            "status": "ok",
+            "client_model": "test-model",
+            "stream": False,
+            "session_tag": "test-session",
+            "duration_ms": 1000,
+            "tools_count": 0,
+            "upstream_response_evidence": {
+                "mode": "nonstream",
+                "protocol": "openai",
+                "thinking_requested": True,
+                "upstream_format": "openai_completion",
+                "normalized_format": "openai_completion",
+                "upstream": {
+                    "thinking_blocks": 1,
+                    "thinking_deltas": 0,
+                    "thinking_content_seen": True,
+                    "usage_seen": True,
+                    "finish_seen": True,
+                },
+                "normalized": {
+                    "thinking_blocks": 1,
+                    "thinking_deltas": 0,
+                    "thinking_content_seen": True,
+                },
+            },
+        }
+    )
+
+    output = capsys.readouterr().out
+    assert "upstream_response: mode=nonstream" in output
+    assert "upstream=openai_completion(blocks=1,deltas=0,content=True)" in output
+    assert "normalized=openai_completion(blocks=1,deltas=0,content=True)" in output
+
+
 def test_cache_report_identifies_ttl_and_relay_anomalies(capsys):
     report = logs._build_cache_report(
         [

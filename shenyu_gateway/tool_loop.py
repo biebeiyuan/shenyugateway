@@ -43,6 +43,13 @@ from .upstream_adapter import (
     _cache_usage_summary,
     _completion_to_stream_events,
 )
+from .upstream_response_evidence import (
+    ensure_upstream_response_evidence,
+    observe_normalized_completion,
+    observe_normalized_stream_chunk,
+    observe_upstream_nonstream_response,
+    upstream_response_evidence_snapshot,
+)
 from .utils import coerce_json_object as _coerce_json_object
 from .utils import normalize_text as _normalize_text
 from .utils import shorten as _shorten
@@ -386,8 +393,16 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
         if ctx.log_entry is not None and round_index == 0:
             ctx.log_entry["prompt_cache"] = cache_meta
 
+        response_evidence = ensure_upstream_response_evidence(
+            upstream,
+            payload,
+            "nonstream",
+            reset=True,
+        )
+        _record_round_response_evidence(ctx, round_log, upstream)
         _mark_request_log_phase(ctx.log_entry, "upstream.nonstream_start", detail={"round": round_index + 1})
         raw = await ctx.call_upstream_json(ctx.request, upstream["chat_url"], payload, headers)
+        observe_upstream_nonstream_response(response_evidence, raw)
         _mark_request_log_phase(ctx.log_entry, "upstream.nonstream_done", detail={"round": round_index + 1})
         upstream_usages.append(raw.get("usage", {}))
         _record_round_usage(
@@ -411,6 +426,8 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
                 "usage": raw.get("usage", {}),
             }
         )
+        observe_normalized_completion(response_evidence, completion)
+        _record_round_response_evidence(ctx, round_log, upstream)
         _attach_anthropic_thinking_config(completion, payload, upstream)
         tool_calls = _extract_tool_calls(completion)
         _record_completion_finish_reason(ctx.log_entry, completion, round_log=round_log)
@@ -492,6 +509,13 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
         tag_filter = AssistantTagFilter()
         stream_replay = StreamReplayAccumulator()
         first_upstream_chunk_seen = False
+        response_evidence = ensure_upstream_response_evidence(
+            upstream,
+            payload,
+            "stream",
+            reset=True,
+        )
+        _record_round_response_evidence(ctx, round_log, upstream)
 
         _mark_request_log_phase(ctx.log_entry, "upstream.stream_start", detail={"round": round_index + 1})
         upstream_chunks = ctx.stream_upstream_openai_chunks(ctx.request, payload, headers, ctx.body.model, upstream)
@@ -528,6 +552,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                     first_upstream_chunk_seen = True
                     _mark_request_log_phase(ctx.log_entry, "upstream.stream_first_chunk", detail={"round": round_index + 1})
                 next_chunk = asyncio.create_task(anext(upstream_chunks))
+                observe_normalized_stream_chunk(response_evidence, data)
                 _apply_openai_stream_chunk(completion, data)
                 choice = (data.get("choices") or [{}])[0]
                 delta = choice.get("delta") or {}
@@ -556,6 +581,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                         )
         finally:
             await close_stream_reader(upstream_chunks=upstream_chunks, next_chunk=next_chunk)
+            _record_round_response_evidence(ctx, round_log, upstream)
 
         usage = completion.get("usage") or {}
         _attach_anthropic_thinking_config(completion, payload, upstream)
@@ -709,6 +735,20 @@ def _record_round_usage(
     if round_log is not None:
         round_log["usage"] = usage
         round_log["cache_usage"] = _cache_usage_summary(usage, protocol=protocol)
+
+
+def _record_round_response_evidence(
+    ctx: InternalToolLoopContext,
+    round_log: Optional[dict],
+    upstream: dict,
+) -> None:
+    evidence = upstream_response_evidence_snapshot(upstream)
+    if evidence is None:
+        return
+    if ctx.log_entry is not None:
+        ctx.log_entry["upstream_response_evidence"] = evidence
+    if round_log is not None:
+        round_log["upstream_response_evidence"] = evidence
 
 
 def _record_round_request(

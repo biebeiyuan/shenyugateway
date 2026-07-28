@@ -79,6 +79,11 @@ from shenyu_gateway.upstream_adapter import (
     _anthropic_to_openai_completion,
     _cache_usage_summary,
 )
+from shenyu_gateway.upstream_response_evidence import (
+    ensure_upstream_response_evidence,
+    observe_normalized_completion,
+    observe_upstream_nonstream_response,
+)
 from shenyu_gateway.utils import clean_config_text as _clean_config_text
 
 logging.basicConfig(level=logging.INFO)
@@ -612,19 +617,16 @@ async def _stream_chat(
 
 async def _nonstream_chat(request: Request, payload: dict, headers: dict, model: str, upstream: dict):
     proto = upstream["protocol"]
+    response_evidence = ensure_upstream_response_evidence(
+        upstream,
+        payload,
+        "nonstream",
+        reset=True,
+    )
     raw = await _call_upstream_json(request, upstream["chat_url"], payload, headers)
-
-    # 诊断日志：打印上游响应中的 thinking/reasoning 字段。
-    if raw.get("choices"):
-        msg = raw["choices"][0].get("message", {})
-        known_keys = set(msg.keys()) - {"role", "content", "tool_calls", "refusal"}
-        if known_keys:
-            logger.info("[CoT diagnostics] upstream message has extra keys: %s", known_keys)
-        if msg.get("reasoning_content") or msg.get("reasoning"):
-            logger.info("[CoT diagnostics] upstream returned reasoning content.")
-
+    observe_upstream_nonstream_response(response_evidence, raw)
     if proto == "openai":
-        return {
+        completion = {
             "id": f"chatcmpl-{uuid.uuid4().hex[:12]}",
             "object": "chat.completion",
             "created": _now_ts(),
@@ -632,7 +634,10 @@ async def _nonstream_chat(request: Request, payload: dict, headers: dict, model:
             "choices": raw.get("choices", []),
             "usage": raw.get("usage", {}),
         }
-    return _anthropic_to_openai_completion(model, raw)
+    else:
+        completion = _anthropic_to_openai_completion(model, raw)
+    observe_normalized_completion(response_evidence, completion)
+    return completion
 
 
 app.include_router(

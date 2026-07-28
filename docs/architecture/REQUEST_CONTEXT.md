@@ -93,6 +93,8 @@ Request count is still driven by model tool rounds, not by streaming itself:
 
 Streaming changes the connection shape, not the number of model rounds. The managed stream sends OpenAI-compatible empty delta keepalives while waiting on the upstream or tool execution, and all SSE responses set `Cache-Control: no-cache, no-transform` plus `X-Accel-Buffering: no` to reduce proxy buffering.
 
+All four response paths (plain/tool-loop × streaming/non-streaming) record the same content-free `upstream_response_evidence`. The `upstream` layer observes the provider response before adaptation; the `normalized` layer observes the OpenAI-compatible completion/chunk handed toward the client. Fixed block/delta counters plus `thinking_content_seen`, usage, and finish booleans are safe to persist in request-log history. Raw response bodies, Thinking text, signatures, redacted data, and arbitrary upstream field names remain excluded. This evidence diagnoses which boundary lost a standard Thinking value; it does not alter the response or make relay-private fields part of the gateway contract.
+
 Tool routing rules:
 
 - Gateway-native calls are recognized by `is_gateway_native_tool()` and executed through `execute_gateway_tool()`.
@@ -470,6 +472,8 @@ The PWA keeps streaming enabled by default and stores its Stream toggle as a bro
 Turning it off sends `stream: false` only for that PWA's chat requests; the completed response then
 hydrates the same visible answer, Thinking, and `shenyu.tool_events` message state without changing the
 gateway default, upstream preset, session identity, or any other client.
+Both modes pass through the response-shape evidence described above, so a single normal request can distinguish
+an upstream omission from adapter loss or a PWA parser/display problem without enabling full-payload logging.
 
 Preserve these response contracts:
 

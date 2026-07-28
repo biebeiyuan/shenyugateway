@@ -26,6 +26,10 @@ from .upstream_adapter import (
     _sanitize_openai_compatible_messages,
     _sanitize_openai_compatible_tools,
 )
+from .upstream_response_evidence import (
+    ensure_upstream_response_evidence,
+    observe_upstream_stream_event,
+)
 from .tool_registry import merge_tools
 from .utils import clean_config_text as _clean_config_text
 
@@ -584,6 +588,7 @@ async def stream_upstream_openai_chunks(
     chat_url = upstream["chat_url"]
     stream_payload = dict(payload)
     stream_payload["stream"] = True
+    response_evidence = ensure_upstream_response_evidence(upstream, stream_payload, "stream")
     try:
         req = client.build_request("POST", chat_url, json=stream_payload, headers=headers)
         resp = await client.send(req, stream=True)
@@ -621,6 +626,7 @@ async def stream_upstream_openai_chunks(
                     data = json.loads(line[6:])
                 except json.JSONDecodeError:
                     continue
+                observe_upstream_stream_event(response_evidence, data)
                 yield data
             return
 
@@ -641,6 +647,7 @@ async def stream_upstream_openai_chunks(
                 data = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            observe_upstream_stream_event(response_evidence, data)
             _update_anthropic_content_blocks(anthropic_blocks, data)
             if data.get("type") == "message_start":
                 usage = (data.get("message") or {}).get("usage")

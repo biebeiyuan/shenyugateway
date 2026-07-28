@@ -202,7 +202,7 @@ test('star map route loads its canvas', async ({ page }) => {
   })
 })
 
-test('logs page exposes per-round cache structure', async ({ page }) => {
+test('logs page exposes per-round cache and response evidence', async ({ page }) => {
   const promptCache = {
     enabled: true,
     protocol: 'anthropic',
@@ -230,6 +230,29 @@ test('logs page exposes per-round cache structure', async ({ page }) => {
       reported: true,
     },
     prompt_cache: promptCache,
+    upstream_response_evidence: {
+      version: 1,
+      protocol: 'anthropic',
+      mode: 'stream',
+      thinking_requested: true,
+      upstream_format: 'anthropic_events',
+      normalized_format: 'openai_chunks',
+      upstream: {
+        events: 8,
+        thinking_blocks: 1,
+        thinking_deltas: 2,
+        thinking_content_seen: true,
+        usage_seen: true,
+        usage_values_seen: true,
+        finish_seen: true,
+      },
+      normalized: {
+        events: 5,
+        thinking_blocks: 0,
+        thinking_deltas: 2,
+        thinking_content_seen: true,
+      },
+    },
     upstream_payload_summary: { model: 'test-model', messages_count: 197, tools_count: 6 },
     tools: [],
   }
@@ -255,6 +278,7 @@ test('logs page exposes per-round cache structure', async ({ page }) => {
     prepared_messages_count: 201,
     internal_tool_rounds: [round],
     prompt_cache: promptCache,
+    upstream_response_evidence: round.upstream_response_evidence,
     error: null,
     response_preview: 'done',
   }
@@ -274,6 +298,9 @@ test('logs page exposes per-round cache structure', async ({ page }) => {
     const detail = page.getByTestId('log-detail-cache-structure-round-1')
     await expect(detail).toContainText('messages[190].stable_tail.content[0]')
     await expect(detail).toContainText('cache_control_marker_count')
+    await page.getByTestId('log-tab-response-cache-structure-round-1').click()
+    await expect(detail).toContainText('上游 anthropic_events：块 1 / 增量 2 / 正文 有')
+    await expect(detail).toContainText('若 PWA 未显示，应检查 PWA 解析或展示')
   })
 })
 

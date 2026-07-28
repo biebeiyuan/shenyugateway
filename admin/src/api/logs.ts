@@ -47,6 +47,37 @@ export interface PromptCache {
   tail_guard_user_turns?: number
 }
 
+export interface ResponseEvidenceLayer {
+  events?: number
+  text_blocks?: number
+  thinking_blocks?: number
+  redacted_thinking_blocks?: number
+  tool_call_blocks?: number
+  text_deltas?: number
+  thinking_deltas?: number
+  signature_deltas?: number
+  tool_call_deltas?: number
+  other_events?: number
+  other_blocks?: number
+  other_deltas?: number
+  other_fields?: number
+  thinking_content_seen?: boolean
+  usage_seen?: boolean
+  usage_values_seen?: boolean
+  finish_seen?: boolean
+}
+
+export interface UpstreamResponseEvidence {
+  version?: number
+  protocol?: string
+  mode?: 'stream' | 'nonstream' | string
+  thinking_requested?: boolean
+  upstream_format?: string
+  normalized_format?: string
+  upstream?: ResponseEvidenceLayer
+  normalized?: ResponseEvidenceLayer
+}
+
 export interface LogEntry {
   id: string
   request_id?: string | null
@@ -83,6 +114,7 @@ export interface LogEntry {
   persistence_schema_version?: number
   persistence_truncated?: boolean
   upstream_payload_summary?: Record<string, any> | null
+  upstream_response_evidence?: UpstreamResponseEvidence | null
   system_additions_chars?: number | null
   usage?: Record<string, any> | null
   cache_usage?: CacheUsage | null
@@ -104,6 +136,7 @@ export interface ToolRoundEntry {
   messages_preview?: any[]
   upstream_payload?: Record<string, any> | null
   upstream_payload_summary?: Record<string, any> | null
+  upstream_response_evidence?: UpstreamResponseEvidence | null
   prompt_cache?: PromptCache | null
   anthropic_thinking?: {
     preserved?: boolean

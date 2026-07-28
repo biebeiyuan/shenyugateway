@@ -18,6 +18,11 @@ from .upstream_adapter import (
     _anthropic_tool_index_override,
     _anthropic_usage_to_openai,
 )
+from .upstream_response_evidence import (
+    ensure_upstream_response_evidence,
+    observe_normalized_stream_chunk,
+    observe_upstream_stream_event,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,6 +46,7 @@ async def stream_chat(
     chat_url = upstream["chat_url"]
 
     payload["stream"] = True
+    response_evidence = ensure_upstream_response_evidence(upstream, payload, "stream", reset=True)
     if proto == "openai":
         stream_options = payload.get("stream_options")
         if not isinstance(stream_options, dict):
@@ -119,6 +125,8 @@ async def stream_chat(
                     if line.startswith("data: "):
                         try:
                             data = json.loads(line[6:])
+                            observe_upstream_stream_event(response_evidence, data)
+                            observe_normalized_stream_chunk(response_evidence, data)
                             upstream_event_seen = True
                             stream_chunk_id = data.get("id") or stream_chunk_id
                             stream_created = data.get("created") or stream_created
@@ -258,6 +266,7 @@ async def stream_chat(
                     data = json.loads(line)
                 except json.JSONDecodeError:
                     continue
+                observe_upstream_stream_event(response_evidence, data)
                 upstream_event_seen = True
                 if data.get("type") == "message_start":
                     usage = (data.get("message") or {}).get("usage")
@@ -327,6 +336,10 @@ async def stream_chat(
                             chunk = json.dumps(chunk_data, ensure_ascii=False)
                         except (TypeError, json.JSONDecodeError):
                             pass
+                    try:
+                        observe_normalized_stream_chunk(response_evidence, json.loads(chunk))
+                    except (TypeError, json.JSONDecodeError):
+                        pass
                     yield f"data: {chunk}\n\n"
             remaining = tag_filter.flush()
             if remaining:

@@ -54,7 +54,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/chat_pipeline.py`: main chat request orchestration (context build → upstream call → tool loop → response).
 - `shenyu_gateway/streaming.py`: SSE streaming helpers, chunk serialization, keepalive logic.
 - `shenyu_gateway/stream_proxy.py`: plain pass-through streaming with `<heartbeat>` filtering.
-- `shenyu_gateway/tool_loop.py`: internal gateway tool loop plus per-round request and cache diagnostics.
+- `shenyu_gateway/tool_loop.py`: internal gateway tool loop plus per-round request, response-shape, and cache diagnostics.
 - `shenyu_gateway/middleware.py`: FastAPI middleware registration (global exception handler, request-id injection, HTTP event logging).
 
 ### Context assembly
@@ -75,6 +75,7 @@ The codebase is partly layered already:
 
 - `shenyu_gateway/upstream_adapter.py`: pure OpenAI/Anthropic message, cache, stream, and model URL conversion helpers.
 - `shenyu_gateway/upstream_client.py`: upstream HTTP client construction, protocol detection, URL routing, request building, streaming chunk iteration, model listing, and connection error formatting.
+- `shenyu_gateway/upstream_response_evidence.py`: content-free counters for raw upstream response shapes and their OpenAI-compatible normalized output, shared by streaming, non-streaming, and tool-loop paths.
 
 ### Tools
 
@@ -178,7 +179,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/stars/starMelody.ts`: constellation → Web Audio melody.
 - `admin/src/views/stars/starUi.ts`: shared Star UI formatting and link-order helpers.
 - `admin/src/views/SessionsView.vue`: session inspection page.
-- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, and cache-structure evidence.
+- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, cache-structure evidence, and raw-versus-normalized upstream response-shape verdicts.
 - `admin/src/views/CalendarView.vue`: day/week/month diary reading view (month grid, entry lists, reading pane, collapsed context-injection settings).
 - `admin/src/views/ArchiveView.vue`: chat archive reader and origin-book clip flow.
 - `admin/src/views/ConflictView.vue`: three-tier bookshelf for revisioned `我是谁`, generated read-only `家现在`, owner-only `家里地图`, and frozen origin books; keeps their distinct visibility and write boundaries explicit.
@@ -399,7 +400,7 @@ http://localhost:8010/chat/
 - `admin/src/views/MemoryGraphView.vue`: entity/alias/relation management, historical source-link backfill, and read-only Recall preview at `/memory-graph`.
 - `admin/src/views/StarsView.vue`: standalone Star entry shell at `/stars`, with split Star panels under `admin/src/views/stars/` and a lazy-loaded memory star map at `/stars/map`.
 - `admin/src/views/SessionsView.vue`: session inspection page.
-- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, and cache-structure evidence.
+- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, cache-structure evidence, and raw-versus-normalized upstream response-shape verdicts.
 - `admin/src/views/CalendarView.vue`: day/week/month diary reading view.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout.
 

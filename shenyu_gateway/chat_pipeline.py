@@ -33,6 +33,10 @@ from .streaming import (
 from .tool_loop import _latest_user_text
 from .tool_registry import is_gateway_native_tool, merge_tools
 from .upstream_adapter import _cache_usage_summary
+from .upstream_response_evidence import (
+    ensure_upstream_response_evidence,
+    upstream_response_evidence_snapshot,
+)
 
 
 def _unpack_private_capture_result(result: tuple) -> tuple[str, str, dict[str, Any]]:
@@ -179,6 +183,7 @@ class ChatPipeline:
             "prepared_messages_preview": [],
             "upstream_payload": None,
             "upstream_payload_summary": None,
+            "upstream_response_evidence": None,
             "cache_layers": {},
             "prompt_cache": {
                 "enabled": False,
@@ -298,6 +303,7 @@ class ChatPipeline:
             "prepared_messages_preview": [_message_log_preview(msg) for msg in prepared_messages_for_log],
             "upstream_payload": None,
             "upstream_payload_summary": None,
+            "upstream_response_evidence": None,
             "cache_layers": {
                 key: f"{len(value)} chars" if value else "(empty)"
                 for key, value in meta.get("cache_layers", {}).items()
@@ -435,6 +441,13 @@ class ChatPipeline:
         )
         _record_upstream_payload(log_entry, payload)
         log_entry["prompt_cache"] = cache_meta
+        ensure_upstream_response_evidence(
+            upstream,
+            payload,
+            "stream" if body.stream else "nonstream",
+            reset=True,
+        )
+        log_entry["upstream_response_evidence"] = upstream_response_evidence_snapshot(upstream)
 
         if body.stream:
             log_entry["status"] = "streaming"
@@ -450,6 +463,7 @@ class ChatPipeline:
                 terminal_error: Optional[str] = None,
             ):
                 try:
+                    log_entry["upstream_response_evidence"] = upstream_response_evidence_snapshot(upstream)
                     if terminal_status != "ok":
                         log_entry["status"] = terminal_status
                         log_entry["error"] = terminal_error or "Upstream stream did not complete normally."
@@ -503,6 +517,7 @@ class ChatPipeline:
             )
 
         completion = await self.nonstream_chat(request, payload, headers, body.model, upstream)
+        log_entry["upstream_response_evidence"] = upstream_response_evidence_snapshot(upstream)
         log_entry["usage"] = completion.get("usage", {})
         log_entry["cache_usage"] = _cache_usage_summary(
             completion.get("usage", {}),
