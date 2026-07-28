@@ -104,7 +104,7 @@ export async function postUpstreamConfig(ctx: RequestContext, body: Record<strin
   if (!response.ok) throw new Error((await response.text()) || `网关返回 ${response.status}`)
 }
 
-export async function postChatStream(ctx: RequestContext, body: Record<string, unknown>, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+async function postChat(ctx: RequestContext, body: Record<string, unknown>, signal: AbortSignal): Promise<Response> {
   const response = await fetch(apiUrl(ctx, '/v1/chat/completions'), {
     method: 'POST',
     headers: requestHeaders(ctx),
@@ -115,6 +115,18 @@ export async function postChatStream(ctx: RequestContext, body: Record<string, u
     const detail = await response.text()
     throw new Error(detail || `网关返回 ${response.status}`)
   }
+  return response
+}
+
+export async function postChatStream(ctx: RequestContext, body: Record<string, unknown>, signal: AbortSignal): Promise<ReadableStream<Uint8Array>> {
+  const response = await postChat(ctx, body, signal)
   if (!response.body) throw new Error('没有收到流式回应')
   return response.body
+}
+
+export async function postChatCompletion(ctx: RequestContext, body: Record<string, unknown>, signal: AbortSignal): Promise<Record<string, unknown>> {
+  const response = await postChat(ctx, body, signal)
+  const payload: unknown = await response.json()
+  if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('没有收到可识别的回应')
+  return payload as Record<string, unknown>
 }

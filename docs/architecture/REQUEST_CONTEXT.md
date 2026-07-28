@@ -466,6 +466,11 @@ The PWA records its current streamed text length when each tool event arrives, s
 tool round between the corresponding text segments without adding a provider-specific field to the
 gateway contract.
 
+The PWA keeps streaming enabled by default and stores its Stream toggle as a browser-local preference.
+Turning it off sends `stream: false` only for that PWA's chat requests; the completed response then
+hydrates the same visible answer, Thinking, and `shenyu.tool_events` message state without changing the
+gateway default, upstream preset, session identity, or any other client.
+
 Preserve these response contracts:
 
 - `GET /api/gateway/heartbeats?token=...&limit=2000&order=asc&scope=normal` returns `heartbeats`; each item must include at least `content` and `created_at`. `scope=normal` reads `heartbeat_entries`; unknown scopes (including the retired `hisense`) still return 200 with an empty list so stale external callers degrade gracefully.

@@ -47,6 +47,7 @@ import {
   fetchRuntimeConfig,
   fetchSessionDetail,
   fetchSessions,
+  postChatCompletion,
   postChatStream,
   postUpstreamConfig,
   renameSession,
@@ -86,6 +87,7 @@ import {
   variantCount,
 } from './session/variants'
 import { parseSseFrame, pumpSseStream, toolEventKey } from './stream/sse'
+import { applyChatCompletion } from './stream/completion'
 import {
   assistantParts,
   formatToolInput,
@@ -108,6 +110,7 @@ const STORAGE_MODEL = 'shenyu_pwa_model'
 const STORAGE_EFFORT = 'shenyu_pwa_effort'
 const STORAGE_EXTENDED = 'shenyu_pwa_extended'
 const STORAGE_PRESET = 'shenyu_pwa_preset'
+const STORAGE_STREAM = 'shenyu_pwa_stream'
 
 const requestedSessionTag = sessionTagFromLocation()
 const storedSessionTag = localStorage.getItem(STORAGE_SESSION) || ''
@@ -121,6 +124,7 @@ const selectedModel = ref(localStorage.getItem(STORAGE_MODEL) || 'default')
 const effort = ref(localStorage.getItem(STORAGE_EFFORT) || 'medium')
 const extendedThinking = ref(localStorage.getItem(STORAGE_EXTENDED) !== 'false')
 const selectedPresetName = ref(localStorage.getItem(STORAGE_PRESET) || '')
+const streamResponses = ref(localStorage.getItem(STORAGE_STREAM) !== 'false')
 const authToken = ref(localStorage.getItem(STORAGE_TOKEN) || localStorage.getItem('shenyu_token') || '')
 const gatewayUrl = ref(localStorage.getItem(STORAGE_GATEWAY) || '')
 const maxClientMessages = ref<number | null>(null)
@@ -584,6 +588,11 @@ function toggleExtended() {
   localStorage.setItem(STORAGE_EXTENDED, String(extendedThinking.value))
 }
 
+function toggleStreamResponses() {
+  streamResponses.value = !streamResponses.value
+  localStorage.setItem(STORAGE_STREAM, String(streamResponses.value))
+}
+
 function openModelSheet(page: 'main' | 'effort' | 'more' | 'preset' = 'main') {
   loadPresets()
   modelSheetPage.value = page
@@ -751,13 +760,20 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
   scrollToBottom()
 
   try {
-    const stream = await postChatStream(clientContext(), {
+    const useStreaming = streamResponses.value
+    const body = {
       model: selectedModel.value,
       messages: wireMessages(source.filter((message) => message.id !== assistant.id)),
-      stream: true,
+      stream: useStreaming,
       reasoning_effort: effectiveEffort.value,
-    }, activeController.signal)
-    await pumpSseStream(stream, (frame) => parseSseFrame(frame, assistant), scrollToBottom)
+    }
+    if (useStreaming) {
+      const stream = await postChatStream(clientContext(), body, activeController.signal)
+      await pumpSseStream(stream, (frame) => parseSseFrame(frame, assistant), scrollToBottom)
+    } else {
+      const completion = await postChatCompletion(clientContext(), body, activeController.signal)
+      applyChatCompletion(completion, assistant)
+    }
     assistant.streaming = false
     if (!assistant.content && !assistant.thinking && !assistant.events.length) assistant.content = '这次没有收到可显示的回应。'
     syncCurrentVariant(assistant)
@@ -1292,6 +1308,12 @@ onMounted(async () => {
                 </span>
                 <ChevronRight :size="18" class="model-nav-right" />
               </button>
+            </div>
+            <div class="model-group">
+              <div class="extended-row">
+                <span class="extended-info"><span class="extended-label">Stream</span><span class="extended-desc">{{ streamResponses ? '流式' : '非流式' }}</span></span>
+                <button class="toggle" :class="{ on: streamResponses }" type="button" role="switch" :aria-checked="streamResponses" aria-label="切换流式回应" @click="toggleStreamResponses"><span /></button>
+              </div>
             </div>
             <div v-if="secondaryModels.length" class="model-group">
               <button class="model-group-item" @click="openModelSheet('more')">
