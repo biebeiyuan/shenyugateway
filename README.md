@@ -212,8 +212,9 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `pwa/src/markdown.ts`: sanitized Markdown rendering with Highlight.js code highlighting.
 - `pwa/src/toolLanguage.ts`: gateway tool-name normalization and resident-facing warm action copy.
 - `pwa/src/styles.css`: responsive chat layout, bundled Anthropic Sans/Serif typography, ChatNest-matched composer geometry, animated status mark, bottom sheets, message actions, Markdown typography, and tool trace states.
-- `pwa/public/manifest.webmanifest` / `pwa/public/sw.js`: installable PWA shell; the service worker never caches `/v1/`, `/api/`, or the deployment-proof `/chat/build-info.json` response.
-- `pwa/vite.config.ts` / `pwa/scripts/`: isolated development server on port `5174`, build-time identity injection plus `build-info.json` emission, a local build assertion, and a post-deployment source-revision verifier.
+- `pwa/public/manifest.webmanifest` / `pwa/public/sw.js` / `pwa/src/main.ts`: installable PWA shell; the service worker never caches `/v1/`, `/api/`, or the deployment-proof `/chat/build-info.json` response, and each build registers its worker with its own build id.
+- `shenyu_gateway/middleware.py`: gives `/chat/sw.js` and `/chat/build-info.json` explicit browser/CDN `no-store` headers so an outer cache cannot impersonate an old PWA deployment.
+- `pwa/vite.config.ts` / `pwa/scripts/`: isolated development server on port `5174`, build-time identity injection plus `build-info.json` emission, and a local build assertion that the active bundle contains that identity.
 - `Dockerfile` + `gateway.py`: production PWA build and protected static `/chat/` mount served by the same gateway origin as `/admin/`; `SOURCE_COMMIT` is passed into the PWA builder so a deployed manifest can prove its source revision.
 - Cross-client handoff uses the existing `X-Shenyu-Session-Tag`: `X-Shenyu-Client` identifies the surface, while the session tag keeps Operit and PWA on one gateway thread. PWA's `接入线程` action loads the newest trimmed client transcript from `context_snapshots` before sending (falling back to the legacy inspection stream only when no snapshot exists), using the Admin `客户端上下文保留` value for its history request, and `/chat/?session_tag=<tag>` supports an exact handoff. The PWA keeps roughly the gateway high-water window locally; once it sends a full client window, the gateway retires any temporary cold-start bridge for that session and uses the PWA transcript directly.
 
@@ -476,8 +477,7 @@ Any other local port is an ad-hoc preview, not a defined PWA environment. It may
 2. Run the matching frontend build locally (`npm run build`) before handoff.
 3. Commit and push the reviewed change. Coolify rebuilds the Dockerfile when its Git service has auto-deploy/webhooks enabled for the tracked branch; the Dockerfile now runs both frontend builds, so no `dist/` directory needs to be committed.
 4. Ensure Coolify passes the full source SHA as Docker build arg `SOURCE_COMMIT`; the PWA builder records it in the protected deployment manifest.
-5. After the deployment is healthy, from the already-built local `pwa/` directory run `PWA_DEPLOY_URL=https://your-domain/chat/ GATEWAY_API_KEY=... npm run verify:deployment`. A missing credential, unreadable manifest, unknown revision, or source mismatch is a failed deployment verification.
-6. Open `/admin/` once to log in, then open `/chat/` on the same domain. In PWA「聊天设置」confirm that the current running build and deployed build match before accepting a user-visible PWA fix. The PWA's preset selector reads the same-origin Admin preset store.
+5. Open `/admin/` once to log in, then open `/chat/` on the same domain. In PWA「聊天设置」confirm that the current running build and deployed build match before accepting a user-visible PWA fix; then reproduce the original scenario on the affected device. If that observation is unavailable, report the change as unverified. The PWA's preset selector reads the same-origin Admin preset store.
 
 ### Future improvements (when needed)
 

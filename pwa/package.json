@@ -7,8 +7,7 @@
     "dev": "vite",
     "build": "vue-tsc && vite build && node scripts/verify-build.mjs",
     "preview": "vite preview",
-    "test": "vitest run",
-    "verify:deployment": "node scripts/verify-deployment.mjs"
+    "test": "vitest run"
   },
   "dependencies": {
     "dompurify": "^3.2.6",

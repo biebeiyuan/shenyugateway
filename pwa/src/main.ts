@@ -1,5 +1,6 @@
 import { createApp } from 'vue'
 import App from './App.vue'
+import { activePwaBuildInfo } from './buildInfo'
 import './styles.css'
 
 createApp(App).mount('#app')
@@ -12,6 +13,7 @@ if ('serviceWorker' in navigator && import.meta.env.PROD) {
     navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload(), { once: true })
   }
   window.addEventListener('load', () => {
-    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`).catch(() => undefined)
+    const workerUrl = `${import.meta.env.BASE_URL}sw.js?build=${encodeURIComponent(activePwaBuildInfo.buildId)}`
+    navigator.serviceWorker.register(workerUrl).catch(() => undefined)
   })
 }

@@ -23,11 +23,17 @@ Use the smallest first evidence below, then follow the linked stage and owning d
 
 PWA 的 Markdown 问题必须从用户看到的完整回复开始，不要把某一段单测、某个本地端口，或某次 Service Worker 更新当作最后结论。按下面的证据链逐项收束；只有第 5 步与真实界面都通过，才可以称为用户侧修复。
 
+三条交付原则：
+
+1. 单测、构建和 HTML 断言只能证明各自的技术层，不能替代实际设备上的可见结果。
+2. 只有正式 `/chat/` 和设置页中可辨认的当前/线上版本才是验收对象；未知本地端口只是待查预览。
+3. 没有在真实设备上看到原始场景的最终结果，就明确写“未验收”，不能用容器健康、缓存更新或局部测试代填。
+
 1. **原文与传输**：保存用户实际看到的完整回复，检查网关日志或 API 返回仍含同一组 Markdown 定界符；分别用 `stream: true` 与 `stream: false` 走一遍。流式阶段可以显示原文，但 completion 后必须用整条 assistant content 渲染，不能拿被思考/工具过程切开的片段做最终 Markdown。
 2. **解析 HTML**：以这段精确原文写入或扩展 `pwa/tests/markdown.spec.ts`，确认 `renderMarkdown()` 生成预期的 `<strong>`、`<em>`、链接、代码等 HTML；同时覆盖中文标点紧邻定界符、嵌套强调和未配对星号。
 3. **计算样式**：在实际浏览器检查生成标签的 computed `font-family`、`font-weight`、`font-style`、`font-synthesis` 和可见尺寸。HTML 正确但字体没有对应字形时，问题属于 CSS/字体，不要回头改网关响应。
-4. **构建与缓存**：运行 `cd pwa && npm test && npm run build`。构建会硬性验证 `dist/build-info.json` 已生成且版本身份已嵌入执行的 bundle；`/chat/build-info.json` 在 Service Worker 中必须始终走网络，不能从 shell cache 读取或写入。
-5. **线上与真实设备**：Coolify 健康后，在本机构建目录运行 `PWA_DEPLOY_URL=https://your-domain/chat/ GATEWAY_API_KEY=... npm run verify:deployment`。它只在部署源码提交号与本地相同才通过。随后在实际使用的手机/浏览器打开「聊天设置」，确认「当前运行」与「线上已部署」为同一个完整版本，再重放原始场景确认可见样式。无权限、线上版本不可读、两个版本不同，或只在未知本地端口看到页面，都属于未验收。
+4. **构建与缓存**：运行 `cd pwa && npm test && npm run build`。构建会硬性验证 `dist/build-info.json` 已生成且版本身份已嵌入执行的 bundle；`/chat/build-info.json` 在 Service Worker 中必须始终走网络，不能从 shell cache 读取或写入。再检查正式响应头：`/chat/sw.js` 与 `/chat/build-info.json` 都应是 browser/CDN `no-store`，否则外层 CDN 仍能把旧部署伪装成当前版本。
+5. **线上与真实设备**：Coolify 健康后，在实际使用的手机/浏览器打开正式 `/chat/` 的「聊天设置」，确认「当前运行」与「线上已部署」为同一个完整版本，再重放原始场景确认可见样式。线上版本不可读、两个版本不同，或只在未知本地端口看到页面，都属于未验收。
 
 `5174` 是唯一约定的 PWA Vite 开发入口；`/chat/` 是生产入口。其他本地端口只能作为临时预览，必须先从设置页确认其版本来源，不能代替生产验收。
 

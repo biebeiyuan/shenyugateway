@@ -13,6 +13,8 @@ from .request_logs import (
 )
 from .runtime import iso_now as _iso_now, logger
 
+_PWA_FRESH_ASSETS = {"/chat/sw.js", "/chat/build-info.json"}
+
 
 def register_middlewares(app: FastAPI, cfg) -> None:
     @app.exception_handler(Exception)
@@ -48,6 +50,12 @@ def register_middlewares(app: FastAPI, cfg) -> None:
         try:
             response = await call_next(request)
             response.headers["X-Shenyu-Request-Id"] = request_id
+            if request.url.path in _PWA_FRESH_ASSETS:
+                # The version manifest and worker decide whether an installed
+                # PWA may trust its own shell. CDN caching here would hide a
+                # deployed client even when the Service Worker bypasses cache.
+                response.headers["Cache-Control"] = "no-store, max-age=0"
+                response.headers["CDN-Cache-Control"] = "no-store"
             if track_chat_request:
                 _finish_http_request_event(
                     request_id=request_id,
