@@ -1,4 +1,4 @@
-const CACHE = 'shenyu-pwa-shell-v5'
+const CACHE = 'shenyu-pwa-shell-v6'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting())
@@ -17,6 +17,13 @@ self.addEventListener('fetch', (event) => {
   const url = new URL(request.url)
   if (request.method !== 'GET' || url.pathname.includes('/v1/') || url.pathname.includes('/api/')) return
   if (!url.pathname.startsWith('/chat/')) return
+
+  if (url.pathname === '/chat/build-info.json') {
+    // This is the final deployment proof. It must bypass the PWA shell cache
+    // so an installed client compares itself with the server that is live now.
+    event.respondWith(fetch(new Request(request, { cache: 'no-store' })))
+    return
+  }
 
   const isNavigation = request.mode === 'navigate' || url.pathname === '/chat/'
   if (isNavigation) {

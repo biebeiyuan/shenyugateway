@@ -26,6 +26,7 @@ import {
 } from 'lucide-vue-next'
 import { CHATNEST_STATUS_SPRITES } from './chatnestSprite'
 import ChatNestSprite from './ChatNestSprite.vue'
+import { activePwaBuildInfo, samePwaBuild, type PwaBuildInfo } from './buildInfo'
 import { renderMarkdown } from './markdown'
 import { toolState, toolWarmCopy, type ToolEvent } from './toolLanguage'
 import type {
@@ -44,6 +45,7 @@ import { createId } from './utils'
 import {
   deleteSession,
   fetchModels,
+  fetchDeployedPwaBuildInfo,
   fetchRuntimeConfig,
   fetchSessionDetail,
   fetchSessions,
@@ -131,6 +133,8 @@ const sessionTag = ref(requestedSessionTag || storedSessionTag || createId('pwa'
 const activeWorkspace = ref<WorkspaceId>('chats')
 const menuOpen = ref(false)
 const settingsOpen = ref(false)
+const deployedPwaBuildInfo = ref<PwaBuildInfo | null>(null)
+const pwaBuildCheck = ref<'idle' | 'checking' | 'current' | 'outdated' | 'unavailable'>('idle')
 const handoffOpen = ref(false)
 const handoffLoading = ref(false)
 const modelOpen = ref(false)
@@ -163,6 +167,13 @@ const currentPreset = computed(() => {
   return presets.value.find((preset) => preset.url === runtimeUpstream.value.url && preset.protocol === runtimeUpstream.value.protocol)
 })
 const effectiveEffort = computed(() => extendedThinking.value ? 'max' : effort.value)
+const pwaBuildStatus = computed(() => {
+  if (pwaBuildCheck.value === 'checking') return '正在核验线上版本'
+  if (pwaBuildCheck.value === 'current') return '当前页面就是线上版本'
+  if (pwaBuildCheck.value === 'outdated') return '线上已更新，请重新打开页面'
+  if (pwaBuildCheck.value === 'unavailable') return '暂时无法核验线上版本'
+  return '尚未核验线上版本'
+})
 const handoffSessions = computed(() => recentSessions.value.filter((session) => {
   const messageCount = Number(session.user_message_count || session.message_count || 0)
   return messageCount > 0
@@ -628,6 +639,23 @@ function saveSettings() {
   loadModels()
   loadPresets()
   loadRuntimeUpstream()
+}
+
+function openSettings() {
+  settingsOpen.value = true
+  void checkPwaBuildInfo()
+}
+
+async function checkPwaBuildInfo() {
+  pwaBuildCheck.value = 'checking'
+  try {
+    const deployed = await fetchDeployedPwaBuildInfo(clientContext())
+    deployedPwaBuildInfo.value = deployed
+    pwaBuildCheck.value = samePwaBuild(activePwaBuildInfo, deployed) ? 'current' : 'outdated'
+  } catch {
+    deployedPwaBuildInfo.value = null
+    pwaBuildCheck.value = 'unavailable'
+  }
 }
 
 function newChat() {
@@ -1101,7 +1129,7 @@ onUnmounted(() => {
         <MessageCirclePlus :size="18" />
         <span>New chat</span>
       </button>
-      <button class="sidebar-link" @click="settingsOpen = true; menuOpen = false">
+      <button class="sidebar-link" @click="openSettings(); menuOpen = false">
         <Settings2 :size="17" />
         <span>Settings</span>
       </button>
@@ -1453,6 +1481,11 @@ onUnmounted(() => {
         <label class="field-label" for="gateway-token">网关密钥</label>
         <input id="gateway-token" v-model="authToken" class="settings-input" type="password" placeholder="只保存在本机 localStorage" />
         <p class="settings-note">图片会在发送前压缩，聊天端不会把图片放进 Service Worker 缓存。</p>
+        <div class="build-proof" :class="`build-proof-${pwaBuildCheck}`" aria-live="polite">
+          <div><span>当前运行</span><code>{{ activePwaBuildInfo.buildId }}</code></div>
+          <div><span>线上已部署</span><code>{{ deployedPwaBuildInfo?.buildId || pwaBuildStatus }}</code></div>
+          <button class="icon-button build-proof-refresh" :disabled="pwaBuildCheck === 'checking'" aria-label="重新核验线上版本" title="重新核验线上版本" @click="checkPwaBuildInfo"><RotateCcw :size="16" /></button>
+        </div>
         <div class="settings-actions"><button class="quiet-button" @click="newChat"><Trash2 :size="16" /> 清空当前对话</button><button class="primary-button" @click="saveSettings"><Check :size="16" /> 收好设置</button></div>
       </section>
     </div>

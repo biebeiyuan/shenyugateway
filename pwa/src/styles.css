@@ -296,6 +296,14 @@ button:disabled { cursor: default; }
 .settings-input { width: 100%; padding: 13px 14px; border: 1px solid var(--border); border-radius: var(--radius-md); outline: 0; background: var(--bg-surface); }
 .settings-input:focus { border-color: var(--border-strong); }
 .settings-note { margin: 13px 0; color: var(--text-secondary); font-size: 13px; line-height: 1.6; }
+.build-proof { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px; gap: 8px; align-items: center; margin: 14px 0; padding: 10px; border: 1px solid var(--border); border-radius: var(--radius-md); background: var(--bg-surface); }
+.build-proof > div { min-width: 0; }
+.build-proof span { display: block; margin-bottom: 3px; color: var(--text-secondary); font-size: 11px; }
+.build-proof code { display: block; overflow: hidden; color: var(--text-primary); font: 11px/1.3 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }
+.build-proof-outdated { border-color: rgba(218, 119, 86, .45); }
+.build-proof-unavailable { border-color: rgba(166, 163, 154, .5); }
+.build-proof-refresh.icon-button { width: 34px; height: 34px; color: var(--text-secondary); }
+.build-proof-refresh:disabled { opacity: .55; }
 .handoff-current { display: flex; align-items: center; gap: 9px; margin: 14px 0; padding: 10px 12px; border-radius: var(--radius-md); background: var(--bg-sunken); color: var(--text-secondary); font-size: 13px; }
 .handoff-current code { min-width: 0; flex: 1; overflow: hidden; color: var(--text-primary); text-overflow: ellipsis; white-space: nowrap; }
 .handoff-current .icon-button { display: grid; width: 30px; height: 30px; flex: none; place-items: center; border-radius: 50%; color: var(--text-secondary); }

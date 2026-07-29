@@ -100,6 +100,8 @@ After Admin routes, page loading, or core interactions change, run `cd admin && 
 
 First listen to the complete symptom and restate the question being investigated. Use the gateway's architecture to identify the relevant boundaries, then inspect logs before assigning blame or changing code. Logs are evidence, not a substitute for understanding what the owner observed.
 
+For a PWA user-visible fix that is being delivered to production, `npm test` and `npm run build` are necessary but not final acceptance. After deployment, run `cd pwa && PWA_DEPLOY_URL=https://your-domain/chat/ GATEWAY_API_KEY=... npm run verify:deployment`; a missing credential, unreadable deployment manifest, unknown source revision, or mismatch is a failed verification. Then use the actual production `/chat/` on the affected device and confirm the settings sheet's current/deployed build identities before reporting a visual or interaction bug fixed. An arbitrary local port is only a preview unless its source and build identity are positively established.
+
 After a production bug's root cause is confirmed by logs, code, or tests and the fix is complete, append exactly one row to `DEBUGGING_GUIDE.md` § Symptom Autopsy Index and follow that section's writing rules: an externally observable symptom, the minimal root-cause path plus fault, and an actionable lesson for the next investigator. Do not record unverified suspicions as autopsy facts.
 
 For gateway, Coolify, VPS, upstream, streaming, cache, or tool-call trouble, the helper is usually the first evidence source:

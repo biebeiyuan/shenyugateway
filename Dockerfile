@@ -12,6 +12,9 @@ FROM node:20-slim AS pwa-builder
 
 WORKDIR /pwa
 
+ARG SOURCE_COMMIT=""
+ENV PWA_BUILD_COMMIT=${SOURCE_COMMIT}
+
 COPY pwa/package*.json ./
 RUN npm ci
 

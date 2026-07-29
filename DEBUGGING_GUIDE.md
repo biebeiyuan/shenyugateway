@@ -17,6 +17,19 @@ Use the smallest first evidence below, then follow the linked stage and owning d
 | 历史消失、上下文分叉或冷启动桥接不对 | 请求详情与 `context_window_observer.py` 时间线 | 上下文组装 / 窗口 | 区域五 | `docs/architecture/REQUEST_CONTEXT.md` |
 | 缓存比例或断点结构不对 | `internal_tool_rounds[].prompt_cache` | provider 适配 / prompt cache | 区域三 | `docs/architecture/REQUEST_CONTEXT.md`、`LOGS_GUIDE.md` |
 | Admin 页面打不开或交互失效 | Playwright smoke 与浏览器运行时/同源资源错误 | 前端路由 / 资源 | 区域八 | `README.md` § Maintenance Map |
+| PWA 回答里的 Markdown 未显示成样式、刷新后像旧界面，或无法确定正在验收哪一份聊天端 | 精确原文、`renderMarkdown()` HTML、浏览器计算样式、设置页的当前/线上版本 | 客户端渲染 / PWA shell / 部署 | 区域一、八 | 本节「PWA 渲染与版本核验」、`README.md` § Frontend workflow |
+
+## PWA 渲染与版本核验
+
+PWA 的 Markdown 问题必须从用户看到的完整回复开始，不要把某一段单测、某个本地端口，或某次 Service Worker 更新当作最后结论。按下面的证据链逐项收束；只有第 5 步与真实界面都通过，才可以称为用户侧修复。
+
+1. **原文与传输**：保存用户实际看到的完整回复，检查网关日志或 API 返回仍含同一组 Markdown 定界符；分别用 `stream: true` 与 `stream: false` 走一遍。流式阶段可以显示原文，但 completion 后必须用整条 assistant content 渲染，不能拿被思考/工具过程切开的片段做最终 Markdown。
+2. **解析 HTML**：以这段精确原文写入或扩展 `pwa/tests/markdown.spec.ts`，确认 `renderMarkdown()` 生成预期的 `<strong>`、`<em>`、链接、代码等 HTML；同时覆盖中文标点紧邻定界符、嵌套强调和未配对星号。
+3. **计算样式**：在实际浏览器检查生成标签的 computed `font-family`、`font-weight`、`font-style`、`font-synthesis` 和可见尺寸。HTML 正确但字体没有对应字形时，问题属于 CSS/字体，不要回头改网关响应。
+4. **构建与缓存**：运行 `cd pwa && npm test && npm run build`。构建会硬性验证 `dist/build-info.json` 已生成且版本身份已嵌入执行的 bundle；`/chat/build-info.json` 在 Service Worker 中必须始终走网络，不能从 shell cache 读取或写入。
+5. **线上与真实设备**：Coolify 健康后，在本机构建目录运行 `PWA_DEPLOY_URL=https://your-domain/chat/ GATEWAY_API_KEY=... npm run verify:deployment`。它只在部署源码提交号与本地相同才通过。随后在实际使用的手机/浏览器打开「聊天设置」，确认「当前运行」与「线上已部署」为同一个完整版本，再重放原始场景确认可见样式。无权限、线上版本不可读、两个版本不同，或只在未知本地端口看到页面，都属于未验收。
+
+`5174` 是唯一约定的 PWA Vite 开发入口；`/chat/` 是生产入口。其他本地端口只能作为临时预览，必须先从设置页确认其版本来源，不能代替生产验收。
 
 ## Error Log Quickstart
 

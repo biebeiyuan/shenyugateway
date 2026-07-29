@@ -1,4 +1,5 @@
 import type { UiMessage } from '../types'
+import { parsePwaBuildInfo, type PwaBuildInfo } from '../buildInfo'
 
 // Thin gateway HTTP layer. Every request carries the PWA client identity
 // headers; interpretation of payload fields stays with the caller.
@@ -14,6 +15,10 @@ export function apiUrl(ctx: RequestContext, path: string): string {
   return `${base}${path}`
 }
 
+function authHeader(ctx: RequestContext): Record<string, string> {
+  return ctx.authToken.trim() ? { Authorization: `Bearer ${ctx.authToken.trim()}` } : {}
+}
+
 export function requestHeaders(ctx: RequestContext): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -22,8 +27,7 @@ export function requestHeaders(ctx: RequestContext): Record<string, string> {
     'X-Shenyu-Tool-Details': 'true',
     'X-Shenyu-Session-Tag': ctx.sessionTag,
   }
-  if (ctx.authToken.trim()) headers.Authorization = `Bearer ${ctx.authToken.trim()}`
-  return headers
+  return { ...headers, ...authHeader(ctx) }
 }
 
 export function wireContent(message: UiMessage): string | Array<Record<string, unknown>> {
@@ -47,6 +51,17 @@ export async function fetchRuntimeConfig(ctx: RequestContext): Promise<Record<st
   const response = await fetch(apiUrl(ctx, '/api/config'), { headers: requestHeaders(ctx) })
   if (!response.ok) throw new Error('config unavailable')
   return await response.json()
+}
+
+export async function fetchDeployedPwaBuildInfo(ctx: RequestContext): Promise<PwaBuildInfo> {
+  const response = await fetch(apiUrl(ctx, '/chat/build-info.json'), {
+    headers: authHeader(ctx),
+    cache: 'no-store',
+  })
+  if (!response.ok) throw new Error(`线上版本暂时拿不到（${response.status}）`)
+  const buildInfo = parsePwaBuildInfo(await response.json())
+  if (!buildInfo) throw new Error('线上版本文件格式不正确')
+  return buildInfo
 }
 
 export async function fetchModels(ctx: RequestContext): Promise<Record<string, unknown>> {
