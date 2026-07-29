@@ -5,52 +5,7 @@ import { textLength, textSlice } from '../utils'
 import { toolEventKey } from './sse'
 
 // Groups streamed thinking segments and tool events by the content offset where
-// they arrived, so the chat view can interleave process strips between text.
-
-// Markdown emphasis, links, and fenced code can span multiple source lines.
-// Rendering each content slice independently is only safe between paragraphs;
-// otherwise a delimiter can land in one slice while its closing delimiter lands
-// in the next one and the raw `*` characters become visible.
-function markdownSafeOffset(source: string, offset: number): number {
-  const chars = Array.from(source)
-  const length = chars.length
-  const clamped = Math.max(0, Math.min(length, offset))
-  if (clamped === 0 || clamped === length) return clamped
-  // Plain text has no cross-slice Markdown state to protect, so keep the
-  // original timing for ordinary prose and emoji-only replies.
-  if (!/[*_`~\[\]]/.test(source)) return clamped
-
-  const isParagraphBoundary = (index: number) => (
-    index > 1
-    && index < length
-    && chars[index - 2] === '\n'
-    && chars[index - 1] === '\n'
-  )
-  if (isParagraphBoundary(clamped)) return clamped
-
-  let previous = -1
-  for (let index = clamped - 1; index > 0; index -= 1) {
-    if (isParagraphBoundary(index)) {
-      previous = index
-      break
-    }
-  }
-
-  let next = length
-  for (let index = clamped + 1; index < length; index += 1) {
-    if (isParagraphBoundary(index)) {
-      next = index
-      break
-    }
-  }
-
-  // A single paragraph has no safe interior split. Keep its Markdown whole and
-  // place the process strip after it rather than exposing unmatched delimiters.
-  if (previous < 0 && next === length) return length
-  if (previous < 0) return next
-  if (next === length) return previous
-  return clamped - previous <= next - clamped ? previous : next
-}
+// they arrived, so the chat view can keep process details ordered with the reply.
 
 export function traceRows(message: UiMessage): ToolEvent[] {
   const rows: ToolEvent[] = []
@@ -72,7 +27,7 @@ export function traceRows(message: UiMessage): ToolEvent[] {
 export function processGroups(message: UiMessage): ProcessGroup[] {
   const groups = new Map<number, ProcessGroup>()
   const ensure = (textOffset: number) => {
-    const normalized = markdownSafeOffset(message.content, textOffset)
+    const normalized = Math.max(0, Math.min(textLength(message.content), textOffset))
     const existing = groups.get(normalized)
     if (existing) return existing
     const created: ProcessGroup = { textOffset: normalized, thinking: [], tools: [] }

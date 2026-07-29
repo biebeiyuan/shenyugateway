@@ -150,6 +150,7 @@ button:disabled { cursor: default; }
 .message-images { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 6px; }
 .message-images img { max-width: 220px; max-height: 180px; border-radius: 14px; object-fit: cover; }
 .assistant-body { min-width: 0; color: var(--text-primary); }
+.assistant-plain { font: var(--text-read)/1.65 var(--font-serif); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .markdown-content { font: var(--text-read)/1.65 var(--font-serif); overflow-wrap: anywhere; word-break: break-word; }
 .markdown-content :first-child { margin-top: 0; }
 .markdown-content :last-child { margin-bottom: 0; }

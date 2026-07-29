@@ -1,4 +1,4 @@
-const CACHE = 'shenyu-pwa-shell-v3'
+const CACHE = 'shenyu-pwa-shell-v4'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting())

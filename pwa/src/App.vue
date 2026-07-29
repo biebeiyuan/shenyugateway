@@ -89,7 +89,6 @@ import {
 import { parseSseFrame, pumpSseStream, toolEventKey } from './stream/sse'
 import { applyChatCompletion } from './stream/completion'
 import {
-  assistantParts,
   formatToolInput,
   formatToolOutput,
   groupHasThinking,
@@ -1160,14 +1159,15 @@ onUnmounted(() => {
               <span v-if="userBubbleSuffix(message)" class="msg-suffix">{{ userBubbleSuffix(message) }}</span>
             </div>
             <div v-else class="assistant-body">
-              <template v-for="part in assistantParts(message)" :key="part.key">
-                <div v-if="part.kind === 'content' && part.content" class="markdown-content" v-html="renderMarkdown(part.content)" />
-                <button v-else-if="part.kind === 'process'" class="process-strip" :class="{ thinking: groupHasThinking(part.group) }" type="button" @click="openProcessSheet(message, part.group)">
+              <div v-if="message.streaming && message.content" class="assistant-plain">{{ message.content }}</div>
+              <div v-else-if="!message.streaming && message.content" class="markdown-content" v-html="renderMarkdown(message.content)" />
+              <template v-for="group in processGroups(message)" :key="`process-${message.id}-${group.textOffset}`">
+                <button class="process-strip" :class="{ thinking: groupHasThinking(group) }" type="button" @click="openProcessSheet(message, group)">
                   <span class="process-icon">
-                    <Clock3 v-if="groupHasThinking(part.group)" :size="16" />
+                    <Clock3 v-if="groupHasThinking(group)" :size="16" />
                     <Sparkles v-else :size="15" />
                   </span>
-                  <span class="process-copy">{{ processSummary(part.group) }}</span>
+                  <span class="process-copy">{{ processSummary(group) }}</span>
                   <ChevronRight :size="16" />
                 </button>
               </template>
