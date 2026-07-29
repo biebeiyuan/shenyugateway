@@ -31,4 +31,35 @@ describe('renderMarkdown', () => {
 
     expect(html).toContain('**代码。**后')
   })
+
+  it('supports valid nested emphasis delimiters', () => {
+    const html = renderMarkdown('*就像这样**这种类型**发消息*')
+
+    expect(html).toContain('<em>就像这样<strong>这种类型</strong>发消息</em>')
+  })
+
+  it('keeps an unmatched inner delimiter as text without breaking the reply', () => {
+    const html = renderMarkdown('有的时候*就像这样**这种类型*发消息')
+
+    expect(html).toContain('<em>就像这样**这种类型</em>发消息')
+    expect(html).not.toContain('<em><em>')
+  })
+
+  it.each([
+    ['*外层 **内层** 后续*', '<em>外层 <strong>内层</strong> 后续</em>'],
+    ['**外层 *内层* 后续**', '<strong>外层 <em>内层</em> 后续</strong>'],
+    ['***加粗斜体***', '<em><strong>加粗斜体</strong></em>'],
+    ['__外层 _内层_ 后续__', '<strong>外层 <em>内层</em> 后续</strong>'],
+    ['~~删除 **重点**~~', '<del>删除 <strong>重点</strong></del>'],
+    ['*外层 **内层。**后续*', '<em>外层 <strong>内层。</strong>后续</em>'],
+    ['**外层 *内层。*后续**', '<strong>外层 <em>内层。</em>后续</strong>'],
+  ])('handles nested emphasis variant: %s', (source, expected) => {
+    expect(renderMarkdown(source)).toContain(expected)
+  })
+
+  it('keeps emphasis markers inside links as inline Markdown', () => {
+    const html = renderMarkdown('[**重点**](https://example.com)')
+
+    expect(html).toContain('<a href="https://example.com"><strong>重点</strong></a>')
+  })
 })
