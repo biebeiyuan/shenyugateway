@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { renderMarkdown } from '../src/markdown'
 import { assistantParts, processGroups, processTimeline, traceRows } from '../src/stream/timeline'
 import type { UiMessage } from '../src/types'
 
@@ -62,13 +63,12 @@ describe('processGroups', () => {
 })
 
 describe('assistantParts', () => {
-  it('splices process strips between text segments at their offsets', () => {
+  it('places process strips before one intact content part', () => {
     const message = assistant('前半段\n\n后半段')
     message.thinkingSegments = [{ id: 's', content: 'mid thought', textOffset: 5, streamOrder: 0 }]
     const parts = assistantParts(message)
-    expect(parts.map((part) => part.kind)).toEqual(['content', 'process', 'content'])
-    expect(parts[0].kind === 'content' && parts[0].content).toBe('前半段\n\n')
-    expect(parts[2].kind === 'content' && parts[2].content).toBe('后半段')
+    expect(parts.map((part) => part.kind)).toEqual(['process', 'content'])
+    expect(parts[1].kind === 'content' && parts[1].content).toBe(message.content)
   })
 
   it('always yields at least one content part for a plain message', () => {
@@ -77,12 +77,25 @@ describe('assistantParts', () => {
     expect(parts[0].kind).toBe('content')
   })
 
-  it('counts offsets in code points so emoji do not split incorrectly', () => {
+  it('keeps unicode content whole while retaining code-point process offsets', () => {
     const message = assistant('😀😀text')
     message.thinkingSegments = [{ id: 's', content: 'after emoji', textOffset: 2, streamOrder: 0 }]
     const parts = assistantParts(message)
-    expect(parts[0].kind === 'content' && parts[0].content).toBe('😀😀')
-    expect(parts[2].kind === 'content' && parts[2].content).toBe('text')
+    expect(parts[0].kind === 'process' && parts[0].group.textOffset).toBe(2)
+    expect(parts[1].kind === 'content' && parts[1].content).toBe('😀😀text')
+  })
+
+  it('keeps Markdown delimiters paired when thinking arrives inside the source', () => {
+    const message = assistant('**是“克服社交”，是找表演含量低的活法**：远程、小团队。')
+    message.thinkingSegments = [{ id: 'late', content: 'late thought', textOffset: 8, streamOrder: 0 }]
+
+    const parts = assistantParts(message)
+    const content = parts.find((part) => part.kind === 'content')
+    expect(parts[0].kind).toBe('process')
+    expect(content?.kind === 'content' && content.content).toBe(message.content)
+    expect(renderMarkdown(content?.kind === 'content' ? content.content : '')).toContain(
+      '<strong>是“克服社交”，是找表演含量低的活法</strong>：远程、小团队。',
+    )
   })
 })
 

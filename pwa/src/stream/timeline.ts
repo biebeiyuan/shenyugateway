@@ -1,11 +1,12 @@
 import type { ToolEvent } from '../toolLanguage'
 import { toolName, toolWarmCopy } from '../toolLanguage'
 import type { AssistantPart, ProcessGroup, ProcessTimelineItem, UiMessage } from '../types'
-import { textLength, textSlice } from '../utils'
+import { textLength } from '../utils'
 import { toolEventKey } from './sse'
 
 // Groups streamed thinking segments and tool events by the content offset where
-// they arrived, so the chat view can keep process details ordered with the reply.
+// they arrived. Offsets preserve process chronology for the detail sheet; they
+// must never split the assistant Markdown document in the chat view.
 
 export function traceRows(message: UiMessage): ToolEvent[] {
   const rows: ToolEvent[] = []
@@ -53,19 +54,14 @@ export function processGroups(message: UiMessage): ProcessGroup[] {
 }
 
 export function assistantParts(message: UiMessage): AssistantPart[] {
-  const parts: AssistantPart[] = []
-  let cursor = 0
-  for (const group of processGroups(message)) {
-    if (group.textOffset > cursor) {
-      parts.push({ kind: 'content', key: `content-${cursor}`, content: textSlice(message.content, cursor, group.textOffset) })
-    }
-    parts.push({ kind: 'process', key: `process-${group.textOffset}`, group })
-    cursor = group.textOffset
-  }
-  if (cursor < textLength(message.content) || !parts.length) {
-    parts.push({ kind: 'content', key: `content-${cursor}`, content: textSlice(message.content, cursor) })
-  }
-  return parts
+  return [
+    ...processGroups(message).map((group) => ({
+      kind: 'process' as const,
+      key: `process-${group.textOffset}`,
+      group,
+    })),
+    { kind: 'content', key: 'content', content: message.content },
+  ]
 }
 
 export function processTimeline(group?: ProcessGroup): ProcessTimelineItem[] {

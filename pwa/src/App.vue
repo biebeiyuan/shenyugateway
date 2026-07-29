@@ -91,6 +91,7 @@ import {
 import { parseSseFrame, pumpSseStream, toolEventKey } from './stream/sse'
 import { applyChatCompletion } from './stream/completion'
 import {
+  assistantParts,
   formatToolInput,
   formatToolOutput,
   groupHasThinking,
@@ -1187,17 +1188,17 @@ onUnmounted(() => {
               <span v-if="userBubbleSuffix(message)" class="msg-suffix">{{ userBubbleSuffix(message) }}</span>
             </div>
             <div v-else class="assistant-body">
-              <div v-if="message.streaming && message.content" class="assistant-plain">{{ message.content }}</div>
-              <div v-else-if="!message.streaming && message.content" class="markdown-content" v-html="renderMarkdown(message.content)" />
-              <template v-for="group in processGroups(message)" :key="`process-${message.id}-${group.textOffset}`">
-                <button class="process-strip" :class="{ thinking: groupHasThinking(group) }" type="button" @click="openProcessSheet(message, group)">
+              <template v-for="part in assistantParts(message)" :key="part.key">
+                <button v-if="part.kind === 'process'" class="process-strip" :class="{ thinking: groupHasThinking(part.group) }" type="button" @click="openProcessSheet(message, part.group)">
                   <span class="process-icon">
-                    <Clock3 v-if="groupHasThinking(group)" :size="16" />
+                    <Clock3 v-if="groupHasThinking(part.group)" :size="16" />
                     <Sparkles v-else :size="15" />
                   </span>
-                  <span class="process-copy">{{ processSummary(group) }}</span>
+                  <span class="process-copy">{{ processSummary(part.group) }}</span>
                   <ChevronRight :size="16" />
                 </button>
+                <div v-else-if="part.content && message.streaming" class="assistant-plain">{{ part.content }}</div>
+                <div v-else-if="part.content" class="markdown-content" v-html="renderMarkdown(part.content)" />
               </template>
               <ChatNestSprite v-if="message.streaming" :mode="statusSpriteMode(message)" />
               <div v-if="message.error" class="message-error">这次没有顺利接上：{{ message.error }}</div>
