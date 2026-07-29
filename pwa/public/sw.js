@@ -1,4 +1,4 @@
-const CACHE = 'shenyu-pwa-shell-v2'
+const CACHE = 'shenyu-pwa-shell-v3'
 
 self.addEventListener('install', (event) => {
   event.waitUntil(self.skipWaiting())
@@ -20,8 +20,10 @@ self.addEventListener('fetch', (event) => {
 
   const isNavigation = request.mode === 'navigate' || url.pathname === '/chat/'
   if (isNavigation) {
+    // Do not let an HTTP-cached index keep pointing at an old hashed bundle.
+    const freshRequest = new Request(request, { cache: 'no-store' })
     event.respondWith(
-      fetch(request).then((response) => {
+      fetch(freshRequest).then((response) => {
         if (response.ok) {
           const copy = response.clone()
           caches.open(CACHE).then((cache) => cache.put(request, copy))

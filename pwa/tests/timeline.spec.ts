@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest'
+import { renderMarkdown } from '../src/markdown'
 import { assistantParts, processGroups, processTimeline, traceRows } from '../src/stream/timeline'
 import type { UiMessage } from '../src/types'
 
@@ -28,7 +29,7 @@ describe('traceRows', () => {
 
 describe('processGroups', () => {
   it('groups thinking and tools by their content offset in order', () => {
-    const message = assistant('0123456789')
+    const message = assistant('前半段\n\n后半段')
     message.thinkingSegments = [
       { id: 'later', content: 'later thought', textOffset: 5, streamOrder: 2 },
       { id: 'early', content: 'early thought', textOffset: 0, streamOrder: 0 },
@@ -38,6 +39,15 @@ describe('processGroups', () => {
     expect(groups.map((group) => group.textOffset)).toEqual([0, 5])
     expect(groups[1].thinking[0].id).toBe('later')
     expect(groups[1].tools).toHaveLength(1)
+  })
+
+  it('moves a process split out of a single Markdown paragraph', () => {
+    const message = assistant('**一整段粗体内容**')
+    message.thinkingSegments = [{ id: 's', content: 'thought', textOffset: 3, streamOrder: 0 }]
+    const parts = assistantParts(message)
+    expect(processGroups(message)[0].textOffset).toBe(message.content.length)
+    expect(parts.filter((part) => part.kind === 'content')).toHaveLength(1)
+    expect(renderMarkdown(parts.find((part) => part.kind === 'content')?.content || '')).toContain('<strong>一整段粗体内容</strong>')
   })
 
   it('clamps offsets beyond the content length', () => {
@@ -57,11 +67,11 @@ describe('processGroups', () => {
 
 describe('assistantParts', () => {
   it('splices process strips between text segments at their offsets', () => {
-    const message = assistant('前半段后半段')
-    message.thinkingSegments = [{ id: 's', content: 'mid thought', textOffset: 3, streamOrder: 0 }]
+    const message = assistant('前半段\n\n后半段')
+    message.thinkingSegments = [{ id: 's', content: 'mid thought', textOffset: 5, streamOrder: 0 }]
     const parts = assistantParts(message)
     expect(parts.map((part) => part.kind)).toEqual(['content', 'process', 'content'])
-    expect(parts[0].kind === 'content' && parts[0].content).toBe('前半段')
+    expect(parts[0].kind === 'content' && parts[0].content).toBe('前半段\n\n')
     expect(parts[2].kind === 'content' && parts[2].content).toBe('后半段')
   })
 
