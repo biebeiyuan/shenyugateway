@@ -198,7 +198,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 
 | 症状 | 根因文件与错误 | 一句话教训 |
 |------|----------------|------------|
-| PWA 回答里的 `**重点**` 已被解析却看不出加粗，聊天框在输入和换行时又会改变外观或高度 | `pwa/src/styles.css`、`pwa/src/App.vue`、`pwa/index.html`：Markdown 强调只依赖浏览器默认字重且没有回归测试，输入框结构、自动高度上限和移动键盘视口处理也与参考实现分叉 | 先检查 Markdown 是否已生成 `<strong>`，再看计算后的字体和字重；输入框跳动则逐项对照 DOM 层级、统一高度上限与 `visualViewport` 处理，不要先改消息协议 |
+| PWA 回答里的 `**重点**` 已被解析却看不出加粗或斜体，聊天框在输入和换行时又会改变外观或高度 | `pwa/src/styles.css`、`pwa/src/App.vue`、`pwa/index.html`：Anthropic 字体只声明了 normal 字形，而全局 `font-synthesis: none` 让 `<em>` 无法合成斜体；输入框结构、自动高度上限和移动键盘视口处理也曾与参考实现分叉 | 先检查 Markdown 是否已生成 `<strong>/<em>`，再看计算后的字体、字重和 `font-synthesis`；输入框跳动则逐项对照 DOM 层级、统一高度上限与 `visualViewport` 处理，不要先改消息协议 |
 | PWA 助手回答前半段正常、后半段仍显示 `**` 等 Markdown 符号，刷新后还像是旧界面 | `pwa/src/stream/timeline.ts`、`pwa/src/markdown.ts`、`pwa/src/main.ts`、`pwa/public/sw.js`：过程条/思考片段把 Markdown 定界符拆到不同内容片段，`marked` 对中文标点紧邻强调闭合符以及混合/未配对星号的边界也不会按直觉闭合，Service Worker 又长期复用同一 `v2` shell 缓存，旧 worker 接管新 shell 后页面仍不重载 | 先确认流式阶段只展示原文、完成后才对整条正文解析，再验证中文强调边界、嵌套/未配对分隔符和完整回复；最后查 Service Worker 缓存版本、导航是否强制取最新 `index.html`，以及新 worker 接管时页面是否重载 |
 | PWA 接入已有线程后上下文重复、前缀从零开始或被误判为分支 | `pwa/src/App.vue`、`shenyu_gateway/gateway_admin_routes.py`、`shenyu_gateway/sessions.py`：接入动作把仅供检查的 `gateway_messages`/`recent_messages` 当成客户端历史，丢失了 `request_context_snapshots` 保存的裁剪窗口 | 线程交接先读最新 `context_snapshots[0].messages`；`recent_messages` 只能作为旧数据回退，不能重建请求历史 |
 | PWA 修复后刷新仍把同一轮重复历史发回网关，且 roll 会吞掉旧回答 | `pwa/src/App.vue`：旧接入流污染了 `localStorage`，启动只恢复本地数组；roll 直接截断 assistant 消息而没有候选版本 | 先清理本地完全重复行并用干净 cold-start source 重绑线程，同时保留之后的新消息；roll 应保留同一 assistant turn 的候选并只发送当前选中版本 |
