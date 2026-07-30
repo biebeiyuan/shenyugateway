@@ -191,6 +191,7 @@ button:disabled { cursor: default; }
 .variant-switcher button:disabled { opacity: .35; }
 .variant-switcher span { min-width: 30px; text-align: center; }
 .user-actions { justify-content: flex-end; }
+.assistant-meta { margin-top: 2px; color: var(--text-faint); font: 12px/1.45 var(--font-sans); }
 
 .notice-line { display: flex; align-items: center; justify-content: center; gap: 8px; min-height: 30px; padding: 3px 20px; color: var(--text-secondary); font-size: 12px; }
 .notice-line.error { color: #ef4b45; }
@@ -205,6 +206,14 @@ button:disabled { cursor: default; }
 .composer-spacer { flex: 1; }
 .composer-icon, .send-button { display: grid; width: var(--input-btn-size); height: var(--input-btn-size); flex: none; place-items: center; border-radius: var(--radius-full); color: var(--text-primary); }
 .composer-icon:active { background: var(--bg-sunken); }
+.composer-menu-wrap { position: relative; flex: none; }
+.composer-tool-trigger svg { transition: transform var(--transition); }
+.composer-tool-trigger.open { background: var(--bg-sunken); }
+.composer-tool-trigger.open svg { transform: rotate(45deg); }
+.composer-tool-menu { position: absolute; bottom: calc(100% + 9px); left: 0; z-index: 8; display: flex; min-width: 142px; flex-direction: column; gap: 2px; padding: 6px; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-primary); box-shadow: 0 8px 24px rgba(31, 30, 29, .12); }
+.composer-tool-menu button { display: flex; min-height: 40px; align-items: center; gap: 10px; padding: 0 11px; border-radius: 6px; color: var(--text-primary); font-size: 14px; text-align: left; }
+.composer-tool-menu button:hover, .composer-tool-menu button:focus-visible { background: var(--bg-sunken); outline: 0; }
+.composer-tool-menu button:disabled { color: var(--text-faint); opacity: .7; }
 .composer-hint { flex: 1; color: var(--text-faint); font-size: 12px; }
 .send-button { background: var(--text-primary); color: var(--bg-primary); transition: background var(--transition); }
 .send-button.ready { background: var(--accent); color: var(--accent-fg); }

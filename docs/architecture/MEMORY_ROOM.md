@@ -257,15 +257,15 @@ Maintenance notes:
 
 ## Room Mode
 
-Room mode is the second context path (alongside normal chat). When a free-time auto-wake trigger fires, the gateway renders a spatial room by the sea where Shenyu wakes up and chooses what to do through "doors" — tools presented as places in a room, not a menu.
+Room mode is the second context path (alongside normal chat). When the resident enters through the PWA's Room action, the gateway renders a spatial room by the sea where Shenyu wakes up and chooses what to do through "doors" — tools presented as places in a room, not a menu.
 
 Core philosophy: **room mode offers doors (choices), normal chat injects content (decisions made by algorithm).** Charge only adjusts which doors are visible and sort order, never decides for Shenyu.
 
 ### Trigger Detection
 
-Room mode activates when `ENABLE_ROOM_MODE=true` and the user text contains `proxy_sender` + `沈予` AND the keyword `窗边` (i.e. an Operit proxy message from Shenyu that names the window side). A plain 沈予 proxy message without `窗边` goes through normal chat — the heartbeat/private-capture fallback still applies via `is_free_time_fallback_context`. The keyword lives in `ROOM_TRIGGER_KEYWORD` in `shenyu_gateway/private_capture.py`.
+Room mode activates when `ENABLE_ROOM_MODE=true` and the complete user text matches `【窗边 · DD/MM HH:mm】`. The PWA generates this entry from the device clock when the resident chooses `房间` from the composer's `+` menu. The retired Operit `proxy_sender` + `窗边` workflow no longer activates Room; `is_free_time_fallback_context` remains separate and serves only its existing private-capture fallback.
 
-Trigger text example: `<proxy_sender name="沈予"/>——窗边` (the `窗边` keyword must appear somewhere in the user text)
+Trigger text example: `【窗边 · 27/07 21:00】` (the whole trimmed user text must match this zero-padded shape)
 
 ### Architecture
 
@@ -314,7 +314,7 @@ When the model calls shenyu_books:
 
 For bookshelf-specific work, `resident_books.py` owns the overview data and per-book semantics; `context_builder.py` owns whether the overview enters Room; `room_context.py` owns whether the physical shelf door is visible; and `room_tools.py` adds the shared schema to the Room surface and supplies the door count. `tool_schemas.py` defines that shared schema, while `tool_registry.py` and `GatewayToolService.books()` route execution into `ResidentBooksService`. The stable resident profile can still explain what an origin book is when the physical shelf is hidden, but titles, status, and `shenyu_books` follow the shelf-door decision.
 
-The trigger message stays in the user text. Room context supplies spatial cues through room layers and tool descriptions instead of rewriting the user's message.
+The entry message stays in the real client transcript and gateway snapshots so Room routing and handoff remain reproducible. The PWA hides only its user-facing row and derives the next assistant reply's gray `HH:mm · 房间` label from the preserved entry. Room context supplies spatial cues through room layers and tool descriptions instead of rewriting the user's message.
 
 Room layers reuse `assemble_layered_messages()` by mapping to the same keys:
 
@@ -463,10 +463,10 @@ If a captured `<heartbeat>` removes all visible text and there are no client-exe
 
 Fallback text is generated in `shenyu_gateway/private_capture.py` by `finalize_assistant_private_content()`, `private_capture_fallback_text()`, and `is_free_time_fallback_context()`:
 
-- room context (回家了 trigger): `沈予回家了 · 已记录私有块 heartbeat`
+- free-time proxy context (heartbeat fallback only): `沈予回家了 · 已记录私有块 heartbeat`
 - generic context: `沈予已记录 · 已记录私有块 heartbeat`
 
-Room mode triggers from any Operit proxy message with `proxy_sender` + `沈予` (trailing text is ignored — the client can use any wording).
+Room mode does not use this proxy fallback. Its only entry is the complete timestamped `【窗边 · DD/MM HH:mm】` message described above.
 
 For debugging, check `GET /api/gateway/logs` or `GET /api/gateway/logs/{id}`. When the fallback fires, `empty_visible_response_fallback` is `true` and `empty_visible_response_fallback_detail` records the generated `text`, detected private `kinds`, and context (`free_time` or `generic`).
 

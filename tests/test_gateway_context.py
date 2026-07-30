@@ -647,24 +647,27 @@ def test_room_trigger_only_matches_shenyu_huijia():
     assert not is_free_time("回家了")
 
 
-def test_room_mode_requires_chuangbian_keyword():
+def test_room_mode_requires_timestamped_room_entry():
     is_room = _is_room_mode
 
-    # 沈予 proxy 消息 + 「窗边」→ 进房间
-    assert is_room('<proxy_sender name="沈予"/>——窗边')
-    assert is_room('<proxy_sender name="沈予"/> 窗边')
-    assert is_room('<proxy_sender name="沈予"/>回家了，坐在窗边')
+    assert is_room("【窗边 · 27/07 21:00】")
+    assert is_room("  【窗边 · 03/11 08:05】  ")
 
-    # 只有沈予 proxy 消息但没有「窗边」→ 不进房间（走正常聊天，心跳回退仍生效）
+    # The retired Operit workflow and ordinary mentions no longer enter Room.
+    assert not is_room('<proxy_sender name="沈予"/>——窗边')
+    assert not is_room('<proxy_sender name="沈予"/>回家了，坐在窗边')
     assert not is_room('<proxy_sender name="沈予"/> 回家了。')
     assert not is_room('<proxy_sender name="沈予"/> 自动提醒')
     assert not is_room('<proxy_sender name="沈予"/> 今天心情不错')
-
-    # 没有 proxy_sender / 不是沈予 / 只有关键词 → 都不进房间
     assert not is_room("沈予回家了")
     assert not is_room("窗边")
     assert not is_room('<proxy_sender name="曾"/> 窗边')
     assert not is_room("普通聊天")
+    assert not is_room("[窗边 · 27/07 21:00]")
+    assert not is_room("【窗边 · 27/7 21:00】")
+    assert not is_room("【窗边 · 32/07 21:00】")
+    assert not is_room("【窗边 · 27/07 24:00】")
+    assert not is_room("【窗边 · 27/07 21:00】 再聊一会儿")
 
 
 def test_room_bookshelf_overview_and_tool_follow_visible_door(tmp_path, monkeypatch):

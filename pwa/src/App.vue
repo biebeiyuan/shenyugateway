@@ -10,6 +10,7 @@ import {
   ChevronRight,
   CircleStop,
   Clipboard,
+  DoorOpen,
   ExternalLink,
   ImagePlus,
   Menu,
@@ -64,6 +65,7 @@ import {
   stampStatusSuffix,
   stripStatusSuffix,
 } from './meta/statusSuffix'
+import { buildRoomEntry, isRoomEntry, roomEntryTime } from './meta/roomEntry'
 import {
   coldStartHistoryRows,
   dedupeUiMessagesForRecovery,
@@ -139,6 +141,7 @@ const pwaBuildCheck = ref<'idle' | 'checking' | 'current' | 'outdated' | 'unavai
 const handoffOpen = ref(false)
 const handoffLoading = ref(false)
 const modelOpen = ref(false)
+const composerMenuOpen = ref(false)
 const modelSheetPage = ref<'main' | 'effort' | 'more' | 'preset'>('main')
 const processSheet = ref<ProcessSheet | null>(null)
 const editId = ref<string | null>(null)
@@ -147,6 +150,7 @@ const status = ref('')
 const errorNotice = ref('')
 const inputRef = ref<HTMLTextAreaElement | null>(null)
 const fileRef = ref<HTMLInputElement | null>(null)
+const composerMenuRef = ref<HTMLElement | null>(null)
 const streamRef = ref<HTMLElement | null>(null)
 const presets = ref<UpstreamPreset[]>([])
 const switchingPreset = ref('')
@@ -159,7 +163,7 @@ let activeAssistantId: string | null = null
 const currentModel = computed(() => models.value.find((model) => model.id === selectedModel.value))
 const currentModelLabel = computed(() => modelLabel(currentModel.value))
 const hasContent = computed(() => Boolean(draft.value.trim()) || pendingAttachments.value.length > 0)
-const isEmpty = computed(() => messages.value.length === 0)
+const isEmpty = computed(() => !messages.value.some((message) => !isRoomEntry(message.content)))
 const primaryModels = computed(() => models.value.filter((model) => model.primary !== false))
 const secondaryModels = computed(() => models.value.filter((model) => model.primary === false))
 const currentPreset = computed(() => {
@@ -803,6 +807,27 @@ function removeAttachment(id: string) {
   pendingAttachments.value = pendingAttachments.value.filter((item) => item.id !== id)
 }
 
+function openImagePicker() {
+  composerMenuOpen.value = false
+  fileRef.value?.click()
+}
+
+async function enterRoom() {
+  if (busy.value || editId.value) return
+  composerMenuOpen.value = false
+  const user: UiMessage = {
+    id: createId('room-entry'),
+    role: 'user',
+    content: buildRoomEntry(),
+    attachments: [],
+    thinking: '',
+    thinkingSegments: [],
+    events: [],
+  }
+  messages.value.push(user)
+  await sendConversation(messages.value)
+}
+
 async function sendConversation(source: UiMessage[], target?: UiMessage) {
   let assistant: UiMessage
   let previousVariantIndex: number | null = null
@@ -1013,6 +1038,20 @@ function userBubbleSuffix(message: UiMessage): string {
   return splitStatusSuffix(message.content).suffix.replace(/^【|】$/gu, '')
 }
 
+function roomReplyLabel(index: number): string {
+  const previous = messages.value[index - 1]
+  if (!previous || previous.role !== 'user') return ''
+  const time = roomEntryTime(previous.content)
+  return time ? `${time} · 房间` : ''
+}
+
+function closeComposerMenuFromOutside(event: PointerEvent) {
+  const target = event.target
+  if (target instanceof Node && !composerMenuRef.value?.contains(target)) {
+    composerMenuOpen.value = false
+  }
+}
+
 function statusSpriteMode(message: UiMessage): SpriteMode {
   const hasActiveTool = traceRows(message).some((event) => event.phase === 'tool_start' || event.ok === undefined)
   if (hasActiveTool) return 'shimmer'
@@ -1030,6 +1069,7 @@ function runQuickPrompt(prompt: string) {
 }
 
 onMounted(async () => {
+  document.addEventListener('pointerdown', closeComposerMenuFromOutside)
   window.visualViewport?.addEventListener('resize', scheduleComposerVisible)
   window.visualViewport?.addEventListener('scroll', scheduleComposerVisible)
   localStorage.setItem(STORAGE_SESSION, sessionTag.value)
@@ -1045,6 +1085,7 @@ onMounted(async () => {
 
 onUnmounted(() => {
   clearKeyboardTimers()
+  document.removeEventListener('pointerdown', closeComposerMenuFromOutside)
   window.visualViewport?.removeEventListener('resize', scheduleComposerVisible)
   window.visualViewport?.removeEventListener('scroll', scheduleComposerVisible)
 })
@@ -1176,48 +1217,51 @@ onUnmounted(() => {
           <h1>What's on your mind?</h1>
         </div>
 
-        <article v-for="(message, index) in messages" :key="message.id" class="message-row" :class="message.role">
-          <div v-if="message.role === 'assistant'" class="assistant-avatar"><Sparkles :size="15" /></div>
-          <div class="message-column">
-            <div v-if="message.role === 'user' && message.attachments.length" class="message-images">
-              <img v-for="attachment in message.attachments" :key="attachment.id" :src="attachment.dataUrl" :alt="attachment.name" />
-            </div>
-            <div v-if="message.role === 'user'" class="user-bubble">
-              <template v-if="userBubbleBody(message)">{{ userBubbleBody(message) }}</template>
-              <template v-else-if="!userBubbleSuffix(message)">{{ '（一张图片）' }}</template>
-              <span v-if="userBubbleSuffix(message)" class="msg-suffix">{{ userBubbleSuffix(message) }}</span>
-            </div>
-            <div v-else class="assistant-body">
-              <template v-for="part in assistantParts(message)" :key="part.key">
-                <button v-if="part.kind === 'process'" class="process-strip" :class="{ thinking: groupHasThinking(part.group) }" type="button" @click="openProcessSheet(message, part.group)">
-                  <span class="process-icon">
-                    <Clock3 v-if="groupHasThinking(part.group)" :size="16" />
-                    <Sparkles v-else :size="15" />
+        <template v-for="(message, index) in messages" :key="message.id">
+          <article v-if="!isRoomEntry(message.content)" class="message-row" :class="message.role">
+            <div v-if="message.role === 'assistant'" class="assistant-avatar"><Sparkles :size="15" /></div>
+            <div class="message-column">
+              <div v-if="message.role === 'user' && message.attachments.length" class="message-images">
+                <img v-for="attachment in message.attachments" :key="attachment.id" :src="attachment.dataUrl" :alt="attachment.name" />
+              </div>
+              <div v-if="message.role === 'user'" class="user-bubble">
+                <template v-if="userBubbleBody(message)">{{ userBubbleBody(message) }}</template>
+                <template v-else-if="!userBubbleSuffix(message)">{{ '（一张图片）' }}</template>
+                <span v-if="userBubbleSuffix(message)" class="msg-suffix">{{ userBubbleSuffix(message) }}</span>
+              </div>
+              <div v-else class="assistant-body">
+                <template v-for="part in assistantParts(message)" :key="part.key">
+                  <button v-if="part.kind === 'process'" class="process-strip" :class="{ thinking: groupHasThinking(part.group) }" type="button" @click="openProcessSheet(message, part.group)">
+                    <span class="process-icon">
+                      <Clock3 v-if="groupHasThinking(part.group)" :size="16" />
+                      <Sparkles v-else :size="15" />
+                    </span>
+                    <span class="process-copy">{{ processSummary(part.group) }}</span>
+                    <ChevronRight :size="16" />
+                  </button>
+                  <div v-else-if="part.content && message.streaming" class="assistant-plain">{{ part.content }}</div>
+                  <div v-else-if="part.content" class="markdown-content" v-html="renderMarkdown(part.content)" />
+                </template>
+                <ChatNestSprite v-if="message.streaming" :mode="statusSpriteMode(message)" />
+                <div v-if="message.error" class="message-error">这次没有顺利接上：{{ message.error }}</div>
+                <div v-if="!message.streaming && (message.content || message.error)" class="message-actions">
+                  <button title="复制" aria-label="复制" @click="copyText(message.content)"><Clipboard :size="15" /></button>
+                  <button title="重新生成" aria-label="重新生成" @click="retryMessage(index)"><RotateCcw :size="15" /></button>
+                  <span v-if="variantCount(message) > 1" class="variant-switcher">
+                    <button title="上一版回答" aria-label="上一版回答" :disabled="!canSwitchMessageVariant(message, -1)" @click="switchMessageVariant(index, -1)"><ChevronLeft :size="15" /></button>
+                    <span>{{ selectedVariantIndex(message) + 1 }} / {{ variantCount(message) }}</span>
+                    <button title="下一版回答" aria-label="下一版回答" :disabled="!canSwitchMessageVariant(message, 1)" @click="switchMessageVariant(index, 1)"><ChevronRight :size="15" /></button>
                   </span>
-                  <span class="process-copy">{{ processSummary(part.group) }}</span>
-                  <ChevronRight :size="16" />
-                </button>
-                <div v-else-if="part.content && message.streaming" class="assistant-plain">{{ part.content }}</div>
-                <div v-else-if="part.content" class="markdown-content" v-html="renderMarkdown(part.content)" />
-              </template>
-              <ChatNestSprite v-if="message.streaming" :mode="statusSpriteMode(message)" />
-              <div v-if="message.error" class="message-error">这次没有顺利接上：{{ message.error }}</div>
-              <div v-if="!message.streaming && (message.content || message.error)" class="message-actions">
-                <button title="复制" aria-label="复制" @click="copyText(message.content)"><Clipboard :size="15" /></button>
-                <button title="重新生成" aria-label="重新生成" @click="retryMessage(index)"><RotateCcw :size="15" /></button>
-                <span v-if="variantCount(message) > 1" class="variant-switcher">
-                  <button title="上一版回答" aria-label="上一版回答" :disabled="!canSwitchMessageVariant(message, -1)" @click="switchMessageVariant(index, -1)"><ChevronLeft :size="15" /></button>
-                  <span>{{ selectedVariantIndex(message) + 1 }} / {{ variantCount(message) }}</span>
-                  <button title="下一版回答" aria-label="下一版回答" :disabled="!canSwitchMessageVariant(message, 1)" @click="switchMessageVariant(index, 1)"><ChevronRight :size="15" /></button>
-                </span>
+                </div>
+                <div v-if="!message.streaming && roomReplyLabel(index)" class="assistant-meta">{{ roomReplyLabel(index) }}</div>
+              </div>
+              <div v-if="message.role === 'user'" class="user-actions">
+                <button title="编辑这条消息" aria-label="编辑这条消息" @click="beginEdit(message)"><Pencil :size="14" /></button>
+                <button title="复制" aria-label="复制" @click="copyText(message.content)"><Clipboard :size="14" /></button>
               </div>
             </div>
-            <div v-if="message.role === 'user'" class="user-actions">
-              <button title="编辑这条消息" aria-label="编辑这条消息" @click="beginEdit(message)"><Pencil :size="14" /></button>
-              <button title="复制" aria-label="复制" @click="copyText(message.content)"><Clipboard :size="14" /></button>
-            </div>
-          </div>
-        </article>
+          </article>
+        </template>
       </section>
 
       <div v-if="activeWorkspace === 'chats' && (status || errorNotice)" class="notice-line" :class="{ error: errorNotice }">
@@ -1255,7 +1299,29 @@ onUnmounted(() => {
               />
             </div>
             <div class="composer-actions">
-              <button class="composer-icon" aria-label="添加图片" title="添加图片" @click="fileRef?.click()"><ImagePlus :size="19" /></button>
+              <div ref="composerMenuRef" class="composer-menu-wrap">
+                <button
+                  class="composer-icon composer-tool-trigger"
+                  :class="{ open: composerMenuOpen }"
+                  aria-label="添加"
+                  title="添加"
+                  aria-haspopup="menu"
+                  :aria-expanded="composerMenuOpen"
+                  @click="composerMenuOpen = !composerMenuOpen"
+                >
+                  <Plus :size="20" />
+                </button>
+                <div v-if="composerMenuOpen" class="composer-tool-menu" role="menu">
+                  <button type="button" role="menuitem" @click="openImagePicker">
+                    <ImagePlus :size="18" />
+                    <span>图片</span>
+                  </button>
+                  <button type="button" role="menuitem" :disabled="busy || Boolean(editId)" @click="enterRoom">
+                    <DoorOpen :size="18" />
+                    <span>房间</span>
+                  </button>
+                </div>
+              </div>
               <span class="composer-spacer" />
               <button v-if="busy" class="send-button stop" aria-label="停止生成" title="停止生成" @click="cancelGeneration"><CircleStop :size="19" /></button>
               <button v-else class="send-button" :class="{ ready: hasContent }" :disabled="!hasContent" aria-label="发送" title="发送" @click="submit"><Send :size="18" /></button>

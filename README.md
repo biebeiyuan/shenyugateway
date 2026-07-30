@@ -95,7 +95,7 @@ The codebase is partly layered already:
 ### Capture & private content
 
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, heartbeat persistence helper.
-- `shenyu_gateway/private_capture.py`: private assistant content finalization (`<heartbeat>` extraction), context-consumed marking, fallback text generation, and free-time detection.
+- `shenyu_gateway/private_capture.py`: private assistant content finalization (`<heartbeat>` extraction), context-consumed marking, fallback text generation, free-time detection, and strict timestamped Room-entry detection.
 
 ### Durable archive
 
@@ -119,6 +119,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/room_tools.py`: room mode tool definitions, compatibility broker, execute dispatch, and door count collection.
 - `shenyu_gateway/room_scenes.py`: window scenes (weather, atmosphere, landscape). Change scene copy here only.
 - `shenyu_gateway/room_newspaper.py`: fixed RSS sources, feed parsing, issue rolling, optional quality checks, and draft generation.
+- `shenyu_gateway/private_capture.py`: recognizes the exact `【窗边 · DD/MM HH:mm】` entry that selects the Room context path; the retired Operit proxy workflow is not a Room entry.
 
 ### Auth & sessions
 
@@ -199,10 +200,11 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 
 ### PWA chat frontend
 
-- `pwa/src/App.vue`: ChatNest-inspired mobile chat surface with real-time response rendering, Thinking/tool process strips fixed above each intact assistant reply, per-trace detail sheet, Claude-style Projects/Artifacts/Memory/Diary workspace shells, gateway-backed Recents, edit/retry actions, local assistant roll variants with arrow switching, clean cold-start recovery, image previews, and Console-synced model/preset selector. The Vue shell owns UI state and orchestration only; protocol, history, and persistence logic live in the modules below.
+- `pwa/src/App.vue`: ChatNest-inspired mobile chat surface with real-time response rendering, Thinking/tool process strips fixed above each intact assistant reply, per-trace detail sheet, Claude-style Projects/Artifacts/Memory/Diary workspace shells, gateway-backed Recents, edit/retry actions, local assistant roll variants with arrow switching, clean cold-start recovery, image previews, an expandable image/Room `+` menu, hidden Room-entry rows with gray reply labels, and Console-synced model/preset selector. The Vue shell owns UI state and orchestration only; protocol, history, and persistence logic live in the modules below.
 - `pwa/src/types.ts` / `pwa/src/utils.ts`: shared domain types (messages, variants, sessions, process timeline, presets) and id/Unicode-safe text-offset helpers.
 - `pwa/src/api/client.ts` / `pwa/src/api/presets.ts`: gateway HTTP layer — PWA identity headers, models/sessions/config/chat fetchers for streaming and non-streaming requests, outbound message wiring, deployed-build fetches — plus reading the Console-shared `shenyu_upstream_presets` storage.
 - `pwa/src/buildInfo.ts`: validates the build identity embedded in the active client and the protected deployed `build-info.json` manifest; the settings sheet compares the two exact build ids.
+- `pwa/src/meta/statusSuffix.ts` / `pwa/src/meta/roomEntry.ts`: generates and parses the normal user-status suffix and the exact timestamped Room-entry contract used for hidden entry rows and `HH:mm · 房间` reply labels.
 - `pwa/src/session/history.ts`: thread-handoff history source selection (context snapshots → legacy snapshot field → inspection-stream fallback), cold-start clean baseline rows, exact-duplicate detection, and recovery dedupe.
 - `pwa/src/session/variants.ts` / `pwa/src/session/persistence.ts`: local assistant roll-variant state machine and the localStorage transcript window save/restore.
 - `pwa/src/stream/sse.ts` / `pwa/src/stream/completion.ts` / `pwa/src/stream/timeline.ts`: streaming and non-streaming OpenAI-compatible response parsing (including `shenyu.tool_event` data), thinking/tool offset bookkeeping and stream pump, and grouping process events into inline strips and detail timelines.
@@ -231,7 +233,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 | Stars | 星星 / 关联记忆 | `shenyu_gateway/stars/` | `admin/src/api/stars.ts`、`StarsView.vue`、`views/stars/` | `MEMORY_ROOM.md` § Star Memory Layer |
 | Mem | Mem Notes / 便签 | `shenyu_gateway/mem_notes/`、`mem_notes_relevance.py` | `admin/src/api/mem0.ts`、`Mem0View.vue` | `MEMORY_ROOM.md` § Mem Note Layer |
 | 记忆网络 | 人物 / 地点 / 物件 / 主题锚点 | `memory_graph.py`、`shenyu_gateway/recall/` | `admin/src/api/memoryGraph.ts`、`MemoryGraphView.vue`、`Mem0View.vue` | `MEMORY_ROOM.md` § Personal Memory Graph |
-| Room | 房间 / 窗台 | `room_context.py`、`room_tools.py`、`room_newspaper.py` | `admin/src/api/room.ts`、`RoomView.vue`、`views/room/` | `MEMORY_ROOM.md` § Room Mode |
+| Room | 房间 / 窗台 | `private_capture.py`、`room_context.py`、`room_tools.py`、`room_newspaper.py` | `pwa/src/App.vue`、`pwa/src/meta/roomEntry.ts`、`admin/src/api/room.ts`、`RoomView.vue`、`views/room/` | `MEMORY_ROOM.md` § Room Mode |
 | 请求日志 / 工具报错 | 日志页、工具报错页 | `request_logs.py`、`tool_loop.py`、`store/_admin.py` | `admin/src/api/logs.ts`、`toolErrors.ts`、`LogsView.vue`、`ToolErrorsView.vue` | `DEBUGGING_GUIDE.md`、`LOGS_GUIDE.md` |
 | Calendar | 日历 / 日周月页 | `calendar_service.py`、`gateway_tools/_calendar.py` | `admin/src/api/calendar.ts`、`CalendarView.vue` | `REQUEST_CONTEXT.md` § Calendar |
 
