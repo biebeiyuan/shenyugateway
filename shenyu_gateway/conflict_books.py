@@ -140,7 +140,7 @@ class ConflictBookService:
             rows = await self.supabase.query(
                 BOOKS_TABLE,
                 params={
-                    "select": "title,thread,span_start,span_end,status,read_count,last_read_at,created_at",
+                    "select": "id,title,thread,span_start,span_end,status,read_count,last_read_at,created_at",
                     "deleted_at": "is.null",
                     "order": "created_at.desc",
                     "limit": "100",

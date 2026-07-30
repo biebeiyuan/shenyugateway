@@ -1070,6 +1070,37 @@ def test_execute_gateway_tool_routes_conflict_title_through_broker():
     assert service.calls == [{"tool": "shenyu_conflict_read", "book_id": "", "title": "唯一书名"}]
 
 
+def test_execute_gateway_tool_routes_books_list_through_broker():
+    service = FakeToolService()
+    result = asyncio.run(
+        execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {"tool": "shenyu_books", "params": {"action": "list"}},
+            session_tag="default",
+            cfg=_cfg(gateway_tool_surface="daily"),
+            service=service,
+        )
+    )
+
+    assert result["ok"] is True
+    assert service.calls == [
+        {
+            "tool": "shenyu_books",
+            "action": "list",
+            "book": "",
+            "book_id": "",
+            "title": "",
+            "content": "",
+            "mode": "replace",
+            "expected_revision": None,
+            "target_revision": None,
+            "summary": "",
+            "view": "current",
+            "actor": "沈予",
+        }
+    ]
+
+
 def test_classify_tool_error_uses_declared_kind_first():
     assert _classify_tool_error({"ok": False, "error": "content is required"}) == "validation"
     assert _classify_tool_error({"ok": False, "error": "Supabase not configured"}) == "config"
@@ -2097,14 +2128,19 @@ def test_daily_gateway_surface_hides_maintenance_tools():
     assert "supabase_query" not in broker_names
     assert "后台管理和数据库工具收起来了" in description
     assert "bulk_update_mem_notes" not in description
-    assert "books(action" in description
+    assert "books(action: list|read|write|annotate" in description
 
 
-def test_books_tool_exposes_direct_actions_without_shelf_action():
+def test_books_tool_exposes_list_on_normal_and_room_surfaces_without_shelf_alias():
     tool = next(tool for tool in _gateway_core_tools() if tool["function"]["name"] == "shenyu_books")
     actions = tool["function"]["parameters"]["properties"]["action"]["enum"]
+    room_tool = next(tool for tool in room_tool_definitions() if tool["function"]["name"] == "shenyu_books")
+    room_actions = room_tool["function"]["parameters"]["properties"]["action"]["enum"]
 
-    assert actions == ["read", "write", "annotate"]
+    assert actions == ["list", "read", "write", "annotate"]
+    assert room_actions == actions
+    assert "list 不需要其他参数" in tool["function"]["description"]
+    assert "read origin 还必须给 book_id 或精确 title" in tool["function"]["parameters"]["properties"]["book"]["description"]
     assert "shelf" not in tool["function"]["description"]
 
 

@@ -4,8 +4,11 @@ import asyncio
 from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
+from shenyu_gateway.gateway_tools import GatewayToolService
 from shenyu_gateway.response_capture import AssistantTagFilter, split_private_assistant_tags
+from shenyu_gateway.room_tools import execute_room_tool
 from shenyu_gateway.stars import StarService, parse_star_payload
+from shenyu_gateway.tool_registry import execute_gateway_tool
 
 
 class FakeSupabase:
@@ -488,6 +491,75 @@ def test_review_returns_remaining_unreviewed():
     assert result["ok"] is True
     assert result["count"] == 2
     assert result["remaining_unreviewed"] == 4
+
+
+def test_gateway_broker_review_uses_resident_wide_unreviewed_queue():
+    supabase = FakeSupabase()
+    cfg = _cfg()
+    service = GatewayToolService(runtime_config=cfg, supabase=supabase, store=None)
+
+    async def run():
+        for i in range(3):
+            await StarService(cfg, supabase).create_star(f"Am · 旧会话星星{i}", session_tag="7.18")
+        return await execute_gateway_tool(
+            "shenyu_gateway_tool",
+            {
+                "tool": "shenyu_star_review",
+                "params": {
+                    "limit_new": 2,
+                    "candidates_per_star": 1,
+                    "total_candidate_limit": 2,
+                },
+            },
+            session_tag="7.30",
+            cfg=cfg,
+            service=service,
+        )
+
+    result = asyncio.run(run())
+
+    assert result["ok"] is True
+    assert result["count"] == 2
+    assert [item["star"]["content"] for item in result["items"]] == [
+        "旧会话星星0",
+        "旧会话星星1",
+    ]
+    assert result["remaining_unreviewed"] == 1
+    assert {row["session_tag"] for row in supabase.tables["shenyu_star_recall_runs"]} == {"7.30"}
+
+
+def test_room_review_uses_resident_wide_unreviewed_queue():
+    supabase = FakeSupabase()
+    cfg = _cfg()
+
+    async def run():
+        for i in range(3):
+            await StarService(cfg, supabase).create_star(f"Cmaj7 · 房间外星星{i}", session_tag="7.18")
+        return await execute_room_tool(
+            "room_star_map",
+            {
+                "action": "review",
+                "limit_new": 2,
+                "candidates_per_star": 1,
+                "total_candidate_limit": 2,
+                "session_tag": "7.30",
+            },
+            store=None,
+            cfg=cfg,
+            supabase_client=supabase,
+            session_tag="7.18",
+        )
+
+    result = asyncio.run(run())
+
+    assert result["ok"] is True
+    assert result["count"] == 2
+    assert [item["star"]["content"] for item in result["items"]] == [
+        "房间外星星0",
+        "房间外星星1",
+    ]
+    assert result["remaining_unreviewed"] == 1
+    assert {row["session_tag"] for row in supabase.tables["shenyu_star_recall_runs"]} == {"7.30"}
 
 
 def test_backfill_scenes_only_updates_unlabeled_stars():

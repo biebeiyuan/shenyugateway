@@ -21,6 +21,8 @@ class BooksToolsMixin:
     ) -> dict:
         service = self._resident_books()
         action_key = str(action or "").strip().lower()
+        if action_key == "list":
+            return await service.list_books()
         if action_key == "read":
             return await service.read(book=book, book_id=book_id, title=title, view=view)
         if action_key == "write":
@@ -41,7 +43,7 @@ class BooksToolsMixin:
                 target_revision=target_revision,
                 actor=actor,
             )
-        return {"ok": False, "error": "action must be read, write, or annotate", "error_kind": "validation"}
+        return {"ok": False, "error": "action must be list, read, write, or annotate", "error_kind": "validation"}
 
     async def conflict_list(self) -> dict:
         return await self._conflict_books().list_books()

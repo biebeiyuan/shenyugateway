@@ -511,7 +511,8 @@ def _gateway_books_tool() -> dict:
         "function": {
             "name": "shenyu_books",
             "description": (
-                "翻开或落笔书架上的书。read 可读我是谁、自动生成的家现在或指定来历书；"
+                "浏览、翻开或落笔书架上的书。list 不需要其他参数，返回轻量书架目录；"
+                "read 可读我是谁、自动生成的家现在或一本指定来历书；"
                 "write 只修改我是谁并留下版本；annotate 给三类书追加不可覆盖的批注。"
             ),
             "parameters": {
@@ -519,12 +520,12 @@ def _gateway_books_tool() -> dict:
                 "properties": {
                     "action": {
                         "type": "string",
-                        "enum": ["read", "write", "annotate"],
+                        "enum": ["list", "read", "write", "annotate"],
                     },
                     "book": {
                         "type": "string",
                         "enum": ["identity", "home", "origin", "我是谁", "家现在", "来历书"],
-                        "description": "identity=我是谁，home=家现在，origin=来历书。",
+                        "description": "书的类别：identity=我是谁，home=家现在，origin=来历书。list 不需要 book；read origin 还必须给 book_id 或精确 title。",
                     },
                     "book_id": {"type": "string", "description": "来历书书架上的 book_id。"},
                     "id": {"type": "string", "description": "book_id 的别名。"},

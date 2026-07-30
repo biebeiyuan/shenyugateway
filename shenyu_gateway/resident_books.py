@@ -77,6 +77,58 @@ class ResidentBooksService:
             "warnings": warnings,
         }
 
+    async def list_books(self) -> dict:
+        """Return a tool-facing shelf directory without any book bodies."""
+        overview = await self.overview()
+        home = overview.get("home") or {}
+        home_entry = {
+            "book": HOME_SLUG,
+            "title": "家现在",
+            "kind": "snapshot",
+        }
+        for key in ("current_week", "current_week_changes", "last_confirmed_at"):
+            if home.get(key) is not None:
+                home_entry[key] = home[key]
+
+        identity = overview.get("identity") or None
+        identity_entry = None
+        if identity:
+            identity_entry = {
+                "book": IDENTITY_SLUG,
+                "title": identity.get("title") or "我是谁",
+                "kind": "living",
+                "revision": int(identity.get("revision") or 0),
+                "status": identity.get("status") or "active",
+                "updated_at": identity.get("updated_at"),
+                "updated_by": identity.get("updated_by"),
+            }
+
+        origin_books = []
+        for item in overview.get("origin_books") or []:
+            origin_books.append(
+                {
+                    "book": "origin",
+                    "book_id": item.get("id"),
+                    "title": item.get("title") or "",
+                    "kind": "origin",
+                    "status": item.get("status") or "open",
+                    "read_count": int(item.get("read_count") or 0),
+                    "last_read_at": item.get("last_read_at"),
+                    "created_at": item.get("created_at"),
+                }
+            )
+
+        result = {
+            "ok": True,
+            "count": 1 + (1 if identity_entry else 0) + len(origin_books),
+            "home": home_entry,
+            "identity": identity_entry,
+            "origin_books": origin_books,
+        }
+        if overview.get("warnings"):
+            result["warnings"] = overview["warnings"]
+        return result
+
     async def read(
         self,
         *,
@@ -92,6 +144,12 @@ class ResidentBooksService:
             return await self._read_identity(view=view)
         if not self.supabase:
             return self._config_error()
+        if slug == "origin" and not str(book_id or "").strip() and not str(title or "").strip():
+            return {
+                "ok": False,
+                "error": "origin 是多本来历书；先用 action=list 看书架，再用 book_id 或精确 title 读取。",
+                "error_kind": "validation",
+            }
         result = await self.conflict_books.read_book(book_id, title=title)
         if result.get("ok"):
             result["kind"] = "origin"

@@ -115,7 +115,7 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   notebook_update(id*, content?, status?)
 
 来历书
-  books(action: read|write|annotate, book?: identity|home|origin, book_id/title?, content?, expected_revision?)
+  books(action: list|read|write|annotate, book?: identity|home|origin, book_id/title?, content?, expected_revision?)  — list 无参数；read origin 要 book_id/title
 
 窗外
   web_search(query*, limit?)  — 搜外面的事，回来是标题+链接+摘要
@@ -157,7 +157,7 @@ _BROKER_DAILY_DESCRIPTION = """\
   notebook_list(limit?)
 
 来历书
-  books(action: read|write|annotate, book?: identity|home|origin, book_id/title?, content?, expected_revision?)
+  books(action: list|read|write|annotate, book?: identity|home|origin, book_id/title?, content?, expected_revision?)  — list 无参数；read origin 要 book_id/title
 
 窗外
   web_search(query*, limit?)  — 搜外面的事，回来是标题+链接+摘要

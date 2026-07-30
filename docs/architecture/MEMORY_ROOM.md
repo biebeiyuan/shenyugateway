@@ -130,12 +130,13 @@ Memory Island decision:
 
 Review flow:
 
-1. `shenyu_star_review` and `/api/gateway/stars/review` take up to `STAR_REVIEW_NEW_LIMIT` unreviewed active stars.
-2. For each new star, the gateway suggests up to `STAR_REVIEW_CANDIDATES_PER_STAR` related stars, bounded by `STAR_REVIEW_TOTAL_CANDIDATE_LIMIT`.
-3. The response includes `remaining_unreviewed`: the count of active stars still awaiting review beyond the current batch. This lets Shenyu know whether to keep reviewing or stop.
-4. The UI/tool can record `positive`, `negative`, `skipped`, `connected`, or `missed`.
-5. `missed` is a high-value positive signal: it means "this star should have surfaced but did not." It can be recorded from the admin UI or directly through `shenyu_star_review` when Shenyu knows the missing star id.
-6. A single no-action/skip is not treated as negative. The weak ignored penalty only appears after the same candidate has been shown repeatedly without positive feedback.
+1. Shenyu-facing `shenyu_star_review` and `room_star_map(action=review)` take up to `STAR_REVIEW_NEW_LIMIT` unreviewed active stars from the resident-wide queue, regardless of which conversation created them.
+2. The caller's `session_tag` records where the review happened; it does not narrow that resident-wide queue. The batch and `remaining_unreviewed` therefore always use the same scope.
+3. For each new star, the gateway suggests up to `STAR_REVIEW_CANDIDATES_PER_STAR` related stars, bounded by `STAR_REVIEW_TOTAL_CANDIDATE_LIMIT`.
+4. The response includes `remaining_unreviewed`: the count of active stars still awaiting review beyond the current batch. This lets Shenyu know whether to keep reviewing or stop.
+5. The UI/tool can record `positive`, `negative`, `skipped`, `connected`, or `missed`.
+6. `missed` is a high-value positive signal: it means "this star should have surfaced but did not." It can be recorded from the admin UI or directly through `shenyu_star_review` when Shenyu knows the missing star id.
+7. A single no-action/skip is not treated as negative. The weak ignored penalty only appears after the same candidate has been shown repeatedly without positive feedback.
 
 Scoring (v4, RRF fusion + multiplicative modifiers):
 
@@ -277,7 +278,7 @@ Core and bridge files, separated by concern:
 | `shenyu_gateway/context_builder.py` | Assembles the complete Room package: charge signals, door state, scene layers, conditional bookshelf overview, and visible tool schemas. |
 | `shenyu_gateway/room_text.py` | All room copy: charter, scenes, doors, trace phrases. Change text here only. |
 | `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |
-| `shenyu_gateway/room_tools.py` | Room tool handlers, direct tool definitions, the shared `shenyu_books` read/write/annotate entry, compatibility broker, and door count collection. |
+| `shenyu_gateway/room_tools.py` | Room tool handlers, direct tool definitions, the shared `shenyu_books` list/read/write/annotate entry, compatibility broker, and door count collection. |
 | `shenyu_gateway/room_scenes.py` | Weather, atmosphere, and window-scene generation. |
 | `shenyu_gateway/room_newspaper.py` | Fixed RSS catalog, feed parsing, issue rolling, optional quality checks, and draft generation. |
 | `shenyu_gateway/store/_room.py` | Room traces, notes, pins, scribbles, and newspaper issue persistence. |
@@ -309,10 +310,10 @@ ChatPipeline
 When the model calls shenyu_books:
   tool_registry._handle_books()
     -> GatewayToolService.books()
-    -> ResidentBooksService read / write / annotate
+    -> ResidentBooksService list / read / write / annotate
 ```
 
-For bookshelf-specific work, `resident_books.py` owns the overview data and per-book semantics; `context_builder.py` owns whether the overview enters Room; `room_context.py` owns whether the physical shelf door is visible; and `room_tools.py` adds the shared schema to the Room surface and supplies the door count. `tool_schemas.py` defines that shared schema, while `tool_registry.py` and `GatewayToolService.books()` route execution into `ResidentBooksService`. The stable resident profile can still explain what an origin book is when the physical shelf is hidden, but titles, status, and `shenyu_books` follow the shelf-door decision.
+For bookshelf-specific work, `resident_books.py` owns the overview data and per-book semantics; `context_builder.py` owns whether the overview enters Room; `room_context.py` owns whether the physical shelf door is visible; and `room_tools.py` adds the shared schema to the Room surface and supplies the door count. `tool_schemas.py` defines that shared schema, while `tool_registry.py` and `GatewayToolService.books()` route execution into `ResidentBooksService`. The stable resident profile can still explain what an origin book is when the physical shelf is hidden, but titles, status, and `shenyu_books` follow the shelf-door decision. `shenyu_books(action=list)` returns a lightweight directory for all three book kinds; origin entries include `book_id` and title but never the frozen body. `read` still opens exactly one book, so `read origin` requires `book_id` or an exact title instead of changing shape into an implicit list.
 
 The entry message stays in the real client transcript and gateway snapshots so Room routing and handoff remain reproducible. The PWA hides only its user-facing row and derives the next assistant reply's gray `HH:mm · 房间` label from the preserved entry. Room context supplies spatial cues through room layers and tool descriptions instead of rewriting the user's message.
 
@@ -359,7 +360,7 @@ Charge affects door visibility:
 | `room_drawer_notes` | drawers | Read notes Yuan left in the middle drawer. |
 | `room_locked_drawer` | drawers | Private drawer. No admin API. Only Shenyu's tool can open it. |
 | `room_star_map` | star_wall | Star map: look, search, review, feedback, connect constellations. |
-| `shenyu_books` | read / write / annotate | When the shelf door is visible, open the generated home, revise `我是谁`, read an origin book, or append annotations; its lightweight overview appears in the same visit. |
+| `shenyu_books` | list / read / write / annotate | When the shelf door is visible, browse the lightweight directory, open the generated home, revise `我是谁`, read an origin book, or append annotations; list entries never include book bodies. |
 | `room_wall_pins` | wall | View/add/complete wall pin reminders. |
 | `room_octopus_pillow` | bed | Hug the octopus pillow. Random Yuan note as easter egg. |
 

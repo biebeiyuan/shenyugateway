@@ -48,7 +48,10 @@ class ReviewMixin:
         }
         if not is_admin_review:
             params["reviewed_at"] = "is.null"
-        if session_tag:
+        # Shenyu's review queue is resident-wide. The caller's session tag is
+        # still recorded on review runs below, but it must not hide stars that
+        # were created in another conversation.
+        if session_tag and is_admin_review:
             params["session_tag"] = f"eq.{session_tag}"
         seeds = await self.supabase.query(STAR_TABLE, params)
         if is_admin_review:

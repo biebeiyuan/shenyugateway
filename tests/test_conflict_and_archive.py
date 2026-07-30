@@ -142,7 +142,9 @@ def test_conflict_book_invariants():
         listed = await service.list_books()
         assert listed["ok"], listed
         assert listed["books"][0]["title"] == "改了标题"
-        assert supabase.queries[-1][1]["select"].split(",")[0] == "title"
+        listed_fields = supabase.queries[-1][1]["select"].split(",")
+        assert listed_fields[:2] == ["id", "title"]
+        assert "original_text" not in listed_fields
 
         # shelf renders titles only, never text
         shelf = render_conflict_shelf([read["book"]])

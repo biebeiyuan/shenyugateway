@@ -135,7 +135,7 @@ def room_tool_definitions(tool_names: Optional[Iterable[str]] = None) -> list[di
             },
         },
         # The old room_conflict_shelf handler remains for compatibility, but
-        # the public room surface uses the same shenyu_books read/write/annotate entry as chat.
+        # the public room surface uses the same shenyu_books list/read/write/annotate entry as chat.
         {
             "type": "function",
             "function": {
@@ -213,7 +213,7 @@ def room_broker_tool() -> dict:
         "room_drawer_notes": "圆儿的纸条（limit?）",
         "room_locked_drawer": "上锁的抽屉（action: write|read, content?）",
         "room_star_map": "星图墙（action: look|search|review|feedback|connect, query?, feedback?: connected|positive|negative|should_surface|skipped|missed, items?=批量, star_ids?=连星座）",
-        "shenyu_books": "共享书架（action: read|write|annotate, book?: identity|home|origin；write 仅限 identity）",
+        "shenyu_books": "共享书架（action: list|read|write|annotate；list 无参数；read origin 要 book_id/title；write 仅限 identity）",
         "room_wall_pins": "墙上便签（action: list|add|done, content?, pin_id?）",
         "room_octopus_pillow": "章鱼抱枕（无参数）",
     }

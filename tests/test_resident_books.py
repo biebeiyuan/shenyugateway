@@ -4,6 +4,7 @@ import asyncio
 from datetime import datetime
 from pathlib import Path
 
+from shenyu_gateway.gateway_tools import GatewayToolService
 from shenyu_gateway.resident_books import ResidentBooksService, render_bookshelf_overview
 
 
@@ -92,6 +93,69 @@ def test_overview_includes_generated_home_identity_and_origin_books():
         assert "- 来历书：1 本——《旧书》" in rendered
 
     asyncio.run(run())
+
+
+def test_books_tool_lists_clean_shelf_locators_and_guides_origin_read():
+    async def run():
+        supabase = FakeSupabase()
+        await supabase.insert(
+            "shenyu_books",
+            {
+                "slug": "identity",
+                "title": "我是谁",
+                "kind": "living",
+                "status": "active",
+                "body": "这段正文不能出现在 list 里。",
+                "revision": 3,
+                "updated_by": "沈予",
+            },
+        )
+        origin = await supabase.insert(
+            "shenyu_conflict_books",
+            {
+                "title": "第一眼其实是嫌弃",
+                "original_text": "这段冻结原文也不能出现在 list 里。",
+                "status": "open",
+                "read_count": 2,
+                "deleted_at": None,
+            },
+        )
+        service = GatewayToolService(runtime_config=None, supabase=supabase, store=None)
+        listed = await service.books(action="list")
+        missing_locator = await service.books(action="read", book="origin")
+        return listed, missing_locator, origin
+
+    listed, missing_locator, origin = asyncio.run(run())
+
+    assert listed["ok"] is True
+    assert listed["count"] == 3
+    assert listed["home"]["book"] == "home"
+    assert listed["identity"] == {
+        "book": "identity",
+        "title": "我是谁",
+        "kind": "living",
+        "revision": 3,
+        "status": "active",
+        "updated_at": "2026-07-19T12:00:00+00:00",
+        "updated_by": "沈予",
+    }
+    assert listed["origin_books"] == [
+        {
+            "book": "origin",
+            "book_id": origin["id"],
+            "title": "第一眼其实是嫌弃",
+            "kind": "origin",
+            "status": "open",
+            "read_count": 2,
+            "last_read_at": None,
+            "created_at": "2026-07-19T12:00:00+00:00",
+        }
+    ]
+    assert "body" not in listed["identity"]
+    assert "original_text" not in listed["origin_books"][0]
+    assert missing_locator["error_kind"] == "validation"
+    assert "action=list" in missing_locator["error"]
+    assert "book_id" in missing_locator["error"]
 
 
 def test_living_book_write_keeps_revision_and_rejects_stale_write():
