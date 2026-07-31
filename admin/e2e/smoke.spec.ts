@@ -127,7 +127,7 @@ test('memory graph page loads and exposes anchor management', async ({ page }) =
           title: '和老周见面',
           event_date: '2026-07-23T00:00:00Z',
           content: '今天和老周吃饭，聊了很久。',
-          recall_match: { group: 'direct', label: '直达：已确认锚点「老周」' },
+          recall_match: { group: 'direct', label: '直达：已确认锚点「老周」', anchor: { name: '老周' } },
         }],
       },
     })
@@ -149,7 +149,8 @@ test('memory graph page loads and exposes anchor management', async ({ page }) =
     await recall.fill('老周')
     await page.getByRole('button', { name: '想起', exact: true }).click()
     await expect(page.getByText('今天和老周吃饭，聊了很久。')).toBeVisible()
-    await expect(page.getByText('直达：已确认锚点「老周」')).toBeVisible()
+    await expect(page.getByText('脱口而出')).toBeVisible()
+    await expect(page.getByText('提到了「老周」')).toBeVisible()
   })
 })
 

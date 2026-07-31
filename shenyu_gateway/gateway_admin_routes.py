@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
 from .memory_graph import MemoryGraphService
-from .recall import RecallIndexService
+from .recall import RecallIndexService, recall_terms
 from .request_logs import (
     _finalize_stale_tool_stream_logs,
     _http_request_diagnostics,
@@ -567,12 +567,17 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             raise HTTPException(status_code=400, detail="query is required")
         # This intentionally bypasses GatewayToolService: no Mem counters,
         # context state, auto-sync, or graph backfill may change in preview.
-        return await RecallIndexService(deps.get_supabase_client(), cfg=cfg).recall(
+        result = await RecallIndexService(deps.get_supabase_client(), cfg=cfg).recall(
             query,
             limit=body.limit,
             auto_sync=False,
             include_trace=True,
         )
+        # The page highlights matched words in the original text; it never
+        # renders gateway scoring internals, so only the terms cross over.
+        if result.get("ok"):
+            result["tokens"] = recall_terms(query)
+        return result
 
     @router.get("/api/gateway/stars")
     async def list_stars(

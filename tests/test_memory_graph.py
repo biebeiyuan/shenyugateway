@@ -373,3 +373,54 @@ def test_name_candidates_come_from_mem_note_fields_and_skip_existing_aliases():
     names = {item["name"] for item in result["candidates"]}
     assert "老周" not in names
     assert "旧名字" not in names
+
+
+def test_snapshot_reports_last_mentioned_and_recent_activity():
+    supabase = GraphSupabase({
+        ENTITY_TABLE: [entity("e1", "老周"), entity("e2", "阿元")],
+        ALIAS_TABLE: [],
+        MENTION_TABLE: [
+            {
+                "id": "m1",
+                "entity_id": "e1",
+                "source_table": "journal",
+                "source_type": "journal",
+                "source_id": "j-1",
+                "status": "confirmed",
+                "updated_at": "2026-07-20T08:00:00+00:00",
+            },
+            {
+                "id": "m2",
+                "entity_id": "e1",
+                "source_table": "windowsill",
+                "source_type": "windowsill",
+                "source_id": "w-1",
+                "status": "confirmed",
+                "created_at": "2026-07-28T08:00:00+00:00",
+            },
+        ],
+        RELATION_TABLE: [
+            {
+                "id": "r1",
+                "source_entity_id": "e1",
+                "target_entity_id": "e2",
+                "relation_type": "认得",
+                "status": "confirmed",
+                "updated_at": "2026-07-25T08:00:00+00:00",
+            },
+        ],
+    })
+
+    result = asyncio.run(MemoryGraphService(supabase).snapshot())
+
+    by_id = {item["id"]: item for item in result["entities"]}
+    assert by_id["e1"]["last_mentioned_at"] == "2026-07-28T08:00:00+00:00"
+    assert by_id["e2"]["last_mentioned_at"] is None
+    recent = result["recent"]
+    assert [item["kind"] for item in recent] == ["mention", "relation", "mention"]
+    assert recent[0]["entity_name"] == "老周"
+    assert recent[0]["source_type"] == "windowsill"
+    relation_item = next(item for item in recent if item["kind"] == "relation")
+    assert relation_item["source_name"] == "老周"
+    assert relation_item["target_name"] == "阿元"
+    assert relation_item["relation_type"] == "认得"

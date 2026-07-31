@@ -29,8 +29,8 @@ import {
   type MemoryEntityRelation,
   type MemoryGraphNameCandidate,
   type MemoryGraphRecallPreviewItem,
+  type MemoryGraphRecentItem,
   type MemoryEntityType,
-  type MemoryRecallMatchGroup,
   type SourceEntityMention,
 } from '@/api/memoryGraph'
 
@@ -39,6 +39,7 @@ const tab = ref<'net' | 'recall'>('net')
 const entities = ref<MemoryEntity[]>([])
 const relations = ref<MemoryEntityRelation[]>([])
 const anchorEntities = ref<MemoryEntity[]>([])
+const recentActivity = ref<MemoryGraphRecentItem[]>([])
 const available = ref(true)
 const loadError = ref('')
 const loading = ref(false)
@@ -69,6 +70,8 @@ const recalling = ref(false)
 const recallHasRun = ref(false)
 const recallError = ref('')
 const recallItems = ref<MemoryGraphRecallPreviewItem[]>([])
+const recallTokens = ref<string[]>([])
+const recallRunId = ref(0)
 const recallManualAnchorIds = ref<Record<string, string[]>>({})
 const recallSourceMentions = ref<Record<string, SourceEntityMention[]>>({})
 const recallSourceMentionsLoaded = ref<Record<string, boolean>>({})
@@ -82,10 +85,10 @@ const entityTypeOptions = [
 ]
 const filterTypeOptions = [{ label: '全部', value: '' }, ...entityTypeOptions]
 const TYPE_COLOR: Record<string, string> = {
-  person: '#2a78d6',
-  place: '#1baf7a',
-  object: '#eb6834',
-  topic: '#4a3aa7',
+  person: '#6e7f57',
+  place: '#5e7386',
+  object: '#b0813f',
+  topic: '#7e6485',
 }
 
 const selected = computed(() => entities.value.find((item) => item.id === selectedId.value) || null)
@@ -102,12 +105,13 @@ const selectedRelations = computed(() => relations.value.filter((item) => (
 )))
 const confirmedRelationCount = computed(() => relations.value.filter((r) => r.status === 'confirmed').length)
 const recallGroups = computed(() => [
-  { key: 'direct', label: '直达', items: recallItems.value.filter((item) => item.recall_match?.group === 'direct') },
-  { key: 'related', label: '顺着关系', items: recallItems.value.filter((item) => item.recall_match?.group === 'related') },
-  { key: 'other', label: '联想', items: recallItems.value.filter((item) => item.recall_match?.group === 'other') },
+  { key: 'direct', label: '脱口而出', whisper: '名字一出口，它就来了', items: recallItems.value.filter((item) => item.recall_match?.group === 'direct') },
+  { key: 'related', label: '由此及彼', whisper: '顺着红线带出来的', items: recallItems.value.filter((item) => item.recall_match?.group === 'related') },
+  { key: 'other', label: '浮想', whisper: '意思相近，自己泛上来的', items: recallItems.value.filter((item) => item.recall_match?.group === 'other') },
 ].filter((group) => group.items.length))
+const recallOrderedItems = computed(() => recallGroups.value.flatMap((group) => group.items))
 
-// ---------- net layout (deterministic force simulation) ----------
+// ---------- net layout (deterministic force simulation, typographic nodes) ----------
 const GRAPH_W = 880
 const GRAPH_H = 600
 
@@ -115,10 +119,8 @@ interface GraphNode {
   entity: MemoryEntity
   x: number
   y: number
-  r: number
-  labelY: number
-  subY: number
-  dots: { x: number; y: number }[]
+  size: number
+  warm: '' | 'warm' | 'fresh'
 }
 interface GraphEdge {
   relation: MemoryEntityRelation
@@ -128,12 +130,24 @@ interface GraphEdge {
   dashed: boolean
 }
 
+function warmTier(entity: MemoryEntity): '' | 'warm' | 'fresh' {
+  const at = entity.last_mentioned_at
+  if (!at) return ''
+  const time = new Date(at).getTime()
+  if (!time) return ''
+  const days = (Date.now() - time) / 86400000
+  if (days <= 2) return 'fresh'
+  if (days <= 7) return 'warm'
+  return ''
+}
+
 const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[] }>(() => {
   const active = entities.value.filter((item) => item.status === 'active')
   const n = active.length
   if (!n) return { nodes: [], edges: [] }
   const indexById: Record<string, number> = Object.fromEntries(active.map((item, i) => [item.id, i]))
-  const rs = active.map((item) => 13 + Math.min(13, Math.sqrt(item.mention_count || 0) * 3.6))
+  const sizes = active.map((item) => 15 + Math.min(10, Math.sqrt(item.mention_count || 0) * 2.6))
+  const rs = active.map((item, i) => Math.min(112, Math.max(38, item.canonical_name.length * sizes[i] * 0.62)))
   const xs = active.map((_, i) => GRAPH_W / 2 + (170 + (i % 3) * 46) * Math.cos(i * 2.399963))
   const ys = active.map((_, i) => GRAPH_H / 2 - 14 + (120 + (i % 3) * 32) * Math.sin(i * 2.399963))
   const links: Array<[number, number]> = []
@@ -171,7 +185,7 @@ const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[] }>(() => {
       const dx = xs[b] - xs[a]
       const dy = ys[b] - ys[a]
       const d = Math.sqrt(dx * dx + dy * dy) || 1
-      const rest = rs[a] + rs[b] + 128
+      const rest = rs[a] + rs[b] + 78
       const pull = (d - rest) * 0.016
       fx[a] += (dx / d) * pull
       fy[a] += (dy / d) * pull
@@ -181,22 +195,17 @@ const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[] }>(() => {
     for (let i = 0; i < n; i++) {
       xs[i] += Math.max(-13, Math.min(13, fx[i]))
       ys[i] += Math.max(-13, Math.min(13, fy[i]))
-      xs[i] = Math.max(72, Math.min(GRAPH_W - 72, xs[i]))
-      ys[i] = Math.max(78, Math.min(GRAPH_H - 96, ys[i]))
+      xs[i] = Math.max(96, Math.min(GRAPH_W - 96, xs[i]))
+      ys[i] = Math.max(64, Math.min(GRAPH_H - 72, ys[i]))
     }
   }
-  const nodes: GraphNode[] = active.map((entity, i) => {
-    const r = rs[i]
-    const dotCount = Math.min(6, entity.mention_count || 0)
-    const dots: { x: number; y: number }[] = []
-    for (let k = 0; k < dotCount; k++) {
-      const deg = dotCount === 1 ? -90 : -200 + k * (220 / (dotCount - 1))
-      const ang = (deg * Math.PI) / 180
-      const rr = r + 12 + (k % 2) * 6
-      dots.push({ x: xs[i] + rr * Math.cos(ang), y: ys[i] + rr * Math.sin(ang) })
-    }
-    return { entity, x: xs[i], y: ys[i], r, labelY: ys[i] + r + 20, subY: ys[i] + r + 35, dots }
-  })
+  const nodes: GraphNode[] = active.map((entity, i) => ({
+    entity,
+    x: xs[i],
+    y: ys[i],
+    size: sizes[i],
+    warm: warmTier(entity),
+  }))
   const nodeById: Record<string, GraphNode> = Object.fromEntries(nodes.map((node) => [node.entity.id, node]))
   const edges: GraphEdge[] = []
   for (const relation of relations.value) {
@@ -219,49 +228,7 @@ const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[] }>(() => {
   return { nodes, edges }
 })
 
-// ---------- recall ripple layout ----------
-const RIPPLE_W = 880
-const RIPPLE_H = 620
-
-interface RippleNode {
-  item: MemoryGraphRecallPreviewItem
-  x: number
-  y: number
-  group: MemoryRecallMatchGroup
-  color: string
-  label: string
-  threadLabel: string
-}
-
-const rippleLayout = computed<{ cx: number; cy: number; rings: number[]; nodes: RippleNode[] }>(() => {
-  const cx = RIPPLE_W / 2
-  const cy = 300
-  const ringR: Record<MemoryRecallMatchGroup, number> = { direct: 120, related: 205, other: 285 }
-  const nodes: RippleNode[] = []
-  for (const group of ['direct', 'related', 'other'] as MemoryRecallMatchGroup[]) {
-    const items = recallItems.value.filter((item) => item.recall_match?.group === group)
-    items.forEach((item, i) => {
-      const ang = ((-90 + (i * 360) / Math.max(items.length, 3)) * Math.PI) / 180
-      const anchorType = group === 'related'
-        ? item.recall_match?.path?.to?.type
-        : item.recall_match?.anchor?.type
-      nodes.push({
-        item,
-        x: cx + ringR[group] * Math.cos(ang),
-        y: cy + ringR[group] * Math.sin(ang),
-        group,
-        color: TYPE_COLOR[anchorType || ''] || '#a4938d',
-        label: (item.title || sourceLabel(item.source_type)).slice(0, 12),
-        threadLabel: group === 'related'
-          ? (item.recall_match?.path?.relation_type || '')
-          : group === 'direct'
-            ? (item.recall_match?.anchor?.name || '')
-            : '',
-      })
-    })
-  }
-  return { cx, cy, rings: [120, 205, 285], nodes }
-})
+// ---------- recall (shown the way Shenyu receives it; gateway accounting stays hidden) ----------
 
 onMounted(async () => {
   await Promise.all([loadGraph(), loadAnchorEntities(), loadCandidates()])
@@ -290,7 +257,7 @@ function sourceLabel(type: string): string {
 }
 
 function sourceKey(item: Pick<MemoryGraphRecallPreviewItem, 'source_table' | 'source_id'>): string {
-  return `${item.source_table} ${item.source_id}`
+  return `${item.source_table} ${item.source_id}`
 }
 
 function sourceMentions(item: MemoryGraphRecallPreviewItem): SourceEntityMention[] {
@@ -299,6 +266,19 @@ function sourceMentions(item: MemoryGraphRecallPreviewItem): SourceEntityMention
 
 function sourceDate(item: MemoryGraphRecallPreviewItem): string {
   return (item.event_date || '').replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '')
+}
+
+function timeAgo(at?: string): string {
+  if (!at) return ''
+  const time = new Date(at).getTime()
+  if (!time) return ''
+  const days = Math.floor((Date.now() - time) / 86400000)
+  if (days <= 0) return '今天'
+  if (days === 1) return '昨天'
+  if (days < 30) return `${days} 天前`
+  const months = Math.floor(days / 30)
+  if (months < 12) return `${months} 个月前`
+  return `${Math.floor(months / 12)} 年前`
 }
 
 function selectEntity(entity: MemoryEntity) {
@@ -322,6 +302,7 @@ async function loadGraph(keepSelection = true) {
     loadError.value = result.error || ''
     entities.value = result.entities || []
     relations.value = result.relations || []
+    recentActivity.value = result.recent || []
     if (!keepSelection || !entities.value.some((item) => item.id === selectedId.value)) {
       selectedId.value = ''
     } else if (selected.value) {
@@ -579,13 +560,17 @@ async function runRecallPreview() {
     const result = await previewMemoryGraphRecall(text)
     if (!result.ok) {
       recallItems.value = []
+      recallTokens.value = []
       recallError.value = result.error || '这次没有读到 recall 结果'
       return
     }
     recallItems.value = result.items || []
+    recallTokens.value = result.tokens || []
+    recallRunId.value += 1
     await loadRecallSourceMentions(recallItems.value)
   } catch {
     recallItems.value = []
+    recallTokens.value = []
     recallError.value = '试着想起时没有读到结果'
   } finally {
     recalling.value = false
@@ -631,6 +616,58 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
     : relation.source_entity_id
   return entityById.value[otherId]
 }
+
+// ---------- evidence rendering ----------
+function escapeRegExp(text: string): string {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, (ch) => '\\' + ch)
+}
+
+const highlightTokens = computed(() => {
+  const tokens = recallTokens.value.filter(Boolean)
+  const text = recallQuery.value.trim()
+  const all = text ? [text, ...tokens] : [...tokens]
+  return [...new Set(all)].sort((a, b) => b.length - a.length).slice(0, 12)
+})
+
+function highlightSegments(item: MemoryGraphRecallPreviewItem): { text: string; hit: boolean }[] {
+  const content = item.content || ''
+  const tokens = highlightTokens.value
+  if (!content || !tokens.length) return [{ text: content, hit: false }]
+  const re = new RegExp(`(${tokens.map(escapeRegExp).join('|')})`, 'gi')
+  const segments: { text: string; hit: boolean }[] = []
+  let last = 0
+  for (const match of content.matchAll(re)) {
+    const index = match.index ?? 0
+    if (index > last) segments.push({ text: content.slice(last, index), hit: false })
+    segments.push({ text: match[0], hit: true })
+    last = index + match[0].length
+  }
+  if (last < content.length) segments.push({ text: content.slice(last), hit: false })
+  return segments
+}
+
+function recallDelay(item: MemoryGraphRecallPreviewItem): number {
+  return recallOrderedItems.value.indexOf(item) * 90
+}
+
+function sourceSeal(item: MemoryGraphRecallPreviewItem): string {
+  const seals: Record<string, string> = {
+    journal: '记',
+    windowsill: '窗',
+    heartbeat: '跳',
+    room: '房',
+    board: '言',
+    memory: '忆',
+    calendar: '历',
+    mem_note: 'M',
+    notebook: '笔',
+  }
+  return seals[item.source_type] || sourceLabel(item.source_type).slice(0, 1) || '·'
+}
+
+function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
+  return item.recall_match?.anchor?.name || ''
+}
 </script>
 
 <template>
@@ -675,17 +712,7 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
 
       <NSpin :show="loading">
         <div class="canvas-card">
-          <svg :viewBox="`0 0 ${GRAPH_W} ${GRAPH_H}`" role="img" aria-label="记忆网络星图">
-            <defs>
-              <filter id="mg-blur" x="-60%" y="-60%" width="220%" height="220%">
-                <feGaussianBlur stdDeviation="7" />
-              </filter>
-              <radialGradient id="mg-spec" cx="0.35" cy="0.28" r="0.8">
-                <stop offset="0%" stop-color="#ffffff" stop-opacity="0.85" />
-                <stop offset="45%" stop-color="#ffffff" stop-opacity="0.2" />
-                <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
-              </radialGradient>
-            </defs>
+          <svg :viewBox="`0 0 ${GRAPH_W} ${GRAPH_H}`" role="img" aria-label="记忆网络">
             <g v-for="edge in graphLayout.edges" :key="edge.relation.id">
               <path class="thread" :class="{ dashed: edge.dashed }" :d="edge.d" />
               <text class="thread-label" :x="edge.lx" :y="edge.ly">{{ edge.relation.relation_type }}</text>
@@ -693,8 +720,8 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
             <g
               v-for="node in graphLayout.nodes"
               :key="node.entity.id"
-              class="star"
-              :class="{ selected: node.entity.id === selectedId }"
+              class="anchor"
+              :class="[{ selected: node.entity.id === selectedId }, node.warm]"
               role="button"
               tabindex="0"
               :aria-label="`锚点：${node.entity.canonical_name}`"
@@ -702,25 +729,36 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
               @keydown.enter.prevent="selectEntity(node.entity)"
               @keydown.space.prevent="selectEntity(node.entity)"
             >
-              <circle class="halo" :cx="node.x" :cy="node.y" :r="node.r + 14" :fill="TYPE_COLOR[node.entity.entity_type]" filter="url(#mg-blur)" />
-              <circle class="orb-body" :cx="node.x" :cy="node.y" :r="node.r" :fill="TYPE_COLOR[node.entity.entity_type]" />
-              <circle :cx="node.x" :cy="node.y" :r="node.r" fill="url(#mg-spec)" />
-              <circle class="orb-rim" :cx="node.x" :cy="node.y" :r="node.r" :stroke="TYPE_COLOR[node.entity.entity_type]" />
-              <circle v-for="(dot, i) in node.dots" :key="i" class="mention-dot" :cx="dot.x" :cy="dot.y" r="3.5" />
-              <text class="star-label" :x="node.x" :y="node.labelY">{{ node.entity.canonical_name }}</text>
-              <text class="star-sub" :x="node.x" :y="node.subY">{{ typeLabel(node.entity.entity_type) }} · {{ node.entity.mention_count }}</text>
+              <circle class="type-dot" :cx="node.x" :cy="node.y - node.size - 13" r="3.2" :fill="TYPE_COLOR[node.entity.entity_type]" />
+              <text class="anchor-name" :x="node.x" :y="node.y" :style="{ fontSize: `${node.size}px` }">{{ node.entity.canonical_name }}</text>
+              <text class="anchor-sub" :x="node.x" :y="node.y + 19">{{ typeLabel(node.entity.entity_type) }} · 提及 {{ node.entity.mention_count }}</text>
             </g>
             <text v-if="!graphLayout.nodes.length" class="canvas-empty" :x="GRAPH_W / 2" :y="GRAPH_H / 2">还没有锚点，先钉一个名字</text>
           </svg>
           <div class="legend">
             <span v-for="option in entityTypeOptions" :key="option.value" class="legend-item">
-              <span class="legend-dot" :style="{ borderColor: TYPE_COLOR[option.value], background: TYPE_COLOR[option.value] + '4d' }"></span>{{ option.label }}
+              <span class="legend-dot" :style="{ background: TYPE_COLOR[option.value] }"></span>{{ option.label }}
             </span>
             <span class="legend-item"><span class="legend-line"></span>红线</span>
             <span class="legend-item"><span class="legend-line dashed"></span>候选</span>
+            <span class="legend-item legend-note">名字变暖 = 最近被提起</span>
           </div>
         </div>
       </NSpin>
+
+      <div v-if="recentActivity.length" class="recent-band">
+        <h4>最近落进网里</h4>
+        <ul>
+          <li v-for="(item, index) in recentActivity" :key="index">
+            <span class="recent-mark" :class="item.kind"></span>
+            <span class="recent-text">
+              <template v-if="item.kind === 'mention'">「{{ item.entity_name }}」在{{ sourceLabel(item.source_type || '') }}里被提起</template>
+              <template v-else>{{ item.source_name }} <i>—{{ item.relation_type }}→</i> {{ item.target_name }}</template>
+            </span>
+            <time>{{ timeAgo(item.at) }}</time>
+          </li>
+        </ul>
+      </div>
 
       <div class="create-band">
         <NSelect v-model:value="createType" :options="entityTypeOptions" aria-label="锚点类型" />
@@ -821,52 +859,34 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
       <p v-if="recallError" class="recall-error">{{ recallError }}</p>
       <NEmpty v-else-if="recallHasRun && !recalling && !recallItems.length" description="还没有找到相连的原件" />
 
-      <div v-if="recallItems.length" class="canvas-card">
-        <svg :viewBox="`0 0 ${RIPPLE_W} ${RIPPLE_H}`" role="img" aria-label="这次想起的涟漪">
-          <defs>
-            <radialGradient id="mg-spec-r" cx="0.35" cy="0.28" r="0.8">
-              <stop offset="0%" stop-color="#ffffff" stop-opacity="0.85" />
-              <stop offset="45%" stop-color="#ffffff" stop-opacity="0.2" />
-              <stop offset="100%" stop-color="#ffffff" stop-opacity="0" />
-            </radialGradient>
-          </defs>
-          <circle v-for="r in rippleLayout.rings" :key="r" class="ripple-ring" :cx="rippleLayout.cx" :cy="rippleLayout.cy" :r="r" />
-          <text class="ring-tag" :x="rippleLayout.cx" :y="rippleLayout.cy - 128">直达</text>
-          <text class="ring-tag" :x="rippleLayout.cx" :y="rippleLayout.cy - 213">顺着关系</text>
-          <text class="ring-tag" :x="rippleLayout.cx" :y="rippleLayout.cy - 293">联想</text>
-          <g v-for="(node, i) in rippleLayout.nodes" :key="i">
-            <template v-if="node.group !== 'other'">
-              <path class="thread" :d="`M ${rippleLayout.cx} ${rippleLayout.cy} Q ${(rippleLayout.cx + node.x) / 2} ${(rippleLayout.cy + node.y) / 2 + 14} ${node.x} ${node.y}`" />
-              <text v-if="node.threadLabel" class="thread-label" :x="(rippleLayout.cx + node.x) / 2" :y="(rippleLayout.cy + node.y) / 2 + 2">{{ node.threadLabel }}</text>
-            </template>
-            <circle v-if="node.group === 'other'" class="echo-ring" :cx="node.x" :cy="node.y" r="9" />
-            <template v-else>
-              <circle class="orb-body" :cx="node.x" :cy="node.y" r="11" :fill="node.color" />
-              <circle :cx="node.x" :cy="node.y" r="11" fill="url(#mg-spec-r)" />
-              <circle class="orb-rim" :cx="node.x" :cy="node.y" r="11" :stroke="node.color" />
-            </template>
-            <text class="star-sub" :x="node.x" :y="node.y + 26">{{ node.label }}</text>
-          </g>
-          <circle class="q-glow" :cx="rippleLayout.cx" :cy="rippleLayout.cy" r="42" />
-          <circle class="orb-body" :cx="rippleLayout.cx" :cy="rippleLayout.cy" r="13" fill="#aa3c60" />
-          <circle :cx="rippleLayout.cx" :cy="rippleLayout.cy" r="13" fill="url(#mg-spec-r)" />
-          <circle class="orb-rim" :cx="rippleLayout.cx" :cy="rippleLayout.cy" r="13" stroke="#aa3c60" />
-          <text class="q-label" :x="rippleLayout.cx" :y="rippleLayout.cy + 40">「{{ recallQuery.trim().slice(0, 20) }}」</text>
-        </svg>
-      </div>
+      <div v-if="recallItems.length" :key="recallRunId" class="recall-sheet-wrap">
+        <header class="recall-thought">
+          <p class="thought-query">「{{ recallQuery.trim() }}」</p>
+          <p class="recall-verdict-line">想起了 {{ recallItems.length }} 件</p>
+        </header>
 
-      <div v-if="recallGroups.length" class="recall-groups">
         <section v-for="group in recallGroups" :key="group.key" class="recall-group">
-          <h4>{{ group.label }}</h4>
-          <article v-for="item in group.items" :key="sourceKey(item)" class="recall-item">
-            <header class="recall-item-head">
+          <h4>{{ group.label }}<small>{{ group.whisper }}</small></h4>
+          <article
+            v-for="item in group.items"
+            :key="recallRunId + sourceKey(item)"
+            class="recall-card"
+            :style="{ animationDelay: `${recallDelay(item)}ms` }"
+          >
+            <header class="recall-card-head">
+              <span class="seal" aria-hidden="true">{{ sourceSeal(item) }}</span>
               <div>
                 <b>{{ item.title || sourceLabel(item.source_type) }}</b>
                 <span>{{ sourceLabel(item.source_type) }}<template v-if="sourceDate(item)"> · {{ sourceDate(item) }}</template></span>
               </div>
-              <NTag size="small" :bordered="false">{{ item.recall_match.label }}</NTag>
             </header>
-            <pre class="recall-content">{{ item.content }}</pre>
+            <p v-if="directAnchorName(item)" class="why-line">提到了「{{ directAnchorName(item) }}」</p>
+            <p v-else-if="item.recall_match?.path?.relation_type" class="path-line">
+              {{ item.recall_match.path.from?.name }}
+              <i>—{{ item.recall_match.path.relation_type }}→</i>
+              {{ item.recall_match.path.to?.name }}
+            </p>
+            <p class="recall-content"><template v-for="(segment, segIndex) in highlightSegments(item)" :key="segIndex"><mark v-if="segment.hit">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></p>
             <p v-if="item.content_complete === false" class="recall-incomplete">原文暂时无法完整读取：{{ item.content_error }}</p>
             <div v-if="available" class="recall-anchor-editor">
               <NSelect
@@ -901,46 +921,50 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
 
 <style scoped>
 .graph-page {
-  --mg-ink: #231a19;
-  --mg-ink-2: #6e615f;
-  --mg-ink-3: #a3928f;
-  --mg-hairline: #e7dbd6;
-  --mg-panel: #fbf8f6;
-  --mg-thread: #c25573;
-  --mg-rose: #aa3c60;
-  --mg-mention: #a4938d;
-  --mg-halo: #f9f1ee;
+  --mg-paper: #fdfaf3;
+  --mg-panel: #fffdf8;
+  --mg-ink: #3c322b;
+  --mg-ink-2: #7e6e5f;
+  --mg-ink-3: #ac9c8b;
+  --mg-hairline: #e9decd;
+  --mg-accent: #b2552f;
+  --mg-accent-ink: #8f4023;
+  --mg-accent-soft: rgba(178, 85, 47, 0.1);
+  --mg-serif: 'Cormorant Garamond', 'Noto Serif SC', 'Songti SC', Georgia, serif;
   width: min(1180px, calc(100vw - 32px));
   margin: 0 auto;
-  padding: 20px 0 40px;
+  padding: 20px 0 48px;
   color: var(--mg-ink);
 }
 
 .page-head {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   justify-content: space-between;
   gap: 16px;
   flex-wrap: wrap;
 }
 
 .page-head h2 {
-  font-size: 22px;
-  font-weight: 600;
+  font-family: var(--mg-serif);
+  font-size: 30px;
+  font-weight: 500;
+  letter-spacing: 0.01em;
 }
 
 .page-head > div > span {
   color: var(--mg-ink-3);
   font-size: 12px;
+  letter-spacing: 0.06em;
 }
 
 .tab-rail {
   display: inline-flex;
-  gap: 4px;
-  padding: 4px;
+  gap: 2px;
+  padding: 3px;
   border: 1px solid var(--mg-hairline);
   border-radius: 999px;
-  background: #f1e9e6;
+  background: var(--mg-paper);
 }
 
 .tab-rail button {
@@ -949,15 +973,16 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
   background: none;
   color: var(--mg-ink-3);
   font-size: 13px;
-  padding: 6px 16px;
+  padding: 6px 18px;
   cursor: pointer;
+  transition: color 0.2s, background 0.2s;
 }
 
 .tab-rail button[aria-selected='true'] {
   background: var(--mg-panel);
   color: var(--mg-ink);
   font-weight: 600;
-  box-shadow: 0 1px 2px rgba(35, 26, 25, 0.08);
+  box-shadow: 0 1px 2px rgba(60, 50, 43, 0.1);
 }
 
 .unavailable {
@@ -975,7 +1000,7 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
   display: grid;
   grid-template-columns: minmax(180px, 300px) 110px auto auto;
   gap: 8px;
-  margin: 16px 0 12px;
+  margin: 18px 0 12px;
 }
 
 .drawer {
@@ -983,7 +1008,7 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
   padding: 10px 14px;
   border: 1px dashed var(--mg-hairline);
   border-radius: 12px;
-  background: var(--mg-panel);
+  background: var(--mg-paper);
 }
 
 .drawer-list {
@@ -1015,8 +1040,8 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
 
 .canvas-card {
   border: 1px solid var(--mg-hairline);
-  border-radius: 16px;
-  background: radial-gradient(ellipse 100% 85% at 50% 112%, #f6dfe3 0%, #f7ece9 45%, #fbf7f5 80%);
+  border-radius: 18px;
+  background: var(--mg-paper);
   overflow: hidden;
 }
 
@@ -1029,8 +1054,10 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
 .legend {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px 16px;
-  padding: 0 14px 10px;
+  align-items: center;
+  gap: 4px 18px;
+  padding: 12px 16px 14px;
+  border-top: 1px dashed var(--mg-hairline);
   font-size: 12px;
   color: var(--mg-ink-2);
 }
@@ -1042,113 +1069,189 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
 }
 
 .legend-dot {
-  width: 10px;
-  height: 10px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
-  border: 1.5px solid;
-  box-sizing: border-box;
 }
 
 .legend-line {
-  width: 16px;
-  border-top: 2px solid var(--mg-thread);
+  width: 18px;
+  border-top: 1.5px solid var(--mg-accent);
+  opacity: 0.6;
 }
 
 .legend-line.dashed {
   border-top-style: dashed;
 }
 
+.legend-note {
+  margin-left: auto;
+  color: var(--mg-ink-3);
+  font-style: italic;
+}
+
 .thread {
   fill: none;
-  stroke: var(--mg-thread);
-  stroke-width: 1.6;
-  opacity: 0.6;
+  stroke: var(--mg-accent);
+  stroke-width: 1.1;
+  opacity: 0.45;
 }
 
 .thread.dashed {
-  stroke-dasharray: 5 4;
+  stroke-dasharray: 4 4;
+  opacity: 0.32;
 }
 
 .thread-label {
-  font-size: 11px;
+  font-family: var(--mg-serif);
+  font-size: 11.5px;
+  font-style: italic;
   fill: var(--mg-ink-2);
   text-anchor: middle;
   paint-order: stroke;
-  stroke: var(--mg-halo);
+  stroke: var(--mg-paper);
   stroke-width: 4px;
   stroke-linejoin: round;
 }
 
-.star {
+.anchor {
   cursor: pointer;
 }
 
-.star:focus {
+.anchor:focus {
   outline: none;
 }
 
-.halo {
-  opacity: 0.16;
-  transition: opacity 0.3s;
+.type-dot {
+  opacity: 0.9;
 }
 
-.star.selected .halo {
-  opacity: 0.5;
+.anchor.fresh .type-dot {
+  stroke: var(--mg-accent);
+  stroke-width: 1.5;
+  stroke-opacity: 0.35;
 }
 
-.orb-body {
-  fill-opacity: 0.3;
-}
-
-.orb-rim {
-  fill: none;
-  stroke-width: 1.6;
-  stroke-opacity: 0.85;
-  transition: stroke-width 0.15s;
-}
-
-.star:hover .orb-rim,
-.star:focus-visible .orb-rim,
-.star.selected .orb-rim {
-  stroke-width: 3;
-}
-
-.mention-dot {
-  fill: var(--mg-mention);
-  opacity: 0.85;
-}
-
-.star-label {
-  font-size: 14px;
+.anchor-name {
+  font-family: var(--mg-serif);
   font-weight: 600;
   fill: var(--mg-ink);
   text-anchor: middle;
+  dominant-baseline: middle;
   pointer-events: none;
   paint-order: stroke;
-  stroke: var(--mg-halo);
+  stroke: var(--mg-paper);
   stroke-width: 3px;
   stroke-linejoin: round;
+  transition: fill 0.3s;
 }
 
-.star-sub {
-  font-size: 10.5px;
+.anchor-sub {
+  font-size: 11px;
   fill: var(--mg-ink-3);
   text-anchor: middle;
   pointer-events: none;
   font-variant-numeric: tabular-nums;
 }
 
+.anchor.warm .anchor-name {
+  fill: #7c4630;
+}
+
+.anchor.fresh .anchor-name {
+  fill: var(--mg-accent);
+}
+
+.anchor:hover .anchor-name,
+.anchor:focus-visible .anchor-name {
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.anchor.selected .anchor-name {
+  fill: var(--mg-accent-ink);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
 .canvas-empty {
   fill: var(--mg-ink-3);
-  font-size: 14px;
+  font-family: var(--mg-serif);
+  font-style: italic;
+  font-size: 15px;
   text-anchor: middle;
+}
+
+.recent-band {
+  margin-top: 14px;
+  padding: 14px 20px 10px;
+  border: 1px solid var(--mg-hairline);
+  border-radius: 14px;
+  background: var(--mg-panel);
+}
+
+.recent-band h4 {
+  font-family: var(--mg-serif);
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--mg-ink-2);
+  letter-spacing: 0.05em;
+  margin-bottom: 6px;
+}
+
+.recent-band ul {
+  list-style: none;
+  display: grid;
+  gap: 2px;
+}
+
+.recent-band li {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 3px 0;
+  font-size: 13px;
+}
+
+.recent-mark {
+  flex: none;
+  width: 14px;
+  text-align: center;
+}
+
+.recent-mark.mention::before {
+  content: '○';
+  color: var(--mg-ink-3);
+  font-size: 10px;
+}
+
+.recent-mark.relation::before {
+  content: '—';
+  color: var(--mg-accent);
+}
+
+.recent-text {
+  color: var(--mg-ink);
+}
+
+.recent-text i {
+  color: var(--mg-accent);
+  font-style: normal;
+  padding: 0 2px;
+}
+
+.recent-band time {
+  margin-left: auto;
+  color: var(--mg-ink-3);
+  font-size: 11.5px;
+  font-variant-numeric: tabular-nums;
 }
 
 .create-band {
   display: grid;
   grid-template-columns: 110px minmax(140px, 1fr) minmax(200px, 1.4fr) auto;
   gap: 8px;
-  margin: 14px 0 0;
+  margin: 16px 0 0;
 }
 
 .candidate-band {
@@ -1175,8 +1278,8 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
 }
 
 .candidate-chip:hover {
-  border-color: var(--mg-rose);
-  color: var(--mg-rose);
+  border-color: var(--mg-accent);
+  color: var(--mg-accent);
 }
 
 .candidate-chip small {
@@ -1184,10 +1287,10 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
 }
 
 .detail {
-  margin-top: 16px;
-  padding: 18px 20px;
+  margin-top: 18px;
+  padding: 22px 24px;
   border: 1px solid var(--mg-hairline);
-  border-radius: 16px;
+  border-radius: 18px;
   background: var(--mg-panel);
 }
 
@@ -1207,18 +1310,16 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
 }
 
 .detail-title h3 {
-  font-size: 19px;
+  font-family: var(--mg-serif);
+  font-size: 26px;
   font-weight: 600;
-  margin: 0;
 }
 
 .type-chip {
   color: #fff;
   font-size: 11px;
-  font-weight: 600;
   border-radius: 999px;
-  padding: 1px 10px;
-  letter-spacing: 0.08em;
+  padding: 2px 10px;
 }
 
 .detail-meta {
@@ -1233,21 +1334,24 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
 
 .edit-row {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(180px, 1.5fr) auto;
+  grid-template-columns: minmax(140px, 240px) 1fr auto;
   gap: 8px;
-  margin: 14px 0 4px;
+  margin-top: 12px;
 }
 
 .detail-block {
-  padding: 14px 0 0;
+  margin-top: 16px;
+  border-top: 1px solid var(--mg-hairline);
+  padding-top: 14px;
 }
 
 .detail-block h4 {
-  margin: 0 0 8px;
-  font-size: 12px;
+  font-family: var(--mg-serif);
+  font-size: 16px;
   font-weight: 600;
-  letter-spacing: 0.18em;
-  color: var(--mg-ink-3);
+  color: var(--mg-ink-2);
+  letter-spacing: 0.05em;
+  margin-bottom: 8px;
 }
 
 .tag-list {
@@ -1258,38 +1362,43 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
 }
 
 .tag-action {
-  margin-left: 6px;
   border: 0;
-  background: transparent;
+  background: none;
   color: var(--mg-ink-3);
   cursor: pointer;
-  font-size: 12px;
+  font-size: 11px;
+  margin-left: 4px;
+  padding: 0 2px;
+}
+
+.tag-action:hover {
+  color: var(--mg-accent);
 }
 
 .tag-action.confirm {
-  color: var(--mg-rose);
-  font-weight: 600;
+  color: var(--mg-accent-ink);
 }
 
 .inline-add {
   display: inline-flex;
   gap: 6px;
   align-items: center;
-  width: 180px;
+}
+
+.inline-add :deep(.n-input) {
+  width: 140px;
 }
 
 .source-counts {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
+  gap: 8px 18px;
+  color: var(--mg-ink-2);
+  font-size: 13px;
 }
 
-.source-counts span {
-  padding: 4px 9px;
-  border: 1px solid var(--mg-hairline);
-  border-radius: 8px;
-  font-size: 12px;
-  color: var(--mg-ink-2);
+.source-counts b {
+  font-variant-numeric: tabular-nums;
 }
 
 .muted {
@@ -1298,7 +1407,7 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
 
 .relation-list {
   display: grid;
-  gap: 2px;
+  gap: 8px;
   margin-bottom: 10px;
 }
 
@@ -1307,168 +1416,222 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  padding: 8px 2px;
-  border-bottom: 1px solid #f1e7e3;
+  padding: 8px 12px;
+  border: 1px solid var(--mg-hairline);
+  border-radius: 12px;
+  background: var(--mg-paper);
 }
 
 .relation-row > div:first-child {
   display: flex;
-  gap: 10px;
   align-items: baseline;
+  gap: 10px;
   flex-wrap: wrap;
 }
 
 .relation-row b {
-  font-size: 13.5px;
-}
-
-.relation-row span {
-  font-size: 13px;
-  color: var(--mg-ink-2);
+  color: var(--mg-accent-ink);
+  font-family: var(--mg-serif);
+  font-size: 15px;
 }
 
 .relation-row small {
   color: var(--mg-ink-3);
-  font-size: 12px;
 }
 
 .relation-actions {
   display: flex;
   gap: 6px;
+  flex: none;
 }
 
 .relation-form {
   display: grid;
-  grid-template-columns: minmax(140px, 1fr) minmax(120px, 1fr) minmax(160px, 1.2fr) auto;
+  grid-template-columns: minmax(160px, 1.2fr) minmax(120px, 0.8fr) minmax(160px, 1fr) auto;
   gap: 8px;
 }
 
+/* ---------- 想起的一瞬间 ---------- */
 .recall-bar {
   display: grid;
-  grid-template-columns: minmax(220px, 480px) auto;
+  grid-template-columns: 1fr auto;
   gap: 8px;
-  margin: 16px 0 12px;
+  margin: 18px 0 14px;
 }
 
-.recall-error,
-.recall-incomplete {
-  margin: 0 0 12px;
-  padding: 10px 14px;
-  color: #8d4c25;
-  background: #fff7ed;
-  border-radius: 10px;
-  font-size: 12px;
-}
-
-.ripple-ring {
-  fill: none;
-  stroke: var(--mg-hairline);
-  stroke-width: 1;
-}
-
-.ring-tag {
-  font-size: 11px;
-  fill: var(--mg-ink-3);
-  letter-spacing: 0.24em;
-  text-anchor: middle;
-}
-
-.echo-ring {
-  fill: none;
-  stroke: var(--mg-ink-3);
-  stroke-width: 1.5;
-  stroke-dasharray: 4 3;
-  opacity: 0.8;
-}
-
-.q-glow {
-  fill: rgba(194, 85, 115, 0.16);
-}
-
-.q-label {
+.recall-error {
+  color: #a4472f;
   font-size: 13px;
-  font-weight: 600;
-  fill: var(--mg-ink);
-  text-anchor: middle;
-  paint-order: stroke;
-  stroke: var(--mg-halo);
-  stroke-width: 3px;
-  stroke-linejoin: round;
+  padding: 10px 14px;
+  border-left: 3px solid #c8956a;
+  background: #fff8f1;
 }
 
-.recall-groups {
-  display: grid;
-  gap: 14px;
-  margin-top: 14px;
+.recall-thought {
+  padding: 24px 28px 18px;
+  border: 1px solid var(--mg-hairline);
+  border-radius: 18px;
+  background: var(--mg-paper);
+}
+
+.thought-query {
+  font-family: var(--mg-serif);
+  font-size: 30px;
+  font-style: italic;
+  font-weight: 500;
+  line-height: 1.3;
+  color: var(--mg-ink);
+}
+
+.recall-verdict-line {
+  margin-top: 8px;
+  font-family: var(--mg-serif);
+  font-style: italic;
+  color: var(--mg-ink-2);
+  font-size: 15px;
 }
 
 .recall-group {
-  border: 1px solid var(--mg-hairline);
-  border-radius: 16px;
-  background: var(--mg-panel);
-  padding: 14px 18px;
+  margin-top: 24px;
 }
 
 .recall-group h4 {
-  margin: 0 0 8px;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.22em;
-  color: var(--mg-ink-2);
-}
-
-.recall-item {
-  padding: 12px 0;
-  border-top: 1px solid #f1e7e3;
-}
-
-.recall-item-head {
   display: flex;
-  align-items: flex-start;
-  justify-content: space-between;
+  align-items: baseline;
+  gap: 12px;
+  font-family: var(--mg-serif);
+  font-size: 19px;
+  font-weight: 600;
+  color: var(--mg-ink);
+  letter-spacing: 0.08em;
+  margin-bottom: 12px;
+}
+
+.recall-group h4 small {
+  font-size: 12px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--mg-ink-3);
+  letter-spacing: 0.02em;
+}
+
+.recall-group h4::after {
+  content: '';
+  flex: 1;
+  border-top: 1px solid var(--mg-hairline);
+}
+
+.recall-card {
+  border: 1px solid var(--mg-hairline);
+  border-radius: 16px;
+  background: var(--mg-panel);
+  padding: 18px 22px;
+  margin-bottom: 12px;
+  animation: mg-rise 0.5s ease both;
+}
+
+@keyframes mg-rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.recall-card-head {
+  display: flex;
+  align-items: center;
   gap: 12px;
 }
 
-.recall-item-head > div {
-  display: grid;
-  gap: 3px;
-  min-width: 0;
+.seal {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--mg-accent);
+  border-radius: 6px;
+  color: var(--mg-accent-ink);
+  background: var(--mg-paper);
+  font-family: var(--mg-serif);
+  font-size: 15px;
+  opacity: 0.85;
 }
 
-.recall-item-head b {
-  color: var(--mg-ink);
-  font-size: 14px;
-  overflow-wrap: anywhere;
+.recall-card-head > div {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
 }
 
-.recall-item-head span {
+.recall-card-head b {
+  font-family: var(--mg-serif);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.recall-card-head span {
   color: var(--mg-ink-3);
   font-size: 12px;
 }
 
-.recall-item-head :deep(.n-tag) {
-  max-width: min(48vw, 360px);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+.why-line {
+  margin-top: 8px;
+  font-family: var(--mg-serif);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--mg-accent-ink);
+}
+
+.path-line {
+  margin-top: 8px;
+  font-family: var(--mg-serif);
+  font-size: 14.5px;
+  color: var(--mg-ink-2);
+}
+
+.path-line i {
+  color: var(--mg-accent);
+  font-style: italic;
+  padding: 0 4px;
 }
 
 .recall-content {
-  margin: 10px 0;
-  color: var(--mg-ink);
-  font-family: inherit;
-  font-size: 13px;
-  line-height: 1.72;
+  margin-top: 10px;
   white-space: pre-wrap;
-  word-break: break-word;
+  font-size: 14px;
+  line-height: 1.85;
+  color: var(--mg-ink);
+}
+
+.recall-content mark {
+  background: none;
+  color: var(--mg-accent-ink);
+  border-bottom: 1.5px solid var(--mg-accent);
+  padding-bottom: 1px;
+  font-weight: 600;
+}
+
+.recall-incomplete {
+  margin-top: 8px;
+  font-size: 12px;
+  color: #a4472f;
 }
 
 .recall-anchor-editor {
-  display: grid;
-  grid-template-columns: minmax(180px, 1fr) auto;
-  gap: 8px;
-  padding-top: 12px;
+  margin-top: 12px;
   border-top: 1px dashed var(--mg-hairline);
+  padding-top: 12px;
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 8px;
+  align-items: start;
 }
 
 .recall-auto-anchors {
@@ -1476,25 +1639,5 @@ function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
-}
-
-@media (max-width: 820px) {
-  .toolbar,
-  .create-band,
-  .edit-row,
-  .relation-form,
-  .recall-anchor-editor {
-    grid-template-columns: 1fr;
-  }
-
-  .recall-bar {
-    grid-template-columns: 1fr auto;
-  }
-
-  .detail-title,
-  .recall-item-head {
-    align-items: stretch;
-    flex-direction: column;
-  }
 }
 </style>

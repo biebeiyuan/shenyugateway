@@ -1134,3 +1134,4 @@ def test_mem_note_recall_corpus_excludes_all_summary_and_anchor_fields():
     ]:
         assert value not in doc.embedding_text
         assert value not in doc.search_text
+

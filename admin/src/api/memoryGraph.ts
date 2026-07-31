@@ -24,6 +24,7 @@ export interface MemoryEntity {
   mention_count: number
   relation_count: number
   source_type_counts: Record<string, number>
+  last_mentioned_at?: string | null
 }
 
 export interface MemoryEntityRelation {
@@ -38,6 +39,21 @@ export interface MemoryEntityRelation {
   valid_to?: string | null
 }
 
+export interface MemoryGraphRecentItem {
+  kind: 'mention' | 'relation'
+  at: string
+  entity_id?: string
+  entity_name?: string
+  source_table?: string
+  source_type?: string
+  source_id?: string
+  relation_type?: string
+  source_entity_id?: string
+  target_entity_id?: string
+  source_name?: string
+  target_name?: string
+}
+
 export interface MemoryGraphSnapshot {
   ok: boolean
   available: boolean
@@ -45,6 +61,7 @@ export interface MemoryGraphSnapshot {
   relations: MemoryEntityRelation[]
   entity_count?: number
   relation_count?: number
+  recent?: MemoryGraphRecentItem[]
   error?: string
 }
 
@@ -90,6 +107,8 @@ export interface MemoryGraphRecallPreview {
   ok: boolean
   count: number
   items: MemoryGraphRecallPreviewItem[]
+  /** Query terms from the gateway tokenizer, used only to highlight matches in the original text. */
+  tokens?: string[]
   error?: string
 }
 

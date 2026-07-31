@@ -147,6 +147,7 @@ class MemoryGraphService:
                 aliases_by_entity.setdefault(entity_id, []).append(alias)
         mention_counts: dict[str, int] = {}
         source_type_counts: dict[str, dict[str, int]] = {}
+        last_mentioned: dict[str, str] = {}
         for mention in mentions:
             entity_id = _clean_id(mention.get("entity_id"))
             if entity_id not in entity_ids:
@@ -155,6 +156,9 @@ class MemoryGraphService:
             source_type = _clean_id(mention.get("source_type"))
             counts = source_type_counts.setdefault(entity_id, {})
             counts[source_type] = counts.get(source_type, 0) + 1
+            stamp = _clean_id(mention.get("updated_at")) or _clean_id(mention.get("created_at"))
+            if stamp and stamp > last_mentioned.get(entity_id, ""):
+                last_mentioned[entity_id] = stamp
         relation_counts: dict[str, int] = {}
         for relation in relations:
             if relation.get("status") not in {"confirmed", "suggested"}:
@@ -185,6 +189,7 @@ class MemoryGraphService:
                     "mention_count": mention_counts.get(entity_id, 0),
                     "source_type_counts": source_type_counts.get(entity_id, {}),
                     "relation_count": relation_counts.get(entity_id, 0),
+                    "last_mentioned_at": last_mentioned.get(entity_id) or None,
                 }
             )
         visible_ids = {_clean_id(item.get("id")) for item in items}
@@ -194,6 +199,49 @@ class MemoryGraphService:
             if _clean_id(relation.get("source_entity_id")) in visible_ids
             or _clean_id(relation.get("target_entity_id")) in visible_ids
         ]
+        entity_names = {
+            _clean_id(entity.get("id")): _clean_text(entity.get("canonical_name"), limit=200)
+            for entity in entities
+        }
+        recent: list[dict[str, Any]] = []
+        for mention in mentions:
+            entity_id = _clean_id(mention.get("entity_id"))
+            if entity_id not in entity_ids:
+                continue
+            stamp = _clean_id(mention.get("updated_at")) or _clean_id(mention.get("created_at"))
+            if not stamp:
+                continue
+            recent.append(
+                {
+                    "kind": "mention",
+                    "entity_id": entity_id,
+                    "entity_name": entity_names.get(entity_id, ""),
+                    "source_table": _clean_id(mention.get("source_table")),
+                    "source_type": _clean_id(mention.get("source_type")),
+                    "source_id": _clean_id(mention.get("source_id")),
+                    "at": stamp,
+                }
+            )
+        for relation in relations:
+            if relation.get("status") not in {"confirmed", "suggested"}:
+                continue
+            stamp = _clean_id(relation.get("updated_at")) or _clean_id(relation.get("created_at"))
+            if not stamp:
+                continue
+            source_id = _clean_id(relation.get("source_entity_id"))
+            target_id = _clean_id(relation.get("target_entity_id"))
+            recent.append(
+                {
+                    "kind": "relation",
+                    "relation_type": _clean_text(relation.get("relation_type"), limit=200),
+                    "source_entity_id": source_id,
+                    "target_entity_id": target_id,
+                    "source_name": entity_names.get(source_id, ""),
+                    "target_name": entity_names.get(target_id, ""),
+                    "at": stamp,
+                }
+            )
+        recent.sort(key=lambda item: item["at"], reverse=True)
         return {
             "ok": True,
             "available": True,
@@ -201,6 +249,7 @@ class MemoryGraphService:
             "relations": visible_relations,
             "entity_count": len(items),
             "relation_count": len(visible_relations),
+            "recent": recent[:12],
         }
 
     async def create_entity(
