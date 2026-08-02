@@ -525,9 +525,23 @@ class MemoryGraphService:
         """Names already extracted into mem-note people/places/objects but not yet anchored."""
         aliases = await self.supabase.query(
             ALIAS_TABLE,
-            {"select": "normalized_alias", "limit": "2000"},
+            {"select": "normalized_alias,entity_id,status", "limit": "2000"},
         )
         known = {_clean_id(row.get("normalized_alias")) for row in aliases}
+        active_entities = {
+            _clean_id(row.get("id"))
+            for row in await self.supabase.query(
+                ENTITY_TABLE,
+                {"select": "id", "status": "eq.active", "limit": "2000"},
+            )
+        }
+        alias_entities: dict[str, set[str]] = {}
+        for row in aliases:
+            if _clean_id(row.get("status")) != "confirmed":
+                continue
+            entity_id = _clean_id(row.get("entity_id"))
+            if entity_id in active_entities:
+                alias_entities.setdefault(_clean_id(row.get("normalized_alias")), set()).add(entity_id)
         notes = await self.supabase.query(
             MEM_NOTES_TABLE,
             {
@@ -537,7 +551,12 @@ class MemoryGraphService:
             },
         )
         counts: dict[str, dict[str, Any]] = {}
+        # Co-occurrence: a candidate sharing one mem note with an anchored name
+        # is genuinely related in her world, so the map may draw it as a ghost
+        # satellite of that anchor. No guessing — only same-note evidence.
+        link_map: dict[str, dict[str, int]] = {}
         for note in notes:
+            note_names: set[str] = set()
             for field, kind in (("people", "person"), ("places", "place"), ("objects", "object")):
                 values = note.get(field) or []
                 if not isinstance(values, list):
@@ -545,12 +564,33 @@ class MemoryGraphService:
                 for value in values:
                     name = _clean_text(value, limit=80)
                     normalized = normalize_alias(name)
-                    if len(normalized) < 2 or normalized in known:
+                    if len(normalized) < 2:
+                        continue
+                    note_names.add(normalized)
+                    if normalized in known:
                         continue
                     slot = counts.setdefault(normalized, {"name": name, "kind": kind, "count": 0})
                     slot["count"] += 1
+            anchored_here: set[str] = set()
+            for normalized in note_names:
+                anchored_here.update(alias_entities.get(normalized, ()))
+            if anchored_here:
+                for normalized in note_names:
+                    if normalized in known:
+                        continue
+                    per_entity = link_map.setdefault(normalized, {})
+                    for entity_id in anchored_here:
+                        per_entity[entity_id] = per_entity.get(entity_id, 0) + 1
         ranked = sorted(counts.values(), key=lambda item: (-item["count"], item["name"]))
-        return {"ok": True, "candidates": ranked[: max(1, min(int(limit or 30), 100))]}
+        capped = ranked[: max(1, min(int(limit or 30), 100))]
+        top_names = {normalize_alias(item["name"]) for item in capped}
+        links = []
+        for normalized, per_entity in link_map.items():
+            if normalized not in top_names or normalized not in counts:
+                continue
+            entity_id, shared = max(per_entity.items(), key=lambda kv: (kv[1], kv[0]))
+            links.append({"name": counts[normalized]["name"], "entity_id": entity_id, "shared": shared})
+        return {"ok": True, "candidates": capped, "links": links}
 
     async def create_relation(
         self,

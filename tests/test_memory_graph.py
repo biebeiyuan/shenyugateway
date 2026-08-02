@@ -493,3 +493,25 @@ def test_entity_mentions_hydrates_originals_by_event_day():
     assert journal_item["origin"] == "exact_alias"
     fallback_item = items[0]
     assert fallback_item["event_date"] == "2026-07-28T08:00:00+00:00"
+
+
+def test_name_candidates_links_co_occurring_names_to_their_anchors():
+    supabase = GraphSupabase({
+        ENTITY_TABLE: [entity("e1", "老周")],
+        ALIAS_TABLE: [alias("a1", "e1", "老周")],
+        "shenyu_mem_notes": [
+            {"status": "active", "people": ["老周", "圆儿"], "places": [], "objects": []},
+            {"status": "active", "people": ["圆儿", "牛奶"], "places": [], "objects": []},
+        ],
+    })
+
+    result = asyncio.run(MemoryGraphService(supabase).name_candidates(limit=10))
+
+    assert result["ok"] is True
+    counts = {item["name"]: item["count"] for item in result["candidates"]}
+    assert counts["圆儿"] == 2
+    assert counts["牛奶"] == 1
+    links = {item["name"]: item for item in result["links"]}
+    assert links["圆儿"]["entity_id"] == "e1"
+    assert links["圆儿"]["shared"] == 1
+    assert "牛奶" not in links

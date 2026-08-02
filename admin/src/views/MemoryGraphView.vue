@@ -29,6 +29,7 @@ import {
   type MemoryEntity,
   type MemoryEntityMentionItem,
   type MemoryEntityRelation,
+  type MemoryGraphCandidateLink,
   type MemoryGraphNameCandidate,
   type MemoryGraphRecallPreviewItem,
   type MemoryGraphRecentItem,
@@ -55,6 +56,7 @@ const mentionsLoading = ref(false)
 const manageOpen = ref(false)
 
 const candidates = ref<MemoryGraphNameCandidate[]>([])
+const candidateLinks = ref<MemoryGraphCandidateLink[]>([])
 const drawerOpen = ref(false)
 const drawerLoading = ref(false)
 const archivedEntities = ref<MemoryEntity[]>([])
@@ -134,6 +136,12 @@ interface GraphEdge {
   ly: number
   dashed: boolean
 }
+interface GhostNode {
+  candidate: MemoryGraphNameCandidate
+  x: number
+  y: number
+  anchor: GraphNode
+}
 
 function warmTier(entity: MemoryEntity): '' | 'warm' | 'fresh' {
   const at = entity.last_mentioned_at
@@ -146,10 +154,10 @@ function warmTier(entity: MemoryEntity): '' | 'warm' | 'fresh' {
   return ''
 }
 
-const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[] }>(() => {
+const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[]; ghosts: GhostNode[] }>(() => {
   const active = entities.value.filter((item) => item.status === 'active')
   const n = active.length
-  if (!n) return { nodes: [], edges: [] }
+  if (!n) return { nodes: [], edges: [], ghosts: [] }
   const indexById: Record<string, number> = Object.fromEntries(active.map((item, i) => [item.id, i]))
   const sizes = active.map((item) => 15 + Math.min(10, Math.sqrt(item.mention_count || 0) * 2.6))
   const rs = active.map((item, i) => Math.min(112, Math.max(38, item.canonical_name.length * sizes[i] * 0.62)))
@@ -230,7 +238,27 @@ const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[] }>(() => {
       dashed: relation.status === 'suggested',
     })
   }
-  return { nodes, edges }
+  // Ghost satellites: unanchored names that share a mem note with an anchor,
+  // parked quietly next to it. No co-occurrence, no ghost — chips below
+  // remain their home.
+  const ghosts: GhostNode[] = []
+  const linkByName = new Map(candidateLinks.value.map((link) => [link.name, link]))
+  for (const candidate of candidates.value) {
+    if (ghosts.length >= 8) break
+    const link = linkByName.get(candidate.name)
+    if (!link) continue
+    const anchor = nodeById[link.entity_id]
+    if (!anchor) continue
+    const ang = ((-90 + ghosts.length * 137.5) * Math.PI) / 180
+    const dist = 96
+    ghosts.push({
+      candidate,
+      x: Math.max(56, Math.min(GRAPH_W - 56, anchor.x + dist * Math.cos(ang))),
+      y: Math.max(40, Math.min(GRAPH_H - 48, anchor.y + dist * Math.sin(ang))),
+      anchor,
+    })
+  }
+  return { nodes, edges, ghosts }
 })
 
 // ---------- recall (shown the way Shenyu receives it; gateway accounting stays hidden) ----------
@@ -346,9 +374,12 @@ async function loadAnchorEntities() {
 
 async function loadCandidates() {
   try {
-    candidates.value = await fetchMemoryGraphNameCandidates(20)
+    const result = await fetchMemoryGraphNameCandidates(20)
+    candidates.value = result.candidates
+    candidateLinks.value = result.links
   } catch {
     candidates.value = []
+    candidateLinks.value = []
   }
 }
 
@@ -372,6 +403,11 @@ function toggleDrawer() {
 function useCandidate(candidate: MemoryGraphNameCandidate) {
   createName.value = candidate.name
   createType.value = candidate.kind
+}
+
+function pinGhost(candidate: MemoryGraphNameCandidate) {
+  useCandidate(candidate)
+  document.querySelector('.create-band')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
 }
 
 async function createEntity() {
@@ -758,6 +794,20 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
               <text class="anchor-name" :x="node.x" :y="node.y" :style="{ fontSize: `${node.size}px` }">{{ node.entity.canonical_name }}</text>
               <text class="anchor-sub" :x="node.x" :y="node.y + 19">{{ typeLabel(node.entity.entity_type) }} · 提及 {{ node.entity.mention_count }}</text>
             </g>
+            <g
+              v-for="ghost in graphLayout.ghosts"
+              :key="ghost.candidate.name"
+              class="ghost"
+              role="button"
+              tabindex="0"
+              :aria-label="`还没钉的名字：${ghost.candidate.name}，点一下填进建立表单`"
+              @click="pinGhost(ghost.candidate)"
+              @keydown.enter.prevent="pinGhost(ghost.candidate)"
+            >
+              <path class="ghost-tie" :d="`M ${ghost.anchor.x} ${ghost.anchor.y} L ${ghost.x.toFixed(1)} ${ghost.y.toFixed(1)}`" />
+              <text class="ghost-name" :x="ghost.x" :y="ghost.y">{{ ghost.candidate.name }}</text>
+              <text class="ghost-sub" :x="ghost.x" :y="ghost.y + 14">未钉 · 提过 {{ ghost.candidate.count }}</text>
+            </g>
             <text v-if="!graphLayout.nodes.length" class="canvas-empty" :x="GRAPH_W / 2" :y="GRAPH_H / 2">还没有锚点，先钉一个名字</text>
           </svg>
           <div class="legend">
@@ -766,7 +816,7 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
             </span>
             <span class="legend-item"><span class="legend-line"></span>红线</span>
             <span class="legend-item"><span class="legend-line dashed"></span>候选</span>
-            <span class="legend-item legend-note">名字变暖 = 最近被提起</span>
+            <span class="legend-item legend-note">名字变暖 = 最近被提起 · 虚线小字 = 还没钉，点一下钉住</span>
           </div>
         </div>
       </NSpin>
@@ -1768,5 +1818,101 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
+}
+
+.ghost {
+  cursor: pointer;
+}
+
+.ghost:focus {
+  outline: none;
+}
+
+.ghost-tie {
+  fill: none;
+  stroke: var(--mg-ink-3);
+  stroke-width: 1;
+  stroke-dasharray: 2 4;
+  opacity: 0.55;
+}
+
+.ghost-name {
+  font-family: var(--mg-serif);
+  font-style: italic;
+  font-size: 12.5px;
+  fill: var(--mg-ink-3);
+  text-anchor: middle;
+  dominant-baseline: middle;
+  paint-order: stroke;
+  stroke: var(--mg-paper);
+  stroke-width: 3px;
+  stroke-linejoin: round;
+  transition: fill 0.2s;
+}
+
+.ghost:hover .ghost-name,
+.ghost:focus-visible .ghost-name {
+  fill: var(--mg-accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.ghost-sub {
+  font-size: 9.5px;
+  fill: var(--mg-ink-3);
+  text-anchor: middle;
+  opacity: 0.8;
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .toolbar {
+    grid-template-columns: 96px 1fr auto;
+  }
+
+  .toolbar > :first-child {
+    grid-column: 1 / -1;
+  }
+
+  .create-band {
+    grid-template-columns: 96px 1fr;
+  }
+
+  .create-band > :nth-child(3) {
+    grid-column: 1 / -1;
+  }
+
+  .create-band > :last-child {
+    grid-column: 1 / -1;
+  }
+
+  .canvas-card {
+    overflow-x: auto;
+    overflow-y: hidden;
+  }
+
+  .canvas-card svg {
+    min-width: 620px;
+  }
+
+  .relation-form {
+    grid-template-columns: 1fr;
+  }
+
+  .edit-row {
+    grid-template-columns: 1fr;
+  }
+
+  .recall-anchor-editor {
+    grid-template-columns: 1fr;
+  }
+
+  .thought-query {
+    font-size: 24px;
+  }
+
+  .page-head h2 {
+    font-size: 26px;
+  }
 }
 </style>

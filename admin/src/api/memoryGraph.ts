@@ -184,9 +184,17 @@ export interface MemoryGraphNameCandidate {
   count: number
 }
 
-export async function fetchMemoryGraphNameCandidates(limit = 30): Promise<MemoryGraphNameCandidate[]> {
+export interface MemoryGraphCandidateLink {
+  name: string
+  entity_id: string
+  shared: number
+}
+
+export async function fetchMemoryGraphNameCandidates(
+  limit = 30,
+): Promise<{ candidates: MemoryGraphNameCandidate[]; links: MemoryGraphCandidateLink[] }> {
   const { data } = await api.get(`/api/gateway/memory-graph/name-candidates?limit=${limit}`)
-  return data.candidates || []
+  return { candidates: data.candidates || [], links: data.links || [] }
 }
 
 export async function createMemoryEntityRelation(payload: {

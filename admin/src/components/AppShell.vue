@@ -232,6 +232,8 @@ body {
   display: flex;
   align-items: center;
   gap: 16px;
+  flex-wrap: wrap;
+  row-gap: 8px;
 }
 
 .header-minimal {
@@ -258,6 +260,8 @@ body {
   color: #c4b0ab;
   text-decoration: none;
   transition: 0.2s;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .back-link:hover {
@@ -270,6 +274,8 @@ body {
   display: flex;
   align-items: center;
   gap: 4px;
+  white-space: nowrap;
+  flex-shrink: 0;
 }
 
 .dot {
@@ -308,6 +314,22 @@ body {
   color: #c4b0ab;
   letter-spacing: 0.3px;
   font-family: -apple-system, 'Segoe UI', sans-serif;
+  white-space: nowrap;
+}
+
+@media (max-width: 720px) {
+  .header {
+    padding: 10px 14px;
+    gap: 10px;
+  }
+
+  .health-tags .ht:last-child {
+    display: none;
+  }
+
+  .main {
+    padding: 14px;
+  }
 }
 
 .ht.ok {
