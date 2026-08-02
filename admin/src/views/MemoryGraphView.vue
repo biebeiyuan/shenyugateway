@@ -17,6 +17,7 @@ import {
   createMemoryEntity,
   createMemoryEntityRelation,
   deleteMemoryEntityAlias,
+  fetchMemoryEntityMentions,
   fetchMemoryGraph,
   fetchMemoryGraphNameCandidates,
   fetchSourceEntityMentions,
@@ -26,6 +27,7 @@ import {
   updateMemoryEntityAlias,
   updateMemoryEntityRelation,
   type MemoryEntity,
+  type MemoryEntityMentionItem,
   type MemoryEntityRelation,
   type MemoryGraphNameCandidate,
   type MemoryGraphRecallPreviewItem,
@@ -48,6 +50,9 @@ const backfilling = ref(false)
 const query = ref('')
 const typeFilter = ref<MemoryEntityType | ''>('')
 const selectedId = ref('')
+const selectedMentions = ref<MemoryEntityMentionItem[]>([])
+const mentionsLoading = ref(false)
+const manageOpen = ref(false)
 
 const candidates = ref<MemoryGraphNameCandidate[]>([])
 const drawerOpen = ref(false)
@@ -289,6 +294,19 @@ function selectEntity(entity: MemoryEntity) {
   relationTarget.value = ''
   relationType.value = ''
   relationEvidence.value = ''
+  void loadSelectedMentions(entity.id)
+}
+
+async function loadSelectedMentions(entityId: string) {
+  mentionsLoading.value = true
+  try {
+    const items = await fetchMemoryEntityMentions(entityId)
+    if (selectedId.value === entityId) selectedMentions.value = items
+  } catch {
+    if (selectedId.value === entityId) selectedMentions.value = []
+  } finally {
+    if (selectedId.value === entityId) mentionsLoading.value = false
+  }
 }
 
 async function loadGraph(keepSelection = true) {
@@ -305,6 +323,8 @@ async function loadGraph(keepSelection = true) {
     recentActivity.value = result.recent || []
     if (!keepSelection || !entities.value.some((item) => item.id === selectedId.value)) {
       selectedId.value = ''
+      selectedMentions.value = []
+      manageOpen.value = false
     } else if (selected.value) {
       selectEntity(selected.value)
     }
@@ -650,7 +670,11 @@ function recallDelay(item: MemoryGraphRecallPreviewItem): number {
   return recallOrderedItems.value.indexOf(item) * 90
 }
 
-function sourceSeal(item: MemoryGraphRecallPreviewItem): string {
+function shortDate(value?: string): string {
+  return (value || '').slice(0, 10)
+}
+
+function sourceSeal(item: { source_type: string }): string {
   const seals: Record<string, string> = {
     journal: '记',
     windowsill: '窗',
@@ -698,6 +722,7 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
       </div>
 
       <div v-if="drawerOpen" class="drawer">
+        <p class="drawer-note">收起来的锚点住在这里——不删，只是不挂在网上了，随时可以放回。</p>
         <NSpin :show="drawerLoading">
           <div v-if="archivedEntities.length" class="drawer-list">
             <div v-for="entity in archivedEntities" :key="entity.id" class="drawer-row">
@@ -747,7 +772,7 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
       </NSpin>
 
       <div v-if="recentActivity.length" class="recent-band">
-        <h4>最近落进网里</h4>
+        <h4>最近落进网里 <small>按事情发生的日子算</small></h4>
         <ul>
           <li v-for="(item, index) in recentActivity" :key="index">
             <span class="recent-mark" :class="item.kind"></span>
@@ -789,55 +814,72 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
           </div>
         </div>
 
-        <div class="edit-row">
-          <NInput v-model:value="editName" placeholder="名称" />
-          <NInput v-model:value="editDescription" placeholder="备注（可空）" />
-          <NButton size="small" :loading="saving" @click="saveEntity">保存</NButton>
-        </div>
-
-        <div class="detail-block">
-          <h4>别名</h4>
-          <div class="tag-list">
-            <NTag v-for="alias in selected.aliases" :key="alias.id" :bordered="false" size="small">
-              {{ alias.alias }}
-              <button v-if="alias.status !== 'confirmed'" class="tag-action confirm" title="确认这个候选" @click="confirmAlias(alias.id)">✓ 候选</button>
-              <button v-if="!alias.is_primary" class="tag-action" title="移除别名" @click="removeAlias(alias.id)">×</button>
-            </NTag>
-            <span class="inline-add">
-              <NInput v-model:value="aliasDraft" size="small" placeholder="新增" @keyup.enter="addAlias" />
-              <NButton size="small" :loading="saving" :disabled="!aliasDraft.trim()" @click="addAlias">＋</NButton>
-            </span>
-          </div>
-        </div>
-
-        <div class="detail-block">
-          <h4>原件</h4>
-          <div class="source-counts">
-            <span v-for="(count, source) in selected.source_type_counts" :key="source">{{ sourceLabel(String(source)) }} <b>{{ count }}</b></span>
-            <span v-if="!Object.keys(selected.source_type_counts).length" class="muted">还没有</span>
-          </div>
-        </div>
-
-        <div class="detail-block">
-          <h4>红线</h4>
-          <div v-if="selectedRelations.length" class="relation-list">
-            <div v-for="relation in selectedRelations" :key="relation.id" class="relation-row">
-              <div>
-                <b>{{ relation.relation_type }}</b>
-                <span>{{ otherEntity(relation)?.canonical_name || '未知锚点' }}</span>
-                <small v-if="relation.evidence">{{ relation.evidence }}</small>
-              </div>
-              <div class="relation-actions">
-                <NButton v-if="relation.status === 'suggested'" size="tiny" type="primary" @click="confirmRelation(relation.id)">✓ 候选</NButton>
-                <NButton size="tiny" quaternary @click="archiveRelation(relation.id)">收起</NButton>
+        <div class="detail-block world-block">
+          <h4>她的世界里，「{{ selected.canonical_name }}」长这样</h4>
+          <NSpin :show="mentionsLoading">
+            <div v-if="selectedMentions.length" class="world-list">
+              <div v-for="mention in selectedMentions" :key="mention.source_table + ' ' + mention.source_id" class="world-item">
+                <span class="seal small" aria-hidden="true">{{ sourceSeal(mention) }}</span>
+                <div class="world-item-body">
+                  <div class="world-item-head">
+                    <b>{{ mention.title || sourceLabel(mention.source_type) }}</b>
+                    <span>{{ sourceLabel(mention.source_type) }}<template v-if="shortDate(mention.event_date)"> · {{ shortDate(mention.event_date) }}</template></span>
+                    <em v-if="mention.origin === 'manual'" class="world-origin">你钉的</em>
+                  </div>
+                  <p v-if="mention.excerpt" class="world-excerpt">{{ mention.excerpt }}</p>
+                </div>
               </div>
             </div>
+            <p v-else-if="!mentionsLoading" class="muted">还没有原件提到这个锚点</p>
+          </NSpin>
+        </div>
+
+        <button class="manage-toggle" @click="manageOpen = !manageOpen">
+          {{ manageOpen ? '收起管理 ▾' : '管理 ▸' }}
+        </button>
+        <div v-show="manageOpen" class="manage-zone">
+          <div class="edit-row">
+            <NInput v-model:value="editName" placeholder="名称" />
+            <NInput v-model:value="editDescription" placeholder="备注（可空）" />
+            <NButton size="small" :loading="saving" @click="saveEntity">保存</NButton>
           </div>
-          <div class="relation-form">
-            <NSelect v-model:value="relationTarget" filterable :options="targetOptions" placeholder="连到谁" />
-            <NInput v-model:value="relationType" placeholder="关系" @keyup.enter="addRelation" />
-            <NInput v-model:value="relationEvidence" placeholder="备注（可空）" />
-            <NButton :loading="saving" :disabled="!relationTarget || !relationType.trim()" @click="addRelation">牵红线</NButton>
+
+          <div class="detail-block">
+            <h4>别名</h4>
+            <div class="tag-list">
+              <NTag v-for="alias in selected.aliases" :key="alias.id" :bordered="false" size="small">
+                {{ alias.alias }}
+                <button v-if="alias.status !== 'confirmed'" class="tag-action confirm" title="确认这个候选" @click="confirmAlias(alias.id)">✓ 候选</button>
+                <button v-if="!alias.is_primary" class="tag-action" title="移除别名" @click="removeAlias(alias.id)">×</button>
+              </NTag>
+              <span class="inline-add">
+                <NInput v-model:value="aliasDraft" size="small" placeholder="新增" @keyup.enter="addAlias" />
+                <NButton size="small" :loading="saving" :disabled="!aliasDraft.trim()" @click="addAlias">＋</NButton>
+              </span>
+            </div>
+          </div>
+
+          <div class="detail-block">
+            <h4>红线</h4>
+            <div v-if="selectedRelations.length" class="relation-list">
+              <div v-for="relation in selectedRelations" :key="relation.id" class="relation-row">
+                <div>
+                  <b>{{ relation.relation_type }}</b>
+                  <span>{{ otherEntity(relation)?.canonical_name || '未知锚点' }}</span>
+                  <small v-if="relation.evidence">{{ relation.evidence }}</small>
+                </div>
+                <div class="relation-actions">
+                  <NButton v-if="relation.status === 'suggested'" size="tiny" type="primary" @click="confirmRelation(relation.id)">✓ 候选</NButton>
+                  <NButton size="tiny" quaternary @click="archiveRelation(relation.id)">收起</NButton>
+                </div>
+              </div>
+            </div>
+            <div class="relation-form">
+              <NSelect v-model:value="relationTarget" filterable :options="targetOptions" placeholder="连到谁" />
+              <NInput v-model:value="relationType" placeholder="关系" @keyup.enter="addRelation" />
+              <NInput v-model:value="relationEvidence" placeholder="备注（可空）" />
+              <NButton :loading="saving" :disabled="!relationTarget || !relationType.trim()" @click="addRelation">牵红线</NButton>
+            </div>
           </div>
         </div>
       </div>
@@ -1005,10 +1047,19 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
 
 .drawer {
   margin: 0 0 12px;
-  padding: 10px 14px;
-  border: 1px dashed var(--mg-hairline);
-  border-radius: 12px;
-  background: var(--mg-paper);
+  padding: 12px 18px;
+  border: 1px solid var(--mg-hairline);
+  border-radius: 14px;
+  background: var(--mg-panel);
+  max-height: 220px;
+  overflow: auto;
+}
+
+.drawer-note {
+  margin: 0 0 8px;
+  font-size: 12px;
+  font-style: italic;
+  color: var(--mg-ink-3);
 }
 
 .drawer-list {
@@ -1199,6 +1250,14 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
   margin-bottom: 6px;
 }
 
+.recent-band h4 small {
+  font-size: 11.5px;
+  font-weight: 400;
+  font-style: italic;
+  color: var(--mg-ink-3);
+  letter-spacing: 0.02em;
+}
+
 .recent-band ul {
   list-style: none;
   display: grid;
@@ -1354,6 +1413,88 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
   margin-bottom: 8px;
 }
 
+.world-list {
+  display: grid;
+  gap: 10px;
+}
+
+.world-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+
+.seal.small {
+  width: 24px;
+  height: 24px;
+  font-size: 12.5px;
+  border-radius: 5px;
+  margin-top: 2px;
+}
+
+.world-item-body {
+  flex: 1;
+  min-width: 0;
+}
+
+.world-item-head {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.world-item-head b {
+  font-family: var(--mg-serif);
+  font-size: 14.5px;
+  font-weight: 600;
+}
+
+.world-item-head span {
+  color: var(--mg-ink-3);
+  font-size: 11.5px;
+}
+
+.world-origin {
+  font-size: 10.5px;
+  font-style: normal;
+  color: var(--mg-accent-ink);
+  border: 1px solid var(--mg-accent);
+  border-radius: 999px;
+  padding: 0 7px;
+  opacity: 0.8;
+}
+
+.world-excerpt {
+  margin-top: 2px;
+  font-size: 12.5px;
+  color: var(--mg-ink-2);
+  line-height: 1.7;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
+.manage-toggle {
+  margin-top: 16px;
+  border: 0;
+  background: none;
+  color: var(--mg-ink-3);
+  font-size: 12.5px;
+  cursor: pointer;
+  padding: 4px 0;
+  letter-spacing: 0.05em;
+}
+
+.manage-toggle:hover {
+  color: var(--mg-accent);
+}
+
+.manage-zone {
+  margin-top: 4px;
+}
+
 .tag-list {
   display: flex;
   flex-wrap: wrap;
@@ -1387,18 +1528,6 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
 
 .inline-add :deep(.n-input) {
   width: 140px;
-}
-
-.source-counts {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 8px 18px;
-  color: var(--mg-ink-2);
-  font-size: 13px;
-}
-
-.source-counts b {
-  font-variant-numeric: tabular-nums;
 }
 
 .muted {

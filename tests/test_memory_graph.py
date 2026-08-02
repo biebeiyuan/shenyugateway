@@ -387,7 +387,9 @@ def test_snapshot_reports_last_mentioned_and_recent_activity():
                 "source_type": "journal",
                 "source_id": "j-1",
                 "status": "confirmed",
-                "updated_at": "2026-07-20T08:00:00+00:00",
+                # Bookkeeping: the link was re-touched in July...
+                "created_at": "2026-07-20T08:00:00+00:00",
+                "updated_at": "2026-07-30T08:00:00+00:00",
             },
             {
                 "id": "m2",
@@ -406,7 +408,18 @@ def test_snapshot_reports_last_mentioned_and_recent_activity():
                 "target_entity_id": "e2",
                 "relation_type": "认得",
                 "status": "confirmed",
-                "updated_at": "2026-07-25T08:00:00+00:00",
+                "created_at": "2026-07-25T08:00:00+00:00",
+                "updated_at": "2026-07-30T08:00:00+00:00",
+            },
+        ],
+        RECALL_INDEX_TABLE: [
+            {
+                "source_table": "journal",
+                "source_id": "j-1",
+                "chunk_index": 0,
+                # ...but the original diary actually happened in March.
+                "event_date": "2026-03-14T00:00:00+00:00",
+                "deleted_at": None,
             },
         ],
     })
@@ -414,13 +427,69 @@ def test_snapshot_reports_last_mentioned_and_recent_activity():
     result = asyncio.run(MemoryGraphService(supabase).snapshot())
 
     by_id = {item["id"]: item for item in result["entities"]}
+    # July bookkeeping updated_at must not fake warmth: the diary counts as March.
     assert by_id["e1"]["last_mentioned_at"] == "2026-07-28T08:00:00+00:00"
     assert by_id["e2"]["last_mentioned_at"] is None
     recent = result["recent"]
     assert [item["kind"] for item in recent] == ["mention", "relation", "mention"]
     assert recent[0]["entity_name"] == "老周"
     assert recent[0]["source_type"] == "windowsill"
+    journal_item = next(item for item in recent if item.get("source_id") == "j-1")
+    assert journal_item["at"] == "2026-03-14T00:00:00+00:00"
     relation_item = next(item for item in recent if item["kind"] == "relation")
     assert relation_item["source_name"] == "老周"
     assert relation_item["target_name"] == "阿元"
     assert relation_item["relation_type"] == "认得"
+
+
+def test_entity_mentions_hydrates_originals_by_event_day():
+    supabase = GraphSupabase({
+        ENTITY_TABLE: [entity("e1", "老周")],
+        ALIAS_TABLE: [],
+        MENTION_TABLE: [
+            {
+                "id": "m1",
+                "entity_id": "e1",
+                "source_table": "journal",
+                "source_type": "journal",
+                "source_id": "j-1",
+                "status": "confirmed",
+                "origin": "exact_alias",
+                "created_at": "2026-07-20T08:00:00+00:00",
+            },
+            {
+                "id": "m2",
+                "entity_id": "e1",
+                "source_table": "windowsill",
+                "source_type": "windowsill",
+                "source_id": "w-1",
+                "status": "confirmed",
+                "origin": "manual",
+                "created_at": "2026-07-28T08:00:00+00:00",
+            },
+        ],
+        RECALL_INDEX_TABLE: [
+            {
+                "source_table": "journal",
+                "source_id": "j-1",
+                "chunk_index": 0,
+                "title": "三月的信",
+                "excerpt": "那天和老周聊了很久。",
+                "event_date": "2026-03-14T00:00:00+00:00",
+                "deleted_at": None,
+            },
+        ],
+    })
+
+    result = asyncio.run(MemoryGraphService(supabase).entity_mentions("e1"))
+
+    assert result["ok"] is True
+    items = result["items"]
+    assert [item["source_id"] for item in items] == ["w-1", "j-1"]
+    journal_item = items[1]
+    assert journal_item["title"] == "三月的信"
+    assert journal_item["excerpt"] == "那天和老周聊了很久。"
+    assert journal_item["event_date"] == "2026-03-14T00:00:00+00:00"
+    assert journal_item["origin"] == "exact_alias"
+    fallback_item = items[0]
+    assert fallback_item["event_date"] == "2026-07-28T08:00:00+00:00"

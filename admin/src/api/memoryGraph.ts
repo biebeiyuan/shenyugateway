@@ -161,6 +161,23 @@ export async function updateMemoryEntityAlias(
   await api.patch(`/api/gateway/memory-graph/aliases/${encodeURIComponent(aliasId)}`, patch)
 }
 
+export interface MemoryEntityMentionItem {
+  source_table: string
+  source_type: string
+  source_id: string
+  origin: string
+  title?: string
+  excerpt?: string
+  event_date?: string
+}
+
+export async function fetchMemoryEntityMentions(entityId: string, limit = 24): Promise<MemoryEntityMentionItem[]> {
+  const { data } = await api.get(
+    `/api/gateway/memory-graph/entities/${encodeURIComponent(entityId)}/mentions?limit=${limit}`,
+  )
+  return data.items || []
+}
+
 export interface MemoryGraphNameCandidate {
   name: string
   kind: 'person' | 'place' | 'object'

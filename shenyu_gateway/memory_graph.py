@@ -111,6 +111,36 @@ class MemoryGraphService:
             offset += len(page)
         return rows
 
+    async def _source_event_dates(self, mentions: list[dict[str, Any]]) -> dict[tuple[str, str], str]:
+        """Map (source_table, source_id) -> the day the original happened.
+
+        Reads the recall index's event_date / source_updated_at. Sources missing
+        from the index simply fall back to the caller's own timestamps.
+        """
+        source_ids = sorted(
+            {_clean_id(mention.get("source_id")) for mention in mentions if _clean_id(mention.get("source_id"))}
+        )
+        dates: dict[tuple[str, str], str] = {}
+        for start in range(0, len(source_ids), 80):
+            try:
+                rows = await self._query_all(
+                    RECALL_INDEX_TABLE,
+                    {
+                        "select": "source_table,source_id,event_date,source_updated_at",
+                        "source_id": _in_filter(source_ids[start : start + 80]),
+                        "deleted_at": "is.null",
+                    },
+                )
+            except Exception as exc:
+                logger.info("Memory graph source-date lookup unavailable; using mention timestamps: %s", exc)
+                continue
+            for row in rows:
+                key = _source_key(row)
+                stamp = _clean_id(row.get("event_date")) or _clean_id(row.get("source_updated_at"))
+                if stamp and stamp > dates.get(key, ""):
+                    dates[key] = stamp
+        return dates
+
     async def snapshot(
         self,
         *,
@@ -145,6 +175,11 @@ class MemoryGraphService:
             entity_id = _clean_id(alias.get("entity_id"))
             if entity_id in entity_ids:
                 aliases_by_entity.setdefault(entity_id, []).append(alias)
+        # "When was this anchor last mentioned" means the day the source
+        # original happened (its recall-index event_date), never the mention
+        # row's bookkeeping timestamps — sync/backfill updates bump updated_at
+        # via trigger and would fake warmth for long-quiet anchors.
+        source_dates = await self._source_event_dates(mentions)
         mention_counts: dict[str, int] = {}
         source_type_counts: dict[str, dict[str, int]] = {}
         last_mentioned: dict[str, str] = {}
@@ -156,7 +191,7 @@ class MemoryGraphService:
             source_type = _clean_id(mention.get("source_type"))
             counts = source_type_counts.setdefault(entity_id, {})
             counts[source_type] = counts.get(source_type, 0) + 1
-            stamp = _clean_id(mention.get("updated_at")) or _clean_id(mention.get("created_at"))
+            stamp = source_dates.get(_source_key(mention)) or _clean_id(mention.get("created_at"))
             if stamp and stamp > last_mentioned.get(entity_id, ""):
                 last_mentioned[entity_id] = stamp
         relation_counts: dict[str, int] = {}
@@ -208,7 +243,7 @@ class MemoryGraphService:
             entity_id = _clean_id(mention.get("entity_id"))
             if entity_id not in entity_ids:
                 continue
-            stamp = _clean_id(mention.get("updated_at")) or _clean_id(mention.get("created_at"))
+            stamp = source_dates.get(_source_key(mention)) or _clean_id(mention.get("created_at"))
             if not stamp:
                 continue
             recent.append(
@@ -225,7 +260,7 @@ class MemoryGraphService:
         for relation in relations:
             if relation.get("status") not in {"confirmed", "suggested"}:
                 continue
-            stamp = _clean_id(relation.get("updated_at")) or _clean_id(relation.get("created_at"))
+            stamp = _clean_id(relation.get("created_at"))
             if not stamp:
                 continue
             source_id = _clean_id(relation.get("source_entity_id"))
@@ -251,6 +286,60 @@ class MemoryGraphService:
             "relation_count": len(visible_relations),
             "recent": recent[:12],
         }
+
+    async def entity_mentions(self, entity_id: str, *, limit: int = 24) -> dict[str, Any]:
+        """One anchor's world: the confirmed originals that mention it."""
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+        entity_id = _clean_id(entity_id)
+        if not entity_id:
+            return {"ok": False, "error": "entity_id is required"}
+        try:
+            mentions = await self._query_all(
+                MENTION_TABLE,
+                {
+                    "select": "*",
+                    "entity_id": f"eq.{entity_id}",
+                    "status": "eq.confirmed",
+                    "order": "created_at.desc",
+                },
+            )
+            source_ids = sorted(
+                {_clean_id(mention.get("source_id")) for mention in mentions if _clean_id(mention.get("source_id"))}
+            )
+            by_source: dict[tuple[str, str], dict[str, Any]] = {}
+            for start in range(0, len(source_ids), 80):
+                rows = await self._query_all(
+                    RECALL_INDEX_TABLE,
+                    {
+                        "select": "source_table,source_id,title,excerpt,event_date,source_updated_at,chunk_index",
+                        "source_id": _in_filter(source_ids[start : start + 80]),
+                        "deleted_at": "is.null",
+                        "order": "chunk_index.asc",
+                    },
+                )
+                for row in rows:
+                    by_source.setdefault(_source_key(row), row)
+        except Exception as exc:
+            return {"ok": False, "error": f"memory graph is not ready: {exc}"}
+        items = []
+        for mention in mentions:
+            row = by_source.get(_source_key(mention)) or {}
+            items.append(
+                {
+                    "source_table": _clean_id(mention.get("source_table")),
+                    "source_type": _clean_id(mention.get("source_type")),
+                    "source_id": _clean_id(mention.get("source_id")),
+                    "origin": _clean_id(mention.get("origin")),
+                    "title": _clean_text(row.get("title"), limit=200),
+                    "excerpt": _clean_text(row.get("excerpt"), limit=400),
+                    "event_date": _clean_id(row.get("event_date"))
+                    or _clean_id(row.get("source_updated_at"))
+                    or _clean_id(mention.get("created_at")),
+                }
+            )
+        items.sort(key=lambda item: item["event_date"], reverse=True)
+        return {"ok": True, "items": items[: max(1, min(int(limit or 24), 100))]}
 
     async def create_entity(
         self,

@@ -514,6 +514,11 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             memory_graph_service().update_entity(entity_id, body.model_dump(exclude_unset=True))
         )
 
+    @router.get("/api/gateway/memory-graph/entities/{entity_id}/mentions")
+    async def get_memory_graph_entity_mentions(entity_id: str, limit: int = 24):
+        # Read-only: one anchor's world, the originals that mention it.
+        return await memory_graph_service().entity_mentions(entity_id, limit=limit)
+
     @router.post("/api/gateway/memory-graph/entities/{entity_id}/aliases")
     async def create_memory_graph_alias(entity_id: str, body: MemoryGraphAliasCreate):
         return await graph_mutation(
