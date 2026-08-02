@@ -15,6 +15,7 @@ pwa/dist/
 *.log
 tmp_gateway_log_*.json
 tmp_gateway_logs*/
+tmp_gateway_latest/
 .shenyu-gateway-debug.local.json
 .claude/
 shenyu_gateway.egg-info/
