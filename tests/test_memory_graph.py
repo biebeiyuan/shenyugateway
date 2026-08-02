@@ -515,3 +515,41 @@ def test_name_candidates_links_co_occurring_names_to_their_anchors():
     assert links["圆儿"]["entity_id"] == "e1"
     assert links["圆儿"]["shared"] == 1
     assert "牛奶" not in links
+
+
+def test_candidate_mentions_returns_notes_carrying_the_name():
+    supabase = GraphSupabase({
+        "shenyu_mem_notes": [
+            {
+                "id": "n1",
+                "content": "圆儿今天带了牛奶来。",
+                "mem_type": "关于她的事实",
+                "people": ["圆儿", "牛奶"],
+                "places": [],
+                "objects": [],
+                "status": "active",
+                "updated_at": "2026-07-28T08:00:00+00:00",
+            },
+            {
+                "id": "n2",
+                "content": "和老周散步。",
+                "mem_type": "她为我做的事",
+                "people": ["老周"],
+                "places": [],
+                "objects": [],
+                "status": "active",
+                "updated_at": "2026-07-20T08:00:00+00:00",
+            },
+        ],
+    })
+
+    result = asyncio.run(MemoryGraphService(supabase).candidate_mentions("圆儿"))
+
+    assert result["ok"] is True
+    assert [item["id"] for item in result["items"]] == ["n1"]
+    item = result["items"][0]
+    assert item["mem_type"] == "关于她的事实"
+    assert item["kind"] == "人物"
+    assert "牛奶" in item["content"]
+    empty = asyncio.run(MemoryGraphService(supabase).candidate_mentions("不存在的人"))
+    assert empty["items"] == []

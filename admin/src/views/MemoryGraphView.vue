@@ -17,6 +17,7 @@ import {
   createMemoryEntity,
   createMemoryEntityRelation,
   deleteMemoryEntityAlias,
+  fetchMemoryCandidateMentions,
   fetchMemoryEntityMentions,
   fetchMemoryGraph,
   fetchMemoryGraphNameCandidates,
@@ -26,6 +27,7 @@ import {
   updateMemoryEntity,
   updateMemoryEntityAlias,
   updateMemoryEntityRelation,
+  type MemoryCandidateMention,
   type MemoryEntity,
   type MemoryEntityMentionItem,
   type MemoryEntityRelation,
@@ -57,6 +59,9 @@ const manageOpen = ref(false)
 
 const candidates = ref<MemoryGraphNameCandidate[]>([])
 const candidateLinks = ref<MemoryGraphCandidateLink[]>([])
+const ghostCard = ref<MemoryGraphNameCandidate | null>(null)
+const ghostMentions = ref<MemoryCandidateMention[]>([])
+const ghostLoading = ref(false)
 const drawerOpen = ref(false)
 const drawerLoading = ref(false)
 const archivedEntities = ref<MemoryEntity[]>([])
@@ -315,6 +320,7 @@ function timeAgo(at?: string): string {
 }
 
 function selectEntity(entity: MemoryEntity) {
+  closeGhost()
   selectedId.value = entity.id
   editName.value = entity.canonical_name
   editDescription.value = entity.description || ''
@@ -405,9 +411,48 @@ function useCandidate(candidate: MemoryGraphNameCandidate) {
   createType.value = candidate.kind
 }
 
-function pinGhost(candidate: MemoryGraphNameCandidate) {
-  useCandidate(candidate)
-  document.querySelector('.create-band')?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+async function openGhost(candidate: MemoryGraphNameCandidate) {
+  selectedId.value = ''
+  selectedMentions.value = []
+  manageOpen.value = false
+  ghostCard.value = candidate
+  ghostMentions.value = []
+  ghostLoading.value = true
+  try {
+    ghostMentions.value = await fetchMemoryCandidateMentions(candidate.name)
+  } catch {
+    ghostMentions.value = []
+  } finally {
+    ghostLoading.value = false
+  }
+}
+
+function closeGhost() {
+  ghostCard.value = null
+  ghostMentions.value = []
+}
+
+async function pinGhostNow() {
+  const candidate = ghostCard.value
+  if (!candidate || saving.value) return
+  saving.value = true
+  try {
+    const entity = await createMemoryEntity({
+      entity_type: candidate.kind,
+      canonical_name: candidate.name,
+      description: '',
+      aliases: [],
+    })
+    await Promise.all([loadGraph(false), loadAnchorEntities(), loadCandidates()])
+    closeGhost()
+    const created = entities.value.find((item) => item.id === entity.id)
+    if (created) selectEntity(created)
+    message.success('锚点已钉住；点「扫描历史关联」把旧原件连上来')
+  } catch {
+    message.error('建立锚点失败')
+  } finally {
+    saving.value = false
+  }
 }
 
 async function createEntity() {
@@ -800,9 +845,9 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
               class="ghost"
               role="button"
               tabindex="0"
-              :aria-label="`还没钉的名字：${ghost.candidate.name}，点一下填进建立表单`"
-              @click="pinGhost(ghost.candidate)"
-              @keydown.enter.prevent="pinGhost(ghost.candidate)"
+              :aria-label="`还没钉的名字：${ghost.candidate.name}，点一下看原文`"
+              @click="openGhost(ghost.candidate)"
+              @keydown.enter.prevent="openGhost(ghost.candidate)"
             >
               <path class="ghost-tie" :d="`M ${ghost.anchor.x} ${ghost.anchor.y} L ${ghost.x.toFixed(1)} ${ghost.y.toFixed(1)}`" />
               <text class="ghost-name" :x="ghost.x" :y="ghost.y">{{ ghost.candidate.name }}</text>
@@ -846,6 +891,39 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
         <button v-for="candidate in candidates" :key="candidate.kind + candidate.name" class="candidate-chip" @click="useCandidate(candidate)">
           {{ candidate.name }} <small>{{ typeLabel(candidate.kind) }} · {{ candidate.count }}</small>
         </button>
+      </div>
+
+      <div v-if="ghostCard" class="detail">
+        <div class="detail-title">
+          <div>
+            <h3>{{ ghostCard.name }}</h3>
+            <span class="type-chip" :style="{ background: TYPE_COLOR[ghostCard.kind] }">{{ typeLabel(ghostCard.kind) }}</span>
+            <span class="detail-meta">还没钉 · 沈予提过 {{ ghostCard.count }} 次</span>
+          </div>
+          <div class="detail-title-actions">
+            <NButton size="small" type="primary" :loading="saving" @click="pinGhostNow">钉住它</NButton>
+            <NButton size="small" quaternary @click="closeGhost">收起</NButton>
+          </div>
+        </div>
+
+        <div class="detail-block world-block">
+          <h4>这个名字出现在这些便签里</h4>
+          <NSpin :show="ghostLoading">
+            <div v-if="ghostMentions.length" class="world-list">
+              <div v-for="note in ghostMentions" :key="note.id" class="world-item">
+                <span class="seal small" aria-hidden="true">M</span>
+                <div class="world-item-body">
+                  <div class="world-item-head">
+                    <b>{{ note.mem_type || 'Mem' }}</b>
+                    <span>{{ note.kind }}<template v-if="shortDate(note.event_date)"> · {{ shortDate(note.event_date) }}</template></span>
+                  </div>
+                  <p class="world-excerpt">{{ note.content }}</p>
+                </div>
+              </div>
+            </div>
+            <p v-else-if="!ghostLoading" class="muted">没有找到写着这个名字的便签</p>
+          </NSpin>
+        </div>
       </div>
 
       <div v-if="selected" class="detail">

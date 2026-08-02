@@ -539,6 +539,11 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
     async def get_memory_graph_name_candidates(limit: int = 30):
         return await graph_mutation(memory_graph_service().name_candidates(limit=limit))
 
+    @router.get("/api/gateway/memory-graph/candidate-mentions")
+    async def get_memory_graph_candidate_mentions(name: str = "", limit: int = 12):
+        # Read-only: the mem notes behind an unanchored name candidate.
+        return await memory_graph_service().candidate_mentions(name, limit=limit)
+
     @router.post("/api/gateway/memory-graph/relations")
     async def create_memory_graph_relation(body: MemoryGraphRelationCreate):
         return await graph_mutation(memory_graph_service().create_relation(**body.model_dump()))

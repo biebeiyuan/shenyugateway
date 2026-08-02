@@ -592,6 +592,52 @@ class MemoryGraphService:
             links.append({"name": counts[normalized]["name"], "entity_id": entity_id, "shared": shared})
         return {"ok": True, "candidates": capped, "links": links}
 
+    async def candidate_mentions(self, name: str, *, limit: int = 12) -> dict[str, Any]:
+        """Evidence behind an unanchored candidate: the mem notes carrying the name."""
+        if not self.supabase:
+            return {"ok": False, "error": "Supabase is not configured."}
+        normalized = normalize_alias(name)
+        if len(normalized) < 2:
+            return {"ok": False, "error": "name is required"}
+        try:
+            notes = await self.supabase.query(
+                MEM_NOTES_TABLE,
+                {
+                    "select": "id,content,mem_type,people,places,objects,status,created_at,updated_at",
+                    "status": "in.(captured,active)",
+                    "order": "updated_at.desc",
+                    "limit": "1000",
+                },
+            )
+        except Exception as exc:
+            return {"ok": False, "error": f"memory graph is not ready: {exc}"}
+        items = []
+        for note in notes if isinstance(notes, list) else []:
+            matched_kind = ""
+            for field, kind in (("people", "人物"), ("places", "地点"), ("objects", "物件")):
+                values = note.get(field) or []
+                if not isinstance(values, list):
+                    continue
+                if any(
+                    normalize_alias(value) == normalized
+                    for value in values
+                    if str(value or "").strip()
+                ):
+                    matched_kind = kind
+                    break
+            if not matched_kind:
+                continue
+            items.append(
+                {
+                    "id": _clean_id(note.get("id")),
+                    "mem_type": _clean_text(note.get("mem_type"), limit=40),
+                    "content": _clean_text(note.get("content"), limit=600),
+                    "kind": matched_kind,
+                    "event_date": _clean_id(note.get("updated_at")) or _clean_id(note.get("created_at")),
+                }
+            )
+        return {"ok": True, "items": items[: max(1, min(int(limit or 12), 50))]}
+
     async def create_relation(
         self,
         *,

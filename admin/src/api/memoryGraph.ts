@@ -190,6 +190,21 @@ export interface MemoryGraphCandidateLink {
   shared: number
 }
 
+export interface MemoryCandidateMention {
+  id: string
+  mem_type: string
+  content: string
+  kind: string
+  event_date?: string
+}
+
+export async function fetchMemoryCandidateMentions(name: string, limit = 12): Promise<MemoryCandidateMention[]> {
+  const { data } = await api.get(
+    `/api/gateway/memory-graph/candidate-mentions?name=${encodeURIComponent(name)}&limit=${limit}`,
+  )
+  return data.items || []
+}
+
 export async function fetchMemoryGraphNameCandidates(
   limit = 30,
 ): Promise<{ candidates: MemoryGraphNameCandidate[]; links: MemoryGraphCandidateLink[] }> {
