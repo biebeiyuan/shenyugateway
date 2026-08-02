@@ -636,7 +636,52 @@ class MemoryGraphService:
                     "event_date": _clean_id(note.get("updated_at")) or _clean_id(note.get("created_at")),
                 }
             )
-        return {"ok": True, "items": items[: max(1, min(int(limit or 12), 50))]}
+        items = items[: max(1, min(int(limit or 12), 50))]
+
+        # Cross-source text evidence: the same characters appearing in any
+        # indexed original (journal, windowsill, heartbeat, ...). This is
+        # display-only evidence for the resident — nothing here auto-links.
+        text_hits: list[dict[str, Any]] = []
+        needle = re.sub(r"[%_]", "", _clean_text(name, limit=80))
+        if needle:
+            try:
+                rows = await self.supabase.query(
+                    RECALL_INDEX_TABLE,
+                    {
+                        "select": "source_table,source_id,source_type,title,excerpt,event_date,source_updated_at,search_text,chunk_index",
+                        "search_text": f"ilike.*{needle}*",
+                        "deleted_at": "is.null",
+                        "order": "event_date.desc",
+                        "limit": "40",
+                    },
+                )
+            except Exception:
+                rows = []
+            mem_ids = {item["id"] for item in items}
+            seen_sources: set[tuple[str, str]] = set()
+            for row in rows if isinstance(rows, list) else []:
+                key = _source_key(row)
+                if key[1] in mem_ids or key in seen_sources:
+                    continue
+                haystack = " ".join(
+                    [_clean_text(row.get("title"), limit=200), _clean_text(row.get("search_text"), limit=4000)]
+                )
+                if not alias_matches_text(name, haystack):
+                    continue
+                seen_sources.add(key)
+                text_hits.append(
+                    {
+                        "source_table": key[0],
+                        "source_id": key[1],
+                        "source_type": _clean_id(row.get("source_type")),
+                        "title": _clean_text(row.get("title"), limit=200),
+                        "excerpt": _clean_text(row.get("excerpt"), limit=400),
+                        "event_date": _clean_id(row.get("event_date")) or _clean_id(row.get("source_updated_at")),
+                    }
+                )
+                if len(text_hits) >= 8:
+                    break
+        return {"ok": True, "items": items, "text_hits": text_hits}
 
     async def create_relation(
         self,

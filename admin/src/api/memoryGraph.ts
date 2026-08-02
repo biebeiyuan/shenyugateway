@@ -198,11 +198,23 @@ export interface MemoryCandidateMention {
   event_date?: string
 }
 
-export async function fetchMemoryCandidateMentions(name: string, limit = 12): Promise<MemoryCandidateMention[]> {
+export interface MemoryCandidateTextHit {
+  source_table: string
+  source_type: string
+  source_id: string
+  title?: string
+  excerpt?: string
+  event_date?: string
+}
+
+export async function fetchMemoryCandidateMentions(
+  name: string,
+  limit = 12,
+): Promise<{ items: MemoryCandidateMention[]; textHits: MemoryCandidateTextHit[] }> {
   const { data } = await api.get(
     `/api/gateway/memory-graph/candidate-mentions?name=${encodeURIComponent(name)}&limit=${limit}`,
   )
-  return data.items || []
+  return { items: data.items || [], textHits: data.text_hits || [] }
 }
 
 export async function fetchMemoryGraphNameCandidates(

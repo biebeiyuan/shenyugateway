@@ -25,7 +25,11 @@ class GraphSupabase:
                 continue
             value = row.get(key)
             text = str(condition)
-            if text.startswith("eq."):
+            if text.startswith("ilike.*") and text.endswith("*"):
+                needle = text[len("ilike.*") : -1].lower()
+                if needle not in str(value or "").lower():
+                    return False
+            elif text.startswith("eq."):
                 expected = text[3:]
                 if expected in {"true", "false"}:
                     if bool(value) is not (expected == "true"):
@@ -541,6 +545,30 @@ def test_candidate_mentions_returns_notes_carrying_the_name():
                 "updated_at": "2026-07-20T08:00:00+00:00",
             },
         ],
+        RECALL_INDEX_TABLE: [
+            {
+                "source_table": "journal",
+                "source_id": "j-1",
+                "source_type": "journal",
+                "chunk_index": 0,
+                "title": "三月的信",
+                "excerpt": "圆儿那天也在。",
+                "search_text": "三月的信 圆儿那天也在",
+                "event_date": "2026-03-14T00:00:00+00:00",
+                "deleted_at": None,
+            },
+            {
+                "source_table": "mem_notes",
+                "source_id": "n1",
+                "source_type": "mem_note",
+                "chunk_index": 0,
+                "title": "",
+                "excerpt": "圆儿今天带了牛奶来。",
+                "search_text": "圆儿今天带了牛奶来",
+                "event_date": "2026-07-28T08:00:00+00:00",
+                "deleted_at": None,
+            },
+        ],
     })
 
     result = asyncio.run(MemoryGraphService(supabase).candidate_mentions("圆儿"))
@@ -551,5 +579,10 @@ def test_candidate_mentions_returns_notes_carrying_the_name():
     assert item["mem_type"] == "关于她的事实"
     assert item["kind"] == "人物"
     assert "牛奶" in item["content"]
+    # Cross-source text evidence covers other originals, while the mem note
+    # already shown as structured evidence is not duplicated.
+    assert [hit["source_id"] for hit in result["text_hits"]] == ["j-1"]
+    assert result["text_hits"][0]["title"] == "三月的信"
     empty = asyncio.run(MemoryGraphService(supabase).candidate_mentions("不存在的人"))
     assert empty["items"] == []
+    assert empty["text_hits"] == []

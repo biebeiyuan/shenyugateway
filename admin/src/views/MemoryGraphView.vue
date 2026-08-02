@@ -28,6 +28,7 @@ import {
   updateMemoryEntityAlias,
   updateMemoryEntityRelation,
   type MemoryCandidateMention,
+  type MemoryCandidateTextHit,
   type MemoryEntity,
   type MemoryEntityMentionItem,
   type MemoryEntityRelation,
@@ -61,6 +62,7 @@ const candidates = ref<MemoryGraphNameCandidate[]>([])
 const candidateLinks = ref<MemoryGraphCandidateLink[]>([])
 const ghostCard = ref<MemoryGraphNameCandidate | null>(null)
 const ghostMentions = ref<MemoryCandidateMention[]>([])
+const ghostTextHits = ref<MemoryCandidateTextHit[]>([])
 const ghostLoading = ref(false)
 const drawerOpen = ref(false)
 const drawerLoading = ref(false)
@@ -417,11 +419,15 @@ async function openGhost(candidate: MemoryGraphNameCandidate) {
   manageOpen.value = false
   ghostCard.value = candidate
   ghostMentions.value = []
+  ghostTextHits.value = []
   ghostLoading.value = true
   try {
-    ghostMentions.value = await fetchMemoryCandidateMentions(candidate.name)
+    const result = await fetchMemoryCandidateMentions(candidate.name)
+    ghostMentions.value = result.items
+    ghostTextHits.value = result.textHits
   } catch {
     ghostMentions.value = []
+    ghostTextHits.value = []
   } finally {
     ghostLoading.value = false
   }
@@ -430,6 +436,7 @@ async function openGhost(candidate: MemoryGraphNameCandidate) {
 function closeGhost() {
   ghostCard.value = null
   ghostMentions.value = []
+  ghostTextHits.value = []
 }
 
 async function pinGhostNow() {
@@ -923,6 +930,22 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
             </div>
             <p v-else-if="!ghostLoading" class="muted">没有找到写着这个名字的便签</p>
           </NSpin>
+        </div>
+
+        <div v-if="ghostTextHits.length" class="detail-block world-block">
+          <h4>原文里也出现过</h4>
+          <div class="world-list">
+            <div v-for="hit in ghostTextHits" :key="hit.source_table + ' ' + hit.source_id" class="world-item">
+              <span class="seal small" aria-hidden="true">{{ sourceSeal(hit) }}</span>
+              <div class="world-item-body">
+                <div class="world-item-head">
+                  <b>{{ hit.title || sourceLabel(hit.source_type) }}</b>
+                  <span>{{ sourceLabel(hit.source_type) }}<template v-if="shortDate(hit.event_date)"> · {{ shortDate(hit.event_date) }}</template></span>
+                </div>
+                <p v-if="hit.excerpt" class="world-excerpt">{{ hit.excerpt }}</p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 
