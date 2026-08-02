@@ -476,8 +476,19 @@ def test_entity_mentions_hydrates_originals_by_event_day():
             {
                 "source_table": "journal",
                 "source_id": "j-1",
+                "chunk_index": 1,
+                "title": "三月的信",
+                "body": "后来一起去喝了茶。",
+                "excerpt": "后来一起去喝了茶。",
+                "event_date": "2026-03-14T00:00:00+00:00",
+                "deleted_at": None,
+            },
+            {
+                "source_table": "journal",
+                "source_id": "j-1",
                 "chunk_index": 0,
                 "title": "三月的信",
+                "body": "那天和老周聊了很久。",
                 "excerpt": "那天和老周聊了很久。",
                 "event_date": "2026-03-14T00:00:00+00:00",
                 "deleted_at": None,
@@ -493,10 +504,17 @@ def test_entity_mentions_hydrates_originals_by_event_day():
     journal_item = items[1]
     assert journal_item["title"] == "三月的信"
     assert journal_item["excerpt"] == "那天和老周聊了很久。"
+    # Full original is hydrated from every chunk, in chunk order.
+    assert journal_item["content"] == "那天和老周聊了很久。\n\n后来一起去喝了茶。"
+    assert journal_item["content_complete"] is True
     assert journal_item["event_date"] == "2026-03-14T00:00:00+00:00"
     assert journal_item["origin"] == "exact_alias"
     fallback_item = items[0]
     assert fallback_item["event_date"] == "2026-07-28T08:00:00+00:00"
+    # A mention whose source is missing from the recall index is marked
+    # incomplete instead of pretending an empty text is the whole original.
+    assert fallback_item["content"] == ""
+    assert fallback_item["content_complete"] is False
 
 
 def test_name_candidates_links_co_occurring_names_to_their_anchors():
@@ -552,6 +570,7 @@ def test_candidate_mentions_returns_notes_carrying_the_name():
                 "source_type": "journal",
                 "chunk_index": 0,
                 "title": "三月的信",
+                "body": "圆儿那天也在。她笑了一下午。",
                 "excerpt": "圆儿那天也在。",
                 "search_text": "三月的信 圆儿那天也在",
                 "event_date": "2026-03-14T00:00:00+00:00",
@@ -583,6 +602,9 @@ def test_candidate_mentions_returns_notes_carrying_the_name():
     # already shown as structured evidence is not duplicated.
     assert [hit["source_id"] for hit in result["text_hits"]] == ["j-1"]
     assert result["text_hits"][0]["title"] == "三月的信"
+    # Text hits are hydrated with the complete original for the reading overlay.
+    assert result["text_hits"][0]["content"] == "圆儿那天也在。她笑了一下午。"
+    assert result["text_hits"][0]["content_complete"] is True
     empty = asyncio.run(MemoryGraphService(supabase).candidate_mentions("不存在的人"))
     assert empty["items"] == []
     assert empty["text_hits"] == []

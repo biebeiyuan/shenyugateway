@@ -39,6 +39,8 @@ import {
   type MemoryEntityType,
   type SourceEntityMention,
 } from '@/api/memoryGraph'
+import AnchorOriginalsOverlay, { type OverlayPaper } from './memory-graph/AnchorOriginalsOverlay.vue'
+import { sourceLabel, sourceSeal } from './memory-graph/sourceDisplay'
 
 const message = useMessage()
 const tab = ref<'net' | 'recall'>('net')
@@ -64,6 +66,7 @@ const ghostCard = ref<MemoryGraphNameCandidate | null>(null)
 const ghostMentions = ref<MemoryCandidateMention[]>([])
 const ghostTextHits = ref<MemoryCandidateTextHit[]>([])
 const ghostLoading = ref(false)
+const overlayOpen = ref(false)
 const drawerOpen = ref(false)
 const drawerLoading = ref(false)
 const archivedEntities = ref<MemoryEntity[]>([])
@@ -282,20 +285,6 @@ function typeLabel(type: string): string {
   return ({ person: '人物', place: '地点', object: '物件', topic: '主题' } as Record<string, string>)[type] || type
 }
 
-function sourceLabel(type: string): string {
-  return ({
-    journal: '日记',
-    windowsill: '窗台',
-    heartbeat: '心跳',
-    room: '房间',
-    board: '留言',
-    memory: '旧记忆',
-    calendar: '日历',
-    mem_note: 'Mem',
-    notebook: '笔记',
-  } as Record<string, string>)[type] || type
-}
-
 function sourceKey(item: Pick<MemoryGraphRecallPreviewItem, 'source_table' | 'source_id'>): string {
   return `${item.source_table} ${item.source_id}`
 }
@@ -331,6 +320,61 @@ function selectEntity(entity: MemoryEntity) {
   relationType.value = ''
   relationEvidence.value = ''
   void loadSelectedMentions(entity.id)
+}
+
+// Reading overlay: picking a name off the net lifts its papers up front.
+function openAnchor(entity: MemoryEntity) {
+  selectEntity(entity)
+  overlayOpen.value = true
+}
+
+function closeOverlay() {
+  overlayOpen.value = false
+  if (ghostCard.value) closeGhost()
+}
+
+const anchorPapers = computed<OverlayPaper[]>(() =>
+  selectedMentions.value.map((mention) => ({
+    key: `${mention.source_table} ${mention.source_id}`,
+    sourceType: mention.source_type,
+    sourceTable: mention.source_table,
+    sourceId: mention.source_id,
+    title: mention.title || '',
+    dateLabel: shortDate(mention.event_date),
+    content: mention.content || mention.excerpt || '',
+    complete: mention.content_complete !== false,
+    badge: mention.origin === 'manual' ? '你钉的' : '',
+  })),
+)
+
+const ghostPapers = computed<OverlayPaper[]>(() => [
+  ...ghostMentions.value.map((note) => ({
+    key: `mem ${note.id}`,
+    sourceType: 'mem_note',
+    title: note.mem_type || 'Mem',
+    dateLabel: shortDate(note.event_date),
+    content: note.content,
+    complete: true,
+    badge: note.kind || '',
+  })),
+  ...ghostTextHits.value.map((hit) => ({
+    key: `${hit.source_table} ${hit.source_id}`,
+    sourceType: hit.source_type,
+    title: hit.title || '',
+    dateLabel: shortDate(hit.event_date),
+    content: hit.content || hit.excerpt || '',
+    complete: hit.content_complete !== false,
+    badge: '',
+  })),
+])
+
+const overlayAnchor = computed(() => (overlayOpen.value && !ghostCard.value ? selected.value : null))
+const overlayGhost = computed(() => (overlayOpen.value ? ghostCard.value : null))
+const overlayPapers = computed(() => (ghostCard.value ? ghostPapers.value : anchorPapers.value))
+const overlayLoading = computed(() => (ghostCard.value ? ghostLoading.value : mentionsLoading.value))
+
+async function onOverlayEntityMutated() {
+  await Promise.all([loadGraph(), loadAnchorEntities()])
 }
 
 async function loadSelectedMentions(entityId: string) {
@@ -417,6 +461,7 @@ async function openGhost(candidate: MemoryGraphNameCandidate) {
   selectedId.value = ''
   selectedMentions.value = []
   manageOpen.value = false
+  overlayOpen.value = true
   ghostCard.value = candidate
   ghostMentions.value = []
   ghostTextHits.value = []
@@ -434,6 +479,7 @@ async function openGhost(candidate: MemoryGraphNameCandidate) {
 }
 
 function closeGhost() {
+  overlayOpen.value = false
   ghostCard.value = null
   ghostMentions.value = []
   ghostTextHits.value = []
@@ -762,21 +808,6 @@ function shortDate(value?: string): string {
   return (value || '').slice(0, 10)
 }
 
-function sourceSeal(item: { source_type: string }): string {
-  const seals: Record<string, string> = {
-    journal: '记',
-    windowsill: '窗',
-    heartbeat: '跳',
-    room: '房',
-    board: '言',
-    memory: '忆',
-    calendar: '历',
-    mem_note: 'M',
-    notebook: '笔',
-  }
-  return seals[item.source_type] || sourceLabel(item.source_type).slice(0, 1) || '·'
-}
-
 function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
   return item.recall_match?.anchor?.name || ''
 }
@@ -838,9 +869,9 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
               role="button"
               tabindex="0"
               :aria-label="`锚点：${node.entity.canonical_name}`"
-              @click="selectEntity(node.entity)"
-              @keydown.enter.prevent="selectEntity(node.entity)"
-              @keydown.space.prevent="selectEntity(node.entity)"
+              @click="openAnchor(node.entity)"
+              @keydown.enter.prevent="openAnchor(node.entity)"
+              @keydown.space.prevent="openAnchor(node.entity)"
             >
               <circle class="type-dot" :cx="node.x" :cy="node.y - node.size - 13" r="3.2" :fill="TYPE_COLOR[node.entity.entity_type]" />
               <text class="anchor-name" :x="node.x" :y="node.y" :style="{ fontSize: `${node.size}px` }">{{ node.entity.canonical_name }}</text>
@@ -900,55 +931,6 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
         </button>
       </div>
 
-      <div v-if="ghostCard" class="detail">
-        <div class="detail-title">
-          <div>
-            <h3>{{ ghostCard.name }}</h3>
-            <span class="type-chip" :style="{ background: TYPE_COLOR[ghostCard.kind] }">{{ typeLabel(ghostCard.kind) }}</span>
-            <span class="detail-meta">还没钉 · 沈予提过 {{ ghostCard.count }} 次</span>
-          </div>
-          <div class="detail-title-actions">
-            <NButton size="small" type="primary" :loading="saving" @click="pinGhostNow">钉住它</NButton>
-            <NButton size="small" quaternary @click="closeGhost">收起</NButton>
-          </div>
-        </div>
-
-        <div class="detail-block world-block">
-          <h4>这个名字出现在这些便签里</h4>
-          <NSpin :show="ghostLoading">
-            <div v-if="ghostMentions.length" class="world-list">
-              <div v-for="note in ghostMentions" :key="note.id" class="world-item">
-                <span class="seal small" aria-hidden="true">M</span>
-                <div class="world-item-body">
-                  <div class="world-item-head">
-                    <b>{{ note.mem_type || 'Mem' }}</b>
-                    <span>{{ note.kind }}<template v-if="shortDate(note.event_date)"> · {{ shortDate(note.event_date) }}</template></span>
-                  </div>
-                  <p class="world-excerpt">{{ note.content }}</p>
-                </div>
-              </div>
-            </div>
-            <p v-else-if="!ghostLoading" class="muted">没有找到写着这个名字的便签</p>
-          </NSpin>
-        </div>
-
-        <div v-if="ghostTextHits.length" class="detail-block world-block">
-          <h4>原文里也出现过</h4>
-          <div class="world-list">
-            <div v-for="hit in ghostTextHits" :key="hit.source_table + ' ' + hit.source_id" class="world-item">
-              <span class="seal small" aria-hidden="true">{{ sourceSeal(hit) }}</span>
-              <div class="world-item-body">
-                <div class="world-item-head">
-                  <b>{{ hit.title || sourceLabel(hit.source_type) }}</b>
-                  <span>{{ sourceLabel(hit.source_type) }}<template v-if="shortDate(hit.event_date)"> · {{ shortDate(hit.event_date) }}</template></span>
-                </div>
-                <p v-if="hit.excerpt" class="world-excerpt">{{ hit.excerpt }}</p>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
       <div v-if="selected" class="detail">
         <div class="detail-title">
           <div>
@@ -963,26 +945,6 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
               收进抽屉，随时可以放回。
             </NPopconfirm>
           </div>
-        </div>
-
-        <div class="detail-block world-block">
-          <h4>她的世界里，「{{ selected.canonical_name }}」长这样</h4>
-          <NSpin :show="mentionsLoading">
-            <div v-if="selectedMentions.length" class="world-list">
-              <div v-for="mention in selectedMentions" :key="mention.source_table + ' ' + mention.source_id" class="world-item">
-                <span class="seal small" aria-hidden="true">{{ sourceSeal(mention) }}</span>
-                <div class="world-item-body">
-                  <div class="world-item-head">
-                    <b>{{ mention.title || sourceLabel(mention.source_type) }}</b>
-                    <span>{{ sourceLabel(mention.source_type) }}<template v-if="shortDate(mention.event_date)"> · {{ shortDate(mention.event_date) }}</template></span>
-                    <em v-if="mention.origin === 'manual'" class="world-origin">你钉的</em>
-                  </div>
-                  <p v-if="mention.excerpt" class="world-excerpt">{{ mention.excerpt }}</p>
-                </div>
-              </div>
-            </div>
-            <p v-else-if="!mentionsLoading" class="muted">还没有原件提到这个锚点</p>
-          </NSpin>
         </div>
 
         <button class="manage-toggle" @click="manageOpen = !manageOpen">
@@ -1036,6 +998,18 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
       </div>
     </section>
 
+    <AnchorOriginalsOverlay
+      :open="overlayOpen"
+      :anchor="overlayAnchor"
+      :ghost="overlayGhost"
+      :papers="overlayPapers"
+      :loading="overlayLoading"
+      :anchor-options="recallAnchorOptions"
+      @close="closeOverlay"
+      @pin="pinGhostNow"
+      @entity-mutated="onOverlayEntityMutated"
+    />
+
     <!-- ============ 想起的一瞬间 ============ -->
     <section v-show="tab === 'recall'" data-testid="memory-graph-recall-preview">
       <div class="recall-bar">
@@ -1067,7 +1041,7 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
             :style="{ animationDelay: `${recallDelay(item)}ms` }"
           >
             <header class="recall-card-head">
-              <span class="seal" aria-hidden="true">{{ sourceSeal(item) }}</span>
+              <span class="seal" aria-hidden="true">{{ sourceSeal(item.source_type) }}</span>
               <div>
                 <b>{{ item.title || sourceLabel(item.source_type) }}</b>
                 <span>{{ sourceLabel(item.source_type) }}<template v-if="sourceDate(item)"> · {{ sourceDate(item) }}</template></span>
@@ -1340,7 +1314,6 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
   fill: var(--mg-ink);
   text-anchor: middle;
   dominant-baseline: middle;
-  pointer-events: none;
   paint-order: stroke;
   stroke: var(--mg-paper);
   stroke-width: 3px;
@@ -1352,7 +1325,6 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
   font-size: 11px;
   fill: var(--mg-ink-3);
   text-anchor: middle;
-  pointer-events: none;
   font-variant-numeric: tabular-nums;
 }
 
@@ -1562,69 +1534,6 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
   color: var(--mg-ink-2);
   letter-spacing: 0.05em;
   margin-bottom: 8px;
-}
-
-.world-list {
-  display: grid;
-  gap: 10px;
-}
-
-.world-item {
-  display: flex;
-  gap: 10px;
-  align-items: flex-start;
-}
-
-.seal.small {
-  width: 24px;
-  height: 24px;
-  font-size: 12.5px;
-  border-radius: 5px;
-  margin-top: 2px;
-}
-
-.world-item-body {
-  flex: 1;
-  min-width: 0;
-}
-
-.world-item-head {
-  display: flex;
-  align-items: baseline;
-  gap: 8px;
-  flex-wrap: wrap;
-}
-
-.world-item-head b {
-  font-family: var(--mg-serif);
-  font-size: 14.5px;
-  font-weight: 600;
-}
-
-.world-item-head span {
-  color: var(--mg-ink-3);
-  font-size: 11.5px;
-}
-
-.world-origin {
-  font-size: 10.5px;
-  font-style: normal;
-  color: var(--mg-accent-ink);
-  border: 1px solid var(--mg-accent);
-  border-radius: 999px;
-  padding: 0 7px;
-  opacity: 0.8;
-}
-
-.world-excerpt {
-  margin-top: 2px;
-  font-size: 12.5px;
-  color: var(--mg-ink-2);
-  line-height: 1.7;
-  display: -webkit-box;
-  -webkit-line-clamp: 2;
-  -webkit-box-orient: vertical;
-  overflow: hidden;
 }
 
 .manage-toggle {
@@ -1963,7 +1872,6 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
   fill: var(--mg-ink-3);
   text-anchor: middle;
   opacity: 0.8;
-  pointer-events: none;
 }
 
 @media (max-width: 720px) {

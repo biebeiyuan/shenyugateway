@@ -168,6 +168,8 @@ export interface MemoryEntityMentionItem {
   origin: string
   title?: string
   excerpt?: string
+  content?: string
+  content_complete?: boolean
   event_date?: string
 }
 
@@ -204,6 +206,8 @@ export interface MemoryCandidateTextHit {
   source_id: string
   title?: string
   excerpt?: string
+  content?: string
+  content_complete?: boolean
   event_date?: string
 }
 

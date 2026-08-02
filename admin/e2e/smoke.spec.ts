@@ -110,9 +110,42 @@ test('Mem page loads and its search field accepts input', async ({ page }) => {
 })
 
 test('memory graph page loads and exposes anchor management', async ({ page }) => {
+  const anchor = {
+    id: 'e1',
+    entity_type: 'person',
+    canonical_name: '老周',
+    description: '',
+    status: 'active',
+    aliases: [{
+      id: 'a1', entity_id: 'e1', alias: '老周', normalized_alias: '老周',
+      status: 'confirmed', is_primary: true, provenance: 'manual',
+    }],
+    mention_count: 1,
+    relation_count: 0,
+    source_type_counts: {},
+    last_mentioned_at: null,
+  }
   await page.route('**/api/gateway/memory-graph?*', async (route) => {
     await route.fulfill({
-      json: { ok: true, available: true, entities: [], relations: [], entity_count: 0, relation_count: 0 },
+      json: { ok: true, available: true, entities: [anchor], relations: [], entity_count: 1, relation_count: 0 },
+    })
+  })
+  await page.route('**/api/gateway/memory-graph/entities/*/mentions*', async (route) => {
+    await route.fulfill({
+      json: {
+        ok: true,
+        items: [{
+          source_table: 'journal',
+          source_type: 'journal',
+          source_id: 'journal-smoke',
+          origin: 'exact_alias',
+          title: '三月的信',
+          excerpt: '今天和老周吃饭。',
+          content: '今天和老周吃饭，聊了很久。饭后又散了散步。',
+          content_complete: true,
+          event_date: '2026-03-14T00:00:00Z',
+        }],
+      },
     })
   })
   await page.route('**/api/gateway/memory-graph/recall-preview', async (route) => {
@@ -144,6 +177,14 @@ test('memory graph page loads and exposes anchor management', async ({ page }) =
     await search.fill('老周')
     await expect(search).toHaveValue('老周')
     await expect(page.getByRole('button', { name: '建立锚点' })).toBeVisible()
+    // Picking a name lifts the reading overlay with the complete original.
+    await page.getByRole('button', { name: '锚点：老周' }).click()
+    const overlay = page.getByTestId('memory-graph-originals-overlay')
+    await expect(overlay).toBeVisible()
+    await expect(overlay.getByText('今天和老周吃饭，聊了很久。饭后又散了散步。')).toBeVisible()
+    await expect(overlay.getByText('命中词')).toBeVisible()
+    await overlay.getByRole('button', { name: '放回去' }).click()
+    await expect(overlay).toBeHidden()
     await page.getByTestId('memory-graph-tab-recall').click()
     const recall = page.getByTestId('memory-graph-recall-input').locator('input')
     await recall.fill('老周')

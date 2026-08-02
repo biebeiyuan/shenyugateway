@@ -67,6 +67,17 @@ def _source_key(row: dict[str, Any]) -> tuple[str, str]:
     return (_clean_id(row.get("source_table")), _clean_id(row.get("source_id")))
 
 
+def _joined_source_content(rows: list[dict[str, Any]], *, limit: int = 20000) -> str:
+    """Full original text: every indexed chunk of one source, joined in chunk order."""
+    ordered = sorted(rows, key=lambda row: int(row.get("chunk_index") or 0))
+    parts = []
+    for row in ordered:
+        text = _clean_text(row.get("body"), limit=limit) or _clean_text(row.get("excerpt"), limit=400)
+        if text:
+            parts.append(text)
+    return "\n\n".join(parts)[:limit]
+
+
 def _is_current_relation(row: dict[str, Any]) -> bool:
     valid_to = _clean_text(row.get("valid_to"), limit=100)
     if not valid_to:
@@ -307,34 +318,40 @@ class MemoryGraphService:
             source_ids = sorted(
                 {_clean_id(mention.get("source_id")) for mention in mentions if _clean_id(mention.get("source_id"))}
             )
-            by_source: dict[tuple[str, str], dict[str, Any]] = {}
+            by_source: dict[tuple[str, str], list[dict[str, Any]]] = {}
             for start in range(0, len(source_ids), 80):
                 rows = await self._query_all(
                     RECALL_INDEX_TABLE,
                     {
-                        "select": "source_table,source_id,title,excerpt,event_date,source_updated_at,chunk_index",
+                        "select": "source_table,source_id,title,excerpt,body,event_date,source_updated_at,chunk_index",
                         "source_id": _in_filter(source_ids[start : start + 80]),
                         "deleted_at": "is.null",
                         "order": "chunk_index.asc",
                     },
                 )
                 for row in rows:
-                    by_source.setdefault(_source_key(row), row)
+                    by_source.setdefault(_source_key(row), []).append(row)
         except Exception as exc:
             return {"ok": False, "error": f"memory graph is not ready: {exc}"}
         items = []
         for mention in mentions:
-            row = by_source.get(_source_key(mention)) or {}
+            rows = sorted(
+                by_source.get(_source_key(mention)) or [],
+                key=lambda row: int(row.get("chunk_index") or 0),
+            )
+            first = rows[0] if rows else {}
             items.append(
                 {
                     "source_table": _clean_id(mention.get("source_table")),
                     "source_type": _clean_id(mention.get("source_type")),
                     "source_id": _clean_id(mention.get("source_id")),
                     "origin": _clean_id(mention.get("origin")),
-                    "title": _clean_text(row.get("title"), limit=200),
-                    "excerpt": _clean_text(row.get("excerpt"), limit=400),
-                    "event_date": _clean_id(row.get("event_date"))
-                    or _clean_id(row.get("source_updated_at"))
+                    "title": _clean_text(first.get("title"), limit=200),
+                    "excerpt": _clean_text(first.get("excerpt"), limit=400),
+                    "content": _joined_source_content(rows),
+                    "content_complete": bool(rows),
+                    "event_date": _clean_id(first.get("event_date"))
+                    or _clean_id(first.get("source_updated_at"))
                     or _clean_id(mention.get("created_at")),
                 }
             )
@@ -631,7 +648,7 @@ class MemoryGraphService:
                 {
                     "id": _clean_id(note.get("id")),
                     "mem_type": _clean_text(note.get("mem_type"), limit=40),
-                    "content": _clean_text(note.get("content"), limit=600),
+                    "content": _clean_text(note.get("content"), limit=4000),
                     "kind": matched_kind,
                     "event_date": _clean_id(note.get("updated_at")) or _clean_id(note.get("created_at")),
                 }
@@ -681,6 +698,28 @@ class MemoryGraphService:
                 )
                 if len(text_hits) >= 8:
                     break
+        if text_hits:
+            # Hydrate the kept hits with their full originals (all chunks), so
+            # the resident reads the whole paper, not a 400-character excerpt.
+            try:
+                chunk_rows = await self.supabase.query(
+                    RECALL_INDEX_TABLE,
+                    {
+                        "select": "source_table,source_id,body,excerpt,chunk_index",
+                        "source_id": _in_filter([hit["source_id"] for hit in text_hits]),
+                        "deleted_at": "is.null",
+                        "limit": "200",
+                    },
+                )
+            except Exception:
+                chunk_rows = []
+            chunks_by_source: dict[tuple[str, str], list[dict[str, Any]]] = {}
+            for row in chunk_rows if isinstance(chunk_rows, list) else []:
+                chunks_by_source.setdefault(_source_key(row), []).append(row)
+            for hit in text_hits:
+                rows = chunks_by_source.get((hit["source_table"], hit["source_id"]), [])
+                hit["content"] = _joined_source_content(rows)
+                hit["content_complete"] = bool(rows)
         return {"ok": True, "items": items, "text_hits": text_hits}
 
     async def create_relation(
