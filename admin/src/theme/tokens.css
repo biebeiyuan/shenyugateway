@@ -36,6 +36,18 @@
   --sy-gilt: #c79748;                       /* 古金（只画线条：发丝边、角饰、印章） */
   --sy-gilt-d: #9a7320;
 
+  /* ---- 角色语义色（学金箔分工：一人一味，新元素只许归入已有角色） ----
+   * 你 = 软玫瑰粉：你的操作、你钉的、你写下的词。
+   * 沈予 = 深松绿：他的锚点、他自动连上的关联、他想起来的东西。
+   * 系统 = 墨/纸灰：标签、元信息、表格线、禁用态。 */
+  --sy-self: #c094a8;
+  --sy-self-d: #a07888;
+  --sy-resident: #2c4a44;
+  --sy-resident-d: #1f3632;
+  --sy-resident-soft: rgba(44, 74, 68, 0.1);
+  --sy-sys-ink: #2c2c2c;
+  --sy-sys-surface: #e8e4e0;
+
   /* ---- 发丝线 ---- */
   --sy-hair: rgba(192, 148, 168, 0.32);     /* 玫瑰发丝 */
   --sy-hair-2: rgba(192, 148, 168, 0.16);
@@ -78,6 +90,15 @@
   --sy-sage: #8a9b6e;
   --sy-gilt: #c19a56;
   --sy-gilt-d: #9b7c45;
+
+  /* 夜场角色色：松绿提亮才压得住近黑底，系统灰反转 */
+  --sy-self: #b87a82;
+  --sy-self-d: #9a5f68;
+  --sy-resident: #7e9c90;
+  --sy-resident-d: #628176;
+  --sy-resident-soft: rgba(126, 156, 144, 0.16);
+  --sy-sys-ink: #e8e4e0;
+  --sy-sys-surface: #292420;
 
   --sy-hair: rgba(193, 154, 86, 0.38);
   --sy-hair-2: rgba(193, 154, 86, 0.18);

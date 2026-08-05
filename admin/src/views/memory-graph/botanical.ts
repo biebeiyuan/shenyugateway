@@ -74,7 +74,3 @@ export const SOURCE_GLYPHS: Record<string, SourceGlyph> = {
   },
 }
 
-/** 通用：包一层 <svg>。 */
-export function glyphSvg(glyph: SourceGlyph, size = 24, cls = ''): string {
-  return `<svg class="${cls}" width="${size}" height="${size}" viewBox="0 0 48 48" fill="none" aria-hidden="true">${glyph.body}</svg>`
-}

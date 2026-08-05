@@ -2,23 +2,30 @@
 // 描金线索板 · 想起的一瞬间
 //
 // 空间骨架是侦探软木板（钉、连线、胶带），皮肤是 rose-gothic Mucha（古金
-// 发丝线、宽字距眉题、老式数字）。一次「想起」把结果钉上板：中心是被想起
-// 的词，三圈纸按与它的远近排开——脱口而出（金钉 + 实金线连到中心）、
-// 由此及彼（细金线 + 路径牌）、浮想（胶带粘在板边，不连线）。
-// 点一张纸，它从板上取下来放大读全文。
+// 发丝线、宽字距眉题、老式数字）。一次「想起」把原件摊上板：最强的一张
+// 在正中心当主角，其余按与词的远近围成一圈——脱口而出（松绿钉 + 实线
+// 连到中心）、由此及彼（金钉 + 细金线）、浮想（胶带粘在外圈，不连线）。
+// 被想起的词收进左上板签，不占中心。点一张纸，它从板上取下来放大读全文，
+// 阅读层与锚点阅读卡共用同一套 OriginalPaper / AttachAnchors。
 
 import { computed, ref } from 'vue'
-import { NButton, NEmpty, NSelect, NSpin, NTag } from 'naive-ui'
+import { NButton, NEmpty } from 'naive-ui'
 import type { MemoryGraphRecallPreviewItem } from '@/api/memoryGraph'
 import { paperFamily, sourceLabel } from './sourceDisplay'
+import { sourceKey } from './sourceAnchors'
 import SyGlyph from './SyGlyph.vue'
+import OriginalPaper from './OriginalPaper.vue'
+import AttachAnchors from './AttachAnchors.vue'
+
+type RecallGroup = 'direct' | 'related' | 'other'
 
 interface PaperPosition {
   item: MemoryGraphRecallPreviewItem
   x: number
   y: number
   rotate: number
-  group: 'direct' | 'related' | 'other'
+  center: boolean
+  group: RecallGroup
 }
 
 const props = defineProps<{
@@ -32,37 +39,31 @@ const props = defineProps<{
   /** 词命中高亮（父级算好 segment）。 */
   highlight: (item: MemoryGraphRecallPreviewItem) => { text: string; hit: boolean }[]
   sourceDate: (item: MemoryGraphRecallPreviewItem) => string
-  /** 关联锚点编辑（保留现有手动确认入口）。 */
+  /** 关联锚点编辑（与阅读卡同一套 AttachAnchors）。 */
   anchorOptions: { label: string; value: string }[]
-  manualAnchorIds: Record<string, string[]>
-  sourceMentionsLoaded: Record<string, boolean>
-  autoAnchorNames: (item: MemoryGraphRecallPreviewItem) => string[]
-  savingKey: string
   runId: number
 }>()
 
 const emit = defineEmits<{
-  (e: 'update:manualAnchorIds', value: Record<string, string[]>): void
-  (e: 'save-anchors', item: MemoryGraphRecallPreviewItem): void
   (e: 'manage'): void
+  (e: 'saved'): void
 }>()
 
 const BOARD_W = 960
 const BOARD_H = 620
 const CX = BOARD_W / 2
-const CY = BOARD_H / 2
+const CY = BOARD_H / 2 + 6
 
 const flippedKey = ref<string | null>(null)
 
-function sourceKey(item: Pick<MemoryGraphRecallPreviewItem, 'source_table' | 'source_id'>): string {
-  return `${item.source_table} ${item.source_id}`
+function groupOf(item: MemoryGraphRecallPreviewItem): RecallGroup {
+  const group = item.recall_match?.group
+  return group === 'direct' || group === 'related' ? group : 'other'
 }
 
-const groups = computed(() => ({
-  direct: props.items.filter((item) => item.recall_match?.group === 'direct'),
-  related: props.items.filter((item) => item.recall_match?.group === 'related'),
-  other: props.items.filter((item) => item.recall_match?.group === 'other'),
-}))
+function groupRank(group: RecallGroup): number {
+  return group === 'direct' ? 0 : group === 'related' ? 1 : 2
+}
 
 // 用 source key 做种子，同一次想起刷新不跳，换一批才换布局。
 function seed(text: string): number {
@@ -71,40 +72,48 @@ function seed(text: string): number {
   return h
 }
 
-function layoutRing(items: MemoryGraphRecallPreviewItem[], radius: number, startAngle: number, group: PaperPosition['group']): PaperPosition[] {
-  const n = items.length
-  if (!n) return []
-  return items.map((item, i) => {
+// 最强的一张在正中心；其余按组排序、从正上方顺时针围成一圈。
+// 一圈排位件多件少都平衡：件数少不再堆某个象限，中心纸永远是主角。
+const papers = computed<PaperPosition[]>(() => {
+  const ordered = [...props.items].sort((a, b) => groupRank(groupOf(a)) - groupRank(groupOf(b)))
+  if (!ordered.length) return []
+  const [first, ...rest] = ordered
+  const result: PaperPosition[] = [{
+    item: first,
+    group: groupOf(first),
+    center: true,
+    x: CX,
+    y: CY,
+    rotate: ((seed(sourceKey(first)) >> 5) % 5) - 2,
+  }]
+  const n = rest.length
+  rest.forEach((item, i) => {
     const s = seed(sourceKey(item))
-    const angle = startAngle + (i / n) * Math.PI * 2 + ((s % 40) - 20) * (Math.PI / 180)
-    const r = radius + ((s >> 3) % 26) - 13
-    const rotate = ((s >> 5) % 9) - 4
-    return {
+    const angle = -Math.PI / 2 + (i / n) * Math.PI * 2 + (((s % 16) - 8) * Math.PI) / 180
+    result.push({
       item,
-      group,
-      x: CX + r * Math.cos(angle),
-      y: CY + r * Math.sin(angle) * 0.78,
-      rotate: group === 'other' ? rotate * 1.8 : rotate,
-    }
+      group: groupOf(item),
+      center: false,
+      x: CX + 336 * Math.cos(angle),
+      y: CY + 200 * Math.sin(angle),
+      rotate: ((s >> 5) % 9) - 4,
+    })
   })
-}
+  return result
+})
 
-const papers = computed<PaperPosition[]>(() => [
-  ...layoutRing(groups.value.direct, 150, -Math.PI / 2, 'direct'),
-  ...layoutRing(groups.value.related, 242, -Math.PI / 2 + 0.6, 'related'),
-  ...layoutRing(groups.value.other, 318, -Math.PI / 2 + 1.2, 'other'),
-])
-
-const strings = computed(() =>
-  papers.value
-    .filter((p) => p.group !== 'other')
+const strings = computed(() => {
+  const hub = papers.value[0]
+  if (!hub) return []
+  return papers.value
+    .filter((p) => !p.center && p.group !== 'other')
     .map((p) => {
-      const sag = Math.min(38, Math.hypot(p.x - CX, p.y - CY) * 0.16)
-      const mx = (CX + p.x) / 2
-      const my = (CY + p.y) / 2 + sag
-      return { key: sourceKey(p.item), d: `M ${CX} ${CY} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, strong: p.group === 'direct' }
-    }),
-)
+      const sag = Math.min(34, Math.hypot(p.x - hub.x, p.y - hub.y) * 0.12)
+      const mx = (hub.x + p.x) / 2
+      const my = (hub.y + p.y) / 2 + sag
+      return { key: sourceKey(p.item), d: `M ${hub.x} ${hub.y} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, strong: p.group === 'direct' }
+    })
+})
 
 const flipped = computed(() => papers.value.find((p) => sourceKey(p.item) === flippedKey.value) || null)
 
@@ -127,8 +136,10 @@ function directAnchor(item: MemoryGraphRecallPreviewItem): string {
   return item.recall_match?.anchor?.name || ''
 }
 
-function onManualChange(key: string, value: string[]) {
-  emit('update:manualAnchorIds', { ...props.manualAnchorIds, [key]: value })
+function ledeLine(item: MemoryGraphRecallPreviewItem): string {
+  const anchor = directAnchor(item)
+  if (anchor) return `提到了「${anchor}」`
+  return pathLine(item)
 }
 </script>
 
@@ -156,27 +167,25 @@ function onManualChange(key: string, value: string[]) {
         />
       </svg>
 
-      <!-- 中心：被想起的词 -->
-      <div class="board-hub">
-        <span class="hub-pin" aria-hidden="true"></span>
-        <SyGlyph name="begonia" :size="34" class="hub-flower" />
-        <p class="hub-eyebrow">想起了 · recalled</p>
-        <p class="hub-word">「{{ query }}」</p>
-        <p class="hub-count">{{ items.length }} 件原件</p>
-        <button v-if="manageAnchorName" class="hub-manage" @click="emit('manage')">管理这个名字</button>
-      </div>
+      <!-- 板签：被想起的词收在左上角，中心留给想起来的纸 -->
+      <header class="board-tag">
+        <span class="tag-eyebrow">想起了 · recalled</span>
+        <span class="tag-word">「{{ query }}」</span>
+        <span class="tag-count">{{ items.length }} 件原件</span>
+        <button v-if="manageAnchorName" class="tag-manage" data-testid="recall-manage-anchor" @click="emit('manage')">管理这个名字</button>
+      </header>
 
-      <!-- 三圈纸 -->
+      <!-- 中心纸 + 一圈纸 -->
       <button
         v-for="(p, pi) in papers"
         :key="runId + sourceKey(p.item)"
         class="board-paper"
-        :class="[`g-${p.group}`, `fam-${paperFamily(p.item.source_type)}`]"
+        :class="[`g-${p.group}`, `fam-${paperFamily(p.item.source_type)}`, { 'is-center': p.center }]"
         :style="{ left: `${(p.x / BOARD_W) * 100}%`, top: `${(p.y / BOARD_H) * 100}%`, '--rot': `${p.rotate}deg`, '--arrive-delay': `${pi * 70}ms` }"
         :aria-label="`原件：${p.item.title || sourceLabel(p.item.source_type)}`"
         @click="flip(p)"
       >
-        <span v-if="p.group !== 'other'" class="pin" aria-hidden="true"></span>
+        <span v-if="p.group !== 'other'" class="pin" :class="{ pine: p.group === 'direct' }" aria-hidden="true"></span>
         <span v-else class="tape" aria-hidden="true"></span>
         <span class="bp-seal" aria-hidden="true"><SyGlyph :name="p.item.source_type" :size="22" /></span>
         <span class="bp-title">{{ p.item.title || sourceLabel(p.item.source_type) }}</span>
@@ -189,58 +198,42 @@ function onManualChange(key: string, value: string[]) {
       </button>
     </div>
 
-    <!-- 取下来读的纸 -->
+    <!-- 取下来读的纸：与锚点阅读卡同一套 OriginalPaper -->
     <Teleport to="body">
       <Transition name="paper-zoom">
         <div v-if="flipped" class="paper-overlay" @click.self="closePaper">
-          <div class="paper-read" :class="`fam-${paperFamily(flipped.item.source_type)}`" role="dialog" aria-modal="true">
-            <span class="paper-read-pin" aria-hidden="true"></span>
-            <header class="paper-read-head">
-              <span class="bp-seal lg" aria-hidden="true"><SyGlyph :name="flipped.item.source_type" :size="32" /></span>
-              <div class="paper-read-heading">
-                <b>{{ flipped.item.title || sourceLabel(flipped.item.source_type) }}</b>
-                <span>{{ sourceLabel(flipped.item.source_type) }}<template v-if="sourceDate(flipped.item)"> · {{ sourceDate(flipped.item) }}</template></span>
-              </div>
-              <NButton size="small" quaternary @click="closePaper">放回板上</NButton>
-            </header>
-            <p v-if="directAnchor(flipped.item)" class="paper-read-why">提到了「{{ directAnchor(flipped.item) }}」</p>
-            <p v-else-if="pathLine(flipped.item)" class="paper-read-path">{{ pathLine(flipped.item) }}</p>
-            <div class="paper-read-content">
+          <OriginalPaper
+            class="paper-read"
+            role="dialog"
+            aria-modal="true"
+            :source-type="flipped.item.source_type"
+            :title="flipped.item.title"
+            :date-label="sourceDate(flipped.item)"
+            :content="flipped.item.content || ''"
+            :complete="flipped.item.content_complete !== false"
+            :lede="ledeLine(flipped.item)"
+          >
+            <template #content>
               <template v-for="(seg, i) in highlight(flipped.item)" :key="i"><mark v-if="seg.hit">{{ seg.text }}</mark><template v-else>{{ seg.text }}</template></template>
-            </div>
-            <p v-if="flipped.item.content_complete === false" class="paper-read-incomplete">这张原件暂时没能完整取出来：{{ flipped.item.content_error }}</p>
-
-            <footer class="paper-read-attach">
-              <span class="attach-label">挂着</span>
-              <NSelect
-                :value="manualAnchorIds[sourceKey(flipped.item)] || []"
-                multiple
-                filterable
-                clearable
-                size="small"
-                :options="anchorOptions"
-                :disabled="!sourceMentionsLoaded[sourceKey(flipped.item)]"
-                placeholder="关联锚点"
-                class="attach-select"
-                @update:value="(v: string[]) => onManualChange(sourceKey(flipped!.item), v)"
-              />
-              <NButton
-                size="small"
-                :disabled="!sourceMentionsLoaded[sourceKey(flipped.item)]"
-                :loading="savingKey === sourceKey(flipped.item)"
-                @click="emit('save-anchors', flipped.item)"
-              >保存关联</NButton>
-              <div v-if="autoAnchorNames(flipped.item).length" class="attach-auto">
-                <span class="attach-label">自动连上的</span>
-                <NTag v-for="name in autoAnchorNames(flipped.item)" :key="name" size="small" :bordered="false">{{ name }}</NTag>
+            </template>
+            <template #footer>
+              <div class="read-actions">
+                <NButton size="small" quaternary @click="closePaper">放回板上</NButton>
               </div>
-            </footer>
-          </div>
+              <AttachAnchors
+                :source-table="flipped.item.source_table"
+                :source-type="flipped.item.source_type"
+                :source-id="flipped.item.source_id"
+                :anchor-options="anchorOptions"
+                @saved="emit('saved')"
+              />
+            </template>
+          </OriginalPaper>
         </div>
       </Transition>
     </Teleport>
 
-    <NSpin v-if="loading" class="board-loading" />
+    <p v-if="loading" class="board-thinking"><span class="think-dot" aria-hidden="true"></span>想起中…</p>
   </div>
 </template>
 
@@ -248,14 +241,38 @@ function onManualChange(key: string, value: string[]) {
 .board-zone { position: relative; margin-top: 18px; }
 
 .board-error {
-  color: var(--sy-rose-d, #a4472f);
+  color: var(--sy-rose-d, #8b7082);
   font-size: 13px;
   padding: 10px 14px;
-  border-left: 3px solid var(--sy-accent, #c8956a);
-  background: var(--sy-panel, #fff8f1);
+  border-left: 3px solid var(--sy-accent, #c094a8);
+  background: var(--sy-panel, rgba(255, 251, 248, 0.58));
 }
 
-.board-loading { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; }
+/* 想起中：柔和的一点，不转圈 */
+.board-thinking {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  margin: 12px 0 0;
+  font-family: var(--sy-serif, serif);
+  font-style: italic;
+  font-size: 13px;
+  color: var(--sy-mute, rgba(74, 44, 44, 0.55));
+}
+
+.think-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--sy-resident, #2c4a44);
+  animation: think-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes think-pulse {
+  0%, 100% { opacity: 0.35; transform: scale(0.8); }
+  50% { opacity: 1; transform: scale(1); }
+}
 
 /* ---------- 板 ---------- */
 .board {
@@ -285,39 +302,32 @@ function onManualChange(key: string, value: string[]) {
 /* ---------- 金线 ---------- */
 .board-strings { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
 .string { fill: none; stroke: var(--sy-gilt, #c79748); stroke-width: 1.1; opacity: 0.5; }
-.string.strong { stroke: var(--sy-accent, #a8505e); stroke-width: 2; opacity: 0.75; }
+.string.strong { stroke: var(--sy-resident, #2c4a44); stroke-width: 2; opacity: 0.75; }
 
-/* ---------- 中心词 ---------- */
-.board-hub {
-  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
-  text-align: center; padding: 18px 26px 16px;
+/* ---------- 板签：被想起的词 ---------- */
+.board-tag {
+  position: absolute; top: 14px; left: 16px; z-index: 5;
+  display: flex; align-items: baseline; gap: 10px; max-width: 46%;
+  padding: 8px 14px;
   background: var(--sy-paper, rgba(255, 252, 250, 0.9));
-  border: 1px solid var(--sy-hair-gilt, #d8c2a8); border-radius: 6px;
-  box-shadow: var(--sy-shadow-paper, 0 10px 28px rgba(74, 44, 44, 0.2));
-  max-width: 300px; z-index: 3;
+  border: 1px solid var(--sy-hair-gilt, #d8c2a8); border-radius: 8px;
+  box-shadow: var(--sy-shadow-paper, 0 10px 28px rgba(74, 44, 44, 0.16));
 }
-.hub-pin {
-  position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
-  width: 16px; height: 16px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #e6c98a, var(--sy-gilt, #c79748) 60%, var(--sy-gilt-d, #9a7320));
-  box-shadow: 0 2px 5px rgba(74, 44, 44, 0.4);
+.tag-eyebrow { font-family: var(--sy-serif, serif); font-size: 9.5px; letter-spacing: 0.38em; text-transform: uppercase; color: var(--sy-gilt, #c79748); white-space: nowrap; }
+.tag-word { font-family: var(--sy-serif, serif); font-style: italic; font-size: 20px; font-weight: 500; color: var(--sy-ink, #4a2c2c); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: oldstyle-nums; }
+.tag-count { font-family: var(--sy-cjk, serif); font-size: 11px; color: var(--sy-mute, rgba(74, 44, 44, 0.55)); white-space: nowrap; }
+.tag-manage {
+  border: 0; background: none; padding: 0; cursor: pointer; white-space: nowrap;
+  color: var(--sy-self, #c094a8); font-family: var(--sy-cjk, serif); font-size: 11.5px;
+  text-decoration: underline; text-underline-offset: 3px;
 }
-.hub-eyebrow { font-family: var(--sy-serif, serif); font-size: 10px; letter-spacing: 0.42em; text-transform: uppercase; color: var(--sy-gilt, #c79748); margin: 0 0 4px; }
-.hub-word { font-family: var(--sy-serif, serif); font-style: italic; font-size: 30px; font-weight: 500; color: var(--sy-ink, #4a2c2c); line-height: 1.2; margin: 0; font-variant-numeric: oldstyle-nums; }
-.hub-count { font-family: var(--sy-cjk, serif); font-size: 12px; color: var(--sy-mute, rgba(74, 44, 44, 0.55)); margin: 6px 0 0; }
-.hub-flower { display: block; margin: 0 auto 2px; }
-.hub-manage {
-  margin-top: 10px; border: 0.6px solid var(--sy-hair-gilt, #d8c2a8); border-radius: 999px;
-  background: none; color: var(--sy-gilt, #c79748); font-family: var(--sy-cjk, serif);
-  font-size: 11.5px; padding: 3px 14px; cursor: pointer; transition: 0.2s;
-}
-.hub-manage:hover { background: var(--sy-hair-gilt-2, rgba(199, 151, 72, 0.12)); }
+.tag-manage:hover { color: var(--sy-self-d, #a07888); }
 
 /* ---------- 板上的纸 ---------- */
 .board-paper {
   position: absolute; transform: translate(-50%, -50%) rotate(var(--rot, 0deg));
-  width: 148px; padding: 12px 12px 10px;
-  border: 1px solid var(--sy-hair, rgba(168, 80, 94, 0.25)); border-radius: 4px;
+  width: 176px; padding: 12px 12px 10px;
+  border: 1px solid var(--sy-hair, rgba(192, 148, 168, 0.25)); border-radius: 4px;
   background: var(--sy-paper, rgba(255, 252, 250, 0.94));
   box-shadow: 0 6px 16px rgba(74, 44, 44, 0.18);
   cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 3px;
@@ -331,9 +341,23 @@ function onManualChange(key: string, value: string[]) {
   to { opacity: 1; transform: translate(-50%, -50%) rotate(var(--rot, 0deg)) scale(1); }
 }
 .board-paper:hover { transform: translate(-50%, -50%) rotate(0deg) scale(1.06); box-shadow: var(--sy-shadow-lift, 0 24px 64px rgba(74, 44, 44, 0.3)); z-index: 5; }
-.board-paper.g-direct { width: 168px; border-color: var(--sy-hair-gilt, #d8c2a8); }
-.board-paper.g-related { width: 152px; }
-.board-paper.g-other { width: 132px; opacity: 0.82; background: var(--sy-panel, rgba(255, 251, 248, 0.8)); }
+.board-paper.g-direct { width: 208px; border-color: var(--sy-hair-gilt, #d8c2a8); }
+.board-paper.g-related { width: 176px; }
+.board-paper.g-other { width: 144px; opacity: 0.82; background: var(--sy-panel, rgba(255, 251, 248, 0.8)); }
+
+/* 中心纸：最强的那张当主角 */
+.board-paper.is-center {
+  width: 232px; z-index: 3;
+  box-shadow: var(--sy-shadow-lift, 0 24px 64px rgba(74, 44, 44, 0.3));
+}
+.board-paper.is-center .bp-excerpt { -webkit-line-clamp: 4; }
+
+/* 来源族一眼可辨（与 OriginalPaper 同一种纸） */
+.board-paper.fam-letter { border-radius: 3px; }
+.board-paper.fam-sticky { background: rgba(251, 240, 195, 0.9); border-radius: 3px; }
+.board-paper.fam-card { border-color: var(--sy-hair-gilt, #d8c2a8); }
+.board-paper.fam-slip { border-top: 3px double var(--sy-gilt, #c79748); border-radius: 2px; }
+[data-theme='night'] .board-paper.fam-sticky { background: #4a4030; }
 
 .pin {
   position: absolute; top: -7px; left: 50%; transform: translateX(-50%);
@@ -341,7 +365,8 @@ function onManualChange(key: string, value: string[]) {
   background: radial-gradient(circle at 35% 30%, #e6c98a, var(--sy-gilt, #c79748) 60%, var(--sy-gilt-d, #9a7320));
   box-shadow: 0 2px 4px rgba(74, 44, 44, 0.35);
 }
-.g-direct .pin { background: radial-gradient(circle at 35% 30%, #d98a96, var(--sy-accent, #a8505e) 60%, var(--sy-accent-d, #8a3a48)); }
+/* 脱口而出 = 沈予直接想起的 → 松绿钉 */
+.pin.pine { background: radial-gradient(circle at 35% 30%, color-mix(in srgb, var(--sy-resident, #2c4a44) 45%, #fff), var(--sy-resident, #2c4a44) 60%, var(--sy-resident-d, #1f3632)); }
 
 .tape {
   position: absolute; top: -9px; left: 50%; transform: translateX(-50%) rotate(-2deg);
@@ -354,43 +379,26 @@ function onManualChange(key: string, value: string[]) {
   width: 24px; height: 24px; opacity: 0.95; margin-bottom: 2px;
 }
 .bp-title { font-family: var(--sy-serif, serif); font-size: 14px; font-weight: 600; color: var(--sy-ink, #4a2c2c); line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
-.bp-why, .bp-path { font-family: var(--sy-serif, serif); font-style: italic; font-size: 11.5px; color: var(--sy-accent, #a8505e); line-height: 1.3; }
+.bp-why { font-family: var(--sy-serif, serif); font-style: italic; font-size: 11.5px; color: var(--sy-resident, #2c4a44); line-height: 1.3; }
+.bp-path { font-family: var(--sy-serif, serif); font-style: italic; font-size: 11.5px; color: var(--sy-gilt-d, #9a7320); line-height: 1.3; }
 .bp-excerpt { font-family: var(--sy-cjk, serif); font-size: 11.5px; line-height: 1.5; color: var(--sy-ink-2, #5a3636); overflow: hidden; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; }
-.bp-excerpt mark { background: none; color: var(--sy-accent-d, #8a3a48); border-bottom: 1px solid var(--sy-accent, #a8505e); font-weight: 600; padding: 0; }
+.bp-excerpt mark { background: none; color: var(--sy-self-d, #a07888); border-bottom: 1px solid var(--sy-self, #c094a8); font-weight: 600; padding: 0; }
 .bp-date { font-size: 9.5px; color: var(--sy-faint, rgba(74, 44, 44, 0.4)); letter-spacing: 0.04em; font-variant-numeric: oldstyle-nums; }
 </style>
 
 <style scoped>
-/* ---------- 取下来读的纸 ---------- */
+/* ---------- 取下来读的纸（OriginalPaper 的阅读层） ---------- */
 .paper-overlay {
   position: fixed; inset: 0; z-index: 1200;
   display: flex; align-items: center; justify-content: center; padding: 24px;
-  background: rgba(40, 26, 26, 0.4); backdrop-filter: blur(3px);
+  background: rgba(44, 44, 44, 0.4); backdrop-filter: blur(3px);
 }
 .paper-read {
-  position: relative; width: min(680px, 94vw); max-height: min(84vh, 820px); overflow-y: auto;
-  background: var(--sy-paper, #fffdf8); border: 1px solid var(--sy-hair-gilt, #d8c2a8);
-  border-radius: 10px; box-shadow: var(--sy-shadow-lift, 0 24px 64px rgba(0, 0, 0, 0.4));
-  padding: 22px 26px 18px;
+  width: min(680px, 94vw); max-height: min(84vh, 820px); overflow-y: auto;
+  box-shadow: var(--sy-shadow-lift, 0 24px 64px rgba(44, 44, 44, 0.4));
 }
-.paper-read-pin {
-  position: absolute; top: -8px; left: 50%; transform: translateX(-50%);
-  width: 16px; height: 16px; border-radius: 50%;
-  background: radial-gradient(circle at 35% 30%, #e6c98a, var(--sy-gilt, #c79748) 60%, var(--sy-gilt-d, #9a7320));
-  box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
-}
-.paper-read-head { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 0.6px dashed var(--sy-hair, rgba(168, 80, 94, 0.3)); }
-.bp-seal.lg { width: 34px; height: 34px; }
-.paper-read-heading { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
-.paper-read-heading b { font-family: var(--sy-serif, serif); font-size: 19px; font-weight: 600; color: var(--sy-ink, #4a2c2c); }
-.paper-read-heading span { font-size: 11.5px; color: var(--sy-mute, rgba(74, 44, 44, 0.55)); letter-spacing: 0.04em; }
-.paper-read-why, .paper-read-path { margin: 10px 0 0; font-family: var(--sy-serif, serif); font-style: italic; font-size: 14px; color: var(--sy-accent, #a8505e); }
-.paper-read-content { margin-top: 12px; font-family: var(--sy-cjk, serif); font-size: 14.5px; line-height: 1.95; color: var(--sy-ink, #4a2c2c); white-space: pre-wrap; word-break: break-word; }
-.paper-read-content mark { background: none; color: var(--sy-accent-d, #8a3a48); border-bottom: 1.5px solid var(--sy-accent, #a8505e); font-weight: 600; padding: 0; }
-.paper-read-incomplete { margin-top: 10px; font-size: 12px; color: var(--sy-rose-d, #a4472f); font-style: italic; }
-.paper-read-attach { margin-top: 14px; border-top: 0.6px dashed var(--sy-hair, rgba(168, 80, 94, 0.3)); padding-top: 12px; display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: center; }
-.attach-label { font-family: var(--sy-cjk, serif); font-size: 12px; color: var(--sy-mute, rgba(74, 44, 44, 0.55)); }
-.attach-auto { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+.paper-read :deep(.paper-content) { max-height: 46vh; }
+.read-actions { display: flex; justify-content: flex-end; margin-bottom: 8px; }
 
 /* ---------- 动效 ---------- */
 .paper-zoom-enter-active, .paper-zoom-leave-active { transition: opacity 0.22s ease; }
@@ -398,14 +406,14 @@ function onManualChange(key: string, value: string[]) {
 .paper-zoom-enter-active .paper-read { transition: transform 0.24s cubic-bezier(0.2, 0.9, 0.3, 1.2); }
 .paper-zoom-enter-from .paper-read { transform: scale(0.92) translateY(10px); }
 @media (prefers-reduced-motion: reduce) {
-  .board-paper, .paper-zoom-enter-active, .paper-zoom-leave-active, .paper-zoom-enter-active .paper-read { transition: none; }
+  .board-paper, .think-dot, .paper-zoom-enter-active, .paper-zoom-leave-active, .paper-zoom-enter-active .paper-read { transition: none; animation: none; }
 }
 
 /* ---------- 手机：纸条流 ---------- */
 @media (max-width: 720px) {
   .board { aspect-ratio: auto; min-height: 0; padding: 18px 14px; display: flex; flex-direction: column; gap: 12px; }
   .board-strings, .board-corner { display: none; }
-  .board-hub { position: static; transform: none; margin: 0 auto 6px; }
+  .board-tag { position: static; max-width: none; margin: 0 auto 4px; flex-wrap: wrap; }
   .board-paper { position: static; transform: none; width: 100% !important; }
   .board-paper:hover { transform: none; }
   .pin, .tape { display: none; }

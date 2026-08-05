@@ -9,6 +9,8 @@ const props = defineProps<{
   content: string
   complete?: boolean
   badge?: string
+  /** 一句斜体引子（如「提到了谁」/关系路径），放在抬头与正文之间。 */
+  lede?: string
 }>()
 
 const family = computed(() => paperFamily(props.sourceType))
@@ -27,7 +29,8 @@ const label = computed(() => sourceLabel(props.sourceType))
       </div>
       <em v-if="badge" class="paper-badge">{{ badge }}</em>
     </header>
-    <div class="paper-content">{{ content }}</div>
+    <p v-if="lede" class="paper-lede">{{ lede }}</p>
+    <div class="paper-content"><slot name="content">{{ content }}</slot></div>
     <p v-if="complete === false" class="paper-incomplete">这张原件暂时没能完整取出来，上面是已经取到的部分。</p>
     <footer v-if="$slots.footer" class="paper-foot">
       <slot name="footer" />
@@ -112,12 +115,20 @@ const label = computed(() => sourceLabel(props.sourceType))
 
 .paper-badge {
   margin-left: auto;
-  color: #b2552f;
+  color: var(--sy-self, #c094a8);
   font-size: 11px;
   font-style: normal;
-  border: 1px solid rgba(178, 85, 47, 0.4);
+  border: 1px solid rgba(192, 148, 168, 0.45);
   border-radius: 999px;
   padding: 1px 8px;
+}
+
+.paper-lede {
+  margin: 10px 0 0;
+  font-family: var(--sy-serif, 'Cormorant Garamond', 'Noto Serif SC', serif);
+  font-style: italic;
+  font-size: 14px;
+  color: var(--sy-resident, #2c4a44);
 }
 
 .paper-content {
@@ -132,9 +143,17 @@ const label = computed(() => sourceLabel(props.sourceType))
 
 .paper-incomplete {
   margin: 6px 0 0;
-  color: #a8703f;
+  color: var(--sy-rose-d, #8b7082);
   font-size: 12px;
   font-style: italic;
+}
+
+.paper-content mark {
+  background: none;
+  color: var(--sy-self-d, #a07888);
+  border-bottom: 1.5px solid var(--sy-self, #c094a8);
+  font-weight: 600;
+  padding: 0;
 }
 
 .paper-foot {

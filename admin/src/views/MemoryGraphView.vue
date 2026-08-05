@@ -2,7 +2,6 @@
 import { computed, onMounted, ref } from 'vue'
 import {
   NButton,
-  NEmpty,
   NInput,
   NPopconfirm,
   NSelect,
@@ -21,9 +20,7 @@ import {
   fetchMemoryEntityMentions,
   fetchMemoryGraph,
   fetchMemoryGraphNameCandidates,
-  fetchSourceEntityMentions,
   previewMemoryGraphRecall,
-  replaceSourceEntities,
   updateMemoryEntity,
   updateMemoryEntityAlias,
   updateMemoryEntityRelation,
@@ -37,11 +34,10 @@ import {
   type MemoryGraphRecallPreviewItem,
   type MemoryGraphRecentItem,
   type MemoryEntityType,
-  type SourceEntityMention,
 } from '@/api/memoryGraph'
 import AnchorOriginalsOverlay, { type OverlayPaper } from './memory-graph/AnchorOriginalsOverlay.vue'
 import RecallBoard from './memory-graph/RecallBoard.vue'
-import { sourceLabel, sourceSeal } from './memory-graph/sourceDisplay'
+import { sourceLabel } from './memory-graph/sourceDisplay'
 
 const message = useMessage()
 const tab = ref<'net' | 'recall'>('net')
@@ -90,10 +86,6 @@ const recallError = ref('')
 const recallItems = ref<MemoryGraphRecallPreviewItem[]>([])
 const recallTokens = ref<string[]>([])
 const recallRunId = ref(0)
-const recallManualAnchorIds = ref<Record<string, string[]>>({})
-const recallSourceMentions = ref<Record<string, SourceEntityMention[]>>({})
-const recallSourceMentionsLoaded = ref<Record<string, boolean>>({})
-const savingRecallSourceKey = ref('')
 
 const entityTypeOptions = [
   { label: '人物', value: 'person' },
@@ -102,11 +94,12 @@ const entityTypeOptions = [
   { label: '主题', value: 'topic' },
 ]
 const filterTypeOptions = [{ label: '全部', value: '' }, ...entityTypeOptions]
+// 类别色全部取自设计 token（CSS 变量，随昼夜换）：人 = 松绿，地 = 古金，物 = 玫瑰，题 = 鼠尾草。
 const TYPE_COLOR: Record<string, string> = {
-  person: '#6e7f57',
-  place: '#5e7386',
-  object: '#b0813f',
-  topic: '#7e6485',
+  person: 'var(--sy-resident)',
+  place: 'var(--sy-gilt-d)',
+  object: 'var(--sy-self-d)',
+  topic: 'var(--sy-sage)',
 }
 
 const selected = computed(() => entities.value.find((item) => item.id === selectedId.value) || null)
@@ -122,14 +115,7 @@ const selectedRelations = computed(() => relations.value.filter((item) => (
   && item.status !== 'archived'
 )))
 const confirmedRelationCount = computed(() => relations.value.filter((r) => r.status === 'confirmed').length)
-const recallGroups = computed(() => [
-  { key: 'direct', label: '脱口而出', whisper: '名字一出口，它就来了', items: recallItems.value.filter((item) => item.recall_match?.group === 'direct') },
-  { key: 'related', label: '由此及彼', whisper: '顺着红线带出来的', items: recallItems.value.filter((item) => item.recall_match?.group === 'related') },
-  { key: 'other', label: '浮想', whisper: '意思相近，自己泛上来的', items: recallItems.value.filter((item) => item.recall_match?.group === 'other') },
-].filter((group) => group.items.length))
-const recallOrderedItems = computed(() => recallGroups.value.flatMap((group) => group.items))
-
-// 当前想起的词若正好是一个确认过的锚点，木板中心就露出「管理这个名字」。
+// 当前想起的词若正好是一个确认过的锚点，木板板签就露出「管理这个名字」。
 const recallMatchedAnchor = computed(() => {
   const q = recallQuery.value.trim().toLowerCase()
   if (!q) return null
@@ -137,13 +123,6 @@ const recallMatchedAnchor = computed(() => {
     (item) => item.status === 'active' && item.canonical_name.trim().toLowerCase() === q,
   ) || null
 })
-
-function autoAnchorNames(item: MemoryGraphRecallPreviewItem): string[] {
-  return sourceMentions(item)
-    .filter((mention) => mention.origin !== 'manual')
-    .map((mention) => mention.entity?.canonical_name || mention.matched_alias || '')
-    .filter(Boolean)
-}
 
 function openAnchorManage() {
   const anchor = recallMatchedAnchor.value
@@ -189,7 +168,11 @@ function warmTier(entity: MemoryEntity): '' | 'warm' | 'fresh' {
 }
 
 const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[]; ghosts: GhostNode[] }>(() => {
-  const active = entities.value.filter((item) => item.status === 'active')
+  // 同一份数据必须排出同一张网：按 id 定序，刷新/改名后不再整网重排。
+  const active = entities.value
+    .filter((item) => item.status === 'active')
+    .slice()
+    .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0))
   const n = active.length
   if (!n) return { nodes: [], edges: [], ghosts: [] }
   const indexById: Record<string, number> = Object.fromEntries(active.map((item, i) => [item.id, i]))
@@ -213,7 +196,13 @@ const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[]; ghosts: G
   // 多成员的簇按热度排前面，单成员的「孤岛」排最后、贴板底。
   const multi = clusterIds.filter((c) => clusterOf.filter((x) => x === c).length > 1)
   const singles = clusterIds.filter((c) => clusterOf.filter((x) => x === c).length === 1)
-  multi.sort((a, b) => clusterHeat(b) - clusterHeat(a))
+  // 热度相同的小岛按成员最小 id 定先后，布局才稳。
+  const clusterMinId = new Map<number, string>()
+  active.forEach((item, i) => {
+    const c = clusterOf[i]
+    if (!clusterMinId.has(c) || item.id < (clusterMinId.get(c) as string)) clusterMinId.set(c, item.id)
+  })
+  multi.sort((a, b) => clusterHeat(b) - clusterHeat(a) || ((clusterMinId.get(a) || '') < (clusterMinId.get(b) || '') ? -1 : 1))
   const orderedClusters = [...multi, ...singles]
   function clusterHeat(c: number): number {
     return active.reduce((sum, item, i) => (clusterOf[i] === c ? sum + (item.mention_count || 0) : sum), 0)
@@ -372,14 +361,6 @@ function typeLabel(type: string): string {
   return ({ person: '人物', place: '地点', object: '物件', topic: '主题' } as Record<string, string>)[type] || type
 }
 
-function sourceKey(item: Pick<MemoryGraphRecallPreviewItem, 'source_table' | 'source_id'>): string {
-  return `${item.source_table} ${item.source_id}`
-}
-
-function sourceMentions(item: MemoryGraphRecallPreviewItem): SourceEntityMention[] {
-  return recallSourceMentions.value[sourceKey(item)] || []
-}
-
 function sourceDate(item: MemoryGraphRecallPreviewItem): string {
   return (item.event_date || '').replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '')
 }
@@ -398,7 +379,6 @@ function timeAgo(at?: string): string {
 }
 
 function selectEntity(entity: MemoryEntity) {
-  closeGhost()
   selectedId.value = entity.id
   editName.value = entity.canonical_name
   editDescription.value = entity.description || ''
@@ -410,9 +390,12 @@ function selectEntity(entity: MemoryEntity) {
 }
 
 // Reading overlay: picking a name off the net lifts its papers up front.
-// 点一个词 = 拿它真跑一次「想起」，把想起来的纸钉上木板。
+// 点一个词 = 把它的原件阅读卡抬到前面（不再拽去想起页；
+// 想去木板「想起」，用详情里的「让沈予想起 →」）。
 function openAnchor(entity: MemoryEntity) {
-  recallEntity(entity)
+  ghostCard.value = null
+  selectEntity(entity)
+  overlayOpen.value = true
 }
 
 function closeOverlay() {
@@ -765,32 +748,6 @@ async function runBackfill() {
   }
 }
 
-async function loadRecallSourceMentions(items: MemoryGraphRecallPreviewItem[]) {
-  const manual: Record<string, string[]> = Object.fromEntries(items.map((item) => [sourceKey(item), []]))
-  const mentionsBySource: Record<string, SourceEntityMention[]> = {}
-  const loaded: Record<string, boolean> = Object.fromEntries(items.map((item) => [sourceKey(item), false]))
-  recallManualAnchorIds.value = manual
-  recallSourceMentions.value = mentionsBySource
-  recallSourceMentionsLoaded.value = loaded
-  if (!available.value) return
-  await Promise.all(items.map(async (item) => {
-    try {
-      const mentions = await fetchSourceEntityMentions(item.source_table, item.source_id)
-      const key = sourceKey(item)
-      mentionsBySource[key] = mentions
-      loaded[key] = true
-      manual[key] = mentions
-        .filter((mention) => mention.origin === 'manual')
-        .map((mention) => mention.entity_id)
-    } catch {
-      // A preview result remains usable even if its optional anchor lookup fails.
-    }
-  }))
-  recallSourceMentions.value = { ...mentionsBySource }
-  recallManualAnchorIds.value = { ...manual }
-  recallSourceMentionsLoaded.value = { ...loaded }
-}
-
 async function runRecallPreview() {
   const text = recallQuery.value.trim()
   if (!text) return
@@ -808,7 +765,6 @@ async function runRecallPreview() {
     recallItems.value = result.items || []
     recallTokens.value = result.tokens || []
     recallRunId.value += 1
-    await loadRecallSourceMentions(recallItems.value)
   } catch {
     recallItems.value = []
     recallTokens.value = []
@@ -822,33 +778,6 @@ function recallEntity(entity: MemoryEntity) {
   tab.value = 'recall'
   recallQuery.value = entity.canonical_name
   void runRecallPreview()
-}
-
-async function saveRecallAnchors(item: MemoryGraphRecallPreviewItem) {
-  const key = sourceKey(item)
-  if (savingRecallSourceKey.value || !recallSourceMentionsLoaded.value[key]) return
-  savingRecallSourceKey.value = key
-  try {
-    await replaceSourceEntities({
-      source_table: item.source_table,
-      source_type: item.source_type,
-      source_id: item.source_id,
-      entity_ids: recallManualAnchorIds.value[key] || [],
-      evidence: '记忆网络想起页手动确认',
-    })
-    const mentions = await fetchSourceEntityMentions(item.source_table, item.source_id)
-    recallSourceMentions.value = { ...recallSourceMentions.value, [key]: mentions }
-    recallSourceMentionsLoaded.value = { ...recallSourceMentionsLoaded.value, [key]: true }
-    recallManualAnchorIds.value = {
-      ...recallManualAnchorIds.value,
-      [key]: mentions.filter((mention) => mention.origin === 'manual').map((mention) => mention.entity_id),
-    }
-    message.success('关联已保存')
-  } catch {
-    message.error('保存关联失败')
-  } finally {
-    savingRecallSourceKey.value = ''
-  }
 }
 
 function otherEntity(relation: MemoryEntityRelation): MemoryEntity | undefined {
@@ -887,17 +816,10 @@ function highlightSegments(item: MemoryGraphRecallPreviewItem): { text: string; 
   return segments
 }
 
-function recallDelay(item: MemoryGraphRecallPreviewItem): number {
-  return recallOrderedItems.value.indexOf(item) * 90
-}
-
 function shortDate(value?: string): string {
   return (value || '').slice(0, 10)
 }
 
-function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
-  return item.recall_match?.anchor?.name || ''
-}
 </script>
 
 <template>
@@ -960,7 +882,7 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
               @keydown.enter.prevent="openAnchor(node.entity)"
               @keydown.space.prevent="openAnchor(node.entity)"
             >
-              <circle class="type-dot" :cx="node.x" :cy="node.y - node.size - 13" r="3.2" :fill="TYPE_COLOR[node.entity.entity_type]" />
+              <circle class="type-dot" :cx="node.x" :cy="node.y - node.size - 13" r="3.2" :style="{ fill: TYPE_COLOR[node.entity.entity_type] }" />
               <text class="anchor-name" :x="node.x" :y="node.y" :style="{ fontSize: `${node.size}px` }">{{ node.entity.canonical_name }}</text>
               <text class="anchor-sub" :x="node.x" :y="node.y + 19">{{ typeLabel(node.entity.entity_type) }} · 提及 {{ node.entity.mention_count }}</text>
             </g>
@@ -1120,14 +1042,9 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
         :highlight="highlightSegments"
         :source-date="sourceDate"
         :anchor-options="recallAnchorOptions"
-        :manual-anchor-ids="recallManualAnchorIds"
-        :source-mentions-loaded="recallSourceMentionsLoaded"
-        :auto-anchor-names="autoAnchorNames"
-        :saving-key="savingRecallSourceKey"
         :run-id="recallRunId"
-        @update:manual-anchor-ids="recallManualAnchorIds = $event"
-        @save-anchors="saveRecallAnchors"
         @manage="openAnchorManage"
+        @saved="onOverlayEntityMutated"
       />
     </section>
   </div>
@@ -1135,19 +1052,22 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
 
 <style scoped>
 .graph-page {
-  --mg-paper: var(--sy-paper, #fdfaf3);
-  --mg-panel: var(--sy-panel, #fffdf8);
-  --mg-ink: var(--sy-ink, #3c322b);
-  --mg-ink-2: var(--sy-ink-2, #7e6e5f);
-  --mg-ink-3: var(--sy-mute, #ac9c8b);
-  --mg-hairline: var(--sy-hair-2, #e9decd);
-  --mg-accent: var(--sy-accent, #b2552f);
-  --mg-accent-ink: var(--sy-accent-d, #8f4023);
-  --mg-gilt: var(--sy-gilt, #c79748);
-  --mg-gilt-d: var(--sy-gilt-d, #9a7320);
-  --mg-hair-gilt: var(--sy-hair-gilt, rgba(199, 151, 72, 0.45));
-  --mg-accent-soft: rgba(178, 85, 47, 0.1);
-  --mg-serif: 'Cormorant Garamond', 'Noto Serif SC', 'Songti SC', Georgia, serif;
+  /* 桥接全局设计 token（token 在 :root 全局可用，这里不再自带 fallback 色） */
+  --mg-paper: var(--sy-paper);
+  --mg-panel: var(--sy-panel);
+  --mg-ink: var(--sy-ink);
+  --mg-ink-2: var(--sy-ink-2);
+  --mg-ink-3: var(--sy-mute);
+  --mg-hairline: var(--sy-hair-2);
+  --mg-accent: var(--sy-accent);
+  --mg-accent-ink: var(--sy-accent-d);
+  --mg-gilt: var(--sy-gilt);
+  --mg-gilt-d: var(--sy-gilt-d);
+  --mg-hair-gilt: var(--sy-hair-gilt);
+  --mg-accent-soft: var(--sy-rose-soft);
+  --mg-resident: var(--sy-resident);
+  --mg-resident-d: var(--sy-resident-d);
+  --mg-serif: var(--sy-serif);
   width: min(1180px, calc(100vw - 32px));
   margin: 0 auto;
   padding: 20px 0 48px;
@@ -1355,7 +1275,7 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
 }
 
 .anchor.fresh .type-dot {
-  stroke: var(--mg-accent);
+  stroke: var(--mg-resident);
   stroke-width: 1.5;
   stroke-opacity: 0.35;
 }
@@ -1380,12 +1300,14 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
   font-variant-numeric: tabular-nums;
 }
 
+/* 名字变松绿 = 最近被沈予提起（fresh ≤ 2 天，warm ≤ 7 天） */
 .anchor.warm .anchor-name {
-  fill: #7c4630;
+  fill: var(--mg-resident);
+  fill-opacity: 0.78;
 }
 
 .anchor.fresh .anchor-name {
-  fill: var(--mg-accent);
+  fill: var(--mg-resident);
 }
 
 .anchor:hover .anchor-name,
@@ -1642,10 +1564,6 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
   width: 140px;
 }
 
-.muted {
-  color: var(--mg-ink-3);
-}
-
 .relation-list {
   display: grid;
   gap: 8px;
@@ -1698,188 +1616,6 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
   grid-template-columns: 1fr auto;
   gap: 8px;
   margin: 18px 0 14px;
-}
-
-.recall-error {
-  color: #a4472f;
-  font-size: 13px;
-  padding: 10px 14px;
-  border-left: 3px solid #c8956a;
-  background: #fff8f1;
-}
-
-.recall-thought {
-  padding: 24px 28px 18px;
-  border: 1px solid var(--mg-hairline);
-  border-radius: 18px;
-  background: var(--mg-paper);
-}
-
-.thought-query {
-  font-family: var(--mg-serif);
-  font-size: 30px;
-  font-style: italic;
-  font-weight: 500;
-  line-height: 1.3;
-  color: var(--mg-ink);
-}
-
-.recall-verdict-line {
-  margin-top: 8px;
-  font-family: var(--mg-serif);
-  font-style: italic;
-  color: var(--mg-ink-2);
-  font-size: 15px;
-}
-
-.recall-group {
-  margin-top: 24px;
-}
-
-.recall-group h4 {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  font-family: var(--mg-serif);
-  font-size: 19px;
-  font-weight: 600;
-  color: var(--mg-ink);
-  letter-spacing: 0.08em;
-  margin-bottom: 12px;
-}
-
-.recall-group h4 small {
-  font-size: 12px;
-  font-weight: 400;
-  font-style: italic;
-  color: var(--mg-ink-3);
-  letter-spacing: 0.02em;
-}
-
-.recall-group h4::after {
-  content: '';
-  flex: 1;
-  border-top: 1px solid var(--mg-hairline);
-}
-
-.recall-card {
-  border: 1px solid var(--mg-hairline);
-  border-radius: 16px;
-  background: var(--mg-panel);
-  padding: 18px 22px;
-  margin-bottom: 12px;
-  animation: mg-rise 0.5s ease both;
-}
-
-@keyframes mg-rise {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: none;
-  }
-}
-
-.recall-card-head {
-  display: flex;
-  align-items: center;
-  gap: 12px;
-}
-
-.seal {
-  flex: none;
-  width: 30px;
-  height: 30px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  border: 1px solid var(--mg-accent);
-  border-radius: 6px;
-  color: var(--mg-accent-ink);
-  background: var(--mg-paper);
-  font-family: var(--mg-serif);
-  font-size: 15px;
-  opacity: 0.85;
-}
-
-.recall-card-head > div {
-  display: flex;
-  align-items: baseline;
-  gap: 10px;
-  flex-wrap: wrap;
-}
-
-.recall-card-head b {
-  font-family: var(--mg-serif);
-  font-size: 18px;
-  font-weight: 600;
-}
-
-.recall-card-head span {
-  color: var(--mg-ink-3);
-  font-size: 12px;
-}
-
-.why-line {
-  margin-top: 8px;
-  font-family: var(--mg-serif);
-  font-style: italic;
-  font-size: 14px;
-  color: var(--mg-accent-ink);
-}
-
-.path-line {
-  margin-top: 8px;
-  font-family: var(--mg-serif);
-  font-size: 14.5px;
-  color: var(--mg-ink-2);
-}
-
-.path-line i {
-  color: var(--mg-accent);
-  font-style: italic;
-  padding: 0 4px;
-}
-
-.recall-content {
-  margin-top: 10px;
-  white-space: pre-wrap;
-  font-size: 14px;
-  line-height: 1.85;
-  color: var(--mg-ink);
-}
-
-.recall-content mark {
-  background: none;
-  color: var(--mg-accent-ink);
-  border-bottom: 1.5px solid var(--mg-accent);
-  padding-bottom: 1px;
-  font-weight: 600;
-}
-
-.recall-incomplete {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #a4472f;
-}
-
-.recall-anchor-editor {
-  margin-top: 12px;
-  border-top: 1px dashed var(--mg-hairline);
-  padding-top: 12px;
-  display: grid;
-  grid-template-columns: 1fr auto;
-  gap: 8px;
-  align-items: start;
-}
-
-.recall-auto-anchors {
-  grid-column: 1 / -1;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
 }
 
 .ghost {
@@ -1962,14 +1698,6 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
 
   .edit-row {
     grid-template-columns: 1fr;
-  }
-
-  .recall-anchor-editor {
-    grid-template-columns: 1fr;
-  }
-
-  .thought-query {
-    font-size: 24px;
   }
 
   .page-head h2 {

@@ -1,15 +1,14 @@
 <script setup lang="ts">
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { NButton, NSelect, NSpin, NTag, useMessage } from 'naive-ui'
+import { NButton, NSpin, useMessage } from 'naive-ui'
 import {
   addMemoryEntityAlias,
   deleteMemoryEntityAlias,
-  fetchSourceEntityMentions,
-  replaceSourceEntities,
   type MemoryEntity,
   type MemoryGraphNameCandidate,
 } from '@/api/memoryGraph'
 import OriginalPaper from './OriginalPaper.vue'
+import AttachAnchors from './AttachAnchors.vue'
 
 export interface OverlayPaper {
   key: string
@@ -42,10 +41,6 @@ const message = useMessage()
 const index = ref(0)
 const aliasDraft = ref('')
 const aliasSaving = ref(false)
-const attachIds = ref<Record<string, string[]>>({})
-const attachLoaded = ref<Record<string, boolean>>({})
-const attachAuto = ref<Record<string, string[]>>({})
-const attachSaving = ref('')
 
 const current = computed(() => props.papers[index.value] || null)
 const aliases = computed(() => props.anchor?.aliases || [])
@@ -55,10 +50,6 @@ watch(
   () => {
     index.value = 0
     aliasDraft.value = ''
-    attachIds.value = {}
-    attachLoaded.value = {}
-    attachAuto.value = {}
-    attachSaving.value = ''
   },
 )
 
@@ -66,55 +57,8 @@ watch(
   () => props.papers,
   () => {
     if (index.value >= props.papers.length) index.value = Math.max(0, props.papers.length - 1)
-    void ensureAttach(current.value)
   },
-  { immediate: true },
 )
-
-watch(current, (paper) => void ensureAttach(paper))
-
-async function ensureAttach(paper: OverlayPaper | null) {
-  if (!props.anchor || !paper?.sourceTable || !paper.sourceId) return
-  if (attachLoaded.value[paper.key]) return
-  if (!attachIds.value[paper.key]) attachIds.value = { ...attachIds.value, [paper.key]: [] }
-  try {
-    const mentions = await fetchSourceEntityMentions(paper.sourceTable, paper.sourceId)
-    attachAuto.value = {
-      ...attachAuto.value,
-      [paper.key]: mentions
-        .filter((mention) => mention.origin !== 'manual')
-        .map((mention) => mention.entity?.canonical_name || mention.matched_alias || '')
-        .filter(Boolean),
-    }
-    attachIds.value = {
-      ...attachIds.value,
-      [paper.key]: mentions.filter((mention) => mention.origin === 'manual').map((mention) => mention.entity_id),
-    }
-    attachLoaded.value = { ...attachLoaded.value, [paper.key]: true }
-  } catch {
-    attachLoaded.value = { ...attachLoaded.value, [paper.key]: false }
-  }
-}
-
-async function saveAttach(paper: OverlayPaper) {
-  if (!paper.sourceTable || !paper.sourceId || attachSaving.value) return
-  attachSaving.value = paper.key
-  try {
-    await replaceSourceEntities({
-      source_table: paper.sourceTable,
-      source_type: paper.sourceType,
-      source_id: paper.sourceId,
-      entity_ids: attachIds.value[paper.key] || [],
-      evidence: '记忆网络阅读卡片手动确认',
-    })
-    message.success('这张纸挂好了')
-    emit('entity-mutated')
-  } catch {
-    message.error('保存关联失败')
-  } finally {
-    attachSaving.value = ''
-  }
-}
 
 async function addAlias() {
   const anchor = props.anchor
@@ -232,29 +176,14 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
                   :badge="current.badge"
                 >
                   <template v-if="anchor && current.sourceTable" #footer>
-                    <div class="attach-row">
-                      <span class="attach-label">挂着</span>
-                      <NSelect
-                        v-model:value="attachIds[current.key]"
-                        multiple
-                        filterable
-                        size="small"
-                        :options="anchorOptions"
-                        :disabled="!attachLoaded[current.key]"
-                        placeholder="选择锚点"
-                        class="attach-select"
-                      />
-                      <NButton
-                        size="tiny"
-                        :loading="attachSaving === current.key"
-                        :disabled="!attachLoaded[current.key]"
-                        @click="saveAttach(current)"
-                      >挂好</NButton>
-                    </div>
-                    <div v-if="attachAuto[current.key]?.length" class="attach-auto">
-                      <span class="attach-label">自动连上的</span>
-                      <NTag v-for="name in attachAuto[current.key]" :key="name" size="small" :bordered="false">{{ name }}</NTag>
-                    </div>
+                    <AttachAnchors
+                      :key="current.key"
+                      :source-table="current.sourceTable"
+                      :source-type="current.sourceType"
+                      :source-id="current.sourceId"
+                      :anchor-options="anchorOptions"
+                      @saved="emit('entity-mutated')"
+                    />
                   </template>
                 </OriginalPaper>
                 <p v-else-if="!loading" key="empty" class="stage-empty">还没有原件提到这个名字</p>
@@ -277,14 +206,15 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 
 <style scoped>
 .mg-overlay {
-  --mg-paper: #fdfaf3;
-  --mg-panel: #fffdf8;
-  --mg-ink: #3c322b;
-  --mg-ink-2: #7e6e5f;
-  --mg-ink-3: #ac9c8b;
-  --mg-hairline: #e9decd;
-  --mg-accent: #b2552f;
-  --mg-serif: 'Cormorant Garamond', 'Noto Serif SC', 'Songti SC', Georgia, serif;
+  /* Teleport 到 body，继承不到 .graph-page，桥接同一批设计 token（不再自带色）。 */
+  --mg-paper: var(--sy-paper);
+  --mg-panel: var(--sy-panel);
+  --mg-ink: var(--sy-ink);
+  --mg-ink-2: var(--sy-ink-2);
+  --mg-ink-3: var(--sy-mute);
+  --mg-hairline: var(--sy-hair-2);
+  --mg-accent: var(--sy-resident);
+  --mg-serif: var(--sy-serif);
   position: fixed;
   inset: 0;
   z-index: 1000;
@@ -292,7 +222,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   align-items: center;
   justify-content: center;
   padding: 24px;
-  background: rgba(60, 50, 43, 0.42);
+  background: rgba(44, 44, 44, 0.42);
   backdrop-filter: blur(2px);
 }
 
@@ -303,8 +233,8 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   max-height: min(86vh, 860px);
   border: 1px solid var(--mg-hairline);
   border-radius: 18px;
-  background: radial-gradient(circle at 18% 12%, rgba(178, 85, 47, 0.05), transparent 42%), var(--mg-paper);
-  box-shadow: 0 24px 64px rgba(60, 50, 43, 0.35);
+  background: radial-gradient(circle at 18% 12%, rgba(199, 151, 72, 0.06), transparent 42%), var(--mg-paper);
+  box-shadow: var(--sy-shadow-lift);
   padding: 18px 22px 16px;
 }
 
@@ -364,7 +294,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   gap: 4px;
   border: 1px solid var(--mg-hairline);
   border-radius: 999px;
-  background: #fff;
+  background: var(--mg-paper);
   color: var(--mg-ink-2);
   font-size: 12.5px;
   padding: 2px 10px;
@@ -415,7 +345,7 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   border-radius: 50%;
   width: 22px;
   height: 22px;
-  background: #fff;
+  background: var(--mg-paper);
   color: var(--mg-ink-2);
   cursor: pointer;
   line-height: 1;
@@ -457,31 +387,6 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
   color: var(--mg-ink-3);
   font-size: 13px;
   font-style: italic;
-}
-
-.attach-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.attach-label {
-  flex: none;
-  color: var(--mg-ink-3);
-  font-size: 12px;
-}
-
-.attach-select {
-  flex: 1;
-  min-width: 0;
-}
-
-.attach-auto {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 6px;
-  flex-wrap: wrap;
 }
 
 .sheet-foot {
@@ -536,11 +441,11 @@ onBeforeUnmount(() => window.removeEventListener('keydown', onKeydown))
 @keyframes sheet-lift {
   from {
     transform: translateY(14px) rotate(0.6deg) scale(0.97);
-    box-shadow: 0 6px 18px rgba(60, 50, 43, 0.2);
+    box-shadow: 0 6px 18px rgba(44, 44, 44, 0.2);
   }
   to {
     transform: none;
-    box-shadow: 0 24px 64px rgba(60, 50, 43, 0.35);
+    box-shadow: var(--sy-shadow-lift);
   }
 }
 
