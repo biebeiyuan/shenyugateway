@@ -214,7 +214,7 @@ function fmtDateTime(value: string | null | undefined): string {
 
 .section-title {
   margin-bottom: 8px;
-  color: #b0a8a0;
+  color: var(--sy-mute);
   font-size: 11.5px;
   letter-spacing: 0.3px;
 }
@@ -229,7 +229,7 @@ function fmtDateTime(value: string | null | undefined): string {
   padding: 13px 14px;
   border: 1px solid #ece3dc;
   border-radius: 10px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
 }
 
 .home-component-head {
@@ -317,7 +317,7 @@ function fmtDateTime(value: string | null | undefined): string {
 }
 
 .annotation-content {
-  color: #3d3535;
+  color: var(--sy-ink);
   font-size: 12.5px;
   line-height: 1.7;
   white-space: pre-wrap;

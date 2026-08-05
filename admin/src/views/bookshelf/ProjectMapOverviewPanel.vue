@@ -272,7 +272,7 @@ function shortPath(value: string): string {
   margin-top: 14px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  background: #fcf8f7;
+  background: var(--sy-paper, #fff);
 }
 
 .overview-rest > div { min-width: 0; padding: 13px 15px; }
@@ -303,7 +303,7 @@ function shortPath(value: string): string {
   overflow: hidden;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   color: var(--ink);
   cursor: pointer;
   font-family: inherit;
@@ -345,7 +345,7 @@ function shortPath(value: string): string {
   padding: 16px 18px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  background: #fcf8f7;
+  background: var(--sy-paper, #fff);
 }
 
 .focus-copy > span,
@@ -368,7 +368,7 @@ function shortPath(value: string): string {
   grid-column: 1 / -1;
   border: 1px solid var(--line);
   border-radius: 6px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
 }
 
 .evidence-fold summary { padding: 10px 12px; color: #90787a; cursor: pointer; font-size: 10px; }
@@ -401,7 +401,7 @@ function shortPath(value: string): string {
   min-width: 0;
   padding: 11px 12px;
   border: 0;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   color: var(--ink);
   cursor: pointer;
   font-family: inherit;
@@ -435,7 +435,7 @@ function shortPath(value: string): string {
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   font-size: 9.5px;
 }
 

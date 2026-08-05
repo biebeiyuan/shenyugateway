@@ -38,7 +38,7 @@ function fmtDateTime(value: string | null | undefined): string {
     preset="card"
     title="《家里地图》"
     style="width: min(1120px, calc(100vw - 24px)); max-height: calc(100dvh - 24px); overflow: hidden"
-    content-style="min-height: 0; overflow-y: auto; background: #fffdfb"
+    content-style="min-height: 0; overflow-y: auto; background: var(--sy-paper, #fff)"
     @update:show="emit('update:show', $event)"
   >
     <NSpin :show="loading">
@@ -103,7 +103,7 @@ function fmtDateTime(value: string | null | undefined): string {
   --rose-soft: #f7e9ed;
   --sage: #728d7c;
   --sage-soft: #edf4ef;
-  --paper: #fffdfb;
+  --paper: var(--sy-paper, #fff);
   --line: #eadcda;
   display: flex;
   flex-direction: column;
@@ -204,7 +204,7 @@ function fmtDateTime(value: string | null | undefined): string {
 }
 
 .atlas-tabs button.active {
-  background: #fff;
+  background: var(--sy-paper, #fff);
   color: #76565f;
   box-shadow: 0 2px 8px rgb(92 55 65 / 8%);
 }

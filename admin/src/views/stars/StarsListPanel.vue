@@ -112,10 +112,10 @@ async function loadAll() {
   min-width: 150px;
   min-height: 34px;
   padding: 6px 10px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
-  background: #fff;
-  color: #4a3535;
+  background: var(--sy-paper, #fff);
+  color: var(--sy-ink);
   outline: none;
   transition: border-color 0.16s;
 }
@@ -128,10 +128,10 @@ async function loadAll() {
 .sort-select {
   min-height: 34px;
   padding: 4px 10px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
-  background: #fff;
-  color: #4a3535;
+  background: var(--sy-paper, #fff);
+  color: var(--sy-ink);
   outline: none;
 }
 
@@ -145,9 +145,9 @@ async function loadAll() {
 
 .star-list-item {
   padding: 10px 12px;
-  border: 1px solid #f0e0dc;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 8px;
-  background: #fffdfc;
+  background: var(--sy-paper, #fff);
   transition: border-color 0.16s, box-shadow 0.16s;
 }
 
@@ -158,7 +158,7 @@ async function loadAll() {
 
 .star-list-item.recent {
   border-color: #f0d4a8;
-  background: linear-gradient(135deg, #fffdf8, #fff8f0);
+  background: linear-gradient(135deg, var(--sy-paper, #fff), #fff8f0);
 }
 
 .star-list-row {
@@ -189,9 +189,9 @@ async function loadAll() {
   min-width: 46px;
   max-width: 80px;
   padding: 2px 8px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 999px;
-  background: #fffaf8;
+  background: var(--sy-paper, #fff);
   color: #967180;
   font-weight: 700;
   white-space: nowrap;
@@ -204,7 +204,7 @@ async function loadAll() {
 .list-content {
   flex: 1;
   min-width: 0;
-  color: #4a3535;
+  color: var(--sy-ink);
   font-size: 13px;
   line-height: 1.5;
   white-space: pre-wrap;
@@ -237,7 +237,7 @@ async function loadAll() {
   gap: 10px;
   margin-top: 4px;
   font-size: 11px;
-  color: #b8a8a3;
+  color: var(--sy-mute);
 }
 
 .meta-constant {

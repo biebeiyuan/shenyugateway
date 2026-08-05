@@ -91,7 +91,7 @@ function go(path: string) {
 
 .mascot-heart {
   font-size: 14px;
-  color: #c094a8;
+  color: var(--sy-accent);
   animation: heartbeat 2.5s ease-in-out infinite;
 }
 
@@ -112,7 +112,7 @@ function go(path: string) {
   font-family: 'Cormorant Garamond', 'Georgia', serif;
   font-size: 52px;
   font-weight: 300;
-  color: #8b7082;
+  color: var(--sy-rose-d);
   line-height: 1;
   letter-spacing: -1px;
 }
@@ -121,14 +121,14 @@ function go(path: string) {
   font-family: 'Cormorant Garamond', 'Georgia', serif;
   font-size: 17px;
   font-weight: 400;
-  color: #b8a8a3;
+  color: var(--sy-mute);
   letter-spacing: 2px;
 }
 
 .hero-since {
   font-family: 'Cormorant Garamond', 'Georgia', serif;
   font-size: 12px;
-  color: #c4b0ab;
+  color: var(--sy-mute);
   letter-spacing: 1px;
 }
 
@@ -146,19 +146,19 @@ function go(path: string) {
   flex-direction: column;
   justify-content: space-between;
   padding: 16px 14px 14px;
-  border: 1px solid #f0e0dc;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 16px;
   cursor: pointer;
   transition: all 0.25s ease;
   text-align: left;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   position: relative;
 }
 
 .cell.full {
   grid-column: span 6;
   padding: 22px 20px 18px;
-  background: linear-gradient(150deg, #faf0ee 0%, #f5edf3 50%, #fff 100%);
+  background: linear-gradient(150deg, var(--sy-rose-soft) 0%, #f5edf3 50%, #fff 100%);
   min-height: 80px;
 }
 
@@ -181,7 +181,7 @@ function go(path: string) {
 
 .cell-icon {
   font-size: 16px;
-  color: #a08090;
+  color: var(--sy-mute);
   margin-bottom: 8px;
   opacity: 0.75;
 }
@@ -205,7 +205,7 @@ function go(path: string) {
   font-family: 'Cormorant Garamond', 'Georgia', serif;
   font-size: 15px;
   font-weight: 600;
-  color: #4a3535;
+  color: var(--sy-ink);
 }
 
 .cell.full .cell-title {
@@ -217,12 +217,12 @@ function go(path: string) {
 }
 
 .cell:hover .cell-title {
-  color: #8b7082;
+  color: var(--sy-rose-d);
 }
 
 .cell-desc {
   font-size: 11px;
-  color: #c4b0ab;
+  color: var(--sy-mute);
   font-style: italic;
 }
 

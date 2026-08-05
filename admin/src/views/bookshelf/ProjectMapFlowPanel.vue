@@ -59,7 +59,7 @@ const selectedFlow = computed<ProjectMapFlowStage | null>(() => (
   overflow-x: auto;
   border: 1px solid var(--line);
   border-radius: 7px;
-  background: #fffdfb;
+  background: var(--sy-paper, #fff);
 }
 
 .flow-stop {
@@ -69,7 +69,7 @@ const selectedFlow = computed<ProjectMapFlowStage | null>(() => (
   padding: 11px 10px;
   border: 1px solid #e6d8d7;
   border-radius: 6px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   color: var(--ink);
   cursor: pointer;
   font-family: inherit;
@@ -115,7 +115,7 @@ const selectedFlow = computed<ProjectMapFlowStage | null>(() => (
   padding: 16px 18px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  background: #fcf8f7;
+  background: var(--sy-paper, #fff);
 }
 
 .flow-number { color: #d5b4bd; font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 38px; }

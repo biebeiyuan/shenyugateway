@@ -781,8 +781,8 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 }
 
 .log-card {
-  background: #fff;
-  border: 1px solid #e8e8e8;
+  background: var(--sy-paper, #fff);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 8px;
   margin-bottom: 6px;
   overflow: hidden;
@@ -822,7 +822,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 }
 
 .log-card.streaming {
-  border-left: 3px solid #c094a8;
+  border-left: 3px solid var(--sy-accent);
 }
 
 .log-card.pending {
@@ -851,7 +851,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 }
 
 .log-sum:hover {
-  background: #fafafa;
+  background: var(--sy-paper, #fafafa);
 }
 
 .lt {
@@ -867,7 +867,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 
 :deep(.tag-tok) {
   color: #6b7280;
-  background: #f3f4f6;
+  background: var(--sy-sys-surface);
 }
 
 :deep(.tag-cache) {
@@ -887,7 +887,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 }
 
 .det {
-  border-top: 1px solid #e8e8e8;
+  border-top: 1px solid var(--sy-hair-2);
 }
 
 .dtabs {
@@ -897,8 +897,8 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
   overflow-y: hidden;
   scrollbar-width: thin;
   -webkit-overflow-scrolling: touch;
-  border-bottom: 1px solid #e8e8e8;
-  background: #fafafa;
+  border-bottom: 1px solid var(--sy-hair-2);
+  background: var(--sy-paper, #fafafa);
 }
 
 .dtab {
@@ -915,8 +915,8 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 }
 
 .dtab.active {
-  color: #8b7082;
-  border-bottom-color: #c094a8;
+  color: var(--sy-rose-d);
+  border-bottom-color: var(--sy-accent);
 }
 
 .dcont {
@@ -926,8 +926,8 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 }
 
 .rendered-detail {
-  background: #fafafa;
-  border: 1px solid #e8e8e8;
+  background: var(--sy-paper, #fafafa);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
   padding: 10px;
   font-size: 11px;
@@ -936,7 +936,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
   white-space: pre-wrap;
   overflow-wrap: anywhere;
   word-break: normal;
-  color: #1f1f1f;
+  color: var(--sy-ink);
 }
 
 .round-bridge {
@@ -1002,8 +1002,8 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 }
 
 .mr.system {
-  background: #faf0ee;
-  color: #8b7082;
+  background: var(--sy-rose-soft);
+  color: var(--sy-rose-d);
 }
 
 .mr.user {
@@ -1023,31 +1023,31 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 
 .mc {
   padding: 6px 10px;
-  background: #fafafa;
+  background: var(--sy-paper, #fafafa);
   font-size: 11px;
   font-family: 'SF Mono', monospace;
   white-space: pre-wrap;
   word-break: break-all;
   line-height: 1.4;
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--sy-hair-2);
   border-top: 0;
   max-height: 300px;
   overflow-y: auto;
-  color: #1f1f1f;
+  color: var(--sy-ink);
 }
 
 .rev-meta {
   padding: 0 10px 6px;
-  background: #fafafa;
-  border: 1px solid #e8e8e8;
+  background: var(--sy-paper, #fafafa);
+  border: 1px solid var(--sy-hair-2);
   border-top: 0;
   color: #6b7280;
   font-size: 10px;
 }
 
 .tc-block {
-  background: #fafafa;
-  border: 1px solid #e8e8e8;
+  background: var(--sy-paper, #fafafa);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
   padding: 8px 10px;
   margin-bottom: 6px;
@@ -1062,7 +1062,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 
 .tc-args {
   font-size: 11px;
-  color: #1f1f1f;
+  color: var(--sy-ink);
   font-family: 'SF Mono', monospace;
   white-space: pre-wrap;
   word-break: break-all;
@@ -1071,11 +1071,11 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 .island-hero { display:flex; align-items:center; gap:13px; padding:15px 16px; border-radius:12px; margin-bottom:10px; }
 .island-calm { background:linear-gradient(135deg,#f7fbf8,#f3f8f5); border:1px solid #dcebe1; }
 .island-changed { background:linear-gradient(135deg,#fff7fa,#faf2f6); border:1px solid #efdce5; }
-.island-orb { width:38px; height:38px; display:grid; place-items:center; flex:0 0 auto; border-radius:50%; color:#8b7082; background:rgba(255,255,255,.78); box-shadow:0 4px 14px rgba(91,68,82,.08); font-size:18px; }
+.island-orb { width:38px; height:38px; display:grid; place-items:center; flex:0 0 auto; border-radius:50%; color:var(--sy-rose-d); background:rgba(255,255,255,.78); box-shadow:0 4px 14px rgba(91,68,82,.08); font-size:18px; }
 .island-hero-title { color:#493e45; font-family:Georgia,'Noto Serif SC',serif; font-size:15px; font-weight:700; }
 .island-hero-sub { margin-top:3px; color:#8d8188; font-size:11px; }
 .soft-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:8px; }
-.soft-card { padding:11px 12px; border:1px solid #ece7ea; border-radius:10px; background:#fffdfd; }
+.soft-card { padding:11px 12px; border:1px solid #ece7ea; border-radius:10px; background:var(--sy-paper, #fff); }
 .soft-label,.round-small-title { color:#aa929f; font-size:10px; font-weight:700; letter-spacing:.04em; }
 .soft-value { margin-top:4px; color:#4f444b; font-size:12px; font-weight:650; }
 .soft-note,.soft-footnote { margin-top:3px; color:#948990; font-size:10px; line-height:1.55; }
@@ -1083,7 +1083,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 .island-section-title { margin-bottom:8px; color:#725e69; font-family:Georgia,'Noto Serif SC',serif; font-size:12px; font-weight:700; }
 .island-content { max-height:380px; overflow-y:auto; padding:12px 13px; border-radius:8px; color:#51484d; background:#fcfaf8; box-shadow:inset 0 0 0 1px #f0ebe6; font-family:'Noto Serif SC',Georgia,serif; font-size:11px; line-height:1.75; white-space:pre-wrap; word-break:break-word; }
 .island-lanes { display:grid; grid-template-columns:repeat(auto-fit,minmax(280px,1fr)); gap:10px; }
-.island-lane { min-width:0; padding:12px; border:1px solid #eee7eb; border-radius:10px; background:#fffdfd; }
+.island-lane { min-width:0; padding:12px; border:1px solid #eee7eb; border-radius:10px; background:var(--sy-paper, #fff); }
 .island-lane-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
 .island-lane-title { display:flex; align-items:center; gap:6px; color:#5e4d56; font-family:Georgia,'Noto Serif SC',serif; font-size:13px; font-weight:700; }
 .island-lane-count { color:#9a8e94; font-size:9px; white-space:nowrap; }
@@ -1107,7 +1107,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 .empty-soft,.muted { color:#a1999e; font-size:11px; line-height:1.65; }
 .story-round { position:relative; padding:14px; border-radius:12px; margin-bottom:10px; overflow:hidden; }
 .story-round::before { content:''; position:absolute; inset:0 auto 0 0; width:4px; }
-.round-middle { background:linear-gradient(145deg,#fff8fb,#fffdfd); border:1px solid #efdde6; }
+.round-middle { background:linear-gradient(145deg,#fff8fb,var(--sy-paper, #fff)); border:1px solid #efdde6; }
 .round-middle::before { background:#d9a8bd; }
 .round-final { background:linear-gradient(145deg,#f7fcf8,#fff); border:1px solid #d8eadc; }
 .round-final::before { background:#85b794; }
@@ -1139,7 +1139,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 .tool-section-title {
   font-size: 11px;
   font-weight: 600;
-  color: #8b7082;
+  color: var(--sy-rose-d);
   margin-bottom: 6px;
 }
 
@@ -1164,13 +1164,13 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 }
 
 .tc-cached {
-  color: #9ca3af;
+  color: var(--sy-mute);
   font-size: 10px;
 }
 
 .tool-empty {
   font-size: 11px;
-  color: #9ca3af;
+  color: var(--sy-mute);
 }
 
 .tool-round-group {
@@ -1186,7 +1186,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 .tool-round-header {
   font-size: 10px;
   font-weight: 600;
-  color: #9ca3af;
+  color: var(--sy-mute);
   margin-bottom: 4px;
 }
 
@@ -1195,7 +1195,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 }
 
 .tool-call-item + .tool-call-item {
-  border-top: 1px solid #f3f4f6;
+  border-top: 1px solid var(--sy-sys-surface);
 }
 
 .tool-detail-block {
@@ -1231,7 +1231,7 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 
 .tool-timing {
   font-size: 10px;
-  color: #9ca3af;
+  color: var(--sy-mute);
   font-family: 'SF Mono', monospace;
 }
 </style>

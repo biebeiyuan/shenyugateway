@@ -349,7 +349,7 @@ function typeBorder(item: MemNoteItem): string {
   if (t === '关于我的事') return '#aec9b5'
   if (t === '心里那一档') return '#d8c18c'
   if (t === '承诺') return '#d6a8ba'
-  return '#ddd7ca'
+  return 'var(--sy-hair-2)'
 }
 
 function isRecent(item: MemNoteItem): boolean {
@@ -1113,7 +1113,7 @@ function formatTime(value?: string | null) {
   gap: 16px;
   margin-bottom: 22px;
   padding-bottom: 18px;
-  border-bottom: 1px solid #dedbd3;
+  border-bottom: 1px solid var(--sy-hair-2);
 }
 
 .memo-title {
@@ -1139,7 +1139,7 @@ function formatTime(value?: string | null) {
   display: grid;
   place-items: center;
   color: #71685d;
-  background: #fbfaf6;
+  background: var(--sy-paper, #fff);
   font-size: 15px;
   font-weight: 600;
 }
@@ -1171,7 +1171,7 @@ function formatTime(value?: string | null) {
 .tab-btn.active {
   background: #2d2b28;
   border-color: #2d2b28;
-  color: #fffdf8;
+  color: var(--sy-paper, #fff);
 }
 
 .memo-count {
@@ -1187,9 +1187,9 @@ function formatTime(value?: string | null) {
   flex-wrap: wrap;
   margin-bottom: 18px;
   padding: 10px;
-  border: 1px solid #dedbd3;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 8px;
-  background: #fbfaf6;
+  background: var(--sy-paper, #fff);
 }
 
 .filter-input {
@@ -1199,7 +1199,7 @@ function formatTime(value?: string | null) {
   border-radius: 6px;
   font-size: 13px;
   color: #38332d;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   min-width: 140px;
   outline: none;
 }
@@ -1229,7 +1229,7 @@ function formatTime(value?: string | null) {
 .memo-card {
   position: relative;
   padding: 14px 14px 12px;
-  border: 1px solid #ddd7ca;
+  border: 1px solid var(--sy-hair-2);
   border-left-width: 3px;
   border-radius: 7px;
   cursor: pointer;
@@ -1326,7 +1326,7 @@ function formatTime(value?: string | null) {
   gap: 4px;
   margin: 2px 0 14px;
   padding: 10px 12px;
-  border: 1px solid #dedbd3;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 7px;
   color: #6f6860;
   background: #f4f2ed;
@@ -1396,7 +1396,7 @@ function formatTime(value?: string | null) {
   text-align: center;
   color: #71695f;
   background: #fffefb;
-  border: 1px solid #ddd7ca;
+  border: 1px solid var(--sy-hair-2);
   border-left: 3px solid #d8c18c;
   border-radius: 7px;
   box-shadow: 0 1px 2px rgba(42, 36, 28, 0.05);
@@ -1438,7 +1438,7 @@ function formatTime(value?: string | null) {
 .anchor-box {
   padding: 12px;
   border: 1px solid #eadbd6;
-  background: #fffdfc;
+  background: var(--sy-paper, #fff);
 }
 
 .new-anchor-inline {
@@ -1498,8 +1498,8 @@ function formatTime(value?: string | null) {
 .source-box {
   margin-top: 12px;
   padding: 12px;
-  background: #fbfaf6;
-  border: 1px solid #dedbd3;
+  background: var(--sy-paper, #fff);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 7px;
   font-size: 12px;
   color: #70675c;
@@ -1537,8 +1537,8 @@ function formatTime(value?: string | null) {
 .settings-group {
   margin-bottom: 20px;
   padding: 16px;
-  background: #fbfaf6;
-  border: 1px solid #dedbd3;
+  background: var(--sy-paper, #fff);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 8px;
 }
 
@@ -1581,9 +1581,9 @@ function formatTime(value?: string | null) {
 .legacy-card {
   padding: 10px;
   margin-top: 8px;
-  border: 1px solid #dedbd3;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
-  background: #fbfaf6;
+  background: var(--sy-paper, #fff);
 }
 
 .legacy-meta {

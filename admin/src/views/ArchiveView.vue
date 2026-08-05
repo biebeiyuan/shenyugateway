@@ -369,8 +369,8 @@ async function saveClip() {
 
 /* ── Control Panel ── */
 .control-panel {
-  background: #fff;
-  border: 1px solid #f0e0dc;
+  background: var(--sy-paper, #fff);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 16px;
   padding: 12px 16px;
   margin-bottom: 10px;
@@ -390,21 +390,21 @@ async function saveClip() {
   width: 24px;
   height: 24px;
   border: none;
-  background: #fdf0ed;
+  background: var(--sy-rose-soft);
   border-radius: 7px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
   transition: 0.2s;
-  color: #c4b0ab;
+  color: var(--sy-mute);
   font-size: 10px;
   flex-shrink: 0;
 }
 
 .cal-toggle:hover {
   background: #f8e4df;
-  color: #c094a8;
+  color: var(--sy-accent);
 }
 
 .cal-toggle-icon {
@@ -423,22 +423,22 @@ async function saveClip() {
 .bar-date {
   font-size: 13px;
   font-weight: 600;
-  color: #8b7082;
+  color: var(--sy-rose-d);
 }
 
 .bar-sep {
-  color: #d4c0bb;
+  color: var(--sy-hair);
   font-size: 14px;
 }
 
 .bar-month {
   font-size: 12px;
-  color: #b8a8a3;
+  color: var(--sy-mute);
 }
 
 .bar-count {
   font-size: 11px;
-  color: #c4b0ab;
+  color: var(--sy-mute);
   font-style: italic;
 }
 
@@ -451,12 +451,12 @@ async function saveClip() {
 .cal-arrow {
   width: 26px;
   height: 26px;
-  border: 1px solid #f2ddd8;
-  background: #fff;
+  border: 1px solid var(--sy-hair-2);
+  background: var(--sy-paper, #fff);
   border-radius: 8px;
   cursor: pointer;
   font-size: 15px;
-  color: #c094a8;
+  color: var(--sy-accent);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -464,7 +464,7 @@ async function saveClip() {
 }
 
 .cal-arrow:hover {
-  background: #fdf0ed;
+  background: var(--sy-rose-soft);
   border-color: #e8c4bc;
 }
 
@@ -483,7 +483,7 @@ async function saveClip() {
 .cal-wd {
   text-align: center;
   font-size: 10px;
-  color: #c4b0ab;
+  color: var(--sy-mute);
   font-weight: 500;
   padding: 2px 0;
 }
@@ -512,7 +512,7 @@ async function saveClip() {
 
 .cal-cell.has-data {
   cursor: pointer;
-  background: #fdf6f4;
+  background: var(--sy-void);
 }
 
 .cal-cell.has-data:hover {
@@ -521,7 +521,7 @@ async function saveClip() {
 }
 
 .cal-cell.active {
-  background: #c094a8;
+  background: var(--sy-accent);
   box-shadow: 0 2px 8px rgba(192, 148, 168, 0.25);
 }
 
@@ -540,7 +540,7 @@ async function saveClip() {
 
 .cal-day-num {
   font-size: 12px;
-  color: #4a3535;
+  color: var(--sy-ink);
   line-height: 1;
   font-family: -apple-system, 'Segoe UI', sans-serif;
 }
@@ -553,7 +553,7 @@ async function saveClip() {
   width: 3px;
   height: 3px;
   border-radius: 50%;
-  background: #c094a8;
+  background: var(--sy-accent);
   margin-top: 2px;
 }
 
@@ -569,7 +569,7 @@ async function saveClip() {
 
 .tools-hint {
   font-size: 11px;
-  color: #c4b0ab;
+  color: var(--sy-mute);
   font-style: italic;
 }
 
@@ -602,7 +602,7 @@ async function saveClip() {
 }
 
 .empty {
-  color: #c4b0ab;
+  color: var(--sy-mute);
   font-size: 13px;
   text-align: center;
   padding: 60px 0;
@@ -675,14 +675,14 @@ async function saveClip() {
 .bubble.user {
   background: linear-gradient(135deg, #f0e4df 0%, #f5ece9 100%);
   border-bottom-right-radius: 6px;
-  color: #4a3535;
+  color: var(--sy-ink);
 }
 
 .bubble.assistant {
-  background: #fff;
-  border: 1px solid #f0e0dc;
+  background: var(--sy-paper, #fff);
+  border: 1px solid var(--sy-hair-2);
   border-bottom-left-radius: 6px;
-  color: #4a3535;
+  color: var(--sy-ink);
 }
 
 .bubble:hover {
@@ -723,22 +723,22 @@ async function saveClip() {
 }
 
 .clip-preview {
-  background: #fdf6f4;
-  border: 1px solid #f2ddd8;
+  background: var(--sy-void);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 12px;
   padding: 12px 14px;
 }
 
 .clip-preview-title {
   font-size: 11px;
-  color: #c4b0ab;
+  color: var(--sy-mute);
   margin-bottom: 6px;
 }
 
 .clip-preview-text {
   font-size: 12px;
   line-height: 1.6;
-  color: #4a3535;
+  color: var(--sy-ink);
   white-space: pre-wrap;
   word-break: break-word;
   max-height: 220px;

@@ -198,12 +198,12 @@ function tryParseJson(s: string | null) {
 .page-title {
   font-size: 22px;
   font-weight: 600;
-  color: #3d3535;
+  color: var(--sy-ink);
   letter-spacing: -0.5px;
 }
 .subtitle {
   font-size: 12px;
-  color: #b0a8a0;
+  color: var(--sy-mute);
   margin-left: 10px;
   letter-spacing: 1px;
   text-transform: uppercase;
@@ -247,7 +247,7 @@ function tryParseJson(s: string | null) {
 }
 
 .filter-tab.active {
-  background: #fff;
+  background: var(--sy-paper, #fff);
   color: #5c504a;
   box-shadow: 0 1px 4px #d6cbc030;
 }
@@ -305,7 +305,7 @@ function tryParseJson(s: string | null) {
   padding: 4px 12px;
   border-radius: 8px;
   border: 1px solid #e8e4df;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   color: #999;
   cursor: pointer;
   transition: 0.15s;
@@ -335,7 +335,7 @@ function tryParseJson(s: string | null) {
 }
 
 .error-row {
-  background: #fff;
+  background: var(--sy-paper, #fff);
   border: 1px solid #f0ece8;
   border-radius: 10px;
   padding: 12px 16px;

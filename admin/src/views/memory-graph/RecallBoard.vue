@@ -2,11 +2,13 @@
 // 描金线索板 · 想起的一瞬间
 //
 // 空间骨架是侦探软木板（钉、连线、胶带），皮肤是 rose-gothic Mucha（古金
-// 发丝线、宽字距眉题、老式数字）。一次「想起」把原件摊上板：最强的一张
-// 在正中心当主角，其余按与词的远近围成一圈——脱口而出（松绿钉 + 实线
-// 连到中心）、由此及彼（金钉 + 细金线）、浮想（胶带粘在外圈，不连线）。
-// 被想起的词收进左上板签，不占中心。点一张纸，它从板上取下来放大读全文，
-// 阅读层与锚点阅读卡共用同一套 OriginalPaper / AttachAnchors。
+// 发丝线、宽字距眉题、老式数字）。中心是被想起的词；三圈纸按远近围着他——
+// 脱口而出（松绿钉 + 实线连到中心）、由此及彼（金钉 + 细金线 + 路径牌）、
+// 浮想（胶带粘在外圈，不连线）。
+// 三圈起排角按黄金角错开：各组各占一段弧，合起来仍均匀围住中心，
+// 件数少不再挤进同一象限；词卡收窄，内圈纸从卡外经过，不被压住。
+// 点一张纸，它从板上取下来放大读全文，阅读层与锚点阅读卡共用同一套
+// OriginalPaper / AttachAnchors。
 
 import { computed, ref } from 'vue'
 import { NButton, NEmpty } from 'naive-ui'
@@ -24,7 +26,6 @@ interface PaperPosition {
   x: number
   y: number
   rotate: number
-  center: boolean
   group: RecallGroup
 }
 
@@ -52,17 +53,13 @@ const emit = defineEmits<{
 const BOARD_W = 960
 const BOARD_H = 620
 const CX = BOARD_W / 2
-const CY = BOARD_H / 2 + 6
+const CY = BOARD_H / 2
 
 const flippedKey = ref<string | null>(null)
 
 function groupOf(item: MemoryGraphRecallPreviewItem): RecallGroup {
   const group = item.recall_match?.group
   return group === 'direct' || group === 'related' ? group : 'other'
-}
-
-function groupRank(group: RecallGroup): number {
-  return group === 'direct' ? 0 : group === 'related' ? 1 : 2
 }
 
 // 用 source key 做种子，同一次想起刷新不跳，换一批才换布局。
@@ -72,48 +69,52 @@ function seed(text: string): number {
   return h
 }
 
-// 最强的一张在正中心；其余按组排序、从正上方顺时针围成一圈。
-// 一圈排位件多件少都平衡：件数少不再堆某个象限，中心纸永远是主角。
-const papers = computed<PaperPosition[]>(() => {
-  const ordered = [...props.items].sort((a, b) => groupRank(groupOf(a)) - groupRank(groupOf(b)))
-  if (!ordered.length) return []
-  const [first, ...rest] = ordered
-  const result: PaperPosition[] = [{
-    item: first,
-    group: groupOf(first),
-    center: true,
-    x: CX,
-    y: CY,
-    rotate: ((seed(sourceKey(first)) >> 5) % 5) - 2,
-  }]
-  const n = rest.length
-  rest.forEach((item, i) => {
+// 三圈半径（竖向压扁 RY_RATIO）：内圈恰好在词卡外，外圈不出板边。
+// 每圈起排角按黄金角错开，是「纸不再挤一侧」的关键。
+const RY_RATIO = 0.66
+const RINGS: Record<RecallGroup, { rx: number; start: number }> = {
+  direct: { rx: 225, start: -Math.PI / 2 },
+  related: { rx: 278, start: -Math.PI / 2 + 2.4 },
+  other: { rx: 330, start: -Math.PI / 2 + 4.8 },
+}
+
+function layoutRing(items: MemoryGraphRecallPreviewItem[], group: RecallGroup): PaperPosition[] {
+  const n = items.length
+  if (!n) return []
+  const ring = RINGS[group]
+  return items.map((item, i) => {
     const s = seed(sourceKey(item))
-    const angle = -Math.PI / 2 + (i / n) * Math.PI * 2 + (((s % 16) - 8) * Math.PI) / 180
-    result.push({
+    const angle = ring.start + (i / n) * Math.PI * 2 + (((s % 16) - 8) * Math.PI) / 180
+    return {
       item,
-      group: groupOf(item),
-      center: false,
-      x: CX + 336 * Math.cos(angle),
-      y: CY + 200 * Math.sin(angle),
-      rotate: ((s >> 5) % 9) - 4,
-    })
+      group,
+      x: CX + ring.rx * Math.cos(angle),
+      y: CY + ring.rx * RY_RATIO * Math.sin(angle),
+      rotate: (((s >> 5) % 9) - 4) * (group === 'other' ? 1.8 : 1),
+    }
   })
-  return result
+}
+
+const papers = computed<PaperPosition[]>(() => {
+  const grouped: Record<RecallGroup, MemoryGraphRecallPreviewItem[]> = { direct: [], related: [], other: [] }
+  for (const item of props.items) grouped[groupOf(item)].push(item)
+  return [
+    ...layoutRing(grouped.direct, 'direct'),
+    ...layoutRing(grouped.related, 'related'),
+    ...layoutRing(grouped.other, 'other'),
+  ]
 })
 
-const strings = computed(() => {
-  const hub = papers.value[0]
-  if (!hub) return []
-  return papers.value
-    .filter((p) => !p.center && p.group !== 'other')
+const strings = computed(() =>
+  papers.value
+    .filter((p) => p.group !== 'other')
     .map((p) => {
-      const sag = Math.min(34, Math.hypot(p.x - hub.x, p.y - hub.y) * 0.12)
-      const mx = (hub.x + p.x) / 2
-      const my = (hub.y + p.y) / 2 + sag
-      return { key: sourceKey(p.item), d: `M ${hub.x} ${hub.y} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, strong: p.group === 'direct' }
-    })
-})
+      const sag = Math.min(34, Math.hypot(p.x - CX, p.y - CY) * 0.12)
+      const mx = (CX + p.x) / 2
+      const my = (CY + p.y) / 2 + sag
+      return { key: sourceKey(p.item), d: `M ${CX} ${CY} Q ${mx.toFixed(1)} ${my.toFixed(1)} ${p.x.toFixed(1)} ${p.y.toFixed(1)}`, strong: p.group === 'direct' }
+    }),
+)
 
 const flipped = computed(() => papers.value.find((p) => sourceKey(p.item) === flippedKey.value) || null)
 
@@ -143,7 +144,6 @@ function ledeLine(item: MemoryGraphRecallPreviewItem): string {
 }
 </script>
 
-
 <template>
   <div class="board-zone">
     <div v-if="error" class="board-error">{{ error }}</div>
@@ -167,20 +167,22 @@ function ledeLine(item: MemoryGraphRecallPreviewItem): string {
         />
       </svg>
 
-      <!-- 板签：被想起的词收在左上角，中心留给想起来的纸 -->
-      <header class="board-tag">
-        <span class="tag-eyebrow">想起了 · recalled</span>
-        <span class="tag-word">「{{ query }}」</span>
-        <span class="tag-count">{{ items.length }} 件原件</span>
-        <button v-if="manageAnchorName" class="tag-manage" data-testid="recall-manage-anchor" @click="emit('manage')">管理这个名字</button>
-      </header>
+      <!-- 中心：被想起的词 -->
+      <div class="board-hub">
+        <span class="hub-pin" aria-hidden="true"></span>
+        <SyGlyph name="begonia" :size="26" class="hub-flower" />
+        <p class="hub-eyebrow">想起了 · recalled</p>
+        <p class="hub-word">「{{ query }}」</p>
+        <p class="hub-count">{{ items.length }} 件原件</p>
+        <button v-if="manageAnchorName" class="hub-manage" data-testid="recall-manage-anchor" @click="emit('manage')">管理这个名字</button>
+      </div>
 
-      <!-- 中心纸 + 一圈纸 -->
+      <!-- 三圈纸 -->
       <button
         v-for="(p, pi) in papers"
         :key="runId + sourceKey(p.item)"
         class="board-paper"
-        :class="[`g-${p.group}`, `fam-${paperFamily(p.item.source_type)}`, { 'is-center': p.center }]"
+        :class="[`g-${p.group}`, `fam-${paperFamily(p.item.source_type)}`]"
         :style="{ left: `${(p.x / BOARD_W) * 100}%`, top: `${(p.y / BOARD_H) * 100}%`, '--rot': `${p.rotate}deg`, '--arrive-delay': `${pi * 70}ms` }"
         :aria-label="`原件：${p.item.title || sourceLabel(p.item.source_type)}`"
         @click="flip(p)"
@@ -282,8 +284,8 @@ function ledeLine(item: MemoryGraphRecallPreviewItem): string {
   border-radius: 18px;
   border: 1px solid var(--sy-hair-gilt, #d8c2a8);
   background:
-    radial-gradient(ellipse at 30% 20%, rgba(255, 252, 246, 0.5), transparent 55%),
-    linear-gradient(160deg, var(--sy-board, #e9d9c8), var(--sy-board-deep, #dcc6ae));
+    radial-gradient(ellipse at 30% 20%, rgba(255, 252, 250, 0.5), transparent 55%),
+    linear-gradient(160deg, var(--sy-board, #eed6d0), var(--sy-board-deep, #e3c6bf));
   box-shadow: var(--sy-shadow-paper, 0 10px 28px rgba(74, 44, 44, 0.16)), inset 0 0 60px rgba(74, 44, 44, 0.08);
   overflow: hidden;
 }
@@ -304,31 +306,38 @@ function ledeLine(item: MemoryGraphRecallPreviewItem): string {
 .string { fill: none; stroke: var(--sy-gilt, #c79748); stroke-width: 1.1; opacity: 0.5; }
 .string.strong { stroke: var(--sy-resident, #2c4a44); stroke-width: 2; opacity: 0.75; }
 
-/* ---------- 板签：被想起的词 ---------- */
-.board-tag {
-  position: absolute; top: 14px; left: 16px; z-index: 5;
-  display: flex; align-items: baseline; gap: 10px; max-width: 46%;
-  padding: 8px 14px;
-  background: var(--sy-paper, rgba(255, 252, 250, 0.9));
-  border: 1px solid var(--sy-hair-gilt, #d8c2a8); border-radius: 8px;
-  box-shadow: var(--sy-shadow-paper, 0 10px 28px rgba(74, 44, 44, 0.16));
+/* ---------- 中心：被想起的词（收窄，让内圈纸从卡外经过） ---------- */
+.board-hub {
+  position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%);
+  text-align: center; padding: 12px 18px 11px;
+  background: var(--sy-paper, rgba(255, 252, 252, 0.92));
+  border: 1px solid var(--sy-hair-gilt, #d8c2a8); border-radius: 6px;
+  box-shadow: var(--sy-shadow-paper, 0 10px 28px rgba(74, 44, 44, 0.2));
+  max-width: 200px; z-index: 3;
 }
-.tag-eyebrow { font-family: var(--sy-serif, serif); font-size: 9.5px; letter-spacing: 0.38em; text-transform: uppercase; color: var(--sy-gilt, #c79748); white-space: nowrap; }
-.tag-word { font-family: var(--sy-serif, serif); font-style: italic; font-size: 20px; font-weight: 500; color: var(--sy-ink, #4a2c2c); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: oldstyle-nums; }
-.tag-count { font-family: var(--sy-cjk, serif); font-size: 11px; color: var(--sy-mute, rgba(74, 44, 44, 0.55)); white-space: nowrap; }
-.tag-manage {
-  border: 0; background: none; padding: 0; cursor: pointer; white-space: nowrap;
+.hub-pin {
+  position: absolute; top: -7px; left: 50%; transform: translateX(-50%);
+  width: 14px; height: 14px; border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #e6c98a, var(--sy-gilt, #c79748) 60%, var(--sy-gilt-d, #9a7320));
+  box-shadow: 0 2px 5px rgba(74, 44, 44, 0.4);
+}
+.hub-eyebrow { font-family: var(--sy-serif, serif); font-size: 9px; letter-spacing: 0.38em; text-transform: uppercase; color: var(--sy-gilt, #c79748); margin: 0 0 3px; }
+.hub-word { font-family: var(--sy-serif, serif); font-style: italic; font-size: 22px; font-weight: 500; color: var(--sy-ink, #4a2c2c); line-height: 1.2; margin: 0; font-variant-numeric: oldstyle-nums; overflow: hidden; text-overflow: ellipsis; }
+.hub-count { font-family: var(--sy-cjk, serif); font-size: 11px; color: var(--sy-mute, rgba(74, 44, 44, 0.55)); margin: 3px 0 0; }
+.hub-flower { display: block; margin: 0 auto 1px; }
+.hub-manage {
+  margin-top: 7px; border: 0; background: none; padding: 0; cursor: pointer;
   color: var(--sy-self, #c094a8); font-family: var(--sy-cjk, serif); font-size: 11.5px;
   text-decoration: underline; text-underline-offset: 3px;
 }
-.tag-manage:hover { color: var(--sy-self-d, #a07888); }
+.hub-manage:hover { color: var(--sy-self-d, #a07888); }
 
 /* ---------- 板上的纸 ---------- */
 .board-paper {
   position: absolute; transform: translate(-50%, -50%) rotate(var(--rot, 0deg));
   width: 176px; padding: 12px 12px 10px;
-  border: 1px solid var(--sy-hair, rgba(192, 148, 168, 0.25)); border-radius: 4px;
-  background: var(--sy-paper, rgba(255, 252, 250, 0.94));
+  border: 1px solid var(--sy-hair, rgba(206, 148, 160, 0.38)); border-radius: 4px;
+  background: var(--sy-paper, rgba(255, 252, 252, 0.94));
   box-shadow: 0 6px 16px rgba(74, 44, 44, 0.18);
   cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 3px;
   transition: transform 0.22s, box-shadow 0.22s; z-index: 2;
@@ -343,14 +352,7 @@ function ledeLine(item: MemoryGraphRecallPreviewItem): string {
 .board-paper:hover { transform: translate(-50%, -50%) rotate(0deg) scale(1.06); box-shadow: var(--sy-shadow-lift, 0 24px 64px rgba(74, 44, 44, 0.3)); z-index: 5; }
 .board-paper.g-direct { width: 208px; border-color: var(--sy-hair-gilt, #d8c2a8); }
 .board-paper.g-related { width: 176px; }
-.board-paper.g-other { width: 144px; opacity: 0.82; background: var(--sy-panel, rgba(255, 251, 248, 0.8)); }
-
-/* 中心纸：最强的那张当主角 */
-.board-paper.is-center {
-  width: 232px; z-index: 3;
-  box-shadow: var(--sy-shadow-lift, 0 24px 64px rgba(74, 44, 44, 0.3));
-}
-.board-paper.is-center .bp-excerpt { -webkit-line-clamp: 4; }
+.board-paper.g-other { width: 144px; opacity: 0.82; background: var(--sy-panel, rgba(255, 250, 251, 0.8)); }
 
 /* 来源族一眼可辨（与 OriginalPaper 同一种纸） */
 .board-paper.fam-letter { border-radius: 3px; }
@@ -413,7 +415,7 @@ function ledeLine(item: MemoryGraphRecallPreviewItem): string {
 @media (max-width: 720px) {
   .board { aspect-ratio: auto; min-height: 0; padding: 18px 14px; display: flex; flex-direction: column; gap: 12px; }
   .board-strings, .board-corner { display: none; }
-  .board-tag { position: static; max-width: none; margin: 0 auto 4px; flex-wrap: wrap; }
+  .board-hub { position: static; transform: none; margin: 0 auto 6px; max-width: none; }
   .board-paper { position: static; transform: none; width: 100% !important; }
   .board-paper:hover { transform: none; }
   .pin, .tape { display: none; }

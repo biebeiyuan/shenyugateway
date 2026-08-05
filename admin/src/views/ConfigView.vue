@@ -553,7 +553,7 @@ async function copyColdHeader(sessionTag: string) {
       <NCard title="上游 API" size="small">
         <NSpace vertical size="medium">
           <div>
-            <div style="font-size:12px;color:#7d8590;margin-bottom:6px">预设</div>
+            <div style="font-size:12px;color:var(--sy-mute);margin-bottom:6px">预设</div>
             <div class="preset-bar">
               <span v-if="!presets.length" style="font-size:11px;color:#484f58">暂无预设，输入名称保存当前上游配置</span>
               <div
@@ -988,7 +988,7 @@ async function copyColdHeader(sessionTag: string) {
   padding: 4px 10px;
   border-radius: 999px;
   font-size: 11px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   color: #4b5563;
   cursor: pointer;
   border: 1px solid #d0d7de;
@@ -997,13 +997,13 @@ async function copyColdHeader(sessionTag: string) {
 
 .preset-chip:hover {
   background: #f5f5f5;
-  color: #1f1f1f;
+  color: var(--sy-ink);
 }
 
 .preset-chip.active {
-  background: #faf0ee;
-  color: #8b7082;
-  border-color: #c094a8;
+  background: var(--sy-rose-soft);
+  color: var(--sy-rose-d);
+  border-color: var(--sy-accent);
 }
 
 .preset-chip .del {
@@ -1025,7 +1025,7 @@ async function copyColdHeader(sessionTag: string) {
 }
 
 .provider-order-hint {
-  color: #7d8590;
+  color: var(--sy-mute);
   font-size: 11px;
   line-height: 1.5;
 }
@@ -1035,14 +1035,14 @@ async function copyColdHeader(sessionTag: string) {
 }
 
 .upstream-custom-box {
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 8px;
   padding: 10px;
   margin-bottom: 12px;
 }
 
 .upstream-custom-title {
-  color: #1f1f1f;
+  color: var(--sy-ink);
   font-size: 13px;
   font-weight: 600;
   margin-bottom: 8px;
@@ -1057,7 +1057,7 @@ async function copyColdHeader(sessionTag: string) {
 }
 
 .snippet-label {
-  color: #7d8590;
+  color: var(--sy-mute);
   font-size: 11px;
 }
 
@@ -1077,15 +1077,15 @@ async function copyColdHeader(sessionTag: string) {
 }
 
 .switch-hint {
-  color: #7d8590;
+  color: var(--sy-mute);
   font-size: 11px;
   line-height: 1.5;
 }
 
 .cal-input {
-  background: #fff;
+  background: var(--sy-paper, #fff);
   border: 1px solid #d0d7de;
-  color: #1f1f1f;
+  color: var(--sy-ink);
   padding: 4px 8px;
   border-radius: 6px;
   font-size: 12px;
@@ -1093,7 +1093,7 @@ async function copyColdHeader(sessionTag: string) {
 
 .cal-input:focus {
   outline: none;
-  border-color: #c094a8;
+  border-color: var(--sy-accent);
 }
 
 .rev-toolbar {
@@ -1146,7 +1146,7 @@ async function copyColdHeader(sessionTag: string) {
 
 .overview-text {
   font-size: 12px;
-  color: #7d8590;
+  color: var(--sy-mute);
   line-height: 1.6;
   margin-bottom: 10px;
 }
@@ -1164,8 +1164,8 @@ async function copyColdHeader(sessionTag: string) {
 }
 
 .rev-card {
-  background: #fafafa;
-  border: 1px solid #e8e8e8;
+  background: var(--sy-paper, #fafafa);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 8px;
   padding: 10px;
 }
@@ -1184,7 +1184,7 @@ async function copyColdHeader(sessionTag: string) {
 }
 
 .rev-pill {
-  background: #f3f4f6;
+  background: var(--sy-sys-surface);
   border: 1px solid #e5e7eb;
   color: #4b5563;
   border-radius: 999px;
@@ -1195,7 +1195,7 @@ async function copyColdHeader(sessionTag: string) {
 .rev-body {
   font-size: 12px;
   line-height: 1.55;
-  color: #1f1f1f;
+  color: var(--sy-ink);
   white-space: pre-wrap;
 }
 

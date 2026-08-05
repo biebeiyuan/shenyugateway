@@ -144,7 +144,7 @@ function fmtDateTime(value: string | null | undefined): string {
 .change-timeline p { margin-top: 4px; color: #8f7775; font-size: 9.5px; line-height: 1.55; }
 
 .review-list { display: grid; gap: 6px; }
-.review-list article { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: #fff; }
+.review-list article { display: flex; align-items: center; gap: 9px; min-width: 0; padding: 8px 10px; border: 1px solid var(--line); border-radius: 5px; background: var(--sy-paper, #fff); }
 .review-list article > span { flex: 0 0 7px; width: 7px; height: 7px; border-radius: 50%; background: var(--sage); }
 .review-list article > span.review_required { background: #c28c60; }
 .review-list article > span.error { background: #b85f64; }
@@ -154,10 +154,10 @@ function fmtDateTime(value: string | null | undefined): string {
 .review-list small { margin-top: 2px; color: var(--muted); font-family: -apple-system, 'Segoe UI', sans-serif; font-size: 8.5px; }
 .empty-note { color: var(--muted); font-size: 10px; }
 
-.document-fold { margin-top: 14px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.document-fold { margin-top: 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--sy-paper, #fff); }
 .document-fold summary { padding: 10px 12px; color: #90787a; cursor: pointer; font-size: 10px; }
 .document-list { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1px; padding: 1px; background: var(--line); }
-.document-list article { min-width: 0; padding: 10px 12px; background: #fff; }
+.document-list article { min-width: 0; padding: 10px 12px; background: var(--sy-paper, #fff); }
 .document-list code { overflow-wrap: anywhere; color: #8e6270; font-size: 9px; }
 .document-list p { margin-top: 4px; color: var(--muted); font-size: 9px; line-height: 1.5; }
 

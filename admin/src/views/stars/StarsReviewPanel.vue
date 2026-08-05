@@ -214,7 +214,7 @@ function isRecent(star: StarItem | StarCandidate): boolean {
   padding: 8px 10px;
   border-radius: 6px;
   background: #fefcfa;
-  color: #4a3535;
+  color: var(--sy-ink);
   font-size: 13px;
   line-height: 1.6;
   white-space: pre-wrap;
@@ -229,7 +229,7 @@ function isRecent(star: StarItem | StarCandidate): boolean {
 
 .candidate-line.recent {
   border-color: #f0d4a8;
-  background: linear-gradient(135deg, #fffdf8, #fff8f0);
+  background: linear-gradient(135deg, var(--sy-paper, #fff), #fff8f0);
 }
 
 @keyframes done-glow {
@@ -254,10 +254,10 @@ function isRecent(star: StarItem | StarCandidate): boolean {
   min-width: 150px;
   min-height: 34px;
   padding: 6px 10px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
-  background: #fff;
-  color: #4a3535;
+  background: var(--sy-paper, #fff);
+  color: var(--sy-ink);
   outline: none;
   transition: border-color 0.16s, background 0.16s;
 }
@@ -269,9 +269,9 @@ function isRecent(star: StarItem | StarCandidate): boolean {
 
 .seed-tile {
   margin-top: 10px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 8px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   overflow: hidden;
   transition: border-color 0.16s, box-shadow 0.16s;
 }
@@ -294,7 +294,7 @@ function isRecent(star: StarItem | StarCandidate): boolean {
   padding: 12px;
   border: 0;
   background: transparent;
-  color: #4a3535;
+  color: var(--sy-ink);
   cursor: pointer;
   text-align: left;
 }
@@ -326,9 +326,9 @@ function isRecent(star: StarItem | StarCandidate): boolean {
   max-width: 92px;
   min-height: 26px;
   padding: 2px 8px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 999px;
-  background: #fffaf8;
+  background: var(--sy-paper, #fff);
   color: #967180;
   font-weight: 700;
   white-space: nowrap;
@@ -355,7 +355,7 @@ function isRecent(star: StarItem | StarCandidate): boolean {
 .seed-count,
 .candidate-score,
 .candidate-status {
-  color: #b8a8a3;
+  color: var(--sy-mute);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -374,8 +374,8 @@ function isRecent(star: StarItem | StarCandidate): boolean {
 
 .source-box.light {
   margin: 0 0 10px;
-  border-color: #f0e0dc;
-  background: #fffaf8;
+  border-color: var(--sy-hair-2);
+  background: var(--sy-paper, #fff);
 }
 
 .source-meta {
@@ -396,9 +396,9 @@ function isRecent(star: StarItem | StarCandidate): boolean {
 
 .candidate-line {
   margin-top: 8px;
-  border: 1px solid #f0e0dc;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 7px;
-  background: #fffdfc;
+  background: var(--sy-paper, #fff);
 }
 
 .candidate-main {
@@ -407,7 +407,7 @@ function isRecent(star: StarItem | StarCandidate): boolean {
   gap: 8px;
   align-items: center;
   padding: 10px;
-  color: #4a3535;
+  color: var(--sy-ink);
 }
 
 .candidate-detail {
@@ -424,9 +424,9 @@ function isRecent(star: StarItem | StarCandidate): boolean {
 .candidate-source {
   margin: 0 10px 8px;
   padding: 8px 9px;
-  border: 1px solid #f0e0dc;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
-  background: #fffaf8;
+  background: var(--sy-paper, #fff);
   color: #6f5d5d;
   font-size: 12px;
 }

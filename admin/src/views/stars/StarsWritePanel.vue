@@ -87,10 +87,10 @@ const emit = defineEmits<{
   min-width: 150px;
   min-height: 34px;
   padding: 6px 10px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
-  background: #fff;
-  color: #4a3535;
+  background: var(--sy-paper, #fff);
+  color: var(--sy-ink);
   outline: none;
   transition: border-color 0.16s, background 0.16s;
 }
@@ -106,9 +106,9 @@ const emit = defineEmits<{
   align-items: center;
   min-height: 38px;
   padding: 0 10px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 7px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   color: #6b555b;
 }
 
@@ -137,10 +137,10 @@ const emit = defineEmits<{
 
 .search-results button {
   padding: 10px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 7px;
-  background: #fff;
-  color: #4a3535;
+  background: var(--sy-paper, #fff);
+  color: var(--sy-ink);
   text-align: left;
   cursor: pointer;
 }

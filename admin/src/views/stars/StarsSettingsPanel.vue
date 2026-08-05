@@ -135,9 +135,9 @@ const protocolOptions = [
   align-items: center;
   min-height: 38px;
   padding: 0 10px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 7px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   color: #6b555b;
 }
 
@@ -148,9 +148,9 @@ const protocolOptions = [
 
 .advanced-settings {
   margin-top: 12px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 8px;
-  background: #fffdfc;
+  background: var(--sy-paper, #fff);
 }
 
 .advanced-settings summary {
@@ -180,7 +180,7 @@ const protocolOptions = [
   padding: 20px;
   border: 1px solid rgba(111, 95, 154, .18);
   border-radius: 15px;
-  background: linear-gradient(135deg, #fffdfc, #f8f5fb);
+  background: linear-gradient(135deg, var(--sy-paper, #fff), #f8f5fb);
 }
 
 .scene-model-copy span { color: #8e83b7; font-size: 10px; letter-spacing: .16em; text-transform: uppercase; }

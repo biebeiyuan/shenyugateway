@@ -415,7 +415,7 @@ function chargeLabel(c?: number) {
 
 <style scoped>
 .room-page {
-  --room-paper: #fffdf8;
+  --room-paper: var(--sy-paper, #fff);
   --room-ink: #302b28;
   --room-muted: #8f817a;
   --room-line: #e7dad1;
@@ -681,7 +681,7 @@ h2 {
   padding: 11px 12px;
   border: 1px solid #e6ddd6;
   border-radius: 7px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
 }
 
 .paper-note.unread {
@@ -777,7 +777,7 @@ h2 {
 .debug-drawer {
   margin-top: 16px;
   padding: 12px 14px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
 }
 
 .debug-drawer summary {

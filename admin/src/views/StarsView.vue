@@ -420,7 +420,7 @@ function clearSeedIfEmpty(seedId: string) {
 .workbench {
   max-width: 980px;
   margin: 0 auto;
-  border: 1px solid #f2ddd8;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 8px;
   background: rgba(255, 255, 255, 0.76);
   padding: 16px;
@@ -433,15 +433,15 @@ function clearSeedIfEmpty(seedId: string) {
   align-items: flex-start;
   margin-bottom: 14px;
   padding: 16px;
-  border: 1px solid #f0e0dc;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 8px;
   background:
     radial-gradient(circle at 12% 18%, rgba(255, 224, 174, 0.26), transparent 34%),
-    linear-gradient(135deg, #fffdfb 0%, #f8eef2 58%, #eff7f2 100%);
+    linear-gradient(135deg, var(--sy-paper, #fff) 0%, #f8eef2 58%, #eff7f2 100%);
 }
 
 .page-eyebrow {
-  color: #a08090;
+  color: var(--sy-mute);
   font-size: 11px;
   letter-spacing: 0.14em;
   text-transform: uppercase;
@@ -449,7 +449,7 @@ function clearSeedIfEmpty(seedId: string) {
 
 .stars-head h2 {
   margin: 2px 0 3px;
-  color: #4a3535;
+  color: var(--sy-ink);
   font-family: 'Cormorant Garamond', 'Georgia', serif;
   font-size: 34px;
   font-weight: 500;
@@ -477,17 +477,17 @@ function clearSeedIfEmpty(seedId: string) {
   gap: 7px;
   min-height: 34px;
   padding: 0 14px;
-  border: 1px solid #ead4cf;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 999px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   color: #846d77;
   cursor: pointer;
 }
 
 .mode-rail button.active {
-  background: #4f4052;
+  background: var(--sy-ink);
   color: #fff7ee;
-  border-color: #4f4052;
+  border-color: var(--sy-ink);
 }
 
 .mode-rail span {
@@ -495,7 +495,7 @@ function clearSeedIfEmpty(seedId: string) {
   padding: 1px 6px;
   border-radius: 999px;
   background: #f1c37a;
-  color: #4f4052;
+  color: var(--sy-ink);
   font-size: 11px;
 }
 

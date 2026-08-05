@@ -421,8 +421,8 @@ function showMoreHeartbeats() {
 }
 
 .thread-chip {
-  background: #fff;
-  border: 1px solid #e8e8e8;
+  background: var(--sy-paper, #fff);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
   cursor: pointer;
   display: flex;
@@ -434,8 +434,8 @@ function showMoreHeartbeats() {
 }
 
 .thread-chip.active {
-  border-color: #c094a8;
-  box-shadow: inset 3px 0 0 #c094a8;
+  border-color: var(--sy-accent);
+  box-shadow: inset 3px 0 0 var(--sy-accent);
 }
 
 .thread-chip strong {
@@ -461,8 +461,8 @@ function showMoreHeartbeats() {
 }
 
 .heartbeat-editor {
-  background: #fafafa;
-  border: 1px solid #e8e8e8;
+  background: var(--sy-paper, #fafafa);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
   display: flex;
   flex-direction: column;
@@ -485,7 +485,7 @@ function showMoreHeartbeats() {
 }
 
 .chat-row {
-  border: 1px solid #e8e8e8;
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
   padding: 10px 12px;
 }
@@ -517,7 +517,7 @@ function showMoreHeartbeats() {
 }
 
 .chat-body {
-  color: #1f1f1f;
+  color: var(--sy-ink);
   line-height: 1.55;
   white-space: pre-wrap;
   word-break: break-word;
@@ -530,8 +530,8 @@ function showMoreHeartbeats() {
 }
 
 .block {
-  background: #fafafa;
-  border: 1px solid #e8e8e8;
+  background: var(--sy-paper, #fafafa);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 6px;
   padding: 10px 12px;
 }
@@ -562,7 +562,7 @@ function showMoreHeartbeats() {
 }
 
 .source-box {
-  background: #fff;
+  background: var(--sy-paper, #fff);
   border: 1px solid #ededed;
   border-radius: 6px;
   margin-top: 8px;
@@ -582,7 +582,7 @@ function showMoreHeartbeats() {
 }
 
 .danger-zone {
-  border-top: 1px solid #e8e8e8;
+  border-top: 1px solid var(--sy-hair-2);
   display: flex;
   flex-wrap: wrap;
   gap: 10px;

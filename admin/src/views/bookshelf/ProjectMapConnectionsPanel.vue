@@ -118,7 +118,7 @@ function shortPath(value: string): string {
   background:
     linear-gradient(90deg, rgb(185 126 145 / 5%) 1px, transparent 1px) 0 0 / 28px 28px,
     linear-gradient(rgb(185 126 145 / 5%) 1px, transparent 1px) 0 0 / 28px 28px,
-    #fffdfb;
+    var(--sy-paper, #fff);
 }
 
 .connection-source,
@@ -128,7 +128,7 @@ function shortPath(value: string): string {
   padding: 15px;
   border: 1px solid #cf9faf;
   border-radius: 7px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   color: var(--ink);
   cursor: pointer;
   font-family: inherit;
@@ -148,11 +148,11 @@ function shortPath(value: string): string {
 .connection-source strong { margin-top: 13px; font-size: 19px; }
 .connection-source small { margin-top: 8px; color: var(--muted); font-size: 10px; line-height: 1.6; }
 
-.connection-trunk { position: relative; height: calc(100% - 70px); border-right: 1px solid #d5acb7; }
-.connection-trunk::before { position: absolute; top: 50%; right: 0; width: 74px; height: 1px; background: #d5acb7; content: ''; }
+.connection-trunk { position: relative; height: calc(100% - 70px); border-right: 1px solid var(--sy-accent); }
+.connection-trunk::before { position: absolute; top: 50%; right: 0; width: 74px; height: 1px; background: var(--sy-accent); content: ''; }
 .neighbor-list { display: grid; gap: 8px; }
 .neighbor-node { min-height: 62px; border-color: #e5d6d8; box-shadow: 0 4px 12px rgb(89 53 63 / 6%); }
-.neighbor-node::before { position: absolute; top: 50%; left: -75px; width: 74px; height: 1px; background: #d5acb7; content: ''; }
+.neighbor-node::before { position: absolute; top: 50%; left: -75px; width: 74px; height: 1px; background: var(--sy-accent); content: ''; }
 .neighbor-node:hover,
 .neighbor-node:focus-visible { border-color: #c995a4; outline: none; }
 .neighbor-node strong { margin-top: 3px; font-size: 12px; }
@@ -172,7 +172,7 @@ function shortPath(value: string): string {
   padding: 16px 18px;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
-  background: #fcf8f7;
+  background: var(--sy-paper, #fff);
 }
 
 .connection-note > strong { color: #80656a; font-size: 10px; }
@@ -190,7 +190,7 @@ function shortPath(value: string): string {
 }
 
 .connection-note li button { border: 0; background: transparent; color: #8e6270; cursor: pointer; font-family: inherit; font-size: 10px; text-align: left; }
-.bridge-fold { margin-top: 14px; border: 1px solid var(--line); border-radius: 6px; background: #fff; }
+.bridge-fold { margin-top: 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--sy-paper, #fff); }
 .bridge-fold summary { padding: 10px 12px; color: #90787a; cursor: pointer; font-size: 10px; }
 .bridge-table { display: grid; gap: 1px; padding: 1px; background: var(--line); }
 
@@ -200,7 +200,7 @@ function shortPath(value: string): string {
   gap: 12px;
   align-items: center;
   padding: 10px 12px;
-  background: #fff;
+  background: var(--sy-paper, #fff);
   font-size: 9.5px;
 }
 
@@ -222,8 +222,8 @@ function shortPath(value: string): string {
     left: 21px;
     width: 6px;
     height: 6px;
-    border-right: 1px solid #d5acb7;
-    border-bottom: 1px solid #d5acb7;
+    border-right: 1px solid var(--sy-accent);
+    border-bottom: 1px solid var(--sy-accent);
     content: '';
     transform: rotate(45deg);
   }

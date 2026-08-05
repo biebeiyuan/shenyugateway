@@ -1088,7 +1088,7 @@ function spineChars(title: string, limit = 5): string[] {
 
 .section-title {
   margin-bottom: 8px;
-  color: #b0a8a0;
+  color: var(--sy-mute);
   font-size: 11.5px;
   letter-spacing: 0.3px;
 }
@@ -1103,7 +1103,7 @@ function spineChars(title: string, limit = 5): string[] {
   border: 1px solid #f0ece8;
   border-radius: 10px;
   background: #faf8f5;
-  color: #3d3535;
+  color: var(--sy-ink);
   font-family: inherit;
   font-size: 12.5px;
   line-height: 1.75;
@@ -1136,7 +1136,7 @@ function spineChars(title: string, limit = 5): string[] {
 }
 
 .annotation-content {
-  color: #3d3535;
+  color: var(--sy-ink);
   font-size: 12.5px;
   line-height: 1.7;
   white-space: pre-wrap;

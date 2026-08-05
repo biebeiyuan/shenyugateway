@@ -444,8 +444,8 @@ async function saveSettings() {
 }
 
 .card {
-  background: #fff;
-  border: 1px solid #f2ddd8;
+  background: var(--sy-paper, #fff);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 18px;
   padding: 16px;
 }
@@ -467,7 +467,7 @@ async function saveSettings() {
 }
 
 .month-title-text {
-  color: #4a3535;
+  color: var(--sy-ink);
   font-family: 'Cormorant Garamond', 'Noto Serif SC', Georgia, serif;
   font-size: 16.5px;
   font-weight: 600;
@@ -477,7 +477,7 @@ async function saveSettings() {
 .today-link {
   background: none;
   border: 0;
-  color: #c094a8;
+  color: var(--sy-accent);
   cursor: pointer;
   font-size: 11px;
   padding: 0;
@@ -492,7 +492,7 @@ async function saveSettings() {
   background: none;
   border: 0;
   border-radius: 8px;
-  color: #b8a8a3;
+  color: var(--sy-mute);
   cursor: pointer;
   display: flex;
   font-size: 18px;
@@ -503,8 +503,8 @@ async function saveSettings() {
 }
 
 .nav-btn:hover {
-  background: #faf0ee;
-  color: #c094a8;
+  background: var(--sy-rose-soft);
+  color: var(--sy-accent);
 }
 
 .weekday-row {
@@ -514,7 +514,7 @@ async function saveSettings() {
 }
 
 .weekday-row span {
-  color: #cbb8b3;
+  color: var(--sy-mute);
   font-size: 10.5px;
   padding: 4px 0;
   text-align: center;
@@ -544,7 +544,7 @@ async function saveSettings() {
 }
 
 .day-cell:hover {
-  background: #faf0ee;
+  background: var(--sy-rose-soft);
 }
 
 .day-cell.off {
@@ -558,22 +558,22 @@ async function saveSettings() {
 }
 
 .day-dot {
-  background: #c094a8;
+  background: var(--sy-accent);
   border-radius: 50%;
   height: 4px;
   width: 4px;
 }
 
 .day-cell.today {
-  box-shadow: inset 0 0 0 1px #c094a8;
+  box-shadow: inset 0 0 0 1px var(--sy-accent);
 }
 
 .day-cell.selected {
-  background: #c094a8;
+  background: var(--sy-accent);
 }
 
 .day-cell.selected:hover {
-  background: #b08898;
+  background: var(--sy-accent-d);
 }
 
 .day-cell.selected .day-num {
@@ -581,7 +581,7 @@ async function saveSettings() {
 }
 
 .day-cell.selected .day-dot {
-  background: #fff;
+  background: var(--sy-paper, #fff);
 }
 
 /* ---- entry list ---- */
@@ -596,7 +596,7 @@ async function saveSettings() {
   background: none;
   border: 0;
   border-radius: 999px;
-  color: #b8a8a3;
+  color: var(--sy-mute);
   cursor: pointer;
   font-size: 12px;
   padding: 4px 12px;
@@ -611,12 +611,12 @@ async function saveSettings() {
 }
 
 .tab-btn:hover {
-  color: #8b7082;
+  color: var(--sy-rose-d);
 }
 
 .tab-btn.active {
-  background: #faf0ee;
-  color: #8b7082;
+  background: var(--sy-rose-soft);
+  color: var(--sy-rose-d);
 }
 
 .entry-list {
@@ -640,22 +640,22 @@ async function saveSettings() {
 }
 
 .entry-row:hover {
-  background: #fdf6f4;
+  background: var(--sy-void);
 }
 
 .entry-row.active {
-  background: #faf0ee;
+  background: var(--sy-rose-soft);
 }
 
 .entry-date {
-  color: #b8a8a3;
+  color: var(--sy-mute);
   display: block;
   font-size: 10.5px;
   letter-spacing: 0.5px;
 }
 
 .entry-title {
-  color: #4a3535;
+  color: var(--sy-ink);
   display: block;
   font-size: 13.5px;
   font-weight: 600;
@@ -665,7 +665,7 @@ async function saveSettings() {
 
 .entry-summary {
   -webkit-box-orient: vertical;
-  color: #b8a8a3;
+  color: var(--sy-mute);
   display: -webkit-box;
   font-size: 11.5px;
   -webkit-line-clamp: 2;
@@ -676,7 +676,7 @@ async function saveSettings() {
 }
 
 .entry-empty {
-  color: #cbb8b3;
+  color: var(--sy-mute);
   font-size: 12px;
   margin: 6px 0;
   padding: 4px 12px;
@@ -692,7 +692,7 @@ async function saveSettings() {
   align-items: center;
   background: none;
   border: 0;
-  color: #b8a8a3;
+  color: var(--sy-mute);
   cursor: pointer;
   display: flex;
   font-size: 12px;
@@ -703,7 +703,7 @@ async function saveSettings() {
 }
 
 .settings-toggle:hover {
-  color: #8b7082;
+  color: var(--sy-rose-d);
 }
 
 .chev {
@@ -724,7 +724,7 @@ async function saveSettings() {
 }
 
 .settings-hint {
-  color: #cbb8b3;
+  color: var(--sy-mute);
   font-size: 11px;
   margin: 0;
 }
@@ -748,8 +748,8 @@ async function saveSettings() {
 }
 
 .paper {
-  background: #fff;
-  border: 1px solid #f2ddd8;
+  background: var(--sy-paper, #fff);
+  border: 1px solid var(--sy-hair-2);
   border-radius: 18px;
   box-shadow: 0 10px 34px rgba(192, 148, 168, 0.09);
   margin: 0 auto;
@@ -770,27 +770,27 @@ async function saveSettings() {
 }
 
 .kind-chip {
-  background: #faf0ee;
+  background: var(--sy-rose-soft);
   border-radius: 999px;
-  color: #a08090;
+  color: var(--sy-mute);
   font-size: 11px;
   letter-spacing: 2px;
   padding: 3px 10px 3px 12px;
 }
 
 .paper-date {
-  color: #b8a8a3;
+  color: var(--sy-mute);
   font-size: 12.5px;
   letter-spacing: 1px;
 }
 
 .version-chip {
-  color: #d4c0bb;
+  color: var(--sy-hair);
   font-size: 10.5px;
 }
 
 .paper-title {
-  color: #4a3535;
+  color: var(--sy-ink);
   font-family: 'Cormorant Garamond', 'Noto Serif SC', Georgia, serif;
   font-size: 25px;
   font-weight: 600;
@@ -800,7 +800,7 @@ async function saveSettings() {
 }
 
 .paper-body {
-  color: #4a3535;
+  color: var(--sy-ink);
 }
 
 .para {
@@ -817,7 +817,7 @@ async function saveSettings() {
 }
 
 .para-blank {
-  color: #cbb8b3;
+  color: var(--sy-mute);
 }
 
 .section-divider {
@@ -830,7 +830,7 @@ async function saveSettings() {
 
 .section-divider::before,
 .section-divider::after {
-  background: #f2ddd8;
+  background: var(--sy-hair-2);
   content: '';
   flex: 1;
   height: 1px;
@@ -851,20 +851,20 @@ async function saveSettings() {
 
 .signature {
   align-self: flex-end;
-  color: #a08090;
+  color: var(--sy-mute);
   font-family: 'Cormorant Garamond', 'Noto Serif SC', Georgia, serif;
   font-size: 15.5px;
 }
 
 .written-at {
   align-self: flex-end;
-  color: #d4c0bb;
+  color: var(--sy-hair);
   font-size: 11px;
   letter-spacing: 0.5px;
 }
 
 .digest {
-  background: #fdf6f4;
+  background: var(--sy-void);
   border-left: 3px solid #e3c3d0;
   border-radius: 12px;
   margin-top: 30px;
@@ -872,7 +872,7 @@ async function saveSettings() {
 }
 
 .digest-label {
-  color: #b8a8a3;
+  color: var(--sy-mute);
   display: block;
   font-size: 10.5px;
   letter-spacing: 3px;
@@ -896,7 +896,7 @@ async function saveSettings() {
 .nav-page {
   background: none;
   border: 0;
-  color: #b8a8a3;
+  color: var(--sy-mute);
   cursor: pointer;
   font-size: 12.5px;
   padding: 4px 0;
@@ -904,7 +904,7 @@ async function saveSettings() {
 }
 
 .nav-page:hover {
-  color: #c094a8;
+  color: var(--sy-accent);
 }
 
 .nav-spacer {
@@ -913,7 +913,7 @@ async function saveSettings() {
 
 .paper-empty {
   align-items: center;
-  color: #b8a8a3;
+  color: var(--sy-mute);
   display: flex;
   flex-direction: column;
   gap: 14px;
