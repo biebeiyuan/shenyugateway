@@ -5,8 +5,8 @@
 // 发丝线、宽字距眉题、老式数字）。中心是被想起的词；三圈纸按远近围着他——
 // 脱口而出（松绿钉 + 实线连到中心）、由此及彼（金钉 + 细金线 + 路径牌）、
 // 浮想（胶带粘在外圈，不连线）。
-// 三圈起排角按黄金角错开：各组各占一段弧，合起来仍均匀围住中心，
-// 件数少不再挤进同一象限；词卡收窄，内圈纸从卡外经过，不被压住。
+// 角度全局均分：第一张纸永远在正上方，之后均匀围满一圈，
+// 件数少不再挤到某一侧；词卡收窄，内圈纸从卡外经过，不被压住。
 // 点一张纸，它从板上取下来放大读全文，阅读层与锚点阅读卡共用同一套
 // OriginalPaper / AttachAnchors。
 
@@ -70,39 +70,32 @@ function seed(text: string): number {
 }
 
 // 三圈半径（竖向压扁 RY_RATIO）：内圈恰好在词卡外，外圈不出板边。
-// 每圈起排角按黄金角错开，是「纸不再挤一侧」的关键。
+// 角度全局均分：第一张纸永远在正上方，之后顺时针均匀围住中心——
+// 不论几件事、属于哪一组，都不会再挤到某一侧。
 const RY_RATIO = 0.66
-const RINGS: Record<RecallGroup, { rx: number; start: number }> = {
-  direct: { rx: 225, start: -Math.PI / 2 },
-  related: { rx: 278, start: -Math.PI / 2 + 2.4 },
-  other: { rx: 330, start: -Math.PI / 2 + 4.8 },
-}
+const RADIUS: Record<RecallGroup, number> = { direct: 225, related: 278, other: 330 }
 
-function layoutRing(items: MemoryGraphRecallPreviewItem[], group: RecallGroup): PaperPosition[] {
-  const n = items.length
-  if (!n) return []
-  const ring = RINGS[group]
-  return items.map((item, i) => {
-    const s = seed(sourceKey(item))
-    const angle = ring.start + (i / n) * Math.PI * 2 + (((s % 16) - 8) * Math.PI) / 180
-    return {
-      item,
-      group,
-      x: CX + ring.rx * Math.cos(angle),
-      y: CY + ring.rx * RY_RATIO * Math.sin(angle),
-      rotate: (((s >> 5) % 9) - 4) * (group === 'other' ? 1.8 : 1),
-    }
-  })
+function groupRank(group: RecallGroup): number {
+  return group === 'direct' ? 0 : group === 'related' ? 1 : 2
 }
 
 const papers = computed<PaperPosition[]>(() => {
-  const grouped: Record<RecallGroup, MemoryGraphRecallPreviewItem[]> = { direct: [], related: [], other: [] }
-  for (const item of props.items) grouped[groupOf(item)].push(item)
-  return [
-    ...layoutRing(grouped.direct, 'direct'),
-    ...layoutRing(grouped.related, 'related'),
-    ...layoutRing(grouped.other, 'other'),
-  ]
+  const ordered = [...props.items].sort((a, b) => groupRank(groupOf(a)) - groupRank(groupOf(b)))
+  const n = ordered.length
+  if (!n) return []
+  return ordered.map((item, k) => {
+    const s = seed(sourceKey(item))
+    const group = groupOf(item)
+    const angle = -Math.PI / 2 + (k / n) * Math.PI * 2 + (((s % 16) - 8) * Math.PI) / 180
+    const rx = RADIUS[group]
+    return {
+      item,
+      group,
+      x: CX + rx * Math.cos(angle),
+      y: CY + rx * RY_RATIO * Math.sin(angle),
+      rotate: (((s >> 5) % 9) - 4) * (group === 'other' ? 1.8 : 1),
+    }
+  })
 })
 
 const strings = computed(() =>
@@ -356,10 +349,10 @@ function ledeLine(item: MemoryGraphRecallPreviewItem): string {
 
 /* 来源族一眼可辨（与 OriginalPaper 同一种纸） */
 .board-paper.fam-letter { border-radius: 3px; }
-.board-paper.fam-sticky { background: rgba(251, 240, 195, 0.9); border-radius: 3px; }
+.board-paper.fam-sticky { background: rgba(250, 231, 238, 0.92); border-radius: 3px; }
 .board-paper.fam-card { border-color: var(--sy-hair-gilt, #d8c2a8); }
 .board-paper.fam-slip { border-top: 3px double var(--sy-gilt, #c79748); border-radius: 2px; }
-[data-theme='night'] .board-paper.fam-sticky { background: #4a4030; }
+[data-theme='night'] .board-paper.fam-sticky { background: #43303a; }
 
 .pin {
   position: absolute; top: -7px; left: 50%; transform: translateX(-50%);

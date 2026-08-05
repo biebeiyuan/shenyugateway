@@ -389,13 +389,9 @@ function selectEntity(entity: MemoryEntity) {
   void loadSelectedMentions(entity.id)
 }
 
-// Reading overlay: picking a name off the net lifts its papers up front.
-// 点一个词 = 把它的原件阅读卡抬到前面（不再拽去想起页；
-// 想去木板「想起」，用详情里的「让沈予想起 →」）。
+// 点一个词 = 拿它真跑一次「想起」，把想起来的纸钉上木板。
 function openAnchor(entity: MemoryEntity) {
-  ghostCard.value = null
-  selectEntity(entity)
-  overlayOpen.value = true
+  recallEntity(entity)
 }
 
 function closeOverlay() {

@@ -184,17 +184,17 @@ const label = computed(() => sourceLabel(props.sourceType))
   );
 }
 
-/* ---------- mem note: goose-yellow sticky note, tape on top ---------- */
+/* ---------- mem note: 淡粉便签，胶带在上 ---------- */
 .paper--sticky {
-  --paper-bg: #fbf0c3;
-  --paper-line: #e3d194;
+  --paper-bg: #fae7ee;
+  --paper-line: #e8c9d6;
   border-radius: 3px;
   transform: rotate(-0.5deg);
 }
 
 [data-theme='night'] .paper--sticky {
-  --paper-bg: #4a4030;
-  --paper-line: #5d5240;
+  --paper-bg: #43303a;
+  --paper-line: #59404d;
 }
 
 .paper--sticky::before {

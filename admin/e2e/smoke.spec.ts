@@ -177,28 +177,25 @@ test('memory graph page loads and exposes anchor management', async ({ page }) =
     await search.fill('老周')
     await expect(search).toHaveValue('老周')
     await expect(page.getByRole('button', { name: '建立锚点' })).toBeVisible()
-    // Picking a name lifts its originals reading card directly, without leaving the net.
+    // Picking a name runs a real recall and pins the result on the board.
     await page.getByRole('button', { name: '锚点：老周' }).click()
+    await expect(page.getByTestId('memory-graph-tab-recall')).toHaveAttribute('aria-selected', 'true')
+    await expect(page.getByText('今天和老周吃饭，聊了很久。')).toBeVisible()
+    await expect(page.getByText('提到了「老周」')).toBeVisible()
+    // The word is a confirmed anchor, so the hub offers to manage it.
+    await page.getByRole('button', { name: '管理这个名字' }).click()
     const overlay = page.getByTestId('memory-graph-originals-overlay')
     await expect(overlay).toBeVisible()
     await expect(overlay.getByText('今天和老周吃饭，聊了很久。饭后又散了散步。')).toBeVisible()
     await expect(overlay.getByText('命中词')).toBeVisible()
-    await expect(page.getByTestId('memory-graph-tab-net')).toHaveAttribute('aria-selected', 'true')
     await overlay.getByRole('button', { name: '放回去' }).click()
     await expect(overlay).toBeHidden()
-    // Typing a word runs a real recall and pins the result on the board.
-    await page.getByTestId('memory-graph-tab-recall').click()
+    // Typing a fresh word recalls again on the same board.
     const recall = page.getByTestId('memory-graph-recall-input').locator('input')
     await recall.fill('老周')
     await page.getByRole('button', { name: '想起', exact: true }).click()
     await expect(page.getByText('今天和老周吃饭，聊了很久。')).toBeVisible()
     await expect(page.getByText('提到了「老周」')).toBeVisible()
-    // The word is a confirmed anchor, so the board tag offers to manage it.
-    await page.getByRole('button', { name: '管理这个名字' }).click()
-    await expect(overlay).toBeVisible()
-    await expect(overlay.getByText('命中词')).toBeVisible()
-    await overlay.getByRole('button', { name: '放回去' }).click()
-    await expect(overlay).toBeHidden()
   })
 })
 
