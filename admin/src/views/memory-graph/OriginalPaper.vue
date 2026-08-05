@@ -37,17 +37,19 @@ const label = computed(() => sourceLabel(props.sourceType))
 
 <style scoped>
 .paper {
-  --paper-bg: #fffdf8;
-  --paper-ink: #3c322b;
-  --paper-muted: #7e6e5f;
-  --paper-line: #e9decd;
+  --paper-bg: var(--sy-paper, #fffdf8);
+  --paper-ink: var(--sy-ink, #3c322b);
+  --paper-muted: var(--sy-mute, #7e6e5f);
+  --paper-line: var(--sy-hair-2, #e9decd);
+  --paper-gilt: var(--sy-gilt, #c79748);
+  --paper-gilt-d: var(--sy-gilt-d, #9a7320);
   position: relative;
   display: flex;
   flex-direction: column;
   border-radius: 10px;
   background: var(--paper-bg);
   color: var(--paper-ink);
-  box-shadow: 0 10px 28px rgba(60, 50, 43, 0.16);
+  box-shadow: var(--sy-shadow-paper, 0 10px 28px rgba(60, 50, 43, 0.16));
   padding: 18px 22px 14px;
   min-height: 260px;
 }
@@ -60,7 +62,7 @@ const label = computed(() => sourceLabel(props.sourceType))
   height: 14px;
   border-radius: 50%;
   transform: translateX(-50%);
-  background: radial-gradient(circle at 35% 30%, #d98d68, #b2552f 60%, #7e3418);
+  background: radial-gradient(circle at 35% 30%, #e6c98a, var(--paper-gilt) 60%, var(--paper-gilt-d));
   box-shadow: 0 2px 4px rgba(60, 50, 43, 0.35);
 }
 
@@ -77,15 +79,16 @@ const label = computed(() => sourceLabel(props.sourceType))
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 30px;
-  height: 30px;
-  border: 1.5px solid #b2552f;
-  border-radius: 8px;
-  color: #b2552f;
-  font-family: 'Cormorant Garamond', 'Noto Serif SC', 'Songti SC', Georgia, serif;
+  width: 32px;
+  height: 32px;
+  border: 1.5px solid var(--paper-gilt);
+  border-radius: 50%;
+  color: var(--paper-gilt);
+  font-family: var(--sy-serif, 'Cormorant Garamond', 'Noto Serif SC', serif);
   font-size: 15px;
   transform: rotate(-4deg);
-  opacity: 0.85;
+  opacity: 0.9;
+  box-shadow: inset 0 0 0 2.5px var(--paper-bg), inset 0 0 0 3.5px var(--paper-gilt);
 }
 
 .paper-heading {
@@ -140,14 +143,18 @@ const label = computed(() => sourceLabel(props.sourceType))
   margin-top: 6px;
 }
 
-/* ---------- journal: ruled letter paper ---------- */
+/* ---------- journal: ruled letter paper with a torn deckle edge ---------- */
 .paper--letter {
   --paper-bg: #fdf8ec;
-  border-radius: 4px;
+  border-radius: 3px;
+}
+
+[data-theme='night'] .paper--letter {
+  --paper-bg: #2b241c;
 }
 
 .paper--letter .paper-content {
-  font-family: 'Cormorant Garamond', 'Noto Serif SC', 'Songti SC', Georgia, serif;
+  font-family: var(--sy-serif, 'Cormorant Garamond', 'Noto Serif SC', serif);
   font-size: 15px;
   background-image: repeating-linear-gradient(
     to bottom,
@@ -158,12 +165,17 @@ const label = computed(() => sourceLabel(props.sourceType))
   );
 }
 
-/* ---------- mem note: sticky note ---------- */
+/* ---------- mem note: goose-yellow sticky note, tape on top ---------- */
 .paper--sticky {
   --paper-bg: #fbf0c3;
   --paper-line: #e3d194;
   border-radius: 3px;
   transform: rotate(-0.5deg);
+}
+
+[data-theme='night'] .paper--sticky {
+  --paper-bg: #4a4030;
+  --paper-line: #5d5240;
 }
 
 .paper--sticky::before {
@@ -182,22 +194,23 @@ const label = computed(() => sourceLabel(props.sourceType))
   display: none;
 }
 
-.paper--sticky .paper-seal {
-  border-radius: 50%;
-}
-
-/* ---------- windowsill / board: little card ---------- */
+/* ---------- windowsill / board: little card with a gilt hairline frame ---------- */
 .paper--card {
-  --paper-bg: #fffdfa;
-  border: 1px solid var(--paper-line);
-  border-radius: 14px;
+  --paper-bg: var(--sy-paper, #fffdfa);
+  border: 1px solid var(--paper-gilt);
+  border-radius: 12px;
+  box-shadow: var(--sy-shadow-paper, 0 10px 28px rgba(60, 50, 43, 0.16)), inset 0 0 0 3px var(--paper-bg), inset 0 0 0 4px var(--sy-hair-gilt, rgba(199, 151, 72, 0.4));
 }
 
-/* ---------- heartbeat: narrow slip ---------- */
+/* ---------- heartbeat: narrow slip with a double gilt rule on top ---------- */
 .paper--slip {
   --paper-bg: #f7f3ea;
   border-radius: 2px;
-  border-top: 3px double rgba(178, 85, 47, 0.4);
+  border-top: 3px double var(--paper-gilt);
+}
+
+[data-theme='night'] .paper--slip {
+  --paper-bg: #251f18;
 }
 
 .paper--slip .paper-content {

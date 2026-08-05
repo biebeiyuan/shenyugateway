@@ -40,6 +40,7 @@ import {
   type SourceEntityMention,
 } from '@/api/memoryGraph'
 import AnchorOriginalsOverlay, { type OverlayPaper } from './memory-graph/AnchorOriginalsOverlay.vue'
+import RecallBoard from './memory-graph/RecallBoard.vue'
 import { sourceLabel, sourceSeal } from './memory-graph/sourceDisplay'
 
 const message = useMessage()
@@ -128,6 +129,29 @@ const recallGroups = computed(() => [
 ].filter((group) => group.items.length))
 const recallOrderedItems = computed(() => recallGroups.value.flatMap((group) => group.items))
 
+// 当前想起的词若正好是一个确认过的锚点，木板中心就露出「管理这个名字」。
+const recallMatchedAnchor = computed(() => {
+  const q = recallQuery.value.trim().toLowerCase()
+  if (!q) return null
+  return anchorEntities.value.find(
+    (item) => item.status === 'active' && item.canonical_name.trim().toLowerCase() === q,
+  ) || null
+})
+
+function autoAnchorNames(item: MemoryGraphRecallPreviewItem): string[] {
+  return sourceMentions(item)
+    .filter((mention) => mention.origin !== 'manual')
+    .map((mention) => mention.entity?.canonical_name || mention.matched_alias || '')
+    .filter(Boolean)
+}
+
+function openAnchorManage() {
+  const anchor = recallMatchedAnchor.value
+  if (!anchor) return
+  selectEntity(anchor)
+  overlayOpen.value = true
+}
+
 // ---------- net layout (deterministic force simulation, typographic nodes) ----------
 const GRAPH_W = 880
 const GRAPH_H = 600
@@ -171,8 +195,10 @@ const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[]; ghosts: G
   const indexById: Record<string, number> = Object.fromEntries(active.map((item, i) => [item.id, i]))
   const sizes = active.map((item) => 15 + Math.min(10, Math.sqrt(item.mention_count || 0) * 2.6))
   const rs = active.map((item, i) => Math.min(112, Math.max(38, item.canonical_name.length * sizes[i] * 0.62)))
-  const xs = active.map((_, i) => GRAPH_W / 2 + (170 + (i % 3) * 46) * Math.cos(i * 2.399963))
-  const ys = active.map((_, i) => GRAPH_H / 2 - 14 + (120 + (i % 3) * 32) * Math.sin(i * 2.399963))
+
+  // 连通分量：confirmed/suggested 红线当绑定，把相连的锚点划进同一座小岛。
+  const parent = active.map((_, i) => i)
+  const find = (x: number): number => (parent[x] === x ? x : (parent[x] = find(parent[x])))
   const links: Array<[number, number]> = []
   for (const relation of relations.value) {
     if (relation.status !== 'confirmed' && relation.status !== 'suggested') continue
@@ -180,11 +206,72 @@ const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[]; ghosts: G
     const b = indexById[relation.target_entity_id]
     if (a === undefined || b === undefined || a === b) continue
     links.push([a, b])
+    parent[find(a)] = find(b)
   }
-  for (let iter = 0; iter < 260; iter++) {
+  const clusterOf = active.map((_, i) => find(i))
+  const clusterIds = [...new Set(clusterOf)]
+  // 多成员的簇按热度排前面，单成员的「孤岛」排最后、贴板底。
+  const multi = clusterIds.filter((c) => clusterOf.filter((x) => x === c).length > 1)
+  const singles = clusterIds.filter((c) => clusterOf.filter((x) => x === c).length === 1)
+  multi.sort((a, b) => clusterHeat(b) - clusterHeat(a))
+  const orderedClusters = [...multi, ...singles]
+  function clusterHeat(c: number): number {
+    return active.reduce((sum, item, i) => (clusterOf[i] === c ? sum + (item.mention_count || 0) : sum), 0)
+  }
+  const clusterIndex = new Map(orderedClusters.map((c, i) => [c, i]))
+
+  // 每座小岛一个岛心：多成员簇散布在画布中上部，孤岛沿底部一字排开。
+  const centerX = new Map<number, number>()
+  const centerY = new Map<number, number>()
+  const multiCount = multi.length
+  multi.forEach((c, k) => {
+    const cols = Math.ceil(Math.sqrt(multiCount))
+    const rows = Math.ceil(multiCount / cols)
+    const col = k % cols
+    const row = Math.floor(k / cols)
+    const gx = cols === 1 ? 0.5 : 0.22 + (col / (cols - 1)) * 0.56
+    const gy = rows === 1 ? 0.42 : 0.24 + (row / (rows - 1)) * 0.36
+    centerX.set(c, GRAPH_W * gx)
+    centerY.set(c, GRAPH_H * gy)
+  })
+  singles.forEach((c, k) => {
+    const gx = singles.length === 1 ? 0.5 : 0.12 + (k / (singles.length - 1)) * 0.76
+    centerX.set(c, GRAPH_W * gx)
+    centerY.set(c, GRAPH_H * 0.86)
+  })
+
+  // 初始位置：多成员簇绕岛心一圈，孤岛就落在自己的岛心。
+  const xs = new Array(n).fill(0)
+  const ys = new Array(n).fill(0)
+  const memberIndex = new Map<number, number>()
+  for (let i = 0; i < n; i++) {
+    const c = clusterOf[i]
+    const idx = memberIndex.get(c) || 0
+    memberIndex.set(c, idx + 1)
+    const cx = centerX.get(c) || GRAPH_W / 2
+    const cy = centerY.get(c) || GRAPH_H / 2
+    const members = clusterOf.filter((x) => x === c).length
+    if (members > 1) {
+      const ang = (idx / members) * Math.PI * 2 - Math.PI / 2
+      const ring = 56 + members * 8
+      xs[i] = cx + ring * Math.cos(ang)
+      ys[i] = cy + ring * Math.sin(ang) * 0.8
+    } else {
+      xs[i] = cx
+      ys[i] = cy
+    }
+  }
+
+  // 轻力导向收尾：簇内向岛心聚拢 + 彼此不重叠，红线轻轻拉住，孤岛不被拖走。
+  for (let iter = 0; iter < 240; iter++) {
     const fx = new Array(n).fill(0)
     const fy = new Array(n).fill(0)
     for (let i = 0; i < n; i++) {
+      const c = clusterOf[i]
+      const cx = centerX.get(c) || GRAPH_W / 2
+      const cy = centerY.get(c) || GRAPH_H / 2
+      fx[i] += (cx - xs[i]) * 0.03
+      fy[i] += (cy - ys[i]) * 0.03
       for (let j = i + 1; j < n; j++) {
         let dx = xs[i] - xs[j]
         let dy = ys[i] - ys[j]
@@ -195,33 +282,33 @@ const graphLayout = computed<{ nodes: GraphNode[]; edges: GraphEdge[]; ghosts: G
           d2 = dx * dx + dy * dy
         }
         const d = Math.sqrt(d2)
-        const push = Math.min(26, 21000 / d2)
+        const sameCluster = clusterOf[i] === clusterOf[j]
+        const push = Math.min(sameCluster ? 18 : 30, (sameCluster ? 9000 : 26000) / d2)
         fx[i] += (dx / d) * push
         fy[i] += (dy / d) * push
         fx[j] -= (dx / d) * push
         fy[j] -= (dy / d) * push
       }
-      fx[i] += (GRAPH_W / 2 - xs[i]) * 0.012
-      fy[i] += (GRAPH_H / 2 - 10 - ys[i]) * 0.014
     }
     for (const [a, b] of links) {
       const dx = xs[b] - xs[a]
       const dy = ys[b] - ys[a]
       const d = Math.sqrt(dx * dx + dy * dy) || 1
-      const rest = rs[a] + rs[b] + 78
-      const pull = (d - rest) * 0.016
+      const rest = rs[a] + rs[b] + 66
+      const pull = (d - rest) * 0.02
       fx[a] += (dx / d) * pull
       fy[a] += (dy / d) * pull
       fx[b] -= (dx / d) * pull
       fy[b] -= (dy / d) * pull
     }
     for (let i = 0; i < n; i++) {
-      xs[i] += Math.max(-13, Math.min(13, fx[i]))
-      ys[i] += Math.max(-13, Math.min(13, fy[i]))
-      xs[i] = Math.max(96, Math.min(GRAPH_W - 96, xs[i]))
-      ys[i] = Math.max(64, Math.min(GRAPH_H - 72, ys[i]))
+      xs[i] += Math.max(-12, Math.min(12, fx[i]))
+      ys[i] += Math.max(-12, Math.min(12, fy[i]))
+      xs[i] = Math.max(88, Math.min(GRAPH_W - 88, xs[i]))
+      ys[i] = Math.max(60, Math.min(GRAPH_H - 60, ys[i]))
     }
   }
+
   const nodes: GraphNode[] = active.map((entity, i) => ({
     entity,
     x: xs[i],
@@ -323,9 +410,9 @@ function selectEntity(entity: MemoryEntity) {
 }
 
 // Reading overlay: picking a name off the net lifts its papers up front.
+// 点一个词 = 拿它真跑一次「想起」，把想起来的纸钉上木板。
 function openAnchor(entity: MemoryEntity) {
-  selectEntity(entity)
-  overlayOpen.value = true
+  recallEntity(entity)
 }
 
 function closeOverlay() {
@@ -1023,79 +1110,42 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
         <NButton type="primary" :loading="recalling" :disabled="!recallQuery.trim()" @click="runRecallPreview">想起</NButton>
       </div>
 
-      <p v-if="recallError" class="recall-error">{{ recallError }}</p>
-      <NEmpty v-else-if="recallHasRun && !recalling && !recallItems.length" description="还没有找到相连的原件" />
-
-      <div v-if="recallItems.length" :key="recallRunId" class="recall-sheet-wrap">
-        <header class="recall-thought">
-          <p class="thought-query">「{{ recallQuery.trim() }}」</p>
-          <p class="recall-verdict-line">想起了 {{ recallItems.length }} 件</p>
-        </header>
-
-        <section v-for="group in recallGroups" :key="group.key" class="recall-group">
-          <h4>{{ group.label }}<small>{{ group.whisper }}</small></h4>
-          <article
-            v-for="item in group.items"
-            :key="recallRunId + sourceKey(item)"
-            class="recall-card"
-            :style="{ animationDelay: `${recallDelay(item)}ms` }"
-          >
-            <header class="recall-card-head">
-              <span class="seal" aria-hidden="true">{{ sourceSeal(item.source_type) }}</span>
-              <div>
-                <b>{{ item.title || sourceLabel(item.source_type) }}</b>
-                <span>{{ sourceLabel(item.source_type) }}<template v-if="sourceDate(item)"> · {{ sourceDate(item) }}</template></span>
-              </div>
-            </header>
-            <p v-if="directAnchorName(item)" class="why-line">提到了「{{ directAnchorName(item) }}」</p>
-            <p v-else-if="item.recall_match?.path?.relation_type" class="path-line">
-              {{ item.recall_match.path.from?.name }}
-              <i>—{{ item.recall_match.path.relation_type }}→</i>
-              {{ item.recall_match.path.to?.name }}
-            </p>
-            <p class="recall-content"><template v-for="(segment, segIndex) in highlightSegments(item)" :key="segIndex"><mark v-if="segment.hit">{{ segment.text }}</mark><template v-else>{{ segment.text }}</template></template></p>
-            <p v-if="item.content_complete === false" class="recall-incomplete">原文暂时无法完整读取：{{ item.content_error }}</p>
-            <div v-if="available" class="recall-anchor-editor">
-              <NSelect
-                v-model:value="recallManualAnchorIds[sourceKey(item)]"
-                multiple
-                filterable
-                clearable
-                :options="recallAnchorOptions"
-                placeholder="关联锚点"
-              />
-              <NButton
-                size="small"
-                :disabled="!recallSourceMentionsLoaded[sourceKey(item)]"
-                :loading="savingRecallSourceKey === sourceKey(item)"
-                @click="saveRecallAnchors(item)"
-              >保存关联</NButton>
-              <div v-if="sourceMentions(item).filter(m => m.origin !== 'manual').length" class="recall-auto-anchors">
-                <NTag
-                  v-for="mention in sourceMentions(item).filter(m => m.origin !== 'manual')"
-                  :key="mention.id"
-                  size="small"
-                  :bordered="false"
-                >{{ mention.entity?.canonical_name || mention.matched_alias }}</NTag>
-              </div>
-            </div>
-          </article>
-        </section>
-      </div>
+      <RecallBoard
+        :query="recallQuery.trim()"
+        :items="recallItems"
+        :loading="recalling"
+        :error="recallError"
+        :has-run="recallHasRun"
+        :manage-anchor-name="recallMatchedAnchor?.canonical_name || ''"
+        :highlight="highlightSegments"
+        :source-date="sourceDate"
+        :anchor-options="recallAnchorOptions"
+        :manual-anchor-ids="recallManualAnchorIds"
+        :source-mentions-loaded="recallSourceMentionsLoaded"
+        :auto-anchor-names="autoAnchorNames"
+        :saving-key="savingRecallSourceKey"
+        :run-id="recallRunId"
+        @update:manual-anchor-ids="recallManualAnchorIds = $event"
+        @save-anchors="saveRecallAnchors"
+        @manage="openAnchorManage"
+      />
     </section>
   </div>
 </template>
 
 <style scoped>
 .graph-page {
-  --mg-paper: #fdfaf3;
-  --mg-panel: #fffdf8;
-  --mg-ink: #3c322b;
-  --mg-ink-2: #7e6e5f;
-  --mg-ink-3: #ac9c8b;
-  --mg-hairline: #e9decd;
-  --mg-accent: #b2552f;
-  --mg-accent-ink: #8f4023;
+  --mg-paper: var(--sy-paper, #fdfaf3);
+  --mg-panel: var(--sy-panel, #fffdf8);
+  --mg-ink: var(--sy-ink, #3c322b);
+  --mg-ink-2: var(--sy-ink-2, #7e6e5f);
+  --mg-ink-3: var(--sy-mute, #ac9c8b);
+  --mg-hairline: var(--sy-hair-2, #e9decd);
+  --mg-accent: var(--sy-accent, #b2552f);
+  --mg-accent-ink: var(--sy-accent-d, #8f4023);
+  --mg-gilt: var(--sy-gilt, #c79748);
+  --mg-gilt-d: var(--sy-gilt-d, #9a7320);
+  --mg-hair-gilt: var(--sy-hair-gilt, rgba(199, 151, 72, 0.45));
   --mg-accent-soft: rgba(178, 85, 47, 0.1);
   --mg-serif: 'Cormorant Garamond', 'Noto Serif SC', 'Songti SC', Georgia, serif;
   width: min(1180px, calc(100vw - 32px));
@@ -1215,9 +1265,11 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
 }
 
 .canvas-card {
-  border: 1px solid var(--mg-hairline);
+  border: 1px solid var(--mg-hair-gilt);
   border-radius: 18px;
-  background: var(--mg-paper);
+  background:
+    radial-gradient(ellipse at 30% 18%, rgba(255, 252, 246, 0.5), transparent 55%),
+    var(--mg-paper);
   overflow: hidden;
 }
 
@@ -1268,9 +1320,9 @@ function directAnchorName(item: MemoryGraphRecallPreviewItem): string {
 
 .thread {
   fill: none;
-  stroke: var(--mg-accent);
+  stroke: var(--mg-gilt);
   stroke-width: 1.1;
-  opacity: 0.45;
+  opacity: 0.5;
 }
 
 .thread.dashed {

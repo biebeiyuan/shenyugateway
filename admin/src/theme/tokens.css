@@ -1,0 +1,86 @@
+/* 沈予的家 · 设计 token（昼夜同根）
+ *
+ * 昼 = 玫瑰羊皮纸：暖白底 + 玫瑰红 + 古金描边，像一沓压在书桌上的旧信纸。
+ * 夜 = 描金：近黑暖底 + 金线，像深夜书房里只点了一盏灯。
+ * 两套色同一棵树：布局、字号、线宽都不动，只换色。切换由 theme.ts 给
+ * <html> 换 data-theme 完成；naive-ui 的 themeOverrides 也吃同一批变量。
+ *
+ * 设计血统：字体与古金取自 kimi-manor（CC BY-NC，署名+非商用）的
+ * rose-gothic Mucha 语言——发丝金线、老式数字、宽字距眉题。
+ */
+
+:root {
+  /* ---- 底与纸 ---- */
+  --sy-bg: radial-gradient(ellipse 120% 80% at 50% -8%, #fdf6f1 0%, #f6e9e1 45%, #eed9d1 100%);
+  --sy-void: #fbf4ef;                       /* 最底层桌面 */
+  --sy-paper: rgba(255, 252, 250, 0.7);     /* 浮起的纸面 */
+  --sy-panel: rgba(255, 251, 248, 0.58);    /* 半透面板 */
+  --sy-board: #e9d9c8;                      /* 软木/线索板 */
+  --sy-board-deep: #dcc6ae;                 /* 板的暗部 */
+
+  /* ---- 墨色 ---- */
+  --sy-ink: #4a2c2c;                        /* 主墨（玫瑰调深棕） */
+  --sy-ink-2: #5a3636;                      /* 次墨 */
+  --sy-mute: rgba(74, 44, 44, 0.55);
+  --sy-faint: rgba(74, 44, 44, 0.32);
+  --sy-ghost: rgba(74, 44, 44, 0.13);
+
+  /* ---- 主色与点缀 ---- */
+  --sy-accent: #a8505e;                     /* 玫瑰红（主） */
+  --sy-accent-d: #8a3a48;
+  --sy-rose: #a8505e;
+  --sy-rose-d: #7a2e3c;
+  --sy-sage: #6f8a55;                       /* 鼠尾草绿（点缀） */
+  --sy-gilt: #c79748;                       /* 古金（描边、发丝线、黄铜钉） */
+  --sy-gilt-d: #9a7320;
+
+  /* ---- 发丝线（金） ---- */
+  --sy-hair: rgba(168, 80, 94, 0.3);        /* 玫瑰发丝 */
+  --sy-hair-2: rgba(168, 80, 94, 0.14);
+  --sy-hair-gilt: rgba(199, 151, 72, 0.45); /* 金发丝 */
+  --sy-hair-gilt-2: rgba(199, 151, 72, 0.2);
+
+  /* ---- 阴影 ---- */
+  --sy-shadow-paper: 0 10px 28px rgba(74, 44, 44, 0.16);
+  --sy-shadow-lift: 0 24px 64px rgba(74, 44, 44, 0.28);
+
+  /* ---- 字体 ---- */
+  --sy-serif: "Cormorant Garamond", "Noto Serif SC", "Songti SC", Georgia, serif;
+  --sy-cjk: "Noto Serif SC", "Cormorant Garamond", serif;
+  --sy-mono: "JetBrains Mono", "Fira Code", "Cascadia Code", monospace;
+
+  /* naive-ui 主色（App.vue 的 themeOverrides 读这些变量之外的静态值，
+     但保持与 accent 一致，保证组件与自绘部分同调） */
+}
+
+/* ============================== 夜 ============================== */
+[data-theme="night"] {
+  --sy-bg: radial-gradient(ellipse at 50% 10%, #1a1612 0%, #0a0806 70%);
+  --sy-void: #0a0806;
+  --sy-paper: rgba(16, 12, 8, 0.55);
+  --sy-panel: rgba(18, 13, 9, 0.46);
+  --sy-board: #2a2019;
+  --sy-board-deep: #1e1611;
+
+  --sy-ink: #f3e6cd;
+  --sy-ink-2: #e9d8b8;
+  --sy-mute: rgba(243, 230, 205, 0.55);
+  --sy-faint: rgba(243, 230, 205, 0.28);
+  --sy-ghost: rgba(243, 230, 205, 0.13);
+
+  --sy-accent: #c19a56;
+  --sy-accent-d: #9b7c45;
+  --sy-rose: #b87a82;
+  --sy-rose-d: #9a5f68;
+  --sy-sage: #8a9b6e;
+  --sy-gilt: #c19a56;
+  --sy-gilt-d: #9b7c45;
+
+  --sy-hair: rgba(193, 154, 86, 0.38);
+  --sy-hair-2: rgba(193, 154, 86, 0.18);
+  --sy-hair-gilt: rgba(193, 154, 86, 0.45);
+  --sy-hair-gilt-2: rgba(193, 154, 86, 0.2);
+
+  --sy-shadow-paper: 0 10px 28px rgba(0, 0, 0, 0.5);
+  --sy-shadow-lift: 0 24px 64px rgba(0, 0, 0, 0.6);
+}

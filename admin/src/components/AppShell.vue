@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
+import { useTheme } from '@/theme/theme'
 
 const route = useRoute()
 const isHome = computed(() => route.path === '/')
+const { theme, toggle: toggleTheme } = useTheme()
 
 const health = ref({ supabase: false, protocol: '', upstream: '' })
 const live = ref(true)
@@ -37,6 +39,12 @@ async function checkHealth() {
         <h1>UwU</h1>
       </RouterLink>
       <RouterLink v-if="!isHome" to="/" class="back-link">&larr; 返回</RouterLink>
+      <button
+        class="theme-toggle"
+        :title="theme === 'night' ? '切到白天' : '切到黑夜'"
+        :aria-label="theme === 'night' ? '切到白天' : '切到黑夜'"
+        @click="toggleTheme"
+      >{{ theme === 'night' ? '☾' : '☀' }}</button>
       <span class="live-indicator">
         <span class="dot" :class="live ? 'live' : 'off'"></span>
         {{ live ? '在线' : '离线' }}
@@ -67,8 +75,12 @@ async function checkHealth() {
 
 body {
   font-family: 'Georgia', 'Noto Serif SC', -apple-system, 'Segoe UI', serif;
-  background: #fdf6f4;
-  color: #4a3535;
+  background: var(--sy-void, #fdf6f4);
+  background-image: var(--sy-bg, none);
+  background-attachment: fixed;
+  background-size: cover;
+  color: var(--sy-ink, #4a3535);
+  transition: background-color 0.3s, color 0.3s;
 }
 
 :root {
@@ -227,13 +239,37 @@ body {
 <style scoped>
 .header {
   padding: 14px 24px;
-  background: #fff;
-  border-bottom: 1px solid #f0e0dc;
+  background: var(--sy-paper, #fff);
+  border-bottom: 0.6px solid var(--sy-hair, #f0e0dc);
+  backdrop-filter: blur(8px);
   display: flex;
   align-items: center;
   gap: 16px;
   flex-wrap: wrap;
   row-gap: 8px;
+  transition: background-color 0.3s, border-color 0.3s;
+}
+
+.theme-toggle {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  border: 0.6px solid var(--sy-hair-gilt, #d8c2a8);
+  background: transparent;
+  color: var(--sy-gilt, #c79748);
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: 0.25s;
+}
+
+.theme-toggle:hover {
+  background: var(--sy-hair-gilt-2, rgba(199, 151, 72, 0.12));
+  transform: rotate(-12deg);
 }
 
 .header-minimal {

@@ -285,7 +285,9 @@ class MemoryGraphBackfillRequest(BaseModel):
 
 class MemoryGraphRecallPreviewRequest(BaseModel):
     query: str = Field(min_length=1, max_length=500)
-    limit: int = Field(default=8, ge=1, le=8)
+    # The memory-board preview pins a full board of originals; the resident-facing
+    # chat recall stays at the smaller budgeted limit and is unaffected by this.
+    limit: int = Field(default=12, ge=1, le=12)
 
 
 class StarCreateRequest(BaseModel):
