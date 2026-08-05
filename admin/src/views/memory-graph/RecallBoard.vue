@@ -10,7 +10,8 @@
 import { computed, ref } from 'vue'
 import { NButton, NEmpty, NSelect, NSpin, NTag } from 'naive-ui'
 import type { MemoryGraphRecallPreviewItem } from '@/api/memoryGraph'
-import { paperFamily, sourceLabel, sourceSeal } from './sourceDisplay'
+import { paperFamily, sourceLabel } from './sourceDisplay'
+import SyGlyph from './SyGlyph.vue'
 
 interface PaperPosition {
   item: MemoryGraphRecallPreviewItem
@@ -158,6 +159,7 @@ function onManualChange(key: string, value: string[]) {
       <!-- 中心：被想起的词 -->
       <div class="board-hub">
         <span class="hub-pin" aria-hidden="true"></span>
+        <SyGlyph name="begonia" :size="34" class="hub-flower" />
         <p class="hub-eyebrow">想起了 · recalled</p>
         <p class="hub-word">「{{ query }}」</p>
         <p class="hub-count">{{ items.length }} 件原件</p>
@@ -166,17 +168,17 @@ function onManualChange(key: string, value: string[]) {
 
       <!-- 三圈纸 -->
       <button
-        v-for="p in papers"
+        v-for="(p, pi) in papers"
         :key="runId + sourceKey(p.item)"
         class="board-paper"
         :class="[`g-${p.group}`, `fam-${paperFamily(p.item.source_type)}`]"
-        :style="{ left: `${(p.x / BOARD_W) * 100}%`, top: `${(p.y / BOARD_H) * 100}%`, '--rot': `${p.rotate}deg` }"
+        :style="{ left: `${(p.x / BOARD_W) * 100}%`, top: `${(p.y / BOARD_H) * 100}%`, '--rot': `${p.rotate}deg`, '--arrive-delay': `${pi * 70}ms` }"
         :aria-label="`原件：${p.item.title || sourceLabel(p.item.source_type)}`"
         @click="flip(p)"
       >
         <span v-if="p.group !== 'other'" class="pin" aria-hidden="true"></span>
         <span v-else class="tape" aria-hidden="true"></span>
-        <span class="bp-seal" aria-hidden="true">{{ sourceSeal(p.item.source_type) }}</span>
+        <span class="bp-seal" aria-hidden="true"><SyGlyph :name="p.item.source_type" :size="22" /></span>
         <span class="bp-title">{{ p.item.title || sourceLabel(p.item.source_type) }}</span>
         <span v-if="directAnchor(p.item)" class="bp-why">提到了「{{ directAnchor(p.item) }}」</span>
         <span v-else-if="pathLine(p.item)" class="bp-path">{{ pathLine(p.item) }}</span>
@@ -194,7 +196,7 @@ function onManualChange(key: string, value: string[]) {
           <div class="paper-read" :class="`fam-${paperFamily(flipped.item.source_type)}`" role="dialog" aria-modal="true">
             <span class="paper-read-pin" aria-hidden="true"></span>
             <header class="paper-read-head">
-              <span class="bp-seal lg" aria-hidden="true">{{ sourceSeal(flipped.item.source_type) }}</span>
+              <span class="bp-seal lg" aria-hidden="true"><SyGlyph :name="flipped.item.source_type" :size="32" /></span>
               <div class="paper-read-heading">
                 <b>{{ flipped.item.title || sourceLabel(flipped.item.source_type) }}</b>
                 <span>{{ sourceLabel(flipped.item.source_type) }}<template v-if="sourceDate(flipped.item)"> · {{ sourceDate(flipped.item) }}</template></span>
@@ -303,6 +305,7 @@ function onManualChange(key: string, value: string[]) {
 .hub-eyebrow { font-family: var(--sy-serif, serif); font-size: 10px; letter-spacing: 0.42em; text-transform: uppercase; color: var(--sy-gilt, #c79748); margin: 0 0 4px; }
 .hub-word { font-family: var(--sy-serif, serif); font-style: italic; font-size: 30px; font-weight: 500; color: var(--sy-ink, #4a2c2c); line-height: 1.2; margin: 0; font-variant-numeric: oldstyle-nums; }
 .hub-count { font-family: var(--sy-cjk, serif); font-size: 12px; color: var(--sy-mute, rgba(74, 44, 44, 0.55)); margin: 6px 0 0; }
+.hub-flower { display: block; margin: 0 auto 2px; }
 .hub-manage {
   margin-top: 10px; border: 0.6px solid var(--sy-hair-gilt, #d8c2a8); border-radius: 999px;
   background: none; color: var(--sy-gilt, #c79748); font-family: var(--sy-cjk, serif);
@@ -319,6 +322,13 @@ function onManualChange(key: string, value: string[]) {
   box-shadow: 0 6px 16px rgba(74, 44, 44, 0.18);
   cursor: pointer; text-align: left; display: flex; flex-direction: column; gap: 3px;
   transition: transform 0.22s, box-shadow 0.22s; z-index: 2;
+  animation: paper-arrive 0.5s cubic-bezier(0.2, 0.8, 0.3, 1.1) both;
+  animation-delay: var(--arrive-delay, 0ms);
+}
+
+@keyframes paper-arrive {
+  from { opacity: 0; transform: translate(-50%, -38%) rotate(var(--rot, 0deg)) scale(0.9); }
+  to { opacity: 1; transform: translate(-50%, -50%) rotate(var(--rot, 0deg)) scale(1); }
 }
 .board-paper:hover { transform: translate(-50%, -50%) rotate(0deg) scale(1.06); box-shadow: var(--sy-shadow-lift, 0 24px 64px rgba(74, 44, 44, 0.3)); z-index: 5; }
 .board-paper.g-direct { width: 168px; border-color: var(--sy-hair-gilt, #d8c2a8); }
@@ -341,9 +351,7 @@ function onManualChange(key: string, value: string[]) {
 
 .bp-seal {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; border: 1.2px solid var(--sy-gilt, #c79748); border-radius: 50%;
-  color: var(--sy-gilt, #c79748); font-family: var(--sy-serif, serif); font-size: 11px;
-  transform: rotate(-4deg); opacity: 0.9; margin-bottom: 2px;
+  width: 24px; height: 24px; opacity: 0.95; margin-bottom: 2px;
 }
 .bp-title { font-family: var(--sy-serif, serif); font-size: 14px; font-weight: 600; color: var(--sy-ink, #4a2c2c); line-height: 1.25; overflow: hidden; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; }
 .bp-why, .bp-path { font-family: var(--sy-serif, serif); font-style: italic; font-size: 11.5px; color: var(--sy-accent, #a8505e); line-height: 1.3; }
@@ -372,7 +380,7 @@ function onManualChange(key: string, value: string[]) {
   box-shadow: 0 2px 5px rgba(0, 0, 0, 0.35);
 }
 .paper-read-head { display: flex; align-items: center; gap: 12px; padding-bottom: 12px; border-bottom: 0.6px dashed var(--sy-hair, rgba(168, 80, 94, 0.3)); }
-.bp-seal.lg { width: 32px; height: 32px; font-size: 15px; }
+.bp-seal.lg { width: 34px; height: 34px; }
 .paper-read-heading { display: flex; flex-direction: column; gap: 1px; min-width: 0; flex: 1; }
 .paper-read-heading b { font-family: var(--sy-serif, serif); font-size: 19px; font-weight: 600; color: var(--sy-ink, #4a2c2c); }
 .paper-read-heading span { font-size: 11.5px; color: var(--sy-mute, rgba(74, 44, 44, 0.55)); letter-spacing: 0.04em; }
