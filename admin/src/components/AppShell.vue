@@ -2,10 +2,12 @@
 import { computed, onMounted, onUnmounted, ref } from 'vue'
 import { useRoute } from 'vue-router'
 import { useTheme } from '@/theme/theme'
+import { isDemoMode } from '@/demo'
 
 const route = useRoute()
 const isHome = computed(() => route.path === '/')
 const { theme, toggle: toggleTheme } = useTheme()
+const demo = isDemoMode()
 
 const health = ref({ supabase: false, protocol: '', upstream: '' })
 const live = ref(true)
@@ -49,6 +51,7 @@ async function checkHealth() {
         <span class="dot" :class="live ? 'live' : 'off'"></span>
         {{ live ? '在线' : '离线' }}
       </span>
+      <span v-if="demo" class="demo-badge" title="当前展示的是编造的演示数据，不会改动真实内容">演示数据</span>
       <div v-if="!isHome" class="health-tags">
         <span class="ht" :class="health.supabase ? 'ok' : 'err'">
           Supabase {{ health.supabase ? '正常' : '异常' }}
@@ -329,6 +332,17 @@ html:not([data-theme='night']) .n-popover {
 
 .dot.off {
   background: #d4726a;
+}
+
+.demo-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 9px;
+  border-radius: 999px;
+  color: var(--sy-accent-d, #a07888);
+  background: var(--sy-rose-soft, #faf0ee);
+  border: 1px solid var(--sy-hair, #f0e0dc);
 }
 
 @keyframes pulse {

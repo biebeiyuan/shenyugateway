@@ -24,6 +24,7 @@
 | 看已经确认的问题和暂不该动的地方 | `docs/architecture/AUDIT_MATRIX.md` | 对应测试和代码 |
 | 判断某份 Markdown 是否仍然有效 | `DOCS_MAP.md` | 对应现行专题文档 |
 | 修改代码 | `AGENTS.md` | 本表对应的专题文档 |
+| 改 admin 前端（配色、组件、动效、演示预览） | `docs/frontend/STYLE_AND_CRAFT.md` | `admin/src/theme/tokens.css`、`admin/src/demo/` |
 
 ## 工具人话解释
 

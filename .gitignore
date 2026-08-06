@@ -24,3 +24,4 @@ shenyu_gateway.egg-info/
 venv/
 
 /tmp/
+admin/.shots/

@@ -102,6 +102,8 @@ First listen to the complete symptom and restate the question being investigated
 
 For a PWA user-visible fix that is being delivered to production, follow three non-substitutable rules: (1) `npm test`, `npm run build`, and HTML assertions prove only their technical layer, never the actual device result; (2) only the production `/chat/` page with identifiable current/deployed builds is an acceptance target, while an arbitrary local port is only a preview; (3) if the original scenario was not observed on the affected device, report it as unverified rather than inferring success from a healthy container, cache update, or partial test.
 
+圆圆默认在手机端：用户可见问题的复现与验收以手机视口（约 390px 宽）为第一现场，桌面视口只是补充。「是缓存」只是假设——出口前必须先用响应头或产物哈希拿到证据，且同一个症状不允许用缓存解释第二次。
+
 After a production bug's root cause is confirmed by logs, code, or tests and the fix is complete, append exactly one row to `DEBUGGING_GUIDE.md` § Symptom Autopsy Index and follow that section's writing rules: an externally observable symptom, the minimal root-cause path plus fault, and an actionable lesson for the next investigator. Do not record unverified suspicions as autopsy facts.
 
 For gateway, Coolify, VPS, upstream, streaming, cache, or tool-call trouble, the helper is usually the first evidence source:

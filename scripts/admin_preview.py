@@ -31,10 +31,26 @@ def isolated_preview_env(*, port: int, db_path: Path) -> dict[str, str]:
     return env
 
 
+def lan_ipv4_addresses() -> list[str]:
+    """手机直连用的局域网地址；WSL mirrored 模式下 hostname -I 会带上宿主机地址。"""
+    try:
+        import subprocess
+
+        raw = subprocess.check_output(["hostname", "-I"], text=True, timeout=3)
+    except Exception:
+        return []
+    return [part for part in raw.split() if part.count(".") == 3]
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Run the built Admin UI without real data or background workers.")
     parser.add_argument("--port", type=int, default=18112)
     parser.add_argument("--db-path", type=Path, default=Path("/tmp/shenyu-admin-preview.db"))
+    parser.add_argument(
+        "--host",
+        default="127.0.0.1",
+        help="绑定地址；用 0.0.0.0 让同一 Wi-Fi 下的手机直接打开（演示模式不需要任何凭据）",
+    )
     args = parser.parse_args(argv)
     if not 1 <= args.port <= 65535:
         parser.error("--port must be between 1 and 65535")
@@ -46,11 +62,14 @@ def main(argv: list[str] | None = None) -> int:
         "uvicorn",
         "gateway:app",
         "--host",
-        "127.0.0.1",
+        args.host,
         "--port",
         str(args.port),
     ]
     print(f"Isolated Admin preview: http://127.0.0.1:{args.port}/admin/", flush=True)
+    if args.host == "0.0.0.0":
+        for ip in lan_ipv4_addresses():
+            print(f"  手机同一 Wi-Fi 打开（演示数据）: http://{ip}:{args.port}/admin/?demo=1#/", flush=True)
     os.chdir(ROOT)
     os.execvpe(sys.executable, command, env)
     return 0

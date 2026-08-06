@@ -8,6 +8,7 @@
     "build": "vue-tsc && vite build",
     "preview": "vite preview",
     "preview:isolated": "npm run build && python ../scripts/admin_preview.py",
+    "preview:lan": "npm run build && python ../scripts/admin_preview.py --host 0.0.0.0",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:install": "playwright install --with-deps chromium",
     "test:e2e:install:mirror": "env PLAYWRIGHT_DOWNLOAD_HOST=https://registry.npmmirror.com/-/binary/playwright npm run test:e2e:install"

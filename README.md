@@ -201,6 +201,9 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/ToolErrorsView.vue`: tool error log viewer.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout, including the day/night (日月) theme toggle.
 - `admin/src/theme/tokens.css`: day/night design tokens (昼 = #fdf6f4 淡奶油底 + 纯白卡 with soft rose 软玫瑰粉 as the interactive primary, 夜 = gilt-on-near-black 描金; 古金描线与玫瑰软木板只在记忆网络视图内使用) — one tree, two palettes swapped via `<html> data-theme`. Includes the role-semantic palette (你 = soft rose 软玫瑰粉 `--sy-self`, 沈予 = deep pine 深松绿 `--sy-resident`, 系统 = ink/paper gray `--sy-sys-*`; gilt only draws lines) — new elements must join an existing role instead of introducing new colors. View styles read these variables (`var(--sy-ink)` etc.) instead of hardcoding day-only hexes, so night mode stays legible everywhere. `admin/src/theme/theme.ts`: `useTheme()` toggle + localStorage persistence; naive-ui overrides in `App.vue` read the same palette, and `AppShell.vue`'s global naive skin applies to day only.
+
+- `admin/src/demo/`: 演示数据模式（`?demo=1`）——`fixtures.ts` 编造样本（锚点/便签/一池可"想起"的原件），`index.ts` 在 axios 适配器层拦截读取请求返回样本、写操作假成功；生产构建带此代码但不开关完全不生效。页头"演示数据"徽章在 `AppShell.vue`。
+- `admin/scripts/mobile-shots.mjs`: mobile-viewport acceptance shots — boots the isolated preview with demo data, walks home → mem → memory graph → recall board → reading overlay at 390×844 and saves PNGs to `admin/.shots/`. 前端风格与手感基线见 `docs/frontend/STYLE_AND_CRAFT.md`。
 - `admin/e2e/smoke.spec.ts`: read-only Chromium smoke checks for every Admin route and a few core interactions.
 - `admin/playwright.config.ts`: isolated local gateway, temporary SQLite, authentication, and browser settings for Admin smoke tests.
 - `scripts/admin_preview.py`: isolated built-Admin preview launcher that disables repository `.env`, external stores, archives, and background workers.
