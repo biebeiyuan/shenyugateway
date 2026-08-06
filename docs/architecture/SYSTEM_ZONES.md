@@ -355,11 +355,15 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 
 - `shenyu_gateway/gateway_admin_routes.py`
 - `shenyu_gateway/project_map.py`
+- `shenyu_gateway/project_delivery.py`
 - `shenyu_gateway/request_logs.py`
 - `shenyu_gateway/store/_request_log_history.py`
 - `admin/src/api/logs.ts`
 - `admin/src/views/LogsView.vue`
 - `admin/src/views/bookshelf/ProjectMapBookModal.vue`
+- `admin/src/views/bookshelf/ProjectMapDeliveryPanel.vue`
+- `scripts/project_delivery.py`
+- `project_delivery_log.jsonl`
 - `scripts/vps_gateway_logs.py`
 - `README.md`
 - `DOCS_MAP.md`
@@ -370,6 +374,8 @@ session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin AP
 
 - Admin 列表 API 应返回摘要；详情 API 优先读取当前进程日志，只有显式开启时才可能含完整 payload。
 - 《家里地图》只属于 Admin：不得加入 `shenyu_books`、共享书架概览、Room 或任何模型上下文。它在每次读取时从现行权威源重画，不保存可被手写覆盖的第二份地图正文。
+- 《家里地图》的“最近做了什么”是独立的项目交付时间线，不替代 `resident_home_changes.jsonl` 的住户影响台账，也不把每个 Git commit 自动冒充一项成果。每条记录必须绑定 README 产品反查中的产品、至少一条源码路径和一条验证证据；区域映射由路径与当前区域核心文件现场推导。
+- 交付状态必须区分本地验证、已推送、已部署和设备实测；未部署或未在目标设备观察到的结果不得写成已验收。可复用 Debug 经验只通过已确认的 `DEBUGGING_GUIDE.md` 记录引用，不在普通交付条目里复制故障叙述。
 - Admin 页面和 API 的交付责任归本区域，但页面所展示数据的业务含义仍归对应功能区；完整页面清单统一看 README，不在这里逐项复制。
 - request log 使用两层保留：进程内 `deque(maxlen=30)` 保存实时/可选完整详情，SQLite 默认保存最近 200 条安全摘要并跨进程恢复。完整 messages/response/payload 不进入持久历史。
 - 每轮顶部 `input` 必须读取后端归一化的 `cache_usage.total_input_tokens`：Anthropic 将未缓存输入、缓存读取和缓存新写相加；OpenAI-compatible 的输入已含 cached 子集，不得在前端重复相加。`⚡ cached` 后的紧凑百分比表示缓存读取占该总输入的比例；分母不可靠时省略百分比。读取与新写之间的前缀复用率只在详情中单独标注。

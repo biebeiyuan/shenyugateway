@@ -466,6 +466,8 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
           zone_count: 2,
           bridge_count: 1,
           document_count: 1,
+          delivery_count: 1,
+          delivery_product_count: 1,
         },
         components: [
           {
@@ -544,7 +546,33 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
           '职责': '现行代码分区、跨区桥梁和审计入口',
           '什么时候更新': '主要调用链改变时',
         }],
-        products: [],
+        products: [{
+          '产品对象': 'PWA 聊天端',
+          '常用叫法 / 旧名': '手机聊天',
+          '后端入口': 'pwa/src/App.vue',
+          'Admin/API': 'POST /v1/chat/completions',
+          '现行文档': 'REQUEST_CONTEXT.md',
+        }],
+        deliveries: [{
+          id: 'delivery-smoke',
+          completed_at: '2026-08-06T10:18:33+08:00',
+          title: 'PWA 新增可编辑上游请求头',
+          product: 'PWA 聊天端',
+          kind: 'feature',
+          summary: '模型面板可以选择 Claude Code 请求头预设。',
+          touchpoint: 'PWA → 模型选择 → 请求头',
+          why: '上游兼容需要受控的请求身份。',
+          status: 'pushed',
+          verification: ['PWA 单测与手机 POST 映射通过'],
+          paths: ['pwa/src/App.vue', 'shenyu_gateway/upstream_client.py'],
+          docs: ['docs/architecture/REQUEST_CONTEXT.md'],
+          commit: '03ea5989b809065e',
+          lesson: '浏览器不能直接覆盖 User-Agent。',
+          debug_ref: '',
+          recorded_by: 'Codex',
+          product_map: { '产品对象': 'PWA 聊天端' },
+          zone_ids: [],
+        }],
         changes: [],
         warnings: [],
       },
@@ -580,6 +608,13 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
     await page.getByTestId('bookshelf-book-project-map').click()
     await expect(page.getByTestId('project-map-atlas')).toBeVisible()
     await expect(page.getByTestId('project-map-status')).toHaveText('地图与现场一致')
+    await expect(page.getByTestId('project-map-delivery-peek')).toContainText('PWA 新增可编辑上游请求头')
+    await page.getByTestId('project-map-delivery-peek').click()
+    const deliveryPanel = page.getByTestId('project-map-deliveries')
+    await expect(deliveryPanel).toContainText('PWA 新增可编辑上游请求头')
+    await deliveryPanel.locator('details').first().locator('summary').click()
+    await expect(deliveryPanel).toContainText('浏览器不能直接覆盖 User-Agent。')
+    await page.getByTestId('project-map-tab-overview').click()
     await page.getByTestId('project-map-overview-components').click()
     await expect(page.getByTestId('project-map-atlas')).toContainText('只让相关的星星浮现。')
     await page.getByTestId('project-map-overview-zones').click()
@@ -591,7 +626,8 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
     await page.getByTestId('project-map-tab-connections').click()
     await expect(page.getByTestId('project-map-connections')).toContainText('Mem')
     await page.getByTestId('project-map-tab-changes').click()
-    await expect(page.getByTestId('project-map-atlas')).toContainText('当前映射都已确认')
+    await expect(page.getByTestId('project-map-atlas')).toContainText('八个生活机制都已确认')
+    await expect(page.getByTestId('project-map-tab-changes')).toHaveText('机制确认')
     await expect(page.getByText('这册只在 Admin 里出现，不进入沈予的上下文。')).toBeVisible()
     await page.keyboard.press('Escape')
 

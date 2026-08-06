@@ -4,6 +4,7 @@ import { NAlert, NModal, NSpin } from 'naive-ui'
 import type { ProjectMapSnapshot } from '@/api/books'
 import ProjectMapChangesPanel from './ProjectMapChangesPanel.vue'
 import ProjectMapConnectionsPanel from './ProjectMapConnectionsPanel.vue'
+import ProjectMapDeliveryPanel from './ProjectMapDeliveryPanel.vue'
 import ProjectMapFlowPanel from './ProjectMapFlowPanel.vue'
 import ProjectMapOverviewPanel from './ProjectMapOverviewPanel.vue'
 
@@ -17,14 +18,15 @@ const emit = defineEmits<{
   'update:show': [value: boolean]
 }>()
 
-type AtlasView = 'overview' | 'flow' | 'connections' | 'changes'
+type AtlasView = 'overview' | 'deliveries' | 'flow' | 'connections' | 'changes'
 
 const activeView = ref<AtlasView>('overview')
 const tabs: Array<{ id: AtlasView; label: string }> = [
   { id: 'overview', label: '先看全貌' },
+  { id: 'deliveries', label: '最近做了什么' },
   { id: 'flow', label: '消息怎样走' },
   { id: 'connections', label: '哪里连接' },
-  { id: 'changes', label: '最近变化' },
+  { id: 'changes', label: '机制确认' },
 ]
 
 function fmtDateTime(value: string | null | undefined): string {
@@ -81,7 +83,12 @@ function fmtDateTime(value: string | null | undefined): string {
           </button>
         </nav>
 
-        <ProjectMapOverviewPanel v-if="activeView === 'overview'" :snapshot="props.snapshot" />
+        <ProjectMapOverviewPanel
+          v-if="activeView === 'overview'"
+          :snapshot="props.snapshot"
+          @open-deliveries="activeView = 'deliveries'"
+        />
+        <ProjectMapDeliveryPanel v-else-if="activeView === 'deliveries'" :snapshot="props.snapshot" />
         <ProjectMapFlowPanel v-else-if="activeView === 'flow'" :snapshot="props.snapshot" />
         <ProjectMapConnectionsPanel v-else-if="activeView === 'connections'" :snapshot="props.snapshot" />
         <ProjectMapChangesPanel v-else :snapshot="props.snapshot" />
@@ -184,7 +191,7 @@ function fmtDateTime(value: string | null | undefined): string {
 
 .atlas-tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(5, 1fr);
   margin: 15px 0 18px;
   padding: 3px;
   border: 1px solid var(--line);

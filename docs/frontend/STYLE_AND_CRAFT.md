@@ -96,7 +96,7 @@ node scripts/mobile-shots.mjs  # 390×844 触屏模拟走关键路径，截图�
 | `admin/src/demo/` | 演示数据与拦截适配器（`?demo=1` 的唯一实现） |
 | `admin/scripts/mobile-shots.mjs` | 手机视口截图验收 |
 | `admin/src/views/memory-graph/` | 记忆网络的皮肤（金、软木板、纸片家族 `OriginalPaper`、想起板 `RecallBoard`、阅读层 `AnchorOriginalsOverlay`、手绘符号 `SyGlyph`） |
+| `admin/src/views/bookshelf/ProjectMapDeliveryPanel.vue` | 《家里地图》的施工簿：日期轴、产品筛选、交付状态、展开证据与经验块 |
 | `admin/src/views/HomeView.vue` | 首页大卡与 bento 格子 |
 
 新增独立维护的前端边界时，同步这份表 + `README.md` § Maintenance Map。
-

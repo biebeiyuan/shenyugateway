@@ -25,7 +25,7 @@ function fmtDateTime(value: string | null | undefined): string {
     <div class="review-banner" :class="props.snapshot.summary.status">
       <span class="state-dot"></span>
       <div>
-        <strong>{{ props.snapshot.summary.pending_count ? '还有变化等待确认' : '当前映射都已确认' }}</strong>
+        <strong>{{ props.snapshot.summary.pending_count ? '还有机制变化等待确认' : '八个生活机制都已确认' }}</strong>
         <p>
           {{ props.snapshot.summary.pending_count
             ? '源码已经变化，但住户影响还没有被最后确认。'

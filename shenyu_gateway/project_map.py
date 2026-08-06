@@ -7,6 +7,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from .project_delivery import ProjectDeliveryError, load_delivery_log
 from .resident_home import (
     check_manifest,
     current_commit,
@@ -236,6 +237,11 @@ def project_map_snapshot(*, root: Path = ROOT) -> dict[str, Any]:
     bridges = _table_after_heading(system_zones, "## 跨区关键桥梁")
     products = _table_after_heading(readme, "### 按产品对象反查")
     documents = _table_after_heading(docs_map, "## 现行文档")
+    try:
+        deliveries = load_delivery_log(root / "project_delivery_log.jsonl")[:60]
+    except ProjectDeliveryError as exc:
+        deliveries = []
+        warnings.append(f"最近施工记录暂时读不到：{exc}")
 
     if system_zones and not zones:
         warnings.append("SYSTEM_ZONES.md 里暂时没有读到系统分区。")
@@ -247,6 +253,33 @@ def project_map_snapshot(*, root: Path = ROOT) -> dict[str, Any]:
         warnings.append("README.md 里暂时没有读到产品反查表。")
     if docs_map and not documents:
         warnings.append("DOCS_MAP.md 里暂时没有读到现行文档表。")
+
+    products_by_name = {
+        str(product.get("产品对象") or "").strip(): product
+        for product in products
+        if str(product.get("产品对象") or "").strip()
+    }
+    mapped_deliveries: list[dict[str, Any]] = []
+    for delivery in deliveries:
+        product = products_by_name.get(delivery["product"])
+        if product is None:
+            warnings.append(f"施工记录产品“{delivery['product']}”尚未进入 README 产品反查表。")
+        zone_ids = [
+            zone["id"]
+            for zone in zones
+            if any(
+                _path_matches(path, core_entry)
+                for path in delivery["paths"]
+                for core_entry in zone["core_files"]
+            )
+        ]
+        mapped_deliveries.append(
+            {
+                **delivery,
+                "product_map": product or {},
+                "zone_ids": zone_ids,
+            }
+        )
 
     for zone in zones:
         component_ids = [
@@ -291,6 +324,8 @@ def project_map_snapshot(*, root: Path = ROOT) -> dict[str, Any]:
             "zone_count": len(zones),
             "bridge_count": len(bridges),
             "document_count": len(documents),
+            "delivery_count": len(mapped_deliveries),
+            "delivery_product_count": len({item["product"] for item in mapped_deliveries}),
         },
         "components": components,
         "zones": zones,
@@ -299,6 +334,7 @@ def project_map_snapshot(*, root: Path = ROOT) -> dict[str, Any]:
         "component_bridges": _component_connections(components),
         "documents": documents,
         "products": products,
+        "deliveries": mapped_deliveries,
         "changes": changes,
         "warnings": warnings,
     }

@@ -62,6 +62,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/context_builder.py`: async parallel gathering of all memory sources into a context package.
 - `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, and cold-start bridge insertion.
 - `shenyu_gateway/project_map.py`: owner-only live project map assembled from the current system zones, maintenance/product indexes, resident component fingerprints, and change ledger; it also derives component links from shared mapped source files.
+- `shenyu_gateway/project_delivery.py` / `project_delivery_log.jsonl`: structured owner-facing delivery ledger and validation/append helpers; one entry represents one coherent completed outcome and links it to a product, paths, docs, verification, and optional reusable lesson.
 - `shenyu_gateway/resident_home.py`: resident-facing component manifest, source fingerprints, review acknowledgements, and weekly change records.
 - `shenyu_gateway/resident_books.py`: unified bookshelf facade for the generated read-only home snapshot, the revisioned `我是谁` document, append-only annotations, and legacy origin-book storage.
 - `shenyu_gateway/resident_profile.py`: stable wake/profile text for memory practice and the origin book.
@@ -196,6 +197,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/bookshelf/ProjectMapFlowPanel.vue`: interactive request route from client entry through context, tools/upstream, capture, and return.
 - `admin/src/views/bookshelf/ProjectMapConnectionsPanel.vue`: one-hop component coupling map derived from shared mapped source files, with explicit architecture bridges as secondary evidence.
 - `admin/src/views/bookshelf/ProjectMapChangesPanel.vue`: review state, resident-impact changes, component confirmations, and current-document evidence.
+- `admin/src/views/bookshelf/ProjectMapDeliveryPanel.vue`: owner-facing chronological delivery journal with product filters, explicit local/pushed/deployed/device-verified status, expandable verification, and optional lessons/debug links.
 - `admin/src/views/RoomView.vue`: room mode admin preview shell (charge, traces, drawer notes, pins, and newspaper placement).
 - `admin/src/views/room/RoomNewspaperPanel.vue`: in-place Room newspaper panel (generate, review, publish, discard, and source status).
 - `admin/src/views/ToolErrorsView.vue`: tool error log viewer.
@@ -203,6 +205,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/theme/tokens.css`: day/night design tokens (昼 = #fdf6f4 淡奶油底 + 纯白卡 with soft rose 软玫瑰粉 as the interactive primary, 夜 = gilt-on-near-black 描金; 古金描线与玫瑰软木板只在记忆网络视图内使用) — one tree, two palettes swapped via `<html> data-theme`. Includes the role-semantic palette (你 = soft rose 软玫瑰粉 `--sy-self`, 沈予 = deep pine 深松绿 `--sy-resident`, 系统 = ink/paper gray `--sy-sys-*`; gilt only draws lines) — new elements must join an existing role instead of introducing new colors. View styles read these variables (`var(--sy-ink)` etc.) instead of hardcoding day-only hexes, so night mode stays legible everywhere. `admin/src/theme/theme.ts`: `useTheme()` toggle + localStorage persistence; naive-ui overrides in `App.vue` read the same palette, and `AppShell.vue`'s global naive skin applies to day only.
 
 - `admin/src/demo/`: 演示数据模式（`?demo=1`）——`fixtures.ts` 编造样本（锚点/便签/一池可"想起"的原件），`index.ts` 在 axios 适配器层拦截读取请求返回样本、写操作假成功；生产构建带此代码但不开关完全不生效。页头"演示数据"徽章在 `AppShell.vue`。
+- `scripts/project_delivery.py`: records and validates one coherent owner-facing delivery outcome in `project_delivery_log.jsonl`; use it after the final verification round, not once per small commit.
 - `admin/scripts/mobile-shots.mjs`: mobile-viewport acceptance shots — boots the isolated preview with demo data, walks home → mem → memory graph → recall board → reading overlay at 390×844 and saves PNGs to `admin/.shots/`. 前端风格与手感基线见 `docs/frontend/STYLE_AND_CRAFT.md`。
 - `admin/e2e/smoke.spec.ts`: read-only Chromium smoke checks for every Admin route and a few core interactions.
 - `admin/playwright.config.ts`: isolated local gateway, temporary SQLite, authentication, and browser settings for Admin smoke tests.
@@ -238,6 +241,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 |----------|-----------------|----------|-----------|----------|
 | 共享书架 | `家现在`、`我是谁`、`来历书`（旧内部名：矛盾书） | `resident_books.py`、`conflict_books.py` | `admin/src/api/books.ts`、`ConflictView.vue`、`bookshelf/HomeBookModal.vue` | `REQUEST_CONTEXT.md` § Generated home and living identity / Origin books |
 | 家里地图 | 给圆圆的项目地图、Owner map | `project_map.py` | `GET /api/project-map`、`admin/src/api/books.ts`、`bookshelf/ProjectMapBookModal.vue` | `SYSTEM_ZONES.md`、`REQUEST_CONTEXT.md` § Owner-only project map |
+| Admin 控制台 | 管理后台、家里后台 | `admin/src/App.vue`、`admin/src/views/` | `admin/src/`、`scripts/admin_preview.py` | `docs/frontend/STYLE_AND_CRAFT.md`、`START_HERE.md` |
 | PWA 聊天端 | 手机聊天、独立 PWA、`shenyu-pwa` 客户端 | `pwa/src/App.vue`、`shenyu_gateway/chat_pipeline.py`、`streaming.py` | `GET /v1/models`、`POST /v1/chat/completions`、`X-Shenyu-Tool-Events`、`shenyu_upstream_presets` | `SYSTEM_ZONES.md` § 客户端表面、`REQUEST_CONTEXT.md` § External Frontend Contracts |
 | Memory Island | Stars + Mem 当前岛 | `memory_island.py`、`context_builder.py` | `admin/src/api/logs.ts`、`LogsView.vue` | `REQUEST_CONTEXT.md`、`MEMORY_ROOM.md` |
 | Stars | 星星 / 关联记忆 | `shenyu_gateway/stars/` | `admin/src/api/stars.ts`、`StarsView.vue`、`views/stars/` | `MEMORY_ROOM.md` § Star Memory Layer |

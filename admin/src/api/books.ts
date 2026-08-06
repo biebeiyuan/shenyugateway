@@ -144,6 +144,27 @@ export interface ProjectMapComponentBridge {
   meaning: string
 }
 
+export interface ProjectMapDelivery {
+  id: string
+  completed_at: string
+  title: string
+  product: string
+  kind: 'feature' | 'fix' | 'experience' | 'operations' | 'architecture'
+  summary: string
+  touchpoint: string
+  why: string
+  status: 'verified_local' | 'pushed' | 'deployed' | 'device_verified'
+  verification: string[]
+  paths: string[]
+  docs: string[]
+  commit: string
+  lesson: string
+  debug_ref: string
+  recorded_by: string
+  product_map: Record<string, string>
+  zone_ids: string[]
+}
+
 export interface ProjectMapSnapshot {
   ok: boolean
   live: {
@@ -162,6 +183,8 @@ export interface ProjectMapSnapshot {
     zone_count: number
     bridge_count: number
     document_count: number
+    delivery_count: number
+    delivery_product_count: number
   }
   components: ProjectMapComponent[]
   zones: ProjectMapZone[]
@@ -170,6 +193,7 @@ export interface ProjectMapSnapshot {
   component_bridges: ProjectMapComponentBridge[]
   documents: Array<Record<string, string>>
   products: Array<Record<string, string>>
+  deliveries: ProjectMapDelivery[]
   changes: ResidentHomeChange[]
   warnings: string[]
 }

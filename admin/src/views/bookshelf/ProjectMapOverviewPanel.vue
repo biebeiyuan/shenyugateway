@@ -3,6 +3,7 @@ import { computed, ref } from 'vue'
 import type { ProjectMapComponent, ProjectMapSnapshot, ProjectMapZone } from '@/api/books'
 
 const props = defineProps<{ snapshot: ProjectMapSnapshot }>()
+const emit = defineEmits<{ 'open-deliveries': [] }>()
 
 type OverviewFocus = 'components' | 'zones' | 'bridges'
 
@@ -17,6 +18,8 @@ const selectedComponent = computed<ProjectMapComponent | null>(() => (
 const selectedZone = computed<ProjectMapZone | null>(() => (
   props.snapshot.zones.find(item => item.id === selectedZoneId.value) || null
 ))
+
+const latestDelivery = computed(() => props.snapshot.deliveries[0] || null)
 
 function zoneFor(id: string): ProjectMapZone | undefined {
   return props.snapshot.zones.find(zone => zone.id === id)
@@ -95,18 +98,35 @@ function shortPath(value: string): string {
         <strong>{{ props.snapshot.live.commit.slice(0, 12) }}</strong>
       </div>
       <div>
-        <span>最近确认</span>
+        <span>机制最近确认</span>
         <strong>{{ fmtDateTime(props.snapshot.live.last_confirmed_at) || '尚未确认' }}</strong>
       </div>
       <div>
-        <span>当前状态</span>
+        <span>机制状态</span>
         <strong>
           {{ props.snapshot.summary.pending_count
             ? `${props.snapshot.summary.pending_count} 处待复核`
-            : '全部已经对上' }}
+            : '生活机制已对上' }}
         </strong>
       </div>
     </div>
+
+    <button
+      v-if="!overviewFocus && latestDelivery"
+      type="button"
+      class="delivery-peek"
+      data-testid="project-map-delivery-peek"
+      @click="emit('open-deliveries')"
+    >
+      <span>
+        <small>近期完成</small>
+        <strong>{{ latestDelivery.title }}</strong>
+      </span>
+      <span>
+        <b>{{ props.snapshot.summary.delivery_count }} 项</b>
+        <small>{{ props.snapshot.summary.delivery_product_count }} 个产品入口</small>
+      </span>
+    </button>
 
     <template v-if="overviewFocus === 'components'">
       <div class="component-map" aria-label="家的核心机制">
@@ -214,6 +234,18 @@ function shortPath(value: string): string {
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 9px;
 }
+
+.delivery-peek { display: flex; align-items: center; justify-content: space-between; gap: 20px; width: 100%; margin-top: 10px; padding: 11px 14px; border: 1px solid var(--line); border-radius: 6px; background: var(--sy-paper, #fff); color: var(--ink); font-family: inherit; text-align: left; }
+.delivery-peek:hover,
+.delivery-peek:focus-visible { border-color: #cc9aaa; outline: none; background: #fffafb; }
+.delivery-peek > span { min-width: 0; }
+.delivery-peek > span:last-child { flex: none; text-align: right; }
+.delivery-peek small,
+.delivery-peek strong,
+.delivery-peek b { display: block; }
+.delivery-peek small { color: var(--muted); font-size: 8.5px; }
+.delivery-peek strong { margin-top: 3px; overflow: hidden; font-size: 10.5px; text-overflow: ellipsis; white-space: nowrap; }
+.delivery-peek b { color: var(--rose); font-size: 11px; }
 
 .overview-gates button {
   position: relative;
@@ -444,6 +476,7 @@ function shortPath(value: string): string {
 .bridge-row span { color: var(--muted); line-height: 1.5; }
 
 @media (max-width: 760px) {
+  .delivery-peek { align-items: flex-start; }
   .overview-gates,
   .overview-rest { grid-template-columns: 1fr; }
   .overview-gates button { min-height: 88px; }

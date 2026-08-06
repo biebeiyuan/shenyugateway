@@ -23,6 +23,11 @@ def test_project_map_assembles_live_authorities_and_connections():
     assert any(bridge["桥梁"] == "context_builder.py" for bridge in snapshot["bridges"])
     assert any(document["文档"] == "DOCS_MAP.md" for document in snapshot["documents"])
     assert any(product["产品对象"] == "共享书架" for product in snapshot["products"])
+    assert snapshot["summary"]["delivery_count"] >= 5
+    assert snapshot["summary"]["delivery_product_count"] >= 3
+    pwa_delivery = next(item for item in snapshot["deliveries"] if item["product"] == "PWA 聊天端")
+    assert pwa_delivery["product_map"]["产品对象"] == "PWA 聊天端"
+    assert pwa_delivery["status"] == "pushed"
     stars = next(component for component in snapshot["components"] if component["id"] == "stars")
     assert "zone-6" in stars["zone_ids"]
 
@@ -58,4 +63,5 @@ def test_production_image_carries_the_map_authorities():
     dockerfile = (ROOT / "Dockerfile").read_text(encoding="utf-8")
 
     assert "COPY README.md DOCS_MAP.md ./" in dockerfile
+    assert "project_delivery_log.jsonl" in dockerfile
     assert "COPY docs/architecture/SYSTEM_ZONES.md ./docs/architecture/SYSTEM_ZONES.md" in dockerfile

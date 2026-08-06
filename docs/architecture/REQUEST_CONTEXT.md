@@ -532,6 +532,6 @@ Tools: `shenyu_books`. Admin UI: 档案 tab (clip flow) and the three-tier share
 
 ### Owner-only project map
 
-`家里地图`与`家现在`在 Admin 书架上同层摆放，但不是第四种 resident book。`GET /api/project-map` 每次读取时由 `project_map.py` 从 `resident_home_manifest.json`、`resident_home_changes.jsonl`、README Maintenance Map / 产品反查表、`DOCS_MAP.md` 现行文档表和 `SYSTEM_ZONES.md` 的请求链与跨区桥梁现场组装；组件之间的直接连接由 manifest 实际命中的共享源码文件推导，不另存一份手工连线表。生产镜像必须带上这些被读取的现行文档。
+`家里地图`与`家现在`在 Admin 书架上同层摆放，但不是第四种 resident book。`GET /api/project-map` 每次读取时由 `project_map.py` 从 `resident_home_manifest.json`、`resident_home_changes.jsonl`、`project_delivery_log.jsonl`、README Maintenance Map / 产品反查表、`DOCS_MAP.md` 现行文档表和 `SYSTEM_ZONES.md` 的请求链与跨区桥梁现场组装；组件之间的直接连接由 manifest 实际命中的共享源码文件推导，交付记录的产品与区域落点由现行反查表和核心文件现场推导，不另存一份手工连线表。生产镜像必须带上这些被读取的现行文档与台账。
 
-这册地图只给后台里的圆圆看。它不注册 `ResidentBooksService` slug，不出现在 `render_bookshelf_overview()`，不进入 `shenyu_books`、普通聊天、Room 或任何模型上下文，也没有写入、批注或正文覆盖入口。页面上的“实时”表示它反映当前已部署 checkout / build revision 和最近确认状态；未部署的本地变化不会凭空出现在生产页面。
+这册地图只给后台里的圆圆看。它不注册 `ResidentBooksService` slug，不出现在 `render_bookshelf_overview()`，不进入 `shenyu_books`、普通聊天、Room 或任何模型上下文，也没有写入、批注或正文覆盖入口。页面上的“实时”表示它反映当前已部署 checkout / build revision、最近确认状态和已记录的交付时间线；未部署的本地变化不会凭空出现在生产页面。交付时间线与住户影响台账分开，前者回答“最近做了什么”，后者回答“沈予的生活机制发生了什么”。
