@@ -15,6 +15,9 @@ export function cloneVariant(variant: Partial<MessageVariant>): MessageVariant {
       : [],
     events: Array.isArray(variant.events) ? variant.events.map((item) => ({ ...item })) : [],
     error: variant.error ? String(variant.error) : undefined,
+    responseMeta: variant.responseMeta && typeof variant.responseMeta === 'object'
+      ? { ...variant.responseMeta }
+      : undefined,
   }
 }
 
@@ -45,10 +48,11 @@ export function applyVariant(message: UiMessage, variant: MessageVariant, index:
   message.thinkingSegments = variant.thinkingSegments.map((item) => ({ ...item }))
   message.events = variant.events.map((item) => ({ ...item }))
   message.error = variant.error
+  message.responseMeta = variant.responseMeta ? { ...variant.responseMeta } : undefined
 }
 
 export function emptyVariant(): MessageVariant {
-  return { content: '', thinking: '', thinkingSegments: [], events: [] }
+  return { content: '', thinking: '', thinkingSegments: [], events: [], responseMeta: undefined }
 }
 
 export function ensureVariants(message: UiMessage): MessageVariant[] {

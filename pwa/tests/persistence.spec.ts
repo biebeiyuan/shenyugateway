@@ -11,16 +11,31 @@ beforeEach(() => {
 })
 
 describe('message persistence round-trip', () => {
-  it('restores role, content, thinking and error', () => {
+  it('restores role, content, thinking, error and reply metadata', () => {
     persistStoredMessages([
       uiMessage('user', 'question'),
-      uiMessage('assistant', 'answer', { thinking: 'why', error: 'boom' }),
+      uiMessage('assistant', 'answer', {
+        thinking: 'why',
+        error: 'boom',
+        responseMeta: {
+          context_rounds: 8,
+          context_trim_in_rounds: 17,
+          cache_read_percent: 62.5,
+          first_tool_round_cache_hit: true,
+          heartbeat_captured: true,
+        },
+      }),
     ], FALLBACK_SESSION_MESSAGE_LIMIT)
     const restored = loadStoredMessages()
     expect(restored).toHaveLength(2)
     expect(restored[1].thinking).toBe('why')
     expect(restored[1].error).toBe('boom')
     expect(restored[1].thinkingSegments).toHaveLength(1)
+    expect(restored[1].responseMeta?.context_rounds).toBe(8)
+    expect(restored[1].responseMeta?.context_trim_in_rounds).toBe(17)
+    expect(restored[1].responseMeta?.cache_read_percent).toBe(62.5)
+    expect(restored[1].responseMeta?.first_tool_round_cache_hit).toBe(true)
+    expect(restored[1].responseMeta?.heartbeat_captured).toBe(true)
   })
 
   it('restores roll variants and lands on the previously selected roll', () => {

@@ -1087,6 +1087,28 @@ function roomReplyLabel(index: number): string {
   return time ? `${time} · 房间` : ''
 }
 
+function assistantMetaLabel(index: number, message: UiMessage): string {
+  const parts: string[] = []
+  const room = roomReplyLabel(index)
+  if (room) parts.push(room)
+  const meta = message.responseMeta
+  if (!meta) return parts.join(' · ')
+
+  if (typeof meta.context_rounds === 'number') {
+    const trim = typeof meta.context_trim_in_rounds === 'number' && meta.context_trim_in_rounds > 0
+      ? `（${meta.context_trim_in_rounds}）`
+      : ''
+    parts.push(`${meta.context_rounds}轮${trim}`)
+  }
+  if (typeof meta.cache_read_percent === 'number') {
+    const percent = Number.isInteger(meta.cache_read_percent) ? meta.cache_read_percent : meta.cache_read_percent.toFixed(1)
+    const firstRoundHit = meta.tool_rounds && meta.tool_rounds > 0 && meta.first_tool_round_cache_hit ? '√' : ''
+    parts.push(`${percent}%${firstRoundHit}`)
+  }
+  if (meta.heartbeat_captured) parts.push('❤')
+  return parts.join(' · ')
+}
+
 function closeComposerMenuFromOutside(event: PointerEvent) {
   const target = event.target
   if (target instanceof Node && !composerMenuRef.value?.contains(target)) {
@@ -1295,7 +1317,7 @@ onUnmounted(() => {
                     <button title="下一版回答" aria-label="下一版回答" :disabled="!canSwitchMessageVariant(message, 1)" @click="switchMessageVariant(index, 1)"><ChevronRight :size="15" /></button>
                   </span>
                 </div>
-                <div v-if="!message.streaming && roomReplyLabel(index)" class="assistant-meta">{{ roomReplyLabel(index) }}</div>
+                <div v-if="!message.streaming && assistantMetaLabel(index, message)" class="assistant-meta">{{ assistantMetaLabel(index, message) }}</div>
               </div>
               <div v-if="message.role === 'user'" class="user-actions">
                 <button title="编辑这条消息" aria-label="编辑这条消息" @click="beginEdit(message)"><Pencil :size="14" /></button>

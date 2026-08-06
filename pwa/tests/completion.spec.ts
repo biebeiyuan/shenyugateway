@@ -12,6 +12,14 @@ describe('applyChatCompletion', () => {
     applyChatCompletion({
       choices: [{ message: { content: '最后的回答', reasoning_content: '先想一想' } }],
       shenyu: {
+        response_meta: {
+          context_rounds: 9,
+          context_trim_in_rounds: 17,
+          cache_read_percent: 75,
+          tool_rounds: 2,
+          first_tool_round_cache_hit: true,
+          heartbeat_captured: true,
+        },
         tool_events: [
           { phase: 'tool_start', tool_call_id: 't1', name: 'shenyu_recall' },
           { phase: 'tool_end', tool_call_id: 't1', name: 'shenyu_recall', ok: true },
@@ -24,6 +32,11 @@ describe('applyChatCompletion', () => {
     expect(message.thinkingSegments[0].textOffset).toBe(0)
     expect(message.events).toHaveLength(2)
     expect(message.events[1].ok).toBe(true)
+    expect(message.responseMeta?.context_rounds).toBe(9)
+    expect(message.responseMeta?.context_trim_in_rounds).toBe(17)
+    expect(message.responseMeta?.cache_read_percent).toBe(75)
+    expect(message.responseMeta?.first_tool_round_cache_hit).toBe(true)
+    expect(message.responseMeta?.heartbeat_captured).toBe(true)
   })
 
   it('accepts text block content and both reasoning field names', () => {

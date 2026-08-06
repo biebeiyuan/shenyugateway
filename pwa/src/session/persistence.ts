@@ -1,5 +1,5 @@
 import type { ToolEvent } from '../toolLanguage'
-import type { MessageVariant, Role, ThinkingSegment, UiMessage } from '../types'
+import type { MessageVariant, ResponseMeta, Role, ThinkingSegment, UiMessage } from '../types'
 import { createId } from '../utils'
 import { applyVariant, cloneVariant, selectedVariantIndex, syncCurrentVariant } from './variants'
 
@@ -31,6 +31,25 @@ function cloneStoredThinkingSegments(value: unknown): ThinkingSegment[] {
     : []
 }
 
+function cloneStoredResponseMeta(value: unknown): ResponseMeta | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const raw = value as Record<string, unknown>
+  return {
+    context_rounds: Number.isFinite(Number(raw.context_rounds)) ? Number(raw.context_rounds) : undefined,
+    context_trim_in_rounds: raw.context_trim_in_rounds === null
+      ? null
+      : Number.isFinite(Number(raw.context_trim_in_rounds)) ? Number(raw.context_trim_in_rounds) : undefined,
+    cache_read_percent: raw.cache_read_percent === null
+      ? null
+      : Number.isFinite(Number(raw.cache_read_percent)) ? Number(raw.cache_read_percent) : undefined,
+    cache_read_input_tokens: Number.isFinite(Number(raw.cache_read_input_tokens)) ? Number(raw.cache_read_input_tokens) : undefined,
+    cache_total_input_tokens: Number.isFinite(Number(raw.cache_total_input_tokens)) ? Number(raw.cache_total_input_tokens) : undefined,
+    tool_rounds: Number.isFinite(Number(raw.tool_rounds)) ? Number(raw.tool_rounds) : undefined,
+    first_tool_round_cache_hit: raw.first_tool_round_cache_hit === true,
+    heartbeat_captured: raw.heartbeat_captured === true,
+  }
+}
+
 export function loadStoredMessages(): UiMessage[] {
   try {
     const raw = JSON.parse(localStorage.getItem(STORAGE_MESSAGES) || '[]')
@@ -52,6 +71,7 @@ export function loadStoredMessages(): UiMessage[] {
           events: cloneStoredEvents(item.events),
           streaming: false,
           error: item.error ? String(item.error) : undefined,
+          responseMeta: cloneStoredResponseMeta(item.responseMeta),
         }
         if (message.role === 'assistant' && Array.isArray(item.variants) && item.variants.length) {
           const variants = item.variants.map((variant: Partial<MessageVariant>) => cloneVariant(variant))
@@ -81,6 +101,7 @@ type StoredRow = {
   error?: string
   variants?: MessageVariant[]
   selectedVariantIndex?: number
+  responseMeta?: ResponseMeta
 }
 
 function mapRowEvents(row: StoredRow, mapper: (events: ToolEvent[]) => ToolEvent[]): StoredRow {
@@ -111,6 +132,7 @@ export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit
     error: message.error,
     variants: message.variants,
     selectedVariantIndex: message.selectedVariantIndex,
+    responseMeta: message.responseMeta,
   }))
   // Keep a little more than the gateway high-water window so a resident PWA
   // can stop relying on a temporary cold-start handoff.

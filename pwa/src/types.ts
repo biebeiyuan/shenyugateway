@@ -22,6 +22,18 @@ export type MessageVariant = {
   thinkingSegments: ThinkingSegment[]
   events: ToolEvent[]
   error?: string
+  responseMeta?: ResponseMeta
+}
+
+export type ResponseMeta = {
+  context_rounds?: number
+  context_trim_in_rounds?: number | null
+  cache_read_percent?: number | null
+  cache_read_input_tokens?: number
+  cache_total_input_tokens?: number
+  tool_rounds?: number
+  first_tool_round_cache_hit?: boolean
+  heartbeat_captured?: boolean
 }
 
 export type UiMessage = {
@@ -37,6 +49,7 @@ export type UiMessage = {
   expanded?: boolean
   variants?: MessageVariant[]
   selectedVariantIndex?: number
+  responseMeta?: ResponseMeta
 }
 
 export type ProcessGroup = {

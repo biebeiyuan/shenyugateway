@@ -17,6 +17,7 @@ from .request_logs import (
     _upstream_payload_summary,
 )
 from .response_capture import AssistantTagFilter, split_private_assistant_tags
+from .response_meta import build_response_meta, response_meta_enabled
 from .runtime import json_dumps as _json_dumps
 from .runtime import logger, now_ts as _now_ts
 from .store._admin import TOOL_ERROR_CONFIG_PHRASES
@@ -30,6 +31,7 @@ from .streaming import (
     _stream_keepalive_event,
     _stream_reasoning_event,
     _stream_role_event,
+    _stream_response_meta_event,
     _stream_tool_event,
     close_stream_reader,
     read_next_stream_chunk,
@@ -294,6 +296,21 @@ def _attach_tool_events(completion: dict, ctx: InternalToolLoopContext) -> dict:
     return completion
 
 
+def _tool_response_meta(ctx: InternalToolLoopContext) -> dict[str, Any]:
+    rounds = list((ctx.log_entry or {}).get("internal_tool_rounds") or [])
+    first_cache = (rounds[0].get("cache_usage") or {}) if rounds else {}
+    tool_rounds = sum(1 for round_item in rounds if round_item.get("tools"))
+    return build_response_meta(
+        ctx.meta,
+        (ctx.log_entry or {}).get("cache_usage") or {},
+        heartbeat_captured=bool(ctx.meta.get("heartbeat_captured")),
+        tool_rounds=tool_rounds,
+        first_tool_round_cache_hit=bool(
+            tool_rounds and first_cache.get("cache_read_input_tokens", 0) > 0
+        ),
+    )
+
+
 async def _execute_mixed_gateway_tool_calls(
     ctx: InternalToolLoopContext,
     completion: dict,
@@ -440,6 +457,8 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
                 round_log,
                 latest_user_text=latest_user_text,
             )
+            if response_meta_enabled(ctx.meta):
+                completion.setdefault("shenyu", {})["response_meta"] = _tool_response_meta(ctx)
             return _attach_tool_events(completion, ctx)
 
         _append_assistant_tool_call_message(working_messages, completion, tool_calls, round_log)
@@ -622,6 +641,13 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                 ctx.record_response_text(ctx.log_entry, _normalize_text(completion.get("choices", [{}])[0].get("message", {}).get("content")))
 
             if tool_calls:
+                if response_meta_enabled(ctx.meta):
+                    yield _stream_response_meta_event(
+                        ctx.body.model,
+                        _tool_response_meta(ctx),
+                        chunk_id=stream_chunk_id,
+                        created=stream_created,
+                    )
                 replay_completion = stream_replay.replay_completion(completion)
                 for chunk in _completion_to_stream_events(
                     replay_completion,
@@ -636,6 +662,13 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                     yield _stream_content_event(
                         ctx.body.model,
                         fallback_meta["text"],
+                        chunk_id=stream_chunk_id,
+                        created=stream_created,
+                    )
+                if response_meta_enabled(ctx.meta):
+                    yield _stream_response_meta_event(
+                        ctx.body.model,
+                        _tool_response_meta(ctx),
                         chunk_id=stream_chunk_id,
                         created=stream_created,
                     )
@@ -821,6 +854,7 @@ async def _finalize_non_gateway_tool_reply(
         )
     )
     ctx.last_fallback_meta = fallback_meta
+    ctx.meta["heartbeat_captured"] = bool(heartbeat_content)
     if heartbeat_content:
         ctx.store_heartbeat(ctx.session_id, ctx.session, heartbeat_content)
     if fallback_meta["applied"] and ctx.log_entry is not None:

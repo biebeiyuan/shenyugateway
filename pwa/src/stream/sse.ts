@@ -1,5 +1,5 @@
 import type { ToolEvent } from '../toolLanguage'
-import type { UiMessage } from '../types'
+import type { ResponseMeta, UiMessage } from '../types'
 import { createId, textLength } from '../utils'
 
 // SSE protocol parsing for /v1/chat/completions streams. The gateway sends
@@ -62,6 +62,13 @@ export function parseSseFrame(frame: string, assistant: UiMessage): boolean {
   if (data === '[DONE]') return true
   try {
     const payload = JSON.parse(data)
+    if (eventName === 'shenyu_meta' || payload.type === 'shenyu.response_meta') {
+      const meta = payload.meta
+      if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
+        assistant.responseMeta = { ...(meta as ResponseMeta) }
+      }
+      return false
+    }
     if (eventName === 'shenyu_tool' || payload.type === 'shenyu.tool_event') {
       const event = payload.event as ToolEvent
       if (event) appendToolEvent(assistant, event)

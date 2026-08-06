@@ -475,9 +475,21 @@ The PWA records its current streamed text length when each tool event arrives, s
 tool round between the corresponding text segments without adding a provider-specific field to the
 gateway contract.
 
+Every successful PWA reply also receives one content-free response summary. Streaming responses emit it
+before `[DONE]` as `event: shenyu_meta` with `type: shenyu.response_meta`; non-streaming responses expose the
+same object under `shenyu.response_meta`. `context_rounds` is the number of retained human-turn groups actually
+sent in the client-history window. `context_trim_in_rounds` uses the same request's dynamic `context_high_water`
+and `client_non_system_retained` values to estimate how many normal PWA user/assistant turns remain before the
+gateway's next high-water trim; it is null when the configured window is unlimited. `cache_read_percent`
+uses the provider-normalized cache coverage already used by Admin and is omitted when its denominator is not
+reliable. For a tool-using reply, that percentage aggregates all upstream rounds; `tool_rounds` counts only rounds
+that actually executed a gateway-native tool, while `first_tool_round_cache_hit` states whether the first upstream
+round reported positive cache reads. `heartbeat_captured` is a boolean only: heartbeat text remains private and is
+never added to the client event.
+
 The PWA keeps streaming enabled by default and stores its Stream toggle as a browser-local preference.
 Turning it off sends `stream: false` only for that PWA's chat requests; the completed response then
-hydrates the same visible answer, Thinking, and `shenyu.tool_events` message state without changing the
+hydrates the same visible answer, Thinking, `shenyu.tool_events`, and `shenyu.response_meta` message state without changing the
 gateway default, upstream preset, session identity, or any other client.
 Both modes pass through the response-shape evidence described above, so a single normal request can distinguish
 an upstream omission from adapter loss or a PWA parser/display problem without enabling full-payload logging.

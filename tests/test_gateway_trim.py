@@ -76,6 +76,7 @@ def test_pwa_client_profile_hides_client_tools_and_enables_tool_events():
 
     assert profile["client_tool_surface"] == "none"
     assert profile["emit_tool_events"] is True
+    assert profile["emit_response_meta"] is True
     assert profile["emit_tool_event_details"] is False
     assert profile["tool_event_protocol"] == "sse+json"
 
@@ -89,6 +90,7 @@ def test_client_profile_only_emits_tool_details_when_explicitly_requested():
 
     assert profile["emit_tool_events"] is True
     assert profile["emit_tool_event_details"] is True
+    assert profile["emit_response_meta"] is False
 
 
 def test_context_overflow_defaults_to_20_percent_with_bounds():

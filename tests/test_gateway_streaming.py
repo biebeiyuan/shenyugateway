@@ -375,7 +375,11 @@ def test_chat_pipeline_updates_single_early_log_on_success(monkeypatch):
             {
                 "session": session,
                 "is_first_turn": True,
-                "client_message_window": {},
+                "client_message_window": {
+                    "human_turn_groups_original": 1,
+                    "human_turn_groups_retained": 1,
+                },
+                "client_profile": {"emit_response_meta": True},
                 "cache_layers": {},
                 "upstream": {
                     "chat_url": "https://example.test/v1/chat/completions",
@@ -413,6 +417,7 @@ def test_chat_pipeline_updates_single_early_log_on_success(monkeypatch):
     result = asyncio.run(pipeline.run(_fake_request({"X-Shenyu-Session-Tag": "new-test-thread"}), body))
 
     assert result["choices"][0]["message"]["content"] == "ok"
+    assert result["shenyu"]["response_meta"]["context_rounds"] == 1
     assert len(request_logs) == 1
     entry = request_logs[0]
     assert entry["status"] == "ok"
@@ -2074,6 +2079,11 @@ def test_openai_plain_stream_adds_done_when_upstream_ends_without_sentinel():
             private_capture_fallback_text=lambda *_args, **_kwargs: ("fallback", ""),
             private_capture_kinds=lambda **_kwargs: [],
             on_complete=lambda *args: completed.append(args),
+            response_meta=lambda **_kwargs: {
+                "context_rounds": 6,
+                "cache_read_percent": 50,
+                "heartbeat_captured": False,
+            },
         )
 
         chunks = []
@@ -2081,6 +2091,8 @@ def test_openai_plain_stream_adds_done_when_upstream_ends_without_sentinel():
             chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
 
         assert chunks[-1] == "data: [DONE]\n\n"
+        assert chunks[-2].startswith("event: shenyu_meta\n")
+        assert '"cache_read_percent": 50' in chunks[-2]
         assert upstream_response.closed is True
         assert completed and completed[0][0] == "hello"
         evidence = upstream["_shenyu_upstream_response_evidence"]

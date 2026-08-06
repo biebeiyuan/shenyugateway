@@ -11,7 +11,12 @@ from fastapi.responses import StreamingResponse
 
 from .response_capture import AssistantTagFilter, clean_text_from_filter_source
 from .runtime import now_ts as _now_ts
-from .streaming import _new_stream_chunk_id, _sse_response, _stream_content_event
+from .streaming import (
+    _new_stream_chunk_id,
+    _sse_response,
+    _stream_content_event,
+    _stream_response_meta_event,
+)
 from .upstream_adapter import (
     _anthropic_stop_reason_to_openai,
     _anthropic_to_openai_chunk,
@@ -39,6 +44,7 @@ async def stream_chat(
     private_capture_kinds: Callable[..., list[str]],
     on_complete: Optional[Callable[..., None]] = None,
     latest_user_text: str = "",
+    response_meta: Optional[Callable[..., dict[str, Any]]] = None,
 ) -> StreamingResponse:
     """Forward a streaming response to the client, filtering heartbeat tags."""
     proto = upstream["protocol"]
@@ -85,6 +91,25 @@ async def stream_chat(
             terminal_status = "ok"
             terminal_error = ""
             upstream_event_seen = False
+            response_meta_sent = False
+
+            def response_meta_event(heartbeat_content: str, usage: dict[str, Any]) -> Optional[str]:
+                nonlocal response_meta_sent
+                if response_meta is None or response_meta_sent or not upstream_event_seen:
+                    return None
+                response_meta_sent = True
+                return _stream_response_meta_event(
+                    model,
+                    response_meta(
+                        heartbeat_content=heartbeat_content,
+                        usage=usage,
+                        finish_reason=stream_finish_reason or None,
+                        terminal_status=terminal_status,
+                    ),
+                    chunk_id=stream_chunk_id,
+                    created=stream_created,
+                )
+
             try:
                 async for raw_line in resp.aiter_lines():
                     line = raw_line.strip()
@@ -119,6 +144,9 @@ async def stream_chat(
                                 chunk_id=stream_chunk_id,
                                 created=stream_created,
                             )
+                        metadata_event = response_meta_event(heartbeat_content, stream_usage)
+                        if metadata_event:
+                            yield metadata_event
                         yield "data: [DONE]\n\n"
                         done_sent = True
                         continue
@@ -201,6 +229,9 @@ async def stream_chat(
                             chunk_id=stream_chunk_id,
                             created=stream_created,
                         )
+                    metadata_event = response_meta_event(heartbeat_content, stream_usage)
+                    if metadata_event:
+                        yield metadata_event
                     yield "data: [DONE]\n\n"
                 if not upstream_event_seen:
                     terminal_status = "error"
@@ -253,6 +284,25 @@ async def stream_chat(
         terminal_status = "ok"
         terminal_error = ""
         upstream_event_seen = False
+        response_meta_sent = False
+
+        def response_meta_event(heartbeat_content: str, usage: dict[str, Any]) -> Optional[str]:
+            nonlocal response_meta_sent
+            if response_meta is None or response_meta_sent or not upstream_event_seen:
+                return None
+            response_meta_sent = True
+            return _stream_response_meta_event(
+                model,
+                response_meta(
+                    heartbeat_content=heartbeat_content,
+                    usage=usage,
+                    finish_reason=_anthropic_stop_reason_to_openai(anthropic_stop_reason),
+                    terminal_status=terminal_status,
+                ),
+                chunk_id=stream_chunk_id,
+                created=stream_created,
+            )
+
         try:
             async for line in resp.aiter_lines():
                 line = line.strip()
@@ -368,6 +418,9 @@ async def stream_chat(
                     chunk_id=stream_chunk_id,
                     created=stream_created,
                 )
+            metadata_event = response_meta_event(heartbeat_content, _anthropic_usage_to_openai(anthropic_usage) or {})
+            if metadata_event:
+                yield metadata_event
             yield "data: [DONE]\n\n"
             if not upstream_event_seen:
                 terminal_status = "error"

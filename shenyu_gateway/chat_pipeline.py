@@ -37,6 +37,7 @@ from .upstream_response_evidence import (
     ensure_upstream_response_evidence,
     upstream_response_evidence_snapshot,
 )
+from .response_meta import attach_response_meta, build_response_meta, response_meta_enabled
 
 
 def _unpack_private_capture_result(result: tuple) -> tuple[str, str, dict[str, Any]]:
@@ -506,6 +507,21 @@ class ChatPipeline:
                 finally:
                     self._persist_log_entry(log_entry)
 
+            def _response_meta(
+                *,
+                heartbeat_content: str = "",
+                usage: Optional[dict] = None,
+                **_kwargs: Any,
+            ) -> dict[str, Any]:
+                return build_response_meta(
+                    meta,
+                    _cache_usage_summary(
+                        usage or {},
+                        protocol=upstream.get("protocol", ""),
+                    ),
+                    heartbeat_captured=bool(heartbeat_content),
+                )
+
             return await self.stream_chat(
                 request,
                 payload,
@@ -514,6 +530,7 @@ class ChatPipeline:
                 upstream,
                 on_complete=_on_stream_complete,
                 latest_user_text=_latest_user_text(prepared_messages),
+                response_meta=_response_meta if response_meta_enabled(meta) else None,
             )
 
         completion = await self.nonstream_chat(request, payload, headers, body.model, upstream)
@@ -540,6 +557,13 @@ class ChatPipeline:
         sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content})
         self.write_completion_context_snapshot(meta, clean_content)
         self.mark_context_consumed(meta)
+        if response_meta_enabled(meta):
+            attach_response_meta(
+                completion,
+                meta,
+                log_entry.get("cache_usage") or {},
+                heartbeat_captured=bool(heartbeat_content),
+            )
         log_entry["status"] = "ok"
         _record_response_text(log_entry, clean_content)
         return completion

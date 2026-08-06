@@ -80,11 +80,18 @@ describe('ensureVariants and syncCurrentVariant', () => {
 describe('applyVariant and switching bounds', () => {
   it('replaces live fields with the chosen variant copy', () => {
     const message = assistant('old')
-    const variant = { content: 'new', thinking: 'why', thinkingSegments: [{ id: 's', content: 'seg', textOffset: 0, streamOrder: 0 }], events: [] }
+    const variant = {
+      content: 'new',
+      thinking: 'why',
+      thinkingSegments: [{ id: 's', content: 'seg', textOffset: 0, streamOrder: 0 }],
+      events: [],
+      responseMeta: { context_rounds: 7, heartbeat_captured: true },
+    }
     applyVariant(message, variant, 1)
     expect(message.content).toBe('new')
     expect(message.selectedVariantIndex).toBe(1)
     expect(message.thinkingSegments[0]).not.toBe(variant.thinkingSegments[0])
+    expect(message.responseMeta).toEqual({ context_rounds: 7, heartbeat_captured: true })
   })
 
   it('allows switching only inside the variant list', () => {

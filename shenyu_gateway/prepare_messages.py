@@ -68,6 +68,7 @@ def _resolve_client_profile(request: Request, client_name: str, cfg: Any) -> dic
         "client_tool_surface": "none" if pwa_client else configured_surface,
         "emit_tool_events": emit_tool_events,
         "emit_tool_event_details": emit_tool_event_details,
+        "emit_response_meta": pwa_client,
         "tool_event_protocol": "sse+json" if emit_tool_events else "none",
     }
 

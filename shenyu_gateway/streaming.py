@@ -106,6 +106,25 @@ def _stream_tool_event(
     return f"event: shenyu_tool\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
+def _stream_response_meta_event(
+    model: str,
+    metadata: dict[str, Any],
+    *,
+    chunk_id: Optional[str] = None,
+    created: Optional[int] = None,
+) -> str:
+    """Emit content-free PWA status metadata without changing chat chunks."""
+    body = {
+        "type": "shenyu.response_meta",
+        "object": "shenyu.response_meta",
+        "id": chunk_id or _new_stream_chunk_id(),
+        "created": created if created is not None else _now_ts(),
+        "model": model,
+        "meta": metadata,
+    }
+    return f"event: shenyu_meta\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+
 def _sse_response(generator) -> StreamingResponse:
     return StreamingResponse(
         generator,

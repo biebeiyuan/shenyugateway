@@ -1,5 +1,5 @@
 import type { ToolEvent } from '../toolLanguage'
-import type { UiMessage } from '../types'
+import type { ResponseMeta, UiMessage } from '../types'
 import { appendThinking, appendToolEvent } from './sse'
 
 function completionText(value: unknown): string {
@@ -29,6 +29,14 @@ function completionToolEvents(payload: Record<string, unknown>): ToolEvent[] {
   ))
 }
 
+function completionResponseMeta(payload: Record<string, unknown>): ResponseMeta | undefined {
+  const shenyu = payload.shenyu
+  if (!shenyu || typeof shenyu !== 'object' || Array.isArray(shenyu)) return undefined
+  const meta = (shenyu as Record<string, unknown>).response_meta
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return undefined
+  return { ...(meta as ResponseMeta) }
+}
+
 export function applyChatCompletion(payload: Record<string, unknown>, assistant: UiMessage): void {
   if (payload.error) {
     const error = payload.error
@@ -48,6 +56,8 @@ export function applyChatCompletion(payload: Record<string, unknown>, assistant:
     : {}
 
   for (const event of completionToolEvents(payload)) appendToolEvent(assistant, event)
+  const responseMeta = completionResponseMeta(payload)
+  if (responseMeta) assistant.responseMeta = responseMeta
   appendThinking(assistant, completionText(reply.reasoning_content))
   appendThinking(assistant, completionText(reply.reasoning))
   assistant.content += completionText(reply.content)

@@ -44,6 +44,19 @@ describe('parseSseFrame', () => {
     expect(message.events[1].ok).toBe(true)
   })
 
+  it('maps content-free response metadata onto the assistant reply', () => {
+    const message = assistant()
+    parseSseFrame('event: shenyu_meta\ndata: {"type":"shenyu.response_meta","meta":{"context_rounds":12,"context_trim_in_rounds":17,"cache_read_percent":68.4,"tool_rounds":2,"first_tool_round_cache_hit":true,"heartbeat_captured":true}}', message)
+    expect(message.responseMeta).toEqual({
+      context_rounds: 12,
+      context_trim_in_rounds: 17,
+      cache_read_percent: 68.4,
+      tool_rounds: 2,
+      first_tool_round_cache_hit: true,
+      heartbeat_captured: true,
+    })
+  })
+
   it('throws on error payloads and unparseable data frames, skips comment frames', () => {
     const message = assistant()
     expect(() => parseSseFrame('data: {"error":{"message":"上游断开"}}', message)).toThrow('上游断开')
