@@ -349,7 +349,7 @@ function ledeLine(item: MemoryGraphRecallPreviewItem): string {
 
 /* 来源族一眼可辨（与 OriginalPaper 同一种纸） */
 .board-paper.fam-letter { border-radius: 3px; }
-.board-paper.fam-sticky { background: rgba(250, 231, 238, 0.92); border-radius: 3px; }
+.board-paper.fam-sticky { background: var(--sy-rose-soft); border-radius: 3px; }
 .board-paper.fam-card { border-color: var(--sy-hair-gilt, #d8c2a8); }
 .board-paper.fam-slip { border-top: 3px double var(--sy-gilt, #c79748); border-radius: 2px; }
 [data-theme='night'] .board-paper.fam-sticky { background: #43303a; }

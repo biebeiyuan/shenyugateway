@@ -21,12 +21,26 @@ def test_pwa_worker_and_build_info_bypass_browser_and_cdn_caches():
     async def hashed_bundle():
         return {"bundle": True}
 
+    @app.get("/")
+    async def root_page():
+        return {"root": True}
+
+    @app.get("/admin")
+    async def admin_page():
+        return {"admin": True}
+
+    @app.get("/admin/assets/index.js")
+    async def admin_hashed_bundle():
+        return {"admin_bundle": True}
+
     register_middlewares(app, SimpleNamespace(gateway_key=""))
     client = TestClient(app)
 
-    for path in ("/chat/sw.js", "/chat/build-info.json"):
+    for path in ("/chat/sw.js", "/chat/build-info.json", "/", "/admin"):
         response = client.get(path)
         assert response.headers["cache-control"] == "no-store, max-age=0"
         assert response.headers["cdn-cache-control"] == "no-store"
 
     assert "cache-control" not in client.get("/chat/assets/index.js").headers
+    # Hashed admin bundles stay cacheable; only the shell HTML bypasses caches.
+    assert "cache-control" not in client.get("/admin/assets/index.js").headers

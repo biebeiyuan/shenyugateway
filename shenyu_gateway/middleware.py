@@ -13,7 +13,10 @@ from .request_logs import (
 )
 from .runtime import iso_now as _iso_now, logger
 
-_PWA_FRESH_ASSETS = {"/chat/sw.js", "/chat/build-info.json"}
+# These documents decide which hashed bundles a client loads. If a browser or
+# CDN caches them, old HTML can pair fresh CSS with stale JS (or the reverse)
+# and render a mixed, broken page, so they must always bypass caches.
+_NO_STORE_PATHS = {"/chat/sw.js", "/chat/build-info.json", "/", "/admin", "/admin/"}
 
 
 def register_middlewares(app: FastAPI, cfg) -> None:
@@ -50,10 +53,11 @@ def register_middlewares(app: FastAPI, cfg) -> None:
         try:
             response = await call_next(request)
             response.headers["X-Shenyu-Request-Id"] = request_id
-            if request.url.path in _PWA_FRESH_ASSETS:
+            if request.url.path in _NO_STORE_PATHS:
                 # The version manifest and worker decide whether an installed
-                # PWA may trust its own shell. CDN caching here would hide a
-                # deployed client even when the Service Worker bypasses cache.
+                # PWA may trust its own shell; the admin shell picks the hashed
+                # bundles. CDN caching here would hide a deployed client even
+                # when the Service Worker bypasses cache.
                 response.headers["Cache-Control"] = "no-store, max-age=0"
                 response.headers["CDN-Cache-Control"] = "no-store"
             if track_chat_request:
