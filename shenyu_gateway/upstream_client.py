@@ -319,6 +319,16 @@ _PASSTHROUGH_RESERVED_HEADERS = {
     "x-shenyu-request-id",
 }
 
+_CUSTOM_UPSTREAM_RESERVED_HEADERS = _PASSTHROUGH_RESERVED_HEADERS | {
+    "proxy-authorization",
+    "x-api-key",
+    "anthropic-version",
+}
+_HTTP_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
+_CUSTOM_UPSTREAM_HEADER_LIMIT = 20
+_CUSTOM_UPSTREAM_HEADER_VALUE_LIMIT = 2048
+_CUSTOM_UPSTREAM_HEADERS_TOTAL_LIMIT = 8192
+
 
 def _is_passthrough_reserved_header(normalized: str) -> bool:
     return normalized in _PASSTHROUGH_RESERVED_HEADERS or normalized.startswith("x-shenyu-")
@@ -349,6 +359,51 @@ def forwarded_client_headers(request: Any, cfg: Any) -> dict[str, str]:
         if value:
             forwarded[normalized] = value
     return forwarded
+
+
+def validated_custom_upstream_headers(value: Any) -> dict[str, str]:
+    """Validate per-request upstream headers without exposing gateway-owned headers."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="upstream_headers 必须是请求头键值对象。")
+    if len(value) > _CUSTOM_UPSTREAM_HEADER_LIMIT:
+        raise HTTPException(
+            status_code=400,
+            detail=f"upstream_headers 最多允许 {_CUSTOM_UPSTREAM_HEADER_LIMIT} 项。",
+        )
+
+    headers: dict[str, str] = {}
+    total_size = 0
+    for raw_name, raw_value in value.items():
+        name = str(raw_name or "").strip()
+        normalized = name.lower()
+        if not name or not _HTTP_HEADER_NAME_RE.fullmatch(name):
+            raise HTTPException(status_code=400, detail=f"无效的上游请求头名称：{name or '(empty)'}。")
+        if normalized in _CUSTOM_UPSTREAM_RESERVED_HEADERS or normalized.startswith("x-shenyu-"):
+            raise HTTPException(status_code=400, detail=f"上游请求头 {name} 由网关管理，不能覆盖。")
+
+        header_value = str(raw_value or "").strip()
+        if any(marker in header_value for marker in ("\r", "\n", "\x00")):
+            raise HTTPException(status_code=400, detail=f"上游请求头 {name} 包含非法换行或空字符。")
+        try:
+            header_value_bytes = header_value.encode("ascii")
+        except UnicodeEncodeError:
+            raise HTTPException(status_code=400, detail=f"上游请求头 {name} 的值只支持 ASCII 字符。")
+        if len(header_value_bytes) > _CUSTOM_UPSTREAM_HEADER_VALUE_LIMIT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"上游请求头 {name} 的值不能超过 {_CUSTOM_UPSTREAM_HEADER_VALUE_LIMIT} 字节。",
+            )
+
+        total_size += len(name.encode("ascii")) + len(header_value_bytes)
+        if total_size > _CUSTOM_UPSTREAM_HEADERS_TOTAL_LIMIT:
+            raise HTTPException(
+                status_code=400,
+                detail=f"upstream_headers 总大小不能超过 {_CUSTOM_UPSTREAM_HEADERS_TOTAL_LIMIT} 字节。",
+            )
+        headers[normalized] = header_value
+    return headers
 
 
 def make_upstream_http_client(cfg: Any) -> httpx.AsyncClient:
@@ -434,6 +489,7 @@ async def build_upstream_request(
     cfg: Any,
 ) -> tuple[dict, dict, str, dict, dict]:
     model_name = mapped_model_name(cfg, body.model)
+    custom_headers = validated_custom_upstream_headers(getattr(body, "upstream_headers", None))
     upstream = (meta or {}).get("upstream") or resolve_upstream(cfg)
     proto = upstream["protocol"]
     raw_messages = messages_override or [message.model_dump(exclude_none=True) for message in body.messages]
@@ -530,6 +586,7 @@ async def build_upstream_request(
             "content-type": "application/json",
         }
         headers.update(forwarded_client_headers(request, cfg))
+        headers.update(custom_headers)
         cache_meta["enabled"] = bool(cache_paths)
         cache_meta["breakpoints"] = cache_paths
         cache_meta["prefix_fingerprints"] = _cache_prefix_fingerprints(payload, cache_paths, proto)
@@ -571,6 +628,7 @@ async def build_upstream_request(
     cache_meta["cache_control_marker_count"] = _cache_control_marker_count(payload)
     headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
     headers.update(forwarded_client_headers(request, cfg))
+    headers.update(custom_headers)
     return payload, headers, model_name, cache_meta, upstream
 
 

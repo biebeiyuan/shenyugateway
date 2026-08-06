@@ -430,6 +430,13 @@ the Admin Config page and applies a selected preset through `POST /api/config`; 
 default upstream configuration, not the PWA client identity, session semantics, memory surface, or tool
 event contract.
 
+The model sheet also owns browser-local editable upstream headers. Completed rows travel only on chat requests
+as `ChatRequest.upstream_headers`; `upstream_client.py` validates them once and applies them to both OpenAI-compatible
+and Anthropic outbound requests. The built-in Claude Code preset is an ordinary editable mapping for
+`User-Agent: claude-cli/2.1.212 (external, cli)`. Gateway-owned authentication, protocol-version, cookie,
+hop-by-hop, and `X-Shenyu-*` headers cannot be replaced. Header values are neither request-log fields nor
+persistent history, and omitting the field preserves the existing upstream request exactly.
+
 Cross-client conversation continuity is keyed by `X-Shenyu-Session-Tag`, not by `X-Shenyu-Client`.
 `X-Shenyu-Client` only selects the client capability profile. Operit and PWA can therefore share one
 conversation by sending the same session tag; the gateway updates the session's last client name but

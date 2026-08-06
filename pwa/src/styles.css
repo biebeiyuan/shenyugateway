@@ -293,6 +293,16 @@ button:disabled { cursor: default; }
 .effort-note { margin: -2px 4px 0; color: var(--text-secondary); font: 400 13px/1.45 var(--font-sans); }
 .preset-empty { display: flex; flex-direction: column; align-items: center; gap: 14px; padding: 22px 18px; border-radius: 22px; background: var(--bg-sunken); color: var(--text-secondary); text-align: center; }
 .preset-empty p { margin: 0; font: 14px/1.45 var(--font-sans); }
+.request-header-list { display: flex; flex-direction: column; gap: 8px; }
+.request-header-row { display: grid; grid-template-columns: minmax(92px, .7fr) minmax(120px, 1.3fr) 36px; gap: 8px; align-items: center; min-height: 50px; padding: 7px 8px 7px 12px; border-radius: 8px; background: #efeeec; }
+.request-header-input { min-width: 0; height: 36px; padding: 0 8px; border: 1px solid transparent; border-radius: 6px; outline: 0; background: rgba(255, 255, 255, .54); color: var(--text-primary); font: 13px/1 var(--font-mono); }
+.request-header-input:focus { border-color: var(--border-strong); background: var(--bg-surface); }
+.request-header-name { font-weight: 600; }
+.request-header-delete { display: grid; width: 36px; height: 36px; place-items: center; border-radius: 50%; color: var(--text-secondary); }
+.request-header-delete:hover { background: rgba(255, 255, 255, .5); color: #c0392b; }
+.request-header-add { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 48px; border: 1px solid var(--border); border-radius: 8px; color: var(--text-secondary); font-size: 14px; }
+.request-header-add:hover { border-color: var(--border-strong); color: var(--text-primary); }
+.request-header-add:disabled { opacity: .45; }
 .extended-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 62px; padding: 10px 18px; }
 .extended-info { display: flex; flex-direction: column; }
 .extended-label { font: 400 16px/1.25 var(--font-sans); }
@@ -348,6 +358,10 @@ button:disabled { cursor: default; }
   .markdown-content, .user-bubble { font-size: 16.5px; }
   .settings-actions { flex-direction: column-reverse; }
   .quiet-button, .primary-button { justify-content: center; }
+  .request-header-row { grid-template-areas: "name delete" "value delete"; grid-template-columns: minmax(0, 1fr) 36px; grid-template-rows: 36px 36px; min-height: 86px; }
+  .request-header-name { grid-area: name; }
+  .request-header-input:not(.request-header-name) { grid-area: value; }
+  .request-header-delete { grid-area: delete; }
 }
 
 @media (prefers-color-scheme: dark) {

@@ -980,6 +980,47 @@ def test_chat_request_does_not_default_or_cap_max_tokens():
     ("protocol", "url"),
     [
         ("openai", "https://example.com"),
+        ("anthropic", "https://api.anthropic.com"),
+    ],
+)
+def test_build_upstream_request_applies_per_request_headers(monkeypatch, protocol, url):
+    monkeypatch.setenv("UPSTREAM_PROTOCOL", protocol)
+    monkeypatch.setenv("UPSTREAM_URL", url)
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "test-key")
+    old_cfg = gateway.cfg
+    gateway.cfg = RuntimeConfig()
+    try:
+        body = ChatRequest(
+            model="test-model",
+            messages=[{"role": "user", "content": "hello"}],
+            upstream_headers={
+                "User-Agent": "claude-cli/2.1.212 (external, cli)",
+                "X-Trace-Id": "abc",
+            },
+        )
+
+        _, headers, _, _, _ = asyncio.run(
+            gateway._build_upstream_request(
+                None,
+                body,
+                messages_override=[{"role": "user", "content": "hello"}],
+            )
+        )
+    finally:
+        gateway.cfg = old_cfg
+
+    assert headers["user-agent"] == "claude-cli/2.1.212 (external, cli)"
+    assert headers["x-trace-id"] == "abc"
+    if protocol == "anthropic":
+        assert headers["x-api-key"] == "test-key"
+    else:
+        assert headers["Authorization"] == "Bearer test-key"
+
+
+@pytest.mark.parametrize(
+    ("protocol", "url"),
+    [
+        ("openai", "https://example.com"),
     ],
 )
 def test_build_upstream_request_omits_max_tokens_when_not_requested(monkeypatch, protocol, url):

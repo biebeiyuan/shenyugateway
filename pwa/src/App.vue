@@ -59,6 +59,15 @@ import {
 } from './api/client'
 import { readUpstreamPresets } from './api/presets'
 import {
+  CLAUDE_CODE_USER_AGENT,
+  isClaudeCodeHeaderPreset,
+  persistUpstreamHeaders,
+  readUpstreamHeaders,
+  upstreamHeaderSummary,
+  upstreamHeadersPayload,
+  type UpstreamHeaderEntry,
+} from './api/upstreamHeaders'
+import {
   initBatteryWatch,
   initWeatherWatch,
   splitStatusSuffix,
@@ -142,7 +151,7 @@ const handoffOpen = ref(false)
 const handoffLoading = ref(false)
 const modelOpen = ref(false)
 const composerMenuOpen = ref(false)
-const modelSheetPage = ref<'main' | 'effort' | 'more' | 'preset'>('main')
+const modelSheetPage = ref<'main' | 'effort' | 'more' | 'preset' | 'headers'>('main')
 const processSheet = ref<ProcessSheet | null>(null)
 const editId = ref<string | null>(null)
 const busy = ref(false)
@@ -153,6 +162,7 @@ const fileRef = ref<HTMLInputElement | null>(null)
 const composerMenuRef = ref<HTMLElement | null>(null)
 const streamRef = ref<HTMLElement | null>(null)
 const presets = ref<UpstreamPreset[]>([])
+const upstreamHeaders = ref<UpstreamHeaderEntry[]>(readUpstreamHeaders())
 const switchingPreset = ref('')
 const runtimeUpstream = ref({ url: '', protocol: '', extraBody: '' })
 const brandMarkUrl = `${import.meta.env.BASE_URL}brand-mark.svg`
@@ -172,6 +182,9 @@ const currentPreset = computed(() => {
   return presets.value.find((preset) => preset.url === runtimeUpstream.value.url && preset.protocol === runtimeUpstream.value.protocol)
 })
 const effectiveEffort = computed(() => extendedThinking.value ? 'max' : effort.value)
+const customHeaderSummary = computed(() => upstreamHeaderSummary(upstreamHeaders.value))
+const hasActiveUpstreamHeaders = computed(() => Object.keys(upstreamHeadersPayload(upstreamHeaders.value)).length > 0)
+const claudeCodeHeaderSelected = computed(() => isClaudeCodeHeaderPreset(upstreamHeaders.value))
 const pwaBuildStatus = computed(() => {
   if (pwaBuildCheck.value === 'checking') return '正在核验线上版本'
   if (pwaBuildCheck.value === 'current') return '当前页面就是线上版本'
@@ -210,6 +223,8 @@ const processSheetTitle = computed(() => {
   if (processSheet.value?.view === 'tool') return toolWarmCopy(processSheetEvent.value || { phase: '', tool_call_id: '', name: '' })
   return '沈予刚才做了什么'
 })
+
+watch(upstreamHeaders, (entries) => persistUpstreamHeaders(entries), { deep: true })
 
 const workspaceContent: Record<WorkspaceId, { eyebrow: string; title: string; description: string; action: string; detail: string }> = {
   chats: {
@@ -608,7 +623,31 @@ function toggleStreamResponses() {
   localStorage.setItem(STORAGE_STREAM, String(streamResponses.value))
 }
 
-function openModelSheet(page: 'main' | 'effort' | 'more' | 'preset' = 'main') {
+function clearUpstreamHeaders() {
+  upstreamHeaders.value = []
+}
+
+function selectClaudeCodeHeaders() {
+  upstreamHeaders.value = [{
+    id: createId('header'),
+    name: 'User-Agent',
+    value: CLAUDE_CODE_USER_AGENT,
+  }]
+}
+
+function addUpstreamHeader() {
+  if (upstreamHeaders.value.length >= 20) {
+    errorNotice.value = '自定义请求头最多 20 项。'
+    return
+  }
+  upstreamHeaders.value.push({ id: createId('header'), name: '', value: '' })
+}
+
+function removeUpstreamHeader(id: string) {
+  upstreamHeaders.value = upstreamHeaders.value.filter((entry) => entry.id !== id)
+}
+
+function openModelSheet(page: 'main' | 'effort' | 'more' | 'preset' | 'headers' = 'main') {
   loadPresets()
   modelSheetPage.value = page
   modelOpen.value = true
@@ -623,6 +662,7 @@ function modelSheetTitle(): string {
   if (modelSheetPage.value === 'effort') return 'Effort'
   if (modelSheetPage.value === 'more') return 'More models'
   if (modelSheetPage.value === 'preset') return 'Preset'
+  if (modelSheetPage.value === 'headers') return '上游请求头'
   return 'Select model'
 }
 
@@ -866,12 +906,14 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
 
   try {
     const useStreaming = streamResponses.value
-    const body = {
+    const body: Record<string, unknown> = {
       model: selectedModel.value,
       messages: wireMessages(source.filter((message) => message.id !== assistant.id)),
       stream: useStreaming,
       reasoning_effort: effectiveEffort.value,
     }
+    const requestHeaders = upstreamHeadersPayload(upstreamHeaders.value)
+    if (Object.keys(requestHeaders).length) body.upstream_headers = requestHeaders
     if (useStreaming) {
       const stream = await postChatStream(clientContext(), body, activeController.signal)
       await pumpSseStream(stream, (frame) => parseSseFrame(frame, assistant), scrollToBottom)
@@ -1474,6 +1516,15 @@ onUnmounted(() => {
               </button>
             </div>
             <div class="model-group">
+              <button class="model-group-item" @click="openModelSheet('headers')">
+                <span class="model-info">
+                  <span class="model-name">请求头</span>
+                  <span class="model-desc">{{ customHeaderSummary }}</span>
+                </span>
+                <ChevronRight :size="18" class="model-nav-right" />
+              </button>
+            </div>
+            <div class="model-group">
               <div class="extended-row">
                 <span class="extended-info"><span class="extended-label">Stream</span><span class="extended-desc">{{ streamResponses ? '流式' : '非流式' }}</span></span>
                 <button class="toggle" :class="{ on: streamResponses }" type="button" role="switch" :aria-checked="streamResponses" aria-label="切换流式回应" @click="toggleStreamResponses"><span /></button>
@@ -1521,6 +1572,38 @@ onUnmounted(() => {
               <button class="workspace-action" type="button" @click="openConsole"><ExternalLink :size="16" /> <span>Open Console</span></button>
             </div>
             <p class="effort-note">Presets use the same Console storage and update the fixed default gateway upstream.</p>
+          </template>
+
+          <template v-else-if="modelSheetPage === 'headers'">
+            <div class="model-group">
+              <button class="model-group-item" :class="{ selected: !hasActiveUpstreamHeaders }" @click="clearUpstreamHeaders">
+                <span class="model-info">
+                  <span class="model-name">不附加</span>
+                  <span class="model-desc">默认网关请求</span>
+                </span>
+                <Check v-if="!hasActiveUpstreamHeaders" class="model-check" :size="18" />
+              </button>
+              <button class="model-group-item" :class="{ selected: claudeCodeHeaderSelected }" @click="selectClaudeCodeHeaders">
+                <span class="model-info">
+                  <span class="model-name">Claude Code</span>
+                  <span class="model-desc">claude-cli/2.1.212 (external, cli)</span>
+                </span>
+                <Check v-if="claudeCodeHeaderSelected" class="model-check" :size="18" />
+              </button>
+            </div>
+
+            <div v-if="upstreamHeaders.length" class="request-header-list">
+              <div v-for="entry in upstreamHeaders" :key="entry.id" class="request-header-row">
+                <input v-model="entry.name" class="request-header-input request-header-name" maxlength="256" placeholder="Header" autocomplete="off" spellcheck="false" :aria-label="`请求头名称 ${entry.name || ''}`">
+                <input v-model="entry.value" class="request-header-input" maxlength="2048" placeholder="Value" autocomplete="off" spellcheck="false" :aria-label="`请求头 ${entry.name || '未命名'} 的值`">
+                <button class="request-header-delete" type="button" aria-label="删除请求头" title="删除请求头" @click="removeUpstreamHeader(entry.id)"><Trash2 :size="17" /></button>
+              </div>
+            </div>
+
+            <button class="request-header-add" type="button" :disabled="upstreamHeaders.length >= 20" @click="addUpstreamHeader">
+              <Plus :size="17" />
+              <span>添加请求头</span>
+            </button>
           </template>
 
           <template v-else>

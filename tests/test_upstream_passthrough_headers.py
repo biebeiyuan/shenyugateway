@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+from fastapi import HTTPException
 from starlette.datastructures import Headers
 
-from shenyu_gateway.upstream_client import forwarded_client_headers
+from shenyu_gateway.upstream_client import forwarded_client_headers, validated_custom_upstream_headers
 
 
 def _request(headers: dict[str, str]) -> SimpleNamespace:
@@ -100,3 +102,34 @@ def test_custom_header_forwarded():
     cfg = SimpleNamespace(upstream_passthrough_headers=["x-api-key", "x-trace-id"])
     req = _request({"x-api-key": "k", "x-trace-id": "abc"})
     assert forwarded_client_headers(req, cfg) == {"x-api-key": "k", "x-trace-id": "abc"}
+
+
+def test_per_request_headers_accept_claude_code_user_agent():
+    assert validated_custom_upstream_headers(
+        {"User-Agent": "claude-cli/2.1.212 (external, cli)", "X-Trace-Id": "abc"}
+    ) == {
+        "user-agent": "claude-cli/2.1.212 (external, cli)",
+        "x-trace-id": "abc",
+    }
+
+
+@pytest.mark.parametrize(
+    "name",
+    ["Authorization", "X-Api-Key", "Anthropic-Version", "Cookie", "X-Shenyu-Client"],
+)
+def test_per_request_headers_reject_gateway_owned_names(name):
+    with pytest.raises(HTTPException, match="由网关管理"):
+        validated_custom_upstream_headers({name: "override"})
+
+
+@pytest.mark.parametrize(
+    ("headers", "message"),
+    [
+        ({"Bad Header": "value"}, "无效的上游请求头名称"),
+        ({"X-Trace": "one\r\ntwo"}, "包含非法换行"),
+        ({"X-Trace": "中文"}, "只支持 ASCII"),
+    ],
+)
+def test_per_request_headers_reject_invalid_wire_values(headers, message):
+    with pytest.raises(HTTPException, match=message):
+        validated_custom_upstream_headers(headers)

@@ -14,7 +14,7 @@
 
 Operit、PWA 聊天端以及未来的其他聊天客户端都属于请求链两端的客户端表面，不是网关内部的第九个代码区。客户端负责输入、展示、Markdown/代码渲染、工具过程的友好映射和客户端请求头；上下文、会话、工具真实执行、上游适配与持久状态仍由下面八个区域各自拥有。
 
-PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它使用 `X-Shenyu-Client: shenyu-pwa` 和 `X-Shenyu-Tool-Events: true` 接入现有聊天契约，并以 `X-Shenyu-Tool-Details: true` 仅为当前响应请求工具的实际输入与传回模型的结果。详情绝不进入请求日志或持久历史。PWA 还读取 Admin Config 页面同源保存的 `shenyu_upstream_presets`，通过 `POST /api/config` 切换固定默认上游预设。这个选择不改变 PWA 的客户端身份、会话、记忆或工具事件契约。只有当客户端开始拥有独立的服务端状态、业务规则或持久化责任时，才需要重新评估是否形成新的架构区。
+PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它使用 `X-Shenyu-Client: shenyu-pwa` 和 `X-Shenyu-Tool-Events: true` 接入现有聊天契约，并以 `X-Shenyu-Tool-Details: true` 仅为当前响应请求工具的实际输入与传回模型的结果。详情绝不进入请求日志或持久历史。PWA 还读取 Admin Config 页面同源保存的 `shenyu_upstream_presets`，通过 `POST /api/config` 切换固定默认上游预设；模型面板中的浏览器本地请求头则通过单次 `ChatRequest.upstream_headers` 交给区域三校验并映射成真正上游 header，不修改网关全局配置。两种选择都不改变 PWA 的客户端身份、会话、记忆或工具事件契约，请求头值也不进入请求日志。只有当客户端开始拥有独立的服务端状态、业务规则或持久化责任时，才需要重新评估是否形成新的架构区。
 
 ## 住户数据注意事项
 
@@ -137,6 +137,7 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 **边界**
 
 - OpenAI-compatible 与 Anthropic 可以共享网关内部 message 语义，但 payload、cache 和 usage 必须分层适配。
+- 单次 `upstream_headers` 只能附加普通上游 header；认证、协议版本、Cookie、hop-by-hop 与 `X-Shenyu-*` 仍由网关独占，且自定义值不得进入请求日志或持久历史。
 - Pioneer、TreeGPT 或单一 relay 的非标准字段不能成为全局标准。
 - 缺失 cache usage 代表 provider unknown，不等同于 cache miss。
 
