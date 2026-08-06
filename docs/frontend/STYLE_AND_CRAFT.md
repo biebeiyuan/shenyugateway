@@ -86,7 +86,39 @@ node scripts/mobile-shots.mjs  # 390×844 触屏模拟走关键路径，截图�
 - 圆圆的手机直接打开 `preview:lan` 打印的网址，点点点就是验收；
   只有双方都看过，才谈得上推生产。
 
-## 五、前端地图（谁拥有什么视觉元素）
+## 五、前端 Agent 工作地图（从任务到验证）
+
+这一节是给维护 Agent 的最短路由，不是第二份完整文件清单。路径的唯一正本仍是 `README.md` § Maintenance Map；这里只回答“接到这类前端任务，先从哪里进去”。
+
+### 先从任务进
+
+| 你要做的事 | 第一入口 | 接着确认 | 改完怎样验 |
+|---|---|---|---|
+| Admin 页面布局、文案、交互 | 对应的 `admin/src/views/*.vue` 或子面板 | `AppShell.vue` 、`tokens.css` 、该页面的 API 文件 | `cd admin && npm run test:e2e`；改布局再做 390px 实拍 |
+| Admin 数据、表单、列表行为 | 对应的 `admin/src/api/<domain>.ts` 和页面 | `gateway_admin_routes.py` 与对应的 service/store，再读该功能的现行文档 | 相关 pytest + `cd admin && npm run test:e2e` |
+| Admin 全局皮肤、明暗场、演示数据 | `admin/src/theme/` 、`admin/src/demo/` 、`AppShell.vue` | 不要在视图内自建颜色总闸，演示适配器也只能在 `demo/` | Admin build + 对应页面 smoke；颜色改动做两种主题检查 |
+| PWA 聊天、流式、会话交接 | `pwa/src/App.vue` 与对应的 `api/` 、`session/` 、`stream/` | `shenyu_gateway/chat_pipeline.py` 、`streaming.py` 与 `REQUEST_CONTEXT.md` 外部前端契约 | `cd pwa && npm test && npm run build`；用户可见修复还要做手机验收 |
+| Memory Graph、Stars、Mem、Room 的前端表面 | 对应页面和其子目录（如 `views/memory-graph/`、`views/stars/`、`views/room/`） | 各自的 API 文件、后端功能包和 `MEMORY_ROOM.md` | 相关 pytest + Admin E2E；记忆网络布局还要看手机 |
+| 家里地图、施工簿的 Admin 界面 | `ProjectMapBookModal.vue` 与 `bookshelf/` 下的子面板 | `admin/src/api/books.ts` 、`project_map.py` 、`project_delivery.py` 和 README/DOCS_MAP 权威源 | `tests/test_project_map.py` + `tests/test_owner_project_map.py` + Admin smoke |
+
+### 一条最短链
+
+`Vue 页面/子面板 → admin/src/api 契约 → FastAPI route/service → 现行文档 → pytest/E2E/手机验收`
+
+如果这条链中间出现两个“谁都像在负责”的文件，先以页面的 API 契约和后端路由为准，不根据组件名猜责任。
+
+### 共享文件的边界
+
+- `admin/src/theme/tokens.css` 只守全站设计 token；单个页面的视觉差异留在自己的 scoped style。
+- `admin/src/components/AppShell.vue` 只守全局壳、导航和主题按钮；业务页面不把交互塞回壳里。
+- `admin/src/api/http.ts` 是请求总闸；域名 API 函数留在各自 `api/*.ts`，页面不直接拼 axios 请求。
+- `pwa/src/App.vue` 只做界面状态与编排；会话、SSE 和持久化契约分别留在 `session/` 、`stream/` 和 `api/` 。
+
+### 最近经验放在哪里
+
+`project_delivery_log.jsonl` 的 `lesson` 只记已做完并有验证证据的可复用经验；前端地图不另建 TODO 或未来想法清单。遇到类似施工时，先看对应产品的最近交付记录；已确认的故障经验则沿 `DEBUGGING_GUIDE.md` 引用。
+
+### 视觉拥有者
 
 | 路径 | 拥有 |
 |---|---|

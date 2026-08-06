@@ -228,10 +228,10 @@ function fmtDateTime(value: string | null | undefined): string {
 }
 
 @media (max-width: 760px) {
-  .atlas-head { align-items: flex-start; }
+  .atlas-head { align-items: stretch; flex-direction: column; gap: 10px; }
   .atlas-head > div:first-child > strong { font-size: 17px; }
-  .atlas-head p { max-width: 210px; }
-  .atlas-state { min-width: 0; padding: 8px; }
+  .atlas-head p { max-width: none; }
+  .atlas-state { box-sizing: border-box; width: 100%; min-width: 0; padding: 8px; }
   .atlas-state small { display: none; }
   .atlas-tabs { overflow-x: auto; }
   .atlas-tabs button { min-width: 76px; padding: 0 6px; }

@@ -150,8 +150,3 @@ export async function createGatewayHeartbeat(sessionTag: string, content: string
   const { data } = await api.post(`/api/gateway/sessions/${encodeURIComponent(sessionTag)}/heartbeats`, { content })
   return data
 }
-
-export async function deleteGatewayHeartbeats(sessionTag: string, payload: { ids?: string[]; delete_all?: boolean; confirm?: string }) {
-  const { data } = await api.delete(`/api/gateway/sessions/${encodeURIComponent(sessionTag)}/heartbeats`, { data: payload })
-  return data
-}

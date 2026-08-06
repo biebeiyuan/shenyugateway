@@ -106,11 +106,6 @@ export async function createDrawerNote(content: string) {
   return data as { ok: boolean; id: string }
 }
 
-export async function markDrawerNotesRead(ids: string[]) {
-  const { data } = await api.post('/api/gateway/room/drawer-notes/read', { ids })
-  return data as { ok: boolean; marked: number }
-}
-
 export async function fetchScribbles(limit = 20) {
   const { data } = await api.get('/api/gateway/room/scribbles', { params: { limit } })
   return data as { scribbles: RoomScribble[]; count: number }
