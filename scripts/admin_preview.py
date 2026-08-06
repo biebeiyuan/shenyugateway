@@ -70,6 +70,12 @@ def main(argv: list[str] | None = None) -> int:
     if args.host == "0.0.0.0":
         for ip in lan_ipv4_addresses():
             print(f"  手机同一 Wi-Fi 打开（演示数据）: http://{ip}:{args.port}/admin/?demo=1#/", flush=True)
+        print(
+            "  手机打不开（拒绝访问）时：WSL mirrored 模式下 Windows 防火墙会拦局域网入站，"
+            "需一次性放行——管理员 PowerShell 跑：New-NetFirewallRule -DisplayName "
+            f"ShenyuAdminPreview{args.port} -Direction Inbound -Protocol TCP -LocalPort {args.port} -Action Allow",
+            flush=True,
+        )
     os.chdir(ROOT)
     os.execvpe(sys.executable, command, env)
     return 0
