@@ -409,7 +409,9 @@ function ledeLine(item: MemoryGraphRecallPreviewItem): string {
   .board { aspect-ratio: auto; min-height: 0; padding: 18px 14px; display: flex; flex-direction: column; gap: 12px; }
   .board-strings, .board-corner { display: none; }
   .board-hub { position: static; transform: none; margin: 0 auto 6px; max-width: none; }
-  .board-paper { position: static; transform: none; width: 100% !important; }
+  /* animation 也必须关掉：paper-arrive 的结束姿势是 translate(-50%,-50%)，
+     fill=both 会让它压住 transform:none，纸条永远被往左推半身位 */
+  .board-paper { position: static; transform: none; width: 100% !important; animation: none; }
   .board-paper:hover { transform: none; }
   .pin, .tape { display: none; }
 }
