@@ -256,9 +256,9 @@ html:not([data-theme='night']) .n-popover {
   width: 30px;
   height: 30px;
   border-radius: 50%;
-  border: 0.6px solid var(--sy-hair-gilt, #d8c2a8);
+  border: 0.6px solid var(--sy-hair, #f0e0dc);
   background: transparent;
-  color: var(--sy-gilt, #c79748);
+  color: var(--sy-mute, rgba(74, 53, 53, 0.55));
   font-size: 15px;
   line-height: 1;
   cursor: pointer;
@@ -269,7 +269,7 @@ html:not([data-theme='night']) .n-popover {
 }
 
 .theme-toggle:hover {
-  background: var(--sy-hair-gilt-2, rgba(199, 151, 72, 0.12));
+  background: var(--sy-rose-soft, #faf0ee);
   transform: rotate(-12deg);
 }
 

@@ -148,7 +148,8 @@ const label = computed(() => sourceLabel(props.sourceType))
   font-style: italic;
 }
 
-.paper-content mark {
+/* 命中词高亮经 slot 从父级进来，必须 :deep 才接得住，否则落回浏览器默认黄底 */
+.paper-content :deep(mark) {
   background: none;
   color: var(--sy-self-d, #a07888);
   border-bottom: 1.5px solid var(--sy-self, #c094a8);

@@ -8,7 +8,7 @@ import { useTheme } from '@/theme/theme'
 const { theme } = useTheme()
 const naiveTheme = computed(() => (theme.value === 'night' ? darkTheme : null))
 
-// 与设计 token 同源（theme/tokens.css）：昼 = 软玫瑰粉主色、金只画线，夜 = 古金。
+// 与设计 token 同源（theme/tokens.css）：昼 = 奶油底 + 软玫瑰粉主色，夜 = 古金。
 const themeOverrides = computed<GlobalThemeOverrides>(() => {
   const night = theme.value === 'night'
   return {
@@ -24,7 +24,7 @@ const themeOverrides = computed<GlobalThemeOverrides>(() => {
       warningColorHover: '#b8855a',
       errorColor: '#d4726a',
       errorColorHover: '#c4625a',
-      borderColor: night ? 'rgba(193,154,86,0.28)' : 'rgba(192,148,168,0.32)',
+      borderColor: night ? 'rgba(193,154,86,0.28)' : '#f2ddd8',
       borderRadius: '10px',
     },
   }
