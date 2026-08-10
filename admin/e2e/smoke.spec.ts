@@ -81,12 +81,91 @@ test('config page loads and accepts input without saving', async ({ page }) => {
   })
 })
 
-test('sessions page loads and its search field accepts input', async ({ page }) => {
+test('sessions page protects single-heartbeat deletion with confirmation', async ({ page }) => {
+  let heartbeatDeleted = false
+  let deleteBody: unknown = null
+  const session = {
+    id: 'session-smoke',
+    session_tag: 'smoke-session',
+    client_name: 'e2e',
+    started_at: '2026-08-10T00:00:00Z',
+    last_active_at: '2026-08-10T00:00:00Z',
+    first_message_at: '2026-08-10T00:00:00Z',
+    message_count: 1,
+    context_state_json: '{}',
+    stored_message_count: 1,
+    last_message_at: '2026-08-10T00:00:00Z',
+    user_message_count: 1,
+    assistant_message_count: 0,
+    tool_message_count: 0,
+    heartbeat_count: 1,
+    latest_user_text: 'smoke',
+  }
+  const heartbeat = {
+    id: 'hb-smoke',
+    session_id: session.id,
+    content: '只用于验证删除确认。',
+    turn_number: 1,
+    created_at: '2026-08-10T00:00:00Z',
+    injected_at: null,
+  }
+  await page.route('**/api/gateway/sessions**', async (route) => {
+    const request = route.request()
+    const path = new URL(request.url()).pathname
+    if (request.method() === 'DELETE' && path.endsWith('/heartbeats')) {
+      deleteBody = request.postDataJSON()
+      heartbeatDeleted = true
+      await route.fulfill({ json: { ok: true, deleted: 1 } })
+      return
+    }
+    if (path === '/api/gateway/sessions/smoke-session') {
+      await route.fulfill({
+        json: {
+          session,
+          stats: {
+            messages: 1,
+            user_messages: 1,
+            assistant_messages: 0,
+            tool_messages: 0,
+            heartbeats: heartbeatDeleted ? 0 : 1,
+            cold_start_snapshots: 0,
+            context_snapshots: 0,
+            raw_request_windows: 0,
+          },
+          latest_cold_start_snapshot: null,
+          context_snapshots: [],
+          raw_request_windows: [],
+          cold_start_snapshots: [],
+          recent_messages: [],
+          heartbeats: heartbeatDeleted ? [] : [heartbeat],
+        },
+      })
+      return
+    }
+    await route.fulfill({
+      json: {
+        sessions: [{ ...session, heartbeat_count: heartbeatDeleted ? 0 : 1 }],
+        limit: 200,
+        query: '',
+      },
+    })
+  })
+
   await openAdminRoute(page, '/sessions', async () => {
     await expect(page.getByTestId('page-sessions')).toBeVisible()
     const search = page.getByTestId('sessions-search').locator('input')
     await search.fill('smoke-session')
     await expect(search).toHaveValue('smoke-session')
+
+    await page.locator('.n-tabs-tab').filter({ hasText: 'Heartbeat' }).click()
+    const deleteButton = page.getByTestId('heartbeat-delete-hb-smoke')
+    await expect(deleteButton).toBeVisible()
+    await deleteButton.click()
+    expect(deleteBody).toBeNull()
+    await expect(page.getByText('删除这条 Heartbeat？不会删除线程，且无法撤销。')).toBeVisible()
+    await page.getByRole('button', { name: '确认删除' }).click()
+    await expect(deleteButton).toBeHidden()
+    expect(deleteBody).toEqual({ ids: ['hb-smoke'] })
   })
 })
 

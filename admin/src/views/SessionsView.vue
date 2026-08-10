@@ -17,6 +17,7 @@ import {
 import {
   createGatewayHeartbeat,
   dedupeGatewayMessages,
+  deleteGatewayHeartbeat,
   deleteGatewaySession,
   exportGatewaySession,
   fetchGatewaySession,
@@ -43,6 +44,7 @@ const selectedTag = ref('')
 const detail = ref<GatewaySessionDetail | null>(null)
 const heartbeatDraft = ref('')
 const savingHeartbeat = ref(false)
+const deletingHeartbeatId = ref('')
 const heartbeatVisibleCount = ref(100)
 
 const selectedSession = computed(() => detail.value?.session || sessions.value.find((item) => item.session_tag === selectedTag.value))
@@ -147,6 +149,38 @@ async function saveHeartbeat() {
     message.error(errorText(error, 'Heartbeat 写入失败'))
   } finally {
     savingHeartbeat.value = false
+  }
+}
+
+async function deleteHeartbeat(item: GatewayHeartbeat) {
+  if (!selectedTag.value) return
+  deletingHeartbeatId.value = item.id
+  try {
+    const result = await deleteGatewayHeartbeat(selectedTag.value, item.id)
+    if (result.deleted !== 1) {
+      message.warning('这条 Heartbeat 已不存在，正在刷新列表')
+      await loadSessions()
+      return
+    }
+
+    if (detail.value) {
+      const ownsHeartbeat = item.session_id === detail.value.session.id
+      detail.value = {
+        ...detail.value,
+        heartbeats: detail.value.heartbeats.filter((heartbeat) => heartbeat.id !== item.id),
+        stats: ownsHeartbeat
+          ? { ...detail.value.stats, heartbeats: Math.max(0, detail.value.stats.heartbeats - 1) }
+          : detail.value.stats,
+      }
+    }
+    sessions.value = sessions.value.map((session) => session.id === item.session_id
+      ? { ...session, heartbeat_count: Math.max(0, (session.heartbeat_count || 0) - 1) }
+      : session)
+    message.success('已删除这条 Heartbeat')
+  } catch (error) {
+    message.error(errorText(error, 'Heartbeat 删除失败'))
+  } finally {
+    deletingHeartbeatId.value = ''
   }
 }
 
@@ -365,6 +399,30 @@ function showMoreHeartbeats() {
                     <NTag size="small" type="warning">Heartbeat</NTag>
                     <span>{{ formatTime(item.created_at) }}</span>
                     <span>{{ heartbeatState(item) }}</span>
+                    <NPopconfirm
+                      :width="300"
+                      positive-text="确认删除"
+                      negative-text="取消"
+                      @positive-click="deleteHeartbeat(item)"
+                    >
+                      <template #trigger>
+                        <NButton
+                          circle
+                          quaternary
+                          size="tiny"
+                          type="error"
+                          class="heartbeat-delete"
+                          :data-testid="`heartbeat-delete-${item.id}`"
+                          :aria-label="`删除这条 Heartbeat：${shortText(item.content, 24)}`"
+                          title="删除这条 Heartbeat"
+                          :loading="deletingHeartbeatId === item.id"
+                          :disabled="Boolean(deletingHeartbeatId) && deletingHeartbeatId !== item.id"
+                        >
+                          <span aria-hidden="true">×</span>
+                        </NButton>
+                      </template>
+                      删除这条 Heartbeat？不会删除线程，且无法撤销。
+                    </NPopconfirm>
                   </div>
                   <div class="chat-body">{{ item.content }}</div>
                 </div>
@@ -514,6 +572,19 @@ function showMoreHeartbeats() {
 .chat-head span {
   color: #999;
   font-size: 12px;
+}
+
+.heartbeat-delete {
+  flex: 0 0 26px;
+  height: 26px;
+  margin-left: auto;
+  width: 26px;
+}
+
+.heartbeat-delete span {
+  color: currentColor;
+  font-size: 17px;
+  line-height: 1;
 }
 
 .chat-body {
