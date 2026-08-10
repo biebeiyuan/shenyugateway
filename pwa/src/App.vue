@@ -60,9 +60,12 @@ import {
 import { readUpstreamPresets } from './api/presets'
 import {
   CLAUDE_CODE_USER_AGENT,
+  claudeCodeHeaders,
   isClaudeCodeHeaderPreset,
   persistUpstreamHeaders,
   readUpstreamHeaders,
+  readClaudeCodeSessionId,
+  refreshClaudeCodeSessionId,
   upstreamHeaderSummary,
   upstreamHeadersPayload,
   type UpstreamHeaderEntry,
@@ -628,11 +631,11 @@ function clearUpstreamHeaders() {
 }
 
 function selectClaudeCodeHeaders() {
-  upstreamHeaders.value = [{
-    id: createId('header'),
-    name: 'User-Agent',
-    value: CLAUDE_CODE_USER_AGENT,
-  }]
+  upstreamHeaders.value = claudeCodeHeaders(readClaudeCodeSessionId())
+}
+
+function refreshClaudeCodeHeaders() {
+  upstreamHeaders.value = claudeCodeHeaders(refreshClaudeCodeSessionId())
 }
 
 function addUpstreamHeader() {
@@ -1608,7 +1611,7 @@ onUnmounted(() => {
               <button class="model-group-item" :class="{ selected: claudeCodeHeaderSelected }" @click="selectClaudeCodeHeaders">
                 <span class="model-info">
                   <span class="model-name">Claude Code</span>
-                  <span class="model-desc">claude-cli/2.1.212 (external, cli)</span>
+                  <span class="model-desc">{{ CLAUDE_CODE_USER_AGENT }} · 固定会话</span>
                 </span>
                 <Check v-if="claudeCodeHeaderSelected" class="model-check" :size="18" />
               </button>
@@ -1625,6 +1628,10 @@ onUnmounted(() => {
             <button class="request-header-add" type="button" :disabled="upstreamHeaders.length >= 20" @click="addUpstreamHeader">
               <Plus :size="17" />
               <span>添加请求头</span>
+            </button>
+            <button v-if="claudeCodeHeaderSelected" class="request-header-refresh" type="button" @click="refreshClaudeCodeHeaders">
+              <RotateCcw :size="16" />
+              <span>刷新会话 UUID</span>
             </button>
           </template>
 

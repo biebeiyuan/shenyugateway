@@ -434,8 +434,10 @@ event contract.
 
 The model sheet also owns browser-local editable upstream headers. Completed rows travel only on chat requests
 as `ChatRequest.upstream_headers`; `upstream_client.py` validates them once and applies them to both OpenAI-compatible
-and Anthropic outbound requests. The built-in Claude Code preset is an ordinary editable mapping for
-`User-Agent: claude-cli/2.1.212 (external, cli)`. Gateway-owned authentication, protocol-version, cookie,
+and Anthropic outbound requests. The Claude Code preset is an ordinary editable mapping for the observed stable
+`User-Agent: claude-cli/2.1.226 (external, cli)`, `X-App: cli`, and browser-local `X-Claude-Code-Session-Id` UUID.
+The UUID remains stable until the user explicitly refreshes it, preserving upstream prompt-cache continuity.
+Gateway-owned authentication, protocol-version, cookie,
 hop-by-hop, and `X-Shenyu-*` headers cannot be replaced. Header values are neither request-log fields nor
 persistent history, and omitting the field preserves the existing upstream request exactly.
 

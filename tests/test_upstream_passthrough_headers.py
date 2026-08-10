@@ -104,12 +104,17 @@ def test_custom_header_forwarded():
     assert forwarded_client_headers(req, cfg) == {"x-api-key": "k", "x-trace-id": "abc"}
 
 
-def test_per_request_headers_accept_claude_code_user_agent():
+def test_per_request_headers_accept_claude_code_preset():
     assert validated_custom_upstream_headers(
-        {"User-Agent": "claude-cli/2.1.212 (external, cli)", "X-Trace-Id": "abc"}
+        {
+            "User-Agent": "claude-cli/2.1.226 (external, cli)",
+            "X-App": "cli",
+            "X-Claude-Code-Session-Id": "550e8400-e29b-41d4-a716-446655440000",
+        }
     ) == {
-        "user-agent": "claude-cli/2.1.212 (external, cli)",
-        "x-trace-id": "abc",
+        "user-agent": "claude-cli/2.1.226 (external, cli)",
+        "x-app": "cli",
+        "x-claude-code-session-id": "550e8400-e29b-41d4-a716-446655440000",
     }
 
 
