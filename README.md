@@ -62,7 +62,7 @@ The codebase is partly layered already:
 
 - `shenyu_gateway/context_builder.py`: async parallel gathering of all memory sources into a context package.
 - `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, and cold-start bridge insertion.
-- `shenyu_gateway/project_map.py`: owner-only live project map assembled from the current system zones, maintenance/product indexes, resident component fingerprints, and change ledger; it also derives component links from shared mapped source files.
+- `shenyu_gateway/project_map.py`: owner-only live project map assembled from the current system zones, maintenance/product indexes, resident component fingerprints, and change ledger; it derives one-hop component links only from mapped source files claimed by exactly two components, while broader shared hubs remain cross-zone bridge evidence.
 - `shenyu_gateway/project_delivery.py` / `project_delivery_log.jsonl`: structured owner-facing delivery ledger and validation/append helpers; one entry represents one coherent completed outcome and links it to a product, paths, docs, verification, and optional reusable lesson.
 - `shenyu_gateway/resident_home.py`: resident-facing component manifest, source fingerprints, review acknowledgements, and weekly change records.
 - `shenyu_gateway/resident_books.py`: unified bookshelf facade for the generated read-only home snapshot, the revisioned `我是谁` document, append-only annotations, and legacy origin-book storage.
@@ -237,6 +237,8 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 ### 按产品对象反查
 
 `Maintenance Map` 解决“文件在哪里”；这张小表解决“我看到产品里的哪个东西，应该从哪里进去”。它是反查索引，不替代路径地图，也不要求为每个私有 helper 再建一条记录。
+
+这里的“产品对象”是有稳定维护入口的主导航桶，可以是一块用户表面或一项长期能力，不是每个按钮、字段或单次修改。施工记录用它表示主要归属；更细的功能写在 `title` / `touchpoint`，跨区影响由 `paths` / `docs` 表达，不为一项小功能临时新增产品对象。
 
 | 产品对象 | 常用叫法 / 旧名 | 后端入口 | Admin/API | 现行文档 |
 |----------|-----------------|----------|-----------|----------|

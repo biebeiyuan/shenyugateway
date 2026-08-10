@@ -33,8 +33,8 @@ SEARCH_RESULT_MAX = 8
 SEARCH_OUTSIDE_PS = "圆儿ps:外面的路没通，不是家里的事，等会儿再试试。"
 READ_OUTSIDE_PS = "圆儿ps:外面这页没打开，不是家里的事，换一条看看就好。"
 
-PAGE_PART_CHARS = 6000
-PAGE_MAX_CHARS = 150_000  # ~25 parts; keeps one huge asset from pinning memory
+PAGE_PART_CHARS = 15_000
+PAGE_MAX_CHARS = 150_000  # 10-14 parts; keeps one huge asset from pinning memory
 PAGE_CACHE_TTL_SECONDS = 10 * 60
 PAGE_CACHE_MAX_ENTRIES = 16
 

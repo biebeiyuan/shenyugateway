@@ -187,9 +187,18 @@ def _path_matches(mapped_file: str, core_entry: str) -> bool:
 
 
 def _component_connections(components: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    file_owner_counts: dict[str, int] = {}
+    for component in components:
+        for path in set(component["files"]):
+            file_owner_counts[path] = file_owner_counts.get(path, 0) + 1
+
     connections: list[dict[str, Any]] = []
     for left, right in combinations(components, 2):
-        shared = sorted(set(left["files"]) & set(right["files"]))
+        shared = sorted(
+            path
+            for path in set(left["files"]) & set(right["files"])
+            if file_owner_counts[path] == 2
+        )
         if not shared:
             continue
         names = "、".join(Path(path).name for path in shared[:3])

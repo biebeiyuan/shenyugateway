@@ -477,7 +477,7 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
             summary: '让真正相关的联想记忆回来。',
             resident_effect: '星星不会每轮乱跳。',
             core: ['只让相关的星星浮现。'],
-            files: ['shenyu_gateway/context_builder.py'],
+            files: ['shenyu_gateway/context_builder.py', 'shenyu_gateway/memory_island.py'],
             reviewed: { reviewed_at: '2026-07-22T13:00:00+08:00', reviewed_by: 'Codex' },
             zone_ids: ['zone-2'],
           },
@@ -488,7 +488,7 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
             summary: '让具体事实在需要时回来。',
             resident_effect: '承诺和名字不会轻易丢掉。',
             core: ['只在有锚点时召回。'],
-            files: ['shenyu_gateway/context_builder.py'],
+            files: ['shenyu_gateway/context_builder.py', 'shenyu_gateway/memory_island.py'],
             reviewed: { reviewed_at: '2026-07-22T12:00:00+08:00', reviewed_by: 'Codex' },
             zone_ids: ['zone-2'],
           },
@@ -538,8 +538,8 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
           id: 'stars--mem',
           left_id: 'stars',
           right_id: 'mem',
-          via_files: ['shenyu_gateway/context_builder.py'],
-          meaning: '它们共同经过 context_builder.py，改动时需要一起确认。',
+          via_files: ['shenyu_gateway/memory_island.py'],
+          meaning: '它们共同经过 memory_island.py，改动时需要一起确认。',
         }],
         documents: [{
           '文档': 'docs/architecture/SYSTEM_ZONES.md',
@@ -624,7 +624,10 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
     await page.getByTestId('project-map-tab-flow').click()
     await expect(page.getByTestId('project-map-flow')).toContainText('ContextBuilder')
     await page.getByTestId('project-map-tab-connections').click()
-    await expect(page.getByTestId('project-map-connections')).toContainText('Mem')
+    const connectionPanel = page.getByTestId('project-map-connections')
+    await expect(connectionPanel).toContainText('Mem')
+    await expect(connectionPanel).toContainText('memory_island.py')
+    await expect(connectionPanel).not.toContainText('context_builder.py')
     await page.getByTestId('project-map-tab-changes').click()
     await expect(page.getByTestId('project-map-atlas')).toContainText('八个生活机制都已确认')
     await expect(page.getByTestId('project-map-tab-changes')).toHaveText('机制确认')

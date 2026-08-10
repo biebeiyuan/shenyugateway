@@ -116,7 +116,7 @@ node scripts/mobile-shots.mjs  # 390×844 触屏模拟走关键路径，截图�
 
 ### 最近经验放在哪里
 
-`project_delivery_log.jsonl` 的 `lesson` 只记已做完并有验证证据的可复用经验；前端地图不另建 TODO 或未来想法清单。遇到类似施工时，先看对应产品的最近交付记录；已确认的故障经验则沿 `DEBUGGING_GUIDE.md` 引用。
+`project_delivery_log.jsonl` 的 `lesson` 只记已做完并有验证证据的可复用经验；前端地图不另建 TODO 或未来想法清单。代码、现行文档和测试仍是当前事实源；只在续接近期功能、排查近期回归或遇到反直觉取舍时，按 README 产品对象查看最近交付，普通任务不预读施工簿。已确认的故障经验则沿 `DEBUGGING_GUIDE.md` 引用。
 
 ### 视觉拥有者
 

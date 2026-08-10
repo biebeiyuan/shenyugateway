@@ -2,6 +2,8 @@
 
 这是给人和新开的 coding agent 共用的懒人入口。先读这一页，再按任务跳转；不需要把仓库里的 Markdown 全部读完。
 
+> 先按任务选入口，不必逐张读地图：`README.md` 回答“文件在哪里”；`SYSTEM_ZONES.md` 回答“谁负责、跨区要看什么”；`DOCS_MAP.md` 回答“哪份文档仍然现行”；`STYLE_AND_CRAFT.md` 回答“前端从哪里改、怎样验证”；Admin《家里地图》把同一批权威事实整理给圆圆（Owner）看，不作为 Agent 的主要入口。
+
 ## 先记住四件事
 
 1. Shenyu Gateway 接收 OpenAI-compatible 请求，但上游既可以是 OpenAI-compatible，也可以是 Anthropic；协议差异应留在 provider adapter，不能把某个 relay 的行为写成全局规则。
@@ -24,6 +26,7 @@
 | 看已经确认的问题和暂不该动的地方 | `docs/architecture/AUDIT_MATRIX.md` | 对应测试和代码 |
 | 判断某份 Markdown 是否仍然有效 | `DOCS_MAP.md` | 对应现行专题文档 |
 | 修改代码 | `AGENTS.md` | 本表对应的专题文档 |
+| 改 PWA 前端（聊天界面、流式、会话交接） | `README.md` § PWA chat frontend | `docs/frontend/STYLE_AND_CRAFT.md` § 五的 PWA 行；涉及请求、流式或会话契约时再读 `docs/architecture/REQUEST_CONTEXT.md` § External Frontend Contracts |
 | 改 admin 前端（配色、组件、动效、演示预览） | `docs/frontend/STYLE_AND_CRAFT.md` | `admin/src/theme/tokens.css`、`admin/src/demo/` |
 
 ## 工具人话解释

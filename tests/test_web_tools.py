@@ -182,7 +182,7 @@ def test_web_read_rejects_non_http_url():
 
 def test_web_read_parses_plain_text_response_and_rest_note():
     """Production shape: `x-return-format: text` returns bare page text."""
-    long_text = "\n".join(f"第{i}行，窗外的字。" for i in range(1200))
+    long_text = "\n".join(f"第{i}行，窗外的字。" for i in range(3000))
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -211,6 +211,23 @@ def test_web_read_parses_plain_text_response_and_rest_note():
     assert first["content"] not in second["content"]
     # The page cache keeps 接着读 from re-downloading.
     assert calls["n"] == 1
+
+
+def test_web_read_uses_larger_parts_to_avoid_repeated_continuations():
+    page = "长" * 30_000
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, text=page)
+
+    async def run():
+        async with _client(handler) as client:
+            return await _service().web_read(url="https://example.com/long", client=client)
+
+    first = asyncio.run(run())
+    assert PAGE_PART_CHARS == 15_000
+    assert first["parts"] == 2
+    assert len(first["content"]) == 15_000
+    assert "part 传 2 接着读" in first["rest"]
 
 
 def test_web_read_still_parses_the_markdown_envelope_if_jina_returns_one():
@@ -395,9 +412,10 @@ def test_web_read_caps_a_huge_page_and_says_so_on_the_last_part():
 
 
 def test_split_page_parts_prefers_newline_cuts_without_dropping_content():
-    text = ("a" * 5000 + "\n") + ("b" * 5000 + "\n") + "c" * 5000
+    line_length = PAGE_PART_CHARS * 4 // 5
+    text = ("a" * line_length + "\n") + ("b" * line_length + "\n") + "c" * line_length
     parts = _split_page_parts(text)
-    assert parts == ["a" * 5000, "b" * 5000, "c" * 5000]
+    assert parts == ["a" * line_length, "b" * line_length, "c" * line_length]
     assert all(len(part) <= PAGE_PART_CHARS for part in parts)
     assert _split_page_parts("") == [""]
     # A wall of text with no newline still cuts at the hard limit.
