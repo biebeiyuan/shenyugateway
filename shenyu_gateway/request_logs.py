@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import time as _time
+import uuid
 from collections import deque
 from datetime import datetime, timezone
 from typing import Any, Optional
@@ -457,7 +458,69 @@ def _message_log_preview(msg: dict) -> dict[str, Any]:
     return item
 
 
-def _upstream_payload_summary(payload: Optional[dict]) -> Optional[dict[str, Any]]:
+def _claude_code_identity_summary(payload: dict, headers: Optional[dict]) -> Optional[dict[str, bool]]:
+    normalized_headers = {
+        str(key).strip().lower(): str(value).strip()
+        for key, value in (headers or {}).items()
+        if str(key).strip()
+    }
+    user_agent = normalized_headers.get("user-agent", "")
+    beta = normalized_headers.get("anthropic-beta", "")
+    session_id = normalized_headers.get("x-claude-code-session-id", "")
+    x_app = normalized_headers.get("x-app", "")
+    if not (
+        user_agent.startswith("claude-cli/")
+        or "claude-code-" in beta
+        or session_id
+        or x_app == "cli"
+    ):
+        return None
+
+    try:
+        session_valid = str(uuid.UUID(session_id)) == session_id.lower()
+    except (AttributeError, ValueError):
+        session_valid = False
+
+    stainless_headers = {
+        "x-stainless-arch",
+        "x-stainless-lang",
+        "x-stainless-os",
+        "x-stainless-package-version",
+        "x-stainless-retry-count",
+        "x-stainless-runtime",
+        "x-stainless-runtime-version",
+        "x-stainless-timeout",
+    }
+    metadata_valid = False
+    metadata = payload.get("metadata")
+    if isinstance(metadata, dict) and isinstance(metadata.get("user_id"), str):
+        try:
+            user_id = json.loads(metadata["user_id"])
+        except (TypeError, json.JSONDecodeError):
+            user_id = None
+        if isinstance(user_id, dict):
+            device_id = str(user_id.get("device_id") or "")
+            metadata_valid = (
+                len(device_id) == 64
+                and all(character in "0123456789abcdefABCDEF" for character in device_id)
+                and user_id.get("account_uuid") == ""
+                and user_id.get("session_id") == session_id
+                and session_valid
+            )
+
+    return {
+        "user_agent": user_agent.startswith("claude-cli/"),
+        "beta": "claude-code-20250219" in {item.strip() for item in beta.split(",")},
+        "session": session_valid,
+        "stainless": stainless_headers.issubset(normalized_headers),
+        "metadata": metadata_valid,
+    }
+
+
+def _upstream_payload_summary(
+    payload: Optional[dict],
+    headers: Optional[dict] = None,
+) -> Optional[dict[str, Any]]:
     if not payload:
         return None
     messages = payload.get("messages") or []
@@ -491,13 +554,20 @@ def _upstream_payload_summary(payload: Optional[dict]) -> Optional[dict[str, Any
     elif system:
         summary["system_blocks_count"] = 1
         summary["system_chars"] = len(normalize_text(system))
+    claude_code_identity = _claude_code_identity_summary(payload, headers)
+    if claude_code_identity is not None:
+        summary["claude_code_identity"] = claude_code_identity
     return summary
 
 
-def _record_upstream_payload(log_entry: Optional[dict], payload: dict) -> None:
+def _record_upstream_payload(
+    log_entry: Optional[dict],
+    payload: dict,
+    headers: Optional[dict] = None,
+) -> None:
     if log_entry is None:
         return
-    log_entry["upstream_payload_summary"] = _upstream_payload_summary(payload)
+    log_entry["upstream_payload_summary"] = _upstream_payload_summary(payload, headers)
     if log_entry.get("request_payloads_retained"):
         log_entry["upstream_payload"] = _payload_without_image_blocks(payload)
 

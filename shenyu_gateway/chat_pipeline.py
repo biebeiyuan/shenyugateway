@@ -440,7 +440,7 @@ class ChatPipeline:
             messages_override=prepared_messages,
             meta=meta,
         )
-        _record_upstream_payload(log_entry, payload)
+        _record_upstream_payload(log_entry, payload, headers)
         log_entry["prompt_cache"] = cache_meta
         ensure_upstream_response_evidence(
             upstream,

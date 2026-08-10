@@ -74,6 +74,13 @@ def test_request_log_history_survives_reopen_prunes_and_excludes_full_payloads(t
                 "system_additions_full": "full system text",
                 "upstream_payload_summary": {
                     "thinking": {"type": "adaptive", "display": "summarized"},
+                    "claude_code_identity": {
+                        "user_agent": True,
+                        "beta": True,
+                        "session": True,
+                        "stainless": True,
+                        "metadata": True,
+                    },
                 },
                 "upstream_response_evidence": {
                     "version": 1,
@@ -155,6 +162,13 @@ def test_request_log_history_survives_reopen_prunes_and_excludes_full_payloads(t
     assert "thinking" not in detail["diagnostics"]
     assert "signature" not in detail["diagnostics"]
     assert detail["upstream_payload_summary"]["thinking"]["type"] == "adaptive"
+    assert detail["upstream_payload_summary"]["claude_code_identity"] == {
+        "user_agent": True,
+        "beta": True,
+        "session": True,
+        "stainless": True,
+        "metadata": True,
+    }
     assert detail["upstream_response_evidence"]["upstream"]["thinking_content_seen"] is True
     round_log = detail["internal_tool_rounds"][0]
     assert round_log["response_preview"] == "round preview"

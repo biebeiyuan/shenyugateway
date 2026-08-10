@@ -107,14 +107,24 @@ def test_custom_header_forwarded():
 def test_per_request_headers_accept_claude_code_preset():
     assert validated_custom_upstream_headers(
         {
-            "User-Agent": "claude-cli/2.1.226 (external, cli)",
+            "User-Agent": "claude-cli/2.1.201 (external, sdk-cli)",
+            "Accept": "application/json",
+            "Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14,effort-2025-11-24",
+            "Anthropic-Dangerous-Direct-Browser-Access": "true",
             "X-App": "cli",
             "X-Claude-Code-Session-Id": "550e8400-e29b-41d4-a716-446655440000",
+            "X-Stainless-Lang": "js",
+            "X-Stainless-Runtime": "node",
         }
     ) == {
-        "user-agent": "claude-cli/2.1.226 (external, cli)",
+        "user-agent": "claude-cli/2.1.201 (external, sdk-cli)",
+        "accept": "application/json",
+        "anthropic-beta": "claude-code-20250219,interleaved-thinking-2025-05-14,effort-2025-11-24",
+        "anthropic-dangerous-direct-browser-access": "true",
         "x-app": "cli",
         "x-claude-code-session-id": "550e8400-e29b-41d4-a716-446655440000",
+        "x-stainless-lang": "js",
+        "x-stainless-runtime": "node",
     }
 
 

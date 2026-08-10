@@ -61,6 +61,8 @@ import { readUpstreamPresets } from './api/presets'
 import {
   CLAUDE_CODE_USER_AGENT,
   claudeCodeHeaders,
+  claudeCodeMetadata,
+  claudeCodeSessionIdFromHeaders,
   isClaudeCodeHeaderPreset,
   persistUpstreamHeaders,
   readUpstreamHeaders,
@@ -917,6 +919,10 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     }
     const requestHeaders = upstreamHeadersPayload(upstreamHeaders.value)
     if (Object.keys(requestHeaders).length) body.upstream_headers = requestHeaders
+    if (claudeCodeHeaderSelected.value) {
+      const claudeCodeSessionId = claudeCodeSessionIdFromHeaders(upstreamHeaders.value)
+      if (claudeCodeSessionId) body.metadata = claudeCodeMetadata(claudeCodeSessionId)
+    }
     if (useStreaming) {
       const stream = await postChatStream(clientContext(), body, activeController.signal)
       await pumpSseStream(stream, (frame) => parseSseFrame(frame, assistant), scrollToBottom)
@@ -1611,7 +1617,7 @@ onUnmounted(() => {
               <button class="model-group-item" :class="{ selected: claudeCodeHeaderSelected }" @click="selectClaudeCodeHeaders">
                 <span class="model-info">
                   <span class="model-name">Claude Code</span>
-                  <span class="model-desc">{{ CLAUDE_CODE_USER_AGENT }} · 固定会话</span>
+                  <span class="model-desc">{{ CLAUDE_CODE_USER_AGENT }} · 电脑请求</span>
                 </span>
                 <Check v-if="claudeCodeHeaderSelected" class="model-check" :size="18" />
               </button>

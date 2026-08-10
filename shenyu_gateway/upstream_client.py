@@ -579,6 +579,11 @@ async def build_upstream_request(
             payload["thinking"] = anthropic_thinking
         if output_config:
             payload["output_config"] = output_config
+        metadata = getattr(body, "metadata", None)
+        if isinstance(metadata, dict):
+            user_id = str(metadata.get("user_id") or "").strip()
+            if user_id:
+                payload["metadata"] = {"user_id": user_id}
         apply_upstream_extra_body(payload, cfg)
         headers = {
             "x-api-key": upstream["api_key"],

@@ -24,6 +24,7 @@ class ChatRequest(BaseModel):
     output_config: Optional[dict[str, Any]] = None
     reasoning_effort: Optional[str] = None
     upstream_headers: Optional[dict[str, str]] = None
+    metadata: Optional[dict[str, Any]] = None
 
 
 class ConfigUpdate(BaseModel):

@@ -35,6 +35,8 @@
 
 每次普通请求和工具轮次还会保存 `upstream_response_evidence`。它只统计固定的响应形状、事件数量和真假标记，不保存正文、Thinking 内容、signature、redacted 数据或任意原始字段名，因此默认就会进入 SQLite 安全摘要，不需要打开完整 payload。
 
+使用 PWA 的 Claude Code preset 时，`upstream_payload_summary.claude_code_identity` 会记录五个布尔值：`user_agent`、`beta`、`session`、`stainless`、`metadata`。它们分别证明已经构建出 Claude CLI User-Agent、Claude Code beta 标记、有效会话 UUID、完整 Stainless SDK 头组，以及与该会话一致的标准 `metadata.user_id` 形状；日志不保存实际 header 值、UUID、device id 或 metadata 文本。普通请求没有 Claude Code 身份信号时不会出现这一段。
+
 需要看完整请求内容时，在 Admin 配置页打开「请求日志 → 保留完整请求内容」（等价于环境变量 `GATEWAY_LOG_FULL_PAYLOADS=true`，开关会随配置覆盖持久化，无需重启，只对之后的新请求生效）。完整内容仍只存在于当前进程最近 30 条日志，重启后旧记录会退回摘要和预览；它们可能包含敏感对话，看完建议关闭。
 
 ## 上游响应证据

@@ -71,7 +71,7 @@ class InternalToolLoopContext:
     call_upstream_json: Callable[..., Awaitable[dict]]
     stream_upstream_openai_chunks: Callable[..., AsyncIterator[dict]]
     execute_gateway_tool: Callable[..., Awaitable[dict]]
-    record_upstream_payload: Callable[[Optional[dict], dict], None]
+    record_upstream_payload: Callable[..., None]
     aggregate_cache_usage: Callable[[list[dict]], dict]
     finalize_assistant_private_content: Callable[..., tuple[str, str, dict[str, Any]]]
     store_heartbeat: Callable[[str, dict, str], None]
@@ -404,9 +404,9 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
             "tool_loop.round_build_done",
             detail={"round": round_index + 1, "messages": len(working_messages)},
         )
-        ctx.record_upstream_payload(ctx.log_entry, payload)
+        ctx.record_upstream_payload(ctx.log_entry, payload, headers)
         round_log = _start_round_log(ctx, round_index, working_messages)
-        _record_round_request(ctx, round_log, payload, working_messages, cache_meta)
+        _record_round_request(ctx, round_log, payload, headers, working_messages, cache_meta)
         if ctx.log_entry is not None and round_index == 0:
             ctx.log_entry["prompt_cache"] = cache_meta
 
@@ -518,9 +518,9 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
             detail={"round": round_index + 1, "messages": len(working_messages)},
         )
         payload["stream"] = True
-        ctx.record_upstream_payload(ctx.log_entry, payload)
+        ctx.record_upstream_payload(ctx.log_entry, payload, headers)
         round_log = _start_round_log(ctx, round_index, working_messages, stream=True)
-        _record_round_request(ctx, round_log, payload, working_messages, cache_meta)
+        _record_round_request(ctx, round_log, payload, headers, working_messages, cache_meta)
         if ctx.log_entry is not None and round_index == 0:
             ctx.log_entry["prompt_cache"] = cache_meta
 
@@ -788,13 +788,14 @@ def _record_round_request(
     ctx: InternalToolLoopContext,
     round_log: Optional[dict],
     payload: dict,
+    headers: dict,
     working_messages: list[dict],
     cache_meta: dict,
 ) -> None:
     if round_log is None:
         return
     round_log["messages_preview"] = [_message_log_preview(message) for message in working_messages]
-    round_log["upstream_payload_summary"] = _upstream_payload_summary(payload)
+    round_log["upstream_payload_summary"] = _upstream_payload_summary(payload, headers)
     round_log["prompt_cache"] = cache_meta
     if ctx.log_entry is not None and ctx.log_entry.get("request_payloads_retained"):
         round_log["messages"] = _payload_without_image_blocks({"messages": working_messages})["messages"]

@@ -434,12 +434,19 @@ event contract.
 
 The model sheet also owns browser-local editable upstream headers. Completed rows travel only on chat requests
 as `ChatRequest.upstream_headers`; `upstream_client.py` validates them once and applies them to both OpenAI-compatible
-and Anthropic outbound requests. The Claude Code preset is an ordinary editable mapping for the observed stable
-`User-Agent: claude-cli/2.1.226 (external, cli)`, `X-App: cli`, and browser-local `X-Claude-Code-Session-Id` UUID.
-The UUID remains stable until the user explicitly refreshes it, preserving upstream prompt-cache continuity.
-Gateway-owned authentication, protocol-version, cookie,
-hop-by-hop, and `X-Shenyu-*` headers cannot be replaced. Header values are neither request-log fields nor
-persistent history, and omitting the field preserves the existing upstream request exactly.
+and Anthropic outbound requests. The Claude Code preset mirrors the locally captured CLI/SDK identity layer:
+`User-Agent: claude-cli/2.1.201 (external, sdk-cli)`, `Accept`, `Anthropic-Beta`, `X-App`,
+`X-Claude-Code-Session-Id`, the observed `X-Stainless-*` fields, and the direct-browser-access marker. For native
+Anthropic requests it also supplies the captured `metadata.user_id` shape with a random browser-local device id,
+empty account UUID, and the same session UUID. Device and session ids remain fixed until the user explicitly
+refreshes the session UUID, preserving upstream prompt-cache continuity. The preset does not copy Claude Code's
+coding system prompt or tool schemas because those would replace Shenyu's product semantics. Gateway-owned
+authentication, protocol-version, cookie, hop-by-hop, and `X-Shenyu-*` headers cannot be replaced. Header values
+are neither request-log fields nor persistent history. Simulated metadata is excluded from the safe persistent
+request-log tier, but can appear in the live full upstream payload when `GATEWAY_LOG_FULL_PAYLOADS=true`. The safe
+`upstream_payload_summary.claude_code_identity` records only five shape booleans for the CLI User-Agent, Claude Code
+beta, valid session UUID, complete Stainless header group, and session-matched metadata; it never stores their
+values. Omitting the preset preserves the existing upstream request exactly.
 
 Cross-client conversation continuity is keyed by `X-Shenyu-Session-Tag`, not by `X-Shenyu-Client`.
 `X-Shenyu-Client` only selects the client capability profile. Operit and PWA can therefore share one

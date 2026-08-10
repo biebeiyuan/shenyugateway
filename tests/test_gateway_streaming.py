@@ -999,12 +999,13 @@ def test_build_upstream_request_applies_per_request_headers(monkeypatch, protoco
             model="test-model",
             messages=[{"role": "user", "content": "hello"}],
             upstream_headers={
-                "User-Agent": "claude-cli/2.1.212 (external, cli)",
+                "User-Agent": "claude-cli/2.1.201 (external, sdk-cli)",
                 "X-Trace-Id": "abc",
             },
+            metadata={"user_id": '{"device_id":"abc","account_uuid":"","session_id":"test"}'},
         )
 
-        _, headers, _, _, _ = asyncio.run(
+        payload, headers, _, _, _ = asyncio.run(
             gateway._build_upstream_request(
                 None,
                 body,
@@ -1014,12 +1015,16 @@ def test_build_upstream_request_applies_per_request_headers(monkeypatch, protoco
     finally:
         gateway.cfg = old_cfg
 
-    assert headers["user-agent"] == "claude-cli/2.1.212 (external, cli)"
+    assert headers["user-agent"] == "claude-cli/2.1.201 (external, sdk-cli)"
     assert headers["x-trace-id"] == "abc"
     if protocol == "anthropic":
         assert headers["x-api-key"] == "test-key"
+        assert payload["metadata"] == {
+            "user_id": '{"device_id":"abc","account_uuid":"","session_id":"test"}'
+        }
     else:
         assert headers["Authorization"] == "Bearer test-key"
+        assert "metadata" not in payload
 
 
 @pytest.mark.parametrize(
@@ -1592,6 +1597,49 @@ def test_upstream_payload_summary_reports_thinking_shape():
     )
 
     assert summary["thinking"] == {"type": "adaptive", "display": "summarized"}
+
+
+def test_upstream_payload_summary_reports_safe_claude_code_identity_shape():
+    session_id = "550e8400-e29b-41d4-a716-446655440000"
+    summary = _upstream_payload_summary(
+        {
+            "model": "test-model",
+            "messages": [],
+            "metadata": {
+                "user_id": json.dumps(
+                    {
+                        "device_id": "a" * 64,
+                        "account_uuid": "",
+                        "session_id": session_id,
+                    }
+                )
+            },
+        },
+        {
+            "User-Agent": "claude-cli/2.1.201 (external, sdk-cli)",
+            "Anthropic-Beta": "claude-code-20250219,interleaved-thinking-2025-05-14",
+            "X-App": "cli",
+            "X-Claude-Code-Session-Id": session_id,
+            "X-Stainless-Arch": "x64",
+            "X-Stainless-Lang": "js",
+            "X-Stainless-Os": "Linux",
+            "X-Stainless-Package-Version": "0.94.0",
+            "X-Stainless-Retry-Count": "0",
+            "X-Stainless-Runtime": "node",
+            "X-Stainless-Runtime-Version": "v26.3.0",
+            "X-Stainless-Timeout": "600",
+        },
+    )
+
+    assert summary["claude_code_identity"] == {
+        "user_agent": True,
+        "beta": True,
+        "session": True,
+        "stainless": True,
+        "metadata": True,
+    }
+    assert session_id not in json.dumps(summary)
+    assert "a" * 64 not in json.dumps(summary)
 
 
 def test_sse_response_disables_proxy_buffering():
@@ -2383,7 +2431,7 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
             call_upstream_json=None,
             stream_upstream_openai_chunks=stream_upstream_openai_chunks,
             execute_gateway_tool=execute_gateway_tool,
-            record_upstream_payload=lambda log_entry, payload: None,
+            record_upstream_payload=lambda log_entry, payload, headers: None,
             aggregate_cache_usage=lambda usages, protocol="": {},
             finalize_assistant_private_content=lambda assistant_message, **kwargs: (
                 assistant_message.get("content", ""),
@@ -2466,7 +2514,7 @@ def test_internal_stream_loop_treats_empty_upstream_stream_as_502():
             call_upstream_json=None,
             stream_upstream_openai_chunks=stream_upstream_openai_chunks,
             execute_gateway_tool=lambda *args, **kwargs: None,
-            record_upstream_payload=lambda log_entry, payload: None,
+            record_upstream_payload=lambda log_entry, payload, headers: None,
             aggregate_cache_usage=lambda usages, protocol="": {},
             finalize_assistant_private_content=lambda assistant_message, **kwargs: (
                 assistant_message.get("content", ""),
