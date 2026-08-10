@@ -157,6 +157,7 @@ class RuntimeConfig:
 
         self.gateway_db_path: str = os.getenv("GATEWAY_DB_PATH", "./data/shenyu_gateway.db")
         self.calendar_context_day_limit: int = _env_int("CALENDAR_CONTEXT_DAY_LIMIT", 3, 1, 30)
+        self.calendar_context_day_offset: int = _env_int("CALENDAR_CONTEXT_DAY_OFFSET", 2, 0, 30)
         self.calendar_context_week_limit: int = _env_int("CALENDAR_CONTEXT_WEEK_LIMIT", 1, 1, 12)
         self.calendar_context_month_limit: int = _env_int("CALENDAR_CONTEXT_MONTH_LIMIT", 1, 1, 12)
         self.max_client_messages: Optional[int] = _env_optional_int("MAX_CLIENT_MESSAGES", 75)
@@ -283,6 +284,7 @@ class RuntimeConfig:
             "embedding_dim": self.embedding_dim,
             "gateway_db_path": self.gateway_db_path,
             "calendar_context_day_limit": self.calendar_context_day_limit,
+            "calendar_context_day_offset": self.calendar_context_day_offset,
             "calendar_context_week_limit": self.calendar_context_week_limit,
             "calendar_context_month_limit": self.calendar_context_month_limit,
             "max_client_messages": self.max_client_messages,

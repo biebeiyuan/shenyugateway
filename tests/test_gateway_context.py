@@ -59,6 +59,7 @@ def _load_gateway_helpers():
         heartbeat_inject_every=5,
         calendar_inject_day=False,
         calendar_context_day_limit=0,
+        calendar_context_day_offset=0,
         calendar_inject_week=False,
         calendar_context_week_limit=0,
         calendar_inject_month=False,
@@ -150,8 +151,9 @@ class _FakeCalendarSupabase:
         if latest_filter == "eq.true":
             rows = [row for row in rows if row.get("is_latest") is True]
         rows.sort(key=lambda row: row.get("period_start") or "", reverse=True)
+        offset = int(params.get("offset") or 0)
         limit = int(params.get("limit") or len(rows))
-        return rows[:limit]
+        return rows[offset : offset + limit]
 
 
 def test_context_recall_failure_preserves_previous_island(monkeypatch, tmp_path):
@@ -496,11 +498,13 @@ def test_calendar_context_pages_loads_and_filters_by_content():
 
     old_day_enabled = cfg.calendar_inject_day
     old_day_limit = cfg.calendar_context_day_limit
+    old_day_offset = cfg.calendar_context_day_offset
     old_week_enabled = cfg.calendar_inject_week
     old_month_enabled = cfg.calendar_inject_month
     try:
         cfg.calendar_inject_day = True
         cfg.calendar_context_day_limit = 5
+        cfg.calendar_context_day_offset = 0
         cfg.calendar_inject_week = False
         cfg.calendar_inject_month = False
 
@@ -509,6 +513,7 @@ def test_calendar_context_pages_loads_and_filters_by_content():
     finally:
         cfg.calendar_inject_day = old_day_enabled
         cfg.calendar_context_day_limit = old_day_limit
+        cfg.calendar_context_day_offset = old_day_offset
         cfg.calendar_inject_week = old_week_enabled
         cfg.calendar_inject_month = old_month_enabled
 
@@ -516,6 +521,66 @@ def test_calendar_context_pages_loads_and_filters_by_content():
     assert [row["period_key"] for row in calendar_context["day"]] == ["2026-05-18"]
     assert calendar_context["day"][0]["content"] == "Full day content goes in"
     assert calendar_context["day"][0]["digest"] == "Digest stays out"
+
+
+def test_calendar_context_day_offset_skips_newest_written_pages_not_elapsed_days():
+    fake_supabase = _FakeCalendarSupabase(
+        [
+            {
+                "period_type": "day",
+                "period_key": "2026-08-10",
+                "content": "Newest page",
+                "period_start": "2026-08-10T00:00:00+00:00",
+                "is_latest": True,
+            },
+            {
+                "period_type": "day",
+                "period_key": "2026-08-07",
+                "content": "Second newest despite the date gap",
+                "period_start": "2026-08-07T00:00:00+00:00",
+                "is_latest": True,
+            },
+            {
+                "period_type": "day",
+                "period_key": "2026-08-02",
+                "content": "First injected page",
+                "period_start": "2026-08-02T00:00:00+00:00",
+                "is_latest": True,
+            },
+            {
+                "period_type": "day",
+                "period_key": "2026-07-29",
+                "content": "Second injected page",
+                "period_start": "2026-07-29T00:00:00+00:00",
+                "is_latest": True,
+            },
+        ]
+    )
+
+    old_day_enabled = cfg.calendar_inject_day
+    old_day_limit = cfg.calendar_context_day_limit
+    old_day_offset = cfg.calendar_context_day_offset
+    old_week_enabled = cfg.calendar_inject_week
+    old_month_enabled = cfg.calendar_inject_month
+    try:
+        cfg.calendar_inject_day = True
+        cfg.calendar_context_day_limit = 2
+        cfg.calendar_context_day_offset = 2
+        cfg.calendar_inject_week = False
+        cfg.calendar_inject_month = False
+
+        calendar_context = asyncio.run(_context_builder(None, supabase=fake_supabase).calendar_context_pages())
+    finally:
+        cfg.calendar_inject_day = old_day_enabled
+        cfg.calendar_context_day_limit = old_day_limit
+        cfg.calendar_context_day_offset = old_day_offset
+        cfg.calendar_inject_week = old_week_enabled
+        cfg.calendar_inject_month = old_month_enabled
+
+    assert fake_supabase.queries[0][1]["order"] == "period_start.desc"
+    assert fake_supabase.queries[0][1]["offset"] == "2"
+    assert fake_supabase.queries[0][1]["limit"] == "2"
+    assert [row["period_key"] for row in calendar_context["day"]] == ["2026-08-02", "2026-07-29"]
 
 
 def test_resolve_upstream_builds_default_chat_url_from_cfg():

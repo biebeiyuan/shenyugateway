@@ -90,9 +90,11 @@ test('sessions page loads and its search field accepts input', async ({ page }) 
   })
 })
 
-test('calendar page loads', async ({ page }) => {
+test('calendar page loads and exposes the day offset setting', async ({ page }) => {
   await openAdminRoute(page, '/calendar', async () => {
     await expect(page.getByTestId('page-calendar')).toBeVisible()
+    await page.getByTestId('calendar-settings-toggle').click()
+    await expect(page.getByTestId('calendar-day-offset')).toBeVisible()
   })
 })
 

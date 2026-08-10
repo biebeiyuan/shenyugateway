@@ -25,6 +25,7 @@ DEFAULTED_ENV_KEYS = [
     "INJECT_MEM_NOTES",
     "ENABLE_MEM0_MANAGEMENT_TOOLS",
     "MAX_INTERNAL_TOOL_ROUNDS",
+    "CALENDAR_CONTEXT_DAY_OFFSET",
     "MAX_CLIENT_MESSAGES",
     "GATEWAY_REQUEST_LOG_RETENTION",
     "ROOM_NEWSPAPER_QA_ENABLED",
@@ -63,6 +64,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.inject_mem_notes is True
     assert cfg.enable_mem0_management_tools is True
     assert cfg.max_internal_tool_rounds == 15
+    assert cfg.calendar_context_day_offset == 2
     assert cfg.max_client_messages == 75
     assert cfg.gateway_request_log_retention == 200
     assert cfg.gateway_log_full_payloads is False
@@ -545,6 +547,25 @@ def test_config_update_saves_request_log_retention(monkeypatch):
     assert "gateway_request_log_retention" in payload["changed"]
     assert gateway.cfg.gateway_request_log_retention == 350
     assert persisted[-1]["GATEWAY_REQUEST_LOG_RETENTION"] == 350
+
+
+def test_config_update_saves_and_clamps_calendar_day_offset(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "calendar_context_day_offset", 2)
+
+    try:
+        response = client.post("/api/config", json={"calendar_context_day_offset": 99})
+        restored = client.post("/api/config", json={"calendar_context_day_offset": 0})
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    assert response.json()["config"]["calendar_context_day_offset"] == 30
+    assert persisted[-2]["CALENDAR_CONTEXT_DAY_OFFSET"] == 30
+    assert restored.status_code == 200
+    assert restored.json()["config"]["calendar_context_day_offset"] == 0
+    assert gateway.cfg.calendar_context_day_offset == 0
+    assert persisted[-1]["CALENDAR_CONTEXT_DAY_OFFSET"] == 0
 
 
 def test_config_update_saves_log_full_payloads_toggle(monkeypatch):

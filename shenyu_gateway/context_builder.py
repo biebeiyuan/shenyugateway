@@ -66,9 +66,15 @@ class ContextBuilder:
         if not self.supabase_client:
             return {"day": [], "week": [], "month": []}
 
-        async def load(period_type: str, enabled: bool, limit: int) -> list[dict[str, Any]]:
+        async def load(
+            period_type: str,
+            enabled: bool,
+            limit: int,
+            offset: int = 0,
+        ) -> list[dict[str, Any]]:
             if not enabled or limit <= 0:
                 return []
+            offset = max(int(offset or 0), 0)
             try:
                 rows = await self.supabase_client.query(
                     "calendar_pages",
@@ -77,6 +83,7 @@ class ContextBuilder:
                         "period_type": f"eq.{period_type}",
                         "is_latest": "eq.true",
                         "order": "period_start.desc",
+                        "offset": str(offset),
                         "limit": str(limit),
                     },
                 )
@@ -96,7 +103,12 @@ class ContextBuilder:
             ]
 
         days, weeks, months = await asyncio.gather(
-            load("day", self.cfg.calendar_inject_day, self.cfg.calendar_context_day_limit),
+            load(
+                "day",
+                self.cfg.calendar_inject_day,
+                self.cfg.calendar_context_day_limit,
+                getattr(self.cfg, "calendar_context_day_offset", 0),
+            ),
             load("week", self.cfg.calendar_inject_week, self.cfg.calendar_context_week_limit),
             load("month", self.cfg.calendar_inject_month, self.cfg.calendar_context_month_limit),
         )

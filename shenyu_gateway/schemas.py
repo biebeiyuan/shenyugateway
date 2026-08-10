@@ -105,6 +105,7 @@ class ConfigUpdate(BaseModel):
     max_internal_tool_rounds: Optional[int] = None
     gateway_db_path: Optional[str] = None
     calendar_context_day_limit: Optional[int] = None
+    calendar_context_day_offset: Optional[int] = None
     calendar_context_week_limit: Optional[int] = None
     calendar_context_month_limit: Optional[int] = None
     max_client_messages: Optional[int] = None

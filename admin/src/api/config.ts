@@ -93,6 +93,7 @@ export interface GatewayConfig {
   calendar_inject_week?: boolean
   calendar_inject_month?: boolean
   calendar_context_day_limit?: number
+  calendar_context_day_offset?: number
   calendar_context_week_limit?: number
   calendar_context_month_limit?: number
 

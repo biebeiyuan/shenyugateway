@@ -189,7 +189,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/stars/starUi.ts`: shared Star UI formatting and link-order helpers.
 - `admin/src/views/SessionsView.vue`: session inspection page.
 - `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, cache-structure evidence, and raw-versus-normalized upstream response-shape verdicts.
-- `admin/src/views/CalendarView.vue`: day/week/month diary reading view (month grid, entry lists, reading pane, collapsed context-injection settings).
+- `admin/src/views/CalendarView.vue`: day/week/month diary reading view (month grid, entry lists, reading pane, collapsed context-injection settings with a day-page offset).
 - `admin/src/views/ArchiveView.vue`: chat archive reader and origin-book clip flow.
 - `admin/src/views/ConflictView.vue`: three-tier bookshelf for revisioned `我是谁`, generated read-only `家现在`, owner-only `家里地图`, and frozen origin books; keeps their distinct visibility and write boundaries explicit.
 - `admin/src/views/bookshelf/HomeBookModal.vue`: generated-home reader for live commit/confirmation state, resident components, weekly impacts, and append-only annotations.

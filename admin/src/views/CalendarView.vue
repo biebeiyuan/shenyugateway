@@ -30,6 +30,7 @@ const injectDay = ref(true)
 const injectWeek = ref(true)
 const injectMonth = ref(true)
 const limitDay = ref(3)
+const offsetDay = ref(2)
 const limitWeek = ref(1)
 const limitMonth = ref(1)
 
@@ -259,6 +260,7 @@ async function toggleSettings() {
       injectWeek.value = config.calendar_inject_week ?? true
       injectMonth.value = config.calendar_inject_month ?? true
       limitDay.value = config.calendar_context_day_limit ?? 3
+      offsetDay.value = config.calendar_context_day_offset ?? 2
       limitWeek.value = config.calendar_context_week_limit ?? 1
       limitMonth.value = config.calendar_context_month_limit ?? 1
       settingsLoaded.value = true
@@ -276,6 +278,7 @@ async function saveSettings() {
       calendar_inject_week: injectWeek.value,
       calendar_inject_month: injectMonth.value,
       calendar_context_day_limit: limitDay.value,
+      calendar_context_day_offset: offsetDay.value,
       calendar_context_week_limit: limitWeek.value,
       calendar_context_month_limit: limitMonth.value,
     })
@@ -353,16 +356,34 @@ async function saveSettings() {
       </section>
 
       <section class="card settings-card">
-        <button class="settings-toggle" @click="toggleSettings">
+        <button class="settings-toggle" data-testid="calendar-settings-toggle" @click="toggleSettings">
           <span>上下文注入</span>
           <span class="chev" :class="{ open: settingsOpen }">›</span>
         </button>
         <div v-if="settingsOpen" class="settings-body">
-          <p class="settings-hint">她醒来时，随身带上最近的几页。</p>
-          <div class="settings-row">
+          <p class="settings-hint">她醒来时，随身带上最近的几页；日记会先错开几篇。</p>
+          <div class="settings-row day-settings-row">
             <span class="settings-label">日记</span>
             <NSwitch v-model:value="injectDay" size="small" />
-            <NInputNumber v-model:value="limitDay" :min="1" :max="30" size="small" :disabled="!injectDay" />
+            <span class="settings-suffix">注入</span>
+            <NInputNumber
+              v-model:value="limitDay"
+              :min="1"
+              :max="30"
+              :show-button="false"
+              size="small"
+              :disabled="!injectDay"
+            />
+            <span class="settings-suffix">错开</span>
+            <NInputNumber
+              v-model:value="offsetDay"
+              data-testid="calendar-day-offset"
+              :min="0"
+              :max="30"
+              :show-button="false"
+              size="small"
+              :disabled="!injectDay"
+            />
           </div>
           <div class="settings-row">
             <span class="settings-label">周记</span>
@@ -734,6 +755,11 @@ async function saveSettings() {
   display: grid;
   gap: 10px;
   grid-template-columns: 30px auto minmax(90px, 1fr);
+}
+
+.day-settings-row {
+  gap: 8px;
+  grid-template-columns: 30px auto auto 46px auto 46px;
 }
 
 .settings-label {

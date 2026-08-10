@@ -115,6 +115,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "gateway_request_log_retention": cfg.gateway_request_log_retention,
         "gateway_log_full_payloads": cfg.gateway_log_full_payloads,
         "calendar_context_day_limit": cfg.calendar_context_day_limit,
+        "calendar_context_day_offset": cfg.calendar_context_day_offset,
         "calendar_context_week_limit": cfg.calendar_context_week_limit,
         "calendar_context_month_limit": cfg.calendar_context_month_limit,
         "max_client_messages": cfg.max_client_messages,
@@ -230,6 +231,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "gateway_db_path": "GATEWAY_DB_PATH",
             "max_internal_tool_rounds": "MAX_INTERNAL_TOOL_ROUNDS",
             "calendar_context_day_limit": "CALENDAR_CONTEXT_DAY_LIMIT",
+            "calendar_context_day_offset": "CALENDAR_CONTEXT_DAY_OFFSET",
             "calendar_context_week_limit": "CALENDAR_CONTEXT_WEEK_LIMIT",
             "calendar_context_month_limit": "CALENDAR_CONTEXT_MONTH_LIMIT",
             "heartbeat_inject_every": "HEARTBEAT_INJECT_EVERY",
@@ -441,6 +443,10 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.calendar_context_day_limit = max(1, min(body.calendar_context_day_limit, 30))
             changed.append("calendar_context_day_limit")
             env_updates[env_names["calendar_context_day_limit"]] = cfg.calendar_context_day_limit
+        if body.calendar_context_day_offset is not None:
+            cfg.calendar_context_day_offset = max(0, min(body.calendar_context_day_offset, 30))
+            changed.append("calendar_context_day_offset")
+            env_updates[env_names["calendar_context_day_offset"]] = cfg.calendar_context_day_offset
         if body.calendar_context_week_limit is not None:
             cfg.calendar_context_week_limit = max(1, min(body.calendar_context_week_limit, 12))
             changed.append("calendar_context_week_limit")

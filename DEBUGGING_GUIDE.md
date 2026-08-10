@@ -343,7 +343,7 @@ Prompt-cache markers target request tools, `stable`, `slow`, and `format` when t
 
 Calendar diary pages are handwritten by 沈予 through the `shenyu_add_calendar` gateway tool (`gateway_tools/_calendar.py`, versioned append/replace into Supabase `calendar_pages`); there is no gateway-side generation pipeline. `CalendarService` is a slim read-only service (month_status + page_detail) backing the `GET /api/calendar/month` and `GET /api/calendar/page/{page_id}` read endpoints.
 
-If a page looks wrong, check the tool-error chain for `shenyu_add_calendar` first, then Supabase `calendar_pages` directly. For context injection of calendar memory, check the `calendar_inject_day/week/month` and `calendar_context_*_limit` config keys and the `## Calendar Memory` slow layer.
+If a page looks wrong, check the tool-error chain for `shenyu_add_calendar` first, then Supabase `calendar_pages` directly. For context injection of calendar memory, check the `calendar_inject_day/week/month`, `calendar_context_*_limit`, and day-only `calendar_context_day_offset` config keys plus the `## Calendar Memory` slow layer. Day pages are ordered by `period_start`; the offset skips written pages, not elapsed calendar days.
 
 ## Response Capture Debugging
 
