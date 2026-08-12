@@ -32,7 +32,7 @@ describe('PWA upstream headers', () => {
     expect(upstreamHeadersPayload(claudeCode)).toEqual({
       'User-Agent': CLAUDE_CODE_USER_AGENT,
       Accept: 'application/json',
-      'Anthropic-Beta': 'claude-code-20250219,interleaved-thinking-2025-05-14,effort-2025-11-24',
+      'Anthropic-Beta': 'claude-code-20250219,interleaved-thinking-2025-05-14,effort-2025-11-24,prompt-caching-scope-2026-01-05',
       'Anthropic-Dangerous-Direct-Browser-Access': 'true',
       'X-App': 'cli',
       'X-Stainless-Arch': 'x64',
