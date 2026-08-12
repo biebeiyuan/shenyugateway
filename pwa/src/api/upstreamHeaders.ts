@@ -11,7 +11,7 @@ export const CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.201 (external, sdk-cli)'
 export const CLAUDE_CODE_APP = 'cli'
 const LEGACY_CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.212 (external, cli)'
 const COMPACT_CLAUDE_CODE_USER_AGENT = 'claude-cli/2.1.226 (external, cli)'
-const CLAUDE_CODE_BETA = 'claude-code-20250219,interleaved-thinking-2025-05-14,effort-2025-11-24,prompt-caching-scope-2026-01-05'
+const CLAUDE_CODE_BETA = 'claude-code-20250219,interleaved-thinking-2025-05-14,effort-2025-11-24'
 
 const CLAUDE_CODE_STATIC_HEADERS = [
   ['claude-code-user-agent', 'User-Agent', CLAUDE_CODE_USER_AGENT],
