@@ -205,20 +205,20 @@
         "room_trace_limit"
       ],
       "reviewed": {
-        "fingerprint": "d48e7d753cdee17486262b5a0d4dd04dac4741b8491cc7c19e74dd8fc2cc4367",
+        "fingerprint": "5ccb7ae18287c7321f78aa13ea275f8026b5c83c26d57fb654a38bc4cef84cde",
         "file_hashes": {
           "pwa/src/meta/roomEntry.ts": "ec8735d046e502d79575c819f0dbf28adce92492efa4e9abb8f87455720e7baf",
           "shenyu_gateway/context_builder.py": "9a29dcbbc739a20ddd0a0e7355c2f2eba635a3b46d7ffd31bba44bda12edf42e",
-          "shenyu_gateway/private_capture.py": "565fcf7187952b2a54b1bb8df87dec6e6dc489be9ecd944038f35ce22473b5a9",
+          "shenyu_gateway/private_capture.py": "90c7a52de661b4f4489b5d647e5bd1af6074a809364b434bd7f491e3cd2a4bea",
           "shenyu_gateway/room_context.py": "b6fda0ef85c3844cc8369e259629fdf70dfe7bca5b636c4799b6555f76d3aac6",
           "shenyu_gateway/room_scenes.py": "becd9376c7ce96aab88e559df58e90d92d4d287ab69bf88a8e4c95e80c3fdf32",
           "shenyu_gateway/room_text.py": "f1d01146e934b56759ab071e114c5d7f55f3c28e3bcc34927b432aafc1d5e487",
           "shenyu_gateway/room_tools.py": "372170def56f2c72da7e580804480ff8ff2ec8781af479b39db0c15d547c004c"
         },
-        "commit": "231ef8cf65e61313852b049b5b285b09a5e45b8c",
-        "revision": "231ef8cf65e61313852b049b5b285b09a5e45b8c-dirty",
+        "commit": "4b0abf87300d5004f7c060864dfa2ddb824ea08b",
+        "revision": "4b0abf87300d5004f7c060864dfa2ddb824ea08b-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-12T14:50:46+08:00",
+        "reviewed_at": "2026-08-13T01:57:51+08:00",
         "reviewed_by": "codex"
       }
     },

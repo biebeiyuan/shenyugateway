@@ -76,6 +76,34 @@ def _stream_echo_event(
     return f"event: shenyu_echo\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
+def flush_stream_tail_events(
+    model: str,
+    *,
+    echo_filter: Any,
+    tag_filter: Any,
+    emit_echo_events: bool,
+    chunk_id: Optional[str] = None,
+    created: Optional[int] = None,
+) -> tuple[list[str], str]:
+    """Drain both end-of-stream filters into SSE events plus the visible tail text."""
+    echo_remaining, echo_tail = echo_filter.finish()
+    events: list[str] = []
+    if emit_echo_events and echo_tail:
+        events.append(_stream_echo_event(model, echo_tail, chunk_id=chunk_id, created=created))
+    remaining = tag_filter.feed(echo_remaining) + tag_filter.flush()
+    if remaining:
+        events.append(
+            _stream_content_event(
+                model,
+                remaining,
+                finish_reason=None,
+                chunk_id=chunk_id,
+                created=created,
+            )
+        )
+    return events, remaining
+
+
 def _stream_role_event(model: str, *, chunk_id: Optional[str] = None, created: Optional[int] = None) -> str:
     body = {
         **_stream_chunk_base(model, chunk_id=chunk_id, created=created),

@@ -315,6 +315,7 @@ def _test_pipeline(*, prepare_messages, nonstream_chat=None) -> ChatPipeline:
         finalize_assistant_private_content=lambda message, **kwargs: (
             message.get("content") or "",
             "",
+            "",
             {"applied": False},
         ),
         store_heartbeat=lambda *args, **kwargs: None,
@@ -2534,6 +2535,7 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
             finalize_assistant_private_content=lambda assistant_message, **kwargs: (
                 assistant_message.get("content", ""),
                 "",
+                "",
                 {"applied": False},
             ),
             store_heartbeat=lambda *args, **kwargs: None,
@@ -2616,6 +2618,7 @@ def test_internal_stream_loop_treats_empty_upstream_stream_as_502():
             aggregate_cache_usage=lambda usages, protocol="": {},
             finalize_assistant_private_content=lambda assistant_message, **kwargs: (
                 assistant_message.get("content", ""),
+                "",
                 "",
                 {"applied": False},
             ),

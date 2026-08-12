@@ -19,6 +19,7 @@ from .request_logs import (
 from .response_capture import AssistantTagFilter, split_private_assistant_tags
 from .echo import EchoStreamFilter, split_leading_echo, strip_leading_echo
 from .private_capture import restore_assistant_echo
+from .private_capture import unpack_private_capture_result as _unpack_private_capture_result
 from .response_meta import build_response_meta, response_meta_enabled
 from .runtime import json_dumps as _json_dumps
 from .runtime import logger, now_ts as _now_ts
@@ -37,6 +38,7 @@ from .streaming import (
     _stream_response_meta_event,
     _stream_tool_event,
     close_stream_reader,
+    flush_stream_tail_events,
     read_next_stream_chunk,
 )
 from .tool_registry import is_gateway_native_tool
@@ -76,7 +78,7 @@ class InternalToolLoopContext:
     execute_gateway_tool: Callable[..., Awaitable[dict]]
     record_upstream_payload: Callable[..., None]
     aggregate_cache_usage: Callable[[list[dict]], dict]
-    finalize_assistant_private_content: Callable[..., tuple[str, str, dict[str, Any]]]
+    finalize_assistant_private_content: Callable[..., tuple[str, str, str, dict[str, Any]]]
     store_heartbeat: Callable[[str, dict, str], None]
     mark_context_consumed: Callable[[dict], None]
     write_completion_context_snapshot: Callable[[dict, str], Any]
@@ -148,13 +150,6 @@ def _attach_anthropic_thinking_config(completion: dict, payload: dict, upstream:
         )
     if config:
         assistant_message[ANTHROPIC_THINKING_CONFIG_KEY] = config
-
-
-def _unpack_private_capture_result(result: tuple) -> tuple[str, str, dict[str, Any]]:
-    if len(result) == 3:
-        clean_content, heartbeat_content, fallback_meta = result
-        return clean_content, heartbeat_content, fallback_meta
-    raise ValueError("finalize_assistant_private_content returned an unsupported tuple shape")
 
 
 def _latest_user_text(messages: list[dict]) -> str:
@@ -681,23 +676,18 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
         tool_calls = _extract_tool_calls(completion)
         _record_completion_finish_reason(ctx.log_entry, completion, round_log=round_log)
         _record_round_response(round_log, completion)
-        echo_remaining, echo_tail = echo_filter.finish()
-        if echo_tail and (ctx.meta.get("client_profile") or {}).get("emit_echo_events"):
-            yield _stream_echo_event(
-                ctx.body.model,
-                echo_tail,
-                chunk_id=stream_chunk_id,
-                created=stream_created,
-            )
-        remaining = tag_filter.feed(echo_remaining) + tag_filter.flush()
+        tail_events, remaining = flush_stream_tail_events(
+            ctx.body.model,
+            echo_filter=echo_filter,
+            tag_filter=tag_filter,
+            emit_echo_events=_echo_events_enabled(ctx),
+            chunk_id=stream_chunk_id,
+            created=stream_created,
+        )
         if remaining:
             stream_replay.mark_visible_output(remaining)
-            yield _stream_content_event(
-                ctx.body.model,
-                remaining,
-                chunk_id=stream_chunk_id,
-                created=stream_created,
-            )
+        for chunk in tail_events:
+            yield chunk
         if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
             await _finalize_non_gateway_tool_reply(
                 ctx,
@@ -922,22 +912,20 @@ async def _finalize_non_gateway_tool_reply(
             original_assistant_message=_pending_assistant_tool_call_message(assistant_message, tool_calls),
             gateway_tool_messages=[],
         )
-    clean_content, heartbeat_content, fallback_meta = _unpack_private_capture_result(
+    clean_content, heartbeat_content, echo_content, fallback_meta = _unpack_private_capture_result(
         ctx.finalize_assistant_private_content(
             assistant_message,
             latest_user_text=latest_user_text,
         )
     )
-    _record_echo_segment(ctx, fallback_meta.get("echo", ""))
+    _record_echo_segment(ctx, echo_content)
     ctx.last_fallback_meta = fallback_meta
     ctx.meta["heartbeat_captured"] = bool(heartbeat_content)
     if heartbeat_content:
         ctx.store_heartbeat(ctx.session_id, ctx.session, heartbeat_content)
     if fallback_meta["applied"] and ctx.log_entry is not None:
         ctx.log_entry["empty_visible_response_fallback"] = True
-        ctx.log_entry["empty_visible_response_fallback_detail"] = {
-            key: value for key, value in fallback_meta.items() if key != "echo"
-        }
+        ctx.log_entry["empty_visible_response_fallback_detail"] = dict(fallback_meta)
     _strip_anthropic_private_blocks(assistant_message)
     model_content = restore_assistant_echo(clean_content, _combined_echo_text(ctx))
     ctx.sessions.log_assistant_output(ctx.session_id, {**assistant_message, "content": model_content})

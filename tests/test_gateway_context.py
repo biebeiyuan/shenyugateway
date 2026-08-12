@@ -658,11 +658,12 @@ def test_private_only_assistant_content_gets_visible_fallback():
     finalize = gateway_namespace["_finalize_assistant_private_content"]
     message = {"role": "assistant", "content": "<heartbeat>记下来</heartbeat>"}
 
-    clean, heartbeat, fallback_meta = finalize(message)
+    clean, heartbeat, echo, fallback_meta = finalize(message)
 
     assert clean == "沈予已记录 · 已记录私有块 heartbeat"
     assert message["content"] == "沈予已记录 · 已记录私有块 heartbeat"
     assert heartbeat == "记下来"
+    assert echo == ""
     assert fallback_meta == {
         "applied": True,
         "text": "沈予已记录 · 已记录私有块 heartbeat",
@@ -675,7 +676,7 @@ def test_home_trigger_private_capture_fallback():
     finalize = gateway_namespace["_finalize_assistant_private_content"]
     message = {"role": "assistant", "content": "<heartbeat>记下来</heartbeat>"}
 
-    clean, heartbeat, fallback_meta = finalize(
+    clean, heartbeat, echo, fallback_meta = finalize(
         message,
         latest_user_text='<proxy_sender name="沈予"/> 回家了。',
     )
@@ -683,6 +684,7 @@ def test_home_trigger_private_capture_fallback():
     assert clean == "沈予回家了 · 已记录私有块 heartbeat"
     assert message["content"] == "沈予回家了 · 已记录私有块 heartbeat"
     assert heartbeat == "记下来"
+    assert echo == ""
     assert fallback_meta == {
         "applied": True,
         "text": "沈予回家了 · 已记录私有块 heartbeat",
@@ -695,11 +697,12 @@ def test_empty_assistant_content_without_private_capture_keeps_empty():
     finalize = gateway_namespace["_finalize_assistant_private_content"]
     message = {"role": "assistant", "content": ""}
 
-    clean, heartbeat, fallback_meta = finalize(message)
+    clean, heartbeat, echo, fallback_meta = finalize(message)
 
     assert clean == ""
     assert message["content"] == ""
     assert heartbeat == ""
+    assert echo == ""
     assert fallback_meta == {
         "applied": False,
         "text": "",
@@ -712,11 +715,12 @@ def test_gateway_error_text_is_not_private_capture_fallback():
     finalize = gateway_namespace["_finalize_assistant_private_content"]
     message = {"role": "assistant", "content": "[网关错误] 400: upstream rejected payload"}
 
-    clean, heartbeat, fallback_meta = finalize(message)
+    clean, heartbeat, echo, fallback_meta = finalize(message)
 
     assert clean == "[网关错误] 400: upstream rejected payload"
     assert message["content"] == "[网关错误] 400: upstream rejected payload"
     assert heartbeat == ""
+    assert echo == ""
     assert fallback_meta["applied"] is False
 
 

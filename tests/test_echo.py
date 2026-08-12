@@ -120,25 +120,25 @@ def test_trim_assistant_echoes_keeps_echo_for_exactly_one_next_user_turn():
 def test_finalize_and_restore_echo_preserve_inner_whitespace_exactly():
     message = {"role": "assistant", "content": "[回响]\n  不急。 \n[/回响]正文"}
 
-    clean, heartbeat, meta = finalize_assistant_private_content(message)
+    clean, heartbeat, echo, _meta = finalize_assistant_private_content(message)
 
     assert clean == "正文"
     assert heartbeat == ""
-    assert meta["echo"] == "\n  不急。 \n"
-    assert restore_assistant_echo(clean, meta["echo"]) == "[回响]\n  不急。 \n[/回响]正文"
+    assert echo == "\n  不急。 \n"
+    assert restore_assistant_echo(clean, echo) == "[回响]\n  不急。 \n[/回响]正文"
 
 
 def test_echo_only_reply_does_not_invent_visible_fallback():
     message = {"role": "assistant", "content": "[回响]只是安静地待一下。[/回响]"}
 
-    clean, heartbeat, meta = finalize_assistant_private_content(message)
+    clean, heartbeat, echo, meta = finalize_assistant_private_content(message)
 
     assert clean == ""
     assert heartbeat == ""
+    assert echo == "只是安静地待一下。"
     assert meta == {
         "applied": False,
         "text": "",
         "kinds": [],
         "context": "",
-        "echo": "只是安静地待一下。",
     }

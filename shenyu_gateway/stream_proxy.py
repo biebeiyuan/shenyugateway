@@ -18,6 +18,7 @@ from .streaming import (
     _stream_content_event,
     _stream_echo_event,
     _stream_response_meta_event,
+    flush_stream_tail_events,
 )
 from .upstream_adapter import (
     _anthropic_stop_reason_to_openai,
@@ -121,25 +122,17 @@ async def stream_chat(
                         yield "\n"
                         continue
                     if line == "data: [DONE]":
-                        echo_remaining, echo_tail = echo_filter.finish()
-                        if emit_echo_events and echo_tail:
-                            yield _stream_echo_event(
-                                model,
-                                echo_tail,
-                                chunk_id=stream_chunk_id,
-                                created=stream_created,
-                            )
-                        filtered_tail = tag_filter.feed(echo_remaining)
-                        remaining = filtered_tail + tag_filter.flush()
-                        if remaining:
-                            yield _stream_content_event(
-                                model,
-                                remaining,
-                                finish_reason=None,
-                                chunk_id=stream_chunk_id,
-                                created=stream_created,
-                            )
-                            visible_output_sent = visible_output_sent or bool(remaining.strip())
+                        tail_events, remaining = flush_stream_tail_events(
+                            model,
+                            echo_filter=echo_filter,
+                            tag_filter=tag_filter,
+                            emit_echo_events=emit_echo_events,
+                            chunk_id=stream_chunk_id,
+                            created=stream_created,
+                        )
+                        for event in tail_events:
+                            yield event
+                        visible_output_sent = visible_output_sent or bool(remaining.strip())
                         heartbeat_content = tag_filter.get_heartbeat()
                         if not visible_output_sent and not tool_call_seen and heartbeat_content:
                             fallback_applied = True
@@ -226,25 +219,17 @@ async def stream_chat(
                             pass
                     yield line + "\n\n"
                 if not done_sent:
-                    echo_remaining, echo_tail = echo_filter.finish()
-                    if emit_echo_events and echo_tail:
-                        yield _stream_echo_event(
-                            model,
-                            echo_tail,
-                            chunk_id=stream_chunk_id,
-                            created=stream_created,
-                        )
-                    filtered_tail = tag_filter.feed(echo_remaining)
-                    remaining = filtered_tail + tag_filter.flush()
-                    if remaining:
-                        yield _stream_content_event(
-                            model,
-                            remaining,
-                            finish_reason=None,
-                            chunk_id=stream_chunk_id,
-                            created=stream_created,
-                        )
-                        visible_output_sent = visible_output_sent or bool(remaining.strip())
+                    tail_events, remaining = flush_stream_tail_events(
+                        model,
+                        echo_filter=echo_filter,
+                        tag_filter=tag_filter,
+                        emit_echo_events=emit_echo_events,
+                        chunk_id=stream_chunk_id,
+                        created=stream_created,
+                    )
+                    for event in tail_events:
+                        yield event
+                    visible_output_sent = visible_output_sent or bool(remaining.strip())
                     heartbeat_content = tag_filter.get_heartbeat()
                     if not visible_output_sent and not tool_call_seen and heartbeat_content:
                         fallback_applied = True
@@ -430,25 +415,17 @@ async def stream_chat(
                     except (TypeError, json.JSONDecodeError):
                         pass
                     yield f"data: {chunk}\n\n"
-            echo_remaining, echo_tail = echo_filter.finish()
-            if emit_echo_events and echo_tail:
-                yield _stream_echo_event(
-                    model,
-                    echo_tail,
-                    chunk_id=stream_chunk_id,
-                    created=stream_created,
-                )
-            filtered_tail = tag_filter.feed(echo_remaining)
-            remaining = filtered_tail + tag_filter.flush()
-            if remaining:
-                yield _stream_content_event(
-                    model,
-                    remaining,
-                    finish_reason=None,
-                    chunk_id=stream_chunk_id,
-                    created=stream_created,
-                )
-                visible_output_sent = visible_output_sent or bool(remaining.strip())
+            tail_events, remaining = flush_stream_tail_events(
+                model,
+                echo_filter=echo_filter,
+                tag_filter=tag_filter,
+                emit_echo_events=emit_echo_events,
+                chunk_id=stream_chunk_id,
+                created=stream_created,
+            )
+            for event in tail_events:
+                yield event
+            visible_output_sent = visible_output_sent or bool(remaining.strip())
             heartbeat_content = tag_filter.get_heartbeat()
             if not visible_output_sent and not tool_call_seen and heartbeat_content:
                 fallback_applied = True

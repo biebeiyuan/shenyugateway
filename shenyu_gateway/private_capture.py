@@ -103,7 +103,7 @@ def finalize_assistant_private_content(
     assistant_message: dict,
     *,
     latest_user_text: str = "",
-) -> tuple[str, str, dict[str, Any]]:
+) -> tuple[str, str, str, dict[str, Any]]:
     """Strip private heartbeat while returning the visible body and leading echo."""
     raw_content = _normalize_text(assistant_message.get("content"))
     echo_split = split_leading_echo(raw_content)
@@ -119,9 +119,19 @@ def finalize_assistant_private_content(
         "kinds": stored_kinds if fallback_applied else [],
         "context": fallback_context if fallback_applied else "",
     }
-    if echo_split.matched:
-        fallback_meta["echo"] = echo_split.echo
-    return _normalize_text(assistant_message.get("content")), heartbeat_content, fallback_meta
+    return (
+        _normalize_text(assistant_message.get("content")),
+        heartbeat_content,
+        echo_split.echo,
+        fallback_meta,
+    )
+
+
+def unpack_private_capture_result(result: tuple) -> tuple[str, str, str, dict[str, Any]]:
+    if len(result) == 4:
+        clean_content, heartbeat_content, echo, fallback_meta = result
+        return clean_content, heartbeat_content, echo, fallback_meta
+    raise ValueError("finalize_assistant_private_content returned an unsupported tuple shape")
 
 
 def restore_assistant_echo(visible_content: str, echo_content: str) -> str:

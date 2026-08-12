@@ -39,13 +39,7 @@ from .upstream_response_evidence import (
 )
 from .response_meta import attach_response_meta, build_response_meta, response_meta_enabled
 from .private_capture import restore_assistant_echo
-
-
-def _unpack_private_capture_result(result: tuple) -> tuple[str, str, dict[str, Any]]:
-    if len(result) == 3:
-        clean_content, heartbeat_content, fallback_meta = result
-        return clean_content, heartbeat_content, fallback_meta
-    raise ValueError("finalize_assistant_private_content returned an unsupported tuple shape")
+from .private_capture import unpack_private_capture_result as _unpack_private_capture_result
 
 
 @dataclass
@@ -62,7 +56,7 @@ class ChatPipeline:
     mapped_model_name: Callable[[str], str]
     private_capture_fallback_text: Callable[[str, list[str]], tuple[str, str]]
     private_capture_kinds: Callable[..., list[str]]
-    finalize_assistant_private_content: Callable[..., tuple[str, str, dict[str, Any]]]
+    finalize_assistant_private_content: Callable[..., tuple[str, str, str, dict[str, Any]]]
     store_heartbeat: Callable[[str, dict, str], None]
     mark_context_consumed: Callable[[dict], None]
     write_completion_context_snapshot: Callable[[dict, str], Any]
@@ -546,7 +540,7 @@ class ChatPipeline:
         )
         _record_completion_finish_reason(log_entry, completion)
         assistant_message = completion.get("choices", [{}])[0].get("message", {})
-        clean_content, heartbeat_content, fallback_meta = _unpack_private_capture_result(
+        clean_content, heartbeat_content, echo_content, fallback_meta = _unpack_private_capture_result(
             self.finalize_assistant_private_content(
                 assistant_message,
                 latest_user_text=_latest_user_text(prepared_messages),
@@ -556,16 +550,14 @@ class ChatPipeline:
             self.store_heartbeat(session_id, session, heartbeat_content)
         if fallback_meta["applied"]:
             log_entry["empty_visible_response_fallback"] = True
-            log_entry["empty_visible_response_fallback_detail"] = {
-                key: value for key, value in fallback_meta.items() if key != "echo"
-            }
+            log_entry["empty_visible_response_fallback_detail"] = dict(fallback_meta)
 
-        model_content = restore_assistant_echo(clean_content, fallback_meta.get("echo", ""))
+        model_content = restore_assistant_echo(clean_content, echo_content)
         sessions.log_assistant_output(session_id, {"role": "assistant", "content": model_content})
         self.write_completion_context_snapshot(meta, model_content)
         self.mark_context_consumed(meta)
-        if fallback_meta.get("echo") and (meta.get("client_profile") or {}).get("emit_echo_events"):
-            completion.setdefault("shenyu", {})["echo"] = fallback_meta["echo"]
+        if echo_content and (meta.get("client_profile") or {}).get("emit_echo_events"):
+            completion.setdefault("shenyu", {})["echo"] = echo_content
         if response_meta_enabled(meta):
             attach_response_meta(
                 completion,
