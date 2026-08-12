@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from .config import RuntimeConfig
+from .private_capture import restore_assistant_echo
 from .runtime import json_dumps
 from .store import GatewayStore
 from .utils import normalize_text
@@ -50,8 +51,8 @@ class SessionManager:
         )
         self.store.touch_session(session_id, message_increment=1)
 
-    def log_assistant_output(self, session_id: str, message: dict):
-        content = normalize_text(message.get("content"))
+    def log_assistant_output(self, session_id: str, message: dict, *, echo: str = ""):
+        content = restore_assistant_echo(message.get("content"), echo)
         self.store.append_message(session_id=session_id, role="assistant", content=content)
         self.store.touch_session(session_id, message_increment=1)
 

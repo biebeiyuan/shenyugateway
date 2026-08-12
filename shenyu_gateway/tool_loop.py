@@ -18,7 +18,6 @@ from .request_logs import (
 )
 from .response_capture import AssistantTagFilter, split_private_assistant_tags
 from .echo import EchoStreamFilter, split_leading_echo, strip_leading_echo
-from .private_capture import restore_assistant_echo
 from .private_capture import unpack_private_capture_result as _unpack_private_capture_result
 from .response_meta import build_response_meta, echo_events_enabled, response_meta_enabled
 from .runtime import json_dumps as _json_dumps
@@ -81,7 +80,7 @@ class InternalToolLoopContext:
     finalize_assistant_private_content: Callable[..., tuple[str, str, str, dict[str, Any]]]
     store_heartbeat: Callable[[str, dict, str], None]
     mark_context_consumed: Callable[[dict], None]
-    write_completion_context_snapshot: Callable[[dict, str], Any]
+    write_completion_context_snapshot: Callable[..., Any]
     record_response_text: Callable[[dict, str], None]
     last_fallback_meta: dict[str, Any] = field(default_factory=lambda: {"applied": False})
 
@@ -926,9 +925,13 @@ async def _finalize_non_gateway_tool_reply(
         ctx.log_entry["empty_visible_response_fallback"] = True
         ctx.log_entry["empty_visible_response_fallback_detail"] = dict(fallback_meta)
     _strip_anthropic_private_blocks(assistant_message)
-    model_content = restore_assistant_echo(clean_content, _combined_echo_text(ctx))
-    ctx.sessions.log_assistant_output(ctx.session_id, {**assistant_message, "content": model_content})
-    ctx.write_completion_context_snapshot(ctx.meta, model_content)
+    combined_echo = _combined_echo_text(ctx)
+    ctx.sessions.log_assistant_output(
+        ctx.session_id,
+        {**assistant_message, "content": clean_content},
+        echo=combined_echo,
+    )
+    ctx.write_completion_context_snapshot(ctx.meta, clean_content, combined_echo)
 
 
 def _append_assistant_tool_call_message(

@@ -483,7 +483,7 @@ def test_chat_pipeline_writes_completion_context_snapshot_after_assistant_reply(
 
     pipeline = _test_pipeline(prepare_messages=prepare_messages, nonstream_chat=nonstream_chat)
     pipeline.build_upstream_request = build_upstream_request
-    pipeline.write_completion_context_snapshot = lambda meta, content: snapshots.append((meta, content))
+    pipeline.write_completion_context_snapshot = lambda meta, content, echo="": snapshots.append((meta, content))
     body = ChatRequest(model="test-model", messages=[{"role": "user", "content": "最新一问"}])
 
     asyncio.run(pipeline.run(_fake_request({"X-Shenyu-Session-Tag": "5.15"}), body))
@@ -552,7 +552,7 @@ def test_chat_pipeline_snapshots_echo_only_stream_reply(monkeypatch):
     pipeline = _test_pipeline(prepare_messages=prepare_messages)
     pipeline.build_upstream_request = build_upstream_request
     pipeline.stream_chat = echo_only_stream
-    pipeline.write_completion_context_snapshot = lambda meta, content: snapshots.append((meta, content))
+    pipeline.write_completion_context_snapshot = lambda meta, content, echo="": snapshots.append((meta, content, echo))
     body = ChatRequest(
         model="test-model",
         messages=[{"role": "user", "content": "先停一下"}],
@@ -562,7 +562,7 @@ def test_chat_pipeline_snapshots_echo_only_stream_reply(monkeypatch):
     response = asyncio.run(pipeline.run(_fake_request({"X-Shenyu-Session-Tag": "echo-only"}), body))
 
     assert isinstance(response, StreamingResponse)
-    assert snapshots and snapshots[0][1] == "[回响]先在这里停一停。[/回响]"
+    assert snapshots and snapshots[0][1] == "" and snapshots[0][2] == "先在这里停一停。"
     assert pipeline.store.messages[-1]["role"] == "assistant"
     assert pipeline.store.messages[-1]["content"] == "[回响]先在这里停一停。[/回响]"
 

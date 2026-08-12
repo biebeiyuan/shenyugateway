@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from .private_capture import restore_assistant_echo
 from .runtime import json_dumps
 from .utils import normalize_text
 
@@ -31,6 +32,7 @@ def write_completion_context_snapshot(
     store: Any,
     meta: dict,
     assistant_content: Any,
+    echo: str = "",
 ) -> Optional[dict]:
     if store is None or not meta:
         return None
@@ -43,7 +45,7 @@ def write_completion_context_snapshot(
     if not base_messages:
         return None
 
-    messages = completion_snapshot_messages(base_messages, assistant_content)
+    messages = completion_snapshot_messages(base_messages, restore_assistant_echo(assistant_content, echo))
     latest_user_text = meta.get("snapshot_latest_user_text") or _latest_user_text(messages)
     return store.write_request_context_snapshot(
         session_id=session_id,

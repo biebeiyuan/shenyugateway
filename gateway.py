@@ -523,8 +523,8 @@ def _mark_context_consumed(meta: dict):
     _mark_context_consumed_impl(meta, store=session_store)
 
 
-def _write_completion_snapshot(meta: dict, assistant_content: str):
-    return _write_completion_context_snapshot(session_store, meta, assistant_content)
+def _write_completion_snapshot(meta: dict, assistant_content: str, echo: str = ""):
+    return _write_completion_context_snapshot(session_store, meta, assistant_content, echo)
 
 
 def _store_heartbeat(session_id: str, session: dict, content: str):

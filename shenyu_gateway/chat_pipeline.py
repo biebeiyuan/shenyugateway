@@ -38,7 +38,6 @@ from .upstream_response_evidence import (
     upstream_response_evidence_snapshot,
 )
 from .response_meta import attach_response_meta, build_response_meta, echo_events_enabled, response_meta_enabled
-from .private_capture import restore_assistant_echo
 from .private_capture import unpack_private_capture_result as _unpack_private_capture_result
 
 
@@ -59,7 +58,7 @@ class ChatPipeline:
     finalize_assistant_private_content: Callable[..., tuple[str, str, str, dict[str, Any]]]
     store_heartbeat: Callable[[str, dict, str], None]
     mark_context_consumed: Callable[[dict], None]
-    write_completion_context_snapshot: Callable[[dict, str], Any]
+    write_completion_context_snapshot: Callable[..., Any]
 
     async def run(self, request: Request, body: Any):
         t0 = _time.monotonic()
@@ -491,10 +490,9 @@ class ChatPipeline:
                             "context": fallback_context,
                         }
                     if collected_text or echo_content:
-                        model_content = restore_assistant_echo(collected_text, echo_content)
-                        assistant_msg = {"role": "assistant", "content": model_content}
-                        sessions.log_assistant_output(session_id, assistant_msg)
-                        self.write_completion_context_snapshot(meta, model_content)
+                        assistant_msg = {"role": "assistant", "content": collected_text}
+                        sessions.log_assistant_output(session_id, assistant_msg, echo=echo_content)
+                        self.write_completion_context_snapshot(meta, collected_text, echo_content)
                         _record_response_text(log_entry, collected_text)
                     else:
                         _record_response_text(log_entry, "")
@@ -552,9 +550,8 @@ class ChatPipeline:
             log_entry["empty_visible_response_fallback"] = True
             log_entry["empty_visible_response_fallback_detail"] = dict(fallback_meta)
 
-        model_content = restore_assistant_echo(clean_content, echo_content)
-        sessions.log_assistant_output(session_id, {"role": "assistant", "content": model_content})
-        self.write_completion_context_snapshot(meta, model_content)
+        sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content}, echo=echo_content)
+        self.write_completion_context_snapshot(meta, clean_content, echo_content)
         self.mark_context_consumed(meta)
         if echo_content and echo_events_enabled(meta):
             completion.setdefault("shenyu", {})["echo"] = echo_content
