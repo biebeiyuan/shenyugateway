@@ -179,28 +179,3 @@ def trim_assistant_echoes(
         "echo_messages_seen": seen,
         "echo_messages_trimmed": stripped,
     }
-
-
-def strip_all_assistant_echoes(
-    messages: list[dict[str, Any]],
-) -> tuple[list[dict[str, Any]], dict[str, int]]:
-    stripped: list[dict[str, Any]] = []
-    seen = 0
-    removed = 0
-    for message in messages:
-        if message.get("role") != "assistant" or not isinstance(message.get("content"), str):
-            stripped.append(message)
-            continue
-        split = split_leading_echo(str(message.get("content") or ""))
-        if not split.matched:
-            stripped.append(message)
-            continue
-        seen += 1
-        clean = dict(message)
-        clean["content"] = split.visible
-        stripped.append(clean)
-        removed += 1
-    return stripped, {
-        "echo_messages_seen": seen,
-        "echo_messages_trimmed": removed,
-    }

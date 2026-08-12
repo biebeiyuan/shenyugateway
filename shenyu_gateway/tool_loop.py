@@ -20,7 +20,7 @@ from .response_capture import AssistantTagFilter, split_private_assistant_tags
 from .echo import EchoStreamFilter, split_leading_echo, strip_leading_echo
 from .private_capture import restore_assistant_echo
 from .private_capture import unpack_private_capture_result as _unpack_private_capture_result
-from .response_meta import build_response_meta, response_meta_enabled
+from .response_meta import build_response_meta, echo_events_enabled, response_meta_enabled
 from .runtime import json_dumps as _json_dumps
 from .runtime import logger, now_ts as _now_ts
 from .store._admin import TOOL_ERROR_CONFIG_PHRASES
@@ -243,8 +243,7 @@ def _tool_event_details_enabled(ctx: InternalToolLoopContext) -> bool:
 
 
 def _echo_events_enabled(ctx: InternalToolLoopContext) -> bool:
-    profile = ctx.meta.get("client_profile") if isinstance(ctx.meta, dict) else None
-    return bool(isinstance(profile, dict) and profile.get("emit_echo_events"))
+    return echo_events_enabled(ctx.meta if isinstance(ctx.meta, dict) else None)
 
 
 def _next_process_order(ctx: InternalToolLoopContext) -> int:
@@ -642,7 +641,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                 text = delta.get("content")
                 if text:
                     echo_visible, echo_delta, _echo_closed = echo_filter.feed(text)
-                    if echo_delta and (ctx.meta.get("client_profile") or {}).get("emit_echo_events"):
+                    if echo_delta and _echo_events_enabled(ctx):
                         yield _stream_echo_event(
                             ctx.body.model,
                             echo_delta,

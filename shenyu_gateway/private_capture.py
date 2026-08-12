@@ -6,7 +6,7 @@ from typing import Any
 
 from .runtime import logger
 from .response_capture import split_private_assistant_tags
-from .echo import split_leading_echo
+from .echo import ECHO_CLOSE_MARKER, ECHO_OPEN_MARKER, split_leading_echo
 from .utils import normalize_text as _normalize_text
 
 
@@ -140,4 +140,4 @@ def restore_assistant_echo(visible_content: str, echo_content: str) -> str:
     visible = _normalize_text(visible_content)
     if not echo.strip():
         return visible
-    return f"[回响]{echo}[/回响]{visible}"
+    return f"{ECHO_OPEN_MARKER}{echo}{ECHO_CLOSE_MARKER}{visible}"

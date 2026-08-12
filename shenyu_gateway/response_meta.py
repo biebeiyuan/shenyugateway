@@ -15,6 +15,11 @@ def response_meta_enabled(context_meta: Optional[dict[str, Any]]) -> bool:
     return bool(isinstance(profile, dict) and profile.get("emit_response_meta"))
 
 
+def echo_events_enabled(context_meta: Optional[dict[str, Any]]) -> bool:
+    profile = (context_meta or {}).get("client_profile") or {}
+    return bool(isinstance(profile, dict) and profile.get("emit_echo_events"))
+
+
 def _context_trim_in_rounds(window: dict[str, Any]) -> Optional[int]:
     try:
         high_water = int(window.get("context_high_water"))

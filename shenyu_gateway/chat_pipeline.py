@@ -37,7 +37,7 @@ from .upstream_response_evidence import (
     ensure_upstream_response_evidence,
     upstream_response_evidence_snapshot,
 )
-from .response_meta import attach_response_meta, build_response_meta, response_meta_enabled
+from .response_meta import attach_response_meta, build_response_meta, echo_events_enabled, response_meta_enabled
 from .private_capture import restore_assistant_echo
 from .private_capture import unpack_private_capture_result as _unpack_private_capture_result
 
@@ -528,7 +528,7 @@ class ChatPipeline:
                 on_complete=_on_stream_complete,
                 latest_user_text=_latest_user_text(prepared_messages),
                 response_meta=_response_meta if response_meta_enabled(meta) else None,
-                emit_echo_events=bool((meta.get("client_profile") or {}).get("emit_echo_events")),
+                emit_echo_events=echo_events_enabled(meta),
             )
 
         completion = await self.nonstream_chat(request, payload, headers, body.model, upstream)
@@ -556,7 +556,7 @@ class ChatPipeline:
         sessions.log_assistant_output(session_id, {"role": "assistant", "content": model_content})
         self.write_completion_context_snapshot(meta, model_content)
         self.mark_context_consumed(meta)
-        if echo_content and (meta.get("client_profile") or {}).get("emit_echo_events"):
+        if echo_content and echo_events_enabled(meta):
             completion.setdefault("shenyu", {})["echo"] = echo_content
         if response_meta_enabled(meta):
             attach_response_meta(
