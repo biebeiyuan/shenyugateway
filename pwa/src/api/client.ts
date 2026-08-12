@@ -1,4 +1,5 @@
 import type { UiMessage } from '../types'
+import { joinEcho } from '../echo'
 import { parsePwaBuildInfo, type PwaBuildInfo } from '../buildInfo'
 
 // Thin gateway HTTP layer. Every request carries the PWA client identity
@@ -31,9 +32,10 @@ export function requestHeaders(ctx: RequestContext): Record<string, string> {
 }
 
 export function wireContent(message: UiMessage): string | Array<Record<string, unknown>> {
-  if (!message.attachments.length) return message.content
+  const content = message.role === 'assistant' ? joinEcho(message.content, message.echo || '') : message.content
+  if (!message.attachments.length) return content
   const blocks: Array<Record<string, unknown>> = []
-  if (message.content.trim()) blocks.push({ type: 'text', text: message.content })
+  if (content.trim()) blocks.push({ type: 'text', text: content })
   for (const attachment of message.attachments) {
     blocks.push({ type: 'image_url', image_url: { url: attachment.dataUrl } })
   }

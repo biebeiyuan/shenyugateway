@@ -21,6 +21,7 @@ from .utils import shorten
 class ContextLayerSettings:
     enable_gateway_tools: bool
     heartbeat_prompt: str
+    echo_prompt: str = ""
     client_tool_surface: str = "all"
 
 
@@ -100,7 +101,11 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
 
     heartbeat = "\n\n".join(heartbeat_blocks)
     tool_policy = _render_gateway_tool_policy(settings) if settings.enable_gateway_tools else ""
-    format_layer = settings.heartbeat_prompt
+    format_layer = "\n\n".join(
+        block.rstrip()
+        for block in (getattr(settings, "echo_prompt", ""), settings.heartbeat_prompt)
+        if block and block.strip()
+    )
 
     return {
         "stable": stable,

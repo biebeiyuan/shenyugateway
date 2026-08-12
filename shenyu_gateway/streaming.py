@@ -12,6 +12,7 @@ from fastapi.responses import StreamingResponse
 
 from .runtime import json_dumps as _json_dumps
 from .runtime import now_ts as _now_ts
+from .echo import strip_leading_echo
 from .utils import normalize_text as _normalize_text
 from .upstream_adapter import ANTHROPIC_CONTENT_BLOCKS_KEY
 
@@ -57,6 +58,22 @@ def _stream_reasoning_event(
         "choices": [{"index": 0, "delta": {"reasoning_content": reasoning}, "finish_reason": finish_reason}],
     }
     return f"data: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+
+def _stream_echo_event(
+    model: str,
+    echo: str,
+    *,
+    chunk_id: Optional[str] = None,
+    created: Optional[int] = None,
+) -> str:
+    body = {
+        **_stream_chunk_base(model, chunk_id=chunk_id, created=created),
+        "type": "shenyu.echo_delta",
+        "object": "shenyu.echo_delta",
+        "echo": echo,
+    }
+    return f"event: shenyu_echo\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
 def _stream_role_event(model: str, *, chunk_id: Optional[str] = None, created: Optional[int] = None) -> str:
@@ -362,7 +379,14 @@ def _completion_with_unstreamed_deltas(
     choice = dict(choices[0])
     message = dict(choice.get("message") or {})
     if streamed_content:
-        message["content"] = _unstreamed_text_suffix(_normalize_text(message.get("content")), streamed_content)
+        # A tool-loop completion may still contain the model-facing leading
+        # echo block even though the visible body was already streamed. Strip
+        # that private wrapper before calculating the unstreamed suffix, or a
+        # client-tool continuation can lose text after the first visible delta.
+        message["content"] = _unstreamed_text_suffix(
+            strip_leading_echo(_normalize_text(message.get("content"))),
+            streamed_content,
+        )
     if streamed_reasoning and message.get("reasoning_content"):
         message["reasoning_content"] = _unstreamed_text_suffix(
             _normalize_text(message.get("reasoning_content")),

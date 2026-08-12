@@ -17,6 +17,8 @@ from .request_logs import (
     _upstream_payload_summary,
 )
 from .response_capture import AssistantTagFilter, split_private_assistant_tags
+from .echo import EchoStreamFilter, split_leading_echo, strip_leading_echo
+from .private_capture import restore_assistant_echo
 from .response_meta import build_response_meta, response_meta_enabled
 from .runtime import json_dumps as _json_dumps
 from .runtime import logger, now_ts as _now_ts
@@ -27,6 +29,7 @@ from .streaming import (
     _new_stream_chunk_id,
     _new_stream_completion,
     _stream_content_event,
+    _stream_echo_event,
     _stream_final_event,
     _stream_keepalive_event,
     _stream_reasoning_event,
@@ -244,6 +247,36 @@ def _tool_event_details_enabled(ctx: InternalToolLoopContext) -> bool:
     return bool(isinstance(profile, dict) and profile.get("emit_tool_event_details"))
 
 
+def _echo_events_enabled(ctx: InternalToolLoopContext) -> bool:
+    profile = ctx.meta.get("client_profile") if isinstance(ctx.meta, dict) else None
+    return bool(isinstance(profile, dict) and profile.get("emit_echo_events"))
+
+
+def _next_process_order(ctx: InternalToolLoopContext) -> int:
+    order = max(0, int(ctx.meta.get("_client_process_order") or 0))
+    ctx.meta["_client_process_order"] = order + 1
+    return order
+
+
+def _record_echo_segment(ctx: InternalToolLoopContext, echo: str) -> Optional[dict[str, Any]]:
+    if not (echo or "").strip():
+        return None
+    segment = {"content": echo, "stream_order": _next_process_order(ctx)}
+    ctx.meta.setdefault("echo_segments", []).append(segment)
+    return segment
+
+
+def _combined_echo_text(ctx: InternalToolLoopContext) -> str:
+    segments = ctx.meta.get("echo_segments") if isinstance(ctx.meta, dict) else None
+    if not isinstance(segments, list):
+        return ""
+    return "".join(
+        str(item.get("content") or "")
+        for item in segments
+        if isinstance(item, dict)
+    )
+
+
 def _record_tool_event(
     ctx: InternalToolLoopContext,
     *,
@@ -265,6 +298,11 @@ def _record_tool_event(
         "target_tool": _target_tool_name(name, args),
         "round": round_index + 1,
     }
+    order_key = str(tool_call.get("id") or f"{name}:{round_index}")
+    process_orders = ctx.meta.setdefault("_tool_process_orders", {})
+    if phase == "tool_start" or order_key not in process_orders:
+        process_orders[order_key] = _next_process_order(ctx)
+    event["stream_order"] = process_orders[order_key]
     if cached is not None:
         event["cached"] = bool(cached)
     if duration_ms is not None:
@@ -293,6 +331,18 @@ def _attach_tool_events(completion: dict, ctx: InternalToolLoopContext) -> dict:
     if not events:
         return completion
     completion.setdefault("shenyu", {})["tool_events"] = json.loads(_json_dumps(events))
+    return completion
+
+
+def _attach_echo_segments(completion: dict, ctx: InternalToolLoopContext) -> dict:
+    if not _echo_events_enabled(ctx):
+        return completion
+    segments = ctx.meta.get("echo_segments") if isinstance(ctx.meta, dict) else None
+    if not isinstance(segments, list) or not segments:
+        return completion
+    shenyu = completion.setdefault("shenyu", {})
+    shenyu["echo"] = _combined_echo_text(ctx)
+    shenyu["echo_segments"] = json.loads(_json_dumps(segments))
     return completion
 
 
@@ -369,7 +419,9 @@ async def _execute_mixed_gateway_tool_calls(
 
 def _pending_assistant_tool_call_message(assistant_message: dict, tool_calls: list[dict]) -> dict:
     pending_copy = dict(assistant_message or {})
-    clean_content, _ = split_private_assistant_tags(_normalize_text(pending_copy.get("content")))
+    clean_content, _ = split_private_assistant_tags(
+        strip_leading_echo(_normalize_text(pending_copy.get("content")))
+    )
     pending_copy["content"] = clean_content
     return _assistant_tool_call_message(pending_copy, tool_calls)
 
@@ -459,8 +511,11 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
             )
             if response_meta_enabled(ctx.meta):
                 completion.setdefault("shenyu", {})["response_meta"] = _tool_response_meta(ctx)
-            return _attach_tool_events(completion, ctx)
+            return _attach_echo_segments(_attach_tool_events(completion, ctx), ctx)
 
+        assistant_message = completion.get("choices", [{}])[0].get("message", {})
+        intermediate_echo = split_leading_echo(_content_text_only(assistant_message.get("content"))).echo
+        _record_echo_segment(ctx, intermediate_echo)
         _append_assistant_tool_call_message(working_messages, completion, tool_calls, round_log)
         for tool_call in tool_calls:
             _record_tool_event(
@@ -526,6 +581,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
 
         completion = _new_stream_completion(ctx.body.model)
         tag_filter = AssistantTagFilter()
+        echo_filter = EchoStreamFilter()
         stream_replay = StreamReplayAccumulator()
         first_upstream_chunk_seen = False
         response_evidence = ensure_upstream_response_evidence(
@@ -590,7 +646,15 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                     )
                 text = delta.get("content")
                 if text:
-                    filtered = tag_filter.feed(text)
+                    echo_visible, echo_delta, _echo_closed = echo_filter.feed(text)
+                    if echo_delta and (ctx.meta.get("client_profile") or {}).get("emit_echo_events"):
+                        yield _stream_echo_event(
+                            ctx.body.model,
+                            echo_delta,
+                            chunk_id=stream_chunk_id,
+                            created=stream_created,
+                        )
+                    filtered = tag_filter.feed(echo_visible)
                     if filtered:
                         yield _stream_content_event(
                             ctx.body.model,
@@ -617,17 +681,24 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
         tool_calls = _extract_tool_calls(completion)
         _record_completion_finish_reason(ctx.log_entry, completion, round_log=round_log)
         _record_round_response(round_log, completion)
+        echo_remaining, echo_tail = echo_filter.finish()
+        if echo_tail and (ctx.meta.get("client_profile") or {}).get("emit_echo_events"):
+            yield _stream_echo_event(
+                ctx.body.model,
+                echo_tail,
+                chunk_id=stream_chunk_id,
+                created=stream_created,
+            )
+        remaining = tag_filter.feed(echo_remaining) + tag_filter.flush()
+        if remaining:
+            stream_replay.mark_visible_output(remaining)
+            yield _stream_content_event(
+                ctx.body.model,
+                remaining,
+                chunk_id=stream_chunk_id,
+                created=stream_created,
+            )
         if not tool_calls or not _all_tool_calls_are_gateway_native(tool_calls):
-            if not tool_calls:
-                remaining = tag_filter.flush()
-                if remaining:
-                    stream_replay.mark_visible_output(remaining)
-                    yield _stream_content_event(
-                        ctx.body.model,
-                        remaining,
-                        chunk_id=stream_chunk_id,
-                        created=stream_created,
-                    )
             await _finalize_non_gateway_tool_reply(
                 ctx,
                 completion,
@@ -682,6 +753,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                 _mark_request_log_phase(ctx.log_entry, "stream.done_sent")
             return
 
+        _record_echo_segment(ctx, echo_filter.echo_text)
         _append_assistant_tool_call_message(working_messages, completion, tool_calls, round_log)
         for tool_call in tool_calls:
             started_event = _record_tool_event(
@@ -806,7 +878,9 @@ def _record_round_response(round_log: Optional[dict], completion: dict) -> None:
     if round_log is None:
         return
     assistant_message = completion.get("choices", [{}])[0].get("message", {})
-    clean_content, _ = split_private_assistant_tags(_content_text_only(assistant_message.get("content")))
+    clean_content, _ = split_private_assistant_tags(
+        strip_leading_echo(_content_text_only(assistant_message.get("content")))
+    )
     round_log["response_full"] = clean_content
     round_log["response_preview"] = _shorten(clean_content, 1200)
     started = round_log.pop("_started_monotonic", None)
@@ -854,16 +928,20 @@ async def _finalize_non_gateway_tool_reply(
             latest_user_text=latest_user_text,
         )
     )
+    _record_echo_segment(ctx, fallback_meta.get("echo", ""))
     ctx.last_fallback_meta = fallback_meta
     ctx.meta["heartbeat_captured"] = bool(heartbeat_content)
     if heartbeat_content:
         ctx.store_heartbeat(ctx.session_id, ctx.session, heartbeat_content)
     if fallback_meta["applied"] and ctx.log_entry is not None:
         ctx.log_entry["empty_visible_response_fallback"] = True
-        ctx.log_entry["empty_visible_response_fallback_detail"] = fallback_meta
+        ctx.log_entry["empty_visible_response_fallback_detail"] = {
+            key: value for key, value in fallback_meta.items() if key != "echo"
+        }
     _strip_anthropic_private_blocks(assistant_message)
-    ctx.sessions.log_assistant_output(ctx.session_id, assistant_message)
-    ctx.write_completion_context_snapshot(ctx.meta, clean_content)
+    model_content = restore_assistant_echo(clean_content, _combined_echo_text(ctx))
+    ctx.sessions.log_assistant_output(ctx.session_id, {**assistant_message, "content": model_content})
+    ctx.write_completion_context_snapshot(ctx.meta, model_content)
 
 
 def _append_assistant_tool_call_message(

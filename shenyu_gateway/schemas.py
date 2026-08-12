@@ -45,6 +45,8 @@ class ConfigUpdate(BaseModel):
     upstream_passthrough_headers: Optional[list[str] | str] = None
     wake_welcome_message: Optional[str] = None
     clear_wake_welcome_message: Optional[bool] = None
+    echo_prompt: Optional[str] = None
+    echo_retention_turns: Optional[int] = Field(default=None, ge=0, le=20)
     inject_inline_memory_prompt: Optional[bool] = None
     enable_inline_memory_capture: Optional[bool] = None
     model_mapping: Optional[dict[str, str]] = None

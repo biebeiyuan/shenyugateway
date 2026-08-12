@@ -338,6 +338,27 @@ def test_gateway_tool_policy_names_broker_call_shape_and_tool_list():
     assert "客户端递给我的工具；按它自己的说明用" in tool_policy
 
 
+def test_echo_prompt_is_immediately_before_heartbeat_format_prompt():
+    package = {
+        "stable_charter": "stable charter",
+        "calendar_context": {},
+        "heartbeat_digest": "",
+        "notebook_items": [],
+        "last_wake_recap": "",
+        "mem_notes": [],
+    }
+    layers = context_layers.render_layered_additions(
+        package,
+        context_layers.ContextLayerSettings(
+            enable_gateway_tools=False,
+            echo_prompt="echo format",
+            heartbeat_prompt="heartbeat format",
+        ),
+    )
+
+    assert layers["format"] == "echo format\n\nheartbeat format"
+
+
 def test_normal_slow_layer_exposes_unified_bookshelf_overview_without_book_bodies():
     layers = context_layers.render_layered_additions(
         {

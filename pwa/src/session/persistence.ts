@@ -1,5 +1,5 @@
 import type { ToolEvent } from '../toolLanguage'
-import type { MessageVariant, ResponseMeta, Role, ThinkingSegment, UiMessage } from '../types'
+import type { EchoSegment, MessageVariant, ResponseMeta, Role, ThinkingSegment, UiMessage } from '../types'
 import { createId } from '../utils'
 import { applyVariant, cloneVariant, selectedVariantIndex, syncCurrentVariant } from './variants'
 
@@ -24,6 +24,19 @@ function cloneStoredThinkingSegments(value: unknown): ThinkingSegment[] {
         .filter((item): item is Partial<ThinkingSegment> => Boolean(item && typeof item === 'object'))
         .map((item) => ({
           id: String(item.id || createId('thinking')),
+          content: String(item.content || ''),
+          textOffset: Number(item.textOffset || 0),
+          streamOrder: Number(item.streamOrder || 0),
+        }))
+    : []
+}
+
+function cloneStoredEchoSegments(value: unknown): EchoSegment[] {
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is Partial<EchoSegment> => Boolean(item && typeof item === 'object'))
+        .map((item) => ({
+          id: String(item.id || createId('echo')),
           content: String(item.content || ''),
           textOffset: Number(item.textOffset || 0),
           streamOrder: Number(item.streamOrder || 0),
@@ -57,10 +70,17 @@ export function loadStoredMessages(): UiMessage[] {
     return raw.filter((item) => item && (item.role === 'user' || item.role === 'assistant'))
       .map((item) => {
         const storedSegments = cloneStoredThinkingSegments(item.thinkingSegments)
+        const storedEchoSegments = cloneStoredEchoSegments(item.echoSegments)
         const message: UiMessage = {
           id: String(item.id || createId('message')),
           role: item.role as Role,
           content: String(item.content || ''),
+          echo: String(item.echo || ''),
+          echoSegments: storedEchoSegments.length
+            ? storedEchoSegments
+            : item.echo
+              ? [{ id: createId('echo'), content: String(item.echo), textOffset: 0, streamOrder: 0 }]
+              : [],
           attachments: [],
           thinking: String(item.thinking || ''),
           thinkingSegments: storedSegments.length
@@ -95,6 +115,8 @@ type StoredRow = {
   id: string
   role: Role
   content: string
+  echo: string
+  echoSegments: EchoSegment[]
   thinking: string
   thinkingSegments: ThinkingSegment[]
   events: ToolEvent[]
@@ -126,6 +148,8 @@ export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit
     id: message.id,
     role: message.role,
     content: message.content,
+    echo: message.echo || '',
+    echoSegments: message.echoSegments || [],
     thinking: message.thinking,
     thinkingSegments: message.thinkingSegments,
     events: message.events,

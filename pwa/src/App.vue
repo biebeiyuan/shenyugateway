@@ -32,6 +32,7 @@ import { renderMarkdown } from './markdown'
 import { toolState, toolWarmCopy, type ToolEvent } from './toolLanguage'
 import type {
   Attachment,
+  EchoSegment,
   GatewaySession,
   ModelOption,
   ProcessGroup,
@@ -86,6 +87,7 @@ import {
   hasExactDuplicateRows,
   sessionHistoryRows,
   sessionMessageContent,
+  sessionMessageParts,
   sessionTagFromLocation,
 } from './session/history'
 import {
@@ -110,6 +112,7 @@ import {
   assistantParts,
   formatToolInput,
   formatToolOutput,
+  groupHasEcho,
   groupHasThinking,
   processGroups,
   processSummary,
@@ -223,7 +226,14 @@ const processSheetThinking = computed(() => {
   if (!current || current.view !== 'thinking' || !group) return undefined
   return group.thinking.find((item) => item.id === current.thinkingKey)
 })
+const processSheetEcho = computed(() => {
+  const current = processSheet.value
+  const group = processSheetGroup.value
+  if (!current || current.view !== 'echo' || !group) return undefined
+  return group.echo.find((item) => item.id === current.echoKey)
+})
 const processSheetTitle = computed(() => {
+  if (processSheet.value?.view === 'echo') return '回响'
   if (processSheet.value?.view === 'thinking') return '思考片段'
   if (processSheet.value?.view === 'tool') return toolWarmCopy(processSheetEvent.value || { phase: '', tool_call_id: '', name: '' })
   return '沈予刚才做了什么'
@@ -475,16 +485,23 @@ async function openSession(session: GatewaySession): Promise<boolean> {
     const rows = sessionHistoryRows(payload)
     messages.value = rows
       .filter((row: Record<string, unknown>) => row.role === 'user' || row.role === 'assistant')
-      .map((row: Record<string, unknown>) => ({
-        id: String(row.id || createId('message')),
-        role: row.role as Role,
-        content: sessionMessageContent(row.content),
-        attachments: [],
-        thinking: '',
-        thinkingSegments: [],
-        events: [],
-        streaming: false,
-      }))
+      .map((row: Record<string, unknown>) => {
+        const parts = sessionMessageParts(row.content)
+        return {
+          id: String(row.id || createId('message')),
+          role: row.role as Role,
+          content: parts.content,
+          echo: row.role === 'assistant' ? parts.echo : '',
+          echoSegments: row.role === 'assistant' && parts.echo
+            ? [{ id: createId('echo'), content: parts.echo, textOffset: 0, streamOrder: 0 }]
+            : [],
+          attachments: [],
+          thinking: '',
+          thinkingSegments: [],
+          events: [],
+          streaming: false,
+        }
+      })
     // 快照只带正文；用 recent_messages 里的 tool 原始行补回工具事件，
     // 随后的 persistMessages 会把补好的 events 一起落盘。
     hydrateToolEvents(messages.value, payload.recent_messages)
@@ -511,16 +528,23 @@ async function recoverSessionFromColdStart(session: GatewaySession = { session_t
     if (!cleanRows.length || hasExactDuplicateRows(cleanRows)) throw new Error('没有找到干净的冷启动源')
     if (messages.value.length) messages.value = dedupeUiMessagesForRecovery(messages.value)
     else {
-      messages.value = cleanRows.map((row) => ({
-        id: createId('message'),
-        role: row.role as Role,
-        content: sessionMessageContent(row.content),
-        attachments: [],
-        thinking: '',
-        thinkingSegments: [],
-        events: [],
-        streaming: false,
-      }))
+      messages.value = cleanRows.map((row) => {
+        const parts = sessionMessageParts(row.content)
+        return {
+          id: createId('message'),
+          role: row.role as Role,
+          content: parts.content,
+          echo: row.role === 'assistant' ? parts.echo : '',
+          echoSegments: row.role === 'assistant' && parts.echo
+            ? [{ id: createId('echo'), content: parts.echo, textOffset: 0, streamOrder: 0 }]
+            : [],
+          attachments: [],
+          thinking: '',
+          thinkingSegments: [],
+          events: [],
+          streaming: false,
+        }
+      })
       hydrateToolEvents(messages.value, payload.recent_messages)
     }
     sessionTag.value = session.session_tag
@@ -864,6 +888,8 @@ async function enterRoom() {
     id: createId('room-entry'),
     role: 'user',
     content: buildRoomEntry(),
+    echo: '',
+    echoSegments: [],
     attachments: [],
     thinking: '',
     thinkingSegments: [],
@@ -891,6 +917,8 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       id: createId('assistant'),
       role: 'assistant',
       content: '',
+      echo: '',
+      echoSegments: [],
       attachments: [],
       thinking: '',
       thinkingSegments: [],
@@ -931,7 +959,9 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       applyChatCompletion(completion, assistant)
     }
     assistant.streaming = false
-    if (!assistant.content && !assistant.thinking && !assistant.events.length) assistant.content = '这次没有收到可显示的回应。'
+    if (!assistant.content && !assistant.echo && !assistant.thinking && !assistant.events.length) {
+      assistant.content = '这次没有收到可显示的回应。'
+    }
     syncCurrentVariant(assistant)
   } catch (error) {
     assistant.streaming = false
@@ -984,6 +1014,8 @@ async function submit() {
     id: createId('user'),
     role: 'user',
     content: text,
+    echo: '',
+    echoSegments: [],
     attachments: [...pendingAttachments.value],
     thinking: '',
     thinkingSegments: [],
@@ -1069,6 +1101,11 @@ function showThinkingDetail(thinking: ThinkingSegment) {
   processSheet.value = { ...processSheet.value, view: 'thinking', thinkingKey: thinking.id }
 }
 
+function showEchoDetail(echo: EchoSegment) {
+  if (!processSheet.value) return
+  processSheet.value = { ...processSheet.value, view: 'echo', echoKey: echo.id }
+}
+
 function showToolDetail(event: ToolEvent) {
   if (!processSheet.value) return
   processSheet.value = { ...processSheet.value, view: 'tool', toolKey: toolEventKey(event) }
@@ -1076,7 +1113,7 @@ function showToolDetail(event: ToolEvent) {
 
 function backToProcessSummary() {
   if (!processSheet.value) return
-  processSheet.value = { ...processSheet.value, view: 'summary', thinkingKey: undefined, toolKey: undefined }
+  processSheet.value = { ...processSheet.value, view: 'summary', echoKey: undefined, thinkingKey: undefined, toolKey: undefined }
 }
 
 // 渲染层切分：气泡里正文与尾部状态后缀分开、后缀淡化展示（数据本身不变）。
@@ -1304,7 +1341,7 @@ onUnmounted(() => {
               </div>
               <div v-else class="assistant-body">
                 <template v-for="part in assistantParts(message)" :key="part.key">
-                  <button v-if="part.kind === 'process'" class="process-strip" :class="{ thinking: groupHasThinking(part.group) }" type="button" @click="openProcessSheet(message, part.group)">
+                  <button v-if="part.kind === 'process'" class="process-strip" :class="{ thinking: groupHasThinking(part.group), echo: groupHasEcho(part.group) }" type="button" @click="openProcessSheet(message, part.group)">
                     <span class="process-icon">
                       <Clock3 v-if="groupHasThinking(part.group)" :size="16" />
                       <Sparkles v-else :size="15" />
@@ -1317,8 +1354,8 @@ onUnmounted(() => {
                 </template>
                 <ChatNestSprite v-if="message.streaming" :mode="statusSpriteMode(message)" />
                 <div v-if="message.error" class="message-error">这次没有顺利接上：{{ message.error }}</div>
-                <div v-if="!message.streaming && (message.content || message.error)" class="message-actions">
-                  <button title="复制" aria-label="复制" @click="copyText(message.content)"><Clipboard :size="15" /></button>
+                <div v-if="!message.streaming && (message.content || message.echo || message.error)" class="message-actions">
+                  <button title="复制" aria-label="复制" @click="copyText(message.content || message.echo)"><Clipboard :size="15" /></button>
                   <button title="重新生成" aria-label="重新生成" @click="retryMessage(index)"><RotateCcw :size="15" /></button>
                   <span v-if="variantCount(message) > 1" class="variant-switcher">
                     <button title="上一版回答" aria-label="上一版回答" :disabled="!canSwitchMessageVariant(message, -1)" @click="switchMessageVariant(index, -1)"><ChevronLeft :size="15" /></button>
@@ -1405,7 +1442,7 @@ onUnmounted(() => {
     </main>
 
     <div v-if="processSheetMessage" class="sheet-layer" @click.self="closeProcessSheet">
-      <section class="bottom-sheet process-sheet">
+      <section class="bottom-sheet process-sheet" :class="{ 'echo-detail': processSheet?.view === 'echo' }">
         <div class="sheet-handle" />
         <header class="sheet-head">
           <button class="sheet-back" :aria-label="processSheet?.view === 'summary' ? '关闭' : '返回过程列表'" :title="processSheet?.view === 'summary' ? '关闭' : '返回过程列表'" @click="processSheet?.view === 'summary' ? closeProcessSheet() : backToProcessSummary()">
@@ -1418,18 +1455,29 @@ onUnmounted(() => {
         <div class="sheet-content process-sheet-content">
           <template v-if="processSheet?.view === 'summary'">
             <div class="process-timeline">
-              <button v-for="item in processTimeline(processSheetGroup)" :key="item.key" class="process-timeline-item" type="button" @click="item.kind === 'thinking' ? showThinkingDetail(item.thinking) : showToolDetail(item.tool)">
+              <button
+                v-for="item in processTimeline(processSheetGroup)"
+                :key="item.key"
+                class="process-timeline-item"
+                :class="{ echo: item.kind === 'echo' }"
+                type="button"
+                @click="item.kind === 'echo' ? showEchoDetail(item.echo) : item.kind === 'thinking' ? showThinkingDetail(item.thinking) : showToolDetail(item.tool)"
+              >
                 <span class="process-timeline-rail">
                   <span class="process-timeline-icon"><Clock3 v-if="item.kind === 'thinking'" :size="16" /><Sparkles v-else :size="15" /></span>
                   <span class="process-timeline-line" />
                 </span>
                 <span class="process-timeline-copy">
-                  <strong>{{ item.kind === 'thinking' ? '思考片段' : toolLabel(item.tool) }}</strong>
-                  <small>{{ item.kind === 'thinking' ? thinkingPreview(item.thinking.content) || '正在整理想法…' : `${toolState(item.tool)} · ${toolResultPreview(item.tool)}` }}</small>
+                  <strong>{{ item.kind === 'echo' ? '回响' : item.kind === 'thinking' ? '思考片段' : toolLabel(item.tool) }}</strong>
+                  <small>{{ item.kind === 'echo' ? thinkingPreview(item.echo.content) || '留下了一点回响' : item.kind === 'thinking' ? thinkingPreview(item.thinking.content) || '正在整理想法…' : `${toolState(item.tool)} · ${toolResultPreview(item.tool)}` }}</small>
                 </span>
                 <ChevronRight :size="17" />
               </button>
             </div>
+          </template>
+
+          <template v-else-if="processSheet?.view === 'echo'">
+            <pre class="process-text echo-text">{{ processSheetEcho?.content }}</pre>
           </template>
 
           <template v-else-if="processSheet?.view === 'thinking'">

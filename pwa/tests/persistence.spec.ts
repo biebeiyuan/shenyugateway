@@ -3,7 +3,7 @@ import { FALLBACK_SESSION_MESSAGE_LIMIT, STORAGE_MESSAGES, loadStoredMessages, p
 import type { UiMessage } from '../src/types'
 
 function uiMessage(role: 'user' | 'assistant', content: string, extra: Partial<UiMessage> = {}): UiMessage {
-  return { id: `id-${content}`, role, content, attachments: [], thinking: '', thinkingSegments: [], events: [], ...extra }
+  return { id: `id-${content}`, role, content, echo: '', echoSegments: [], attachments: [], thinking: '', thinkingSegments: [], events: [], ...extra }
 }
 
 beforeEach(() => {

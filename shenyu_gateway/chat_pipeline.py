@@ -38,6 +38,7 @@ from .upstream_response_evidence import (
     upstream_response_evidence_snapshot,
 )
 from .response_meta import attach_response_meta, build_response_meta, response_meta_enabled
+from .private_capture import restore_assistant_echo
 
 
 def _unpack_private_capture_result(result: tuple) -> tuple[str, str, dict[str, Any]]:
@@ -462,6 +463,7 @@ class ChatPipeline:
                 finish_reason: Optional[str] = None,
                 terminal_status: str = "ok",
                 terminal_error: Optional[str] = None,
+                echo_content: str = "",
             ):
                 try:
                     log_entry["upstream_response_evidence"] = upstream_response_evidence_snapshot(upstream)
@@ -494,10 +496,11 @@ class ChatPipeline:
                             ),
                             "context": fallback_context,
                         }
-                    if collected_text:
-                        assistant_msg = {"role": "assistant", "content": collected_text}
+                    if collected_text or echo_content:
+                        model_content = restore_assistant_echo(collected_text, echo_content)
+                        assistant_msg = {"role": "assistant", "content": model_content}
                         sessions.log_assistant_output(session_id, assistant_msg)
-                        self.write_completion_context_snapshot(meta, collected_text)
+                        self.write_completion_context_snapshot(meta, model_content)
                         _record_response_text(log_entry, collected_text)
                     else:
                         _record_response_text(log_entry, "")
@@ -531,6 +534,7 @@ class ChatPipeline:
                 on_complete=_on_stream_complete,
                 latest_user_text=_latest_user_text(prepared_messages),
                 response_meta=_response_meta if response_meta_enabled(meta) else None,
+                emit_echo_events=bool((meta.get("client_profile") or {}).get("emit_echo_events")),
             )
 
         completion = await self.nonstream_chat(request, payload, headers, body.model, upstream)
@@ -552,11 +556,16 @@ class ChatPipeline:
             self.store_heartbeat(session_id, session, heartbeat_content)
         if fallback_meta["applied"]:
             log_entry["empty_visible_response_fallback"] = True
-            log_entry["empty_visible_response_fallback_detail"] = fallback_meta
+            log_entry["empty_visible_response_fallback_detail"] = {
+                key: value for key, value in fallback_meta.items() if key != "echo"
+            }
 
-        sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content})
-        self.write_completion_context_snapshot(meta, clean_content)
+        model_content = restore_assistant_echo(clean_content, fallback_meta.get("echo", ""))
+        sessions.log_assistant_output(session_id, {"role": "assistant", "content": model_content})
+        self.write_completion_context_snapshot(meta, model_content)
         self.mark_context_consumed(meta)
+        if fallback_meta.get("echo") and (meta.get("client_profile") or {}).get("emit_echo_events"):
+            completion.setdefault("shenyu", {})["echo"] = fallback_meta["echo"]
         if response_meta_enabled(meta):
             attach_response_meta(
                 completion,

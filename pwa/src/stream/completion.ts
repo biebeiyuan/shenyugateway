@@ -1,6 +1,7 @@
 import type { ToolEvent } from '../toolLanguage'
 import type { ResponseMeta, UiMessage } from '../types'
-import { appendThinking, appendToolEvent } from './sse'
+import { textLength } from '../utils'
+import { appendEcho, appendThinking, appendToolEvent } from './sse'
 
 function completionText(value: unknown): string {
   if (typeof value === 'string') return value
@@ -37,6 +38,26 @@ function completionResponseMeta(payload: Record<string, unknown>): ResponseMeta 
   return { ...(meta as ResponseMeta) }
 }
 
+function completionEchoSegments(payload: Record<string, unknown>): Array<{ content: string; stream_order?: number }> {
+  const shenyu = payload.shenyu
+  if (!shenyu || typeof shenyu !== 'object' || Array.isArray(shenyu)) return []
+  const segments = (shenyu as Record<string, unknown>).echo_segments
+  if (Array.isArray(segments)) {
+    return segments.flatMap((item) => {
+      if (typeof item === 'string') return item ? [{ content: item }] : []
+      if (!item || typeof item !== 'object' || Array.isArray(item)) return []
+      const segment = item as Record<string, unknown>
+      if (typeof segment.content !== 'string' || !segment.content) return []
+      return [{
+        content: segment.content,
+        stream_order: Number.isFinite(Number(segment.stream_order)) ? Number(segment.stream_order) : undefined,
+      }]
+    })
+  }
+  const echo = (shenyu as Record<string, unknown>).echo
+  return typeof echo === 'string' && echo ? [{ content: echo }] : []
+}
+
 export function applyChatCompletion(payload: Record<string, unknown>, assistant: UiMessage): void {
   if (payload.error) {
     const error = payload.error
@@ -55,9 +76,23 @@ export function applyChatCompletion(payload: Record<string, unknown>, assistant:
     ? message as Record<string, unknown>
     : {}
 
-  for (const event of completionToolEvents(payload)) appendToolEvent(assistant, event)
+  for (const event of completionToolEvents(payload)) appendToolEvent(assistant, event, true)
   const responseMeta = completionResponseMeta(payload)
   if (responseMeta) assistant.responseMeta = responseMeta
+  for (const segment of completionEchoSegments(payload)) {
+    if (segment.stream_order !== undefined) {
+      assistant.echoSegments ||= []
+      assistant.echoSegments.push({
+        id: `echo-${segment.stream_order}-${assistant.echoSegments.length}`,
+        content: segment.content,
+        textOffset: textLength(assistant.content),
+        streamOrder: segment.stream_order,
+      })
+      assistant.echo = (assistant.echo || '') + segment.content
+    } else {
+      appendEcho(assistant, segment.content)
+    }
+  }
   appendThinking(assistant, completionText(reply.reasoning_content))
   appendThinking(assistant, completionText(reply.reasoning))
   assistant.content += completionText(reply.content)

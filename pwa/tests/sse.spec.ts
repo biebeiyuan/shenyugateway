@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest'
-import { appendThinking, appendToolEvent, parseSseFrame, pumpSseStream, toolEventKey } from '../src/stream/sse'
+import { appendEcho, appendThinking, appendToolEvent, parseSseFrame, pumpSseStream, toolEventKey } from '../src/stream/sse'
 import type { UiMessage } from '../src/types'
 
 function assistant(): UiMessage {
-  return { id: 'assistant-1', role: 'assistant', content: '', attachments: [], thinking: '', thinkingSegments: [], events: [], streaming: true }
+  return { id: 'assistant-1', role: 'assistant', content: '', echo: '', echoSegments: [], attachments: [], thinking: '', thinkingSegments: [], events: [], streaming: true }
 }
 
 function streamOf(chunks: string[]): ReadableStream<Uint8Array> {
@@ -44,6 +44,16 @@ describe('parseSseFrame', () => {
     expect(message.events[1].ok).toBe(true)
   })
 
+  it('collects separate echo passages around a tool in process order', () => {
+    const message = assistant()
+    parseSseFrame('event: shenyu_echo\ndata: {"type":"shenyu.echo_delta","echo":"先看看"}', message)
+    parseSseFrame('event: shenyu_tool\ndata: {"event":{"phase":"tool_start","tool_call_id":"t1","name":"shenyu_recall"}}', message)
+    parseSseFrame('event: shenyu_echo\ndata: {"type":"shenyu.echo_delta","echo":"看见了"}', message)
+    expect(message.echo).toBe('先看看看见了')
+    expect(message.echoSegments.map((item) => item.content)).toEqual(['先看看', '看见了'])
+    expect(message.echoSegments.map((item) => item.streamOrder)).toEqual([0, 2])
+  })
+
   it('maps content-free response metadata onto the assistant reply', () => {
     const message = assistant()
     parseSseFrame('event: shenyu_meta\ndata: {"type":"shenyu.response_meta","meta":{"context_rounds":12,"context_trim_in_rounds":17,"cache_read_percent":68.4,"tool_rounds":2,"first_tool_round_cache_hit":true,"heartbeat_captured":true}}', message)
@@ -66,6 +76,14 @@ describe('parseSseFrame', () => {
 })
 
 describe('appendThinking and appendToolEvent ordering', () => {
+  it('merges consecutive echo deltas until another process item arrives', () => {
+    const message = assistant()
+    appendEcho(message, 'a')
+    appendEcho(message, 'b')
+    appendToolEvent(message, { phase: 'tool_start', tool_call_id: 't1', name: 'shenyu_recall' })
+    appendEcho(message, 'c')
+    expect(message.echoSegments.map((item) => item.content)).toEqual(['ab', 'c'])
+  })
   it('merges consecutive thinking at the same offset into one segment', () => {
     const message = assistant()
     appendThinking(message, 'a')

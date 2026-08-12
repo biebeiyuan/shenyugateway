@@ -141,11 +141,12 @@ def _cache_tail_guard_user_turns(
 ) -> int:
     if not raw_messages or raw_messages[-1].get("role") != "user":
         return 0
+    echo_turns = int(window_meta.get("echo_keep_subsequent_user_turns") or 0)
     if int(window_meta.get("client_attachment_messages_seen") or 0) > 0:
-        return 3
+        return max(3, echo_turns)
     if int(window_meta.get("client_image_messages_seen") or 0) > 0:
-        return 2
-    return 0
+        return max(2, echo_turns)
+    return echo_turns
 
 
 def validate_protocol(field_name: str, value: Any, *, allow_empty: bool = False) -> str:

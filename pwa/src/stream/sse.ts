@@ -13,12 +13,13 @@ export function toolEventKey(event: ToolEvent): string {
 }
 
 export function nextProcessOrder(message: UiMessage): number {
+  const echoOrder = (message.echoSegments || []).reduce((max, item) => Math.max(max, item.streamOrder), -1)
   const thoughtOrder = message.thinkingSegments.reduce((max, item) => Math.max(max, item.streamOrder), -1)
-  const toolOrder = message.events.reduce((max, item) => Math.max(max, item.stream_order || -1), -1)
-  return Math.max(thoughtOrder, toolOrder) + 1
+  const toolOrder = message.events.reduce((max, item) => Math.max(max, item.stream_order ?? -1), -1)
+  return Math.max(echoOrder, thoughtOrder, toolOrder) + 1
 }
 
-export function appendToolEvent(message: UiMessage, event: ToolEvent) {
+export function appendToolEvent(message: UiMessage, event: ToolEvent, preserveProvidedOrder = false) {
   const key = `${event.phase}:${event.tool_call_id || event.name}`
   const existingIndex = message.events.findIndex((item) => `${item.phase}:${item.tool_call_id || item.name}` === key)
   const existing = existingIndex >= 0 ? message.events[existingIndex] : undefined
@@ -26,10 +27,32 @@ export function appendToolEvent(message: UiMessage, event: ToolEvent) {
   const stored = {
     ...event,
     text_offset: existing?.text_offset ?? relatedStart?.text_offset ?? textLength(message.content),
-    stream_order: existing?.stream_order ?? relatedStart?.stream_order ?? nextProcessOrder(message),
+    stream_order: existing?.stream_order
+      ?? relatedStart?.stream_order
+      ?? (preserveProvidedOrder ? event.stream_order : undefined)
+      ?? nextProcessOrder(message),
   }
   if (existingIndex >= 0) message.events.splice(existingIndex, 1, stored)
   else message.events.push(stored)
+}
+
+export function appendEcho(message: UiMessage, delta: string) {
+  if (!delta) return
+  message.echo = (message.echo || '') + delta
+  message.echoSegments ||= []
+  const textOffset = textLength(message.content)
+  const last = message.echoSegments[message.echoSegments.length - 1]
+  const latestProcessOrder = nextProcessOrder(message) - 1
+  if (last && last.textOffset === textOffset && last.streamOrder === latestProcessOrder) {
+    last.content += delta
+    return
+  }
+  message.echoSegments.push({
+    id: createId('echo'),
+    content: delta,
+    textOffset,
+    streamOrder: nextProcessOrder(message),
+  })
 }
 
 export function appendThinking(message: UiMessage, delta: string) {
@@ -67,6 +90,10 @@ export function parseSseFrame(frame: string, assistant: UiMessage): boolean {
       if (meta && typeof meta === 'object' && !Array.isArray(meta)) {
         assistant.responseMeta = { ...(meta as ResponseMeta) }
       }
+      return false
+    }
+    if (eventName === 'shenyu_echo' || payload.type === 'shenyu.echo_delta') {
+      if (typeof payload.echo === 'string') appendEcho(assistant, payload.echo)
       return false
     }
     if (eventName === 'shenyu_tool' || payload.type === 'shenyu.tool_event') {

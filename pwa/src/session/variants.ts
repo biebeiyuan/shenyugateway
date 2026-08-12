@@ -4,6 +4,15 @@ import { createId } from '../utils'
 export function cloneVariant(variant: Partial<MessageVariant>): MessageVariant {
   return {
     content: String(variant.content || ''),
+    echo: String(variant.echo || ''),
+    echoSegments: Array.isArray(variant.echoSegments)
+      ? variant.echoSegments.map((item) => ({
+          id: String(item?.id || createId('echo')),
+          content: String(item?.content || ''),
+          textOffset: Number(item?.textOffset || 0),
+          streamOrder: Number(item?.streamOrder || 0),
+        }))
+      : [],
     thinking: String(variant.thinking || ''),
     thinkingSegments: Array.isArray(variant.thinkingSegments)
       ? variant.thinkingSegments.map((item) => ({
@@ -42,17 +51,20 @@ export function syncCurrentVariant(message: UiMessage) {
 }
 
 export function applyVariant(message: UiMessage, variant: MessageVariant, index: number) {
+  const normalized = cloneVariant(variant)
   message.selectedVariantIndex = index
-  message.content = variant.content
-  message.thinking = variant.thinking
-  message.thinkingSegments = variant.thinkingSegments.map((item) => ({ ...item }))
-  message.events = variant.events.map((item) => ({ ...item }))
-  message.error = variant.error
-  message.responseMeta = variant.responseMeta ? { ...variant.responseMeta } : undefined
+  message.content = normalized.content
+  message.echo = normalized.echo
+  message.echoSegments = normalized.echoSegments.map((item) => ({ ...item }))
+  message.thinking = normalized.thinking
+  message.thinkingSegments = normalized.thinkingSegments.map((item) => ({ ...item }))
+  message.events = normalized.events.map((item) => ({ ...item }))
+  message.error = normalized.error
+  message.responseMeta = normalized.responseMeta ? { ...normalized.responseMeta } : undefined
 }
 
 export function emptyVariant(): MessageVariant {
-  return { content: '', thinking: '', thinkingSegments: [], events: [], responseMeta: undefined }
+  return { content: '', echo: '', echoSegments: [], thinking: '', thinkingSegments: [], events: [], responseMeta: undefined }
 }
 
 export function ensureVariants(message: UiMessage): MessageVariant[] {

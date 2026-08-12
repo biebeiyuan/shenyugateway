@@ -6,6 +6,7 @@ from typing import Any
 
 from .runtime import logger
 from .response_capture import split_private_assistant_tags
+from .echo import split_leading_echo
 from .utils import normalize_text as _normalize_text
 
 
@@ -103,11 +104,11 @@ def finalize_assistant_private_content(
     *,
     latest_user_text: str = "",
 ) -> tuple[str, str, dict[str, Any]]:
-    """Strip heartbeat from assistant content. Returns (clean_content, heartbeat, fallback_meta)."""
-    clean_content, heartbeat_content = split_private_assistant_tags(
-        _normalize_text(assistant_message.get("content"))
-    )
-    if heartbeat_content:
+    """Strip private heartbeat while returning the visible body and leading echo."""
+    raw_content = _normalize_text(assistant_message.get("content"))
+    echo_split = split_leading_echo(raw_content)
+    clean_content, heartbeat_content = split_private_assistant_tags(echo_split.visible)
+    if echo_split.matched or heartbeat_content:
         assistant_message["content"] = clean_content
     stored_kinds = private_capture_kinds(heartbeat_content=heartbeat_content)
     fallback_text, fallback_context = private_capture_fallback_text(latest_user_text, stored_kinds)
@@ -118,4 +119,15 @@ def finalize_assistant_private_content(
         "kinds": stored_kinds if fallback_applied else [],
         "context": fallback_context if fallback_applied else "",
     }
+    if echo_split.matched:
+        fallback_meta["echo"] = echo_split.echo
     return _normalize_text(assistant_message.get("content")), heartbeat_content, fallback_meta
+
+
+def restore_assistant_echo(visible_content: str, echo_content: str) -> str:
+    """Rebuild the model-facing tagged assistant text from its display parts."""
+    echo = echo_content or ""
+    visible = _normalize_text(visible_content)
+    if not echo.strip():
+        return visible
+    return f"[回响]{echo}[/回响]{visible}"

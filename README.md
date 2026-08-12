@@ -52,7 +52,8 @@ The codebase is partly layered already:
 ### Chat pipeline & streaming
 
 - `shenyu_gateway/chat_pipeline.py`: main chat request orchestration (context build → upstream call → tool loop → response).
-- `shenyu_gateway/streaming.py`: SSE streaming helpers, chunk serialization, keepalive logic.
+- `shenyu_gateway/streaming.py`: SSE streaming helpers, chunk serialization, keepalive logic, and the client-facing `shenyu_echo` delta event.
+- `shenyu_gateway/echo.py`: model-authored leading `[回响]...[/回响]` stream splitter, turn-based upstream retention trimming, and archive/history-safe tag stripping.
 - `shenyu_gateway/response_meta.py`: content-free assistant reply status contract shared by streaming and non-streaming paths: retained context rounds, reliable cache coverage, real gateway-tool rounds, first-round cache hit, and heartbeat-captured boolean.
 - `shenyu_gateway/stream_proxy.py`: plain pass-through streaming with `<heartbeat>` filtering.
 - `shenyu_gateway/tool_loop.py`: internal gateway tool loop plus per-round request, response-shape, and cache diagnostics.
@@ -61,7 +62,7 @@ The codebase is partly layered already:
 ### Context assembly
 
 - `shenyu_gateway/context_builder.py`: async parallel gathering of all memory sources into a context package.
-- `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering, client message trimming, and cold-start bridge insertion.
+- `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering (including the optional echo prompt immediately before Heartbeat), client message trimming, and cold-start bridge insertion.
 - `shenyu_gateway/project_map.py`: owner-only live project map assembled from the current system zones, maintenance/product indexes, resident component fingerprints, and change ledger; it derives one-hop component links only from mapped source files claimed by exactly two components, while broader shared hubs remain cross-zone bridge evidence.
 - `shenyu_gateway/project_delivery.py` / `project_delivery_log.jsonl`: structured owner-facing delivery ledger and validation/append helpers; one entry represents one coherent completed outcome and links it to a product, paths, docs, verification, and optional reusable lesson.
 - `shenyu_gateway/resident_home.py`: resident-facing component manifest, source fingerprints, review acknowledgements, and weekly change records.
@@ -214,14 +215,15 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 
 ### PWA chat frontend
 
-- `pwa/src/App.vue`: ChatNest-inspired mobile chat surface with real-time response rendering, Thinking/tool process strips fixed above each intact assistant reply, per-trace detail sheet, Claude-style Projects/Artifacts/Memory/Diary workspace shells, gateway-backed Recents, edit/retry actions, local assistant roll variants with arrow switching, clean cold-start recovery, image previews, an expandable image/Room `+` menu, and one shared gray reply-meta line for Room time plus context/cache/first-round-hit/heartbeat status. The Vue shell owns UI state and orchestration only; protocol, history, and persistence logic live in the modules below.
+- `pwa/src/App.vue`: ChatNest-inspired mobile chat surface with real-time response rendering, Thinking/tool/echo process strips fixed above each intact assistant reply, per-trace detail sheet, Claude-style Projects/Artifacts/Memory/Diary workspace shells, gateway-backed Recents, edit/retry actions, local assistant roll variants with arrow switching, clean cold-start recovery, image previews, an expandable image/Room `+` menu, and one shared gray reply-meta line for Room time plus context/cache/first-round-hit/heartbeat status. Echo content is retained in the PWA transcript and rendered through the existing process sheet with a soft-pink detail surface; it is not a standalone panel. The Vue shell owns UI state and orchestration only; protocol, history, and persistence logic live in the modules below.
+- `pwa/src/echo.ts`: leading echo marker parsing and model-facing tagged-content reconstruction for handoff and outbound history.
 - `pwa/src/types.ts` / `pwa/src/utils.ts`: shared domain types (messages, variants, sessions, process timeline, presets) and id/Unicode-safe text-offset helpers.
 - `pwa/src/api/client.ts` / `pwa/src/api/presets.ts` / `pwa/src/api/upstreamHeaders.ts`: gateway HTTP layer — PWA identity headers, models/sessions/config/chat fetchers for streaming and non-streaming requests, outbound message wiring, deployed-build fetches — plus reading the Console-shared `shenyu_upstream_presets` storage and the browser-local per-request upstream-header preset/editor state.
 - `pwa/src/buildInfo.ts`: validates the build identity embedded in the active client and the protected deployed `build-info.json` manifest; the settings sheet compares the two exact build ids.
 - `pwa/src/meta/statusSuffix.ts` / `pwa/src/meta/roomEntry.ts`: generates and parses the normal user-status suffix and the exact timestamped Room-entry contract used for hidden entry rows and `HH:mm · 房间` reply labels.
 - `pwa/src/session/history.ts`: thread-handoff history source selection (context snapshots → legacy snapshot field → inspection-stream fallback), cold-start clean baseline rows, exact-duplicate detection, and recovery dedupe.
 - `pwa/src/session/variants.ts` / `pwa/src/session/persistence.ts`: local assistant roll-variant state machine and the localStorage transcript window save/restore.
-- `pwa/src/stream/sse.ts` / `pwa/src/stream/completion.ts` / `pwa/src/stream/timeline.ts`: streaming and non-streaming OpenAI-compatible response parsing (including `shenyu.tool_event` and content-free `shenyu.response_meta` data), thinking/tool offset bookkeeping and stream pump, and grouping process events into inline strips and detail timelines.
+- `pwa/src/stream/sse.ts` / `pwa/src/stream/completion.ts` / `pwa/src/stream/timeline.ts`: streaming and non-streaming OpenAI-compatible response parsing (including `shenyu.tool_event`, `shenyu_echo`, and content-free `shenyu.response_meta` data), echo/thinking/tool offset bookkeeping and stream pump, and grouping process events into inline strips and detail timelines.
 - `pwa/tests/` + `pwa/vitest.config.ts`: Vitest unit suite (`cd pwa && npm test`) covering history source priority, dedupe recovery, roll variants, persistence window limits, SSE parsing, timeline grouping, and per-request upstream-header persistence/payload mapping.
 - `pwa/src/ChatNestSprite.vue`: ChatNest status-sprite player using the demo's Web Animations API and per-mode frame loop configuration.
 - `pwa/src/chatnestSprite.ts`: user-supplied private ChatNest status sprite set for the personal PWA deployment.

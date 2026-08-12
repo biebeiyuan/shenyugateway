@@ -1,4 +1,5 @@
 import type { UiMessage } from '../types'
+import { splitEcho } from '../echo'
 
 // Thread handoff / history source selection.
 //
@@ -30,6 +31,11 @@ export function sessionMessageContent(value: unknown): string {
     }).join('')
   }
   return value == null ? '' : String(value)
+}
+
+export function sessionMessageParts(value: unknown): { content: string; echo: string } {
+  const split = splitEcho(sessionMessageContent(value))
+  return { content: split.content, echo: split.echo }
 }
 
 export function sessionHistoryRows(payload: Record<string, unknown>): Record<string, unknown>[] {

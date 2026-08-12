@@ -603,6 +603,8 @@ async def _stream_chat(
     request: Request, payload: dict, headers: dict, model: str, upstream: dict,
     on_complete: callable = None,
     latest_user_text: str = "",
+    response_meta: callable = None,
+    emit_echo_events: bool = False,
 ):
     from shenyu_gateway.stream_proxy import stream_chat
     return await stream_chat(
@@ -612,6 +614,8 @@ async def _stream_chat(
         private_capture_kinds=_private_capture_kinds,
         on_complete=on_complete,
         latest_user_text=latest_user_text,
+        response_meta=response_meta,
+        emit_echo_events=emit_echo_events,
     )
 
 

@@ -16,8 +16,17 @@ export type ThinkingSegment = {
   streamOrder: number
 }
 
+export type EchoSegment = {
+  id: string
+  content: string
+  textOffset: number
+  streamOrder: number
+}
+
 export type MessageVariant = {
   content: string
+  echo: string
+  echoSegments: EchoSegment[]
   thinking: string
   thinkingSegments: ThinkingSegment[]
   events: ToolEvent[]
@@ -40,6 +49,8 @@ export type UiMessage = {
   id: string
   role: Role
   content: string
+  echo: string
+  echoSegments: EchoSegment[]
   attachments: Attachment[]
   thinking: string
   thinkingSegments: ThinkingSegment[]
@@ -54,11 +65,13 @@ export type UiMessage = {
 
 export type ProcessGroup = {
   textOffset: number
+  echo: EchoSegment[]
   thinking: ThinkingSegment[]
   tools: ToolEvent[]
 }
 
 export type ProcessTimelineItem =
+  | { kind: 'echo'; key: string; echo: EchoSegment; streamOrder: number }
   | { kind: 'thinking'; key: string; thinking: ThinkingSegment; streamOrder: number }
   | { kind: 'tool'; key: string; tool: ToolEvent; streamOrder: number }
 
@@ -100,8 +113,9 @@ export type UpstreamPreset = {
 
 export type ProcessSheet = {
   messageId: string
-  view: 'summary' | 'thinking' | 'tool'
+  view: 'summary' | 'echo' | 'thinking' | 'tool'
   textOffset?: number
+  echoKey?: string
   thinkingKey?: string
   toolKey?: string
 }

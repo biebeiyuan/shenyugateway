@@ -4,7 +4,7 @@ import { assistantParts, processGroups, processTimeline, traceRows } from '../sr
 import type { UiMessage } from '../src/types'
 
 function assistant(content: string): UiMessage {
-  return { id: 'assistant-1', role: 'assistant', content, attachments: [], thinking: '', thinkingSegments: [], events: [] }
+  return { id: 'assistant-1', role: 'assistant', content, echo: '', echoSegments: [], attachments: [], thinking: '', thinkingSegments: [], events: [] }
 }
 
 describe('traceRows', () => {
@@ -100,13 +100,15 @@ describe('assistantParts', () => {
 })
 
 describe('processTimeline', () => {
-  it('interleaves thinking and tools by stream order', () => {
+  it('interleaves echo, thinking and tools by stream order', () => {
     const message = assistant('abc')
-    message.thinkingSegments = [{ id: 's1', content: 'first', textOffset: 0, streamOrder: 0 }]
-    message.events = [{ phase: 'tool_start', tool_call_id: 't1', name: 'shenyu_recall', text_offset: 0, stream_order: 1 }]
+    message.echo = 'first'
+    message.echoSegments = [{ id: 'e1', content: 'first', textOffset: 0, streamOrder: 0 }]
+    message.thinkingSegments = [{ id: 's1', content: 'second', textOffset: 0, streamOrder: 1 }]
+    message.events = [{ phase: 'tool_start', tool_call_id: 't1', name: 'shenyu_recall', text_offset: 0, stream_order: 2 }]
     const [group] = processGroups(message)
     const timeline = processTimeline(group)
-    expect(timeline.map((item) => item.kind)).toEqual(['thinking', 'tool'])
+    expect(timeline.map((item) => item.kind)).toEqual(['echo', 'thinking', 'tool'])
   })
 
   it('returns empty for a missing group', () => {

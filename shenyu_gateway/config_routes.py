@@ -43,6 +43,8 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "upstream_extra_body": cfg.upstream_extra_body,
         "upstream_passthrough_headers": cfg.upstream_passthrough_headers,
         "wake_welcome_message": cfg.wake_welcome_message,
+        "echo_prompt": cfg.echo_prompt,
+        "echo_retention_turns": cfg.echo_retention_turns,
         "inject_inline_memory_prompt": cfg.inject_inline_memory_prompt,
         "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
         "model_mapping": cfg.model_mapping,
@@ -170,6 +172,8 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "upstream_extra_body": "UPSTREAM_EXTRA_BODY",
             "upstream_passthrough_headers": "UPSTREAM_PASSTHROUGH_HEADERS",
             "wake_welcome_message": "WAKE_WELCOME_MESSAGE",
+            "echo_prompt": "ECHO_PROMPT",
+            "echo_retention_turns": "ECHO_RETENTION_TURNS",
             "inject_inline_memory_prompt": "INJECT_INLINE_MEMORY_PROMPT",
             "enable_inline_memory_capture": "ENABLE_INLINE_MEMORY_CAPTURE",
             "model_mapping": "MODEL_MAPPING",
@@ -270,6 +274,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "anthropic_auto_thinking_effort",
             "anthropic_default_max_tokens",
             "wake_welcome_message",
+            "echo_prompt",
             "inject_inline_memory_prompt",
             "enable_inline_memory_capture",
             "supabase_url",
@@ -459,6 +464,10 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.heartbeat_inject_every = max(1, min(body.heartbeat_inject_every, 50))
             changed.append("heartbeat_inject_every")
             env_updates[env_names["heartbeat_inject_every"]] = cfg.heartbeat_inject_every
+        if body.echo_retention_turns is not None:
+            cfg.echo_retention_turns = max(0, min(body.echo_retention_turns, 20))
+            changed.append("echo_retention_turns")
+            env_updates[env_names["echo_retention_turns"]] = cfg.echo_retention_turns
         if body.gateway_message_retention is not None:
             cfg.gateway_message_retention = max(50, min(body.gateway_message_retention, 200000))
             changed.append("gateway_message_retention")

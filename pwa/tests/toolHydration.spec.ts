@@ -4,7 +4,7 @@ import { traceRows } from '../src/stream/timeline'
 import type { UiMessage } from '../src/types'
 
 function uiMessage(role: 'user' | 'assistant', content: string): UiMessage {
-  return { id: `id-${role}-${content}`, role, content, attachments: [], thinking: '', thinkingSegments: [], events: [] }
+  return { id: `id-${role}-${content}`, role, content, echo: '', echoSegments: [], attachments: [], thinking: '', thinkingSegments: [], events: [] }
 }
 
 const toolRow = (id: number, name: string, args: unknown, result: unknown) => ({

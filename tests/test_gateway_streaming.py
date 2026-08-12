@@ -493,6 +493,79 @@ def test_chat_pipeline_writes_completion_context_snapshot_after_assistant_reply(
     assert content == "最新一答"
 
 
+def test_chat_pipeline_snapshots_echo_only_stream_reply(monkeypatch):
+    from shenyu_gateway import chat_pipeline
+
+    request_logs = deque(maxlen=30)
+    monkeypatch.setattr(chat_pipeline, "_request_logs", request_logs)
+    snapshots: list[tuple[dict, str]] = []
+    session = {"id": "session-1", "session_tag": "echo-only", "message_count": 1}
+
+    async def prepare_messages(_request, _body):
+        return (
+            [{"role": "user", "content": "先停一下"}],
+            {
+                "session": session,
+                "is_first_turn": False,
+                "snapshot_messages": [{"role": "user", "content": "先停一下"}],
+                "snapshot_latest_user_text": "先停一下",
+                "client_message_window": {},
+                "client_profile": {"emit_response_meta": True, "emit_echo_events": True},
+                "cache_layers": {},
+                "upstream": {
+                    "chat_url": "https://example.test/v1/chat/completions",
+                    "scope": "default",
+                    "protocol": "openai",
+                    "api_key": "test",
+                },
+            },
+        )
+
+    async def build_upstream_request(*_args, **_kwargs):
+        return (
+            {"model": "test-model", "messages": [{"role": "user", "content": "先停一下"}]},
+            {},
+            "test-model",
+            {"enabled": False, "protocol": "openai", "breakpoints": []},
+            {
+                "chat_url": "https://example.test/v1/chat/completions",
+                "scope": "default",
+                "protocol": "openai",
+                "api_key": "test",
+            },
+        )
+
+    async def echo_only_stream(*_args, on_complete=None, **_kwargs):
+        on_complete(
+            "",
+            "",
+            False,
+            None,
+            "stop",
+            "ok",
+            None,
+            "先在这里停一停。",
+        )
+        return StreamingResponse(iter([b""]))
+
+    pipeline = _test_pipeline(prepare_messages=prepare_messages)
+    pipeline.build_upstream_request = build_upstream_request
+    pipeline.stream_chat = echo_only_stream
+    pipeline.write_completion_context_snapshot = lambda meta, content: snapshots.append((meta, content))
+    body = ChatRequest(
+        model="test-model",
+        messages=[{"role": "user", "content": "先停一下"}],
+        stream=True,
+    )
+
+    response = asyncio.run(pipeline.run(_fake_request({"X-Shenyu-Session-Tag": "echo-only"}), body))
+
+    assert isinstance(response, StreamingResponse)
+    assert snapshots and snapshots[0][1] == "[回响]先在这里停一停。[/回响]"
+    assert pipeline.store.messages[-1]["role"] == "assistant"
+    assert pipeline.store.messages[-1]["content"] == "[回响]先在这里停一停。[/回响]"
+
+
 def test_chat_pipeline_does_not_commit_context_for_interrupted_plain_stream(monkeypatch):
     from shenyu_gateway import chat_pipeline
 
@@ -909,6 +982,14 @@ def test_cache_tail_guard_uses_existing_attachment_and_image_metadata():
         {"client_attachment_messages_seen": 0, "client_image_messages_seen": 1},
     ) == 2
     assert _cache_tail_guard_user_turns(user_messages, {}) == 0
+    assert _cache_tail_guard_user_turns(
+        user_messages,
+        {"echo_keep_subsequent_user_turns": 4},
+    ) == 4
+    assert _cache_tail_guard_user_turns(
+        user_messages,
+        {"client_attachment_messages_seen": 1, "echo_keep_subsequent_user_turns": 5},
+    ) == 5
     assert _cache_tail_guard_user_turns(
         [{"role": "user", "content": "hello"}, {"role": "tool", "content": "result"}],
         {"client_attachment_messages_seen": 1},
@@ -2034,6 +2115,23 @@ def test_stream_replay_accumulator_replays_only_unstreamed_deltas():
 
     assert accumulator.should_skip_visible_delta() is True
     assert replay["choices"][0]["message"]["reasoning_content"] == "more"
+    assert replay["choices"][0]["message"]["content"] == "\n\nFinal text."
+
+
+def test_completion_replay_ignores_leading_echo_before_visible_suffix():
+    completion = {
+        "choices": [
+            {
+                "message": {
+                    "role": "assistant",
+                    "content": "[回响]先看一下。[/回响]I will check.\n\nFinal text.",
+                }
+            }
+        ]
+    }
+
+    replay = _completion_with_unstreamed_deltas(completion, streamed_content="I will check.")
+
     assert replay["choices"][0]["message"]["content"] == "\n\nFinal text."
 
 

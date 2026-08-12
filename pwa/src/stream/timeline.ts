@@ -31,10 +31,18 @@ export function processGroups(message: UiMessage): ProcessGroup[] {
     const normalized = Math.max(0, Math.min(textLength(message.content), textOffset))
     const existing = groups.get(normalized)
     if (existing) return existing
-    const created: ProcessGroup = { textOffset: normalized, thinking: [], tools: [] }
+    const created: ProcessGroup = { textOffset: normalized, echo: [], thinking: [], tools: [] }
     groups.set(normalized, created)
     return created
   }
+
+  const echoSegments = message.echoSegments || []
+  const echo = echoSegments.length
+    ? echoSegments
+    : message.echo
+      ? [{ id: `${message.id}-echo`, content: message.echo, textOffset: 0, streamOrder: 0 }]
+      : []
+  for (const item of echo) ensure(item.textOffset).echo.push(item)
 
   const thinking = message.thinkingSegments.length
     ? message.thinkingSegments
@@ -48,8 +56,9 @@ export function processGroups(message: UiMessage): ProcessGroup[] {
     .sort((left, right) => left.textOffset - right.textOffset)
     .map((group) => ({
       ...group,
+      echo: [...group.echo].sort((left, right) => left.streamOrder - right.streamOrder),
       thinking: [...group.thinking].sort((left, right) => left.streamOrder - right.streamOrder),
-      tools: [...group.tools].sort((left, right) => (left.stream_order || 0) - (right.stream_order || 0)),
+      tools: [...group.tools].sort((left, right) => (left.stream_order ?? 0) - (right.stream_order ?? 0)),
     }))
 }
 
@@ -67,6 +76,12 @@ export function assistantParts(message: UiMessage): AssistantPart[] {
 export function processTimeline(group?: ProcessGroup): ProcessTimelineItem[] {
   if (!group) return []
   return [
+    ...group.echo.map((echo) => ({
+      kind: 'echo' as const,
+      key: `echo-${echo.id}`,
+      echo,
+      streamOrder: echo.streamOrder,
+    })),
     ...group.thinking.map((thinking) => ({
       kind: 'thinking' as const,
       key: `thinking-${thinking.id}`,
@@ -77,13 +92,17 @@ export function processTimeline(group?: ProcessGroup): ProcessTimelineItem[] {
       kind: 'tool' as const,
       key: `tool-${toolEventKey(tool)}`,
       tool,
-      streamOrder: tool.stream_order || 0,
+      streamOrder: tool.stream_order ?? 0,
     })),
   ].sort((left, right) => left.streamOrder - right.streamOrder)
 }
 
 export function groupHasThinking(group: ProcessGroup): boolean {
   return group.thinking.length > 0
+}
+
+export function groupHasEcho(group: ProcessGroup): boolean {
+  return group.echo.length > 0
 }
 
 export function thinkingPreview(thinking: string): string {
@@ -106,10 +125,12 @@ export function toolResultPreview(event: ToolEvent): string {
 export function processSummary(group: ProcessGroup): string {
   const active = group.tools.find((event) => event.phase === 'tool_start' || event.ok === undefined)
   if (active) return `正在${toolWarmCopy(active)} · ${toolLabel(active)}…`
-  const thought = group.thinking[group.thinking.length - 1]
-  if (thought) return thinkingPreview(thought.content) || '想了一会儿'
-  const tool = group.tools[group.tools.length - 1]
-  return tool ? `${toolWarmCopy(tool)} · ${toolLabel(tool)}` : '想了一会儿'
+  const timeline = processTimeline(group)
+  const latest = timeline[timeline.length - 1]
+  if (latest?.kind === 'echo') return thinkingPreview(latest.echo.content) || '留下了一点回响'
+  if (latest?.kind === 'thinking') return thinkingPreview(latest.thinking.content) || '想了一会儿'
+  if (latest?.kind === 'tool') return `${toolWarmCopy(latest.tool)} · ${toolLabel(latest.tool)}`
+  return '想了一会儿'
 }
 
 export function formatToolInput(event?: ToolEvent): string {

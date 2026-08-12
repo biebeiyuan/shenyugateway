@@ -55,6 +55,18 @@ def test_assistant_lineage_detects_client_history_rewrite():
     assert result["client_sha256"] != result["stored_sha256"]
 
 
+def test_assistant_lineage_ignores_leading_echo_but_still_hashes_visible_reply():
+    result = _assistant_lineage(
+        [{"role": "assistant", "content": "[回响]只有客户端保留这一段。[/回响]same reply"}],
+        [{"role": "assistant", "content": "same reply"}],
+    )
+
+    assert result["available"] is True
+    assert result["match"] is True
+    assert result["client_chars"] == 10
+    assert result["stored_chars"] == 10
+
+
 def test_memory_island_force_reason_covers_branch_and_message_high_water():
     assert _memory_island_force_reason(
         {"event_class": "new_user"}, {"reset_reason": "message_high_water"}
@@ -77,6 +89,7 @@ def test_pwa_client_profile_hides_client_tools_and_enables_tool_events():
     assert profile["client_tool_surface"] == "none"
     assert profile["emit_tool_events"] is True
     assert profile["emit_response_meta"] is True
+    assert profile["emit_echo_events"] is True
     assert profile["emit_tool_event_details"] is False
     assert profile["tool_event_protocol"] == "sse+json"
 
@@ -91,6 +104,7 @@ def test_client_profile_only_emits_tool_details_when_explicitly_requested():
     assert profile["emit_tool_events"] is True
     assert profile["emit_tool_event_details"] is True
     assert profile["emit_response_meta"] is False
+    assert profile["emit_echo_events"] is False
 
 
 def test_context_overflow_defaults_to_20_percent_with_bounds():

@@ -68,6 +68,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.max_client_messages == 75
     assert cfg.gateway_request_log_retention == 200
     assert cfg.gateway_log_full_payloads is False
+    assert cfg.echo_retention_turns == 1
     assert cfg.room_newspaper_qa_enabled is False
     assert cfg.room_newspaper_llm_model == ""
     assert cfg.star_soft_direct_cooldown_turns == 8
@@ -348,6 +349,36 @@ def test_wake_welcome_message_can_be_cleared_explicitly(monkeypatch):
     assert "wake_welcome_message" in payload["changed"]
     assert gateway.cfg.wake_welcome_message == ""
     assert persisted[-1]["WAKE_WELCOME_MESSAGE"] == ""
+
+
+def test_echo_config_saves_prompt_and_retention_range(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    try:
+        response = client.post(
+            "/api/config",
+            json={"echo_prompt": "  自己想想  ", "echo_retention_turns": 4},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["echo_prompt"] == "自己想想"
+    assert payload["config"]["echo_retention_turns"] == 4
+    assert {"echo_prompt", "echo_retention_turns"} <= set(payload["changed"])
+    assert persisted[-1]["ECHO_PROMPT"] == "自己想想"
+    assert persisted[-1]["ECHO_RETENTION_TURNS"] == 4
+
+
+def test_echo_retention_rejects_values_outside_runtime_range(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    try:
+        response = client.post("/api/config", json={"echo_retention_turns": 999})
+    finally:
+        client.close()
+
+    assert response.status_code == 422
+    assert persisted == []
 
 
 def test_config_update_saves_provider_via_extra_body(monkeypatch):

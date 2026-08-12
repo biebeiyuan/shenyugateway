@@ -9,12 +9,14 @@ import httpx
 from fastapi import HTTPException, Request
 from fastapi.responses import StreamingResponse
 
+from .echo import EchoStreamFilter, split_leading_echo
 from .response_capture import AssistantTagFilter, clean_text_from_filter_source
 from .runtime import now_ts as _now_ts
 from .streaming import (
     _new_stream_chunk_id,
     _sse_response,
     _stream_content_event,
+    _stream_echo_event,
     _stream_response_meta_event,
 )
 from .upstream_adapter import (
@@ -45,6 +47,7 @@ async def stream_chat(
     on_complete: Optional[Callable[..., None]] = None,
     latest_user_text: str = "",
     response_meta: Optional[Callable[..., dict[str, Any]]] = None,
+    emit_echo_events: bool = False,
 ) -> StreamingResponse:
     """Forward a streaming response to the client, filtering heartbeat tags."""
     proto = upstream["protocol"]
@@ -77,6 +80,7 @@ async def stream_chat(
 
     collected_parts: list[str] = []
     tag_filter = AssistantTagFilter()
+    echo_filter = EchoStreamFilter()
 
     if proto == "openai":
         async def generate():
@@ -117,7 +121,16 @@ async def stream_chat(
                         yield "\n"
                         continue
                     if line == "data: [DONE]":
-                        remaining = tag_filter.flush()
+                        echo_remaining, echo_tail = echo_filter.finish()
+                        if emit_echo_events and echo_tail:
+                            yield _stream_echo_event(
+                                model,
+                                echo_tail,
+                                chunk_id=stream_chunk_id,
+                                created=stream_created,
+                            )
+                        filtered_tail = tag_filter.feed(echo_remaining)
+                        remaining = filtered_tail + tag_filter.flush()
                         if remaining:
                             yield _stream_content_event(
                                 model,
@@ -169,7 +182,15 @@ async def stream_chat(
                             text = delta.get("content")
                             if text:
                                 collected_parts.append(text)
-                                filtered = tag_filter.feed(text)
+                                echo_visible, echo_delta, _echo_closed = echo_filter.feed(text)
+                                if emit_echo_events and echo_delta:
+                                    yield _stream_echo_event(
+                                        model,
+                                        echo_delta,
+                                        chunk_id=stream_chunk_id,
+                                        created=stream_created,
+                                    )
+                                filtered = tag_filter.feed(echo_visible)
                                 if filtered:
                                     data["choices"][0]["delta"]["content"] = filtered
                                     yield f"data: {json.dumps(data, ensure_ascii=False)}\n\n"
@@ -205,7 +226,16 @@ async def stream_chat(
                             pass
                     yield line + "\n\n"
                 if not done_sent:
-                    remaining = tag_filter.flush()
+                    echo_remaining, echo_tail = echo_filter.finish()
+                    if emit_echo_events and echo_tail:
+                        yield _stream_echo_event(
+                            model,
+                            echo_tail,
+                            chunk_id=stream_chunk_id,
+                            created=stream_created,
+                        )
+                    filtered_tail = tag_filter.feed(echo_remaining)
+                    remaining = filtered_tail + tag_filter.flush()
                     if remaining:
                         yield _stream_content_event(
                             model,
@@ -249,7 +279,7 @@ async def stream_chat(
                 if on_complete:
                     try:
                         full_text = "".join(collected_parts)
-                        clean_text = clean_text_from_filter_source(full_text)
+                        clean_text = clean_text_from_filter_source(split_leading_echo(full_text).visible)
                         if fallback_applied and not clean_text.strip():
                             clean_text, _ = private_capture_fallback_text(
                                 latest_user_text,
@@ -265,6 +295,7 @@ async def stream_chat(
                             stream_finish_reason or None,
                             terminal_status,
                             terminal_error or None,
+                            echo_filter.echo_text,
                         )
                     except Exception:
                         logger.exception("流式回调执行失败")
@@ -327,7 +358,15 @@ async def stream_chat(
                     text = delta.get("text", "")
                     if text:
                         collected_parts.append(text)
-                        filtered = tag_filter.feed(text)
+                        echo_visible, echo_delta, _echo_closed = echo_filter.feed(text)
+                        if emit_echo_events and echo_delta:
+                            yield _stream_echo_event(
+                                model,
+                                echo_delta,
+                                chunk_id=stream_chunk_id,
+                                created=stream_created,
+                            )
+                        filtered = tag_filter.feed(echo_visible)
                         if filtered:
                             delta["text"] = filtered
                             visible_output_sent = visible_output_sent or bool(filtered.strip())
@@ -391,7 +430,16 @@ async def stream_chat(
                     except (TypeError, json.JSONDecodeError):
                         pass
                     yield f"data: {chunk}\n\n"
-            remaining = tag_filter.flush()
+            echo_remaining, echo_tail = echo_filter.finish()
+            if emit_echo_events and echo_tail:
+                yield _stream_echo_event(
+                    model,
+                    echo_tail,
+                    chunk_id=stream_chunk_id,
+                    created=stream_created,
+                )
+            filtered_tail = tag_filter.feed(echo_remaining)
+            remaining = filtered_tail + tag_filter.flush()
             if remaining:
                 yield _stream_content_event(
                     model,
@@ -438,7 +486,7 @@ async def stream_chat(
             if on_complete:
                 try:
                     full_text = "".join(collected_parts)
-                    clean_text = clean_text_from_filter_source(full_text)
+                    clean_text = clean_text_from_filter_source(split_leading_echo(full_text).visible)
                     if fallback_applied and not clean_text.strip():
                         clean_text, _ = private_capture_fallback_text(
                             latest_user_text,
@@ -454,6 +502,7 @@ async def stream_chat(
                         _anthropic_stop_reason_to_openai(anthropic_stop_reason),
                         terminal_status,
                         terminal_error or None,
+                        echo_filter.echo_text,
                     )
                 except Exception:
                     logger.exception("流式回调执行失败")

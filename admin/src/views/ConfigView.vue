@@ -60,6 +60,8 @@ const config = ref<GatewayConfig>({
   upstream_extra_body: {},
   upstream_passthrough_headers: ['x-api-key'],
   wake_welcome_message: '',
+  echo_prompt: '',
+  echo_retention_turns: 1,
   weather_city: '',
   qweather_api_key: '',
   qweather_api_host: '',
@@ -311,6 +313,8 @@ async function doSave() {
       gateway_tool_surface: config.value.gateway_tool_surface,
       client_tool_surface: config.value.client_tool_surface,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
+      echo_prompt: config.value.echo_prompt || '',
+      echo_retention_turns: config.value.echo_retention_turns ?? 1,
       gateway_log_full_payloads: config.value.gateway_log_full_payloads,
       room_newspaper_qa_enabled: config.value.room_newspaper_qa_enabled,
       room_newspaper_llm_model: config.value.room_newspaper_llm_model,
@@ -717,6 +721,23 @@ async function copyColdHeader(sessionTag: string) {
                 确认清空醒来欢迎词？
               </NPopconfirm>
             </div>
+          </NFormItem>
+        </NForm>
+      </NCard>
+
+      <NCard title="回响" size="small">
+        <NForm label-placement="top">
+          <NFormItem label="回响提示词（放在 Heartbeat 之前）">
+            <NInput
+              v-model:value="config.echo_prompt"
+              type="textarea"
+              :autosize="{ minRows: 8, maxRows: 18 }"
+              placeholder="留空则不要求沈予写回响"
+            />
+          </NFormItem>
+          <NFormItem label="回响随正文保留的后续轮数">
+            <NInputNumber v-model:value="config.echo_retention_turns" :min="0" :max="20" style="width: 100%" />
+            <div class="provider-order-hint">按后续用户轮数计算；0 表示下一次请求就不再带回。PWA 的历史显示不受这个数字影响。</div>
           </NFormItem>
         </NForm>
       </NCard>

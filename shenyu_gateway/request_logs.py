@@ -433,8 +433,11 @@ def _finalize_stale_tool_stream_logs() -> None:
 
 def _message_log_preview(msg: dict) -> dict[str, Any]:
     from shenyu_gateway.tool_loop import _tool_call_arguments, _tool_call_name
+    from shenyu_gateway.echo import strip_leading_echo
 
     content = normalize_text(msg.get("content"))
+    if msg.get("role") == "assistant":
+        content = strip_leading_echo(content)
     item: dict[str, Any] = {
         "role": msg.get("role", ""),
         "content_preview": _shorten(content, 500),

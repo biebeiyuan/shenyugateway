@@ -15,6 +15,10 @@
   --accent: #da7756;
   --accent-hover: #c96846;
   --accent-fg: #ffffff;
+  --echo-bg: #f8e7eb;
+  --echo-bg-hover: #f5dde3;
+  --echo-border: rgba(176, 81, 108, .2);
+  --echo-text: #7d4253;
   --border: rgba(31, 30, 29, 0.1);
   --border-strong: rgba(31, 30, 29, 0.18);
   --font-serif: "Anthropic Serif", "Source Serif 4", ui-serif, Georgia, serif;
@@ -55,6 +59,10 @@
     --text-faint: #6e6d66;
     --border: rgba(236, 234, 228, 0.1);
     --border-strong: rgba(236, 234, 228, 0.22);
+    --echo-bg: #3b292e;
+    --echo-bg-hover: #493037;
+    --echo-border: rgba(239, 174, 192, .22);
+    --echo-text: #efb7c7;
     --shadow-soft: none;
     --shadow-composer: none;
     --sidebar-bg: #181817;
@@ -174,6 +182,8 @@ button:disabled { cursor: default; }
 
 .process-strip { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 28px; margin: 6px 0 20px; padding: 0; color: var(--text-secondary); text-align: left; }
 .process-strip.thinking { margin-top: 20px; }
+.process-strip.echo { min-height: 34px; padding: 3px 7px; border: 1px solid var(--echo-border); border-radius: 8px; background: var(--echo-bg); color: var(--echo-text); }
+.process-strip.echo:hover { background: var(--echo-bg-hover); color: var(--echo-text); }
 .process-strip:hover { color: var(--accent); }
 .process-icon { display: grid; width: 22px; height: 22px; flex: none; place-items: center; color: currentColor; }
 .process-copy { min-width: 0; flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 15px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", system-ui, sans-serif; }
@@ -264,6 +274,9 @@ button:disabled { cursor: default; }
 .process-timeline { display: flex; flex-direction: column; }
 .process-timeline-item { display: flex; align-items: stretch; gap: 13px; width: 100%; min-width: 0; padding: 9px 2px; color: var(--text-primary); text-align: left; }
 .process-timeline-item:hover { color: var(--accent); }
+.process-timeline-item.echo { margin: 3px 0; padding: 10px 9px 10px 7px; border: 1px solid var(--echo-border); border-radius: 8px; background: var(--echo-bg); color: var(--echo-text); }
+.process-timeline-item.echo:hover { background: var(--echo-bg-hover); color: var(--echo-text); }
+.process-timeline-item.echo .process-timeline-icon, .process-timeline-item.echo .process-timeline-copy small { color: var(--echo-text); }
 .process-timeline-rail { display: flex; width: 20px; flex: none; flex-direction: column; align-items: center; }
 .process-timeline-icon { display: grid; width: 20px; height: 20px; flex: none; place-items: center; color: var(--text-secondary); }
 .process-timeline-line { width: 1px; min-height: 28px; flex: 1; margin: 4px 0 -13px; background: var(--border-strong); }
@@ -275,6 +288,9 @@ button:disabled { cursor: default; }
 .process-disclosure { margin: 0; color: var(--text-secondary); font: 13px/1.5 var(--font-sans); }
 .process-text, .process-code { width: 100%; margin: 0; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-sunken); color: var(--text-primary); font: 13px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .process-text { min-height: 150px; max-height: 56dvh; padding: 14px; font-family: var(--font-serif); }
+.process-sheet.echo-detail { background: var(--echo-bg); }
+.process-sheet.echo-detail .sheet-back:hover { background: rgba(255, 255, 255, .3); }
+.process-text.echo-text { border-color: var(--echo-border); background: rgba(255, 255, 255, .32); color: var(--text-primary); font: 15px/1.7 var(--font-serif); }
 .process-code-section { display: flex; flex-direction: column; gap: 7px; }
 .process-code-label { color: var(--text-secondary); font: 600 12px/1.3 var(--font-sans); }
 .process-code { max-height: 36dvh; padding: 11px 12px; }
@@ -368,6 +384,7 @@ button:disabled { cursor: default; }
 
 @media (prefers-color-scheme: dark) {
   .composer-box { border-color: var(--border); }
+  .process-text.echo-text { background: rgba(0, 0, 0, .12); }
 }
 
 @media (prefers-reduced-motion: reduce) {

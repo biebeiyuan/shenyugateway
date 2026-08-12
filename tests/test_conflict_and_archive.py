@@ -215,6 +215,29 @@ def test_chat_archive_dedup():
     asyncio.run(run())
 
 
+def test_chat_archive_keeps_assistant_body_but_drops_private_echo():
+    async def run():
+        supabase = FakeSupabase()
+        with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as tmp:
+            store = GatewayStore(str(Path(tmp) / "test.db"))
+            service = ChatArchiveService(store, supabase, Cfg())
+            result = await service.archive_window(
+                session_tag="default",
+                client_name="shenyu-pwa",
+                messages=[
+                    {"role": "user", "content": "你还好吗"},
+                    {"role": "assistant", "content": "[回响]有一点怕。[/回响]我在。"},
+                ],
+            )
+
+            assert result["archived"] == 2
+            rows = supabase.tables["shenyu_chat_archive"]
+            assert rows[-1]["content"] == "我在。"
+            assert "有一点怕" not in rows[-1]["content"]
+
+    asyncio.run(run())
+
+
 def test_chat_archive_uses_client_attachment_time():
     async def run():
         supabase = FakeSupabase()

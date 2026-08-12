@@ -14,7 +14,7 @@
 
 Operit、PWA 聊天端以及未来的其他聊天客户端都属于请求链两端的客户端表面，不是网关内部的第九个代码区。客户端负责输入、展示、Markdown/代码渲染、工具过程的友好映射和客户端请求头；上下文、会话、工具真实执行、上游适配与持久状态仍由下面八个区域各自拥有。
 
-PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它使用 `X-Shenyu-Client: shenyu-pwa` 和 `X-Shenyu-Tool-Events: true` 接入现有聊天契约，并以 `X-Shenyu-Tool-Details: true` 仅为当前响应请求工具的实际输入与传回模型的结果。详情绝不进入请求日志或持久历史。回复结束时，网关还以 `shenyu.response_meta` 返回不含正文的上下文轮数、缓存覆盖、实际工具轮、首轮缓存命中和 heartbeat 捕获布尔值；PWA 只负责轻量映射。PWA 还读取 Admin Config 页面同源保存的 `shenyu_upstream_presets`，通过 `POST /api/config` 切换固定默认上游预设；模型面板中的浏览器本地请求头则通过单次 `ChatRequest.upstream_headers` 交给区域三校验并映射成真正上游 header，不修改网关全局配置。Claude Code 身份模拟还携带浏览器本地固定 device/session id 组成的标准 Anthropic `metadata.user_id`，但不复制 coding system prompt 或工具。两种选择都不改变 PWA 的客户端身份、会话、记忆或工具事件契约，请求头值也不进入请求日志。模拟 metadata 只可能在临时开启 full-payload 日志时出现在进程内，不进入安全持久日志。只有当客户端开始拥有独立的服务端状态、业务规则或持久化责任时，才需要重新评估是否形成新的架构区。
+PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它使用 `X-Shenyu-Client: shenyu-pwa` 和 `X-Shenyu-Tool-Events: true` 接入现有聊天契约，并以 `X-Shenyu-Tool-Details: true` 仅为当前响应请求工具的实际输入与传回模型的结果。详情绝不进入请求日志或持久历史。回复结束时，网关还以 `shenyu.response_meta` 返回不含正文的上下文轮数、缓存覆盖、实际工具轮、首轮缓存命中和 heartbeat 捕获布尔值；模型写入正文卷首的 `[回响]...[/回响]` 则通过 `shenyu_echo` SSE / `shenyu.echo` 非流式字段进入同一条过程时间线，PWA 永久保留并以粉色回响行展示，不另立面板。PWA 只负责轻量映射。PWA 还读取 Admin Config 页面同源保存的 `shenyu_upstream_presets`，通过 `POST /api/config` 切换固定默认上游预设；模型面板中的浏览器本地请求头则通过单次 `ChatRequest.upstream_headers` 交给区域三校验并映射成真正上游 header，不修改网关全局配置。Claude Code 身份模拟还携带浏览器本地固定 device/session id 组成的标准 Anthropic `metadata.user_id`，但不复制 coding system prompt 或工具。两种选择都不改变 PWA 的客户端身份、会话、记忆或工具事件契约，请求头值也不进入请求日志。模拟 metadata 只可能在临时开启 full-payload 日志时出现在进程内，不进入安全持久日志。只有当客户端开始拥有独立的服务端状态、业务规则或持久化责任时，才需要重新评估是否形成新的架构区。
 
 ## 住户数据注意事项
 
@@ -195,6 +195,7 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 - `shenyu_gateway/context_layers.py`
 - `shenyu_gateway/context_builder.py`
 - `shenyu_gateway/context_snapshots.py`
+- `shenyu_gateway/echo.py`
 - `shenyu_gateway/memory_island.py`
 - `shenyu_gateway/store/_window_state.py`
 - `shenyu_gateway/store/_cold_start.py`
@@ -325,6 +326,7 @@ Stars 的 run/candidate 写入暂时保留在关键路径。它们不仅用于�
 - `shenyu_gateway/chat_archive.py`
 - `shenyu_gateway/heartbeat_archive.py`
 - `shenyu_gateway/archive_routes.py`
+- `shenyu_gateway/echo.py`（回响在本地会话/快照中保留，进入长期聊天归档前剥离）
 - `scripts/prune_sqlite_history.py`
 
 **数据寿命概览**

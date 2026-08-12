@@ -12,12 +12,12 @@ import {
 import type { UiMessage } from '../src/types'
 
 function assistant(content: string): UiMessage {
-  return { id: 'assistant-1', role: 'assistant', content, attachments: [], thinking: '', thinkingSegments: [], events: [] }
+  return { id: 'assistant-1', role: 'assistant', content, echo: '', echoSegments: [], attachments: [], thinking: '', thinkingSegments: [], events: [] }
 }
 
 describe('cloneVariant', () => {
   it('fills defaults for missing fields', () => {
-    expect(cloneVariant({})).toEqual({ content: '', thinking: '', thinkingSegments: [], events: [], error: undefined })
+    expect(cloneVariant({})).toEqual({ content: '', echo: '', echoSegments: [], thinking: '', thinkingSegments: [], events: [], error: undefined, responseMeta: undefined })
   })
 
   it('deep-copies segments and events', () => {
@@ -82,6 +82,8 @@ describe('applyVariant and switching bounds', () => {
     const message = assistant('old')
     const variant = {
       content: 'new',
+      echo: 'soft',
+      echoSegments: [{ id: 'e', content: 'soft', textOffset: 0, streamOrder: 0 }],
       thinking: 'why',
       thinkingSegments: [{ id: 's', content: 'seg', textOffset: 0, streamOrder: 0 }],
       events: [],
@@ -89,6 +91,7 @@ describe('applyVariant and switching bounds', () => {
     }
     applyVariant(message, variant, 1)
     expect(message.content).toBe('new')
+    expect(message.echo).toBe('soft')
     expect(message.selectedVariantIndex).toBe(1)
     expect(message.thinkingSegments[0]).not.toBe(variant.thinkingSegments[0])
     expect(message.responseMeta).toEqual({ context_rounds: 7, heartbeat_captured: true })

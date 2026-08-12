@@ -3,7 +3,7 @@ import { applyChatCompletion } from '../src/stream/completion'
 import type { UiMessage } from '../src/types'
 
 function assistant(): UiMessage {
-  return { id: 'assistant-1', role: 'assistant', content: '', attachments: [], thinking: '', thinkingSegments: [], events: [], streaming: true }
+  return { id: 'assistant-1', role: 'assistant', content: '', echo: '', echoSegments: [], attachments: [], thinking: '', thinkingSegments: [], events: [], streaming: true }
 }
 
 describe('applyChatCompletion', () => {
@@ -21,13 +21,16 @@ describe('applyChatCompletion', () => {
           heartbeat_captured: true,
         },
         tool_events: [
-          { phase: 'tool_start', tool_call_id: 't1', name: 'shenyu_recall' },
-          { phase: 'tool_end', tool_call_id: 't1', name: 'shenyu_recall', ok: true },
+          { phase: 'tool_start', tool_call_id: 't1', name: 'shenyu_recall', stream_order: 1 },
+          { phase: 'tool_end', tool_call_id: 't1', name: 'shenyu_recall', ok: true, stream_order: 1 },
         ],
+        echo_segments: [{ content: '先确认一下', stream_order: 0 }, { content: '确认好了', stream_order: 2 }],
       },
     }, message)
 
     expect(message.content).toBe('最后的回答')
+    expect(message.echo).toBe('先确认一下确认好了')
+    expect(message.echoSegments.map((item) => item.streamOrder)).toEqual([0, 2])
     expect(message.thinking).toBe('先想一想')
     expect(message.thinkingSegments[0].textOffset).toBe(0)
     expect(message.events).toHaveLength(2)

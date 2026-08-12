@@ -19,6 +19,7 @@ from .context_layers import (
     trim_cold_start_sources as _trim_cold_start_sources,
     trim_package_install_tool_results as _trim_package_install_tool_results,
 )
+from .echo import strip_leading_echo, trim_assistant_echoes
 from .context_window import (
     classify_history_event,
     compact_history_event_messages,
@@ -69,27 +70,28 @@ def _resolve_client_profile(request: Request, client_name: str, cfg: Any) -> dic
         "emit_tool_events": emit_tool_events,
         "emit_tool_event_details": emit_tool_event_details,
         "emit_response_meta": pwa_client,
+        "emit_echo_events": pwa_client,
         "tool_event_protocol": "sse+json" if emit_tool_events else "none",
     }
 
 
 def _assistant_lineage(messages: list[dict], stored_messages: list[dict]) -> dict[str, Any]:
-    client_text = next(
+    client_text = strip_leading_echo(next(
         (
             str(message.get("content") or "")
             for message in reversed(messages)
             if message.get("role") == "assistant" and isinstance(message.get("content"), str)
         ),
         "",
-    )
-    stored_text = next(
+    ))
+    stored_text = strip_leading_echo(next(
         (
             str(message.get("content") or "")
             for message in reversed(stored_messages)
             if message.get("role") == "assistant"
         ),
         "",
-    )
+    ))
     if not client_text or not stored_text:
         return {
             "available": False,
@@ -526,6 +528,14 @@ async def prepare_messages(
         now_iso=_iso_now(),
         detail={"snapshot_messages": len(snapshot_messages)},
     )
+    # Session snapshots keep the PWA transcript exactly as the client returned it.
+    # Echo expiry applies only to the upstream-facing copy so old echoes remain
+    # visible after a thread handoff or local-history restore.
+    messages, echo_trim_meta = trim_assistant_echoes(
+        messages,
+        keep_subsequent_user_turns=getattr(cfg, "echo_retention_turns", 1),
+    )
+    trim_meta.update(echo_trim_meta)
     messages, pending_gateway_meta = inject_pending_gateway_tool_turns(
         messages,
         store,

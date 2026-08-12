@@ -32,6 +32,7 @@ from typing import Any, Optional
 
 from .client_extra import parse_pwa_status_suffix_time
 from .context_layers import _strip_client_extra_bundle_text
+from .echo import strip_leading_echo
 from .runtime import dt_to_iso, iso_now, logger
 
 CHAT_ARCHIVE_TABLE = "shenyu_chat_archive"
@@ -154,6 +155,10 @@ class ChatArchiveService:
             if client_event_at:
                 latest_client_event_at = client_event_at
             text, _ = _strip_client_extra_bundle_text(text)
+            if role == "assistant":
+                # Echo stays in the PWA transcript/snapshots but must not become
+                # an unlimited long-term recall source after its turn retention expires.
+                text = strip_leading_echo(text)
             if not text:
                 continue
             if _looks_like_numbered_transcript(text):

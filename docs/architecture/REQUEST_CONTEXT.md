@@ -13,7 +13,7 @@ Context is assembled in the order Shenyu should wake into it:
 | `slow` | system prefix after `stable` | calendar memory | covered by `system.end` |
 | `heartbeat` | system prefix after `slow` | `## 我之前的心跳` | covered by `system.end` |
 | `tool_policy` | system prefix after heartbeat | compact gateway/client tool reminder rendered as `## 工具怎么用` | covered by `system.end` |
-| `format` | end of the system prefix | heartbeat and star format instructions | `system.end` uses the last non-empty system layer |
+| `format` | end of the system prefix | optional model-authored echo format instructions, then heartbeat and star format instructions | `system.end` uses the last non-empty system layer |
 | `mem` | between fixed older history and the recent chat tail | stateful star/Mem memory island | breakpoint before and at the end of the island |
 | client history | after the system prefix | chunk-trimmed client messages and an optional cold-start bridge | rolling-tail breakpoint when a slot is free |
 | current user | latest user message | current request | no breakpoint |
@@ -448,6 +448,16 @@ request-log tier, but can appear in the live full upstream payload when `GATEWAY
 beta, valid session UUID, complete Stainless header group, and session-matched metadata; it never stores their
 values. Omitting the preset preserves the existing upstream request exactly.
 
+The optional `ECHO_PROMPT` is appended to the `format` system layer immediately before the Heartbeat
+format prompt. It asks the model to place a visible, model-authored reflection at the beginning of its
+assistant text as `[回响]...[/回响]`; this is a user-facing self-reflection channel, not provider hidden
+Thinking or the private `<heartbeat>` block. The Admin Config field is global, and `ECHO_RETENTION_TURNS`
+(default `1`, range `0..20`) controls only how many later user turns keep the tagged block in the next
+upstream request. `0` removes it on the next request. The PWA always keeps echo in its local transcript,
+variants, and context snapshots, even after the model-facing tag expires. Empty echo is valid and does not
+create a fallback reply. The long-term `shenyu_chat_archive` path strips echo tags before archival so a
+short-lived private reflection does not become unlimited recall material.
+
 Cross-client conversation continuity is keyed by `X-Shenyu-Session-Tag`, not by `X-Shenyu-Client`.
 `X-Shenyu-Client` only selects the client capability profile. Operit and PWA can therefore share one
 conversation by sending the same session tag; the gateway updates the session's last client name but
@@ -485,6 +495,21 @@ under `shenyu.tool_events`. A client should treat a tool round as complete only 
 The PWA records its current streamed text length when each tool event arrives, so it can place that
 tool round between the corresponding text segments without adding a provider-specific field to the
 gateway contract.
+
+PWA echo deltas use a separate SSE event and never enter visible assistant content deltas:
+
+```text
+event: shenyu_echo
+data: {"type":"shenyu.echo_delta","object":"shenyu.echo_delta","echo":"..."}
+```
+
+Non-streaming PWA responses expose `shenyu.echo` for one echo and `shenyu.echo_segments` when a
+gateway-tool loop produced multiple echo passages around tool events. Each segment carries a
+`stream_order` so the PWA can place 回响, Thinking, and tool rows in their actual process order. A
+non-PWA client does not receive these echo events/fields unless its resolved client profile enables the
+same event surface. The raw tagged assistant text remains in the model-facing session history/snapshot
+path for the configured retention window; request-log previews and durable chat archive strip the leading
+tag.
 
 Every successful PWA reply also receives one content-free response summary. Streaming responses emit it
 before `[DONE]` as `event: shenyu_meta` with `type: shenyu.response_meta`; non-streaming responses expose the

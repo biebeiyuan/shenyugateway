@@ -8,6 +8,7 @@ from typing import Any, Optional
 # Only the dynamic Operit bundle is normalized away for event comparison; the
 # PWA status suffix is a stable part of the stored message text, so it stays.
 from .client_extra import CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE as _CLIENT_EXTRA_BUNDLE_RE
+from .echo import strip_leading_echo
 
 
 MEMORY_ISLAND_LAYER = "memory_island"
@@ -125,6 +126,8 @@ def normalize_history_event_messages(messages: list[dict[str, Any]]) -> list[dic
         clean = dict(message)
         if clean.get("role") == "user":
             clean["content"] = _normalize_event_content(clean.get("content"))
+        elif clean.get("role") == "assistant" and isinstance(clean.get("content"), str):
+            clean["content"] = strip_leading_echo(clean["content"])
         normalized.append(clean)
     return normalized
 
