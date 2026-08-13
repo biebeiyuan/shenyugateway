@@ -605,6 +605,7 @@ async def _stream_chat(
     latest_user_text: str = "",
     response_meta: callable = None,
     emit_echo_events: bool = False,
+    on_client_disconnect: callable = None,
 ):
     from shenyu_gateway.stream_proxy import stream_chat
     return await stream_chat(
@@ -616,6 +617,7 @@ async def _stream_chat(
         latest_user_text=latest_user_text,
         response_meta=response_meta,
         emit_echo_events=emit_echo_events,
+        on_client_disconnect=on_client_disconnect,
     )
 
 

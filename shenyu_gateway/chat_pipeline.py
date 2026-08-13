@@ -27,8 +27,8 @@ from .sessions import SessionManager
 from .streaming import (
     _gateway_error_completion,
     _gateway_error_text,
-    _sse_response,
     _stream_gateway_error_events,
+    resilient_sse_response,
 )
 from .tool_loop import _latest_user_text
 from .tool_registry import is_gateway_native_tool, merge_tools
@@ -381,7 +381,14 @@ class ChatPipeline:
                     )
                     self._persist_log_entry(log_entry)
 
-            return _sse_response(_tool_loop_stream())
+            def _note_client_disconnected():
+                log_entry["client_disconnected"] = True
+
+            return resilient_sse_response(
+                _tool_loop_stream(),
+                model=body.model,
+                on_client_disconnect=_note_client_disconnected,
+            )
 
         try:
             completion = await self.run_internal_tool_loop(
@@ -448,6 +455,9 @@ class ChatPipeline:
             log_entry["status"] = "streaming"
             log_entry["usage"] = {"note": "Streaming usage is not available in this gateway log path."}
 
+            def _note_client_disconnected():
+                log_entry["client_disconnected"] = True
+
             def _on_stream_complete(
                 collected_text: str,
                 heartbeat_content: str = "",
@@ -464,6 +474,14 @@ class ChatPipeline:
                         log_entry["status"] = terminal_status
                         log_entry["error"] = terminal_error or "Upstream stream did not complete normally."
                         _record_response_text(log_entry, collected_text)
+                        # Salvage partial text when the detached drain was cut short
+                        # (watchdog cancel); an interrupted reply beats a lost one.
+                        if terminal_status == "client_disconnected" and (collected_text or echo_content):
+                            sessions.log_assistant_output(
+                                session_id,
+                                {"role": "assistant", "content": collected_text},
+                                echo=echo_content,
+                            )
                         return
                     log_entry["status"] = "ok"
                     _record_finish_reason(log_entry, finish_reason)
@@ -527,6 +545,7 @@ class ChatPipeline:
                 latest_user_text=_latest_user_text(prepared_messages),
                 response_meta=_response_meta if response_meta_enabled(meta) else None,
                 emit_echo_events=echo_events_enabled(meta),
+                on_client_disconnect=_note_client_disconnected,
             )
 
         completion = await self.nonstream_chat(request, payload, headers, body.model, upstream)

@@ -114,30 +114,63 @@ export function parseSseFrame(frame: string, assistant: UiMessage): boolean {
   return false
 }
 
+export const SSE_STALL_ERROR = '连接停滞，可能已断开'
+
+// 单次 read 与停滞定时器赛跑：Doze/NAT 过期会让 socket 静默死亡，read 永远
+// 挂起，没有这层看门狗 UI 会永远锁在"正在看着这边…"。超时后 cancel reader
+// 释放连接再抛错，交给调用方走错误恢复（reconcile）。
+async function readWithStallGuard(
+  reader: ReadableStreamDefaultReader<Uint8Array>,
+  stallTimeoutMs?: number,
+): Promise<ReadableStreamReadResult<Uint8Array>> {
+  if (!stallTimeoutMs || stallTimeoutMs <= 0) return reader.read()
+  let timer: ReturnType<typeof setTimeout> | undefined
+  const stalled = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      // 先 reject 再 cancel：cancel 会让挂起的 read() 以 done:true 结算，
+      // 顺序反了 race 会走 resolve 分支，停滞被当成正常 EOF。
+      reject(new Error(SSE_STALL_ERROR))
+      void reader.cancel().catch(() => undefined)
+    }, stallTimeoutMs)
+  })
+  try {
+    return await Promise.race([reader.read(), stalled])
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // Reads a streaming response body, splitting on blank lines into SSE frames.
 // `onFrame` returns true to mark the stream done ([DONE]); remaining frames of
 // the current chunk are still delivered, matching upstream flush behavior.
+// `sawDone` 让调用方区分正常收尾与静默截断（EOF 但没等到 [DONE]）。
 export async function pumpSseStream(
   body: ReadableStream<Uint8Array>,
   onFrame: (frame: string) => boolean,
   onChunkEnd?: () => void,
-): Promise<void> {
+  stallTimeoutMs?: number,
+): Promise<{ sawDone: boolean }> {
   const reader = body.getReader()
   const decoder = new TextDecoder()
   let buffer = ''
   let done = false
+  let sawDone = false
   while (!done) {
-    const chunk = await reader.read()
+    const chunk = await readWithStallGuard(reader, stallTimeoutMs)
     buffer += decoder.decode(chunk.value || new Uint8Array(), { stream: !chunk.done })
     const frames = buffer.split(/\r?\n\r?\n/)
     buffer = frames.pop() || ''
     for (const frame of frames) {
-      if (onFrame(frame)) done = true
+      if (onFrame(frame)) {
+        done = true
+        sawDone = true
+      }
     }
     if (chunk.done) {
-      if (buffer.trim()) onFrame(buffer)
+      if (buffer.trim() && onFrame(buffer)) sawDone = true
       done = true
     }
     onChunkEnd?.()
   }
+  return { sawDone }
 }

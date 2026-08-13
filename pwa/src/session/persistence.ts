@@ -91,6 +91,7 @@ export function loadStoredMessages(): UiMessage[] {
           events: cloneStoredEvents(item.events),
           streaming: false,
           error: item.error ? String(item.error) : undefined,
+          truncated: item.truncated === true ? true : undefined,
           responseMeta: cloneStoredResponseMeta(item.responseMeta),
         }
         if (message.role === 'assistant' && Array.isArray(item.variants) && item.variants.length) {
@@ -121,6 +122,7 @@ type StoredRow = {
   thinkingSegments: ThinkingSegment[]
   events: ToolEvent[]
   error?: string
+  truncated?: boolean
   variants?: MessageVariant[]
   selectedVariantIndex?: number
   responseMeta?: ResponseMeta
@@ -154,6 +156,10 @@ export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit
     thinkingSegments: message.thinkingSegments,
     events: message.events,
     error: message.error,
+    // streaming 态只在流式中途落盘（节流/pagehide）时出现；正常收尾会先清掉
+    // streaming 再落盘。它留在存储里就意味着进程死在了流中间——按截断标记，
+    // 重启后 reconcile 会去服务器找回全文。
+    truncated: message.truncated || message.streaming || undefined,
     variants: message.variants,
     selectedVariantIndex: message.selectedVariantIndex,
     responseMeta: message.responseMeta,

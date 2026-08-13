@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { appendEcho, appendThinking, appendToolEvent, parseSseFrame, pumpSseStream, toolEventKey } from '../src/stream/sse'
+import { SSE_STALL_ERROR, appendEcho, appendThinking, appendToolEvent, parseSseFrame, pumpSseStream, toolEventKey } from '../src/stream/sse'
 import type { UiMessage } from '../src/types'
 
 function assistant(): UiMessage {
@@ -141,5 +141,57 @@ describe('pumpSseStream', () => {
     let chunkEnds = 0
     await pumpSseStream(streamOf(['data: [DONE]\n\n']), () => true, () => { chunkEnds += 1 })
     expect(chunkEnds).toBeGreaterThan(0)
+  })
+
+  it('reports sawDone=true when the stream closes with [DONE]', async () => {
+    const message = assistant()
+    const { sawDone } = await pumpSseStream(streamOf([
+      'data: {"choices":[{"delta":{"content":"完整"}}]}\n\n',
+      'data: [DONE]\n\n',
+    ]), (frame) => parseSseFrame(frame, message))
+    expect(sawDone).toBe(true)
+    expect(message.content).toBe('完整')
+  })
+
+  it('reports sawDone=false on silent EOF without [DONE]', async () => {
+    const message = assistant()
+    const { sawDone } = await pumpSseStream(streamOf([
+      'data: {"choices":[{"delta":{"content":"半截"}}]}\n\n',
+    ]), (frame) => parseSseFrame(frame, message))
+    expect(sawDone).toBe(false)
+    expect(message.content).toBe('半截')
+  })
+
+  it('recognizes [DONE] arriving as the trailing frame without a blank line', async () => {
+    const { sawDone } = await pumpSseStream(streamOf(['data: [DONE]']), (frame) => frame.includes('[DONE]'))
+    expect(sawDone).toBe(true)
+  })
+
+  it('throws the stall error when no chunk arrives within the watchdog window', async () => {
+    // A stream that produces one chunk then hangs forever, like a dead NAT socket.
+    const encoder = new TextEncoder()
+    const hangingStream = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"开头"}}]}\n\n'))
+      },
+    })
+    const message = assistant()
+    await expect(
+      pumpSseStream(hangingStream, (frame) => parseSseFrame(frame, message), undefined, 50),
+    ).rejects.toThrow(SSE_STALL_ERROR)
+    expect(message.content).toBe('开头')
+  })
+
+  it('does not stall a healthy stream slower than one chunk per tick', async () => {
+    const encoder = new TextEncoder()
+    const slowStream = new ReadableStream<Uint8Array>({
+      async start(controller) {
+        await new Promise((resolve) => setTimeout(resolve, 20))
+        controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+        controller.close()
+      },
+    })
+    const { sawDone } = await pumpSseStream(slowStream, (frame) => frame.includes('[DONE]'), undefined, 5_000)
+    expect(sawDone).toBe(true)
   })
 })

@@ -593,16 +593,18 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                 read_result = await read_next_stream_chunk(
                     upstream_chunks=upstream_chunks,
                     next_chunk=next_chunk,
-                    request=ctx.request,
+                    # The response is wrapped by resilient_sse_response: client
+                    # disconnects are absorbed there and the loop must keep
+                    # running so the finished reply still reaches the session.
+                    request=None,
                 )
                 if read_result.kind == "keepalive":
                     yield _stream_keepalive_event(ctx.body.model, chunk_id=stream_chunk_id, created=stream_created)
                     continue
                 if read_result.kind == "disconnected":
                     if ctx.log_entry is not None:
-                        ctx.log_entry["status"] = "client_disconnected"
-                        ctx.log_entry["error"] = "Client disconnected during native internal gateway tool stream."
-                    return
+                        ctx.log_entry["client_disconnected"] = True
+                    continue
                 if read_result.kind == "exhausted":
                     _mark_request_log_phase(ctx.log_entry, "upstream.stream_exhausted", detail={"round": round_index + 1})
                     if not first_upstream_chunk_seen:
@@ -777,10 +779,10 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
             _append_tool_round_log(round_log, name, args, cached, result, duration_ms=duration_ms)
             working_messages.append(_tool_result_message(tool_call, name, result))
             if await ctx.request.is_disconnected():
+                # resilient_sse_response keeps draining this generator after the
+                # client leaves; just note it and finish the loop normally.
                 if ctx.log_entry is not None:
-                    ctx.log_entry["status"] = "client_disconnected"
-                    ctx.log_entry["error"] = "Client disconnected during native internal gateway tool execution."
-                return
+                    ctx.log_entry["client_disconnected"] = True
             if finished_event:
                 yield _stream_tool_event(
                     ctx.body.model,

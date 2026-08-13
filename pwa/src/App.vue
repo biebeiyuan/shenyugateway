@@ -97,6 +97,7 @@ import {
   persistStoredMessages,
 } from './session/persistence'
 import { hydrateToolEvents } from './session/toolHydration'
+import { applyReconciledTail, tailNeedsReconcile } from './session/reconcile'
 import {
   applyVariant,
   canSwitchMessageVariant,
@@ -324,6 +325,19 @@ function persistMessages() {
   persistStoredMessages(messages.value, sessionMessageLimit())
 }
 
+// 流式中途每 ~3 秒落盘一次：进程在后台被杀时半截回复不丢（pagehide 再兜底）。
+const STREAM_PERSIST_INTERVAL_MS = 3_000
+let lastStreamPersistAt = 0
+
+function onStreamChunkEnd() {
+  scrollToBottom()
+  const now = Date.now()
+  if (now - lastStreamPersistAt >= STREAM_PERSIST_INTERVAL_MS) {
+    lastStreamPersistAt = now
+    persistMessages()
+  }
+}
+
 function clientContext(): RequestContext {
   return { gatewayUrl: gatewayUrl.value, authToken: authToken.value, sessionTag: sessionTag.value }
 }
@@ -483,6 +497,7 @@ async function openSession(session: GatewaySession): Promise<boolean> {
   try {
     const payload = await fetchSessionDetail(clientContext(), session.session_tag, sessionMessageLimit())
     const rows = sessionHistoryRows(payload)
+    invalidateReconcile()
     messages.value = rows
       .filter((row: Record<string, unknown>) => row.role === 'user' || row.role === 'assistant')
       .map((row: Record<string, unknown>) => {
@@ -526,6 +541,7 @@ async function recoverSessionFromColdStart(session: GatewaySession = { session_t
     const payload = await fetchSessionDetail(clientContext(), session.session_tag, sessionMessageLimit())
     const cleanRows = coldStartHistoryRows(payload, session.session_tag)
     if (!cleanRows.length || hasExactDuplicateRows(cleanRows)) throw new Error('没有找到干净的冷启动源')
+    invalidateReconcile()
     if (messages.value.length) messages.value = dedupeUiMessagesForRecovery(messages.value)
     else {
       messages.value = cleanRows.map((row) => {
@@ -570,6 +586,53 @@ async function adoptInitialSession() {
     localStorage.setItem(STORAGE_SESSION, requestedSessionTag)
   }
   status.value = opened ? `已接上线程 ${requestedSessionTag}` : `将继续使用线程 ${requestedSessionTag}`
+}
+
+// ---- 尾部对账：后台断流/进程被杀后，从服务器找回 drain 落库的完整回复 ------
+// 触发点：流结束没等到 [DONE]、看门狗/网络错误、回前台、冷启动恢复本地消息。
+// 服务端 drain 可能还没跑完，锚不上就按退避重试；切会话/新会话使旧的重试链作废。
+
+const RECONCILE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000]
+const RECONCILE_STATUS = '正在找回后台期间的回复…'
+let reconcileGeneration = 0
+let reconcileTimer: number | null = null
+
+function invalidateReconcile() {
+  reconcileGeneration++
+  if (reconcileTimer !== null) {
+    window.clearTimeout(reconcileTimer)
+    reconcileTimer = null
+  }
+}
+
+async function reconcileTailFromServer(attempt = 0) {
+  invalidateReconcile()
+  const generation = reconcileGeneration
+  if (busy.value || !tailNeedsReconcile(messages.value)) return
+  status.value = RECONCILE_STATUS
+  try {
+    const payload = await fetchSessionDetail(clientContext(), sessionTag.value, sessionMessageLimit())
+    if (generation !== reconcileGeneration || busy.value) return
+    if (applyReconciledTail(messages.value, payload)) {
+      persistMessages()
+      errorNotice.value = ''
+      status.value = '已找回后台期间的回复'
+      await nextTick()
+      scrollToBottom()
+      return
+    }
+  } catch {
+    // 网络可能还没恢复，与"drain 未完成"一样按退避重试。
+  }
+  if (generation !== reconcileGeneration) return
+  if (attempt < RECONCILE_RETRY_DELAYS_MS.length) {
+    reconcileTimer = window.setTimeout(() => {
+      reconcileTimer = null
+      void reconcileTailFromServer(attempt + 1)
+    }, RECONCILE_RETRY_DELAYS_MS[attempt])
+    return
+  }
+  if (status.value === RECONCILE_STATUS) status.value = ''
 }
 
 async function openHandoffSheet() {
@@ -734,6 +797,7 @@ async function checkPwaBuildInfo() {
 
 function newChat() {
   if (busy.value) cancelGeneration()
+  invalidateReconcile()
   messages.value = []
   pendingAttachments.value = []
   editId.value = null
@@ -953,7 +1017,12 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     }
     if (useStreaming) {
       const stream = await postChatStream(clientContext(), body, activeController.signal)
-      await pumpSseStream(stream, (frame) => parseSseFrame(frame, assistant), scrollToBottom)
+      // 3 分钟看门狗：Doze/NAT 让 socket 静默死亡时解锁 UI，交给 reconcile 找回。
+      const { sawDone } = await pumpSseStream(stream, (frame) => parseSseFrame(frame, assistant), onStreamChunkEnd, 180_000)
+      if (!sawDone) {
+        assistant.truncated = true
+        errorNotice.value = '回复可能被截断，正在尝试找回…'
+      }
     } else {
       const completion = await postChatCompletion(clientContext(), body, activeController.signal)
       applyChatCompletion(completion, assistant)
@@ -988,6 +1057,9 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     persistMessages()
     loadSessions()
     scrollToBottom()
+    // 静默截断（!sawDone）或看门狗/网络错误后，去服务器找回 drain 落库的全文。
+    // 用户主动停止不带 error/truncated，这里自然是无操作。
+    if (tailNeedsReconcile(messages.value)) void reconcileTailFromServer()
   }
 }
 
@@ -1178,8 +1250,34 @@ function runQuickPrompt(prompt: string) {
   })
 }
 
+// 切后台瞬间同步落盘（localStorage 是同步 API，来得及写完）；回前台时找回
+// 后台断掉的回复，并顺手核验线上版本（≥5 分钟一次；busy 时跳过——main.ts 的
+// controllerchange reload 会杀掉活动流）。
+const BUILD_CHECK_INTERVAL_MS = 5 * 60_000
+let lastBuildCheckAt = 0
+
+function handleVisibilityChange() {
+  if (document.visibilityState === 'hidden') {
+    persistMessages()
+    return
+  }
+  if (busy.value) return
+  if (tailNeedsReconcile(messages.value)) void reconcileTailFromServer()
+  const now = Date.now()
+  if (now - lastBuildCheckAt >= BUILD_CHECK_INTERVAL_MS) {
+    lastBuildCheckAt = now
+    void checkPwaBuildInfo()
+  }
+}
+
+function handlePageHide() {
+  persistMessages()
+}
+
 onMounted(async () => {
   document.addEventListener('pointerdown', closeComposerMenuFromOutside)
+  document.addEventListener('visibilitychange', handleVisibilityChange)
+  window.addEventListener('pagehide', handlePageHide)
   window.visualViewport?.addEventListener('resize', scheduleComposerVisible)
   window.visualViewport?.addEventListener('scroll', scheduleComposerVisible)
   localStorage.setItem(STORAGE_SESSION, sessionTag.value)
@@ -1190,12 +1288,18 @@ onMounted(async () => {
   await loadModels()
   await loadSessions()
   await adoptInitialSession()
+  // 本地恢复的消息可能停在半截（流式中途进程被杀）：去服务器找回全文。
+  if (tailNeedsReconcile(messages.value)) void reconcileTailFromServer()
   nextTick(() => inputRef.value?.focus())
 })
 
 onUnmounted(() => {
+  activeController?.abort()
+  invalidateReconcile()
   clearKeyboardTimers()
   document.removeEventListener('pointerdown', closeComposerMenuFromOutside)
+  document.removeEventListener('visibilitychange', handleVisibilityChange)
+  window.removeEventListener('pagehide', handlePageHide)
   window.visualViewport?.removeEventListener('resize', scheduleComposerVisible)
   window.visualViewport?.removeEventListener('scroll', scheduleComposerVisible)
 })

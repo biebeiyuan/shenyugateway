@@ -14,11 +14,11 @@ from .response_capture import AssistantTagFilter, clean_text_from_filter_source
 from .runtime import now_ts as _now_ts
 from .streaming import (
     _new_stream_chunk_id,
-    _sse_response,
     _stream_content_event,
     _stream_echo_event,
     _stream_response_meta_event,
     flush_stream_tail_events,
+    resilient_sse_response,
 )
 from .upstream_adapter import (
     _anthropic_stop_reason_to_openai,
@@ -49,6 +49,7 @@ async def stream_chat(
     latest_user_text: str = "",
     response_meta: Optional[Callable[..., dict[str, Any]]] = None,
     emit_echo_events: bool = False,
+    on_client_disconnect: Optional[Callable[[], None]] = None,
 ) -> StreamingResponse:
     """Forward a streaming response to the client, filtering heartbeat tags."""
     proto = upstream["protocol"]
@@ -285,7 +286,7 @@ async def stream_chat(
                     except Exception:
                         logger.exception("流式回调执行失败")
 
-        return _sse_response(generate())
+        return resilient_sse_response(generate(), model=model, on_client_disconnect=on_client_disconnect)
 
     # Anthropic protocol
     async def generate():
@@ -484,4 +485,4 @@ async def stream_chat(
                 except Exception:
                     logger.exception("流式回调执行失败")
 
-    return _sse_response(generate())
+    return resilient_sse_response(generate(), model=model, on_client_disconnect=on_client_disconnect)

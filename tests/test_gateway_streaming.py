@@ -40,6 +40,7 @@ from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.stream_proxy import stream_chat
 from shenyu_gateway.streaming import (
     StreamReplayAccumulator,
+    _DETACHED_STREAM_TASKS,
     _apply_openai_stream_chunk,
     _completion_with_unstreamed_deltas,
     _gateway_error_completion,
@@ -53,6 +54,7 @@ from shenyu_gateway.streaming import (
     _stream_role_event,
     close_stream_reader,
     read_next_stream_chunk,
+    resilient_sse_response,
 )
 from shenyu_gateway.tool_loop import (
     InternalToolLoopContext,
@@ -2282,13 +2284,151 @@ def test_openai_plain_stream_reports_incomplete_terminal_status(interruption, ex
             on_complete=lambda *args: completed.append(args),
         )
 
-        with pytest.raises(type(interruption), match=None if isinstance(interruption, asyncio.CancelledError) else "upstream stream broke"):
-            async for _chunk in response.body_iterator:
-                pass
+        if isinstance(interruption, asyncio.CancelledError):
+            # resilient_sse_response absorbs a cancelled upstream read: the
+            # client-facing stream ends (without [DONE]) instead of raising,
+            # while on_complete still reports client_disconnected.
+            chunks = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+            assert not any("[DONE]" in chunk for chunk in chunks)
+        else:
+            with pytest.raises(type(interruption), match="upstream stream broke"):
+                async for _chunk in response.body_iterator:
+                    pass
 
         assert upstream_response.closed is True
         assert completed and completed[0][0] == "partial"
         assert completed[0][5] == expected_status
+
+    asyncio.run(run_case())
+
+
+class _GatedPlainStreamResponse(_PlainStreamResponse):
+    """Yields the head lines, then waits for a gate before the tail lines."""
+
+    def __init__(self, head_lines, gate, tail_lines):
+        super().__init__(list(head_lines) + list(tail_lines))
+        self.head_lines = list(head_lines)
+        self.gate = gate
+        self.tail_lines = list(tail_lines)
+
+    async def aiter_lines(self):
+        for line in self.head_lines:
+            yield line
+        await self.gate.wait()
+        for line in self.tail_lines:
+            yield line
+
+
+def test_openai_plain_stream_drains_upstream_after_client_disconnect():
+    async def run_case():
+        gate = asyncio.Event()
+        upstream_response = _GatedPlainStreamResponse(
+            [
+                'data: {"id":"chatcmpl-upstream","created":123,"choices":[{"delta":{"content":"hello"},"finish_reason":null}]}'
+            ],
+            gate,
+            [
+                'data: {"id":"chatcmpl-upstream","created":123,"choices":[{"delta":{"content":"world"},"finish_reason":"stop"}]}'
+            ],
+        )
+        request = _fake_request()
+        request.scope["app"] = SimpleNamespace(
+            state=SimpleNamespace(http=_PlainStreamClient(upstream_response))
+        )
+        completed: list[tuple] = []
+        disconnects: list[bool] = []
+
+        response = await stream_chat(
+            request,
+            {"model": "test-model", "messages": []},
+            {},
+            "test-model",
+            {"protocol": "openai", "chat_url": "https://upstream.test/v1/chat/completions"},
+            connect_error_detail=lambda _url, exc: str(exc),
+            private_capture_fallback_text=lambda *_args, **_kwargs: ("fallback", ""),
+            private_capture_kinds=lambda **_kwargs: [],
+            on_complete=lambda *args: completed.append(args),
+            on_client_disconnect=lambda: disconnects.append(True),
+        )
+
+        first_content_seen = asyncio.Event()
+
+        async def consume():
+            async for chunk in response.body_iterator:
+                text = chunk.decode() if isinstance(chunk, bytes) else chunk
+                if '"content": "hello"' in text:
+                    first_content_seen.set()
+
+        consumer = asyncio.create_task(consume())
+        await asyncio.wait_for(first_content_seen.wait(), timeout=5)
+        # Simulate uvicorn cancelling the response task on client disconnect.
+        consumer.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await consumer
+
+        assert disconnects == [True]
+        assert _DETACHED_STREAM_TASKS
+
+        gate.set()
+        for _ in range(500):
+            if not _DETACHED_STREAM_TASKS:
+                break
+            await asyncio.sleep(0.01)
+        assert not _DETACHED_STREAM_TASKS, "detached drain did not finish in time"
+
+        assert completed and completed[0][0] == "helloworld"
+        assert completed[0][5] == "ok"
+        assert upstream_response.closed is True
+
+    asyncio.run(run_case())
+
+
+def test_resilient_sse_response_passes_inner_events_through():
+    async def run_case():
+        finished: list[bool] = []
+
+        async def inner():
+            try:
+                yield "data: one\n\n"
+                yield "data: two\n\n"
+                yield "data: three\n\n"
+            finally:
+                finished.append(True)
+
+        response = resilient_sse_response(inner(), model="test-model")
+
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+        assert chunks == ["data: one\n\n", "data: two\n\n", "data: three\n\n"]
+        assert finished == [True]
+        assert not _DETACHED_STREAM_TASKS
+
+    asyncio.run(run_case())
+
+
+def test_resilient_sse_response_emits_keepalive_while_inner_is_slow():
+    async def run_case():
+        async def inner():
+            await asyncio.sleep(0.2)
+            yield "data: real\n\n"
+
+        response = resilient_sse_response(inner(), model="test-model", keepalive_interval=0.05)
+
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+
+        assert chunks[-1] == "data: real\n\n"
+        keepalives = chunks[:-1]
+        assert keepalives, "expected at least one keepalive before the real event"
+        for chunk in keepalives:
+            payload = json.loads(chunk[len("data: "):])
+            assert payload["model"] == "test-model"
+            assert payload["choices"][0]["delta"] == {"content": ""}
 
     asyncio.run(run_case())
 
@@ -2425,6 +2565,30 @@ def test_read_next_stream_chunk_closes_upstream_when_client_disconnects():
         assert result.kind == "disconnected"
         assert next_chunk.cancelled() is True
         assert upstream.closed is True
+
+    asyncio.run(run_case())
+
+
+def test_read_next_stream_chunk_without_request_keeps_alive_instead_of_disconnecting():
+    async def pending_forever():
+        await asyncio.sleep(3600)
+
+    async def run_case():
+        upstream = _ClosableAsyncIterator([])
+        next_chunk = asyncio.create_task(pending_forever())
+        try:
+            result = await read_next_stream_chunk(
+                upstream_chunks=upstream,
+                next_chunk=next_chunk,
+                request=None,
+                timeout=0.001,
+            )
+
+            assert result.kind == "keepalive"
+            assert next_chunk.cancelled() is False
+            assert upstream.closed is False
+        finally:
+            next_chunk.cancel()
 
     asyncio.run(run_case())
 
@@ -2572,6 +2736,111 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
         assert len(tool_events) == 2
         assert '"phase": "tool_start"' in tool_events[0]
         assert '"phase": "tool_end"' in tool_events[1]
+
+    asyncio.run(run_case())
+
+
+def test_internal_stream_loop_continues_after_client_disconnect():
+    async def run_case():
+        class Body:
+            model = "test-model"
+
+        class Cfg:
+            max_internal_tool_rounds = 3
+
+        executed_tools: list[tuple[str, dict]] = []
+        rounds_started: list[int] = []
+
+        async def build_upstream_request(request, body, messages_override=None, meta=None):
+            rounds_started.append(len(messages_override or []))
+            return (
+                {"model": body.model, "messages": messages_override or [], "tools": []},
+                {},
+                "",
+                {},
+                {"chat_url": "https://upstream.test/v1/chat/completions", "protocol": "openai"},
+            )
+
+        async def stream_upstream_openai_chunks(request, payload, headers, model, upstream):
+            if len(rounds_started) == 1:
+                yield {
+                    "choices": [
+                        {
+                            "delta": {
+                                "tool_calls": [
+                                    {
+                                        "index": 0,
+                                        "id": "tooluse_1",
+                                        "type": "function",
+                                        "function": {
+                                            "name": "shenyu_gateway_tool",
+                                            "arguments": "{\"tool\":\"shenyu_list_mem_notes\",\"arguments\":{}}",
+                                        },
+                                    }
+                                ],
+                            },
+                            "finish_reason": "tool_calls",
+                        }
+                    ]
+                }
+            else:
+                yield {"choices": [{"delta": {"content": "done"}, "finish_reason": None}]}
+                yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
+
+        async def execute_gateway_tool(name, args, session_tag=None, cfg=None):
+            executed_tools.append((name, args))
+            return {"ok": True, "items": []}
+
+        class Sessions:
+            def log_tool_result(self, *args, **kwargs):
+                pass
+
+            def log_assistant_output(self, *args, **kwargs):
+                pass
+
+        ctx = InternalToolLoopContext(
+            request=_DisconnectProbe(disconnected=True),
+            body=Body(),
+            prepared_messages=[{"role": "user", "content": "list mem"}],
+            meta={"session": {"id": "session-1", "session_tag": "5.15"}},
+            log_entry={},
+            cfg=Cfg(),
+            store=None,
+            sessions=Sessions(),
+            build_upstream_request=build_upstream_request,
+            call_upstream_json=None,
+            stream_upstream_openai_chunks=stream_upstream_openai_chunks,
+            execute_gateway_tool=execute_gateway_tool,
+            record_upstream_payload=lambda log_entry, payload, headers: None,
+            aggregate_cache_usage=lambda usages, protocol="": {},
+            finalize_assistant_private_content=lambda assistant_message, **kwargs: (
+                assistant_message.get("content", ""),
+                "",
+                "",
+                {"applied": False},
+            ),
+            store_heartbeat=lambda *args, **kwargs: None,
+            mark_context_consumed=lambda meta: None,
+            write_completion_context_snapshot=lambda *args, **kwargs: None,
+            record_response_text=lambda log_entry, text: log_entry.__setitem__("response_text", text),
+        )
+
+        all_events = [
+            event
+            async for event in run_internal_tool_loop_stream(ctx)
+            if isinstance(event, str)
+        ]
+
+        # The disconnect is only noted; the loop still runs the tool, does the
+        # follow-up round, and finishes the stream normally.
+        assert executed_tools == [
+            ("shenyu_gateway_tool", {"tool": "shenyu_list_mem_notes", "arguments": {}})
+        ]
+        assert len(rounds_started) == 2
+        assert all_events[-1] == "data: [DONE]\n\n"
+        assert ctx.log_entry["client_disconnected"] is True
+        assert ctx.log_entry["status"] == "ok"
+        assert ctx.log_entry["response_text"] == "done"
 
     asyncio.run(run_case())
 

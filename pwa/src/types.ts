@@ -57,6 +57,8 @@ export type UiMessage = {
   events: ToolEvent[]
   streaming?: boolean
   error?: string
+  // 流在收到 [DONE] 之前就结束了（静默截断/进程被杀）；等待 reconcile 找回全文。
+  truncated?: boolean
   expanded?: boolean
   variants?: MessageVariant[]
   selectedVariantIndex?: number

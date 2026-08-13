@@ -5,12 +5,13 @@ import json
 import uuid
 from contextlib import suppress
 from dataclasses import dataclass, field
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 from fastapi import HTTPException
 from fastapi.responses import StreamingResponse
 
 from .runtime import json_dumps as _json_dumps
+from .runtime import logger
 from .runtime import now_ts as _now_ts
 from .echo import strip_leading_echo
 from .utils import normalize_text as _normalize_text
@@ -173,6 +174,101 @@ def _stream_response_meta_event(
 def _sse_response(generator) -> StreamingResponse:
     return StreamingResponse(
         generator,
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
+# Strong references to detached drain tasks: asyncio only keeps weak refs to
+# running tasks, so without this set a drained stream could be GC'd mid-flight.
+_DETACHED_STREAM_TASKS: set[asyncio.Task] = set()
+
+# Safety valve for the detached drain: if the upstream never finishes, cancel it
+# eventually so the producer's finally-blocks run and partial text is persisted.
+_DETACHED_DRAIN_MAX_SECONDS = 30 * 60.0
+
+_QUEUE_END = object()
+
+
+def resilient_sse_response(
+    inner_gen,
+    *,
+    model: str,
+    keepalive_interval: float = 15.0,
+    on_client_disconnect: Optional[Callable[[], None]] = None,
+) -> StreamingResponse:
+    """SSE response that survives client disconnects.
+
+    The inner generator runs in a detached producer task feeding a queue. The
+    HTTP response only consumes the queue, so when the client goes away (mobile
+    background / lock screen), the producer keeps draining the upstream to its
+    natural end and all completion callbacks (session persistence, snapshots,
+    heartbeats) fire as if the client had stayed. Queue reads that time out
+    emit OpenAI-compatible keepalive deltas so proxies (e.g. Cloudflare Tunnel,
+    ~100s idle cutoff) never see a silent connection.
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+    producer_error: list[BaseException] = []
+
+    async def _produce() -> None:
+        try:
+            async for event in inner_gen:
+                queue.put_nowait(event)
+        except asyncio.CancelledError:
+            raise
+        except BaseException as exc:  # noqa: BLE001 - relayed to the consumer
+            producer_error.append(exc)
+        finally:
+            queue.put_nowait(_QUEUE_END)
+
+    producer = asyncio.create_task(_produce())
+
+    def _detach_producer() -> None:
+        if producer.done():
+            return
+        if on_client_disconnect is not None:
+            with suppress(Exception):
+                on_client_disconnect()
+        _DETACHED_STREAM_TASKS.add(producer)
+        producer.add_done_callback(_DETACHED_STREAM_TASKS.discard)
+
+        async def _watchdog() -> None:
+            with suppress(asyncio.CancelledError):
+                await asyncio.wait({producer}, timeout=_DETACHED_DRAIN_MAX_SECONDS)
+            if not producer.done():
+                logger.warning("Detached SSE drain exceeded %.0fs; cancelling upstream read.", _DETACHED_DRAIN_MAX_SECONDS)
+                producer.cancel()
+
+        watchdog = asyncio.create_task(_watchdog())
+        _DETACHED_STREAM_TASKS.add(watchdog)
+        watchdog.add_done_callback(_DETACHED_STREAM_TASKS.discard)
+        logger.info("Client disconnected mid-stream; continuing upstream drain in background.")
+
+    async def _consume():
+        try:
+            while True:
+                try:
+                    event = await asyncio.wait_for(queue.get(), timeout=keepalive_interval)
+                except asyncio.TimeoutError:
+                    yield _stream_keepalive_event(model)
+                    continue
+                if event is _QUEUE_END:
+                    break
+                yield event
+            if producer_error:
+                raise producer_error[0]
+        except (asyncio.CancelledError, GeneratorExit):
+            # Client went away (uvicorn cancels the response task) — keep the
+            # producer alive so the upstream reply still gets persisted.
+            _detach_producer()
+            raise
+
+    return StreamingResponse(
+        _consume(),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache, no-transform",
@@ -490,12 +586,18 @@ async def read_next_stream_chunk(
     *,
     upstream_chunks,
     next_chunk,
-    request,
+    request=None,
     timeout: float = 2.0,
 ) -> StreamReadResult:
+    """Await the pending chunk task with a keepalive timeout.
+
+    Pass `request=None` when the surrounding response is wrapped by
+    `resilient_sse_response`: client disconnects are handled there, and the
+    upstream read must keep going so the reply still gets persisted.
+    """
     done, _ = await asyncio.wait({next_chunk}, timeout=timeout)
     if next_chunk not in done:
-        if await request.is_disconnected():
+        if request is not None and await request.is_disconnected():
             await close_stream_reader(upstream_chunks=upstream_chunks, next_chunk=next_chunk)
             return StreamReadResult("disconnected")
         return StreamReadResult("keepalive")

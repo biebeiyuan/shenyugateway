@@ -88,6 +88,26 @@ describe('message persistence round-trip', () => {
     localStorage.setItem(STORAGE_MESSAGES, 'not json')
     expect(loadStoredMessages()).toEqual([])
   })
+
+  it('marks a mid-stream save as truncated so restart can reconcile it', () => {
+    persistStoredMessages([
+      uiMessage('user', 'question'),
+      uiMessage('assistant', 'half an answer', { streaming: true }),
+    ], FALLBACK_SESSION_MESSAGE_LIMIT)
+    const restored = loadStoredMessages()
+    expect(restored[1].truncated).toBe(true)
+    expect(restored[1].streaming).toBe(false)
+  })
+
+  it('round-trips an explicit truncated flag and leaves finished replies unmarked', () => {
+    persistStoredMessages([
+      uiMessage('assistant', 'cut off', { truncated: true }),
+      uiMessage('assistant', 'complete'),
+    ], FALLBACK_SESSION_MESSAGE_LIMIT)
+    const restored = loadStoredMessages()
+    expect(restored[0].truncated).toBe(true)
+    expect(restored[1].truncated).toBeUndefined()
+  })
 })
 
 describe('tool event persistence', () => {
