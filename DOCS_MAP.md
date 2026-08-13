@@ -95,6 +95,7 @@
 | `docs/history/CLAUDE_REVIEW_FOLLOW_UP.md` | 历史 code-review 执行清单；当前状态以 `docs/architecture/AUDIT_MATRIX.md` 为准 |
 | `docs/history/PROJECT_MAP_AUDIT_2026-07-14.md` | 2026-07-14 项目地图审查快照；部分建议已在后续文档维护中采纳或修正，不作为当前事实 |
 | `docs/history/MCP_INTEGRATION_2026-08-13.md` | 2026-08-13 完成的 MCP 外部工具接入实施稿（网关作为 MCP client，`mcp_registry` / `mcp_routes` / Admin 卡片）；当前事实以 README Maintenance Map 与代码为准 |
+| `docs/history/PLAN_STREAM_RESILIENCE_2026-08.md` | 2026-08 完成的流式韧性交接稿（服务端断连后照常读完上游并落库、15s keepalive、PWA 停滞看门狗与尾部对账）；当前事实以 `REQUEST_CONTEXT.md` 流式章节与代码为准 |
 
 ## 维护原则
 
