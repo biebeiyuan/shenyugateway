@@ -94,6 +94,7 @@
 | `docs/history/REFACTOR_PLAN_2026-07.md` | 2026-07 完成的结构重构计划（gateway.py、mem_notes、tool_schemas、gateway_tools、recall 拆分）；遗留 Phase 4/5 由 `OPTIMIZATION_PLAN.md` 状态表跟踪 |
 | `docs/history/CLAUDE_REVIEW_FOLLOW_UP.md` | 历史 code-review 执行清单；当前状态以 `docs/architecture/AUDIT_MATRIX.md` 为准 |
 | `docs/history/PROJECT_MAP_AUDIT_2026-07-14.md` | 2026-07-14 项目地图审查快照；部分建议已在后续文档维护中采纳或修正，不作为当前事实 |
+| `docs/history/MCP_INTEGRATION_2026-08-13.md` | 2026-08-13 完成的 MCP 外部工具接入实施稿（网关作为 MCP client，`mcp_registry` / `mcp_routes` / Admin 卡片）；当前事实以 README Maintenance Map 与代码为准 |
 
 ## 维护原则
 

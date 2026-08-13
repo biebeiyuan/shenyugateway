@@ -591,6 +591,8 @@ _PACKAGE_TOOL_NAMES = {"use_package", "package_proxy"}
 
 _PACKAGE_DOC_MIN_CHARS = 2000
 
+_MCP_RESULT_MIN_CHARS = 600
+
 
 def _tool_call_name_from_msg(tool_call: dict) -> str:
     function = tool_call.get("function", {}) if isinstance(tool_call, dict) else {}
@@ -712,6 +714,79 @@ def trim_package_install_tool_results(
         "package_tool_results_seen": len(hits),
         "package_tool_results_compressed": len(compress_indices),
         "package_tool_results_deduped": deduped_count,
+    }
+
+
+def trim_mcp_tool_results(
+    messages: list[dict],
+    keep_recent: int = 3,
+) -> tuple[list[dict], dict]:
+    """Compress old MCP tool results (``mcp_<server>_<tool>``) in the window.
+
+    Per exposed tool name, the most recent ``keep_recent`` results stay
+    intact; older results longer than ``_MCP_RESULT_MIN_CHARS`` become a
+    one-line stub. Results the model may still be reasoning about (the
+    recent ones) are never touched, so multi-round MCP workflows keep their
+    working set while dead weight from earlier rounds is dropped.
+    """
+    keep_recent = max(int(keep_recent or 0), 0)
+
+    mcp_call_ids: dict[str, str] = {}
+    for msg in messages:
+        if msg.get("role") != "assistant":
+            continue
+        for tc in msg.get("tool_calls") or []:
+            name = _tool_call_name_from_msg(tc)
+            if name.startswith("mcp_"):
+                tc_id = str(tc.get("id") or "")
+                if tc_id:
+                    mcp_call_ids[tc_id] = name
+
+    empty_meta = {"mcp_tool_results_seen": 0, "mcp_tool_results_compressed": 0}
+    if not mcp_call_ids:
+        return messages, empty_meta
+
+    # (msg_index, tool_name) for every large-enough MCP tool result
+    hits: list[tuple[int, str]] = []
+    for idx, msg in enumerate(messages):
+        if msg.get("role") != "tool":
+            continue
+        tc_id = str(msg.get("tool_call_id") or "")
+        tool_name = mcp_call_ids.get(tc_id)
+        if not tool_name:
+            continue
+        if len(str(msg.get("content") or "")) >= _MCP_RESULT_MIN_CHARS:
+            hits.append((idx, tool_name))
+
+    if not hits:
+        return messages, empty_meta
+
+    per_tool: dict[str, list[int]] = defaultdict(list)
+    for msg_idx, tool_name in hits:
+        per_tool[tool_name].append(msg_idx)
+
+    compress_indices: set[int] = set()
+    for tool_name, indices in per_tool.items():
+        if keep_recent:
+            indices = indices[:-keep_recent]
+        compress_indices.update(indices)
+
+    if not compress_indices:
+        return messages, {"mcp_tool_results_seen": len(hits), "mcp_tool_results_compressed": 0}
+
+    result: list[dict] = []
+    for idx, msg in enumerate(messages):
+        if idx not in compress_indices:
+            result.append(msg)
+            continue
+        clean = dict(msg)
+        tool_name = mcp_call_ids.get(str(msg.get("tool_call_id") or ""), "mcp")
+        clean["content"] = f"[{tool_name} 的历史结果已省略，如需数据请重新调用]"
+        result.append(clean)
+
+    return result, {
+        "mcp_tool_results_seen": len(hits),
+        "mcp_tool_results_compressed": len(compress_indices),
     }
 
 

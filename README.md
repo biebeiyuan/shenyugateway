@@ -85,6 +85,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/gateway_tools/`: gateway-native tool implementations (`GatewayToolService`, package split into mixins like stars/: `_supabase`, `_recall`, `_mem_notes`, `_stars`, `_books`, `_calendar`, `_sessions`, `_windowsill`, `_notebook`, `_web`, `_compat`, plus shared `_runtime`/`_helpers`/`_base`). `__init__.py` assembles the service and re-exports `configure_gateway_tools` / `get_runtime`. `_web` is the 窗外 pair: `shenyu_web_search` (Serper, `SERPER_API_KEY`) and `shenyu_web_read` (Jina Reader, `JINA_API_KEY` — required from datacenter IPs).
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/tool_schemas.py`: tool JSON schema definitions (separated from registry logic).
+- `shenyu_gateway/mcp_registry.py`: gateway-as-MCP-client registry — validates `MCP_SERVERS`, caches remote tool lists (TTL, background refresh), exposes them as `mcp_<server>_<tool>` function tools, and executes calls with timeout/degradation (never 500s the chat path).
 
 ### Memory subsystems
 
@@ -135,6 +136,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/calendar_routes.py`: read-only calendar API routes (month grid, page detail).
 - `shenyu_gateway/archive_routes.py`: archive reader, origin-book, shared resident-book, and owner-only project-map API routes.
 - `shenyu_gateway/config_routes.py`: configuration API routes (get/set runtime config).
+- `shenyu_gateway/mcp_routes.py`: MCP server management API routes (`/api/mcp/servers` list/save with header masking, `/api/mcp/test` one-off probe, `/api/mcp/refresh`).
 - `shenyu_gateway/admin_shell_routes.py`: admin shell/UI routes (static file serving, login page).
 
 Route modules are HTTP adapters, not a separate business zone. `gateway.py` mounts them, while each endpoint's behavior remains owned by its feature area.
@@ -169,6 +171,8 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/api/books.ts`: resident-shelf APIs plus the separate owner-only live project-map contract.
 - `admin/src/api/room.ts`: room mode APIs (traces, drawer notes, scribbles, pins, newspapers).
 - `admin/src/api/toolErrors.ts`: tool error log APIs.
+- `admin/src/api/mcp.ts`: MCP server management APIs (`/api/mcp/*`) plus the frontend mirror of server validation and masked-header rules.
+- `admin/src/components/McpServersCard.vue`: MCP server management panel inside ConfigView — server list with status dots, add/edit form with header key-value rows, one-off connection test, and merged-tool listing.
 - `admin/src/views/HomeView.vue`: admin landing/dashboard page.
 - `admin/src/views/ConfigView.vue`: configuration page.
 - `admin/src/views/Mem0View.vue`: Mem injection/tool controls, full-set two-state recall-eligibility management, Shenyu-write provenance badges, mem-note attributes, and old atomic read-only lookup.

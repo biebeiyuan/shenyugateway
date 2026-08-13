@@ -78,6 +78,15 @@ test('config page loads and accepts input without saving', async ({ page }) => {
     const upstreamInput = page.getByTestId('config-upstream-url').locator('input')
     await upstreamInput.fill('https://example.test/v1')
     await expect(upstreamInput).toHaveValue('https://example.test/v1')
+    // MCP servers card is alive: empty list on a fresh gateway, add form opens.
+    await expect(page.getByTestId('config-mcp-card')).toBeVisible()
+    await expect(page.getByTestId('mcp-empty')).toBeVisible()
+    await page.getByTestId('mcp-add-server').click()
+    const mcpName = page.getByTestId('mcp-form-name').locator('input')
+    await mcpName.fill('smoke_server')
+    await expect(mcpName).toHaveValue('smoke_server')
+    await page.getByTestId('mcp-form-cancel').click()
+    await expect(page.getByTestId('mcp-form')).toBeHidden()
   })
 })
 

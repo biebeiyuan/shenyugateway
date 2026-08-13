@@ -110,6 +110,11 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "gateway_tool_surface": cfg.gateway_tool_surface,
         "client_tool_surface": cfg.client_tool_surface,
         "max_internal_tool_rounds": cfg.max_internal_tool_rounds,
+        "enable_mcp_tools": cfg.enable_mcp_tools,
+        "mcp_call_timeout_seconds": cfg.mcp_call_timeout_seconds,
+        "mcp_list_timeout_seconds": cfg.mcp_list_timeout_seconds,
+        "mcp_tools_cache_seconds": cfg.mcp_tools_cache_seconds,
+        "mcp_tool_result_keep_recent": cfg.mcp_tool_result_keep_recent,
         "gateway_db_path": cfg.gateway_db_path,
         "gateway_message_retention": cfg.gateway_message_retention,
         "gateway_context_snapshot_retention": cfg.gateway_context_snapshot_retention,
@@ -234,6 +239,11 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "client_tool_surface": "CLIENT_TOOL_SURFACE",
             "gateway_db_path": "GATEWAY_DB_PATH",
             "max_internal_tool_rounds": "MAX_INTERNAL_TOOL_ROUNDS",
+            "enable_mcp_tools": "ENABLE_MCP_TOOLS",
+            "mcp_call_timeout_seconds": "MCP_CALL_TIMEOUT_SECONDS",
+            "mcp_list_timeout_seconds": "MCP_LIST_TIMEOUT_SECONDS",
+            "mcp_tools_cache_seconds": "MCP_TOOLS_CACHE_SECONDS",
+            "mcp_tool_result_keep_recent": "MCP_TOOL_RESULT_KEEP_RECENT",
             "calendar_context_day_limit": "CALENDAR_CONTEXT_DAY_LIMIT",
             "calendar_context_day_offset": "CALENDAR_CONTEXT_DAY_OFFSET",
             "calendar_context_week_limit": "CALENDAR_CONTEXT_WEEK_LIMIT",
@@ -307,6 +317,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "enable_stream_duplicate_guard",
             "enable_mem0_management_tools",
             "expose_supabase_tools",
+            "enable_mcp_tools",
             "gateway_tool_mode",
             "gateway_tool_surface",
             "client_tool_surface",
@@ -444,6 +455,22 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.max_internal_tool_rounds = max(1, body.max_internal_tool_rounds)
             changed.append("max_internal_tool_rounds")
             env_updates[env_names["max_internal_tool_rounds"]] = cfg.max_internal_tool_rounds
+        if body.mcp_call_timeout_seconds is not None:
+            cfg.mcp_call_timeout_seconds = max(5, min(body.mcp_call_timeout_seconds, 600))
+            changed.append("mcp_call_timeout_seconds")
+            env_updates[env_names["mcp_call_timeout_seconds"]] = cfg.mcp_call_timeout_seconds
+        if body.mcp_list_timeout_seconds is not None:
+            cfg.mcp_list_timeout_seconds = max(2, min(body.mcp_list_timeout_seconds, 120))
+            changed.append("mcp_list_timeout_seconds")
+            env_updates[env_names["mcp_list_timeout_seconds"]] = cfg.mcp_list_timeout_seconds
+        if body.mcp_tools_cache_seconds is not None:
+            cfg.mcp_tools_cache_seconds = max(10, min(body.mcp_tools_cache_seconds, 86400))
+            changed.append("mcp_tools_cache_seconds")
+            env_updates[env_names["mcp_tools_cache_seconds"]] = cfg.mcp_tools_cache_seconds
+        if body.mcp_tool_result_keep_recent is not None:
+            cfg.mcp_tool_result_keep_recent = max(0, min(body.mcp_tool_result_keep_recent, 50))
+            changed.append("mcp_tool_result_keep_recent")
+            env_updates[env_names["mcp_tool_result_keep_recent"]] = cfg.mcp_tool_result_keep_recent
         if body.calendar_context_day_limit is not None:
             cfg.calendar_context_day_limit = max(1, min(body.calendar_context_day_limit, 30))
             changed.append("calendar_context_day_limit")
