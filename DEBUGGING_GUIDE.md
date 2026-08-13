@@ -238,7 +238,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 | 档案页日历大段日期无痕迹，整天聊天挤在同一时间戳上，气泡顺序颠倒；换会话后旧消息重复出现两份 | `shenyu_gateway/chat_archive.py`、`shenyu_gateway/store/_admin.py`：`event_at` 只认 Operit 时间标记不认 PWA 状态后缀，窗口深处一枚旧标记把后续所有消息拖到同一时刻；seen-hash 按 session_tag 隔离，历史交接进新 session 被整窗重归档 | 档案时间错乱先抽查 Supabase 里 `event_at` 是否大量相同、再对比 `archived_at` 跨度；跨会话重复先查 `chat_archive_seen` 的去重作用域是不是 per-session |
 | 拉日志感觉最近的 PWA 聊天没拼进请求，Messages 列表比实际发送条数短且每条被截短 | `shenyu_gateway/request_logs.py`、`admin/src/views/LogsView.vue`：持久化快照对消息预览做头部切片只留最早 100 条，默认又不保留完整 payload，Messages 页对列表截断没有任何提示 | 先对比 `prepared_messages_count` 与预览条数，再看 `persisted`/`persistence_truncated`，别把持久化预览当完整请求；要全文就开「保留完整请求内容」再看之后的新请求 |
 | 沈予 review 星星时返回 `count=0`、`items=[]`，却同时显示还有多颗 `remaining_unreviewed` | `shenyu_gateway/stars/_review.py`：取本批星星时误用当前聊天 `session_tag` 限定来源，但剩余数统计的是全库，导致两者范围不一致 | review 数量互相矛盾时先逐项比较种子查询和剩余计数的过滤条件；当前聊天标签只能记录 review 来路，不能切割住户级星星队列 |
-| 后台家里地图永远显示 room/home 两处待复核，本地 `resident_home.py check` 全绿，review 与住户签字都无法清除 | `Dockerfile`、`resident_home_manifest.json`：manifest source_globs 里的 `Dockerfile` 与 `pwa/src/meta/roomEntry.ts` 未 COPY 进生产镜像，容器内指纹计算永远缺这两个文件、与登记指纹永不一致 | 线上待复核但本地全绿时，先比对 `/api/project-map` 组件返回的 files 列表与本地 manifest globs 命中集；给 manifest 新增源文件时同步检查 Dockerfile 是否把它带进镜像 |
+| 后台家里地图永远显示 room/home 两处待复核，本地 `resident_home.py check` 全绿，review 与住户签字都无法清除 | `Dockerfile`、`resident_home_manifest.json`：room 是 manifest 源文件 `pwa/src/meta/roomEntry.ts` 未 COPY 进生产镜像；home 是 `Dockerfile` 本身在 manifest 指纹范围内，而 Coolify 构建时会把全部配置环境变量（含密钥）注入成 ARG 行改写它，容器内永远没有与仓库一致的版本可校验 | 线上待复核但本地全绿时，先比对 `/api/project-map` 组件返回的 files 列表与本地 manifest globs 命中集；构建平台会改写的文件（如 Coolify 注入 ARG 的 Dockerfile）不能进指纹范围，也不要把它 COPY 进镜像留下密钥落点 |
 
 ## Module Map
 
