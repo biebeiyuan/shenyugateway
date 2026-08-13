@@ -45,6 +45,10 @@ For live triage, start with the helper script before changing code:
 python scripts/vps_gateway_logs.py api --via-ssh --errors --detail
 ```
 
+On POSIX/WSL, the helper pins SSH's optional multiplexing socket under `/tmp/shenyu-gateway-ssh-<uid>/cm-%C`; it does not need to write `~/.ssh`. If the temporary filesystem is unavailable, use the public API path or fix that environment before interpreting an SSH failure as a gateway failure.
+
+The production edge in front of the public gateway blocks default programmatic User-Agents (for example `Python-urllib/3.x`) with **403** even when the Bearer token is correct; the gateway's own auth failures are **401** (or the HTML login page). On a 403, suspect the edge/WAF and set a non-default `User-Agent` before re-checking the token. The helper's own requests already send `shenyu-gateway-debug/1.0` and are unaffected; this bites hand-written `urllib`/`requests` probes.
+
 For prompt-cache, image, epoch, or memory-island questions, start with the compact timeline report. It defaults to `ssh vps`, does not print message content, and follows a stale Coolify container name to the current deployment:
 
 ```bash
@@ -271,6 +275,8 @@ When Anthropic Thinking or tool continuation looks wrong, inspect one request in
 5. `pending_gateway_tool_lineage_mismatches`: a non-zero value means the saved transcript was deliberately rejected because the returned client history no longer matched.
 
 Never treat opaque signature or redacted Thinking data as readable chain-of-thought, and never add it to request logs. `upstream_response_evidence` stores fixed counters and booleans only; it is not a raw-response capture and intentionally cannot name or expose a relay's unknown private fields. A sent `thinking` parameter without `anthropic_thinking.preserved=true` says nothing conclusive about a final visible reply; use the raw-versus-normalized response evidence instead.
+
+Native Claude Code and Shenyu's OpenAI-compatible surface can use different Thinking request shapes. A Claude Code request may use `thinking.type=enabled` with a token budget, while the gateway may normalize an OpenAI request to `thinking.type=adaptive` and an `output_config.effort`; compare the actual upstream payload and event counters before attributing a difference to client rendering. Claude Code receives native `thinking_delta` events, whereas a gateway client receives non-empty Thinking as `choices[].delta.reasoning_content` (or `message.reasoning_content`).
 
 Tool schemas and name dispatch live in `shenyu_gateway/tool_registry.py`; implementation methods live in the `shenyu_gateway/gateway_tools/` mixin package. If a tool is visible but behaves wrong, check `tool_registry.py` dispatch first, then the matching mixin method in `gateway_tools/`.
 

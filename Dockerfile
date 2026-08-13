@@ -40,6 +40,11 @@ RUN pip install --no-cache-dir --timeout 120 --retries 5 -r requirements.txt
 COPY gateway.py ./
 COPY shenyu_gateway ./shenyu_gateway
 COPY resident_home_manifest.json resident_home_changes.jsonl project_delivery_log.jsonl ./
+# The resident-home fingerprint check hashes every file in the manifest
+# source_globs. Any manifest source that is not otherwise shipped must be
+# copied here, or production permanently shows those components as 待复核.
+COPY Dockerfile ./
+COPY pwa/src/meta/roomEntry.ts ./pwa/src/meta/roomEntry.ts
 COPY README.md DOCS_MAP.md ./
 COPY docs/architecture/SYSTEM_ZONES.md ./docs/architecture/SYSTEM_ZONES.md
 COPY scripts/backfill_chat_archive.py ./scripts/backfill_chat_archive.py
