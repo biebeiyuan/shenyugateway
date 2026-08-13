@@ -43,7 +43,9 @@ COPY resident_home_manifest.json resident_home_changes.jsonl project_delivery_lo
 # The resident-home fingerprint check hashes every file in the manifest
 # source_globs. Any manifest source that is not otherwise shipped must be
 # copied here, or production permanently shows those components as 待复核.
-COPY Dockerfile ./
+# The Dockerfile itself must NOT be copied or fingerprinted: Coolify rewrites
+# it at build time, injecting every configured env var as ARG lines (secrets
+# included), so the in-container copy never matches the repository version.
 COPY pwa/src/meta/roomEntry.ts ./pwa/src/meta/roomEntry.ts
 COPY README.md DOCS_MAP.md ./
 COPY docs/architecture/SYSTEM_ZONES.md ./docs/architecture/SYSTEM_ZONES.md
