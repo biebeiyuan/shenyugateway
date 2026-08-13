@@ -208,6 +208,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 
 - `admin/src/demo/`: 演示数据模式（`?demo=1`）——`fixtures.ts` 编造样本（锚点/便签/一池可"想起"的原件），`index.ts` 在 axios 适配器层拦截读取请求返回样本、写操作假成功；生产构建带此代码但不开关完全不生效。页头"演示数据"徽章在 `AppShell.vue`。
 - `scripts/project_delivery.py`: records and validates one coherent owner-facing delivery outcome in `project_delivery_log.jsonl`; use it after the final verification round, not once per small commit.
+- `scripts/vps_gateway_logs.py`: content-light request/cache log reader with public-API and VPS/SSH fallbacks; POSIX `--via-ssh` keeps its OpenSSH control socket under a private `/tmp` directory so a read-only `~/.ssh` cannot block diagnostics.
 - `admin/scripts/mobile-shots.mjs`: mobile-viewport acceptance shots — boots the isolated preview with demo data, walks home → mem → memory graph → recall board → reading overlay at 390×844 and saves PNGs to `admin/.shots/`. 前端风格与手感基线见 `docs/frontend/STYLE_AND_CRAFT.md`。
 - `admin/e2e/smoke.spec.ts`: read-only Chromium smoke checks for every Admin route and a few core interactions.
 - `admin/playwright.config.ts`: isolated local gateway, temporary SQLite, authentication, and browser settings for Admin smoke tests.

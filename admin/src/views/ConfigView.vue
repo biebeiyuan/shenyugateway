@@ -335,9 +335,7 @@ async function doSave() {
       body.room_newspaper_llm_api_key = config.value.room_newspaper_llm_api_key.trim()
     }
     const wakeWelcomeMessage = config.value.wake_welcome_message?.trim()
-    if (wakeWelcomeMessage) {
-      body.wake_welcome_message = wakeWelcomeMessage
-    }
+    if (wakeWelcomeMessage) body.wake_welcome_message = wakeWelcomeMessage
     const result = await saveConfig(body)
     config.value = result.config
     upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)

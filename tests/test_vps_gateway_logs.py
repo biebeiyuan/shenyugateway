@@ -1,4 +1,5 @@
 import argparse
+import os
 from scripts import vps_gateway_logs as logs
 
 
@@ -16,6 +17,18 @@ def _args(**overrides):
     }
     values.update(overrides)
     return argparse.Namespace(**values)
+
+
+def test_ssh_args_put_control_socket_in_private_temp_dir(tmp_path, monkeypatch):
+    monkeypatch.setattr(logs.tempfile, "gettempdir", lambda: str(tmp_path))
+
+    ssh_args = logs._ssh_args(_args(ssh_alias="vps"), {}, "true")
+
+    control_option = next(value for value in ssh_args if value.startswith("ControlPath="))
+    expected_dir = tmp_path / f"shenyu-gateway-ssh-{os.getuid()}"
+    assert control_option == f"ControlPath={expected_dir / 'cm-%C'}"
+    assert expected_dir.stat().st_mode & 0o777 == 0o700
+    assert ".ssh" not in control_option
 
 
 def test_configured_container_id_is_resolved_before_logs_command():

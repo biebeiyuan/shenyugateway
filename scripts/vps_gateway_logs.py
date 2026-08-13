@@ -7,6 +7,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.parse
@@ -171,6 +172,16 @@ def _http_json(base_url: str, path: str, token: str = "", timeout: float = 30.0)
     return json.loads(raw.decode("utf-8"))
 
 
+def _ssh_control_path() -> str:
+    if os.name == "nt":
+        return ""
+    user_id = str(os.getuid()) if hasattr(os, "getuid") else "user"
+    control_dir = Path(tempfile.gettempdir()) / f"shenyu-gateway-ssh-{user_id}"
+    control_dir.mkdir(mode=0o700, parents=True, exist_ok=True)
+    control_dir.chmod(0o700)
+    return str(control_dir / "cm-%C")
+
+
 def _ssh_args(args: argparse.Namespace, config: dict[str, Any], remote: str) -> list[str]:
     explicit_connection = any(
         value is not None and str(value).strip()
@@ -198,6 +209,9 @@ def _ssh_args(args: argparse.Namespace, config: dict[str, Any], remote: str) -> 
         "-o",
         "ServerAliveCountMax=2",
     ]
+    control_path = _ssh_control_path()
+    if control_path:
+        ssh_args.extend(["-o", f"ControlPath={control_path}"])
     if alias and not explicit_connection:
         return [*ssh_args, str(alias), remote]
 
