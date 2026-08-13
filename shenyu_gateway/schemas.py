@@ -105,6 +105,11 @@ class ConfigUpdate(BaseModel):
     gateway_tool_mode: Optional[str] = None
     gateway_tool_surface: Optional[str] = None
     client_tool_surface: Optional[str] = None
+    enable_mcp_tools: Optional[bool] = None
+    mcp_call_timeout_seconds: Optional[int] = None
+    mcp_list_timeout_seconds: Optional[int] = None
+    mcp_tools_cache_seconds: Optional[int] = None
+    mcp_tool_result_keep_recent: Optional[int] = None
     max_internal_tool_rounds: Optional[int] = None
     gateway_db_path: Optional[str] = None
     calendar_context_day_limit: Optional[int] = None

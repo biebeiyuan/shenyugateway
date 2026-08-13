@@ -103,6 +103,11 @@ export interface GatewayConfig {
   enable_stream_duplicate_guard?: boolean
   enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
+  enable_mcp_tools?: boolean
+  mcp_call_timeout_seconds?: number
+  mcp_list_timeout_seconds?: number
+  mcp_tools_cache_seconds?: number
+  mcp_tool_result_keep_recent?: number
   gateway_tool_mode?: string
   gateway_tool_surface?: string
   client_tool_surface?: string

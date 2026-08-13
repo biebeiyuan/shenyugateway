@@ -24,11 +24,12 @@ def _expected_map_paths() -> set[str]:
     paths.update(
         path.relative_to(ROOT).as_posix()
         for path in (ROOT / "admin" / "src" / "views").rglob("*")
-        if path.suffix in {".ts", ".vue"}
+        if path.suffix in {".ts", ".vue"} and not path.name.endswith(".spec.ts")
     )
     paths.update(
         path.relative_to(ROOT).as_posix()
         for path in (ROOT / "admin" / "src" / "api").glob("*.ts")
+        if not path.name.endswith(".spec.ts")
     )
     return paths
 

@@ -17,6 +17,7 @@ from .context_layers import (
     trim_client_image_blocks as _trim_client_image_blocks,
     trim_client_tool_system_messages as _trim_client_tool_system_messages,
     trim_cold_start_sources as _trim_cold_start_sources,
+    trim_mcp_tool_results as _trim_mcp_tool_results,
     trim_package_install_tool_results as _trim_package_install_tool_results,
 )
 from .echo import strip_leading_echo, trim_assistant_echoes
@@ -29,6 +30,7 @@ from .context_window import (
     select_chunked_window,
 )
 from .gateway_tools import GatewayToolService
+from .mcp_registry import registry as _mcp_registry
 from .private_capture import is_room_mode as _is_room_mode
 from .request_logs import _mark_request_log_phase
 from .runtime import iso_now as _iso_now, json_dumps as _json_dumps, logger, now as _now, parse_ts as _parse_ts
@@ -477,6 +479,12 @@ async def prepare_messages(
     trim_meta.update(attachment_trim_meta)
     messages, package_trim_meta = _trim_package_install_tool_results(messages, keep_recent=1)
     trim_meta.update(package_trim_meta)
+    messages, mcp_trim_meta = _trim_mcp_tool_results(
+        messages,
+        keep_recent=getattr(cfg, "mcp_tool_result_keep_recent", 3),
+    )
+    trim_meta.update(mcp_trim_meta)
+    await _mcp_registry.ensure_fresh(cfg)
     messages, image_trim_meta = _trim_client_image_blocks(messages, keep_recent_messages=2)
     trim_meta.update(image_trim_meta)
     _mark_request_log_phase(

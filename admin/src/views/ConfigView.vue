@@ -28,6 +28,7 @@ import {
   type HealthStatus,
 } from '@/api/config'
 import { fetchGatewaySessions, type GatewaySession } from '@/api/sessions'
+import McpServersCard from '@/components/McpServersCard.vue'
 
 interface UpstreamPreset {
   name: string
@@ -78,6 +79,11 @@ const config = ref<GatewayConfig>({
   enable_gateway_tools: true,
   enable_mem0_management_tools: true,
   expose_supabase_tools: true,
+  enable_mcp_tools: true,
+  mcp_call_timeout_seconds: 60,
+  mcp_list_timeout_seconds: 10,
+  mcp_tools_cache_seconds: 300,
+  mcp_tool_result_keep_recent: 3,
   gateway_tool_mode: 'broker',
   gateway_tool_surface: 'full',
   client_tool_surface: 'all',
@@ -309,6 +315,11 @@ async function doSave() {
       enable_gateway_tools: config.value.enable_gateway_tools,
       enable_mem0_management_tools: config.value.enable_mem0_management_tools,
       expose_supabase_tools: config.value.expose_supabase_tools,
+      enable_mcp_tools: config.value.enable_mcp_tools,
+      mcp_call_timeout_seconds: config.value.mcp_call_timeout_seconds,
+      mcp_list_timeout_seconds: config.value.mcp_list_timeout_seconds,
+      mcp_tools_cache_seconds: config.value.mcp_tools_cache_seconds,
+      mcp_tool_result_keep_recent: config.value.mcp_tool_result_keep_recent,
       gateway_tool_mode: config.value.gateway_tool_mode,
       gateway_tool_surface: config.value.gateway_tool_surface,
       client_tool_surface: config.value.client_tool_surface,
@@ -759,6 +770,31 @@ async function copyColdHeader(sessionTag: string) {
           </NFormItem>
           <NFormItem label="普通线程客户端工具桌面">
             <NSelect v-model:value="config.client_tool_surface" :options="clientToolSurfaceOptions" />
+          </NFormItem>
+          <NFormItem label="启用 MCP 外部工具">
+            <div class="switch-row">
+              <NSwitch v-model:value="config.enable_mcp_tools" data-testid="config-enable-mcp-tools" />
+              <span class="switch-hint">关闭后所有 mcp_* 工具从桌面消失，服务器配置保留。</span>
+            </div>
+          </NFormItem>
+        </NForm>
+      </NCard>
+
+      <NCard title="MCP 服务器" size="small">
+        <McpServersCard />
+        <NForm label-placement="top" class="mcp-numbers">
+          <NFormItem label="单次调用超时（秒）">
+            <NInputNumber v-model:value="config.mcp_call_timeout_seconds" :min="5" :max="600" style="width:100%" />
+          </NFormItem>
+          <NFormItem label="列工具超时（秒）">
+            <NInputNumber v-model:value="config.mcp_list_timeout_seconds" :min="2" :max="120" style="width:100%" />
+          </NFormItem>
+          <NFormItem label="工具清单缓存（秒）">
+            <NInputNumber v-model:value="config.mcp_tools_cache_seconds" :min="10" :max="86400" style="width:100%" />
+          </NFormItem>
+          <NFormItem label="历史保留最近几条 MCP 结果">
+            <NInputNumber v-model:value="config.mcp_tool_result_keep_recent" :min="0" :max="50" style="width:100%" />
+            <div class="provider-order-hint">更早的 MCP 工具结果在发给上游前替换成占位符，省 token；0 表示全部替换。这四个数值随页面底部「保存」一起生效。</div>
           </NFormItem>
         </NForm>
       </NCard>

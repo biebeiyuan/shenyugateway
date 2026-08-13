@@ -146,6 +146,12 @@ class RuntimeConfig:
         self.gateway_tool_mode: str = self._normalize_tool_mode(os.getenv("GATEWAY_TOOL_MODE", "broker"))
         self.gateway_tool_surface: str = _env_choice("GATEWAY_TOOL_SURFACE", "full", {"full", "daily"})
         self.client_tool_surface: str = _env_choice("CLIENT_TOOL_SURFACE", "all", {"all", "daily", "none"})
+        self.enable_mcp_tools: bool = _env_bool("ENABLE_MCP_TOOLS", True)
+        self.mcp_servers: list[dict[str, Any]] = self._load_mcp_servers()
+        self.mcp_call_timeout_seconds: int = _env_int("MCP_CALL_TIMEOUT_SECONDS", 60, 5, 600)
+        self.mcp_list_timeout_seconds: int = _env_int("MCP_LIST_TIMEOUT_SECONDS", 10, 2, 120)
+        self.mcp_tools_cache_seconds: int = _env_int("MCP_TOOLS_CACHE_SECONDS", 300, 10, 86400)
+        self.mcp_tool_result_keep_recent: int = _env_int("MCP_TOOL_RESULT_KEEP_RECENT", 3, 0, 50)
         self.max_internal_tool_rounds: int = _env_int("MAX_INTERNAL_TOOL_ROUNDS", 15, 1)
         self.enable_recall_auto_sync: bool = _env_bool("ENABLE_RECALL_AUTO_SYNC", False)
         self.recall_candidate_limit: int = _env_int("RECALL_CANDIDATE_LIMIT", 160, 20, 1000)
@@ -278,6 +284,15 @@ class RuntimeConfig:
             "gateway_tool_mode": self.gateway_tool_mode,
             "gateway_tool_surface": self.gateway_tool_surface,
             "client_tool_surface": self.client_tool_surface,
+            "enable_mcp_tools": self.enable_mcp_tools,
+            "mcp_servers": [
+                {**server, "headers": {key: mask(value) for key, value in (server.get("headers") or {}).items()}}
+                for server in self.mcp_servers
+            ],
+            "mcp_call_timeout_seconds": self.mcp_call_timeout_seconds,
+            "mcp_list_timeout_seconds": self.mcp_list_timeout_seconds,
+            "mcp_tools_cache_seconds": self.mcp_tools_cache_seconds,
+            "mcp_tool_result_keep_recent": self.mcp_tool_result_keep_recent,
             "max_internal_tool_rounds": self.max_internal_tool_rounds,
             "enable_recall_auto_sync": self.enable_recall_auto_sync,
             "recall_candidate_limit": self.recall_candidate_limit,
@@ -353,6 +368,20 @@ class RuntimeConfig:
             for key, value in data.items()
             if str(key).strip() and str(value).strip()
         }
+
+    def _load_mcp_servers(self) -> list[dict[str, Any]]:
+        raw = os.getenv("MCP_SERVERS", "").strip()
+        if not raw:
+            return []
+        from .mcp_registry import validate_mcp_servers
+
+        try:
+            return validate_mcp_servers(raw)
+        except ValueError as exc:
+            # A malformed env value must not prevent gateway boot; drop the
+            # list and let the owner fix it in the Admin panel.
+            logger.warning("MCP_SERVERS invalid, ignoring: %s", exc)
+            return []
 
     def _load_upstream_extra_body(self) -> dict[str, Any]:
         """Load UPSTREAM_EXTRA_BODY; auto-migrate legacy UPSTREAM_PROVIDER_* once.

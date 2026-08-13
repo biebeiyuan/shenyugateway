@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "preview:isolated": "npm run build && python ../scripts/admin_preview.py",
     "preview:lan": "npm run build && python ../scripts/admin_preview.py --host 0.0.0.0",
+    "test": "vitest run",
     "test:e2e": "npm run build && playwright test",
     "test:e2e:install": "playwright install --with-deps chromium",
     "test:e2e:install:mirror": "env PLAYWRIGHT_DOWNLOAD_HOST=https://registry.npmmirror.com/-/binary/playwright npm run test:e2e:install"
@@ -24,8 +25,11 @@
     "@playwright/test": "1.61.1",
     "@types/three": "^0.184.1",
     "@vitejs/plugin-vue": "^5.2.0",
+    "@vue/test-utils": "^2.4.11",
+    "happy-dom": "^20.11.2",
     "typescript": "~5.6.0",
     "vite": "^6.0.0",
+    "vitest": "^4.1.10",
     "vue-tsc": "^2.2.0"
   }
 }

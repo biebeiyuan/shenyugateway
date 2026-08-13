@@ -37,6 +37,7 @@ from shenyu_gateway.gateway_tools import (
 )
 from shenyu_gateway.heartbeat_archive import HeartbeatArchiveService, heartbeat_archive_worker
 from shenyu_gateway.gateway_admin_routes import GatewayAdminRouteDeps, build_gateway_admin_router
+from shenyu_gateway.mcp_routes import McpRouteDeps, build_mcp_router
 from shenyu_gateway.recall import RecallIndexService
 from shenyu_gateway.runtime import (
     iso_now as _iso_now,
@@ -656,6 +657,14 @@ app.include_router(
             init_supabase=_init_supabase,
             init_store=_init_store,
             make_upstream_http_client=_make_upstream_http_client,
+        )
+    )
+)
+app.include_router(
+    build_mcp_router(
+        McpRouteDeps(
+            cfg=cfg,
+            persist_env=_persist_env_with_store,
         )
     )
 )

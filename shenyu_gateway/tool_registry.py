@@ -329,22 +329,33 @@ def merge_tools(client_tools: Optional[list[dict]], cfg: Any, *, meta: Optional[
         return merged
 
     merged = list(filtered_client_tools)
-    if not (
+    existing = {tool.get("function", {}).get("name") for tool in merged if isinstance(tool, dict)}
+    if (
         _core_gateway_tools_enabled(cfg)
         or _mem0_management_tools_enabled(cfg)
         or _supabase_tools_enabled(cfg)
     ):
-        return merged
-    existing = {tool.get("function", {}).get("name") for tool in merged if isinstance(tool, dict)}
-    for tool in gateway_native_tools(cfg):
-        name = tool["function"]["name"]
-        if name not in existing:
+        for tool in gateway_native_tools(cfg):
+            name = tool["function"]["name"]
+            if name not in existing:
+                merged.append(tool)
+                existing.add(name)
+    from .mcp_registry import registry as _mcp_registry
+    for tool in _mcp_registry.tools_for_merge(cfg):
+        name = tool.get("function", {}).get("name", "")
+        if name and name not in existing:
             merged.append(tool)
+            existing.add(name)
     return merged
 
 
 def is_gateway_native_tool(name: str) -> bool:
-    return name.startswith("shenyu_") or name.startswith("supabase_") or name.startswith("room_")
+    return (
+        name.startswith("shenyu_")
+        or name.startswith("supabase_")
+        or name.startswith("room_")
+        or name.startswith("mcp_")
+    )
 
 
 def _int_arg(arguments: dict, key: str, default: int) -> int:
@@ -966,6 +977,11 @@ async def execute_gateway_tool(
             cfg=cfg,
             service=service,
         )
+
+    if name.startswith("mcp_"):
+        from .mcp_registry import registry as _mcp_registry
+
+        return await _mcp_registry.execute(name, arguments, cfg=cfg)
 
     if name.startswith("room_"):
         from .room_tools import execute_room_tool
