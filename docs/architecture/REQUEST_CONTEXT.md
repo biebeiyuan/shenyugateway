@@ -330,7 +330,7 @@ EMBEDDING_MODEL=BAAI/bge-m3
 EMBEDDING_DIM=1024
 ```
 
-The in-process recall worker first reconciles source tables into `shenyu_recall_index` every `RECALL_SYNC_WORKER_INTERVAL_SECONDS`, then embeds pending rows when embeddings and a valid API key are enabled. It embeds up to `RECALL_EMBEDDING_WORKER_BATCH_SIZE` rows per pass. Request-time auto sync remains an emergency fallback rather than the freshness strategy.
+The in-process recall worker first reconciles source tables into `shenyu_recall_index` every `RECALL_SYNC_WORKER_INTERVAL_SECONDS`, then embeds pending rows when embeddings and a valid API key are enabled. It embeds up to `RECALL_EMBEDDING_WORKER_BATCH_SIZE` rows per pass. Background recall, graph, and heartbeat upserts use `return=minimal`: those callers do not need stored rows back, and avoiding a full mutation representation prevents persisted embeddings from becoming recurrent Supabase egress. Request-time auto sync remains an emergency fallback rather than the freshness strategy.
 
 `BAAI/bge-m3` remains the compatibility default: it is multilingual, produces the existing 1024-dimensional vectors, and handles inputs up to 8192 tokens. A model change requires a measured recall A/B run and full re-embedding; do not mix vectors from different models in the same index merely because a newer model exists.
 

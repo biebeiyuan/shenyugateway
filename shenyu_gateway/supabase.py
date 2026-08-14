@@ -91,6 +91,19 @@ class SupabaseClient:
         result = response.json()
         return result if isinstance(result, list) else [result]
 
+    async def upsert_minimal(self, table: str, data: Any, on_conflict: Optional[str] = None) -> None:
+        """Upsert rows when the caller does not need their stored representation.
+
+        Background reconciliation can write rows containing vector columns. Returning
+        their merged representation immediately sends those vectors back over the
+        network, despite the worker discarding the result.
+        """
+        params = {"on_conflict": on_conflict} if on_conflict else {}
+        headers = dict(self.headers)
+        headers["Prefer"] = "resolution=merge-duplicates,return=minimal"
+        response = await self._request("POST", f"{self.base_url}/{table}", params=params, json=data, headers=headers)
+        _raise_for_status(response)
+
     def _filter_params(self, match: Any) -> Any:
         if isinstance(match, list):
             return match

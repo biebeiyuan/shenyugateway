@@ -71,7 +71,8 @@ class HeartbeatArchiveService:
             if (row.get("content") or "").strip()
         ]
         if payload:
-            await self.supabase.upsert(ARCHIVE_TABLE, payload, on_conflict="id")
+            upsert = getattr(self.supabase, "upsert_minimal", self.supabase.upsert)
+            await upsert(ARCHIVE_TABLE, payload, on_conflict="id")
         self.store.mark_heartbeats_synced([row["id"] for row in rows])
         return len(payload)
 

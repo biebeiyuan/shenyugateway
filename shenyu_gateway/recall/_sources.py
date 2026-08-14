@@ -101,9 +101,10 @@ class SourcesMixin:
             rows_by_columns: dict[tuple[str, ...], list[dict[str, Any]]] = {}
             for row in rows:
                 rows_by_columns.setdefault(tuple(sorted(row)), []).append(row)
+            upsert = getattr(self.supabase, "upsert_minimal", self.supabase.upsert)
             for matching_rows in rows_by_columns.values():
                 for start in range(0, len(matching_rows), 100):
-                    await self.supabase.upsert(
+                    await upsert(
                         RECALL_INDEX_TABLE,
                         matching_rows[start : start + 100],
                         on_conflict="source_table,source_id,chunk_index",

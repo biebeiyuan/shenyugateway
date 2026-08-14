@@ -109,16 +109,20 @@ class StrictBatchSupabase:
     def __init__(self, existing_rows):
         self.existing_rows = existing_rows
         self.upsert_batches = []
+        self.used_minimal_upsert = False
 
     async def query(self, table, params=None):
         return self.existing_rows
 
-    async def upsert(self, table, data, on_conflict=None):
+    async def upsert_minimal(self, table, data, on_conflict=None):
         key_sets = {frozenset(row) for row in data}
         if len(key_sets) != 1:
             raise RuntimeError("PostgREST PGRST102: All object keys must match")
+        self.used_minimal_upsert = True
         self.upsert_batches.append(data)
-        return data
+
+    async def upsert(self, table, data, on_conflict=None):
+        raise AssertionError("background recall sync should not request row representations")
 
 
 def test_split_recall_chunks_keeps_embedding_sized_chunks():
@@ -188,6 +192,7 @@ def test_upsert_groups_changed_and_unchanged_documents_by_columns():
 
     asyncio.run(service._upsert_documents(docs))
 
+    assert supabase.used_minimal_upsert is True
     assert len(supabase.upsert_batches) == 2
     rows = [row for batch in supabase.upsert_batches for row in batch]
     unchanged = next(row for row in rows if row["source_id"] == "window-unchanged")

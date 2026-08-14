@@ -1077,11 +1077,13 @@ class MemoryGraphService:
                 })
 
         errors: dict[str, str] = {}
+        minimal_upsert = getattr(self.supabase, "upsert_minimal", None)
         for start in range(0, len(upsert_rows), 100):
             batch = upsert_rows[start : start + 100]
             try:
                 if hasattr(self.supabase, "upsert"):
-                    await self.supabase.upsert(
+                    upsert = minimal_upsert if callable(minimal_upsert) else self.supabase.upsert
+                    await upsert(
                         MENTION_TABLE,
                         batch,
                         on_conflict="entity_id,source_table,source_id",

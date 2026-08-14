@@ -103,18 +103,18 @@
         "heartbeat_archive_reconcile_deletions"
       ],
       "reviewed": {
-        "fingerprint": "96bc729d0ce19749ee689d45c7bbe4b7f94ab0682de9f1f081ea45cfa2f75975",
+        "fingerprint": "083b2d8c4796bf460fb06faf4d716ae33db519692b5b7eeb0dc8cd7af9f2bac3",
         "file_hashes": {
           "shenyu_gateway/context_builder.py": "9a29dcbbc739a20ddd0a0e7355c2f2eba635a3b46d7ffd31bba44bda12edf42e",
-          "shenyu_gateway/heartbeat_archive.py": "4728b98dc2f61992c7b1086876f087fb6ac889f28937ada2644611aad0b44fd8",
+          "shenyu_gateway/heartbeat_archive.py": "ee4fedd48f68bcb782a72b249e011415ded3e3d17210f3f00b278b95f7553354",
           "shenyu_gateway/response_capture.py": "ac490ae5747b0008d72ebb2b4af607f4ca6a8ebc881771acd89541d70e539155",
           "shenyu_gateway/store/_heartbeats.py": "5f3a124f1e6a487e49f510344938dd017652b41bf39d0639880719790509be4a"
         },
-        "commit": "231ef8cf65e61313852b049b5b285b09a5e45b8c",
-        "revision": "231ef8cf65e61313852b049b5b285b09a5e45b8c-dirty",
+        "commit": "4f1ba1a34bb027a37519a858a375ccec387fec98",
+        "revision": "4f1ba1a34bb027a37519a858a375ccec387fec98-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-12T14:45:46+08:00",
-        "reviewed_by": "codex"
+        "reviewed_at": "2026-08-15T01:29:25+08:00",
+        "reviewed_by": "Codex"
       }
     },
     "calendar": {
