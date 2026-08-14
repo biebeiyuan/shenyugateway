@@ -135,6 +135,8 @@ class RankingMixin:
             item["content_kind"] = "windowsill"
             if metadata.get("mood"):
                 item["mood"] = metadata.get("mood")
+            if metadata.get("origin") == "room":
+                item["origin"] = "写自房间"
         elif source_type == "heartbeat":
             item["content_kind"] = "heartbeat"
         elif source_type == "board":

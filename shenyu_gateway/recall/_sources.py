@@ -186,6 +186,12 @@ class SourcesMixin:
 
     def _windowsill_documents(self, row: dict[str, Any]) -> list[RecallDocument]:
         mood = _normalize_text(row.get("mood")).strip()
+        origin = _normalize_text(row.get("origin")).strip() or "normal"
+        metadata = {}
+        if mood:
+            metadata["mood"] = mood
+        if origin == "room":
+            metadata["origin"] = origin
         return _make_documents(
             source_table="windowsill",
             source_id=row.get("id"),
@@ -193,7 +199,7 @@ class SourcesMixin:
             title=row.get("title"),
             body=row.get("content"),
             tags=[mood] if mood else [],
-            metadata={"mood": mood} if mood else {},
+            metadata=metadata,
             event_date=row.get("created_at"),
             created_at=row.get("created_at"),
             updated_at=row.get("created_at"),

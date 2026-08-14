@@ -120,7 +120,7 @@ The codebase is partly layered already:
 
 - `shenyu_gateway/room_text.py`: all room mode copy — charter, atmosphere scenes, door descriptions, trace phrases. Change text here only.
 - `shenyu_gateway/room_context.py`: room mode charge calculation, layer rendering, door filtering logic.
-- `shenyu_gateway/room_tools.py`: room mode tool definitions, compatibility broker, execute dispatch, and door count collection.
+- `shenyu_gateway/room_tools.py`: room mode tool definitions, compatibility broker, execute dispatch, door count collection, and the Room-to-canonical-windowsill bridge (`origin=room` plus idempotent legacy scribble import).
 - `shenyu_gateway/room_scenes.py`: window scenes (weather, atmosphere, landscape). Change scene copy here only.
 - `shenyu_gateway/room_newspaper.py`: fixed RSS sources, feed parsing, issue rolling, optional quality checks, and draft generation.
 - `shenyu_gateway/private_capture.py`: recognizes the exact `【窗边 · DD/MM HH:mm】` entry that selects the Room context path; the retired Operit proxy workflow is not a Room entry.

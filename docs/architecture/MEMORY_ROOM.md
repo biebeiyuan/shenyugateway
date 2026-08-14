@@ -278,10 +278,10 @@ Core and bridge files, separated by concern:
 | `shenyu_gateway/context_builder.py` | Assembles the complete Room package: charge signals, door state, scene layers, conditional bookshelf overview, and visible tool schemas. |
 | `shenyu_gateway/room_text.py` | All room copy: charter, scenes, doors, trace phrases. Change text here only. |
 | `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |
-| `shenyu_gateway/room_tools.py` | Room tool handlers, direct tool definitions, the shared `shenyu_books` list/read/write/annotate entry, compatibility broker, and door count collection. |
+| `shenyu_gateway/room_tools.py` | Room tool handlers, direct tool definitions, the shared `shenyu_books` list/read/write/annotate entry, compatibility broker, door count collection, and the canonical-windowsill bridge for `room_scribble`. |
 | `shenyu_gateway/room_scenes.py` | Weather, atmosphere, and window-scene generation. |
 | `shenyu_gateway/room_newspaper.py` | Fixed RSS catalog, feed parsing, issue rolling, optional quality checks, and draft generation. |
-| `shenyu_gateway/store/_room.py` | Room traces, notes, pins, scribbles, and newspaper issue persistence. |
+| `shenyu_gateway/store/_room.py` | Room traces, notes, pins, newspaper issue persistence, and the local idempotency links used to import pre-bridge scribbles. |
 | `shenyu_gateway/tool_registry.py` | In Room mode, merges filtered client tools with only the direct Room tools selected in the package and omits the normal gateway surface. |
 | `admin/src/views/RoomView.vue` | Room preview plus the independent collapsible windowsill, hand, and middle-drawer sections. |
 | `admin/src/views/room/RoomNewspaperPanel.vue` | Newspaper controls and continuous article rendering inside the windowsill section. |
@@ -366,6 +366,8 @@ Charge affects door visibility:
 
 Room mode exposes tools for visible doors directly instead of routing them through `shenyu_gateway_tool`; the shelf door uses the shared `shenyu_books` entry instead of a separate Room-only handler. At low charge, only always-visible doors plus the top active doors get matching tool schemas; when charge is mid/high, all room doors and their tools are visible. The bookshelf overview, shelf description, and `shenyu_books` schema follow the same visibility decision. Normal gateway tools are omitted in room mode, while filtered client tools can remain alongside the direct room tools.
 
+`room_scribble` keeps its Room door and wording, but its canonical content is Supabase `windowsill` with `origin=room`. It reads only that origin in the Room, while the normal windowsill list remains one shared pool. This gives Recall one `windowsill` source and lets recalled Room text say `写自房间`; ordinary window writes still use `origin=normal`. Existing local `room_scribbles` are copied once with their original `created_at` and a deterministic target id, then recorded in a local link table so retries cannot duplicate them.
+
 Dynamic door text: some doors show different text when there's activity (e.g., "好像多了几张" when new notes exist).
 
 ### Window Newspaper
@@ -406,7 +408,8 @@ Fixed sources, live-checked on 2026-07-14:
 |-------|---------|
 | `room_trace` | Visit log: what Shenyu did each time |
 | `room_locked_drawer` | Private content. No admin API, no frontend exposure. |
-| `room_scribbles` | Windowsill notebook entries |
+| `room_scribbles` | Legacy local Room notebook entries awaiting/recording import; new Room scribbles go to Supabase `windowsill` |
+| `room_scribble_windowsill_links` | Local legacy-scribble to canonical-windowsill import markers |
 | `room_pins` | Wall pin reminders (done/undone) |
 | `room_drawer_notes` | Yuan's notes in the middle drawer |
 | `room_newspaper_issues` | Draft, published, archived, and discarded issue metadata plus source/QA status |
@@ -418,7 +421,7 @@ Fixed sources, live-checked on 2026-07-14:
 - `GET /api/gateway/room/traces?limit=20` — recent room traces (full exposure including locked_drawer, for early tuning)
 - `GET/POST /api/gateway/room/drawer-notes` — list or add drawer notes
 - `POST /api/gateway/room/drawer-notes/read` — mark drawer notes read
-- `GET /api/gateway/room/scribbles` — recent windowsill notebook entries
+- `GET /api/gateway/room/scribbles` — recent canonical windowsill entries with `origin=room`
 - `GET /api/gateway/room/pins` — wall pin reminders
 - `GET /api/gateway/room/newspapers` — current drafts, published issue, and recent history
 - `POST /api/gateway/room/newspapers/generate` — fetch feeds and create one visible draft

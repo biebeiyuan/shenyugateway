@@ -359,6 +359,8 @@ Heartbeats 注入到它**自己的 `heartbeat` 层**（不是 `slow`，也不是
 
 Recall 是跨历史的**统一捞取入口**。普通文档来源包括 journal、windowsill、normal heartbeat archive、room、message_board、memories、calendar_pages、notebook；Stars 与 active Mem Notes 复用各自的专用排序器做联邦召回，原始 Chat Archive 只在找原话时显式下潜。
 
+Room 的 `room_scribble` 是进入方式，不是另一套 Recall 来源：它写入同一张 `windowsill`，并带 `origin=room`。因此 Recall 仍把它作为 `windowsill` 返回，同时可明确标出“写自房间”。
+
 工具默认只返回匹配片段、`source_type`、`source_id` 和时间。需要全文时再调用 `shenyu_recall_read`。分数、命中原因和候选淘汰过程不进入沈予上下文，只写日志。
 
 普通记忆默认跨 session；`session_tag` 是来源信息，不是可见性硬门。只有明确的 `private/hidden` 记录继续要求 session 完全一致。

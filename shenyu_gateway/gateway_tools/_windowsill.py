@@ -4,21 +4,38 @@ from typing import Any
 
 from shenyu_gateway.runtime import logger
 
-from ._runtime import WINDOWSILL_TABLE
+from ._runtime import (
+    WINDOWSILL_ORIGIN_NORMAL,
+    WINDOWSILL_ORIGINS,
+    WINDOWSILL_TABLE,
+)
 
 
 class WindowsillToolsMixin:
-    async def windowsill_write(self, content: Any, title: Any = "", mood: Any = "") -> dict:
+    async def windowsill_write(
+        self,
+        content: Any,
+        title: Any = "",
+        mood: Any = "",
+        *,
+        origin: Any = WINDOWSILL_ORIGIN_NORMAL,
+    ) -> dict:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured.", "error_kind": "config"}
         body = str(content or "").strip()
         if not body:
             return {"ok": False, "error": "content is required.", "error_kind": "validation"}
+        origin_key = str(origin or WINDOWSILL_ORIGIN_NORMAL).strip() or WINDOWSILL_ORIGIN_NORMAL
+        if origin_key not in WINDOWSILL_ORIGINS:
+            return {"ok": False, "error": "unsupported windowsill origin.", "error_kind": "validation"}
         payload = {
             "content": body,
             "title": str(title or "").strip(),
             "mood": str(mood or "").strip(),
         }
+        # Normal writes keep the original database-default path unchanged.
+        if origin_key != WINDOWSILL_ORIGIN_NORMAL:
+            payload["origin"] = origin_key
         try:
             row = await self.supabase.insert(WINDOWSILL_TABLE, payload)
             if isinstance(row, dict):
@@ -36,17 +53,22 @@ class WindowsillToolsMixin:
                 "error_kind": "exception",
             }
 
-    async def windowsill_list(self, mood: Any = "", limit: int = 10) -> dict:
+    async def windowsill_list(self, mood: Any = "", limit: int = 10, *, origin: Any = "") -> dict:
         if not self.supabase:
             return {"ok": False, "error": "Supabase is not configured.", "error_kind": "config"}
         params = {
-            "select": "id,content,title,mood,created_at",
+            "select": "id,content,title,mood,origin,created_at",
             "order": "created_at.desc",
             "limit": str(max(1, min(int(limit or 10), 50))),
         }
         mood_key = str(mood or "").strip()
         if mood_key:
             params["mood"] = f"eq.{mood_key}"
+        origin_key = str(origin or "").strip()
+        if origin_key:
+            if origin_key not in WINDOWSILL_ORIGINS:
+                return {"ok": False, "error": "unsupported windowsill origin.", "error_kind": "validation"}
+            params["origin"] = f"eq.{origin_key}"
         try:
             rows = await self.supabase.query(WINDOWSILL_TABLE, params)
             return {"ok": True, "count": len(rows or []), "data": rows or []}

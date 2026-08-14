@@ -106,6 +106,37 @@ class RoomMixin:
             ).fetchall()
             return [dict(r) for r in rows]
 
+    def unmigrated_room_scribbles(self, limit: int = 200) -> list[dict]:
+        capped_limit = max(1, min(int(limit or 200), 1000))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT scribble.id, scribble.content, scribble.created_at
+                FROM room_scribbles AS scribble
+                LEFT JOIN room_scribble_windowsill_links AS link
+                    ON link.room_scribble_id = scribble.id
+                WHERE link.room_scribble_id IS NULL
+                ORDER BY scribble.created_at ASC
+                LIMIT ?
+                """,
+                (capped_limit,),
+            ).fetchall()
+            return [dict(row) for row in rows]
+
+    def mark_room_scribble_migrated(self, room_scribble_id: str, windowsill_id: str) -> None:
+        with self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO room_scribble_windowsill_links
+                    (room_scribble_id, windowsill_id, migrated_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(room_scribble_id) DO UPDATE SET
+                    windowsill_id = excluded.windowsill_id,
+                    migrated_at = excluded.migrated_at
+                """,
+                (room_scribble_id, windowsill_id, iso_now()),
+            )
+
     def add_room_pin(self, content: str) -> str:
         pin_id = f"rmpin_{uuid.uuid4().hex[:12]}"
         with self._connect() as conn:

@@ -268,6 +268,12 @@ class BaseStoreMixin:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS room_scribble_windowsill_links (
+                    room_scribble_id TEXT PRIMARY KEY,
+                    windowsill_id TEXT NOT NULL,
+                    migrated_at TEXT NOT NULL
+                );
+
                 CREATE TABLE IF NOT EXISTS room_pins (
                     id TEXT PRIMARY KEY,
                     content TEXT NOT NULL,

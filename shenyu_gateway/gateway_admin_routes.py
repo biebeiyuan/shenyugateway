@@ -6,7 +6,7 @@ from typing import Any, Callable, Optional
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import JSONResponse
 
-from .gateway_tools import GatewayToolService
+from .gateway_tools import GatewayToolService, WINDOWSILL_ORIGIN_ROOM
 from .mem_notes import MemNoteService
 from .memory_graph import MemoryGraphService
 from .recall import RecallIndexService, recall_terms
@@ -17,6 +17,7 @@ from .request_logs import (
     _retain_request_log_payloads,
 )
 from .room_newspaper import RoomNewspaperService, source_catalog
+from .room_tools import sync_legacy_room_scribbles
 from .runtime import iso_now as _iso_now, logger
 from .schemas import (
     ColdStartPreviewRequest,
@@ -141,7 +142,23 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
     @router.get("/api/gateway/room/scribbles")
     async def list_room_scribbles(limit: int = 20):
         store = deps.require_session_store()
-        scribbles = store.recent_room_scribbles(limit=min(limit, 100))
+        supabase_client = deps.get_supabase_client()
+        await sync_legacy_room_scribbles(
+            store=store,
+            cfg=cfg,
+            supabase_client=supabase_client,
+        )
+        result = await GatewayToolService(
+            runtime_config=cfg,
+            supabase=supabase_client,
+            store=store,
+        ).windowsill_list(
+            limit=min(limit, 100),
+            origin=WINDOWSILL_ORIGIN_ROOM,
+        )
+        if not result.get("ok"):
+            raise HTTPException(status_code=503, detail=result.get("error") or "Windowsill is not available.")
+        scribbles = result.get("data") if isinstance(result.get("data"), list) else []
         return {"scribbles": scribbles, "count": len(scribbles)}
 
     @router.get("/api/gateway/room/pins")

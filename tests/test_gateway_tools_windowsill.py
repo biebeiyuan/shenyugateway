@@ -88,7 +88,7 @@ def test_windowsill_list_filters_mood_and_orders_recent_first():
         (
             "windowsill",
             {
-                "select": "id,content,title,mood,created_at",
+                "select": "id,content,title,mood,origin,created_at",
                 "order": "created_at.desc",
                 "limit": "4",
                 "mood": "eq.安静",

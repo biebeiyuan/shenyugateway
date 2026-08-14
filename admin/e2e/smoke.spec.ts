@@ -740,6 +740,19 @@ test('resident bookshelf keeps all three tiers and living-book reader alive', as
 })
 
 test('Room page keeps its mapped labels, dates, and fold sections alive', async ({ page }) => {
+  await page.route('**/api/gateway/room/scribbles?*', async (route) => {
+    await route.fulfill({
+      json: {
+        scribbles: [{
+          id: 'room-windowsill-smoke',
+          content: '这句通过房间窗台落进普通窗台。',
+          origin: 'room',
+          created_at: '2026-08-14T08:00:00+00:00',
+        }],
+        count: 1,
+      },
+    })
+  })
   await page.route('**/api/gateway/room/traces?*', async (route) => {
     await route.fulfill({
       json: {
@@ -773,6 +786,7 @@ test('Room page keeps its mapped labels, dates, and fold sections alive', async 
 
     await hand.locator('summary').click()
     await expect(hand).toHaveAttribute('open', '')
+    await expect(hand.getByText('这句通过房间窗台落进普通窗台。')).toBeVisible()
     await drawer.locator('summary').click()
     await expect(drawer).toHaveAttribute('open', '')
     await expect(drawer.locator('textarea')).toBeVisible()

@@ -219,6 +219,7 @@ def test_windowsill_adapter_indexes_title_content_mood_and_created_at():
     assert "窗边" in docs[0].search_text
     assert "风从窗边过了一下" in docs[0].search_text
     assert "安静" in docs[0].search_text
+    assert docs[0].metadata_json == {"mood": "安静"}
     assert docs[0].event_date == "2026-07-10T00:00:00+00:00"
 
 
@@ -1134,4 +1135,3 @@ def test_mem_note_recall_corpus_excludes_all_summary_and_anchor_fields():
     ]:
         assert value not in doc.embedding_text
         assert value not in doc.search_text
-

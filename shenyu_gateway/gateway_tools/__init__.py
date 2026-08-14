@@ -13,6 +13,8 @@ from ._recall import RecallToolsMixin
 # reach the implementations. Patch the defining submodule (via sys.modules) or
 # inject dependencies through configure_gateway_tools / constructor arguments.
 from ._runtime import (
+    WINDOWSILL_ORIGIN_NORMAL,
+    WINDOWSILL_ORIGIN_ROOM,
     WINDOWSILL_TABLE,
     GatewayToolRuntime,
     _UNSET,
@@ -46,6 +48,8 @@ class GatewayToolService(
 __all__ = [
     "GatewayToolRuntime",
     "GatewayToolService",
+    "WINDOWSILL_ORIGIN_NORMAL",
+    "WINDOWSILL_ORIGIN_ROOM",
     "WINDOWSILL_TABLE",
     "configure_gateway_tools",
     "get_runtime",

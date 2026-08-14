@@ -251,10 +251,12 @@ The mem review UI reads and updates Supabase `shenyu_mem_notes`. The star review
 
 ## Windowsill
 
-`windowsill` is Shenyu's own writing place for essays, journal entries, moods, and reflections, without the category structure of `journal`. Apply `supabase/migrations/20260710_create_windowsill.sql` before enabling the tools.
+`windowsill` is Shenyu's own writing place for essays, journal entries, moods, and reflections, without the category structure of `journal`. Apply `supabase/migrations/20260710_create_windowsill.sql` and `supabase/migrations/20260814_windowsill_origin.sql` before enabling the tools.
 
 - `shenyu_windowsill_write(content, title?, mood?)` leaves a new entry. PostgreSQL generates `id` and `created_at`; neither is supplied by the model.
 - `shenyu_windowsill_list(mood?, limit?)` returns recent entries, newest first, with optional exact mood filtering.
+- `room_scribble` is the Room adapter for the same table: it automatically writes `origin=room`, while normal windowsill writes retain the database default `origin=normal`. Room reads only its own origin; the normal list can see both without splitting the writing pool.
+- Legacy SQLite `room_scribbles` are copied idempotently on Room context/tool/Admin access with their original time and `origin=room`; a local link row prevents duplicate imports after restart.
 - Successful writes are indexed immediately; the periodic recall reconciliation worker repairs any missed write later.
 - The table is intentionally reached through these dedicated tools. Raw Supabase tools remain an explicit maintenance/debug surface rather than a daily Shenyu surface.
 
@@ -287,7 +289,7 @@ Indexed public source types:
 
 - `memory`: rows from `memories`
 - `journal`: rows from `journal`
-- `windowsill`: personal writing from `windowsill`
+- `windowsill`: personal writing from `windowsill`, including Room entries marked `写自房间`
 - `heartbeat`: settled normal-scope rows from `shenyu_heartbeat_archive`
 - `room`: rows from `room`
 - `board`: rows from `message_board`
@@ -305,6 +307,7 @@ Required Supabase migrations:
 - `supabase/migrations/20260527_shenyu_recall_keyword_rpc.sql`
 - `supabase/migrations/20260527_shenyu_recall_vector_rpc.sql`
 - `supabase/migrations/20260723_create_memory_graph.sql` (entities, aliases, source mentions, and typed relations)
+- `supabase/migrations/20260814_windowsill_origin.sql` (Room-to-windowsill provenance)
 
 Migrations are an explicit deployment operation, not a gateway-startup side effect. Apply the required SQL through the project's Supabase migration workflow before deploying code that reads or writes the new schema. For the memory graph, verify the four `shenyu_entity_*` tables first; then deploy, open `/admin/#/memory-graph`, create one test anchor, and only then run the historical backfill.
 

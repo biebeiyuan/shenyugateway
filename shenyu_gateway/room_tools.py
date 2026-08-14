@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import uuid
 from datetime import timedelta
 from typing import Any, Iterable, Optional
 
@@ -267,7 +268,12 @@ async def execute_room_tool(
         return await _handle_notebook(arguments, cfg=cfg, supabase_client=supabase_client)
 
     elif name == "room_scribble":
-        return _handle_scribble(store, arguments)
+        return await _handle_scribble(
+            store,
+            arguments,
+            cfg=cfg,
+            supabase_client=supabase_client,
+        )
 
     elif name == "room_wall_pins":
         return _handle_wall_pins(store, arguments)
@@ -524,18 +530,160 @@ async def _handle_notebook(arguments: dict, *, cfg: Any, supabase_client: Any) -
     return result
 
 
-def _handle_scribble(store: Any, arguments: dict) -> dict:
+_ROOM_SCRIBBLE_EXPORT_LIMIT = 200
+
+
+def _room_scribble_windowsill_id(scribble_id: str) -> str:
+    return str(
+        uuid.uuid5(
+            uuid.NAMESPACE_URL,
+            f"https://shenyu-gateway.local/room-scribble/{scribble_id}",
+        )
+    )
+
+
+async def sync_legacy_room_scribbles(
+    *,
+    store: Any,
+    cfg: Any,
+    supabase_client: Any,
+) -> dict[str, Any]:
+    """Move old local Room scribbles into the canonical windowsill once."""
+    list_pending = getattr(store, "unmigrated_room_scribbles", None)
+    mark_migrated = getattr(store, "mark_room_scribble_migrated", None)
+    if not callable(list_pending) or not callable(mark_migrated):
+        return {"ok": True, "migrated": 0, "skipped": "no legacy Room store"}
+    if not supabase_client:
+        return {"ok": True, "migrated": 0, "skipped": "Supabase is not configured"}
+
+    try:
+        legacy_rows = list_pending(limit=_ROOM_SCRIBBLE_EXPORT_LIMIT)
+    except Exception as exc:
+        logger.warning("[Room] could not read legacy scribbles for migration: %s", exc)
+        return {"ok": False, "migrated": 0, "errors": 1}
+    if not legacy_rows:
+        return {"ok": True, "migrated": 0}
+
+    from .gateway_tools import WINDOWSILL_ORIGIN_ROOM
+    from .recall import RecallIndexService
+
+    recall_index = RecallIndexService(supabase_client, cfg=cfg)
+    migrated = 0
+    errors = 0
+    for legacy in legacy_rows:
+        scribble_id = str(legacy.get("id") or "").strip()
+        content = str(legacy.get("content") or "").strip()
+        if not scribble_id or not content:
+            errors += 1
+            logger.warning("[Room] skipped malformed legacy scribble during migration")
+            continue
+
+        windowsill_id = _room_scribble_windowsill_id(scribble_id)
+        payload = {
+            "id": windowsill_id,
+            "content": content,
+            "title": "",
+            "mood": "",
+            "origin": WINDOWSILL_ORIGIN_ROOM,
+            "created_at": legacy.get("created_at"),
+        }
+        try:
+            result = await supabase_client.upsert(
+                "windowsill",
+                payload,
+                on_conflict="id",
+            )
+            rows = result if isinstance(result, list) else [result]
+            stored_row = next(
+                (
+                    row
+                    for row in rows
+                    if isinstance(row, dict) and str(row.get("id") or "") == windowsill_id
+                ),
+                None,
+            )
+            if not stored_row:
+                raise RuntimeError("windowsill upsert did not return the migrated row")
+        except Exception as exc:
+            errors += 1
+            logger.warning("[Room] legacy scribble migration failed: %s", exc)
+            continue
+
+        try:
+            index_result = await recall_index.index_windowsill_row(stored_row)
+            if not index_result.get("ok"):
+                logger.warning(
+                    "[Room] legacy scribble Recall indexing was skipped: %s",
+                    index_result.get("error"),
+                )
+        except Exception as exc:
+            # The canonical row is durable; periodic reconciliation can repair this.
+            logger.warning("[Room] legacy scribble Recall indexing failed: %s", exc)
+
+        try:
+            mark_migrated(scribble_id, windowsill_id)
+        except Exception as exc:
+            errors += 1
+            logger.warning("[Room] could not mark legacy scribble migration: %s", exc)
+            continue
+        migrated += 1
+
+    return {"ok": errors == 0, "migrated": migrated, "errors": errors}
+
+
+async def _handle_scribble(
+    store: Any,
+    arguments: dict,
+    *,
+    cfg: Any,
+    supabase_client: Any,
+) -> dict:
+    await sync_legacy_room_scribbles(
+        store=store,
+        cfg=cfg,
+        supabase_client=supabase_client,
+    )
+    from .gateway_tools import GatewayToolService, WINDOWSILL_ORIGIN_ROOM
+
+    service = GatewayToolService(
+        runtime_config=cfg,
+        supabase=supabase_client,
+        store=store,
+    )
     action = arguments.get("action", "read")
     if action == "write":
-        content = arguments.get("content", "")
+        content = str(arguments.get("content", "") or "")
         if not content.strip():
             return {"ok": False, "error": "内容不能为空"}
-        scribble_id = store.add_room_scribble(content)
-        return {"ok": True, "id": scribble_id, "message": "写下了。"}
-    else:
-        limit = min(int(arguments.get("limit", 5)), 20)
-        items = store.recent_room_scribbles(limit=limit)
-        return {"ok": True, "scribbles": [{"content": s["content"], "created_at": s["created_at"]} for s in items], "count": len(items)}
+        result = await service.windowsill_write(
+            content=content,
+            origin=WINDOWSILL_ORIGIN_ROOM,
+        )
+        if not result.get("ok"):
+            return result
+        row = result.get("data") if isinstance(result.get("data"), dict) else {}
+        return {"ok": True, "id": row.get("id", ""), "message": "写下了。"}
+
+    try:
+        limit = max(1, min(int(arguments.get("limit", 5)), 20))
+    except (TypeError, ValueError):
+        limit = 5
+    result = await service.windowsill_list(
+        limit=limit,
+        origin=WINDOWSILL_ORIGIN_ROOM,
+    )
+    if not result.get("ok"):
+        return result
+    items = result.get("data") if isinstance(result.get("data"), list) else []
+    scribbles = [
+        {
+            "content": str(item.get("content") or ""),
+            "created_at": item.get("created_at"),
+        }
+        for item in items
+        if isinstance(item, dict)
+    ]
+    return {"ok": True, "scribbles": scribbles, "count": len(scribbles)}
 
 
 def _handle_wall_pins(store: Any, arguments: dict) -> dict:
@@ -715,9 +863,30 @@ async def collect_door_counts(
     except Exception:
         counts["notebook"] = 0
 
-    # Scribbles: recent count
-    scribbles = store.recent_room_scribbles(limit=1) if store else []
-    counts["scribble"] = len(scribbles)
+    # Room scribbles share the canonical windowsill but retain their Room origin.
+    try:
+        if supabase_client:
+            await sync_legacy_room_scribbles(
+                store=store,
+                cfg=cfg,
+                supabase_client=supabase_client,
+            )
+            from .gateway_tools import WINDOWSILL_ORIGIN_ROOM
+
+            rows = await supabase_client.query(
+                "windowsill",
+                {
+                    "select": "id",
+                    "origin": f"eq.{WINDOWSILL_ORIGIN_ROOM}",
+                    "limit": "1",
+                },
+            )
+            counts["scribble"] = len(rows) if rows else 0
+        else:
+            counts["scribble"] = 0
+    except Exception as exc:
+        logger.warning("[Room] failed to collect windowsill scribble count: %s", exc)
+        counts["scribble"] = 0
 
     # Wall pins: undone
     counts["wall_pins"] = store.room_pin_count_undone() if store else 0
