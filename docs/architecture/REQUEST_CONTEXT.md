@@ -308,6 +308,7 @@ Required Supabase migrations:
 - `supabase/migrations/20260527_shenyu_recall_vector_rpc.sql`
 - `supabase/migrations/20260723_create_memory_graph.sql` (entities, aliases, source mentions, and typed relations)
 - `supabase/migrations/20260814_windowsill_origin.sql` (Room-to-windowsill provenance)
+- `supabase/migrations/20260828_mem_note_remind_on.sql` (mem note date reminders; also relaxes the active-ready CHECK so a date alone is a valid anchor)
 
 Migrations are an explicit deployment operation, not a gateway-startup side effect. Apply the required SQL through the project's Supabase migration workflow before deploying code that reads or writes the new schema. For the memory graph, verify the four `shenyu_entity_*` tables first; then deploy, open `/admin/#/memory-graph`, create one test anchor, and only then run the historical backfill.
 

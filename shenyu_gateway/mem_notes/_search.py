@@ -30,8 +30,16 @@ from ..mem_notes_relevance import (
     _trigger_overlap,
     running_joke_serendipity_rate,
 )
-from ..runtime import iso_now, now as _now, parse_ts as _parse_ts
+from ..runtime import (
+    iso_now,
+    local_today as _local_today,
+    now as _now,
+    parse_ts as _parse_ts,
+)
 from ._helpers import _MEM_NOTE_SELECT_FIELDS, _MEM_NOTE_SELECT_FIELDS_LIGHT, _normalize_note_id
+
+# 一次最多挂几条到点的提醒。剩下的不打戳，下一轮再来。
+DUE_REMINDER_MAX = 3
 
 
 class SearchMixin:
@@ -225,6 +233,78 @@ class SearchMixin:
         }
 
     # ------------------------------------------------------------------
+    # 日期提醒
+    # ------------------------------------------------------------------
+
+    async def due_reminder_notes(self, limit: int = DUE_REMINDER_MAX) -> dict[str, Any]:
+        """Notes whose reminder day has arrived and that have not been hung yet.
+
+        `lte` rather than `eq`: if the gateway was down on the day itself, the
+        reminder still comes up the next time we talk instead of being missed.
+        Over the cap, the rest keep their empty `reminded_at` and come back on
+        a later turn.
+        """
+        if not self.supabase:
+            return {"ok": False, "count": 0, "items": []}
+        target_limit = max(1, min(int(limit or DUE_REMINDER_MAX), 5))
+        today = _local_today().isoformat()
+        try:
+            rows = await self.supabase.query(
+                "shenyu_mem_notes",
+                {
+                    "status": "eq.active",
+                    "remind_on": f"lte.{today}",
+                    "reminded_at": "is.null",
+                    "order": "remind_on.asc",
+                    "limit": str(target_limit * 4),
+                    "select": _MEM_NOTE_SELECT_FIELDS_LIGHT,
+                },
+            )
+        except Exception as exc:
+            logger.warning("[MemNote] Due reminder lookup failed: %s", exc)
+            return {"ok": False, "count": 0, "items": []}
+
+        items: list[dict[str, Any]] = []
+        for raw_row in rows or []:
+            if len(items) >= target_limit:
+                break
+            # 一张写坏的便签不该让整条提醒通道停摆。
+            try:
+                row = self._effective_note(raw_row)
+                if not self._auto_surface_eligibility(row)[0]:
+                    continue
+                item = self._public_search_item(row, ["due_reminder"])
+                item["search_mode"] = "due_reminder"
+                items.append(item)
+            except Exception as exc:
+                logger.warning(
+                    "[MemNote] Skipping malformed due reminder: id=%s error=%s",
+                    (raw_row or {}).get("id"),
+                    exc,
+                )
+        return {"ok": True, "count": len(items), "items": items}
+
+    async def mark_reminders_hung(self, items: list[dict[str, Any]]) -> None:
+        """Stamp 已提醒 on reminders that just went up on the island.
+
+        Only the stamp: status stays as it is and the note stays where it is.
+        Hung once is enough — 沈予 saw it.
+        """
+        stamped_at = iso_now()
+        for item in items or []:
+            note_id = str(item.get("id") or "").strip()
+            if not note_id or not item.get("remind_on") or item.get("reminded_at"):
+                continue
+            try:
+                await self.supabase.update(
+                    "shenyu_mem_notes",
+                    {"id": note_id},
+                    {"reminded_at": stamped_at},
+                )
+            except Exception as exc:
+                logger.warning("Failed to stamp mem note reminder: id=%s error=%s", note_id, exc)
+
+    # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------
 
@@ -335,6 +415,8 @@ class SearchMixin:
             "joke_text": row.get("joke_text") or "",
             "scene_tags": row.get("scene_tags") or [],
             "last_used_at": row.get("last_used_at"),
+            "remind_on": row.get("remind_on"),
+            "reminded_at": row.get("reminded_at"),
         }
 
     # ------------------------------------------------------------------

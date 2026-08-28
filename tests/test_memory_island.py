@@ -1,10 +1,16 @@
 from __future__ import annotations
 
 import copy
+from datetime import timedelta
 
 import pytest
 
-from shenyu_gateway.memory_island import memory_island_log_content, resolve_memory_island
+from shenyu_gateway.memory_island import (
+    memory_island_log_content,
+    render_mem_notes,
+    resolve_memory_island,
+)
+from shenyu_gateway.runtime import local_today
 
 
 def _star(
@@ -311,3 +317,80 @@ def test_external_window_force_reason_is_preserved(reason):
     assert [item["id"] for item in rewritten["stars"]] == ["b", "a", "d"]
     assert meta["star"]["reason"] == reason
     assert meta["mem"]["reason"] == reason
+
+
+def _due_mem(item_id: str, content: str, *, remind_on: str, created_at: str = "") -> dict:
+    return {
+        "id": item_id,
+        "content": content,
+        "summary": content,
+        "search_mode": "due_reminder",
+        "remind_on": remind_on,
+        "created_at": created_at,
+    }
+
+
+def test_due_reminder_breaks_into_the_island_even_with_high_overlap():
+    initial, _entering, _meta = resolve_memory_island(
+        None,
+        [],
+        [_mem("m-a", "a"), _mem("m-b", "b"), _mem("m-c", "c")],
+    )
+
+    rewritten, entering, meta = resolve_memory_island(
+        initial,
+        [],
+        [
+            _due_mem("m-due", "圆儿生日", remind_on=local_today().isoformat()),
+            _mem("m-a", "a"),
+            _mem("m-b", "b"),
+        ],
+    )
+
+    assert meta["mem"]["reason"] == "due_reminder"
+    assert [item["id"] for item in rewritten["mem_notes"]] == ["m-due", "m-a", "m-b"]
+    assert [item["id"] for item in entering["mem_notes"]] == ["m-due"]
+
+
+def test_due_reminder_already_on_the_island_does_not_force_another_rewrite():
+    today = local_today().isoformat()
+    initial, _entering, _meta = resolve_memory_island(
+        None,
+        [],
+        [_due_mem("m-due", "圆儿生日", remind_on=today), _mem("m-a", "a"), _mem("m-b", "b")],
+    )
+
+    retained, entering, meta = resolve_memory_island(
+        initial,
+        [],
+        [_due_mem("m-due", "圆儿生日", remind_on=today), _mem("m-a", "a"), _mem("m-b", "b")],
+    )
+
+    assert meta["mem"]["reason"] == "retained_overlap"
+    assert retained["rendered_text"] == initial["rendered_text"]
+    assert entering["mem_notes"] == []
+
+
+def test_rendered_reminder_carries_the_day_and_when_it_was_written():
+    today = local_today()
+    written = (today - timedelta(days=3)).isoformat() + "T02:00:00+00:00"
+    text = render_mem_notes(
+        [_due_mem("m-due", "圆儿生日", remind_on=today.isoformat(), created_at=written)]
+    )
+
+    assert "说的就是今天" in text
+    assert "3天前记的" in text
+
+
+def test_rendered_reminder_says_the_day_has_passed():
+    today = local_today()
+    past = (today - timedelta(days=2)).isoformat()
+    text = render_mem_notes([_due_mem("m-due", "该交电费了", remind_on=past)])
+
+    assert f"说的是{past}，已经过了" in text
+
+
+def test_rendered_note_without_a_date_is_unchanged():
+    text = render_mem_notes([_mem("m-a", "普通便签")])
+
+    assert text == "## 我之前写下的便签，可能用的到。\n- 普通便签"

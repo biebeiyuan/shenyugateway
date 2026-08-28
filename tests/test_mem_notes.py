@@ -1,9 +1,29 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import timedelta
 from types import SimpleNamespace
 
 from shenyu_gateway.mem_notes import MemNoteService, _clean_context_query
+from shenyu_gateway.runtime import local_today
+
+
+def _apply_filter(rows, column: str, expression):
+    """Honour the PostgREST filters the mem note queries actually send."""
+    if not expression:
+        return rows
+    op, _, value = str(expression).partition(".")
+    if op == "eq":
+        return [row for row in rows if str(row.get(column) or "") == value]
+    if op == "neq":
+        return [row for row in rows if str(row.get(column) or "") != value]
+    if op == "lte":
+        return [row for row in rows if str(row.get(column) or "") and str(row[column]) <= value]
+    if op == "gte":
+        return [row for row in rows if str(row.get(column) or "") and str(row[column]) >= value]
+    if op == "is" and value == "null":
+        return [row for row in rows if row.get(column) in (None, "")]
+    return rows
 
 
 class FakeSupabase:
@@ -29,12 +49,8 @@ class FakeSupabase:
             return [row for row in self.rows if row.get("id") in wanted]
         if table == "shenyu_mem_notes":
             rows = list(self.rows)
-            status_filter = params.get("status")
-            if status_filter and status_filter.startswith("eq."):
-                rows = [row for row in rows if row.get("status") == status_filter.removeprefix("eq.")]
-            session_filter = params.get("session_tag")
-            if session_filter and session_filter.startswith("eq."):
-                rows = [row for row in rows if row.get("session_tag") == session_filter.removeprefix("eq.")]
+            for column in ("status", "session_tag", "remind_on", "reminded_at"):
+                rows = _apply_filter(rows, column, params.get(column))
             return rows
         if table == "atomic_memories":
             return list(self.rows)
@@ -1580,3 +1596,200 @@ def test_recall_private_search_contract_for_mem_note_search():
     ):
         assert callable(getattr(RecallIndexService, name, None)), name
     assert "allow_mem_note" in inspect.signature(RecallIndexService._query_index).parameters
+
+
+# ── 日期提醒 ──────────────────────────────────────────────────────────
+
+def _reminder_service(rows=None):
+    supabase = FakeSupabase(rows=rows or [])
+    return supabase, MemNoteService(
+        SimpleNamespace(mem_note_default_cooldown_hours=72), supabase
+    )
+
+
+def _reminder_row(note_id: str, content: str, *, remind_on: str, reminded_at=None) -> dict:
+    return {
+        "id": note_id,
+        "session_tag": "default",
+        "content": content,
+        "summary": content,
+        "mem_type": "心里那一档",
+        "memory_kind": "event",
+        "status": "active",
+        "trigger_text": "",
+        "trigger_keywords": [],
+        "entities": [],
+        "people": [],
+        "places": [],
+        "objects": [],
+        "keywords": [],
+        "cooldown_hours": 0,
+        "last_triggered_at": None,
+        "trigger_count": 0,
+        "remind_on": remind_on,
+        "reminded_at": reminded_at,
+        "created_at": "2026-08-01T00:00:00+00:00",
+        "updated_at": "2026-08-01T00:00:00+00:00",
+    }
+
+
+def test_a_date_alone_is_enough_to_activate_a_note():
+    _supabase, service = _reminder_service()
+
+    result = asyncio.run(
+        service.create_note("圆儿生日", status="active", remind_on="2026-09-01", trigger_text="")
+    )
+
+    assert result["ok"] is True
+    assert result["note"]["remind_on"] == "2026-09-01"
+
+
+def test_create_note_refuses_a_date_it_cannot_read():
+    supabase, service = _reminder_service()
+
+    result = asyncio.run(service.create_note("生日", remind_on="下周三"))
+
+    assert result["ok"] is False
+    assert "remind_on" in result["error"]
+    assert supabase.inserts == []
+
+
+def test_same_content_on_the_same_day_is_written_once():
+    existing = _reminder_row("note-1", "圆儿生日", remind_on="2026-09-01")
+    supabase, service = _reminder_service(rows=[existing])
+
+    result = asyncio.run(service.create_note("圆儿生日", remind_on="2026-09-01"))
+
+    assert result["ok"] is True
+    assert result["duplicate_of"] == "note-1"
+    assert supabase.inserts == []
+
+
+def test_same_content_on_a_different_day_is_a_new_note():
+    existing = _reminder_row("note-1", "圆儿生日", remind_on="2026-09-01")
+    supabase, service = _reminder_service(rows=[existing])
+
+    result = asyncio.run(service.create_note("圆儿生日", remind_on="2027-09-01"))
+
+    assert result.get("duplicate_of") is None
+    assert len(supabase.inserts) == 1
+
+
+def test_due_reminders_include_a_day_that_already_passed():
+    today = local_today()
+    rows = [
+        _reminder_row("past", "该交电费了", remind_on=(today - timedelta(days=4)).isoformat()),
+        _reminder_row("today", "圆儿生日", remind_on=today.isoformat()),
+        _reminder_row("later", "还没到", remind_on=(today + timedelta(days=5)).isoformat()),
+        _reminder_row(
+            "hung", "挂过了", remind_on=today.isoformat(), reminded_at="2026-08-02T00:00:00+00:00"
+        ),
+    ]
+    supabase, service = _reminder_service(rows=rows)
+
+    result = asyncio.run(service.due_reminder_notes())
+
+    assert result["ok"] is True
+    assert {item["id"] for item in result["items"]} == {"past", "today"}
+    assert all(item["search_mode"] == "due_reminder" for item in result["items"])
+    params = supabase.queries[-1]["params"]
+    assert params["remind_on"] == f"lte.{today.isoformat()}"
+    assert params["reminded_at"] == "is.null"
+
+
+def test_due_reminders_are_capped_and_the_rest_stay_unstamped():
+    today = local_today().isoformat()
+    rows = [_reminder_row(f"n{i}", f"事{i}", remind_on=today) for i in range(6)]
+    supabase, service = _reminder_service(rows=rows)
+
+    result = asyncio.run(service.due_reminder_notes())
+
+    assert result["count"] == 3
+    assert supabase.updates == []
+
+
+def test_due_reminder_lookup_failure_does_not_raise():
+    class FailingQuery(FakeSupabase):
+        async def query(self, table, params):
+            raise RuntimeError("supabase down")
+
+    service = MemNoteService(SimpleNamespace(mem_note_default_cooldown_hours=72), FailingQuery())
+
+    result = asyncio.run(service.due_reminder_notes())
+
+    assert result == {"ok": False, "count": 0, "items": []}
+
+
+def test_hanging_a_reminder_only_stamps_reminded_at():
+    supabase, service = _reminder_service()
+
+    asyncio.run(
+        service.mark_reminders_hung(
+            [
+                {"id": "note-1", "remind_on": "2026-09-01", "reminded_at": None},
+                {"id": "note-2", "remind_on": "2026-09-01", "reminded_at": "2026-09-01T00:00:00+00:00"},
+                {"id": "note-3", "remind_on": None},
+            ]
+        )
+    )
+
+    assert [update["match"]["id"] for update in supabase.updates] == ["note-1"]
+    assert set(supabase.updates[0]["data"]) == {"reminded_at"}
+
+
+def test_moving_the_date_clears_the_already_reminded_stamp():
+    row = _reminder_row("note-1", "圆儿生日", remind_on="2026-09-01", reminded_at="2026-09-01T00:00:00+00:00")
+    _supabase, service = _reminder_service()
+
+    update, error = service._prepare_note_update(row, {"remind_on": "2026-10-01"})
+
+    assert error == ""
+    assert update["remind_on"] == "2026-10-01"
+    assert update["reminded_at"] is None
+
+
+def test_keeping_the_same_date_keeps_the_stamp():
+    row = _reminder_row("note-1", "圆儿生日", remind_on="2026-09-01", reminded_at="2026-09-01T00:00:00+00:00")
+    _supabase, service = _reminder_service()
+
+    update, error = service._prepare_note_update(row, {"remind_on": "2026-09-01"})
+
+    assert error == ""
+    assert "reminded_at" not in update
+
+
+def test_clearing_the_date_drops_both_fields():
+    row = _reminder_row("note-1", "圆儿生日", remind_on="2026-09-01", reminded_at="2026-09-01T00:00:00+00:00")
+    row["trigger_text"] = "生日"
+    _supabase, service = _reminder_service()
+
+    update, error = service._prepare_note_update(row, {"remind_on": ""})
+
+    assert error == ""
+    assert update["remind_on"] is None
+    assert update["reminded_at"] is None
+
+
+def test_reminder_fields_reach_the_context_projection():
+    row = _reminder_row("note-1", "圆儿生日", remind_on="2026-09-01")
+    _supabase, service = _reminder_service()
+
+    item = service._public_search_item(row, ["due_reminder"])
+
+    assert item["remind_on"] == "2026-09-01"
+    assert item["reminded_at"] is None
+
+
+def test_light_select_carries_the_reminder_columns():
+    from shenyu_gateway.mem_notes._helpers import (
+        MEM_NOTE_PATCH_FIELDS,
+        _MEM_NOTE_SELECT_FIELDS,
+        _MEM_NOTE_SELECT_FIELDS_LIGHT,
+    )
+
+    # The injection path reads the LIGHT select only; a column missing there is
+    # a reminder that silently never fires.
+    for field in ("remind_on", "reminded_at"):
+        assert field in _MEM_NOTE_SELECT_FIELDS_LIGHT.split(",")
+        assert field in _MEM_NOTE_SELECT_FIELDS.split(",")
+        assert field in MEM_NOTE_PATCH_FIELDS

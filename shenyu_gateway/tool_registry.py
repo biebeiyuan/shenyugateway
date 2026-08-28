@@ -692,6 +692,7 @@ async def _handle_write_mem_note(ctx: ToolContext) -> dict:
         keywords=ctx.arguments.get("keywords"),
         event_time=ctx.arguments.get("event_time"),
         importance=ctx.arguments.get("importance"),
+        remind_on=ctx.arguments.get("remind_on"),
         promise_text=ctx.arguments.get("promise_text"),
         trigger_scenarios=ctx.arguments.get("trigger_scenarios"),
         due_hint=ctx.arguments.get("due_hint"),

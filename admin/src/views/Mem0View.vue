@@ -460,6 +460,7 @@ function notePatch(item: MemNoteItem, status?: MemNoteStatus): MemNotePatch {
     keywords: splitKeywords(keywordsDrafts.value[item.id] || ''),
     event_time: item.event_time || null,
     importance: item.importance ?? null,
+    remind_on: (item.remind_on || '').trim() || null,
   }
   if (item.memory_kind === 'promise') {
     patch.promise_text = item.promise_text || null
@@ -500,6 +501,8 @@ function activationMissing(item: MemNoteItem): string {
     || splitKeywords(keywordsDrafts.value[item.id] || '').length > 0
     || splitKeywords(sceneDrafts.value[item.id] || '').length > 0
     || splitKeywords(triggerScenariosDrafts.value[item.id] || '').length > 0
+    // 一个日子本身就是锚点：到了那天它自己会挂上来，不需要关键词。
+    || Boolean((item.remind_on || '').trim())
   if (!hasType && !hasTrigger) return '需要补充「分类」和「什么时候想起来」才能放回来'
   if (!hasType) return '需要补充「分类」才能放回来'
   if (!hasTrigger) return '需要补充「什么时候想起来」才能放回来'
@@ -659,6 +662,11 @@ async function loadLegacy() {
 function formatTime(value?: string | null) {
   if (!value) return '-'
   return value.replace('T', ' ').replace(/\.\d+Z?$/, '').replace(/Z$/, '')
+}
+
+// 挂过一次就打这个戳，便签本身不动。改了提醒日期，戳会由网关清掉。
+function reminderStamp(item: MemNoteItem) {
+  return item.reminded_at ? formatTime(item.reminded_at) : ''
 }
 </script>
 
@@ -855,6 +863,15 @@ function formatTime(value?: string | null) {
               </NFormItem>
               <NFormItem label="时间">
                 <NInput v-model:value="activeNote.event_time" placeholder="2026-06-15" />
+              </NFormItem>
+            </div>
+
+            <div class="drawer-row two">
+              <NFormItem label="提醒日期">
+                <NInput v-model:value="activeNote.remind_on" placeholder="2026-09-01（到那天自己挂上动态岛一次）" />
+              </NFormItem>
+              <NFormItem label="已提醒">
+                <NInput :value="reminderStamp(activeNote)" readonly placeholder="还没挂过" />
               </NFormItem>
             </div>
 

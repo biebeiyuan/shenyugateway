@@ -218,6 +218,9 @@ export interface MemNoteItem {
   mention_count?: number | null
   promotion_score?: number | null
   decay_after?: string | null
+  // 日期提醒
+  remind_on?: string | null
+  reminded_at?: string | null
   // promise
   promise_text?: string | null
   trigger_scenarios?: string[] | null
@@ -262,6 +265,7 @@ export interface MemNotePatch {
   keywords?: string[] | null
   event_time?: string | null
   importance?: number | null
+  remind_on?: string | null
   promise_text?: string | null
   trigger_scenarios?: string[] | null
   due_hint?: string | null

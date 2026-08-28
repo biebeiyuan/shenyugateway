@@ -34,7 +34,21 @@ Search/injection flow:
 
 Before resolving each normal Memory Island, `ContextBuilder` re-checks the previous Mem lane against the current automatic-recall eligibility rule. A note that was collected into the old island but has since been archived, paused, left captured, made invalid for activation, or marked as a resolved promise is removed on the next context build instead of being retained by the `2/3` overlap gate. If that authoritative check itself fails, the old lane is preserved fail-soft rather than guessed inactive.
 
-The active-ready validation accepts either legacy triggers (`trigger_text`, `trigger_keywords`, `entities`) or v2 structured anchors (`people`, `places`, `objects`, `keywords`, `scene_tags`, `trigger_scenarios`).
+The active-ready validation accepts either legacy triggers (`trigger_text`, `trigger_keywords`, `entities`), v2 structured anchors (`people`, `places`, `objects`, `keywords`, `scene_tags`, `trigger_scenarios`), or a `remind_on` date. A date is an anchor by itself: the note surfaces on its own day without needing any keyword.
+
+### Date reminders (`remind_on`)
+
+A note can carry a day it should not be missed. `remind_on` is `date` (Asia/Shanghai day precision, decided by `runtime.local_today()`); `reminded_at` is the 已提醒 stamp written after it has hung once.
+
+- **Its own water source, not the recall lane.** `MemNoteService.due_reminder_notes()` is queried independently of `INJECT_MEM_NOTES` and merged at the head of the Mem lane. Turning the Mem channel off means "don't automatically recall notes", not "forget the day I wrote down". Ordinary contextual recall stays gated by the switch.
+- **`lte` today, not `eq`.** If the gateway was down on the day itself, the reminder still comes up the next time we talk instead of being missed.
+- **Hangs once.** Reminders entering the island are stamped `reminded_at` and never come back from the source. While hung, the item is carried at the head of the lane until the island is rewritten by the existing forced-rewrite boundary (`message_high_water` trim or `history_branch`) — that boundary is the trimming cycle, so no separate per-cycle bookkeeping exists.
+- **Breaks in on the due day.** A due reminder not already on the island sets `mem` reason `due_reminder`, forcing a rewrite even when overlap with the previous lane would otherwise retain it. That day is only today.
+- **Only a stamp.** Hanging a reminder does not change `status` and does not delete the note. Changing `remind_on` clears `reminded_at`, so a moved date fires again; clearing the date drops both fields.
+- **Written once per day.** `create_note()` refuses to insert a second live note with the same content and the same `remind_on`, returning the existing row with `duplicate_of`. Without this, one day would surface several identical notes at once.
+- **Capped and fail-soft.** At most `DUE_REMINDER_MAX` (3) hang per turn; the remainder keep an empty `reminded_at` and return on a later turn. A malformed row is logged and skipped rather than stalling the lane.
+- **Rendered wording.** Date-bearing notes gain leading anchors in the island: 说的就是今天 / 说的是 `YYYY-MM-DD` / 说的是 `YYYY-MM-DD`，已经过了, plus `xx天前记的` from `created_at`. Phrasing is computed from whole Asia/Shanghai days only, so the island fingerprint (a prompt-cache breakpoint anchor) changes at most once per day.
+- **Where it lives.** Migration `supabase/migrations/20260828_mem_note_remind_on.sql`; day helpers in `runtime.py` (`LOCAL_DAY_TZ`, `local_today`, `parse_local_date`, `local_day_of`); the 几天前 wording in `utils.human_time_ago`, shared with `room_context`; tools `shenyu_write_mem_note` / `shenyu_update_mem_note` accept `remind_on`; Admin exposes 提醒日期 and a read-only 已提醒 on the Mem0 drawer.
 
 When an active Mem note enters the shared unified Recall index, its document contains only the original `content` and its time. `summary`, type, trigger text, importance, source model, and all structured fields remain Mem-management data; they do not enter shared keyword search, embedding, or graph auto-linking. The Mem-specific automatic-injection lane above still uses its own explicit eligibility and anchor rules.
 
@@ -125,6 +139,7 @@ Memory Island decision:
 - A hard direct reference means either an active star UUID written in the user text or a sufficiently long exact phrase that occurs in only one active candidate. A newly entering hard reference bypasses the overlap gate with no cooldown.
 - A soft direct reference requires both an explicit recall intent (for example "还记得") and anchors that resolve to exactly one active star. It may bypass the overlap gate once per star after `STAR_SOFT_DIRECT_COOLDOWN_TURNS` real user turns (default 8, editable in Admin Stars settings). Only `initial`, `new_user`, and `branch` advance that counter; retry, roll, tail edit, and tool continuation do not. Setting it to 0 disables this soft cooldown.
 - `branch` and `message_high_water` rebuild both Star and Mem lanes from their current proposals. They are different events: branch means earlier semantic history changed; message high-water means the retained window crossed its trimming boundary.
+- `due_reminder` rebuilds the Mem lane only, when a mem note whose `remind_on` day has arrived is not yet on the island. See § Date reminders.
 - ContextBuilder asks Stars to re-check every previous island star as active, even if it falls outside the normal candidate limit. If a current star was archived, the Star lane immediately adopts the current proposal.
 - Direct-reference traces store only the match kind/count. They do not add the matched phrase itself to candidate feature JSON.
 

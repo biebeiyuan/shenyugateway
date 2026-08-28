@@ -193,6 +193,9 @@ class MemNotePatch(BaseModel):
     mention_count: Optional[int] = None
     promotion_score: Optional[float] = None
     decay_after: Optional[str] = None
+    # 日期提醒（reminded_at 传空就是"当没提醒过"，那天还没过就会再挂一次）
+    remind_on: Optional[str] = None
+    reminded_at: Optional[str] = None
     # promise
     promise_text: Optional[str] = None
     trigger_scenarios: Optional[list[str] | str] = None

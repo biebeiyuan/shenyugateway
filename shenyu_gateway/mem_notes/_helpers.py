@@ -56,6 +56,9 @@ MEM_NOTE_PATCH_FIELDS = {
     "mention_count",
     "promotion_score",
     "decay_after",
+    # 日期提醒
+    "remind_on",
+    "reminded_at",
     # promise
     "promise_text",
     "trigger_scenarios",
@@ -96,6 +99,7 @@ _MEM_NOTE_SELECT_FIELDS = (
     "source_excerpt,review_note,reviewed_at,created_at,updated_at,"
     "summary,memory_kind,people,places,objects,keywords,event_time,"
     "importance,confidence,mention_count,promotion_score,decay_after,"
+    "remind_on,reminded_at,"
     "promise_text,trigger_scenarios,due_hint,resolved,resolved_at,next_action,privacy_level,"
     "joke_text,scene_tags,last_used_at,"
     "routine_domain,pattern,phase,constraints,last_confirmed_at,"
@@ -106,7 +110,7 @@ _MEM_NOTE_SELECT_FIELDS_LIGHT = (
     "id,session_tag,content,mem_type,trigger_text,trigger_keywords,entities,status,"
     "cooldown_hours,last_triggered_at,trigger_count,source_model,created_at,updated_at,"
     "summary,memory_kind,people,places,objects,keywords,event_time,"
-    "importance,mention_count,promotion_score,"
+    "importance,mention_count,promotion_score,remind_on,reminded_at,"
     "promise_text,resolved,joke_text,scene_tags,last_used_at,"
     "routine_domain,pattern,topic,thread_resolved"
 )

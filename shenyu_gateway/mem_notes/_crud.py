@@ -51,6 +51,7 @@ class CrudMixin:
         keywords: Any = None,
         event_time: Any = None,
         importance: Any = None,
+        remind_on: Any = None,
         # promise
         promise_text: Any = None,
         trigger_scenarios: Any = None,
@@ -163,6 +164,11 @@ class CrudMixin:
             payload["event_time"] = normalized_event_time
         if importance is not None:
             payload["importance"] = self._int_range(importance, 1, 0, 5)
+        resolved_remind_on, remind_error = self._remind_on(remind_on)
+        if remind_error:
+            return {"ok": False, "error": remind_error}
+        if resolved_remind_on:
+            payload["remind_on"] = resolved_remind_on
 
         # promise fields
         normalized_promise = _normalize_text(promise_text).strip() if promise_text else ""
@@ -222,6 +228,17 @@ class CrudMixin:
         active_error = self._active_validation_error(payload)
         if active_error:
             return {"ok": False, "error": active_error}
+
+        # 同一件事同一天，只留一张。否则那天到了会一口气挂出好几条一样的。
+        if resolved_remind_on:
+            existing = await self._find_reminder_duplicate(normalized_content, resolved_remind_on)
+            if existing:
+                return {
+                    "ok": True,
+                    "note_id": existing.get("id"),
+                    "note": existing,
+                    "duplicate_of": existing.get("id"),
+                }
 
         row = await self.supabase.insert("shenyu_mem_notes", payload)
         await self._sync_note_graph_fail_soft(row)
@@ -503,6 +520,31 @@ class CrudMixin:
     # CRUD helpers
     # ------------------------------------------------------------------
 
+    async def _find_reminder_duplicate(
+        self,
+        content: str,
+        remind_on: str,
+    ) -> Optional[dict[str, Any]]:
+        """Return an existing live note with the same content on the same day."""
+        try:
+            rows = await self.supabase.query(
+                "shenyu_mem_notes",
+                {
+                    "remind_on": f"eq.{remind_on}",
+                    "status": "neq.archived",
+                    "limit": "20",
+                    "select": _MEM_NOTE_SELECT_FIELDS,
+                },
+            )
+        except Exception as exc:
+            logger.warning("[MemNote] Reminder dedupe lookup failed; writing anyway: %s", exc)
+            return None
+        target = content.strip()
+        for row in rows or []:
+            if str(row.get("content") or "").strip() == target:
+                return row
+        return None
+
     async def _get_note(self, note_id: str) -> Optional[dict[str, Any]]:
         note_id = _normalize_note_id(note_id)
         if not note_id or not self.supabase:
@@ -562,6 +604,16 @@ class CrudMixin:
             update["promotion_score"] = self._float_range(patch.get("promotion_score"), 0.0, 0.0, 100.0)
         if "decay_after" in patch:
             update["decay_after"] = _normalize_text(patch.get("decay_after")).strip() or None
+        if "remind_on" in patch:
+            remind_on, remind_error = self._remind_on(patch.get("remind_on"))
+            if remind_error:
+                return {}, remind_error
+            update["remind_on"] = remind_on
+            # 改了日子就是换了一个要提醒的日期，之前挂过的那次不算数了。
+            if remind_on != (_normalize_text(current.get("remind_on")).strip()[:10] or None):
+                update["reminded_at"] = None
+        if "reminded_at" in patch:
+            update["reminded_at"] = _normalize_text(patch.get("reminded_at")).strip() or None
         # promise
         if "promise_text" in patch:
             update["promise_text"] = _normalize_text(patch.get("promise_text")).strip() or None

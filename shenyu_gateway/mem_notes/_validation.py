@@ -4,7 +4,7 @@ import re
 from typing import Any, Optional
 
 from shenyu_gateway.utils import normalize_text as _normalize_text
-from ..runtime import now as _now, parse_ts as _parse_ts
+from ..runtime import now as _now, parse_local_date as _parse_local_date, parse_ts as _parse_ts
 from ._helpers import (
     MEM_NOTE_MEMORY_KIND_ALIASES,
     MEM_NOTE_MEMORY_KINDS,
@@ -76,6 +76,21 @@ class ValidationMixin:
                 result.append(entity)
         return result[:32]
 
+    def _remind_on(self, value: Any) -> tuple[Optional[str], str]:
+        """Normalize a reminder day to YYYY-MM-DD. Day precision on purpose.
+
+        Returns (day, error). An empty value clears the reminder without error;
+        a value we cannot read is refused rather than silently dropped, so a
+        typo never turns into a便签 that quietly never fires.
+        """
+        raw = _normalize_text(value).strip()
+        if not raw:
+            return None, ""
+        parsed = _parse_local_date(raw)
+        if not parsed:
+            return None, "remind_on must be a date like 2026-09-01."
+        return parsed.isoformat(), ""
+
     def _int_range(self, value: Any, fallback: int, min_value: int, max_value: int) -> int:
         try:
             parsed = int(value)
@@ -118,10 +133,15 @@ class ValidationMixin:
             + self._keyword_list(row.get("scene_tags"))
             + self._keyword_list(row.get("trigger_scenarios"))
         )
+        # 一个日子本身就是锚点：到了那天便签自己会挂上来，不需要关键词。
+        remind_on = _normalize_text(row.get("remind_on")).strip()
         if mem_type not in MEM_NOTE_TYPES:
             return "active mem note requires a known mem_type value."
-        if not trigger_text and not trigger_keywords and not entities and not structured_anchors:
-            return "active mem note requires trigger_text, trigger_keywords, entities, or structured anchors."
+        if not trigger_text and not trigger_keywords and not entities and not structured_anchors and not remind_on:
+            return (
+                "active mem note requires trigger_text, trigger_keywords, entities, "
+                "structured anchors, or remind_on."
+            )
         return ""
 
     def _auto_surface_eligibility(self, row: dict[str, Any]) -> tuple[bool, str]:

@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Optional
 
@@ -54,6 +54,37 @@ def parse_ts(value: Optional[str]) -> Optional[datetime]:
         return dt
     except ValueError:
         return None
+
+
+# 我们过的是 Asia/Shanghai 的日子。now() 只给 UTC，所以任何"今天""几天前"
+# 的判断都得先落到这个时区，否则 UTC 的 8 点前会算成前一天。
+LOCAL_DAY_TZ = timezone(timedelta(hours=8))
+
+
+def local_today() -> date:
+    """Return today's date in Asia/Shanghai."""
+    return now().astimezone(LOCAL_DAY_TZ).date()
+
+
+def parse_local_date(value: Any) -> Optional[date]:
+    """Parse a YYYY-MM-DD day (or the day part of a timestamp) into a date."""
+    if isinstance(value, datetime):
+        return value.astimezone(LOCAL_DAY_TZ).date()
+    if isinstance(value, date):
+        return value
+    raw = str(value or "").strip()
+    if not raw:
+        return None
+    try:
+        return date.fromisoformat(raw[:10])
+    except ValueError:
+        return None
+
+
+def local_day_of(value: Optional[str]) -> Optional[date]:
+    """Return the Asia/Shanghai calendar day of a stored timestamp."""
+    dt = parse_ts(value)
+    return dt.astimezone(LOCAL_DAY_TZ).date() if dt else None
 
 
 def mask(value: str, keep: int = 8) -> str:

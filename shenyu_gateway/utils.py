@@ -11,6 +11,22 @@ def shorten(text: str, limit: int = 240) -> str:
     return text[: limit - 3].rstrip() + "..."
 
 
+def human_time_ago(days: int) -> str:
+    """How long ago, said the way we say it. Single source for this wording."""
+    if days < 1:
+        return "今天"
+    if days == 1:
+        return "昨天"
+    if days < 7:
+        return f"{days}天前"
+    weeks = days // 7
+    if weeks == 1:
+        return "一周前"
+    if weeks < 5:
+        return f"{weeks}周前"
+    return f"{days}天前"
+
+
 def clean_config_text(value: Any) -> str:
     return str(value or "").strip()
 

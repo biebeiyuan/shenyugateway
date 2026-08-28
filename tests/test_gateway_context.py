@@ -15,6 +15,7 @@ from shenyu_gateway import upstream_adapter
 from shenyu_gateway.context_builder import ContextBuilder
 from shenyu_gateway.gateway_tools import GatewayToolService
 from shenyu_gateway.gateway_tools import configure_gateway_tools
+from shenyu_gateway.runtime import local_today
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.tool_registry import gateway_native_tools
 from shenyu_gateway.utils import normalize_text as _normalize_text, clean_config_text as _clean_config_text
@@ -164,6 +165,9 @@ def test_context_recall_failure_preserves_previous_island(monkeypatch, tmp_path)
         async def search_notes_contextual(self, *_args, **_kwargs):
             raise RuntimeError("mem unavailable")
 
+        async def due_reminder_notes(self, *_args, **_kwargs):
+            raise RuntimeError("mem unavailable")
+
     class FailingStarService:
         def __init__(self, *_args, **_kwargs):
             pass
@@ -248,6 +252,126 @@ def test_context_retry_removes_mem_note_that_is_no_longer_auto_surface_eligible(
 
     assert [item["id"] for item in package["mem_notes"]] == ["mem-a", "mem-b"]
     assert package["memory_island_decision"]["mem"]["reason"] == "inactive_item"
+
+
+def test_due_reminder_reaches_the_island_with_the_mem_channel_off(monkeypatch, tmp_path):
+    """关着 Mem 通道也要挂到日子的提醒——那个开关管的是自动想起，不是我写下的日子。"""
+    stamped: list[list[dict[str, Any]]] = []
+
+    class ReminderMemService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def search_notes_contextual(self, *_args, **_kwargs):
+            raise AssertionError("mem channel is off; ordinary recall must not run")
+
+        async def due_reminder_notes(self, *_args, **_kwargs):
+            return {
+                "ok": True,
+                "count": 1,
+                "items": [
+                    {
+                        "id": "mem-due",
+                        "content": "圆儿生日",
+                        "summary": "圆儿生日",
+                        "search_mode": "due_reminder",
+                        "remind_on": local_today().isoformat(),
+                        "created_at": "2026-08-01T00:00:00+00:00",
+                    }
+                ],
+            }
+
+        async def auto_surface_active_ids(self, note_ids):
+            return set(note_ids)
+
+        async def mark_context_items_triggered(self, *_args, **_kwargs):
+            return None
+
+        async def mark_reminders_hung(self, items):
+            stamped.append(list(items))
+
+    monkeypatch.setattr(context_builder_module, "MemNoteService", ReminderMemService)
+    monkeypatch.setattr(cfg, "inject_mem_notes", False)
+    monkeypatch.setattr(cfg, "inject_stars", False, raising=False)
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("mem-due-bypass", "operit")
+
+    package = asyncio.run(
+        _context_builder(store, supabase=object()).build_context_package(
+            session,
+            current_user_text="在吗",
+            is_first_turn=False,
+            client_name="operit",
+            previous_island_state={
+                "version": "island-previous",
+                "stars": [],
+                "mem_notes": [],
+                "rendered_text": "",
+            },
+        )
+    )
+
+    assert [item["id"] for item in package["mem_notes"]] == ["mem-due"]
+    rendered = package["memory_island_state"]["rendered_text"]
+    assert "圆儿生日" in rendered
+    assert "说的就是今天" in rendered
+    assert package["memory_island_decision"]["due_reminder_count"] == 1
+    assert [item["id"] for item in stamped[0]] == ["mem-due"]
+
+
+def test_hung_reminder_rides_the_island_and_is_stamped_once(monkeypatch, tmp_path):
+    """挂过一次就不再从水源上来；它跟着岛走，直到下一次裁剪把岛整体重写。"""
+    stamped: list[list[dict[str, Any]]] = []
+
+    class SettledReminderMemService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def due_reminder_notes(self, *_args, **_kwargs):
+            return {"ok": True, "count": 0, "items": []}
+
+        async def auto_surface_active_ids(self, note_ids):
+            return set(note_ids)
+
+        async def mark_context_items_triggered(self, *_args, **_kwargs):
+            return None
+
+        async def mark_reminders_hung(self, items):
+            stamped.append(list(items))
+
+    monkeypatch.setattr(context_builder_module, "MemNoteService", SettledReminderMemService)
+    monkeypatch.setattr(cfg, "inject_mem_notes", False)
+    monkeypatch.setattr(cfg, "inject_stars", False, raising=False)
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("mem-due-carry", "operit")
+    hung = {
+        "id": "mem-due",
+        "content": "圆儿生日",
+        "summary": "圆儿生日",
+        "search_mode": "due_reminder",
+        "remind_on": local_today().isoformat(),
+        "created_at": "2026-08-01T00:00:00+00:00",
+        "reminded_at": "2026-08-28T00:00:00+00:00",
+    }
+
+    package = asyncio.run(
+        _context_builder(store, supabase=object()).build_context_package(
+            session,
+            current_user_text="继续聊",
+            is_first_turn=False,
+            client_name="operit",
+            previous_island_state={
+                "version": "island-previous",
+                "stars": [],
+                "mem_notes": [hung],
+                "rendered_text": "old island",
+            },
+        )
+    )
+
+    assert [item["id"] for item in package["mem_notes"]] == ["mem-due"]
+    # 已经在岛上，不算新进来的，所以不会再打一次戳。
+    assert stamped == [] or stamped == [[]]
 
 
 def test_context_builder_rechecks_previous_star_ids_and_advances_real_user_turn(monkeypatch, tmp_path):

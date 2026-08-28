@@ -404,6 +404,13 @@ def _gateway_core_tools() -> list[dict]:
                         "objects": {"type": "array", "items": {"type": "string"}, "description": "涉及的物品"},
                         "event_time": {"type": "string", "description": "什么时候的事（模糊就好：上周、2026年6月、昨天晚上）"},
                         "importance": {"type": "integer", "minimum": 0, "maximum": 5, "default": 2, "description": "重要度 0-5，默认 2"},
+                        "remind_on": {
+                            "type": "string",
+                            "description": (
+                                "有个日子我不想错过，写成 2026-09-01。到那天这张便签自己会挂上来一次，"
+                                "我看见了就够了，不用提前几天念。精确到天。"
+                            ),
+                        },
                         "trigger_text": {"type": "string", "description": "用自然语言描述什么场景下该想起来"},
                         "trigger_keywords": {"type": "array", "items": {"type": "string"}, "description": "旧版触发关键词（兼容）"},
                         "entities": {"type": "array", "items": {"type": "string"}, "description": "旧版精确锚点（兼容）"},
@@ -573,6 +580,10 @@ def _gateway_mem0_management_tools() -> list[dict]:
                         "trigger_text": {"type": "string"},
                         "event_time": {"type": "string"},
                         "importance": {"type": "integer", "minimum": 0, "maximum": 5},
+                        "remind_on": {
+                            "type": "string",
+                            "description": "改那个要提醒的日子（2026-09-01）；换了日子就当没提醒过，传空就是不惦记了",
+                        },
                         "status": {"type": "string", "enum": ["captured", "active", "paused", "archived"]},
                         "cooldown_hours": {"type": "integer", "minimum": 0, "maximum": 8760},
                         "review_note": {"type": "string"},

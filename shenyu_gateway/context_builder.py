@@ -11,7 +11,11 @@ from .context_layers import (
 )
 from .gateway_tools import GatewayToolService
 from .mem_notes import MemNoteService
-from .memory_island import memory_island_log_content, resolve_memory_island
+from .memory_island import (
+    MEM_DUE_REMINDER_MODE,
+    memory_island_log_content,
+    resolve_memory_island,
+)
 from .request_logs import _mark_request_log_phase
 from .resident_books import ResidentBooksService, render_bookshelf_overview
 from .runtime import logger
@@ -30,6 +34,40 @@ _HEARTBEAT_PROMPT = """## Heartbeat（仅网关可见）
 不必每次都写；没有感触就空着。
 """
 
+
+
+def _merge_due_reminders(
+    due_items: list[dict[str, Any]],
+    recalled_items: list[dict[str, Any]],
+    *,
+    previous_mem_notes: list[dict[str, Any]],
+    carry_previous_reminders: bool,
+) -> list[dict[str, Any]]:
+    """Put due reminders at the head of the Mem lane, then ordinary recall.
+
+    A reminder that is already on the island keeps its place until the island is
+    rewritten (a trim boundary or a branch), which is exactly "hangs for one
+    trimming cycle". Once it has hung, it is done — it does not come back.
+    """
+    merged: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def take(item: dict[str, Any]) -> None:
+        item_id = str(item.get("id") or "").strip()
+        if not item_id or item_id in seen:
+            return
+        seen.add(item_id)
+        merged.append(item)
+
+    if carry_previous_reminders:
+        for item in previous_mem_notes:
+            if item.get("search_mode") == MEM_DUE_REMINDER_MODE:
+                take(item)
+    for item in due_items:
+        take(item)
+    for item in recalled_items:
+        take(item)
+    return merged
 
 
 class ContextBuilder:
@@ -194,6 +232,16 @@ class ContextBuilder:
                 logger.warning("[Context] %s recall failed: %s", source, exc)
                 return {"ok": False, "items": [], "error": str(exc)}
 
+        # 到日子的提醒是另一条水源：Mem 通道关着的时候它照样上来。
+        # 关掉 Mem 通道的意思是"别自动想起便签"，不是"忘掉我写下的日子"。
+        if reuse_previous_island:
+            due_task = asyncio.sleep(0, result={"ok": True, "items": []})
+        else:
+            due_task = fail_soft_recall(
+                mem_note_service.due_reminder_notes(),
+                "mem note due reminder",
+            )
+
         if reuse_previous_island:
             notes_task = asyncio.sleep(
                 0,
@@ -216,7 +264,8 @@ class ContextBuilder:
             notes_task = asyncio.sleep(0, result={"ok": True, "items": []})
 
         async def validate_previous_mem_notes() -> dict[str, Any]:
-            if not inject_mem_notes or not previous_mem_note_ids:
+            # 通道关着也要验：岛上可能挂着一条到日子的提醒，它不受那个开关管。
+            if not previous_mem_note_ids:
                 return {"ok": True, "ids": []}
             if not self.supabase_client:
                 return {"ok": False, "ids": [], "error": "Supabase is not configured."}
@@ -261,8 +310,15 @@ class ContextBuilder:
         else:
             stars_task = asyncio.sleep(0, result={"ok": True, "items": []})
 
-        calendar_context, book_overview, notes_result, stars_result, mem_active_result = await asyncio.gather(
-            calendar_task, bookshelf_task, notes_task, stars_task, mem_active_task
+        (
+            calendar_context,
+            book_overview,
+            notes_result,
+            stars_result,
+            mem_active_result,
+            due_result,
+        ) = await asyncio.gather(
+            calendar_task, bookshelf_task, notes_task, stars_task, mem_active_task, due_task
         )
         package["calendar_context"] = calendar_context
         package["mem_notes"] = notes_result.get("items") or []
@@ -273,11 +329,23 @@ class ContextBuilder:
             if inject_stars and stars_result.get("ok")
             else list((previous_island_state or {}).get("stars") or []) if inject_stars else []
         )
-        proposed_mem_notes = (
-            package["mem_notes"]
-            if inject_mem_notes and notes_result.get("ok")
-            else list((previous_island_state or {}).get("mem_notes") or []) if inject_mem_notes else []
-        )
+        if reuse_previous_island:
+            proposed_mem_notes = list(package["mem_notes"])
+        else:
+            recalled_mem_notes = (
+                package["mem_notes"]
+                if inject_mem_notes and notes_result.get("ok")
+                else list((previous_island_state or {}).get("mem_notes") or []) if inject_mem_notes else []
+            )
+            # 到日子的提醒排在前面，然后才是普通召回；同一条不重复挂。
+            # 已经挂上去的提醒跟着岛走，直到下一次裁剪把岛整体重写——
+            # 那正好是"挂一整个裁剪周期"，不需要再记一套周期账。
+            proposed_mem_notes = _merge_due_reminders(
+                due_result.get("items") or [],
+                recalled_mem_notes,
+                previous_mem_notes=list((previous_island_state or {}).get("mem_notes") or []),
+                carry_previous_reminders=not force_island_rewrite,
+            )
         active_star_ids = None
         if stars_result.get("ok") and "_active_required_ids" in stars_result:
             active_star_ids = {
@@ -307,6 +375,11 @@ class ContextBuilder:
         )
         island_meta["star_recall_ok"] = bool(stars_result.get("ok"))
         island_meta["mem_recall_ok"] = bool(notes_result.get("ok"))
+        island_meta["due_reminder_count"] = sum(
+            1
+            for item in island_state.get("mem_notes") or []
+            if item.get("search_mode") == MEM_DUE_REMINDER_MODE
+        )
         package["memory_island_state"] = island_state
         package["memory_island_decision"] = island_meta
         package["memory_island_log_content"] = memory_island_log_content(
@@ -324,8 +397,14 @@ class ContextBuilder:
                 trace_log=trace_log,
             )
         if entering["mem_notes"]:
-            await MemNoteService(self.cfg, self.supabase_client).mark_context_items_triggered(
-                entering["mem_notes"]
+            await mem_note_service.mark_context_items_triggered(entering["mem_notes"])
+            # 挂上去了就打「已提醒」，那张便签原样留着，状态不动。
+            await mem_note_service.mark_reminders_hung(
+                [
+                    item
+                    for item in entering["mem_notes"]
+                    if item.get("search_mode") == MEM_DUE_REMINDER_MODE
+                ]
             )
 
         if want_bookshelf:

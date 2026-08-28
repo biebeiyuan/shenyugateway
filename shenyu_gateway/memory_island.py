@@ -4,12 +4,36 @@ import hashlib
 import uuid
 from typing import Any
 
+from .runtime import local_day_of, local_today, parse_local_date
 from .stars import render_star_context
-from .utils import shorten
+from .utils import human_time_ago, shorten
 
 
 STAR_SOFT_DIRECT_COOLDOWN_TURNS = 8
 _STAR_HARD_DIRECT_KINDS = frozenset({"star_id", "exact_phrase"})
+MEM_DUE_REMINDER_MODE = "due_reminder"
+
+
+def _mem_date_note(item: dict[str, Any]) -> list[str]:
+    """带日期的便签多说两句：这个日子到了没有，这张是多久前记的。
+
+    只按 Asia/Shanghai 的整天算，所以同一天里渲染结果不变——动态岛是缓存断点，
+    一句话每小时变一次会白烧掉一次缓存。
+    """
+    remind_on = parse_local_date(item.get("remind_on"))
+    if not remind_on:
+        return []
+    today = local_today()
+    if remind_on == today:
+        parts = ["说的就是今天"]
+    elif remind_on < today:
+        parts = [f"说的是{remind_on.isoformat()}，已经过了"]
+    else:
+        parts = [f"说的是{remind_on.isoformat()}"]
+    written_on = local_day_of(item.get("created_at"))
+    if written_on:
+        parts.append(f"{human_time_ago(max((today - written_on).days, 0))}记的")
+    return parts
 
 
 def render_mem_notes(items: list[dict[str, Any]]) -> str:
@@ -24,7 +48,7 @@ def render_mem_notes(items: list[dict[str, Any]]) -> str:
             continue
         mem_type = str(item.get("mem_type") or "").strip()
         prefix = f"{mem_type}：" if mem_type else ""
-        anchors = []
+        anchors = _mem_date_note(item)
         for label, key in (("人", "people"), ("地", "places"), ("物", "objects")):
             values = item.get(key) or []
             if values:
@@ -301,6 +325,15 @@ def resolve_memory_island(
         )
     mem_force_reason = external_force_reason
     proposed_mem = list(proposed_mem_notes or [])
+    if not mem_force_reason:
+        # 到日子的提醒要挂上来，别等下一次重写——那个日子只有今天。
+        old_mem_ids_for_due = {_item_id(item) for item in old_mem if _item_id(item)}
+        if any(
+            item.get("search_mode") == MEM_DUE_REMINDER_MODE
+            and _item_id(item) not in old_mem_ids_for_due
+            for item in proposed_mem
+        ):
+            mem_force_reason = "due_reminder"
     if active_mem_note_ids is not None:
         old_mem_ids = {_item_id(item) for item in old_mem if _item_id(item)}
         active_mem_ids = {

@@ -326,6 +326,7 @@ function reasonText(value: unknown): string {
     empty_transition: '内容从有到无，或从无到有',
     forced: '这次被明确要求重新整理',
     proposal_applied: '采用了本次召回结果',
+    due_reminder: '有便签写的日子到了，挂上来给他看一次',
   }
   return labels[key] || key || '没有额外原因'
 }

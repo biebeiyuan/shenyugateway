@@ -18,6 +18,8 @@ from .room_text import (
     door_zone,
 )
 from .runtime import logger, now, parse_ts
+# 「几天前」的说法统一在 utils，动态岛的日期提醒共用同一套措辞。
+from .utils import human_time_ago
 
 
 # ── Charge Calculation ─────────────────────────────────────────────────
@@ -244,7 +246,7 @@ def _render_star_wall_hint(spec: dict) -> str:
         snippet = f"{chord}，{content}" if chord else content
         if snippet:
             if days_ago is not None and days_ago > 7:
-                parts.append(f"最近落下的那颗是{_human_time_ago(days_ago)}的——{snippet}")
+                parts.append(f"最近落下的那颗是{human_time_ago(days_ago)}的——{snippet}")
             else:
                 parts.append(f"最近的一颗还亮着——{snippet}")
 
@@ -254,7 +256,7 @@ def _render_star_wall_hint(spec: dict) -> str:
         last_at = fading.get("last_activated_at") or ""
         days_ago = _days_since(last_at)
         if chord and days_ago is not None:
-            parts.append(f"角落里有一颗在暗——{chord}，{_human_time_ago(days_ago)}。")
+            parts.append(f"角落里有一颗在暗——{chord}，{human_time_ago(days_ago)}。")
 
     return "\n".join(parts)
 
@@ -266,21 +268,6 @@ def _days_since(iso_str: str) -> int | None:
     if not dt:
         return None
     return max(int((now() - dt).total_seconds() / 86400.0), 0)
-
-
-def _human_time_ago(days: int) -> str:
-    if days < 1:
-        return "今天"
-    if days == 1:
-        return "昨天"
-    if days < 7:
-        return f"{days}天前"
-    weeks = days // 7
-    if weeks == 1:
-        return "一周前"
-    if weeks < 5:
-        return f"{weeks}周前"
-    return f"{days}天前"
 
 
 # ── Full Layer Assembly ────────────────────────────────────────────────
