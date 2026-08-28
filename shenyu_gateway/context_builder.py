@@ -42,22 +42,35 @@ def _merge_due_reminders(
     *,
     previous_mem_notes: list[dict[str, Any]],
     carry_previous_reminders: bool,
+    limit: int,
 ) -> list[dict[str, Any]]:
-    """Put due reminders at the head of the Mem lane, then ordinary recall.
+    """Fill the Mem lane up to `limit`, reminders first, then ordinary recall.
 
-    A reminder that is already on the island keeps its place until the island is
+    The contract is a total: the Mem lane never holds more than `limit` notes,
+    and a reminder outranks ordinary recall for those places. It is not
+    "reminders are extra" — the island is a prompt-cache breakpoint anchor, so
+    an unbounded lane means an unbounded cacheable prefix.
+
+    A reminder already on the island keeps its place until the island is
     rewritten (a trim boundary or a branch), which is exactly "hangs for one
     trimming cycle". Once it has hung, it is done — it does not come back.
+
+    A reminder squeezed out by the ceiling never reaches the island, so it is
+    never stamped (stamping follows `entering`) and comes back on a later turn —
+    the same way an over-cap reminder already behaves in `due_reminder_notes`.
     """
-    merged: list[dict[str, Any]] = []
+    ceiling = max(1, int(limit))
+    lane: list[dict[str, Any]] = []
     seen: set[str] = set()
 
     def take(item: dict[str, Any]) -> None:
+        if len(lane) >= ceiling:
+            return
         item_id = str(item.get("id") or "").strip()
         if not item_id or item_id in seen:
             return
         seen.add(item_id)
-        merged.append(item)
+        lane.append(item)
 
     if carry_previous_reminders:
         for item in previous_mem_notes:
@@ -67,7 +80,7 @@ def _merge_due_reminders(
         take(item)
     for item in recalled_items:
         take(item)
-    return merged
+    return lane
 
 
 class ContextBuilder:
@@ -337,14 +350,16 @@ class ContextBuilder:
                 if inject_mem_notes and notes_result.get("ok")
                 else list((previous_island_state or {}).get("mem_notes") or []) if inject_mem_notes else []
             )
-            # 到日子的提醒排在前面，然后才是普通召回；同一条不重复挂。
-            # 已经挂上去的提醒跟着岛走，直到下一次裁剪把岛整体重写——
-            # 那正好是"挂一整个裁剪周期"，不需要再记一套周期账。
+            # Mem 通道是一个总量：最多 mem_note_limit 条，提醒优先占位。
+            # 不是"提醒是额外的"——动态岛是缓存断点锚，通道无上限就等于
+            # 可缓存前缀无上限。已经挂上去的提醒跟着岛走，直到下一次裁剪
+            # 把岛整体重写——那正好是"挂一整个裁剪周期"，不必再记周期账。
             proposed_mem_notes = _merge_due_reminders(
                 due_result.get("items") or [],
                 recalled_mem_notes,
                 previous_mem_notes=list((previous_island_state or {}).get("mem_notes") or []),
                 carry_previous_reminders=not force_island_rewrite,
+                limit=self.cfg.mem_note_limit,
             )
         active_star_ids = None
         if stars_result.get("ok") and "_active_required_ids" in stars_result:

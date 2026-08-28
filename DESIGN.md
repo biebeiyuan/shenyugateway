@@ -234,6 +234,8 @@ actr_score = clamp((base_activation + 2.5) / 4.5, 0, 1)
 
 便签进动态岛有**两条互不相干的水源**：下面这三层是「按当前对话想起来」，`remind_on` 是「日子到了自己挂上来」（见 3.4.1）。三层由窄到宽：
 
+两条水源共用一个总量：**Mem 通道任何时候不超过 `MEM_NOTE_LIMIT` 条**（默认 3，Admin 里 1~5），提醒优先占位。不是"提醒是额外的"——动态岛是缓存断点锚，通道没有上限就等于可缓存前缀没有上限。合并顺序和占位规则见 `context_builder.py::_merge_due_reminders`。
+
 **第一层：锚点匹配（anchor match，无阈值）**
 
 从便签的 `people`、`places`、`objects` 字段里提取锚点词，检查它们是否出现在当前用户文本中。中文锚点用 recall_terms tokenize 后做子串匹配（因为中文没有空格，"沈予"需要在"沈予说的话"里被找到）。
@@ -262,7 +264,7 @@ v2 `keywords` 字段也参与锚点匹配，但需要通过**特异性过滤**�
 - **拉取形状，不是定时器。** 网关在组装上下文时才判断"日子到了没"，请求之外没有推送通道。所以用 `lte.今天` 而不是 `eq.今天`——错过的日子下次照样挂上来。
 - **挂过一次就够了。** 到日子那轮强制重写 Mem lane（`force_reason = "due_reminder"`），之后靠动态岛的正常携带一直挂着，直到窗口跨过裁剪边界（`message_high_water` / `history_branch`）被整体重写。不需要额外簿记。
 - **撤下来只打戳。** 挂过就写 `reminded_at`，便签的 `status` 不动、也不删。改了 `remind_on` 会清掉这个戳（那天还没过就会再挂一次）。
-- **每轮上限 3 条，失败不炸。** 超出的把 `reminded_at` 留空推到下一轮；查询异常按 fail-soft 处理，不影响其余 lane。
+- **占位不加位，失败不炸。** 提醒和普通召回抢同一个 `MEM_NOTE_LIMIT`（见 3.4 开头），提醒排在前面。查询本身还有 `DUE_REMINDER_MAX` 上限。被总量挤掉的那条不会进动态岛，因此也不会被打戳（打戳跟着实际进岛的 `entering` 走），下一轮再来。查询异常按 fail-soft 处理，不影响其余 lane。
 
 完整的渲染措辞、去重规则和 Supabase 列定义在 `docs/architecture/MEMORY_ROOM.md` § Date reminders。
 

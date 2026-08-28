@@ -12,7 +12,7 @@ from shenyu_gateway import context_builder as context_builder_module
 from shenyu_gateway import context_layers
 from shenyu_gateway import room_context
 from shenyu_gateway import upstream_adapter
-from shenyu_gateway.context_builder import ContextBuilder
+from shenyu_gateway.context_builder import ContextBuilder, _merge_due_reminders
 from shenyu_gateway.gateway_tools import GatewayToolService
 from shenyu_gateway.gateway_tools import configure_gateway_tools
 from shenyu_gateway.runtime import local_today
@@ -69,6 +69,8 @@ def _load_gateway_helpers():
         enable_inline_memory_capture=False,
         inject_inline_memory_prompt=False,
         inject_mem_notes=False,
+        # Mem 通道的总量上限；提醒和普通召回共用这几个位置。
+        mem_note_limit=3,
         inject_atomic_memories=False,
         default_atomic_memory_limit=3,
         wake_welcome_message="",
@@ -252,6 +254,79 @@ def test_context_retry_removes_mem_note_that_is_no_longer_auto_surface_eligible(
 
     assert [item["id"] for item in package["mem_notes"]] == ["mem-a", "mem-b"]
     assert package["memory_island_decision"]["mem"]["reason"] == "inactive_item"
+
+
+def _reminder(note_id: str) -> dict[str, Any]:
+    return {"id": note_id, "content": note_id, "search_mode": "due_reminder"}
+
+
+def _recalled(note_id: str) -> dict[str, Any]:
+    return {"id": note_id, "content": note_id, "search_mode": "anchor"}
+
+
+def test_mem_lane_is_a_total_and_reminders_take_the_places_first():
+    """Mem 通道是一个总量，不是"提醒额外加"——动态岛是缓存断点锚。"""
+    lane = _merge_due_reminders(
+        [_reminder("due-1"), _reminder("due-2")],
+        [_recalled("recall-1"), _recalled("recall-2"), _recalled("recall-3")],
+        previous_mem_notes=[],
+        carry_previous_reminders=True,
+        limit=3,
+    )
+
+    assert [item["id"] for item in lane] == ["due-1", "due-2", "recall-1"]
+
+
+def test_reminders_can_fill_the_whole_mem_lane():
+    lane = _merge_due_reminders(
+        [_reminder("due-1"), _reminder("due-2"), _reminder("due-3"), _reminder("due-4")],
+        [_recalled("recall-1")],
+        previous_mem_notes=[],
+        carry_previous_reminders=True,
+        limit=3,
+    )
+
+    # 挤掉的 due-4 从没进过岛，所以 mark_reminders_hung 看不到它，
+    # reminded_at 留空，下一轮再来。
+    assert [item["id"] for item in lane] == ["due-1", "due-2", "due-3"]
+
+
+def test_a_hung_reminder_keeps_its_place_against_fresh_recall():
+    lane = _merge_due_reminders(
+        [],
+        [_recalled("recall-1"), _recalled("recall-2"), _recalled("recall-3")],
+        previous_mem_notes=[_reminder("hung-1")],
+        carry_previous_reminders=True,
+        limit=3,
+    )
+
+    assert [item["id"] for item in lane] == ["hung-1", "recall-1", "recall-2"]
+
+
+def test_a_rewritten_island_drops_the_hung_reminder_and_frees_its_place():
+    lane = _merge_due_reminders(
+        [],
+        [_recalled("recall-1"), _recalled("recall-2"), _recalled("recall-3")],
+        previous_mem_notes=[_reminder("hung-1")],
+        carry_previous_reminders=False,
+        limit=3,
+    )
+
+    assert [item["id"] for item in lane] == ["recall-1", "recall-2", "recall-3"]
+
+
+def test_mem_lane_never_exceeds_the_limit_from_all_three_sources():
+    # 三个来源：岛上挂着的旧提醒、今天新到期的、普通召回。加起来也不能超。
+    lane = _merge_due_reminders(
+        [_reminder("due-1"), _reminder("due-2")],
+        [_recalled("recall-1"), _recalled("recall-2")],
+        previous_mem_notes=[_reminder("hung-1"), _reminder("hung-2")],
+        carry_previous_reminders=True,
+        limit=3,
+    )
+
+    assert len(lane) == 3
+    assert [item["id"] for item in lane] == ["hung-1", "hung-2", "due-1"]
 
 
 def test_due_reminder_reaches_the_island_with_the_mem_channel_off(monkeypatch, tmp_path):
