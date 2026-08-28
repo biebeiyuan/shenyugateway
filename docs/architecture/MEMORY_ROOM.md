@@ -10,6 +10,8 @@ Mem notes are small personal notes, separate from event memories and calendar pa
 
 `INJECT_MEM_NOTES` controls injection: before a reply, search mem notes that are eligible for automatic recall and inject relevant hits in the `mem` layer. `active` is necessary but not sufficient: the row must also pass active-ready validation, and a resolved promise is never automatically surfaced. Eligibility means the note may participate in retrieval; it does not promise that the note will appear in a particular turn.
 
+The switch takes effect at **three independent places** in `context_builder.py`, and changing what "channel off" means requires visiting all three: the `notes_task` construction (skip contextual recall), `validate_previous_mem_notes()` (still re-check notes already on the island — a hung date reminder lives here, so an early return would judge it inactive and drop it next turn), and the `recalled_mem_notes` ternary (which previous-island notes may be carried). Sources not gated by the switch — currently only date reminders — merge after those three.
+
 Inline `[mem]...[/mem]` tag capture has been removed. Mem notes are now written exclusively via tool call (`shenyu_write_mem_note`). The note types are `她为我做的事`, `我为她做的事`, `关于她的事实`, `关于我的事`, `心里那一档`, and `承诺`. If type or trigger is missing, the writer fills safe defaults so the note can surface immediately.
 
 Writing a note requires only `content`. All other fields are auto-enriched from the content when not explicitly provided:

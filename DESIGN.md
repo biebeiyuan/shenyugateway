@@ -232,7 +232,7 @@ actr_score = clamp((base_activation + 2.5) / 4.5, 0, 1)
 
 ### 3.4 检索与注入（搜索流程）
 
-便签检索分三层，由窄到宽：
+便签进动态岛有**两条互不相干的水源**：下面这三层是「按当前对话想起来」，`remind_on` 是「日子到了自己挂上来」（见 3.4.1）。三层由窄到宽：
 
 **第一层：锚点匹配（anchor match，无阈值）**
 
@@ -252,6 +252,19 @@ v2 `keywords` 字段也参与锚点匹配，但需要通过**特异性过滤**�
 - 无锚点支撑时：`min_score ≥ 0.40`，`vector_score ≥ 0.50`
 - 有锚点相关词时：`min_score ≥ 0.30`，`vector_score ≥ 0.42`
 - 低信息量查询（短文本、少信号词）直接跳过语义召回
+
+### 3.4.1 日期提醒（remind_on）——第二条水源
+
+写便签时可以带一个 `remind_on` 日期（精确到天，Asia/Shanghai）。它不参与上面三层的打分，是一条独立通道：
+
+- **不受 `INJECT_MEM_NOTES` 管。** 那个开关关掉的是"按对话自动想起"，不是"沈予自己写下的日子"。所以日期提醒走独立的 `due_reminder_notes()` 查询，在 Mem lane 头部并入。
+- **一个日子本身就是激活锚点。** 有 `remind_on` 的便签不需要关键词或触发词也算 active-ready。
+- **拉取形状，不是定时器。** 网关在组装上下文时才判断"日子到了没"，请求之外没有推送通道。所以用 `lte.今天` 而不是 `eq.今天`——错过的日子下次照样挂上来。
+- **挂过一次就够了。** 到日子那轮强制重写 Mem lane（`force_reason = "due_reminder"`），之后靠动态岛的正常携带一直挂着，直到窗口跨过裁剪边界（`message_high_water` / `history_branch`）被整体重写。不需要额外簿记。
+- **撤下来只打戳。** 挂过就写 `reminded_at`，便签的 `status` 不动、也不删。改了 `remind_on` 会清掉这个戳（那天还没过就会再挂一次）。
+- **每轮上限 3 条，失败不炸。** 超出的把 `reminded_at` 留空推到下一轮；查询异常按 fail-soft 处理，不影响其余 lane。
+
+完整的渲染措辞、去重规则和 Supabase 列定义在 `docs/architecture/MEMORY_ROOM.md` § Date reminders。
 
 ### 3.5 running_joke 的特殊处理
 
@@ -287,7 +300,7 @@ heat = initial_temp × decay + recall_bonus         # 最终温度 [0, 1]
 ### 3.8 改动边界
 
 > **注意**：`mem_notes.py` 已在重构中拆成 `mem_notes/` 包（mixin 模式，同 `stars/`）。`MemNoteService`
-> 由四个 mixin 组装而成，定义在 `mem_notes/__init__.py`，并在包级 re-export 了旧的兼容符号
+> 由 `SearchMixin`、`CrudMixin`、`SuggestionsMixin`、`ValidationMixin` 组装而成，定义在 `mem_notes/__init__.py`，并在包级 re-export 了旧的兼容符号
 > （`MemNoteService`、`MEM_NOTE_*` 常量、`_clean_context_query`、`running_joke_serendipity_rate`），
 > 所以 `from shenyu_gateway.mem_notes import ...` 全部照旧可用。下表已指向拆分后的真实位置。
 
@@ -303,9 +316,11 @@ heat = initial_temp × decay + recall_bonus         # 最终温度 [0, 1]
 | running_joke 随机率 | `mem_notes_relevance.py::running_joke_serendipity_rate` |
 | heat 计算 | `mem_notes_relevance.py::compute_heat` |
 | kind 别名表（常量） | `mem_notes/_helpers.py::MEM_NOTE_MEMORY_KIND_ALIASES`（别名命中逻辑在 `_validation.py`） |
+| 日期提醒（查询 / 打戳） | `mem_notes/_search.py::due_reminder_notes` + `mark_reminders_hung`；渲染和强制重写在 `memory_island.py` |
+| **新增一个便签列** | 同一列必须同时出现在 `mem_notes/_helpers.py` 的三处：`MEM_NOTE_PATCH_FIELDS`、`_MEM_NOTE_SELECT_FIELDS`、`_MEM_NOTE_SELECT_FIELDS_LIGHT`。注入路径只读 LIGHT——漏在那里不会报错，只会让新列永远读不到 |
 | 工具定义 | `tool_registry.py` + `tool_schemas.py` |
-| 管理 API | `gateway_admin_routes.py` |
-| 前端 | `admin/src/views/Mem0View.vue` |
+| 管理 API | `gateway_admin_routes.py`；Admin 可编辑的字段还必须加进 `schemas.py::MemNotePatch`（patch 由 `model_fields_set` 构造，漏了就静默丢弃） |
+| 前端 | `admin/src/views/Mem0View.vue` + `admin/src/api/config.ts` 的 `MemNoteItem` / `MemNotePatch` |
 
 ---
 

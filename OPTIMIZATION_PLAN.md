@@ -34,7 +34,7 @@
 > |-------|------|------|
 > | A 场景向量缓存 | ✅ 已完成 | `stars/_scene.py` 的 `_DESC_VECTOR_CACHE` |
 > | B context build 并行化 | ✅ 已完成 | `context_builder.py` 合并 gather（AUDIT_MATRIX 区域五已确认） |
-> | C 中文停用词统一 | ✅ 已完成 | `recall.py::is_generic_chinese_fragment` 为单一来源，`mem_notes_relevance.py` 复用 |
+> | C 中文停用词统一 | ✅ 已完成 | `recall/_text.py::is_generic_chinese_fragment` 为单一来源（包级 re-export），`mem_notes_relevance.py` 复用 |
 > | D 配置 fallback / 去重 | ◐ D4 已完成（2026-07-26） | D4：`_vector_literal` 收敛到 `embeddings.vector_literal`、`_json_dict` 收敛到 `utils.json_dict`，recall 与 stars 共享单一实现；D1 `stars/_crud.py` 死 fallback 仍未处理 |
 > | E 测试硬化 | ✅ 已完成 | 硬化测试文件均已存在；全仓测试早已超过 283 基线（2026-07-26 为 550+） |
 > | F 拆 gateway_tools.py | ✅ 已完成（2026-07-26） | `shenyu_gateway/gateway_tools/` mixin 包；拆前删除了 ask_memory / search_primary_texts / meta_summaries 死代码，并新增 broker 描述与 daily 名单守护测试 |
@@ -53,7 +53,7 @@
 **改法**（`stars/_scene.py`）：
 1. 把 6 条描述向量缓存一次。描述是 config 驱动（`_load_scene_config` / `star_scene_rules_path`），所以缓存 key 用"描述文本"或 config 内容的 hash，避免配置热更新后用旧向量。
    - 实现选项：模块级 `dict[str, list[float]]`，key 为 `desc` 文本；命中直接用，未命中才 embed 并存。
-2. （次要、可选）复用 query 向量：注意 `_classify_scene_by_embedding` 用 `query[:800]`，而 `_embedding.py::_vector_rows` 用 `query[:1600]` —— 截断长度不同，复用需要权衡，**不强求**。先做描述缓存就能拿回绝大部分延迟。
+2. （次要、可选）复用 query 向量：注意 `_classify_scene_by_embedding` 用 `query[:800]`，而 `stars/_embedding.py::_vector_rows` 用 `query[:1600]` —— 截断长度不同，复用需要权衡，**不强求**。先做描述缓存就能拿回绝大部分延迟。
 
 **验证**：
 - [ ] 新增/补强 `tests/test_star_memory.py`：同一描述第二次分类不再触发对该描述的 embed（用 fake embedding client 计数调用次数）。

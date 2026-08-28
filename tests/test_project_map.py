@@ -1,4 +1,5 @@
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -122,6 +123,67 @@ def test_readme_maintenance_map_covers_runtime_packages():
     entries = set(re.findall(r"`([^`]+)`", _maintenance_map()))
     missing = sorted(pkg for pkg in packages if pkg not in entries)
     assert not missing, f"README Maintenance Map is missing package entries: {missing}"
+
+
+def _tracked_files() -> list[str]:
+    result = subprocess.run(
+        ["git", "ls-files"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.split()
+
+
+def _live_docs() -> list[str]:
+    # Dated snapshots under docs/history/ record what was true then; they are
+    # deliberately allowed to name symbols that have since moved or gone.
+    return [
+        path
+        for path in _tracked_files()
+        if path.endswith(".md") and not path.startswith("docs/history/")
+    ]
+
+
+def _symbol_anchors(doc: str) -> set[tuple[str, str]]:
+    text = (ROOT / doc).read_text(encoding="utf-8")
+    return set(re.findall(r"`([\w./-]+\.(?:py|ts|vue))::([\w.]+)`", text))
+
+
+def _resolve_named_file(reference: str, tracked: list[str]) -> str | None:
+    """Docs name files by the shortest unambiguous suffix, not the full path."""
+    if (ROOT / reference).is_file():
+        return reference
+    matches = [path for path in tracked if path.endswith("/" + reference)]
+    return matches[0] if len(matches) == 1 else None
+
+
+def _defines_symbol(path: str, symbol: str) -> bool:
+    text = (ROOT / path).read_text(encoding="utf-8", errors="replace")
+    leaf = re.escape(symbol.rsplit(".", 1)[-1])
+    return bool(
+        re.search(rf"^\s*(?:async\s+def|def|class)\s+{leaf}\b", text, flags=re.MULTILINE)
+        or re.search(rf"^\s*{leaf}\s*[:=]", text, flags=re.MULTILINE)
+    )
+
+
+def test_live_docs_symbol_anchors_still_resolve():
+    # A `file.py::symbol` anchor is the one doc reference that names something
+    # small enough to be moved or renamed without anyone noticing. Path-only
+    # references are already covered by the map tests above; symbols are not.
+    tracked = _tracked_files()
+    if not tracked:  # No git available: nothing to verify against.
+        return
+    broken: dict[str, list[str]] = {}
+    for doc in _live_docs():
+        for reference, symbol in sorted(_symbol_anchors(doc)):
+            path = _resolve_named_file(reference, tracked)
+            if path is None:
+                broken.setdefault(doc, []).append(f"{reference}::{symbol} (file not found)")
+            elif not _defines_symbol(path, symbol):
+                broken.setdefault(doc, []).append(f"{reference}::{symbol} (gone from {path})")
+    assert not broken, f"docs point at symbols that no longer exist: {broken}"
 
 
 def test_map_tier_docs_anchor_by_function_name_not_line_number():
