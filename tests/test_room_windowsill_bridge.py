@@ -8,6 +8,8 @@ from shenyu_gateway.recall import RecallIndexService
 from shenyu_gateway.room_tools import execute_room_tool, sync_legacy_room_scribbles
 from shenyu_gateway.store import GatewayStore
 
+from .fake_postgrest import project_select
+
 
 class FakeSupabase:
     def __init__(self):
@@ -70,9 +72,9 @@ class FakeSupabase:
             rows = list(self.windowsill_rows)
             if origin.startswith("eq."):
                 rows = [row for row in rows if row.get("origin", "normal") == origin[3:]]
-            return rows[: int(params.get("limit", len(rows)))]
+            return project_select(rows[: int(params.get("limit", len(rows)))], params)
         if table == "shenyu_recall_index":
-            return list(self.recall_rows)
+            return project_select(self.recall_rows, params)
         return []
 
 

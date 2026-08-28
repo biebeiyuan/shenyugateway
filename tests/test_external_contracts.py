@@ -6,6 +6,8 @@ from fastapi.testclient import TestClient
 import gateway
 from shenyu_gateway.store import GatewayStore
 
+from .fake_postgrest import project_select
+
 
 class FakeSupabaseClient:
     def __init__(self, calendar_pages: list[dict]):
@@ -20,7 +22,7 @@ class FakeSupabaseClient:
         if isinstance(id_filter, str) and id_filter.startswith("eq."):
             expected_id = id_filter.removeprefix("eq.")
             rows = [row for row in rows if row.get("id") == expected_id]
-        return [dict(row) for row in rows]
+        return project_select(rows, params)
 
 
 @pytest.fixture()

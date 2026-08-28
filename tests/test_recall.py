@@ -16,6 +16,8 @@ from shenyu_gateway.recall import (
     _recency_score,
 )
 
+from .fake_postgrest import project_select
+
 
 class FakeSupabase:
     def __init__(self, rows, vector_rows=None):
@@ -27,7 +29,7 @@ class FakeSupabase:
 
     async def query(self, table, params=None):
         assert table == "shenyu_recall_index"
-        return self.rows + self.vector_rows
+        return project_select(self.rows + self.vector_rows, params)
 
     async def update(self, table, match, data):
         self.updates.append((table, match, data))
@@ -54,7 +56,7 @@ class FakeSourceSupabase:
 
     async def query(self, table, params=None):
         self.queries.append((table, params or {}))
-        return self.rows
+        return project_select(self.rows, params)
 
 
 class FakeEmbeddingClient:
@@ -102,7 +104,7 @@ class PagingSupabase:
         self.queries.append((table, params))
         offset = int(params.get("offset", 0))
         limit = int(params.get("limit", 1000))
-        return self.rows[offset : offset + limit]
+        return project_select(self.rows[offset : offset + limit], params)
 
 
 class StrictBatchSupabase:
@@ -112,7 +114,7 @@ class StrictBatchSupabase:
         self.used_minimal_upsert = False
 
     async def query(self, table, params=None):
-        return self.existing_rows
+        return project_select(self.existing_rows, params)
 
     async def upsert_minimal(self, table, data, on_conflict=None):
         key_sets = {frozenset(row) for row in data}

@@ -27,6 +27,8 @@ from shenyu_gateway.tool_schemas import (
 )
 from shenyu_gateway.tool_loop import _classify_tool_error, _decorate_tool_error_result, _tool_call_arguments
 
+from .fake_postgrest import project_select
+
 
 class FakeToolService:
     def __init__(self):
@@ -2307,20 +2309,20 @@ def test_collect_door_counts_keeps_star_count_when_optional_star_stats_fail():
     class PartlyFailingSupabase:
         async def query(self, table, params):
             if table == "shenyu_stars" and params.get("reviewed_at") == "is.null":
-                return [{"id": "star-new-1"}, {"id": "star-new-2"}]
+                return project_select([{"id": "star-new-1"}, {"id": "star-new-2"}], params)
             if table == "shenyu_star_links":
                 raise RuntimeError("links temporarily unavailable")
             if table == "shenyu_stars" and params.get("order") == "created_at.desc":
-                return [{
+                return project_select([{
                     "id": "star-latest",
                     "chord": "Cmaj7",
                     "content": "新的星星内容",
                     "created_at": "2026-06-30T00:00:00+00:00",
-                }]
+                }], params)
             if table == "shenyu_stars" and params.get("last_activated_at", "").startswith("lt."):
                 return []
             if table == "shenyu_stars":
-                return [{"id": "star-1"}, {"id": "star-2"}, {"id": "star-3"}]
+                return project_select([{"id": "star-1"}, {"id": "star-2"}, {"id": "star-3"}], params)
             if table == "shenyu_mem_notes":
                 return []
             if table == "shenyu_conflict_books":

@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 from shenyu_gateway.gateway_tools import GatewayToolService
 
+from .fake_postgrest import project_select
+
 
 class FakeCalendarSupabase:
     def __init__(self):
@@ -22,7 +24,7 @@ class FakeCalendarSupabase:
         if params.get("order") == "version.desc":
             rows = sorted(rows, key=lambda row: row.get("version", 0), reverse=True)
         limit = int(params.get("limit") or len(rows) or 0)
-        return rows[:limit]
+        return project_select(rows[:limit], params)
 
     async def update(self, table, match, data):
         if table != "calendar_pages":

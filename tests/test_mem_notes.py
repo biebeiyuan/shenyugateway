@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from shenyu_gateway.mem_notes import MemNoteService, _clean_context_query
 from shenyu_gateway.runtime import local_today
 
+from .fake_postgrest import project_select
+
 
 def _apply_filter(rows, column: str, expression):
     """Honour the PostgREST filters the mem note queries actually send."""
@@ -34,26 +36,32 @@ class FakeSupabase:
         self.inserts = []
 
     async def query(self, table: str, params: dict):
+        # Every return path goes through project_select: a column left out of the
+        # real `select` string must not be visible here either, or dropping one
+        # stays invisible to the whole suite.
         self.queries.append({"table": table, "params": params})
         if params.get("id") == "eq.88eb939b-8742-4e17-8186-3de6a3e9a016":
-            return [
-                {
-                    "id": "88eb939b-8742-4e17-8186-3de6a3e9a016",
-                    "content": "note",
-                    "status": "captured",
-                    "trigger_keywords": [],
-                }
-            ]
+            return project_select(
+                [
+                    {
+                        "id": "88eb939b-8742-4e17-8186-3de6a3e9a016",
+                        "content": "note",
+                        "status": "captured",
+                        "trigger_keywords": [],
+                    }
+                ],
+                params,
+            )
         if params.get("id", "").startswith("in.("):
             wanted = {item.strip() for item in params["id"].removeprefix("in.").strip("()").split(",") if item.strip()}
-            return [row for row in self.rows if row.get("id") in wanted]
+            return project_select([row for row in self.rows if row.get("id") in wanted], params)
         if table == "shenyu_mem_notes":
             rows = list(self.rows)
             for column in ("status", "session_tag", "remind_on", "reminded_at"):
                 rows = _apply_filter(rows, column, params.get(column))
-            return rows
+            return project_select(rows, params)
         if table == "atomic_memories":
-            return list(self.rows)
+            return project_select(self.rows, params)
         return []
 
     async def update(self, table: str, match: dict, data: dict):
@@ -244,7 +252,7 @@ def test_list_notes_all_rows_pages_and_exposes_surface_eligibility_and_origin():
             self.queries.append({"table": table, "params": dict(params)})
             offset = int(params.get("offset") or 0)
             limit = int(params.get("limit") or len(self.rows))
-            return self.rows[offset : offset + limit]
+            return project_select(self.rows[offset : offset + limit], params)
 
     rows = [
         {

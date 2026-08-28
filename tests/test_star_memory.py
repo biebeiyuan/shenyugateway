@@ -10,6 +10,8 @@ from shenyu_gateway.room_tools import execute_room_tool
 from shenyu_gateway.stars import StarService, parse_star_payload
 from shenyu_gateway.tool_registry import execute_gateway_tool
 
+from .fake_postgrest import project_select
+
 
 class FakeSupabase:
     def __init__(self):
@@ -48,7 +50,7 @@ class FakeSupabase:
                 expected = set(value[4:-1].split(","))
                 rows = [row for row in rows if str(row.get(key)) in expected]
         limit = int(params.get("limit") or len(rows) or 0)
-        return rows[:limit]
+        return project_select(rows[:limit], params)
 
     async def insert(self, table, data):
         row = dict(data)

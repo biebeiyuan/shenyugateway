@@ -16,6 +16,8 @@ from scripts.backfill_chat_archive import _candidate_rows
 from shenyu_gateway.conflict_books import ConflictBookService, render_conflict_shelf
 from shenyu_gateway.store import GatewayStore
 
+from .fake_postgrest import project_select
+
 
 class FakeSupabase:
     def __init__(self):
@@ -78,7 +80,7 @@ class FakeSupabase:
             rows = rows[offset : offset + int(limit)]
         elif offset:
             rows = rows[offset:]
-        return rows
+        return project_select(rows, params)
 
     async def update(self, table: str, match, data: dict) -> list:
         rows = self._table(table)

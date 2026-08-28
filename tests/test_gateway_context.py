@@ -39,6 +39,8 @@ from shenyu_gateway.resident_profile import (
     ORIGIN_BOOK_PROFILE,
 )
 
+from .fake_postgrest import project_select
+
 
 def _load_gateway_helpers():
     source = (Path(__file__).resolve().parent.parent / "gateway.py").read_text(encoding="utf-8")
@@ -156,7 +158,7 @@ class _FakeCalendarSupabase:
         rows.sort(key=lambda row: row.get("period_start") or "", reverse=True)
         offset = int(params.get("offset") or 0)
         limit = int(params.get("limit") or len(rows))
-        return rows[offset : offset + limit]
+        return project_select(rows[offset : offset + limit], params)
 
 
 def test_context_recall_failure_preserves_previous_island(monkeypatch, tmp_path):

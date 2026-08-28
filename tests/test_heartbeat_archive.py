@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 from shenyu_gateway.heartbeat_archive import ARCHIVE_TABLE, HeartbeatArchiveService
 
+from .fake_postgrest import project_select
+
 
 class FakeStore:
     def __init__(self, *, unsettled: list[dict] | None = None, live_ids: set[str] | None = None):
@@ -33,7 +35,7 @@ class FakeSupabase:
         # _reconcile_deleted still filters on the archive table's scope column
         # ("scope": "eq.normal"); the fake answers the same rows for it.
         self.queries.append((table, dict(params)))
-        return [{"id": value} for value in sorted(self.archived_ids)]
+        return project_select([{"id": value} for value in sorted(self.archived_ids)], params)
 
     async def upsert(self, table, payload, *, on_conflict):
         self.upserts.append((table, list(payload), on_conflict))

@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 from shenyu_gateway.gateway_tools import GatewayToolService
 
+from .fake_postgrest import project_select
+
 
 class FakeSupabase:
     def __init__(self):
@@ -74,7 +76,7 @@ class FakeSupabase:
 
     async def query(self, table, params):
         if table == "shenyu_recall_index":
-            return self.rows
+            return project_select(self.rows, params)
         return []
 
     async def update(self, table, match, data):
@@ -87,7 +89,7 @@ class ChatSupabase:
 
     async def query(self, table, params):
         if table == "shenyu_chat_archive":
-            return [{
+            return project_select([{
                 "id": "chat-1",
                 "session_tag": "old",
                 "thread": "old",
@@ -95,7 +97,7 @@ class ChatSupabase:
                 "content": self.content,
                 "event_at": "2026-05-01T00:00:00+00:00",
                 "archived_at": "2026-05-01T00:00:00+00:00",
-            }]
+            }], params)
         return []
 
 

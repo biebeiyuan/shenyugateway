@@ -7,6 +7,8 @@ from pathlib import Path
 from shenyu_gateway.gateway_tools import GatewayToolService
 from shenyu_gateway.resident_books import ResidentBooksService, render_bookshelf_overview
 
+from .fake_postgrest import project_select
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -45,7 +47,7 @@ class FakeSupabase:
             rows.sort(key=lambda row: str(row.get(field) or ""), reverse=direction == "desc")
         if params.get("limit") is not None:
             rows = rows[: int(params["limit"])]
-        return rows
+        return project_select(rows, params)
 
     async def update(self, table: str, match, data: dict) -> list[dict]:
         updated = []

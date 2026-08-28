@@ -90,6 +90,14 @@ Also update the owning README or architecture document when the field changes us
 
 After Admin routes, page loading, or core interactions change, run `cd admin && npm run test:e2e`. The Playwright suite is an alive/not-alive smoke layer: keep it read-only, prefer stable `data-testid` hooks over mutable display copy, fail on browser runtime or same-origin asset errors, and do not turn it into screenshot or visual-polish testing. Add, remove, or update the corresponding smoke case in the same change when an Admin route or core workflow changes; ordinary copy and styling edits should not require smoke-test rewrites. `npm run test:e2e` already runs `npm run build`, so do not run a separate Admin build before it. If the default E2E port is occupied, set `E2E_PORT` to an unused port (for example, `E2E_PORT=18111 npm run test:e2e`) rather than enabling `reuseExistingServer`; keep reuse disabled so the smoke suite cannot accidentally test a foreign service.
 
+### Supabase test fakes
+
+A test fake standing in for Supabase must honour `params["select"]`: route the rows it returns through `project_select` from `tests/fake_postgrest.py`. Fakes that ignore `select` hand back every column their fixture rows happen to carry, so dropping a column from a real select string changes nothing any test can see. Measured on 2026-08-28, before the fakes projected: 33 of the 35 columns in the light mem-note select list could be deleted — `id` and `content` included — with all 749 tests green. `tests/test_supabase.py` fails on any fake that returns a non-empty row set without projecting, and on any fake that parses a select string by hand. A fake that only ever returns `[]` or raises has no columns to hide and is exempt.
+
+Projection alone is not coverage. It turns an unselected column into an absent key, but only a test that reads the value can go red — so when adding a column to a select list, add or extend a test that touches it.
+
+The helper deliberately does not model embedded resources, aliases, or casts, and returns rows untouched when it sees them; nothing in this repository sends that syntax. It also cannot catch "the migration was never run" — a fake row is a fixture, not a table. Deriving column sets from `supabase/migrations/*.sql` was measured and rejected: 3 of the 9 tables the code queries by literal name (`atomic_memories`, `calendar_pages`, `shenyu_notebook`) have no migration in the repository, so that derivation cannot be a repo-wide invariant.
+
 ## Encoding Rules
 
 - Treat source, Markdown, and config files as UTF-8.

@@ -7,6 +7,8 @@ from types import SimpleNamespace
 from shenyu_gateway.stars import StarService
 from shenyu_gateway.stars._helpers import _direct_reference_kinds
 
+from .fake_postgrest import project_select
+
 
 class FakeSupabase:
     """Fake with the star tables empty except shenyu_stars (seeded per test).
@@ -46,7 +48,7 @@ class FakeSupabase:
                 expected = set(value[4:-1].split(","))
                 rows = [r for r in rows if str(r.get(key)) in expected]
         limit = int(params.get("limit") or len(rows) or 0)
-        return rows[:limit]
+        return project_select(rows[:limit], params)
 
 
 def _cfg():

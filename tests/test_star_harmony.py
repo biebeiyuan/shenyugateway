@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 from shenyu_gateway.stars import StarService
 
+from .fake_postgrest import project_select
+
 
 class LinkFakeSupabase:
     """Minimal fake backing only shenyu_star_links for _harmony_scores tests.
@@ -31,7 +33,7 @@ class LinkFakeSupabase:
                 expected = set(value[4:-1].split(","))
                 rows = [r for r in rows if str(r.get(key)) in expected]
         limit = int(params.get("limit") or len(rows) or 0)
-        return rows[:limit]
+        return project_select(rows[:limit], params)
 
 
 class ConcurrentLinkFakeSupabase(LinkFakeSupabase):

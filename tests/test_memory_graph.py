@@ -12,6 +12,8 @@ from shenyu_gateway.memory_graph import (
 )
 from shenyu_gateway.recall import RecallIndexService
 
+from .fake_postgrest import project_select
+
 
 class GraphSupabase:
     def __init__(self, tables=None):
@@ -51,7 +53,7 @@ class GraphSupabase:
         rows = [dict(row) for row in self.tables.get(table, []) if self._matches(row, params or {})]
         offset = int((params or {}).get("offset", 0))
         limit = int((params or {}).get("limit", len(rows) or 1000))
-        return rows[offset : offset + limit]
+        return project_select(rows[offset : offset + limit], params)
 
     async def insert(self, table, data):
         row = dict(data)

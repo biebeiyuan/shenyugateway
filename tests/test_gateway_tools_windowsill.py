@@ -5,6 +5,8 @@ from types import SimpleNamespace
 
 from shenyu_gateway.gateway_tools import GatewayToolService
 
+from .fake_postgrest import project_select
+
 
 class FakeSupabase:
     def __init__(self, rows=None):
@@ -22,7 +24,7 @@ class FakeSupabase:
 
     async def query(self, table, params):
         self.queries.append((table, params))
-        return list(self.rows)
+        return project_select(self.rows, params)
 
 
 def _service(supabase):
