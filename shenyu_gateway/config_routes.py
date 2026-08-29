@@ -6,6 +6,7 @@ from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException, Request
 
+from .context_window import ISLAND_TAIL_MESSAGES_MAX, ISLAND_TAIL_MESSAGES_MIN
 from .schemas import ConfigUpdate
 from .runtime import logger
 
@@ -128,6 +129,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "calendar_context_week_limit": cfg.calendar_context_week_limit,
         "calendar_context_month_limit": cfg.calendar_context_month_limit,
         "max_client_messages": cfg.max_client_messages,
+        "island_tail_messages": cfg.island_tail_messages,
         "cold_start_message_limit": cfg.cold_start_message_limit,
         "cold_start_idle_minutes": cfg.cold_start_idle_minutes,
         "mem_note_limit": cfg.mem_note_limit,
@@ -259,6 +261,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "gateway_request_log_retention": "GATEWAY_REQUEST_LOG_RETENTION",
             "gateway_log_full_payloads": "GATEWAY_LOG_FULL_PAYLOADS",
             "max_client_messages": "MAX_CLIENT_MESSAGES",
+            "island_tail_messages": "ISLAND_TAIL_MESSAGES",
             "cold_start_message_limit": "COLD_START_MESSAGE_LIMIT",
             "cold_start_idle_minutes": "COLD_START_IDLE_MINUTES",
             "mem_note_limit": "MEM_NOTE_LIMIT",
@@ -521,6 +524,13 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.max_client_messages = max(1, min(int(value), 500)) if value and int(value) > 0 else None
             changed.append("max_client_messages")
             env_updates[env_names["max_client_messages"]] = cfg.max_client_messages
+        if body.island_tail_messages is not None:
+            cfg.island_tail_messages = max(
+                ISLAND_TAIL_MESSAGES_MIN,
+                min(int(body.island_tail_messages), ISLAND_TAIL_MESSAGES_MAX),
+            )
+            changed.append("island_tail_messages")
+            env_updates[env_names["island_tail_messages"]] = cfg.island_tail_messages
         if "cold_start_message_limit" in body.model_fields_set:
             value = body.cold_start_message_limit
             cfg.cold_start_message_limit = max(1, min(int(value), 500)) if value and int(value) > 0 else None

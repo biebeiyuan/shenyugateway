@@ -71,6 +71,7 @@ const config = ref<GatewayConfig>({
   supabase_url: '',
   supabase_key: '',
   max_client_messages: 75,
+  island_tail_messages: 32,
   enable_cold_start: true,
   cold_start_message_limit: null,
   cold_start_idle_minutes: 120,
@@ -310,6 +311,7 @@ async function doSave() {
       qweather_api_host: config.value.qweather_api_host,
       supabase_url: config.value.supabase_url,
       max_client_messages: config.value.max_client_messages || null,
+      island_tail_messages: config.value.island_tail_messages,
       enable_cold_start: config.value.enable_cold_start,
       enable_upstream_tools: config.value.enable_upstream_tools,
       enable_gateway_tools: config.value.enable_gateway_tools,
@@ -906,6 +908,10 @@ async function copyColdHeader(sessionTag: string) {
           </NFormItem>
           <NFormItem label="客户端上下文保留">
             <NInputNumber v-model:value="config.max_client_messages" :min="1" :max="500" style="width:100%" clearable placeholder="全部" />
+          </NFormItem>
+          <NFormItem label="动态岛挂在倒数第几条之前">
+            <NInputNumber v-model:value="config.island_tail_messages" :min="8" :max="80" style="width:100%" />
+            <div class="provider-order-hint">按消息数算，不是轮数——一轮通常两条，所以 32 大约是 16 轮。小突起跟着一起挪。改完不会立刻生效：要等下一次裁剪或换分支，否则调一次数值就会白烧掉一整个窗口的缓存。</div>
           </NFormItem>
           <NFormItem label="启用冷启动注入">
             <NSwitch v-model:value="config.enable_cold_start" />

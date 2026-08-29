@@ -527,7 +527,7 @@ Room 的 `room_scribble` 是进入方式，不是另一套 Recall 来源：它�
 ### 8.5.2 三条边界
 
 - **不是工具。** 她什么都不用调。做成工具等于「让她记得调一个工具，来帮她记得自己做过什么」——正是要修的那个 bug。
-- **不进岛文本。** 渲染结果作为岛之后的独立 block，动态岛的 `rendered_hash` 逐字节不变，2/3 重合门照旧生效。写进岛正文会让每次写入都换版，岛之后那三十来条消息的缓存一起作废。技术上它挂在岛消息的 `MEMORY_ISLAND_BUMP_KEY` 旁挂字段上，由两条协议适配路径各自渲染；因此它自动跟着 `island_anchor_offset` 走，那个数从 32 改成别的值时这里不用动。
+- **不进岛文本。** 渲染结果作为岛之后的独立 block，动态岛的 `rendered_hash` 逐字节不变，2/3 重合门照旧生效。写进岛正文会让每次写入都换版，岛之后那三十来条消息的缓存一起作废。技术上它挂在岛消息的 `MEMORY_ISLAND_BUMP_KEY` 旁挂字段上，由两条协议适配路径各自渲染；因此它自动跟着 `island_anchor_offset` 走，`ISLAND_TAIL_MESSAGES` 改成别的值时这里不用动。
 - **无状态。** 「展示过没有」不记账，纯按时间窗口算，所以 retry / roll / branch 都不会让它错乱。
 
 ### 8.5.3 日界在凌晨两点
@@ -554,6 +554,7 @@ Room 的 `room_scribble` 是进入方式，不是另一套 Recall 来源：它�
 |--------|--------|
 | 白名单、一行的措辞、上限行为 | `island_bumps.py`（纯函数，无 IO） |
 | 日界小时 | `runtime.py::NIGHT_OWL_DAY_START_HOUR` |
+| 挂在倒数第几条之前（连岛一起） | `ISLAND_TAIL_MESSAGES`（Admin 在 ConfigView 的「节奏与窗口」；只在 epoch 重置时生效） |
 | 读取源 | `store/_messages.py::get_tool_messages_since` |
 | 工具行上记的动作名 | `tool_loop.py::_logged_tool_name`（broker 模式下 `tool_name` 曾恒为 `shenyu_gateway_tool`） |
 | 层渲染 / 位置 | `context_layers.py::render_layered_additions` + `assemble_layered_messages` |

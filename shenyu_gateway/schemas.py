@@ -119,6 +119,7 @@ class ConfigUpdate(BaseModel):
     calendar_context_week_limit: Optional[int] = None
     calendar_context_month_limit: Optional[int] = None
     max_client_messages: Optional[int] = None
+    island_tail_messages: Optional[int] = None
     cold_start_message_limit: Optional[int] = None
     cold_start_idle_minutes: Optional[int] = None
     mem_note_limit: Optional[int] = None

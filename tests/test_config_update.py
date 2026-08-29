@@ -37,6 +37,7 @@ DEFAULTED_ENV_KEYS = [
     "HEARTBEAT_ARCHIVE_RECONCILE_DELETIONS",
     "INJECT_ISLAND_BUMPS",
     "ISLAND_BUMP_LIMIT",
+    "ISLAND_TAIL_MESSAGES",
 ]
 
 
@@ -77,6 +78,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.heartbeat_archive_reconcile_deletions is False
     assert cfg.inject_island_bumps is True
     assert cfg.island_bump_limit == 8
+    assert cfg.island_tail_messages == 32
 
 
 def test_aggregate_cache_usage_preserves_multi_round_reported_state():
@@ -679,6 +681,26 @@ def test_config_update_saves_and_clamps_island_bump_settings(monkeypatch):
     assert persisted[-1]["ISLAND_BUMP_LIMIT"] == 20
 
 
+def test_config_update_saves_and_clamps_island_tail_messages(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "island_tail_messages", 32)
+
+    try:
+        response = client.post("/api/config", json={"island_tail_messages": 20})
+        clamped = client.post("/api/config", json={"island_tail_messages": 500})
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    assert response.json()["config"]["island_tail_messages"] == 20
+    assert "island_tail_messages" in response.json()["changed"]
+    assert persisted[-2]["ISLAND_TAIL_MESSAGES"] == 20
+
+    assert clamped.status_code == 200
+    assert clamped.json()["config"]["island_tail_messages"] == 80
+    assert gateway.cfg.island_tail_messages == 80
+
+
 def test_full_config_exposes_island_bump_settings_for_admin(monkeypatch):
     client, _ = _config_client(monkeypatch)
     monkeypatch.setattr(gateway.cfg, "inject_island_bumps", True)
@@ -693,6 +715,7 @@ def test_full_config_exposes_island_bump_settings_for_admin(monkeypatch):
     payload = response.json()
     assert payload["inject_island_bumps"] is True
     assert payload["island_bump_limit"] == 8
+    assert payload["island_tail_messages"] == 32
 
 
 def test_persist_env_saves_config_overrides_to_sqlite(tmp_path, monkeypatch):

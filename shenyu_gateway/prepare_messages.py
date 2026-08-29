@@ -23,6 +23,7 @@ from .context_layers import (
 from .echo import strip_leading_echo, trim_assistant_echoes
 from .context_window import (
     classify_history_event,
+    DEFAULT_ISLAND_TAIL_MESSAGES,
     compact_history_event_messages,
     deduplicate_bridge_messages,
     insert_bridge_messages,
@@ -446,6 +447,9 @@ async def prepare_messages(
         previous_state=previous_window_state,
         event_class=event_meta["event_class"],
         head_slide_messages=int(event_meta.get("head_slide_messages") or 0),
+        island_tail_messages=getattr(
+            cfg, "island_tail_messages", DEFAULT_ISLAND_TAIL_MESSAGES
+        ),
     )
     trim_meta.update(event_meta)
     trim_meta["assistant_lineage"] = lineage_meta

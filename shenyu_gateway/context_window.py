@@ -16,7 +16,12 @@ INTERNAL_LAYER_KEY = "_shenyu_context_layer"
 # 小突起搭在岛消息上，由协议适配层渲染成岛之后的独立 block。挂成旁挂字段而不是
 # 拼进 content，是为了让岛文本保持逐字节稳定——它是缓存前缀的锚。
 MEMORY_ISLAND_BUMP_KEY = "_shenyu_island_bumps"
+# 动态岛挂在倒数这么多条消息之前。这是消息数不是轮数——一轮通常两条，所以 32
+# 大约是 16 轮。可用 ISLAND_TAIL_MESSAGES 调整；新值只在 epoch 重置（裁剪或
+# 分支）时生效，因为 anchor_offset 在 epoch 内是沿用的，见 select_chunked_window。
 DEFAULT_ISLAND_TAIL_MESSAGES = 32
+ISLAND_TAIL_MESSAGES_MIN = 8
+ISLAND_TAIL_MESSAGES_MAX = 80
 DEFAULT_RAW_TOOL_PROTECTION_TURNS = 18
 _IMAGE_SEEN_PLACEHOLDER = "圆圆发来的照片我已经看过。"
 _IMAGE_LINEAGE_MARKER = "shenyu_history_image"

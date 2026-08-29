@@ -1075,3 +1075,64 @@ def test_latest_user_text_ignores_image_urls():
     ]
 
     assert _latest_user_text(messages) == "看这个。"
+
+
+def _plain_history(count: int) -> list[dict]:
+    """Alternating turns, so a group-safe anchor can land anywhere."""
+    return [
+        {"role": "user" if index % 2 == 0 else "assistant", "content": f"m{index}"}
+        for index in range(count)
+    ]
+
+
+def test_island_tail_messages_moves_the_anchor_on_a_fresh_window():
+    messages = _plain_history(100)
+
+    _default, default_state, _ = select_chunked_window(
+        messages, limit=None, previous_state=None, event_class="initial"
+    )
+    _narrow, narrow_state, narrow_meta = select_chunked_window(
+        messages,
+        limit=None,
+        previous_state=None,
+        event_class="initial",
+        island_tail_messages=20,
+    )
+
+    # The island hangs this many messages from the end, so a smaller tail pushes
+    # the anchor later in the history.
+    assert default_state["island_anchor_offset"] == 100 - 32
+    assert narrow_state["island_anchor_offset"] == 100 - 20
+    assert narrow_meta["memory_island_anchor_offset"] == 80
+
+
+def test_a_changed_island_tail_waits_for_an_epoch_boundary():
+    messages = _plain_history(100)
+    _first, state, _ = select_chunked_window(
+        messages, limit=None, previous_state=None, event_class="initial"
+    )
+    assert state["island_anchor_offset"] == 68
+
+    # Same epoch: the stored anchor is reused, so the new setting is not applied
+    # yet. Applying it mid-epoch would move the cache prefix and burn the whole
+    # window's cache on a settings change.
+    _second, same_epoch, _ = select_chunked_window(
+        messages + _plain_history(2),
+        limit=None,
+        previous_state=state,
+        event_class="new_user",
+        island_tail_messages=20,
+    )
+    assert same_epoch["epoch_id"] == state["epoch_id"]
+    assert same_epoch["island_anchor_offset"] == 68
+
+    # A branch resets the epoch, and only then does the new tail take effect.
+    _third, reset_state, _ = select_chunked_window(
+        messages,
+        limit=None,
+        previous_state=same_epoch,
+        event_class="branch",
+        island_tail_messages=20,
+    )
+    assert reset_state["epoch_id"] != state["epoch_id"]
+    assert reset_state["island_anchor_offset"] == 80

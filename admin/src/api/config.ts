@@ -21,6 +21,7 @@ export interface GatewayConfig {
   supabase_key: string
   supabase_key_configured?: boolean
   max_client_messages: number | null
+  island_tail_messages?: number
   enable_cold_start: boolean
   cold_start_message_limit: number | null
   cold_start_idle_minutes: number

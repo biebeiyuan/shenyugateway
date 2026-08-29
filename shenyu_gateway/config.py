@@ -4,6 +4,11 @@ import os
 import json
 from typing import Any, Optional
 
+from .context_window import (
+    DEFAULT_ISLAND_TAIL_MESSAGES,
+    ISLAND_TAIL_MESSAGES_MAX,
+    ISLAND_TAIL_MESSAGES_MIN,
+)
 from .runtime import logger, mask, _env_bool
 
 
@@ -177,6 +182,12 @@ class RuntimeConfig:
         self.calendar_context_week_limit: int = _env_int("CALENDAR_CONTEXT_WEEK_LIMIT", 1, 1, 12)
         self.calendar_context_month_limit: int = _env_int("CALENDAR_CONTEXT_MONTH_LIMIT", 1, 1, 12)
         self.max_client_messages: Optional[int] = _env_optional_int("MAX_CLIENT_MESSAGES", 75)
+        self.island_tail_messages: int = _env_int(
+            "ISLAND_TAIL_MESSAGES",
+            DEFAULT_ISLAND_TAIL_MESSAGES,
+            ISLAND_TAIL_MESSAGES_MIN,
+            ISLAND_TAIL_MESSAGES_MAX,
+        )
         self.cold_start_message_limit: Optional[int] = _env_optional_int("COLD_START_MESSAGE_LIMIT")
         self.cold_start_idle_minutes: int = _env_int("COLD_START_IDLE_MINUTES", 120, 1, 10080)
         self.mem_note_limit: int = _env_int("MEM_NOTE_LIMIT", 3, 1, 5)
@@ -317,6 +328,7 @@ class RuntimeConfig:
             "calendar_context_week_limit": self.calendar_context_week_limit,
             "calendar_context_month_limit": self.calendar_context_month_limit,
             "max_client_messages": self.max_client_messages,
+            "island_tail_messages": self.island_tail_messages,
             "cold_start_message_limit": self.cold_start_message_limit,
             "cold_start_idle_minutes": self.cold_start_idle_minutes,
             "mem_note_limit": self.mem_note_limit,
