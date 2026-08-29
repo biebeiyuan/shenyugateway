@@ -291,6 +291,153 @@ def test_a_malformed_table_row_is_reported_not_dropped_in_silence():
     assert "B.md" in warnings[0] and "测试表" in warnings[0]
 
 
+# Pointer targets deliberately allowed to name a stale heading: DOCS_MAP marks
+# these documents as snapshots or superseded history, and their § references
+# describe the structure of a document as it was written then.
+def _pointer_exempt_docs() -> set[str]:
+    text = (ROOT / "DOCS_MAP.md").read_text(encoding="utf-8")
+    exempt: set[str] = set()
+    for heading in ("## 专题设计与实施记录", "## 辅助与历史文档"):
+        if heading not in text:
+            continue
+        table = text.split(heading, 1)[1].split("\n## ", 1)[0]
+        exempt.update(re.findall(r"^\| `([^`]+)` \|", table, flags=re.MULTILINE))
+    return exempt
+
+
+def _pointer_docs() -> list[str]:
+    exempt = _pointer_exempt_docs()
+    return [doc for doc in _live_docs() if doc not in exempt]
+
+
+def _headings(doc: str) -> list[str]:
+    found = []
+    for line in (ROOT / doc).read_text(encoding="utf-8").splitlines():
+        match = re.match(r"^#{1,4}\s+(.+?)\s*$", line)
+        if match:
+            found.append(match.group(1))
+    return found
+
+
+# A pointer quotes a heading the way its sentence needs it, not byte for byte:
+# `§ 一 视觉基线` for `## 一、视觉基线（昼场）`, `§ Calendar` for `## Calendar Layer`.
+# These normalizations accept that and still reject a heading that is not there.
+_PUNCTUATION = r"[\s、，,；;：:。\.\|（）()「」【】]"
+_SECTION_NUMBER = re.compile(r"^\s*(?:[0-9]+(?:\.[0-9]+)*\.?|[一二三四五六七八九十]+[、.]?)\s*")
+def _inside_code_span(line: str, index: int) -> bool:
+    """Prose about pointers writes `§` in backticks; that is an example, not a pointer."""
+    return line.count("`", 0, index) % 2 == 1
+
+
+# Where the quoted heading ends and the surrounding sentence resumes.
+_SENTENCE_RESUMES = re.compile(r"[|。、，,；;）)\]]|\.\s|\.$| — |--")
+
+
+def _normalize_heading(text: str) -> str:
+    return re.sub(_PUNCTUATION, "", text.replace("`", ""))
+
+
+def _leading_number(text: str) -> str | None:
+    match = re.match(r"^\s*([0-9]+(?:\.[0-9]+)*|[一二三四五六七八九十]+)", text.replace("`", ""))
+    return match.group(1) if match else None
+
+
+def _matches_by_number(target: str, raw: str, headings: dict[str, list[str]]) -> bool:
+    """`DESIGN.md §12` names a section by its number instead of its words."""
+    number = _leading_number(raw)
+    return bool(number) and any(
+        _leading_number(heading) == number for heading in headings.get(target, [])
+    )
+
+
+def _pointer_resolves(target: str, raw: str, headings: dict[str, list[str]]) -> bool:
+    quoted = _normalize_heading(_SENTENCE_RESUMES.split(raw, 1)[0])
+    if len(quoted) < 2:
+        return _matches_by_number(target, raw, headings)
+    for heading in headings.get(target, []):
+        candidate = _normalize_heading(_SECTION_NUMBER.sub("", heading))
+        if candidate and (quoted.startswith(candidate) or candidate.startswith(quoted)):
+            return True
+    return _matches_by_number(target, raw, headings)
+
+
+def test_live_doc_section_pointers_still_resolve():
+    # AGENTS.md § Project Memory and Collaboration tells agents to shrink a
+    # relocated copy into a pointer that names the real heading. A copy rots
+    # visibly — its content stops matching. A pointer rots invisibly: you follow
+    # it, find nothing, and are left guessing. So the rule cannot be enforced by
+    # remembering it. The commit that wrote it left `§ 金的边界` aimed at bold body
+    # text while reporting that all 57 pointers resolved, checked by hand — which
+    # is the failure this test exists to make loud.
+    docs = _pointer_docs()
+    if not docs:  # No git available: nothing to verify against.
+        return
+    headings = {doc: _headings(doc) for doc in docs}
+    broken: dict[str, list[str]] = {}
+    for doc in docs:
+        for number, line in enumerate((ROOT / doc).read_text(encoding="utf-8").splitlines(), 1):
+            for hit in re.finditer("§", line):
+                before, raw = line[: hit.start()], line[hit.start() + 1 :].strip()
+                if _inside_code_span(line, hit.start()):
+                    continue  # `§` quoted as an example, not aimed at a heading.
+                # A pointer names its document before the §; a bare § (or one
+                # after 本页/本节) means the heading lives in this document.
+                named = re.findall(r"`([\w./-]+\.md)`", before)
+                target = named[-1] if named else doc
+                if target not in headings:
+                    # Docs name a document by its filename, not its full path.
+                    suffix = [path for path in docs if path.endswith("/" + target)]
+                    target = suffix[0] if len(suffix) == 1 else target
+                if target not in headings:
+                    broken.setdefault(doc, []).append(f"line {number}: § into unknown {target}")
+                elif not _pointer_resolves(target, raw, headings):
+                    broken.setdefault(doc, []).append(f"line {number}: {target} § {raw[:40]}")
+    assert not broken, (
+        "docs point at section headings that do not exist — name a real "
+        f"`## `/`### ` heading, or fix the target: {broken}"
+    )
+
+
+def test_the_pointer_check_is_actually_reading_pointers():
+    # A silent pass is the whole problem this file keeps running into: if the §
+    # scan ever stops finding pointers (an exemption table grows, a regex drifts),
+    # the check above goes quiet instead of red. Measured when written: 68 § in 14
+    # live documents. The floor is deliberately loose — it guards against the scan
+    # collapsing, not against anyone editing a sentence.
+    docs = _pointer_docs()
+    if not docs:
+        return
+    assert "AGENTS.md" in docs and "README.md" in docs, (
+        f"the pointer scan lost its main documents: {docs}"
+    )
+    found = sum(
+        (ROOT / doc).read_text(encoding="utf-8").count("§") for doc in docs
+    )
+    assert found >= 40, f"the § pointer scan found almost nothing ({found}) — is it still parsing?"
+
+
+def test_a_pointer_to_a_missing_heading_fails():
+    # The clean measurement above only means something if a bad pointer is loud.
+    # Heading text as _headings() returns it: the `#` marks are already stripped.
+    headings = {"target.md": ["Prompt Cache", "2.8 改动边界", "一、视觉基线（昼场）"]}
+    resolves = lambda raw: _pointer_resolves("target.md", raw, headings)
+    # Real headings, quoted the way sentences actually quote them.
+    assert resolves("Prompt Cache for the breakpoint consequence.")
+    assert resolves("改动边界 tables for examples)")
+    assert resolves("一 视觉基线 / more prose")
+    # Bold body text dressed up as a heading, and a heading that has been renamed.
+    assert not resolves("金的边界. `admin/src/theme/theme.ts`")
+    assert not resolves("Tool Calls |")
+
+
+def test_a_backticked_pointer_is_an_example_not_a_pointer():
+    # AGENTS.md has to write `§` inside backticks to state the rule itself. That
+    # is prose about pointers, not a pointer — but the exemption must stay narrow,
+    # or quoting a pointer becomes the way to hide a broken one.
+    assert _inside_code_span("the `§` form names a heading", len("the `"))
+    assert not _inside_code_span("see `README.md` § Maintenance Map", len("see `README.md` "))
+
+
 def test_map_tier_docs_anchor_by_function_name_not_line_number():
     # Line-number anchors rot on every refactor; map-tier documents must anchor
     # by path or symbol name. Dated snapshots (docs/history/, review docs,

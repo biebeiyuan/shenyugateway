@@ -574,7 +574,7 @@ SQLite stays the live read path; injection behavior is unchanged. Enable deletio
 
 ### Origin books（来历书）
 
-Frozen verbatim excerpts of arguments, clipped by the user from the archive reader, readable and annotatable by Shenyu. Invariants enforced in `shenyu_gateway/conflict_books.py` (no API path can violate them):
+Frozen verbatim excerpts of arguments, clipped by the user from the archive reader, readable and annotatable by Shenyu. These are a relationship record with no backup, so a migration or cleanup that cannot prove the invariants below survived it must stop and ask 沈予 rather than assume a rewrite is equivalent. Invariants enforced in `shenyu_gateway/conflict_books.py` (no API path can violate them):
 
 - `original_text` is frozen at clip time; update paths drop it and a text-only patch is rejected.
 - Shenyu's annotations are append-only with timestamps; no update or delete endpoint exists.

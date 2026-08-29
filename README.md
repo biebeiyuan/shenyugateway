@@ -209,7 +209,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/room/RoomNewspaperPanel.vue`: in-place Room newspaper panel (generate, review, publish, discard, and source status).
 - `admin/src/views/ToolErrorsView.vue`: tool error log viewer.
 - `admin/src/components/AppShell.vue`: shared admin navigation and layout, and the home of the day/night theme switch, the online indicator, and the demo-data badge.
-- `admin/src/theme/tokens.css`: the single home for all design tokens — one tree, two palettes (day/night) swapped via `<html> data-theme`, including the role-semantic palette every new element must join instead of introducing its own color. View styles read these variables rather than hardcoding hexes, so night mode stays legible everywhere. Actual values and the 金 boundary live in `docs/frontend/STYLE_AND_CRAFT.md` § 一 视觉基线 / § 金的边界. `admin/src/theme/theme.ts`: `useTheme()` toggle + localStorage persistence; naive-ui overrides in `App.vue` read the same palette, and `AppShell.vue`'s global naive skin applies to day only.
+- `admin/src/theme/tokens.css`: the single home for all design tokens — one tree, two palettes (day/night) swapped via `<html> data-theme`, including the role-semantic palette every new element must join instead of introducing its own color. View styles read these variables rather than hardcoding hexes, so night mode stays legible everywhere. Actual values live in `docs/frontend/STYLE_AND_CRAFT.md` § 一 视觉基线, whose 金的边界 clause is the authority on where gilt and cork are allowed. `admin/src/theme/theme.ts`: `useTheme()` toggle + localStorage persistence; naive-ui overrides in `App.vue` read the same palette, and `AppShell.vue`'s global naive skin applies to day only.
 
 - `admin/src/demo/`: 演示数据模式（`?demo=1`）——`fixtures.ts` 编造样本（锚点/便签/一池可"想起"的原件），`index.ts` 在 axios 适配器层拦截读取请求返回样本、写操作假成功；生产构建带此代码但不开关完全不生效。页头"演示数据"徽章在 `AppShell.vue`。
 - `scripts/project_delivery.py`: records and validates one coherent owner-facing delivery outcome in `project_delivery_log.jsonl`; use it after the final verification round, not once per small commit.
@@ -470,7 +470,7 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 3. Use the `Dockerfile` — Coolify detects it automatically.
 4. Set environment variables in Coolify's dashboard (`.env` content).
 5. Port mapping: `8010:8010`.
-6. Coolify auto-deploys the tracked branch, which is `master`. **A `master` push is a production deployment**, not merely a repository update: the resident gateway, its Supabase project, and the mounted `/app/data` volume are the live ones. Feature branches are not deployed. See `AGENTS.md` § Project Memory and Collaboration and `docs/DELIVERY.md` for what must pass before pushing `master`.
+6. Coolify auto-deploys the tracked branch, which is `master`. **A `master` push is a production deployment**, not merely a repository update: the resident gateway, its Supabase project, and the mounted `/app/data` volume are the live ones. Feature branches are not deployed. `docs/DELIVERY.md` § 交付状态梯 is the authority for what must pass before pushing `master` and why a push receipt is not yet a deployment.
 
 For the resident home snapshot to show the deployed revision inside the image, pass the source SHA as the Docker build argument `SOURCE_COMMIT` (or set the runtime environment variable with the same name). The image intentionally omits `.git`.
 

@@ -29,7 +29,7 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 | 家现在 / 我是谁 | `家现在` 必须来自现场快照，不得被手写正文覆盖；`我是谁` 的每次改写保留版本，两者批注都只追加 | `docs/architecture/REQUEST_CONTEXT.md` § Generated home and living identity |
 | 来历书 | `original_text` 剪下后永久冻结，沈予批注只追加；正文不得被自动注入、改写或“清洗” | `docs/architecture/REQUEST_CONTEXT.md` § Origin books、`DESIGN.md` § Chat Archive & Conflict Books |
 | Room / 窗台 | 房间提供门，不替沈予选择；原始房间宪章保持不动，charge 只能影响门的可见性和顺序 | `docs/architecture/MEMORY_ROOM.md` § Room Mode |
-| 窗台报纸与报纸篓 | 只读固定 RSS 白名单，保留来源标题、摘要和 URL；出版、阅读状态与字面搜索仍由住户手动控制 | `AGENTS.md`、`docs/architecture/MEMORY_ROOM.md` § Window Newspaper |
+| 窗台报纸与报纸篓 | 只读固定 RSS 白名单，保留来源标题、摘要和 URL；出版、阅读状态与字面搜索仍由住户手动控制，字面搜索不得换成语义搜索 | `docs/architecture/MEMORY_ROOM.md` § Window Newspaper |
 
 ## 总体请求链
 
