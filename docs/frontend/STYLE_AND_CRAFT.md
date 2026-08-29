@@ -15,6 +15,13 @@ PWA（`pwa/`）另有一条血统：聊天界面几何与状态精灵取自 Chat
 精灵动画走 Web Animations API 而不是 CSS，所以 `pwa/src/styles.css` 里那条
 `prefers-reduced-motion` 覆盖**管不到它**；要让它也停下必须在脚本侧判断。
 
+合并照片卡（堆叠、探边、跟手翻页、快甩，以及展开收起的运动规格）学自
+**PhotoStack by Wren036**（<https://github.com/Wren036/PhotoStack>，
+PolyForm Noncommercial 1.0.0；`Required Notice` 与许可条款随移植文件的文件头保留）。
+该项目的全部设计参数由作者对微信原版逐帧观察测量得出，所以移植时照抄数字，
+不要凭手感重调。上游仓库不含展开/收起实现，那部分是照其 README 的规格自行实现。
+落地进度与规格摘要见 `docs/history/PWA_NATIVE_FEEL_PLAN_2026-08-29.md`。
+
 ## 一、视觉基线（昼场）
 
 | 部位 | 值 | 说明 |
@@ -132,7 +139,9 @@ PWA 三铁律——(1) `npm test` / `npm run build` / HTML 断言只证明技术
 - `admin/src/theme/tokens.css` 只守全站设计 token；单个页面的视觉差异留在自己的 scoped style。
 - `admin/src/components/AppShell.vue` 只守全局壳、导航和主题按钮；业务页面不把交互塞回壳里。
 - `admin/src/api/http.ts` 是请求总闸；域名 API 函数留在各自 `api/*.ts`，页面不直接拼 axios 请求。
-- `pwa/src/App.vue` 只做界面状态与编排；会话、SSE 和持久化契约分别留在 `session/` 、`stream/` 和 `api/` 。
+- `pwa/src/App.vue` 只做界面状态与编排；会话、SSE 和持久化契约分别留在 `session/` 、`stream/` 和 `api/` ，单条消息自己怎么画留在 `components/` 。
+- 改一条消息的外观进 `pwa/src/components/`，不要写回 `App.vue` 的模板。这不是分层洁癖：内联在根组件 render 里的消息，一是打字就会牵动整条历史重新渲染（实测 40 条约 200ms 阻塞），二是其中任意一条抛异常会让 Vue 卸载整棵树——顶栏、输入框、全部消息一起消失，手机上就是白屏。两条都有单测守着（`pwa/tests/messageRow.spec.ts`）。
+- 错误文案在 `pwa/src/api/errors.ts` 提取，不在渲染侧收拾。502 时上游代理返回的是整张 HTML 页，让它进 `Error.message` 就等于让它进消息、进 localStorage、每次重开复发一遍。CSS 的行数上限是第二道墙，不是第一道。
 
 PWA 的回复过程条把 Thinking、网关工具和模型主动写下的回响放在同一条时间线上；回响使用柔和粉色
 语义色，但不另开常驻面板。点开过程条后，回响在自己的详情面板中显示，长文本必须换行且不能造成
@@ -156,6 +165,6 @@ PWA 的回复过程条把 Thinking、网关工具和模型主动写下的回响�
 | `admin/src/views/memory-graph/` | 记忆网络的皮肤（金、软木板、纸片家族 `OriginalPaper`、想起板 `RecallBoard`、阅读层 `AnchorOriginalsOverlay`、手绘符号 `SyGlyph`） |
 | `admin/src/views/bookshelf/ProjectMapDeliveryPanel.vue` | 《家里地图》的施工簿：日期轴、产品筛选、交付状态、展开证据与经验块 |
 | `admin/src/views/HomeView.vue` | 首页大卡与 bento 格子 |
-| `pwa/src/styles.css` | PWA 的全部视觉：聊天布局、自带字体、输入框几何、状态标动画、底部弹层、消息动作、Markdown 排版、工具轨迹状态。PWA 组件没有 scoped style，这里是唯一落点 |
+| `pwa/src/styles.css` | PWA 的全部视觉：聊天布局、自带字体、输入框几何、状态标动画、底部弹层、消息动作、Markdown 排版、工具轨迹状态。PWA 组件（含 `components/`）都没有 scoped style，这里是唯一落点 |
 
 新增独立维护的前端边界时，同步这份表 + `README.md` § Maintenance Map。

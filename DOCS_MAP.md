@@ -97,6 +97,7 @@
 | `docs/history/MCP_INTEGRATION_2026-08-13.md` | 2026-08-13 完成的 MCP 外部工具接入实施稿（网关作为 MCP client，`mcp_registry` / `mcp_routes` / Admin 卡片）；当前事实以 README Maintenance Map 与代码为准 |
 | `docs/history/PLAN_STREAM_RESILIENCE_2026-08.md` | 2026-08 完成的流式韧性交接稿（服务端断连后照常读完上游并落库、15s keepalive、PWA 停滞看门狗与尾部对账）；当前事实以 `REQUEST_CONTEXT.md` 流式章节与代码为准 |
 | `docs/history/SUPABASE_EGRESS_RECALL_WORKER_2026-08-15.md` | 2026-08-15 Supabase Egress 调查与 Recall worker 回传优化观察档；上线后的计费/更新时间戳核验按该档继续，不把快照当作永久账单结论 |
+| `docs/history/PWA_NATIVE_FEEL_PLAN_2026-08-29.md` | PWA 原生手感与照片堆的六档接续计划（①②已完成，③–⑥未开工）；含两个已拍决定（图片只存本机 IndexedDB、PhotoStack 署名不进地图）和本轮量到的渲染开销数字。已完成部分的当前事实以代码与 README Maintenance Map 为准 |
 
 ## 维护原则
 
