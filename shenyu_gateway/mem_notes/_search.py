@@ -34,12 +34,19 @@ from ..runtime import (
     iso_now,
     local_today as _local_today,
     now as _now,
+    parse_local_date as _parse_local_date,
     parse_ts as _parse_ts,
 )
 from ._helpers import _MEM_NOTE_SELECT_FIELDS, _MEM_NOTE_SELECT_FIELDS_LIGHT, _normalize_note_id
 
 # 一次最多挂几条到点的提醒。剩下的不打戳，下一轮再来。
 DUE_REMINDER_MAX = 3
+
+# 过了这么多天还没挂上的提醒，不再挂了：打个戳、记一条日志，让它从队列里消失。
+# `lte` 的本意是"那天网关正好没开，下次说话补上"，一次停机顶多几天；一周之后
+# 才冒出来的"该交电费了"已经不是提醒而是噪音。desc 让欠账不挡今天的路，这个地板
+# 让它们真的走掉——否则积压只会一直长，每一轮都占着查询窗口。
+DUE_REMINDER_STALE_DAYS = 7
 
 
 class SearchMixin:
@@ -243,19 +250,28 @@ class SearchMixin:
         reminder still comes up the next time we talk instead of being missed.
         Over the cap, the rest keep their empty `reminded_at` and come back on
         a later turn.
+
+        `desc`, not `asc`: today comes first and the backlog queues behind it.
+        Ascending order would put the oldest unpaid debt ahead of the reminder
+        that is actually due today, which contradicts the whole reason a due
+        reminder is allowed to force an island rewrite — that day is only today.
+
+        Past `DUE_REMINDER_STALE_DAYS`, a reminder is stamped and logged instead
+        of hung. `desc` only keeps the backlog out of the way; without a floor it
+        would still sit in the query window forever.
         """
         if not self.supabase:
             return {"ok": False, "count": 0, "items": []}
         target_limit = max(1, min(int(limit or DUE_REMINDER_MAX), 5))
-        today = _local_today().isoformat()
+        today = _local_today()
         try:
             rows = await self.supabase.query(
                 "shenyu_mem_notes",
                 {
                     "status": "eq.active",
-                    "remind_on": f"lte.{today}",
+                    "remind_on": f"lte.{today.isoformat()}",
                     "reminded_at": "is.null",
-                    "order": "remind_on.asc",
+                    "order": "remind_on.desc",
                     "limit": str(target_limit * 4),
                     "select": _MEM_NOTE_SELECT_FIELDS_LIGHT,
                 },
@@ -265,9 +281,8 @@ class SearchMixin:
             return {"ok": False, "count": 0, "items": []}
 
         items: list[dict[str, Any]] = []
+        stale: list[dict[str, Any]] = []
         for raw_row in rows or []:
-            if len(items) >= target_limit:
-                break
             # 一张写坏的便签不该让整条提醒通道停摆。
             try:
                 row = self._effective_note(raw_row)
@@ -275,6 +290,14 @@ class SearchMixin:
                     continue
                 item = self._public_search_item(row, ["due_reminder"])
                 item["search_mode"] = "due_reminder"
+                # 陈旧判定放在限额之前：过期的不该占今天的名额，也不该等到
+                # 队列排空才被发现。
+                overdue = self._days_overdue(item.get("remind_on"), today)
+                if overdue is not None and overdue > DUE_REMINDER_STALE_DAYS:
+                    stale.append(item)
+                    continue
+                if len(items) >= target_limit:
+                    continue
                 items.append(item)
             except Exception as exc:
                 logger.warning(
@@ -282,7 +305,38 @@ class SearchMixin:
                     (raw_row or {}).get("id"),
                     exc,
                 )
+        if stale:
+            await self._retire_stale_reminders(stale, today)
         return {"ok": True, "count": len(items), "items": items}
+
+    @staticmethod
+    def _days_overdue(remind_on: Any, today: Any) -> Optional[int]:
+        """How many days late this reminder is, or None when the day is unreadable."""
+        day = _parse_local_date(remind_on)
+        if day is None:
+            return None
+        return (today - day).days
+
+    async def _retire_stale_reminders(self, items: list[dict[str, Any]], today: Any) -> None:
+        """Stamp reminders too old to be worth hanging, and say so in the log.
+
+        Stamping is what makes them disappear: the query filters on
+        `reminded_at is.null`, so an unstamped backlog entry comes back every
+        single turn. The log line is the point of the whole branch — a reminder
+        that silently never fired is the failure this is here to make visible.
+        """
+        for item in items:
+            overdue = self._days_overdue(item.get("remind_on"), today)
+            logger.warning(
+                "[MemNote] Retiring a reminder nobody hung: id=%s remind_on=%s overdue_days=%s "
+                "floor=%s summary=%s",
+                item.get("id"),
+                item.get("remind_on"),
+                overdue,
+                DUE_REMINDER_STALE_DAYS,
+                _shorten(str(item.get("summary") or item.get("content") or ""), 60),
+            )
+        await self.mark_reminders_hung(items)
 
     async def mark_reminders_hung(self, items: list[dict[str, Any]]) -> None:
         """Stamp 已提醒 on reminders that just went up on the island.

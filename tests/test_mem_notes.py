@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from datetime import timedelta
 from types import SimpleNamespace
 
 from shenyu_gateway.mem_notes import MemNoteService, _clean_context_query
+from shenyu_gateway.mem_notes._search import DUE_REMINDER_STALE_DAYS
 from shenyu_gateway.runtime import local_today
 
 from .fake_postgrest import project_select
@@ -1703,6 +1705,9 @@ def test_due_reminders_include_a_day_that_already_passed():
     params = supabase.queries[-1]["params"]
     assert params["remind_on"] == f"lte.{today.isoformat()}"
     assert params["reminded_at"] == "is.null"
+    # desc, not asc: 今天的排最前，欠账排它后面。asc 会让一条漏挂的老提醒
+    # 永远压在真正到期的那条前面，正好跟"那个日子只有今天"的破门逻辑矛盾。
+    assert params["order"] == "remind_on.desc"
 
 
 def test_due_reminders_are_capped_and_the_rest_stay_unstamped():
@@ -1714,6 +1719,79 @@ def test_due_reminders_are_capped_and_the_rest_stay_unstamped():
 
     assert result["count"] == 3
     assert supabase.updates == []
+
+
+def test_the_staleness_floor_stays_within_a_plausible_outage():
+    # 这个数字有射程：它是"停机几天回来补上"和"这已经是噪音了"的分界。
+    # 写死它，是因为按常量算测试数据的用例无法发现地板被抬到天上——
+    # 数据会跟着常量一起漂走。
+    assert DUE_REMINDER_STALE_DAYS == 7
+
+
+def test_a_month_old_reminder_is_retired_with_a_log_line_instead_of_hung(caplog):
+    # 地板：过了 DUE_REMINDER_STALE_DAYS 就不再挂，打个戳让它从队列里消失。
+    # 打戳才是"消失"的机制——查询按 reminded_at is.null 过滤，不打戳的话
+    # 这条欠账每一轮都回来。日志是这个分支存在的意义：一条从没挂上的提醒
+    # 不该静默蒸发。天数写死成 30，不用常量算：地板被抬走时这条必须变红。
+    today = local_today()
+    stale_day = (today - timedelta(days=30)).isoformat()
+    rows = [
+        _reminder_row("stale", "该交电费了", remind_on=stale_day),
+        _reminder_row("today", "圆儿生日", remind_on=today.isoformat()),
+    ]
+    supabase, service = _reminder_service(rows=rows)
+
+    with caplog.at_level(logging.WARNING, logger="shenyu-gateway"):
+        result = asyncio.run(service.due_reminder_notes())
+
+    assert [item["id"] for item in result["items"]] == ["today"]
+    assert [update["match"]["id"] for update in supabase.updates] == ["stale"]
+    assert set(supabase.updates[0]["data"]) == {"reminded_at"}
+    assert "Retiring a reminder nobody hung" in caplog.text
+    assert "该交电费了" in caplog.text
+
+
+def test_a_reminder_inside_the_floor_still_hangs():
+    # 停机几天补上来，是 lte 的本意；地板只砍陈年欠账，别把它一起砍掉。
+    today = local_today()
+    rows = [
+        _reminder_row(
+            "recent", "该交电费了", remind_on=(today - timedelta(days=DUE_REMINDER_STALE_DAYS)).isoformat()
+        )
+    ]
+    supabase, service = _reminder_service(rows=rows)
+
+    result = asyncio.run(service.due_reminder_notes())
+
+    assert [item["id"] for item in result["items"]] == ["recent"]
+    assert supabase.updates == []
+
+
+def test_a_stale_reminder_does_not_consume_a_place_from_the_cap():
+    # 陈旧判定在限额之前：过期的既不占今天的名额，也不用等队列排空才被发现。
+    today = local_today()
+    stale_day = (today - timedelta(days=30)).isoformat()
+    rows = [_reminder_row(f"stale{i}", f"旧事{i}", remind_on=stale_day) for i in range(3)]
+    rows.extend(
+        _reminder_row(f"today{i}", f"今天{i}", remind_on=today.isoformat()) for i in range(3)
+    )
+    supabase, service = _reminder_service(rows=rows)
+
+    result = asyncio.run(service.due_reminder_notes())
+
+    assert [item["id"] for item in result["items"]] == ["today0", "today1", "today2"]
+    assert {update["match"]["id"] for update in supabase.updates} == {"stale0", "stale1", "stale2"}
+
+
+def test_an_unreadable_reminder_date_is_never_judged_stale():
+    # 读不出日子就不做陈旧判定：这条路只能让提醒消失，宁可它多留一轮。
+    # 只测这个 helper——remind_on 是 date 列，读不出的值进不了库，所以整条
+    # 查询路径走不到这里；能走到的是"哪天有人往这个函数塞了别的东西"。
+    _supabase, service = _reminder_service()
+
+    assert service._days_overdue("not-a-date", local_today()) is None
+    assert service._days_overdue(None, local_today()) is None
+    assert service._days_overdue((local_today() - timedelta(days=2)).isoformat(), local_today()) == 2
 
 
 def test_due_reminder_lookup_failure_does_not_raise():

@@ -51,8 +51,14 @@ def _merge_due_reminders(
     "reminders are extra" — the island is a prompt-cache breakpoint anchor, so
     an unbounded lane means an unbounded cacheable prefix.
 
-    A reminder already on the island keeps its place until the island is
-    rewritten (a trim boundary or a branch), which is exactly "hangs for one
+    Newly due reminders go in before carried-over ones. Nothing may outrank
+    "due today": a due reminder is the one thing allowed to force an island
+    rewrite, on the grounds that the day is only today, and putting anything
+    ahead of it under a shared ceiling hollows that out. A carried reminder has
+    already been seen and stamped, so it is the one that should yield.
+
+    A reminder already on the island otherwise keeps its place until the island
+    is rewritten (a trim boundary or a branch), which is exactly "hangs for one
     trimming cycle". Once it has hung, it is done — it does not come back.
 
     A reminder squeezed out by the ceiling never reaches the island, so it is
@@ -72,12 +78,12 @@ def _merge_due_reminders(
         seen.add(item_id)
         lane.append(item)
 
+    for item in due_items:
+        take(item)
     if carry_previous_reminders:
         for item in previous_mem_notes:
             if item.get("search_mode") == MEM_DUE_REMINDER_MODE:
                 take(item)
-    for item in due_items:
-        take(item)
     for item in recalled_items:
         take(item)
     return lane
@@ -352,8 +358,8 @@ class ContextBuilder:
             )
             # Mem 通道是一个总量：最多 mem_note_limit 条，提醒优先占位。
             # 不是"提醒是额外的"——动态岛是缓存断点锚，通道无上限就等于
-            # 可缓存前缀无上限。已经挂上去的提醒跟着岛走，直到下一次裁剪
-            # 把岛整体重写——那正好是"挂一整个裁剪周期"，不必再记周期账。
+            # 可缓存前缀无上限。今天到期的排最前，然后才是已经挂着的（它跟着
+            # 岛走，直到下一次裁剪把岛整体重写——那正好是"挂一整个裁剪周期"）。
             proposed_mem_notes = _merge_due_reminders(
                 due_result.get("items") or [],
                 recalled_mem_notes,

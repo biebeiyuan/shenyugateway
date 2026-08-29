@@ -318,7 +318,7 @@ def test_a_rewritten_island_drops_the_hung_reminder_and_frees_its_place():
 
 
 def test_mem_lane_never_exceeds_the_limit_from_all_three_sources():
-    # 三个来源：岛上挂着的旧提醒、今天新到期的、普通召回。加起来也不能超。
+    # 三个来源：今天新到期的、岛上挂着的旧提醒、普通召回。加起来也不能超。
     lane = _merge_due_reminders(
         [_reminder("due-1"), _reminder("due-2")],
         [_recalled("recall-1"), _recalled("recall-2")],
@@ -328,7 +328,22 @@ def test_mem_lane_never_exceeds_the_limit_from_all_three_sources():
     )
 
     assert len(lane) == 3
-    assert [item["id"] for item in lane] == ["hung-1", "hung-2", "due-1"]
+    assert [item["id"] for item in lane] == ["due-1", "due-2", "hung-1"]
+
+
+def test_today_outranks_a_carried_reminder_when_the_lane_is_full():
+    # 到期的提醒是唯一有权破门重写岛的东西，理由是"那个日子只有今天"。
+    # 共享总量下让任何东西排在它前面，都等于把那条理由架空——挂过的那条
+    # 已经被看见、打过戳，该让位的是它。
+    lane = _merge_due_reminders(
+        [_reminder("due-today")],
+        [],
+        previous_mem_notes=[_reminder("hung-1"), _reminder("hung-2"), _reminder("hung-3")],
+        carry_previous_reminders=True,
+        limit=3,
+    )
+
+    assert [item["id"] for item in lane] == ["due-today", "hung-1", "hung-2"]
 
 
 def test_due_reminder_reaches_the_island_with_the_mem_channel_off(monkeypatch, tmp_path):
