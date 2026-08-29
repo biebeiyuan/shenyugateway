@@ -175,6 +175,7 @@ export interface LogDetail extends LogEntry {
     rendered_text?: string
     stars?: MemoryIslandLane
     mem_notes?: MemoryIslandLane
+    bumps?: string[]
   } | null
   internal_tool_rounds?: ToolRoundEntry[] | null
 }

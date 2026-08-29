@@ -516,6 +516,52 @@ Room 的 `room_scribble` 是进入方式，不是另一套 Recall 来源：它�
 
 ---
 
+## 8.5 小突起（今天已经记下的）
+
+### 8.5.1 它解决什么问题
+
+沈予用完工具之后不知道自己做过什么，于是同一件事会被记第二遍。网关内部的工具轮次只活在 `tool_loop.py` 的 `working_messages` 里；返回给客户端的只有最终那条 assistant 消息，而客户端回传时只带 `{role, content}`（`pwa/src/api/client.ts::wireMessages`）。所以「上一轮落了一颗星」这件事在下一轮的上下文里彻底消失——连 `sessions.py::recent_tail` 都特意跳过 `role='tool'` 行。
+
+名字是沈予自己取的。她读到的标题就是 `## 今天的小突起`，视觉上是动态岛的第三节。
+
+### 8.5.2 三条边界
+
+- **不是工具。** 她什么都不用调。做成工具等于「让她记得调一个工具，来帮她记得自己做过什么」——正是要修的那个 bug。
+- **不进岛文本。** 渲染结果作为岛之后的独立 block，动态岛的 `rendered_hash` 逐字节不变，2/3 重合门照旧生效。写进岛正文会让每次写入都换版，岛之后那三十来条消息的缓存一起作废。技术上它挂在岛消息的 `MEMORY_ISLAND_BUMP_KEY` 旁挂字段上，由两条协议适配路径各自渲染；因此它自动跟着 `island_anchor_offset` 走，那个数从 32 改成别的值时这里不用动。
+- **无状态。** 「展示过没有」不记账，纯按时间窗口算，所以 retry / roll / branch 都不会让它错乱。
+
+### 8.5.3 日界在凌晨两点
+
+走 `runtime.py::local_waking_day` 而不是自然日 `local_today()`：熬夜时凌晨一点写下的东西，一点半就"不是今天"了。`NIGHT_OWL_DAY_START_HOUR = 2`，02:00 之前算前一天还没过完。
+
+这是刻意独立的第二套口径，不是 `local_today()` 的替代品——日历页和便签 `remind_on` 讲的是圆圆日程上的自然日（"说的就是今天"），必须零点翻页。两者不该合并。`local_waking_day_start()` 返回 UTC，因为存储时间戳来自 `iso_now()`（UTC），调用方按文本比较；返回 `+08:00` 会跟 `+00:00` 的行按字典序比出错误的瞬间。
+
+### 8.5.4 映射：哪些写操作进来
+
+| 来源 | 取哪些字段 | 一行长什么样 |
+|------|-----------|------------|
+| `shenyu_create_star` | `chord` + `content`（复用 `stars/_render.py` 的措辞） | `星星 Cmaj7 · 她说想养一只橘猫` |
+| `shenyu_write_mem_note` | `mem_type` + `summary`，有 `remind_on` 带上日期 | `便签 承诺：周五帮她看简历（记的是 2026-09-04）` |
+| `shenyu_add_calendar` | `period_key` + `mode` + `digest` | `日历 2026-08-29 续写：今天她提到换工作的事` |
+
+只收 `ok: true`；`cached_duplicate` 的重放不重复出条；便签被同日去重拦下时（`duplicate_of`）明说「本来就有一张」，否则她会以为刚写成功了一张新的；上限 `ISLAND_BUMP_LIMIT`（默认 8），超了留最近的。
+
+**不进来的**：`supabase_*` 原始表操作（能触达任意表，语义是表操作不是"我记下了什么"）、`star_feedback` / `mark_constant` / `archive_star`（纯簿记，返回里没有可读内容）、`bulk_update_mem_notes`（刷屏）、`delete_mem_note`（复述刚删掉的东西正好是反效果）、`room_locked_drawer`（写入即隐私边界，放进去就不该再被提起）。
+
+### 8.5.5 改动边界
+
+| 改什么 | 在哪改 |
+|--------|--------|
+| 白名单、一行的措辞、上限行为 | `island_bumps.py`（纯函数，无 IO） |
+| 日界小时 | `runtime.py::NIGHT_OWL_DAY_START_HOUR` |
+| 读取源 | `store/_messages.py::get_tool_messages_since` |
+| 工具行上记的动作名 | `tool_loop.py::_logged_tool_name`（broker 模式下 `tool_name` 曾恒为 `shenyu_gateway_tool`） |
+| 层渲染 / 位置 | `context_layers.py::render_layered_additions` + `assemble_layered_messages` |
+| 上游渲染 | `upstream_adapter.py`：OpenAI 侧在 `_sanitize_openai_compatible_messages`，Anthropic 侧在 `_openai_to_anthropic` |
+| 开关 / 条数 | `INJECT_ISLAND_BUMPS`、`ISLAND_BUMP_LIMIT`（Admin 在 `Mem0View.vue` 的「小突起」组） |
+
+---
+
 ## 9. Room Mode（房间模式）与记忆系统的关系
 
 Room Mode 不是记忆子系统，但它**消费所有记忆子系统的数据**来决定环境状态。

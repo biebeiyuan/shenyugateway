@@ -10,6 +10,11 @@ from .context_layers import (
     render_system_additions as _render_system_additions,
 )
 from .gateway_tools import GatewayToolService
+from .island_bumps import (
+    DEFAULT_BUMP_LIMIT,
+    bump_lines_from_tool_rows,
+    waking_day_start_iso,
+)
 from .mem_notes import MemNoteService
 from .memory_island import (
     MEM_DUE_REMINDER_MODE,
@@ -205,6 +210,7 @@ class ContextBuilder:
             "book_overview": {},
             "memory_island_state": previous_island_state or {},
             "memory_island_decision": {},
+            "island_bumps": self._island_bump_lines(session_id),
         }
 
         # Collect independent context sources concurrently. Each source is normalized
@@ -466,6 +472,27 @@ class ContextBuilder:
     def _normal_heartbeat_digest(self, session_id: str, consume_pending: bool = True) -> str:
         digest, _ = self._normal_heartbeat_context(session_id=session_id, consume_pending=consume_pending)
         return digest
+
+    def _island_bump_lines(self, session_id: str) -> list[str]:
+        """今天沈予已经记下的东西，一条一句话。失败就当没有，不影响其他 lane。
+
+        同步读本地 SQLite，跟心跳一样不进 gather：这一路很便宜，而且要拿的行数
+        由「凌晨两点以来的工具行」界定，不需要等任何远端。
+        """
+        if not getattr(self.cfg, "inject_island_bumps", True):
+            return []
+        since = waking_day_start_iso()
+        if not since:
+            return []
+        try:
+            rows = self.store.get_tool_messages_since(session_id, since)
+            return bump_lines_from_tool_rows(
+                rows,
+                limit=getattr(self.cfg, "island_bump_limit", DEFAULT_BUMP_LIMIT),
+            )
+        except Exception as exc:
+            logger.warning("[IslandBump] 读今天的小突起失败，这轮先不挂: %s", exc)
+            return []
 
     def _normal_heartbeat_context(self, session_id: str, consume_pending: bool = True) -> tuple[str, list[str]]:
         heartbeat_batch_size = max(int(self.cfg.heartbeat_inject_every or 5), 1)

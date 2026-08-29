@@ -56,6 +56,8 @@ class ConfigUpdate(BaseModel):
     calendar_inject_week: Optional[bool] = None
     calendar_inject_month: Optional[bool] = None
     inject_mem_notes: Optional[bool] = None
+    inject_island_bumps: Optional[bool] = None
+    island_bump_limit: Optional[int] = None
     inject_stars: Optional[bool] = None
     inject_star_prompt: Optional[bool] = None
     enable_inline_star_capture: Optional[bool] = None

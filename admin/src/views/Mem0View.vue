@@ -87,6 +87,8 @@ const MEM_TUNING_DEFAULTS: Partial<GatewayConfig> = {
   inject_mem_notes: true,
   enable_gateway_tools: true,
   enable_mem0_management_tools: true,
+  inject_island_bumps: true,
+  island_bump_limit: 8,
   mem_note_limit: 3,
   mem_note_min_score: 0.45,
   mem_note_context_keyword_min_score: 0.25,
@@ -103,6 +105,8 @@ const config = ref<Partial<GatewayConfig>>({
   inject_mem_notes: true,
   enable_gateway_tools: true,
   enable_mem0_management_tools: true,
+  inject_island_bumps: true,
+  island_bump_limit: 8,
 })
 const savingConfig = ref(false)
 
@@ -249,6 +253,8 @@ async function saveSettings() {
       inject_mem_notes: config.value.inject_mem_notes,
       enable_gateway_tools: config.value.enable_gateway_tools,
       enable_mem0_management_tools: config.value.enable_mem0_management_tools,
+      inject_island_bumps: config.value.inject_island_bumps,
+      island_bump_limit: config.value.island_bump_limit,
       mem_note_limit: config.value.mem_note_limit,
       mem_note_min_score: config.value.mem_note_min_score,
       mem_note_context_keyword_min_score: config.value.mem_note_context_keyword_min_score,
@@ -1014,6 +1020,22 @@ function reminderStamp(item: MemNoteItem) {
               <NFormItem label="便签管理工具">
                 <NSwitch v-model:value="config.enable_mem0_management_tools" />
                 <span class="cfg-hint">他能不能自己新建、修改便签</span>
+              </NFormItem>
+            </div>
+          </div>
+
+          <!-- 小突起：告诉沈予今天已经记过什么，免得重复记 -->
+          <div class="settings-group">
+            <div class="settings-group-title">小突起</div>
+            <div class="settings-group-desc">动态岛下面一小节，告诉沈予今天已经落过哪些星星、写过哪些便签和日历</div>
+            <div class="cfg-row">
+              <NFormItem label="小突起">
+                <NSwitch v-model:value="config.inject_island_bumps" />
+                <span class="cfg-hint">关掉之后，他就看不见自己今天记过什么了</span>
+              </NFormItem>
+              <NFormItem label="最多列几条">
+                <NInputNumber v-model:value="config.island_bump_limit" :min="1" :max="20" style="width:100%" />
+                <span class="cfg-hint">推荐 8，超过就只留最近的；凌晨两点翻页</span>
               </NFormItem>
             </div>
           </div>

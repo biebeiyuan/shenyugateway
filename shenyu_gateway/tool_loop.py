@@ -381,7 +381,7 @@ async def _execute_mixed_gateway_tool_calls(
             logger.exception("[GatewayTool] Mixed tool call failed: %s", name)
             result = {"ok": False, "error": str(exc), "error_kind": "exception"}
         result = _decorate_tool_error_result(result)
-        ctx.sessions.log_tool_result(ctx.session_id, name, args, result)
+        ctx.sessions.log_tool_result(ctx.session_id, _logged_tool_name(name, args), args, result)
         if isinstance(result, dict) and result.get("ok") is False:
             _record_tool_error(ctx, name, args, result)
         gateway_tool_messages.append(
@@ -977,7 +977,7 @@ async def _execute_internal_tool_call(
         result = _decorate_tool_error_result(result)
         duration_ms = int((time.monotonic() - t0) * 1000)
         tool_result_cache[cache_key] = result
-        ctx.sessions.log_tool_result(ctx.session_id, name, args, result)
+        ctx.sessions.log_tool_result(ctx.session_id, _logged_tool_name(name, args), args, result)
         if isinstance(result, dict) and result.get("ok") is False:
             _record_tool_error(ctx, name, args, result)
     return result, args, name, cached, duration_ms
@@ -1009,6 +1009,17 @@ def _append_tool_round_log(
 
 def _target_tool_name(name: str, args: dict) -> str:
     return str(args.get("tool") or args.get("name") or args.get("action") or "") if name == "shenyu_gateway_tool" else name
+
+
+def _logged_tool_name(name: str, args: dict) -> str:
+    """The name worth storing on the `gateway_messages` tool row.
+
+    Broker mode (the default) puts every gateway tool behind one wire name, so
+    storing that name verbatim recorded "shenyu_gateway_tool" for落星星, 写便签,
+    and 写日历 alike — indistinguishable afterwards. Fall back to the wire name
+    when the target cannot be resolved.
+    """
+    return _target_tool_name(name, args) or name
 
 
 def _classify_tool_error(result: dict) -> str:

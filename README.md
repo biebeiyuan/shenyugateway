@@ -62,7 +62,7 @@ The codebase is partly layered already:
 ### Context assembly
 
 - `shenyu_gateway/context_builder.py`: async parallel gathering of all memory sources into a context package.
-- `shenyu_gateway/context_layers.py`: stable/slow/mem/heartbeat/tool-policy/format layer rendering (including the optional echo prompt immediately before Heartbeat), client message trimming, and cold-start bridge insertion.
+- `shenyu_gateway/context_layers.py`: stable/slow/mem/island-bumps/heartbeat/tool-policy/format layer rendering (including the optional echo prompt immediately before Heartbeat), client message trimming, and cold-start bridge insertion.
 - `shenyu_gateway/project_map.py`: owner-only live project map assembled from the current system zones, maintenance/product indexes, resident component fingerprints, and change ledger; it derives one-hop component links only from mapped source files claimed by exactly two components, while broader shared hubs remain cross-zone bridge evidence.
 - `shenyu_gateway/project_delivery.py` / `project_delivery_log.jsonl`: structured owner-facing delivery ledger and validation/append helpers; one entry represents one coherent completed outcome and links it to a product, paths, docs, verification, and optional reusable lesson.
 - `shenyu_gateway/resident_home.py`: resident-facing component manifest, source fingerprints, review acknowledgements, and weekly change records.
@@ -72,6 +72,7 @@ The codebase is partly layered already:
 - `shenyu_gateway/context_window.py`: semantic history-event classification, chunk-safe client-history windowing with high-water/epoch/anchor state, and cold-start bridge overlap deduplication.
 - `shenyu_gateway/client_extra.py`: shared recognition/stripping of client-injected per-message extras (Operit `message_insert_extra_bundle` attachments and the PWA tail status suffix), imported by trimming, archiving, history normalization, and recall-query cleaning.
 - `shenyu_gateway/memory_island.py`: Stars/Mem island rendering and per-lane retain/rewrite state, including overlap decisions and current/added/updated/removed log summaries.
+- `shenyu_gateway/island_bumps.py`: 小突起 — stateless one-line receipts for the memory writes Shenyu already made this waking day (stars, mem notes, calendar), rendered as a block trailing the island so repeats stop happening.
 - `shenyu_gateway/prepare_messages.py`: cold-start snapshot preparation, runtime state pruning, pending gateway tool turn injection, and message/tool-call helpers.
 
 ### Upstream communication
@@ -256,6 +257,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 | Admin 控制台 | 管理后台、家里后台 | `admin/src/App.vue`、`admin/src/views/` | `admin/src/`、`scripts/admin_preview.py` | `docs/frontend/STYLE_AND_CRAFT.md`、`START_HERE.md` |
 | PWA 聊天端 | 手机聊天、独立 PWA、`shenyu-pwa` 客户端 | `pwa/src/App.vue`、`shenyu_gateway/chat_pipeline.py`、`streaming.py` | `GET /v1/models`、`POST /v1/chat/completions`、`X-Shenyu-Tool-Events`、`shenyu_upstream_presets` | `SYSTEM_ZONES.md` § 客户端表面、`REQUEST_CONTEXT.md` § External Frontend Contracts |
 | Memory Island | Stars + Mem 当前岛 | `memory_island.py`、`context_builder.py` | `admin/src/api/logs.ts`、`LogsView.vue` | `REQUEST_CONTEXT.md`、`MEMORY_ROOM.md` |
+| 小突起 | 今天已经记下的、工具回执 | `island_bumps.py`、`context_layers.py` | `admin/src/api/logs.ts`、`LogsView.vue`、`Mem0View.vue` | `DESIGN.md` § 小突起、`MEMORY_ROOM.md` |
 | Stars | 星星 / 关联记忆 | `shenyu_gateway/stars/` | `admin/src/api/stars.ts`、`StarsView.vue`、`views/stars/` | `MEMORY_ROOM.md` § Star Memory Layer |
 | Mem | Mem Notes / 便签 | `shenyu_gateway/mem_notes/`、`mem_notes_relevance.py` | `admin/src/api/mem0.ts`、`Mem0View.vue` | `MEMORY_ROOM.md` § Mem Note Layer |
 | 记忆网络 | 人物 / 地点 / 物件 / 主题锚点 | `memory_graph.py`、`shenyu_gateway/recall/` | `admin/src/api/memoryGraph.ts`、`MemoryGraphView.vue`、`Mem0View.vue` | `MEMORY_ROOM.md` § Personal Memory Graph |

@@ -92,6 +92,50 @@ def local_day_of(value: Optional[str]) -> Optional[date]:
     return dt.astimezone(LOCAL_DAY_TZ).date() if dt else None
 
 
+# 沈予和圆圆熬夜聊天时，凌晨一点写下的东西在一点半就"不是今天"了，这很荒谬。
+# 所以"这一晚"的日界定在凌晨两点：02:00 之前算前一天还没过完。
+#
+# 这是刻意独立于 local_today() 的第二套口径，不是它的替代品：日历页、便签的
+# remind_on 提醒讲的是自然日（"说的就是今天"），那是圆圆日程上的日子，必须在
+# 零点翻页。这里讲的是"沈予醒着的这一段"，两者不该合并。
+NIGHT_OWL_DAY_START_HOUR = 2
+
+
+def local_waking_day(value: Optional[str] = None) -> Optional[date]:
+    """Return the Asia/Shanghai day a moment belongs to, with the night rolled over.
+
+    Pass nothing for the current moment. A timestamp before 02:00 belongs to the
+    previous calendar day, because that is still the same night to whoever is awake.
+    """
+    dt = now() if value is None else parse_ts(value)
+    if dt is None:
+        return None
+    local = dt.astimezone(LOCAL_DAY_TZ)
+    if local.hour < NIGHT_OWL_DAY_START_HOUR:
+        return (local - timedelta(days=1)).date()
+    return local.date()
+
+
+def local_waking_day_start(value: Optional[str] = None) -> Optional[datetime]:
+    """Return the 02:00 Asia/Shanghai boundary opening a moment's waking day, in UTC.
+
+    Returned in UTC on purpose: stored timestamps come from `iso_now()`, which is
+    UTC, and callers compare the two as text. A `+08:00` boundary would compare
+    against `+00:00` rows lexically and silently pick the wrong instant.
+    """
+    day = local_waking_day(value)
+    if day is None:
+        return None
+    boundary = datetime(
+        day.year,
+        day.month,
+        day.day,
+        NIGHT_OWL_DAY_START_HOUR,
+        tzinfo=LOCAL_DAY_TZ,
+    )
+    return boundary.astimezone(timezone.utc)
+
+
 def mask(value: str, keep: int = 8) -> str:
     if len(value) <= keep + 4:
         return "****"

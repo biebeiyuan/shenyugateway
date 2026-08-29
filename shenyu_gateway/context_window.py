@@ -13,6 +13,9 @@ from .echo import strip_leading_echo
 
 MEMORY_ISLAND_LAYER = "memory_island"
 INTERNAL_LAYER_KEY = "_shenyu_context_layer"
+# 小突起搭在岛消息上，由协议适配层渲染成岛之后的独立 block。挂成旁挂字段而不是
+# 拼进 content，是为了让岛文本保持逐字节稳定——它是缓存前缀的锚。
+MEMORY_ISLAND_BUMP_KEY = "_shenyu_island_bumps"
 DEFAULT_ISLAND_TAIL_MESSAGES = 32
 DEFAULT_RAW_TOOL_PROTECTION_TURNS = 18
 _IMAGE_SEEN_PLACEHOLDER = "圆圆发来的照片我已经看过。"

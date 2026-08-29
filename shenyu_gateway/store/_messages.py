@@ -69,6 +69,31 @@ class MessagesMixin:
             ).fetchall()
             return [dict(row) for row in reversed(rows)]
 
+    def get_tool_messages_since(
+        self,
+        session_id: str,
+        since: str,
+        limit: int = 40,
+    ) -> list[dict]:
+        """Return this session's tool rows written at or after `since`, oldest first.
+
+        `since` is an ISO timestamp compared as text, which works because
+        `iso_now()` writes a fixed-width UTC format. The dialogue reader next door
+        filters to user/assistant and therefore cannot answer this.
+        """
+        limit = max(1, min(int(limit or 40), 500))
+        with self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT * FROM gateway_messages
+                WHERE session_id = ? AND role = 'tool' AND created_at >= ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (session_id, since, limit),
+            ).fetchall()
+            return [dict(row) for row in reversed(rows)]
+
     def dedupe_messages(self, session_id: Optional[str] = None) -> dict[str, int]:
         params: list[Any] = []
         where = ""

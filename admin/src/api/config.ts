@@ -42,6 +42,8 @@ export interface GatewayConfig {
   inject_inline_memory_prompt?: boolean
   enable_inline_memory_capture?: boolean
   inject_mem_notes?: boolean
+  inject_island_bumps?: boolean
+  island_bump_limit?: number
   mem_note_limit?: number
   mem_note_min_score?: number
   mem_note_context_keyword_min_score?: number
@@ -150,6 +152,8 @@ export interface HealthStatus {
   gateway_tool_surface?: string
   client_tool_surface?: string
   inject_mem_notes?: boolean
+  inject_island_bumps?: boolean
+  island_bump_limit?: number
   enable_cold_start?: boolean
 }
 

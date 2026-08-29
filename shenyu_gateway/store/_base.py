@@ -71,6 +71,9 @@ class BaseStoreMixin:
                     FOREIGN KEY(session_id) REFERENCES gateway_sessions(id)
                 );
 
+                CREATE INDEX IF NOT EXISTS idx_gateway_messages_session_role_created
+                    ON gateway_messages(session_id, role, created_at DESC);
+
                 CREATE TABLE IF NOT EXISTS cache_entries (
                     cache_key TEXT PRIMARY KEY,
                     cache_type TEXT NOT NULL,

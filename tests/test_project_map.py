@@ -166,6 +166,14 @@ def _defines_symbol(path: str, symbol: str) -> bool:
     leaf = re.escape(symbol.rsplit(".", 1)[-1])
     return bool(
         re.search(rf"^\s*(?:async\s+def|def|class)\s+{leaf}\b", text, flags=re.MULTILINE)
+        # TypeScript/Vue declaration forms. The anchor pattern above accepts .ts
+        # and .vue, so leaving these out made every such anchor fail on sight.
+        or re.search(
+            rf"^\s*(?:export\s+)?(?:default\s+)?(?:async\s+)?"
+            rf"(?:function|class|const|let|var|type|interface|enum)\s+{leaf}\b",
+            text,
+            flags=re.MULTILINE,
+        )
         or re.search(rf"^\s*{leaf}\s*[:=]", text, flags=re.MULTILINE)
     )
 

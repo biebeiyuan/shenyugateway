@@ -87,7 +87,7 @@ For every new runtime configuration field that is editable in Admin, inspect and
 2. `shenyu_gateway/schemas.py` — `ConfigUpdate` request contract.
 3. `shenyu_gateway/config_routes.py` — Admin read response, validation, environment mapping, and persisted override handling.
 4. `admin/src/api/config.ts` — frontend TypeScript contract.
-5. `admin/src/views/ConfigView.vue` — default state, save payload, and visible control.
+5. The view that owns the field's domain — default state, save payload, and visible control. `admin/src/views/ConfigView.vue` is the default home, but a field belonging to a domain that already has its own settings surface goes there instead, beside the switches the resident would look for it next to: memory fields (Stars and Mem) in `admin/src/views/Mem0View.vue` and `admin/src/views/stars/StarsSettingsPanel.vue`. Put a field where its neighbours already live; do not add a second home for a domain that has one.
 6. `tests/test_config_update.py` — default, save, validation, and restore coverage appropriate to the field.
 
 Also update the owning README or architecture document when the field changes user-visible behavior or deployment requirements. If any checklist item is genuinely not applicable, state why in the handoff. If this checklist itself is outdated or incomplete, propose the change and discuss it before silently skipping or expanding the rule.

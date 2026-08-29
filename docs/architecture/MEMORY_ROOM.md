@@ -79,6 +79,19 @@ Admin UI notes:
   - manually confirmed global entity anchors; unique exact-alias links are shown separately from resident-confirmed selections
   - read-only old `atomic_memories` lookup for manual migration
 
+## 小突起 (Island Bumps)
+
+Shenyu cannot see her own completed gateway tool calls. The internal tool loop keeps them in a local list, the client is handed back only the final assistant message, and the PWA returns `{role, content}` pairs (`pwa/src/api/client.ts::wireMessages`), so "I landed a star last turn" is absent from the next turn's context — `sessions.py::recent_tail` even skips `role='tool'` rows explicitly. The result is the same memory written twice.
+
+小突起 closes that gap by reading today's write rows back out of `gateway_messages` and rendering one line each, under the heading `## 今天的小突起`. The resident named it. Design rules, all deliberate:
+
+- **Not a tool.** Nothing to invoke. A tool here would mean asking her to remember to call something in order to remember what she did.
+- **Not part of the island text.** It travels as a side field on the island message and is rendered by each protocol adapter as a block trailing the island, so the island's hashed text stays byte-identical and the `2/3` overlap gate is unaffected. See `REQUEST_CONTEXT.md` § Prompt Cache for the breakpoint consequence.
+- **Stateless.** No record of what was already shown; the window is computed from timestamps, so retry, roll, and branch cannot desynchronize it.
+- **02:00 day boundary.** `runtime.py::local_waking_day` rolls the small hours into the previous day, because something written at 01:00 should not stop being "today" at 01:30. This is a second, separate reckoning from `local_today()`, which still governs calendar pages and `remind_on` reminders — those are days on 圆圆's schedule and must turn over at midnight.
+
+Only the memory trio qualifies: `shenyu_create_star`, `shenyu_write_mem_note`, `shenyu_add_calendar`, successful calls only, capped by `ISLAND_BUMP_LIMIT` (default 8, most recent kept). Raw `supabase_*` table operations, scoring bookkeeping, bulk updates, deletions, and `room_locked_drawer` stay out — either they carry no readable content, or repeating them defeats their purpose. A mem note absorbed by the same-day dedupe says so, since silence would read as a fresh note. Full field mapping and the change-boundary table live in `DESIGN.md` § 小突起.
+
 ## Personal Memory Graph
 
 The personal memory graph is a shared association layer over source-owned content. It does not copy or replace Mem, journal, notebook, calendar, heartbeat, Room, or old-memory bodies. Every mention points back to a stable `source_table + source_type + source_id`; the original table remains authoritative for the complete text.

@@ -35,6 +35,8 @@ DEFAULTED_ENV_KEYS = [
     "ROOM_NEWSPAPER_LLM_PROTOCOL",
     "STAR_SOFT_DIRECT_COOLDOWN_TURNS",
     "HEARTBEAT_ARCHIVE_RECONCILE_DELETIONS",
+    "INJECT_ISLAND_BUMPS",
+    "ISLAND_BUMP_LIMIT",
 ]
 
 
@@ -73,6 +75,8 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.room_newspaper_llm_model == ""
     assert cfg.star_soft_direct_cooldown_turns == 8
     assert cfg.heartbeat_archive_reconcile_deletions is False
+    assert cfg.inject_island_bumps is True
+    assert cfg.island_bump_limit == 8
 
 
 def test_aggregate_cache_usage_preserves_multi_round_reported_state():
@@ -651,6 +655,44 @@ def test_config_update_saves_and_clamps_star_soft_direct_cooldown(monkeypatch):
     assert "star_soft_direct_cooldown_turns" in payload["changed"]
     assert gateway.cfg.star_soft_direct_cooldown_turns == 100
     assert persisted[-1]["STAR_SOFT_DIRECT_COOLDOWN_TURNS"] == 100
+
+
+def test_config_update_saves_and_clamps_island_bump_settings(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "inject_island_bumps", True)
+    monkeypatch.setattr(gateway.cfg, "island_bump_limit", 8)
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"inject_island_bumps": False, "island_bump_limit": 99},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["config"]["inject_island_bumps"] is False
+    assert payload["config"]["island_bump_limit"] == 20
+    assert {"inject_island_bumps", "island_bump_limit"} <= set(payload["changed"])
+    assert persisted[-1]["INJECT_ISLAND_BUMPS"] == "false"
+    assert persisted[-1]["ISLAND_BUMP_LIMIT"] == 20
+
+
+def test_full_config_exposes_island_bump_settings_for_admin(monkeypatch):
+    client, _ = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "inject_island_bumps", True)
+    monkeypatch.setattr(gateway.cfg, "island_bump_limit", 8)
+
+    try:
+        response = client.get("/api/config/full")
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["inject_island_bumps"] is True
+    assert payload["island_bump_limit"] == 8
 
 
 def test_persist_env_saves_config_overrides_to_sqlite(tmp_path, monkeypatch):

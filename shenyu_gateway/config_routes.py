@@ -55,6 +55,8 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
         "inject_mem_notes": cfg.inject_mem_notes,
+        "inject_island_bumps": cfg.inject_island_bumps,
+        "island_bump_limit": cfg.island_bump_limit,
         "inject_stars": cfg.inject_stars,
         "inject_star_prompt": cfg.inject_star_prompt,
         "enable_inline_star_capture": cfg.enable_inline_star_capture,
@@ -188,6 +190,8 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "calendar_inject_week": "CALENDAR_INJECT_WEEK",
             "calendar_inject_month": "CALENDAR_INJECT_MONTH",
             "inject_mem_notes": "INJECT_MEM_NOTES",
+            "inject_island_bumps": "INJECT_ISLAND_BUMPS",
+            "island_bump_limit": "ISLAND_BUMP_LIMIT",
             "inject_stars": "INJECT_STARS",
             "inject_star_prompt": "INJECT_STAR_PROMPT",
             "enable_inline_star_capture": "ENABLE_INLINE_STAR_CAPTURE",
@@ -293,6 +297,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "calendar_inject_week",
             "calendar_inject_month",
             "inject_mem_notes",
+            "inject_island_bumps",
             "inject_stars",
             "inject_star_prompt",
             "enable_inline_star_capture",
@@ -529,6 +534,10 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             cfg.mem_note_limit = max(1, min(body.mem_note_limit, 5))
             changed.append("mem_note_limit")
             env_updates[env_names["mem_note_limit"]] = cfg.mem_note_limit
+        if body.island_bump_limit is not None:
+            cfg.island_bump_limit = max(1, min(body.island_bump_limit, 20))
+            changed.append("island_bump_limit")
+            env_updates[env_names["island_bump_limit"]] = cfg.island_bump_limit
         if body.mem_note_min_score is not None:
             cfg.mem_note_min_score = deps.clamp(float(body.mem_note_min_score), 0.0, 1.0)
             changed.append("mem_note_min_score")

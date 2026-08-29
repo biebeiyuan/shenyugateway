@@ -5,7 +5,11 @@ import uuid
 from typing import Any, Optional
 
 from .runtime import now_ts as _now_ts
-from .context_window import INTERNAL_LAYER_KEY, MEMORY_ISLAND_LAYER
+from .context_window import (
+    INTERNAL_LAYER_KEY,
+    MEMORY_ISLAND_BUMP_KEY,
+    MEMORY_ISLAND_LAYER,
+)
 from .utils import clean_config_text as _clean_config_text
 from .utils import coerce_json_object as _coerce_json_object
 from .utils import normalize_text as _normalize_text
@@ -113,6 +117,7 @@ def _sanitize_openai_compatible_messages(messages: list[dict]) -> list[dict]:
             continue
         clean = {key: value for key, value in msg.items() if value is not None}
         clean.pop(INTERNAL_LAYER_KEY, None)
+        bump_text = _normalize_text(clean.pop(MEMORY_ISLAND_BUMP_KEY, "")).strip()
         role = clean.get("role")
         content = clean.get("content")
 
@@ -137,6 +142,11 @@ def _sanitize_openai_compatible_messages(messages: list[dict]) -> list[dict]:
         if "content" not in clean and not (role == "assistant" and clean.get("tool_calls")):
             continue
         sanitized.append(clean)
+        # 小突起作为岛后面紧挨着的一条独立消息，而不是拼进岛正文：岛消息本身要
+        # 逐字节稳定（断点就打在它上面），突起每次写入都会变。放在这里意味着
+        # cache_control 开或关都会出现，两条路径都走同一个 sanitize。
+        if bump_text:
+            sanitized.append({"role": "system", "content": bump_text})
     return sanitized
 
 
@@ -663,7 +673,13 @@ def _openai_to_anthropic(
                 cache_ttl,
             )
             island_anthropic_idx = len(anthropic_messages)
-            anthropic_messages.append({"role": "user", "content": [island_block]})
+            island_blocks = [island_block]
+            # 小突起排在带断点的岛 block 之后，所以按 block 顺序它落在缓存前缀
+            # 之外：岛照旧命中，突起变了只重算它自己往后的部分。
+            bump_text = _normalize_text(msg.get(MEMORY_ISLAND_BUMP_KEY))
+            if bump_text.strip():
+                island_blocks.append({"type": "text", "text": bump_text})
+            anthropic_messages.append({"role": "user", "content": island_blocks})
             continue
 
         if role == "system":

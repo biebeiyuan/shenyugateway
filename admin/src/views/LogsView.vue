@@ -397,6 +397,18 @@ function renderOverview(detail: LogDetail): string {
     html += '</div></div>'
   }
 
+  // 小突起自己一块，不做成第三条 lane：它跟星星、Mem 不是同级的岛内容——
+  // 那两条讲「现在岛上是这些」，这一条讲「今天我已经记下的」，每次写入都不同。
+  const bumps = content?.bumps || []
+  if (bumps.length) {
+    html += '<div class="island-section"><div class="island-section-title">今天的小突起</div>'
+    html += `<div class="island-bump-list">${bumps
+      .map((line) => `<div class="island-bump-item">${esc(line)}</div>`)
+      .join('')}</div>`
+    html += '<div class="soft-note">挂在小岛后面，告诉沈予今天已经记过什么；凌晨两点翻页</div>'
+    html += '</div>'
+  }
+
   const rendered = islandRenderedText(detail)
   if (rendered || (!content?.stars && !content?.mem_notes)) {
     html += `<div class="island-section"><div class="island-section-title">${content?.stars || content?.mem_notes ? '送给沈予的完整原文' : '这次真正送过去的小岛'}</div>`
@@ -1093,6 +1105,8 @@ function renderContent(detail: LogDetail, tab: string, roundNumber?: number): st
 .change-updated { color:#946c99; }.change-removed { color:#b86b70; }
 .island-memory-list { display:grid; gap:6px; }
 .island-memory-item { padding:8px 9px; border:1px solid #eee9eb; border-radius:8px; background:#fff; }
+.island-bump-list { display:grid; gap:5px; margin-bottom:7px; }
+.island-bump-item { padding:7px 9px; border-left:2px solid #e3d3dc; border-radius:0 7px 7px 0; color:#51474c; background:#fcfaf8; font-family:'Noto Serif SC',Georgia,serif; font-size:10px; line-height:1.6; word-break:break-word; }
 .memory-item-top { display:flex; justify-content:space-between; gap:6px; min-height:14px; }
 .memory-item-label { color:#9a7e8c; font-size:9px; font-weight:700; }
 .memory-change-label { font-size:9px; font-weight:700; }

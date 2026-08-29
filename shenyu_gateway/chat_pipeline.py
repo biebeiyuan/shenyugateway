@@ -251,6 +251,10 @@ class ChatPipeline:
             }
         )
         island_log_content["rendered_text"] = island_state.get("rendered_text") or "" if retain_payloads else ""
+        # 小突起跟 rendered_text 一样是原文，走同一个保留开关。
+        island_log_content["bumps"] = (
+            list((meta.get("package") or {}).get("island_bumps") or []) if retain_payloads else []
+        )
         upstream_model = self.mapped_model_name(body.model)
         log_entry.update({
             "stage": "prepared",

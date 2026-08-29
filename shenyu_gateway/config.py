@@ -101,6 +101,8 @@ class RuntimeConfig:
         self.calendar_inject_week: bool = _env_bool("CALENDAR_INJECT_WEEK", True)
         self.calendar_inject_month: bool = _env_bool("CALENDAR_INJECT_MONTH", True)
         self.inject_mem_notes: bool = _env_bool("INJECT_MEM_NOTES", True)
+        self.inject_island_bumps: bool = _env_bool("INJECT_ISLAND_BUMPS", True)
+        self.island_bump_limit: int = _env_int("ISLAND_BUMP_LIMIT", 8, 1, 20)
         self.inject_stars: bool = _env_bool("INJECT_STARS", True)
         self.inject_star_prompt: bool = _env_bool("INJECT_STAR_PROMPT", True)
         self.enable_inline_star_capture: bool = _env_bool("ENABLE_INLINE_STAR_CAPTURE", True)
@@ -248,6 +250,8 @@ class RuntimeConfig:
             "calendar_inject_week": self.calendar_inject_week,
             "calendar_inject_month": self.calendar_inject_month,
             "inject_mem_notes": self.inject_mem_notes,
+            "inject_island_bumps": self.inject_island_bumps,
+            "island_bump_limit": self.island_bump_limit,
             "inject_stars": self.inject_stars,
             "inject_star_prompt": self.inject_star_prompt,
             "enable_inline_star_capture": self.enable_inline_star_capture,

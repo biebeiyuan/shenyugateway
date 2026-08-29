@@ -5,7 +5,12 @@ from dataclasses import dataclass
 from typing import Any, Optional
 
 from .client_extra import has_client_extra_text, strip_client_extra_text
-from .context_window import INTERNAL_LAYER_KEY, MEMORY_ISLAND_LAYER
+from .context_window import (
+    INTERNAL_LAYER_KEY,
+    MEMORY_ISLAND_BUMP_KEY,
+    MEMORY_ISLAND_LAYER,
+)
+from .island_bumps import render_island_bumps
 from .memory_island import render_mem_notes
 from .resident_books import render_bookshelf_overview
 from .stars import render_star_context
@@ -107,10 +112,16 @@ def render_layered_additions(package: dict, settings: ContextLayerSettings) -> d
         if block and block.strip()
     )
 
+    # 小突起是独立的一层，不拼进 mem：动态岛的 rendered_hash 必须逐字节不变，
+    # 否则每次落星星都会让岛换版，岛之后那三十来条消息的缓存一起作废。
+    # 位置上它紧跟着岛（见 assemble_layered_messages），读起来是岛的第三节。
+    bumps = render_island_bumps(list(package.get("island_bumps") or []))
+
     return {
         "stable": stable,
         "slow": slow,
         "mem": mem,
+        "island_bumps": bumps,
         "heartbeat": heartbeat,
         "tool_policy": tool_policy,
         "format": format_layer,
@@ -135,6 +146,8 @@ def render_system_additions(package: dict, settings: ContextLayerSettings) -> st
         blocks.append(layers["slow"])
     if layers.get("mem"):
         blocks.append(layers["mem"])
+    if layers.get("island_bumps"):
+        blocks.append(layers["island_bumps"])
     if layers.get("heartbeat"):
         blocks.append(layers["heartbeat"])
     if layers.get("tool_policy"):
@@ -816,6 +829,7 @@ def assemble_layered_messages(
         meta["client_messages_after_bridge"] = len(messages)
 
     island_text = layers.get("mem") or ""
+    bump_text = layers.get("island_bumps") or ""
     if island_text:
         history_indices = [index for index, message in enumerate(messages) if message.get("role") != "system"]
         if memory_island_anchor_offset is None:
@@ -823,14 +837,19 @@ def assemble_layered_messages(
         else:
             anchor_offset = max(0, min(int(memory_island_anchor_offset), len(history_indices)))
         insert_at = history_indices[anchor_offset] if anchor_offset < len(history_indices) else len(messages)
-        messages.insert(
-            insert_at,
-            {
-                "role": "system",
-                "content": island_text,
-                INTERNAL_LAYER_KEY: MEMORY_ISLAND_LAYER,
-            },
-        )
+        island_message: dict[str, Any] = {
+            "role": "system",
+            "content": island_text,
+            INTERNAL_LAYER_KEY: MEMORY_ISLAND_LAYER,
+        }
+        if bump_text:
+            # 挂在岛消息上而不是拼进 content：岛文本要保持逐字节稳定（它是缓存
+            # 前缀的锚），而小突起每次写入都会变。协议适配层把它渲染成岛之后的
+            # 独立 block，于是它天然落在岛的缓存断点之外，同时跟着岛的锚点走——
+            # 以后 island_anchor_offset 从 32 调成别的数，这里不用改。
+            island_message[MEMORY_ISLAND_BUMP_KEY] = bump_text
+            meta["island_bump_chars"] = len(bump_text)
+        messages.insert(insert_at, island_message)
         meta["memory_island_insert_index"] = insert_at
         meta["memory_island_anchor_offset"] = anchor_offset
 

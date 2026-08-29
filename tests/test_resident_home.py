@@ -60,6 +60,7 @@ def test_manifest_has_resident_facing_core_rules_and_live_source_paths():
     assert set(manifest["components"]) == {
         "stars",
         "mem",
+        "island_bumps",
         "heartbeat",
         "calendar",
         "windowsill",
