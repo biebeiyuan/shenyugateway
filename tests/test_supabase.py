@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import ast
+import importlib
 import re
 from pathlib import Path
 
@@ -10,6 +11,7 @@ from shenyu_gateway.supabase import SupabaseClient
 from .fake_postgrest import project_row, project_select, select_columns
 
 TESTS_DIR = Path(__file__).resolve().parent
+ROOT = TESTS_DIR.parent
 
 
 class _SuccessfulResponse:
@@ -120,6 +122,39 @@ def test_every_fake_that_returns_rows_honours_the_select_param():
     assert not offenders, (
         "these Supabase fakes return rows without honouring params['select'] — "
         f"route them through tests/fake_postgrest.py: {sorted(offenders)}"
+    )
+
+
+def test_no_select_string_this_repository_sends_falls_into_the_unparseable_branch():
+    # `_UNPARSEABLE` turns off projection for syntax the helper does not model —
+    # the same silent return to the old permissive behaviour that this whole
+    # projection effort exists to remove. It is a correct guard (mis-projecting
+    # would be worse) but a dangerous one, because nothing else notices when a
+    # select string starts landing in it. Measured 2026-08-29: every select
+    # string in the package parses, none contain `(`, `:`, `!`, or `-`.
+    fell_through: dict[str, str] = {}
+    for path in sorted((ROOT / "shenyu_gateway").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"""["']select["']\s*:\s*(["'])(?P<value>[a-zA-Z0-9_,\s*]*?)\1""", text):
+            value = match.group("value")
+            if not value or value == "*":
+                continue
+            if select_columns({"select": value}) is None:
+                line = text[: match.start()].count("\n") + 1
+                fell_through[f"{path.name}:{line}"] = value
+    # The named select constants are the ones that actually matter: the light
+    # list feeds every automatic injection path.
+    for module_name, attribute in (
+        ("shenyu_gateway.mem_notes._helpers", "_MEM_NOTE_SELECT_FIELDS"),
+        ("shenyu_gateway.mem_notes._helpers", "_MEM_NOTE_SELECT_FIELDS_LIGHT"),
+        ("shenyu_gateway.stars._helpers", "STAR_SELECT"),
+    ):
+        value = getattr(importlib.import_module(module_name), attribute)
+        if select_columns({"select": value}) is None:
+            fell_through[f"{module_name}.{attribute}"] = value
+    assert not fell_through, (
+        "these select strings hit tests/fake_postgrest.py::_UNPARSEABLE, so the fakes "
+        f"silently stop projecting them and drop back to returning every column: {fell_through}"
     )
 
 

@@ -1,18 +1,22 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import pytest
 
 from shenyu_gateway.project_delivery import (
-    ABANDONED_FIELD_LIMIT,
+    ABANDONED_FIELD_WIDTH_LIMIT,
     ProjectDeliveryError,
     append_delivery,
+    display_width,
     load_delivery_log,
     main,
     normalize_delivery,
     parse_abandoned_argument,
 )
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def _delivery(**overrides):
@@ -109,7 +113,11 @@ def test_abandoned_roads_are_optional_and_keep_their_three_fields():
         ({"what": "甲", "why": "乙", "cost": ""}, "cost is required"),
         ({"what": "甲", "why": "乙", "cost": "半小时", "how": "先量后改"}, "unsupported field"),
         ({"what": "甲", "why": "第一步\n第二步", "cost": "半小时"}, "single line"),
-        ({"what": "甲", "why": "乙" * (ABANDONED_FIELD_LIMIT + 1), "cost": "半小时"}, "at most"),
+        # 61 Chinese characters is 122 columns. Under the old character count the
+        # same limit allowed 120 of them — a paragraph, which is what this field
+        # was written to refuse.
+        ({"what": "甲", "why": "乙" * 61, "cost": "半小时"}, "at most"),
+        ({"what": "甲", "why": "b" * 121, "cost": "半小时"}, "at most"),
         ("放弃了缓存", "must be an object"),
     ],
 )
@@ -118,6 +126,32 @@ def test_abandoned_format_is_locked_to_three_short_lines(entry, message):
     # fourth field, or a missing cost would turn it back into a work diary.
     with pytest.raises(ProjectDeliveryError, match=message):
         normalize_delivery(_delivery(abandoned=[entry]))
+
+
+def test_the_abandoned_limit_binds_the_same_in_chinese_and_english():
+    # 一行的意思跟语言无关。按字符数算的时候，同一个数字在中文下是三倍的余量，
+    # 于是"别写成流水账"这条规则在实际写日志的那个语言里几乎不设限。
+    assert ABANDONED_FIELD_WIDTH_LIMIT == 120
+    assert display_width("乙" * 60) == display_width("b" * 120) == 120
+    assert display_width("ＡＢ") == 4  # fullwidth latin counts as wide too
+
+    sixty_hanzi = {"what": "甲", "why": "乙" * 60, "cost": "半小时"}
+    assert normalize_delivery(_delivery(abandoned=[sixty_hanzi]))["abandoned"][0]["why"] == "乙" * 60
+
+
+def test_every_recorded_abandoned_road_still_passes_todays_limit():
+    # 收紧上限不能让已经写下的记录追溯性失效——check 会红，而那些字是过去的
+    # 事实，不该为了迁就新数字被改。量过：最宽的一条 118 列。
+    log = load_delivery_log(ROOT / "project_delivery_log.jsonl")
+    widths = [
+        display_width(value)
+        for record in log
+        for item in record.get("abandoned") or []
+        for value in item.values()
+    ]
+
+    assert widths, "the log should still carry abandoned roads to measure"
+    assert max(widths) <= ABANDONED_FIELD_WIDTH_LIMIT
 
 
 def test_abandoned_cli_argument_splits_into_the_three_fields():

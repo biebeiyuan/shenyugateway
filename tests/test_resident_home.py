@@ -329,8 +329,42 @@ def test_pending_detection_survives_a_stale_index_stat_cache(tmp_path):
     assert working_tree_line_endings(root=tmp_path)["pending"] == first == []
 
 
-def test_line_ending_report_is_absent_outside_a_git_checkout(tmp_path):
+def test_a_brand_new_crlf_file_is_visible_before_it_is_ever_added(tmp_path, capsys):
+    # `ls-files --eol` reads the index, so an untracked file used to be invisible
+    # to this check for exactly as long as it was the cheapest thing to fix —
+    # until someone added it, at which point it became inherited churn nobody
+    # owns. A file created in this session is always this handoff's to normalize.
+    _init_repo(tmp_path)
+    (tmp_path / "fresh.py").write_bytes(b"FRESH = 1\r\n")
+
+    report = working_tree_line_endings(root=tmp_path)
+
+    assert [item["path"] for item in report["files"]] == ["fresh.py"]
+    assert report["files"][0]["untracked"] is True
+    assert report["pending"] == ["fresh.py"]
+    assert _print_check([{"id": "demo", "title": "演示", "status": "ok"}], line_endings=report) == 1
+    assert "1 file(s) you are about to commit are not LF: fresh.py" in capsys.readouterr().out
+
+
+def test_a_gitignored_crlf_file_is_not_this_check_s_business(tmp_path):
+    # `--exclude-standard`: build output and local scratch files are not content
+    # this repository carries, and flagging them would be a red light nobody can
+    # clear without deleting something they wanted.
+    _init_repo(tmp_path)
+    (tmp_path / ".gitignore").write_bytes(b"scratch.py\n")
+    (tmp_path / "scratch.py").write_bytes(b"SCRATCH = 1\r\n")
+
+    assert working_tree_line_endings(root=tmp_path)["files"] == []
+
+
+def test_no_git_says_so_out_loud_instead_of_looking_clean(tmp_path):
+    # Printing nothing is indistinguishable from a clean check, which is how a
+    # guard stops guarding without anyone noticing. Exit stays 0 — there is
+    # nothing to fix here, only something the check could not see.
     report = working_tree_line_endings(root=tmp_path)
 
     assert report == {"checked": False, "files": [], "pending": []}
+    assert _format_line_endings(report) == [
+        "[line endings] skipped (no git) — this check cannot see line endings here"
+    ]
     assert _print_check([{"id": "demo", "title": "演示", "status": "ok"}], line_endings=report) == 0

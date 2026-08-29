@@ -186,6 +186,58 @@ def test_live_docs_symbol_anchors_still_resolve():
     assert not broken, f"docs point at symbols that no longer exist: {broken}"
 
 
+"""Modules allowed to define the +08:00 offset instead of importing it.
+
+`runtime.py` is the home. `client_extra.py` is the documented exception: its
+docstring forbids package-internal imports so importing it can never create a
+cycle, which means it cannot reach runtime.
+"""
+_LOCAL_TZ_HOMES = {"runtime.py", "client_extra.py"}
+
+# The two spellings of "+08:00 written in place". Both were in the tree until
+# 2026-08-29; the rule that replaced them lives in AGENTS.md § New subsystem
+# growth path, and a documented rule alone is what this test exists to distrust.
+_LOCAL_TZ_LITERALS = (
+    re.compile(r"timezone\(\s*timedelta\(\s*hours\s*=\s*8\s*\)\s*\)"),
+    re.compile(r"""ZoneInfo\(\s*["']Asia/Shanghai["']\s*\)"""),
+)
+
+
+def test_the_local_timezone_is_defined_in_exactly_one_place():
+    # Nine modules each spelled this out before it was consolidated, so any
+    # change to "which day is it" depended on someone recalling all nine. That
+    # is a documented convention now, and this repository measured on the same
+    # night that documented conventions fail silently — hence a test, matching
+    # the line-ending and --abandoned guards rather than trusting the doc.
+    offenders: dict[str, list[str]] = {}
+    for path in sorted((ROOT / "shenyu_gateway").rglob("*.py")):
+        if path.name in _LOCAL_TZ_HOMES:
+            continue
+        text = path.read_text(encoding="utf-8")
+        for pattern in _LOCAL_TZ_LITERALS:
+            for match in pattern.finditer(text):
+                line = text[: match.start()].count("\n") + 1
+                offenders.setdefault(path.relative_to(ROOT).as_posix(), []).append(
+                    f"line {line}: {match.group(0)}"
+                )
+    assert not offenders, (
+        "the local timezone has one home — import LOCAL_DAY_TZ from "
+        f"shenyu_gateway/runtime.py instead of writing the offset in place: {offenders}"
+    )
+
+
+def test_the_timezone_home_and_its_one_exception_still_exist():
+    # The exemption list above is only honest if both files still hold what it
+    # claims: a bare name in a skip set silently stops guarding anything.
+    runtime = (ROOT / "shenyu_gateway" / "runtime.py").read_text(encoding="utf-8")
+    assert re.search(r"^LOCAL_DAY_TZ\s*=", runtime, flags=re.MULTILINE)
+    extra = (ROOT / "shenyu_gateway" / "client_extra.py").read_text(encoding="utf-8")
+    assert "free of package-internal imports" in extra, (
+        "client_extra.py is exempt only because it may not import from the package; "
+        "if that contract is gone, it should import LOCAL_DAY_TZ like everyone else"
+    )
+
+
 def test_map_tier_docs_anchor_by_function_name_not_line_number():
     # Line-number anchors rot on every refactor; map-tier documents must anchor
     # by path or symbol name. Dated snapshots (docs/history/, review docs,

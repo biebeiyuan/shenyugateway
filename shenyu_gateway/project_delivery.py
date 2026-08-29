@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import unicodedata
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -33,7 +34,24 @@ ABANDONED_FIELDS = ("what", "why", "cost")
 # agent from re-walking a road that was already measured and rejected, which needs
 # three facts and nothing else. Room for a paragraph invites a work diary, and the
 # `lesson` field already exists for anything worth carrying forward.
-ABANDONED_FIELD_LIMIT = 120
+#
+# Display columns, not characters, because this log is written in Chinese: counting
+# characters let 120 mean one dense line in English and a solid paragraph in
+# Chinese, so the same number carried two or three times the slack depending on the
+# language. Every CJK character is two columns wide, so this is ~60 Chinese
+# characters and unchanged for English — one line either way, which was always the
+# rule the number was trying to express.
+ABANDONED_FIELD_WIDTH_LIMIT = 120
+
+
+def display_width(text: str) -> int:
+    """How wide this string is on a terminal, counting CJK as two columns.
+
+    ``W`` is a wide character, ``F`` its fullwidth form. Everything else, including
+    combining marks, counts as one — close enough for a length ceiling, and it needs
+    no dependency.
+    """
+    return sum(2 if unicodedata.east_asian_width(char) in "WF" else 1 for char in text)
 
 
 def _abandoned_line(value: Any, field: str, *, location: str) -> str:
@@ -42,10 +60,12 @@ def _abandoned_line(value: Any, field: str, *, location: str) -> str:
         raise ProjectDeliveryError(f"{location}: abandoned.{field} is required")
     if "\n" in text or "\r" in text:
         raise ProjectDeliveryError(f"{location}: abandoned.{field} must be a single line")
-    if len(text) > ABANDONED_FIELD_LIMIT:
+    width = display_width(text)
+    if width > ABANDONED_FIELD_WIDTH_LIMIT:
         raise ProjectDeliveryError(
-            f"{location}: abandoned.{field} must be at most {ABANDONED_FIELD_LIMIT} characters "
-            f"(got {len(text)}) — record the fact, not the process"
+            f"{location}: abandoned.{field} must be at most {ABANDONED_FIELD_WIDTH_LIMIT} display "
+            f"columns, about {ABANDONED_FIELD_WIDTH_LIMIT // 2} Chinese characters "
+            f"(got {width}) — record the fact, not the process"
         )
     return text
 

@@ -145,7 +145,7 @@ _LINE_ENDING_OK = frozenset({"lf", "none", "-text"})
 
 
 def working_tree_line_endings(root: Path = ROOT) -> dict[str, Any]:
-    """Tracked text files whose working copy is not pure LF.
+    """Text files in the worktree, tracked or not, whose copy on disk is not pure LF.
 
     ``_source_state`` normalizes line endings before hashing, so this module reads
     every mapped source and deliberately looks away from how its lines end. This
@@ -157,11 +157,18 @@ def working_tree_line_endings(root: Path = ROOT) -> dict[str, Any]:
     local worktree drift — a Windows-side write leaving a stray CR inside a string
     literal, or half a file rewritten in the other style. git decides what counts
     as text, so binaries and empty files fall out for free.
+
+    ``--others --exclude-standard`` is what makes a brand new file visible: plain
+    ``ls-files --eol`` only reports the index, so a file written in CRLF and not yet
+    ``git add``-ed was invisible to this check for exactly as long as it was the
+    easiest thing to fix. A new file is also always ``pending`` — the concession for
+    inherited churn exists because an old tracked file's endings are not this
+    handoff's fault, and a file created in this session is.
     """
-    listing = _git("ls-files", "--eol", root=root)
+    listing = _git("ls-files", "--eol", "--cached", "--others", "--exclude-standard", root=root)
     if not listing:
         return {"checked": False, "files": [], "pending": []}
-    pending = _paths_changed_from_head(root)
+    changed = _paths_changed_from_head(root)
     offenders: list[dict[str, Any]] = []
     for line in listing.splitlines():
         attributes, separator, relative = line.partition("\t")
@@ -173,8 +180,18 @@ def working_tree_line_endings(root: Path = ROOT) -> dict[str, Any]:
         worktree_eol = fields[1].partition("/")[2]
         if worktree_eol in _LINE_ENDING_OK:
             continue
+        # An untracked file has nothing in the index, so git leaves that column
+        # bare — the one signal here for "this file is new".
+        untracked = not fields[0].partition("/")[2]
         path = relative.strip()
-        offenders.append({"path": path, "eol": worktree_eol, "pending": path in pending})
+        offenders.append(
+            {
+                "path": path,
+                "eol": worktree_eol,
+                "untracked": untracked,
+                "pending": untracked or path in changed,
+            }
+        )
     offenders.sort(key=lambda item: item["path"])
     return {
         "checked": True,
@@ -551,7 +568,10 @@ def home_snapshot(
 def _format_line_endings(report: dict[str, Any]) -> list[str]:
     """Line-ending lines for `check`, most actionable first."""
     if not report.get("checked"):
-        return []
+        # Printing nothing here reads exactly like a clean check, which is the one
+        # thing this must not do: a guard that quietly stops guarding is worse than
+        # no guard, because everyone downstream keeps trusting it.
+        return ["[line endings] skipped (no git) — this check cannot see line endings here"]
     offenders = report.get("files") or []
     if not offenders:
         return []
