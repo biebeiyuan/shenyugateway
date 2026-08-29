@@ -51,7 +51,7 @@
 
 | 发生的变化 | 必须核对 | 不需要做 |
 |------|------|------|
-| 修改了运行模块或独立维护的前端视图/面板 | `README.md` § Maintenance Map 是否能直接或通过 package 条目找到该路径；旧文件原本漏项也应在本次补上 | 不把每个 package mixin、私有 helper、测试或生成文件逐一展开 |
+| 修改了运行模块或独立维护的前端视图/面板 | `README.md` § Maintenance Map 是否能直接或通过 package 条目找到该路径；旧文件原本漏项也应在本次补上 | 不把每个 package mixin、私有 helper、测试或生成文件逐一展开；纯改样式不算地图改动，只在条目自己写下的布局/组件/效果名被改掉时才修那一句 |
 | 新增、删除、改名或移动上述独立边界 | 在同一次改动中更新 `README.md` § Maintenance Map | 不把完整设计说明塞回 README |
 | 模块职责、主要调用链或跨区桥梁改变 | `docs/architecture/SYSTEM_ZONES.md` 和所属现行架构文档 | 纯内部优化且这些事实没变时，不制造文档改动 |
 | 用户可见行为、配置、日志含义或排障方式改变 | 对应的现行专题文档、`DESIGN.md`、`LOGS_GUIDE.md` 或 `DEBUGGING_GUIDE.md` | 不因为“改了代码”就更新所有文档 |

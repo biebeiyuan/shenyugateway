@@ -32,7 +32,7 @@ Operit / PWA chat
 
 ## Maintenance Map
 
-The codebase is partly layered already:
+The codebase is partly layered already. Entries owe a path and a responsibility: a restyle changes this map only when it invalidates a layout, component, or effect that an entry names.
 
 ### Core entrypoint
 
@@ -177,8 +177,8 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/HomeView.vue`: admin landing/dashboard page.
 - `admin/src/views/ConfigView.vue`: configuration page.
 - `admin/src/views/Mem0View.vue`: Mem injection/tool controls, full-set two-state recall-eligibility management, Shenyu-write provenance badges, mem-note attributes, and old atomic read-only lookup.
-- `admin/src/views/MemoryGraphView.vue`: personal memory-graph console — a clustered gilt thread map (anchors linked by confirmed/suggested red threads cluster into islands, isolates rest along the bottom edge; layout is id-sorted so a refresh does not reshuffle the net) with recent-mention warmth (names turn pine 松绿) plus a recent-activity stream. Picking an anchor runs a real recall and pins the result on the recall board (`RecallBoard.vue`); picking a ghost name lifts the reading overlay (`AnchorOriginalsOverlay.vue`) of the originals that mention it, with a pin-it action. Entity/alias/relation management with candidate confirmation stays folded behind 管理 below the map (and behind the hub's 管理这个名字 when the recalled word is an anchor), beside an archived-anchor drawer, unanchored name candidates, historical exact-alias backfill. The recall board is a read-only preview that mirrors what the model actually receives — the recalled word pinned at a compact center hub with per-source papers orbiting in three rings by strength (脱口而出 direct / 由此及彼 related / 浮想 other) over evidence-highlighted per-source papers, with explicit source-anchor linking on the lifted paper (the preview response only adds the query terms used for highlighting, never scoring internals).
-- `admin/src/views/memory-graph/RecallBoard.vue`: the 描金线索板 (gilt-thread cork board) for 想起的一瞬间 — the recalled word pinned at the center hub (begonia + eyebrow + count), three rings of per-source papers by recall strength (direct: pine pin + strong thread to the hub; related: gilt pin + thinner gilt thread + a relation-path tag; other: taped to the outer ring, no thread), gold filigree corners, grain overlay, and a click-to-lift full-text reading layer built from the same `OriginalPaper` + `AttachAnchors` as the net's reading overlay. Paper angles are spaced evenly around the whole circle (first paper always at the top, radius set by group) so any result count surrounds the hub instead of piling into one side, and the hub is sized to never cover the inner ring; positions are seeded by source key so a board stays put across refreshes; narrow screens fall back to a paper stream.
+- `admin/src/views/MemoryGraphView.vue`: personal memory-graph console — the anchor net (anchors sharing confirmed/suggested relations form connected clusters; layout is id-sorted so a refresh does not reshuffle the net) plus a recent-activity stream. Picking an anchor runs a real recall and pins the result on the recall board (`RecallBoard.vue`); picking a ghost name opens the reading overlay (`AnchorOriginalsOverlay.vue`) of the originals that mention it, with a pin-it action. Entity/alias/relation management with candidate confirmation, an archived-anchor drawer, unanchored name candidates, and historical exact-alias backfill stay on the management side.
+- `admin/src/views/memory-graph/RecallBoard.vue`: the 描金线索板 for 想起的一瞬间 — a read-only preview of what the model actually receives for one recalled word, grouping per-source papers by recall strength (脱口而出 direct / 由此及彼 related / 浮想 other) with evidence highlighting and source-anchor linking, built from the same `OriginalPaper` + `AttachAnchors` as the net's reading overlay. Positions are seeded by source key so a board stays put across refreshes. The preview response only adds the query terms used for highlighting, never scoring internals.
 - `admin/src/views/memory-graph/sourceDisplay.ts`: single home for recall-source display literals (Chinese labels, seal glyphs, paper families) shared by the memory-net view, the recall board, and the reading overlay.
 - `admin/src/views/memory-graph/sourceAnchors.ts`: single home for original↔anchor attachment (manual-confirm evidence literal, source keys, per-source manual/auto anchor state with a small cache) — the one implementation both reading surfaces use. `admin/src/views/memory-graph/AttachAnchors.vue`: the shared 「挂着 / 自动连上的」 editing block built on it.
 - `admin/src/views/memory-graph/botanical.ts`: Shenyu's hand-drawn SVG glyphs (begonia + per-source emblems, tinted by `--sy-rose-soft` petals and `--sy-gilt` linework), rendered through `admin/src/views/memory-graph/SyGlyph.vue`.
@@ -208,8 +208,8 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `admin/src/views/RoomView.vue`: room mode admin preview shell (charge, traces, drawer notes, pins, and newspaper placement).
 - `admin/src/views/room/RoomNewspaperPanel.vue`: in-place Room newspaper panel (generate, review, publish, discard, and source status).
 - `admin/src/views/ToolErrorsView.vue`: tool error log viewer.
-- `admin/src/components/AppShell.vue`: shared admin navigation and layout, including the day/night (日月) theme toggle.
-- `admin/src/theme/tokens.css`: day/night design tokens (昼 = #fdf6f4 淡奶油底 + 纯白卡 with soft rose 软玫瑰粉 as the interactive primary, 夜 = gilt-on-near-black 描金; 古金描线与玫瑰软木板只在记忆网络视图内使用) — one tree, two palettes swapped via `<html> data-theme`. Includes the role-semantic palette (你 = soft rose 软玫瑰粉 `--sy-self`, 沈予 = deep pine 深松绿 `--sy-resident`, 系统 = ink/paper gray `--sy-sys-*`; gilt only draws lines) — new elements must join an existing role instead of introducing new colors. View styles read these variables (`var(--sy-ink)` etc.) instead of hardcoding day-only hexes, so night mode stays legible everywhere. `admin/src/theme/theme.ts`: `useTheme()` toggle + localStorage persistence; naive-ui overrides in `App.vue` read the same palette, and `AppShell.vue`'s global naive skin applies to day only.
+- `admin/src/components/AppShell.vue`: shared admin navigation and layout, and the home of the day/night theme switch, the online indicator, and the demo-data badge.
+- `admin/src/theme/tokens.css`: the single home for all design tokens — one tree, two palettes (day/night) swapped via `<html> data-theme`, including the role-semantic palette every new element must join instead of introducing its own color. View styles read these variables rather than hardcoding hexes, so night mode stays legible everywhere. Actual values and the 金 boundary live in `docs/frontend/STYLE_AND_CRAFT.md` § 一 视觉基线 / § 金的边界. `admin/src/theme/theme.ts`: `useTheme()` toggle + localStorage persistence; naive-ui overrides in `App.vue` read the same palette, and `AppShell.vue`'s global naive skin applies to day only.
 
 - `admin/src/demo/`: 演示数据模式（`?demo=1`）——`fixtures.ts` 编造样本（锚点/便签/一池可"想起"的原件），`index.ts` 在 axios 适配器层拦截读取请求返回样本、写操作假成功；生产构建带此代码但不开关完全不生效。页头"演示数据"徽章在 `AppShell.vue`。
 - `scripts/project_delivery.py`: records and validates one coherent owner-facing delivery outcome in `project_delivery_log.jsonl`; use it after the final verification round, not once per small commit.
@@ -221,7 +221,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 
 ### PWA chat frontend
 
-- `pwa/src/App.vue`: ChatNest-inspired mobile chat surface with real-time response rendering, Thinking/tool/echo process strips fixed above each intact assistant reply, per-trace detail sheet, Claude-style Projects/Artifacts/Memory/Diary workspace shells, gateway-backed Recents, edit/retry actions, local assistant roll variants with arrow switching, clean cold-start recovery, image previews, an expandable image/Room `+` menu, and one shared gray reply-meta line for Room time plus context/cache/first-round-hit/heartbeat status. Echo content is retained in the PWA transcript and rendered through the existing process sheet with a soft-pink detail surface; it is not a standalone panel. The Vue shell owns UI state and orchestration only; protocol, history, and persistence logic live in the modules below.
+- `pwa/src/App.vue`: the mobile chat surface (ChatNest-derived; see `docs/frontend/STYLE_AND_CRAFT.md` § 风格血统声明) with real-time response rendering, Thinking/tool/echo process strips emitted before each intact assistant reply, per-trace detail view, Projects/Artifacts/Memory/Diary workspace shells, gateway-backed Recents, edit/retry actions, local assistant roll variants, clean cold-start recovery, image previews, an image/Room `+` menu, and one shared reply-meta line for Room time plus context/cache/first-round-hit/heartbeat status. Echo content is retained in the transcript and rendered through the existing process view, not a standalone panel. The Vue shell owns UI state and orchestration only; protocol, history, and persistence logic live in the modules below.
 - `pwa/src/echo.ts`: leading echo marker parsing and model-facing tagged-content reconstruction for handoff and outbound history.
 - `pwa/src/types.ts` / `pwa/src/utils.ts`: shared domain types (messages, variants, sessions, process timeline, presets) and id/Unicode-safe text-offset helpers.
 - `pwa/src/api/client.ts` / `pwa/src/api/presets.ts` / `pwa/src/api/upstreamHeaders.ts`: gateway HTTP layer — PWA identity headers, models/sessions/config/chat fetchers for streaming and non-streaming requests, outbound message wiring, deployed-build fetches — plus reading the Console-shared `shenyu_upstream_presets` storage and the browser-local per-request upstream-header preset/editor state.
@@ -256,8 +256,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 | 家里地图 | 给圆圆的项目地图、Owner map | `project_map.py` | `GET /api/project-map`、`admin/src/api/books.ts`、`bookshelf/ProjectMapBookModal.vue` | `SYSTEM_ZONES.md`、`REQUEST_CONTEXT.md` § Owner-only project map |
 | Admin 控制台 | 管理后台、家里后台 | `admin/src/App.vue`、`admin/src/views/` | `admin/src/`、`scripts/admin_preview.py` | `docs/frontend/STYLE_AND_CRAFT.md`、`START_HERE.md` |
 | PWA 聊天端 | 手机聊天、独立 PWA、`shenyu-pwa` 客户端 | `pwa/src/App.vue`、`shenyu_gateway/chat_pipeline.py`、`streaming.py` | `GET /v1/models`、`POST /v1/chat/completions`、`X-Shenyu-Tool-Events`、`shenyu_upstream_presets` | `SYSTEM_ZONES.md` § 客户端表面、`REQUEST_CONTEXT.md` § External Frontend Contracts |
-| Memory Island | Stars + Mem 当前岛 | `memory_island.py`、`context_builder.py` | `admin/src/api/logs.ts`、`LogsView.vue` | `REQUEST_CONTEXT.md`、`MEMORY_ROOM.md` |
-| 小突起 | 今天已经记下的、工具回执 | `island_bumps.py`、`context_layers.py` | `admin/src/api/logs.ts`、`LogsView.vue`、`Mem0View.vue` | `DESIGN.md` § 小突起、`MEMORY_ROOM.md` |
+| Memory Island | Stars + Mem 当前岛、小突起（今天已经记下的、工具回执） | `memory_island.py`、`island_bumps.py`、`context_builder.py`、`context_layers.py` | `admin/src/api/logs.ts`、`LogsView.vue`、`Mem0View.vue` | `REQUEST_CONTEXT.md`、`MEMORY_ROOM.md`、`DESIGN.md` § 小突起 |
 | Stars | 星星 / 关联记忆 | `shenyu_gateway/stars/` | `admin/src/api/stars.ts`、`StarsView.vue`、`views/stars/` | `MEMORY_ROOM.md` § Star Memory Layer |
 | Mem | Mem Notes / 便签 | `shenyu_gateway/mem_notes/`、`mem_notes_relevance.py` | `admin/src/api/mem0.ts`、`Mem0View.vue` | `MEMORY_ROOM.md` § Mem Note Layer |
 | 记忆网络 | 人物 / 地点 / 物件 / 主题锚点 | `memory_graph.py`、`shenyu_gateway/recall/` | `admin/src/api/memoryGraph.ts`、`MemoryGraphView.vue`、`Mem0View.vue` | `MEMORY_ROOM.md` § Personal Memory Graph |
@@ -420,23 +419,7 @@ http://localhost:8010/chat/
 
 `/admin` is the formal Vue/Vite admin app. `/chat/` is the installable PWA client. They share the gateway origin, so the PWA can reuse the Admin login cookie/token and the Admin Config page's `shenyu_upstream_presets` localStorage entries.
 
-`/admin` is organized by feature:
-
-- `admin/src/api/config.ts`: gateway and upstream configuration.
-- `admin/src/api/mem0.ts`: Mem config, mem-note review APIs, and old atomic read-only lookup.
-- `admin/src/api/memoryGraph.ts`: personal memory-graph management and source-anchor APIs.
-- `admin/src/api/stars.ts`: Star list/search/create/review/feedback/connect APIs.
-- `admin/src/api/sessions.ts`: local SQLite session browser.
-- `admin/src/api/logs.ts`: request log list and detail APIs.
-- `admin/src/api/calendar.ts`: read-only calendar month grid and page detail.
-- `admin/src/views/ConfigView.vue`: configuration page.
-- `admin/src/views/Mem0View.vue`: Mem injection/tool controls, full-set two-state recall-eligibility management, Shenyu-write provenance badges, mem-note attributes, and old atomic read-only lookup. The "静音但保留工具" preset turns off automatic Mem injection while leaving gateway tools available.
-- `admin/src/views/MemoryGraphView.vue`: entity/alias/relation management, historical source-link backfill, and read-only Recall preview at `/memory-graph`.
-- `admin/src/views/StarsView.vue`: standalone Star entry shell at `/stars`, with split Star panels under `admin/src/views/stars/` and a lazy-loaded memory star map at `/stars/map`.
-- `admin/src/views/SessionsView.vue`: session inspection page.
-- `admin/src/views/LogsView.vue`: request log viewer with expandable detail tabs, per-round normalized input/cache badges, cache-structure evidence, and raw-versus-normalized upstream response-shape verdicts.
-- `admin/src/views/CalendarView.vue`: day/week/month diary reading view.
-- `admin/src/components/AppShell.vue`: shared admin navigation and layout.
+`/admin` is organized by feature: every `admin/src/api/*.ts` and `admin/src/views/*` boundary is listed once in § Maintenance Map above. Do not restate those files here — a second list drifts silently, because `tests/test_project_map.py` only guards the § Maintenance Map section.
 
 The old single-file `/debug` console has been retired. User-facing admin features should go into `admin/src/views/*` and `admin/src/api/*`.
 

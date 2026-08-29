@@ -187,7 +187,7 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 - 维护 chunked window、high-water、epoch、anchor 和工具边界。
 - 插入 cold-start bridge，清理附件、图片和客户端工具系统说明。
 - 构建和渲染 stable、slow、mem、heartbeat、tool-policy、format 层。
-- 维护 memory island retain/rewrite 状态。
+- 维护 memory island retain/rewrite 状态，并在岛后附上当日已记下的小突起回执。
 
 **核心文件**
 
@@ -197,6 +197,7 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 - `shenyu_gateway/context_snapshots.py`
 - `shenyu_gateway/echo.py`
 - `shenyu_gateway/memory_island.py`
+- `shenyu_gateway/island_bumps.py`
 - `shenyu_gateway/store/_window_state.py`
 - `shenyu_gateway/store/_cold_start.py`
 - `shenyu_gateway/store/_snapshots.py`

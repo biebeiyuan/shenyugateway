@@ -8,6 +8,11 @@
 的规矩学自 kimi-room；手感工程规范摘编自 webview-native-feel-2（《把网页 App
 磨出原生手感 2.0》）。学方法，不搬代码与素材。
 
+PWA（`pwa/`）另有一条血统：聊天界面几何与状态精灵取自 ChatNest —— 输入框几何对齐
+该参考实现，状态精灵是圆圆自备的私有素材包（`pwa/src/chatnestSprite.ts`，不可外传）。
+精灵动画走 Web Animations API 而不是 CSS，所以 `pwa/src/styles.css` 里那条
+`prefers-reduced-motion` 覆盖**管不到它**；要让它也停下必须在脚本侧判断。
+
 ## 一、视觉基线（昼场）
 
 | 部位 | 值 | 说明 |
@@ -149,5 +154,6 @@ PWA 的回复过程条把 Thinking、网关工具和模型主动写下的回响�
 | `admin/src/views/memory-graph/` | 记忆网络的皮肤（金、软木板、纸片家族 `OriginalPaper`、想起板 `RecallBoard`、阅读层 `AnchorOriginalsOverlay`、手绘符号 `SyGlyph`） |
 | `admin/src/views/bookshelf/ProjectMapDeliveryPanel.vue` | 《家里地图》的施工簿：日期轴、产品筛选、交付状态、展开证据与经验块 |
 | `admin/src/views/HomeView.vue` | 首页大卡与 bento 格子 |
+| `pwa/src/styles.css` | PWA 的全部视觉：聊天布局、自带字体、输入框几何、状态标动画、底部弹层、消息动作、Markdown 排版、工具轨迹状态。PWA 组件没有 scoped style，这里是唯一落点 |
 
 新增独立维护的前端边界时，同步这份表 + `README.md` § Maintenance Map。

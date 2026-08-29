@@ -47,7 +47,7 @@
 Before handing off a meaningful change:
 
 1. For every touched runtime module or independently maintained frontend view/panel, verify that its path is discoverable in `README.md` § Maintenance Map, either directly or through a package entry. Add a missing entry even when the file predates the current change; when such a boundary is added, removed, renamed, or moved, update the map in the same change.
-2. Package-internal mixins and small private helpers may remain summarized under their package entry unless they become an independently maintained boundary. Tests, generated files, and build artifacts do not need per-file map entries.
+2. Package-internal mixins and small private helpers may remain summarized under their package entry unless they become an independently maintained boundary. Tests, generated files, and build artifacts do not need per-file map entries. A map entry owes a path and a responsibility, not an appearance: a pure restyle is not by itself a map change, and the only check is whether the entry's own wording still holds afterwards — if it names a layout, component, or effect the restyle removed, fix that clause in the same change. `tests/test_project_map.py` reads only the backticked paths, never the prose, so a long entry buys nothing a short one does not; colors, geometry, and decoration belong to `docs/frontend/STYLE_AND_CRAFT.md` § 视觉拥有者 or the component itself. When a view gains an internal block rather than a new maintained boundary, no document needs updating at all.
 3. If module responsibility, a major call chain, or a cross-zone bridge changed, update `docs/architecture/SYSTEM_ZONES.md` and the owning architecture reference. An internal optimization that leaves those facts unchanged should not create architecture-doc churn. When an Admin view's layout or visual language changes, also grep the owning architecture document for stale visual descriptions of that view (old layout, component, or effect names) and refresh the wording in the same change: behavior contracts usually survive a restyle, while pixel-level wording rots.
 4. If a Markdown document is added, renamed, archived, or changes status, update `DOCS_MAP.md`. Do not register temporary local investigation notes that will not enter the repository.
 5. When a map-covered path changes, run `python -m pytest -q tests/test_project_map.py` before handoff.
@@ -134,56 +134,14 @@ export SHENYU_GATEWAY_URL="https://gateway.example.com"
 export SHENYU_GATEWAY_TOKEN="gateway-api-token"
 ```
 
-The helper also auto-loads a local ignored config file at `.shenyu-gateway-debug.local.json`, or a home config at `~/.shenyu-gateway-debug.json`, or the path in `SHENYU_GATEWAY_LOG_CONFIG`.
-
-Config shape:
-
-```json
-{
-  "gateway_url": "https://gateway.example.com",
-  "gateway_token": "gateway-api-token",
-  "ssh_alias": "vps",
-  "vps_host": "example.com",
-  "vps_user": "root",
-  "vps_port": 22,
-  "vps_identity": "/home/yuan/.ssh/vps_ed25519",
-  "container_match": "shenyu|gateway"
-}
-```
-
-在当前 WSL Ubuntu 环境中，`vps_identity` 必须是 Linux 可见路径；如果使用 `ssh_alias`，让 WSL 的 `~/.ssh/config` 负责主机、用户和密钥配置，不要照抄 Windows `C:/...` 路径。
-
-For a retained local JSON log:
-
-```bash
-python scripts/vps_gateway_logs.py local tmp_gateway_log_84f8b85a.json --detail
-```
-
-For VPS container logs:
-
-```bash
-export SHENYU_VPS_HOST="root@example.com"
-python scripts/vps_gateway_logs.py ssh --list-containers
-python scripts/vps_gateway_logs.py ssh --match "shenyu|gateway" --tail 300 -f
-```
-
-If public gateway API access is not blocked by Cloudflare, this also works:
-
-```bash
-python scripts/vps_gateway_logs.py api --errors --detail
-```
+The helper also auto-loads a local ignored config file at `.shenyu-gateway-debug.local.json`, or a home config at `~/.shenyu-gateway-debug.json`, or the path in `SHENYU_GATEWAY_LOG_CONFIG`. Its config shape, the WSL rule that `vps_identity` must be a Linux-visible path, local-JSON and `ssh` container modes, and the redeploy-safe container lookup are documented once in `DEBUGGING_GUIDE.md` § Error Log Quickstart and § VPS, SSH, and Coolify Operations.
 
 Do not store gateway tokens, SSH host secrets, or API keys in repo files. Ask the user for missing credentials or use environment variables already configured in the shell.
 
 ## Log Interpretation
 
-- `tools_offered` means tools were included in the request payload.
-- `gateway_tools_executed` means the gateway actually received and ran gateway-native tool calls.
-- If `tools_offered > 0` but `gateway_tools_executed = 0`, the failure happened before gateway tool execution. Check upstream, relay, payload shape, streaming, and prompt-cache compatibility first.
-- `Max retries reached` from the upstream relay usually means the relay failed before the gateway received a usable model response.
-- For OpenAI-compatible relays, `prompt_cache.protocol=openai` with `cache_control` breakpoints is a compatibility suspect if errors only appear with tools/streaming/cache together.
-- An outbound `thinking=...` field proves only that Thinking was requested. It does not prove that the upstream returned native Thinking blocks.
-- `internal_tool_rounds[].anthropic_thinking.preserved=true` proves that native Thinking or redacted Thinking blocks were captured for an unfinished Anthropic tool turn. `signature_present` and `redacted_present` are booleans only; never log or attempt to decode their opaque content.
-- Pending Anthropic tool context may be restored only when the session, tool-call ids, visible assistant content, tool names, and arguments still match. A rolled, edited, or branched reply must not recover the original hidden blocks.
+Field-by-field meanings (`tools_offered` versus `gateway_tools_executed`, relay `Max retries reached`, `prompt_cache.protocol`, outbound `thinking`, `anthropic_thinking.preserved` / `signature_present` / `redacted_present`, and the pending-tool restore conditions) live in `DEBUGGING_GUIDE.md` — § Symptom Triage for the symptom-to-evidence table, § Error Log Quickstart for the helper's fields, § Chat Request Flow for per-round tool and Thinking evidence. Read them when reading logs; they are not needed to write code.
+
+One rule does belong here, because it decides whether you may edit at all: a log field proves what it names and nothing more. `tools_offered > 0` with `gateway_tools_executed = 0` locates the failure before gateway tool execution, and an outbound `thinking=...` proves Thinking was requested, not returned — never present either as proof of upstream behavior.
 
 Read `DOCS_MAP.md` for document status and `DEBUGGING_GUIDE.md` for the full request flow and deeper triage notes.
