@@ -32,6 +32,7 @@ from ..mem_notes_relevance import (
 )
 from ..runtime import (
     iso_now,
+    local_day_of as _local_day_of,
     local_today as _local_today,
     now as _now,
     parse_local_date as _parse_local_date,
@@ -258,7 +259,9 @@ class SearchMixin:
 
         Past `DUE_REMINDER_STALE_DAYS`, a reminder is stamped and logged instead
         of hung. `desc` only keeps the backlog out of the way; without a floor it
-        would still sit in the query window forever.
+        would still sit in the query window forever. The floor measures how long
+        the note has been *waiting*, not how old the date is — see
+        `_days_unhung`.
         """
         if not self.supabase:
             return {"ok": False, "count": 0, "items": []}
@@ -292,8 +295,8 @@ class SearchMixin:
                 item["search_mode"] = "due_reminder"
                 # 陈旧判定放在限额之前：过期的不该占今天的名额，也不该等到
                 # 队列排空才被发现。
-                overdue = self._days_overdue(item.get("remind_on"), today)
-                if overdue is not None and overdue > DUE_REMINDER_STALE_DAYS:
+                unhung = self._days_unhung(item, today)
+                if unhung is not None and unhung > DUE_REMINDER_STALE_DAYS:
                     stale.append(item)
                     continue
                 if len(items) >= target_limit:
@@ -317,6 +320,28 @@ class SearchMixin:
             return None
         return (today - day).days
 
+    def _days_unhung(self, item: dict[str, Any], today: Any) -> Optional[int]:
+        """How long this reminder has had a chance to be said and was not.
+
+        Not the same as `_days_overdue`, and the difference is the whole reason
+        this exists: a note written today about a day last month is overdue by a
+        month but has been waiting zero days. Retiring it on age alone would stamp
+        it 已提醒 before 沈予 ever said it — the exact silent-never-fired failure
+        the floor was added to prevent, caused by the floor.
+
+        `created_at` is when the note started waiting, so the floor counts from
+        the later of the two: the day it was written, or the day it came due. An
+        unreadable `created_at` falls back to the due date, because a note that
+        cannot say when it was written should not become un-retirable.
+        """
+        overdue = self._days_overdue(item.get("remind_on"), today)
+        if overdue is None:
+            return None
+        written = _local_day_of(item.get("created_at"))
+        if written is None:
+            return overdue
+        return min(overdue, (today - written).days)
+
     async def _retire_stale_reminders(self, items: list[dict[str, Any]], today: Any) -> None:
         """Stamp reminders too old to be worth hanging, and say so in the log.
 
@@ -326,13 +351,14 @@ class SearchMixin:
         that silently never fired is the failure this is here to make visible.
         """
         for item in items:
-            overdue = self._days_overdue(item.get("remind_on"), today)
             logger.warning(
-                "[MemNote] Retiring a reminder nobody hung: id=%s remind_on=%s overdue_days=%s "
-                "floor=%s summary=%s",
+                "[MemNote] Retiring a reminder nobody hung: id=%s remind_on=%s created_at=%s "
+                "overdue_days=%s unhung_days=%s floor=%s summary=%s",
                 item.get("id"),
                 item.get("remind_on"),
-                overdue,
+                item.get("created_at"),
+                self._days_overdue(item.get("remind_on"), today),
+                self._days_unhung(item, today),
                 DUE_REMINDER_STALE_DAYS,
                 _shorten(str(item.get("summary") or item.get("content") or ""), 60),
             )

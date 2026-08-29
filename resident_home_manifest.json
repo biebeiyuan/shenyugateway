@@ -65,21 +65,21 @@
         "inject_mem_notes"
       ],
       "reviewed": {
-        "fingerprint": "7e7fdd8b95c35f0a63482d65598296a26de3d4c9490c0dcceae1cc6f4ee14f94",
+        "fingerprint": "a142752bacb3c3db414a4399d0706d8172239931724277afffca5e4ff0f18dce",
         "file_hashes": {
           "shenyu_gateway/context_builder.py": "beb36deb1a39f797751abe082cdfad409715dc844823431a2e8dd27cc32f653f",
           "shenyu_gateway/mem_notes/__init__.py": "545bee8d5a19f09b81fae420f163fd459ca9393e51832972e631e75f27ff4448",
           "shenyu_gateway/mem_notes/_crud.py": "169cb0a2d90498eec1f4e3f1b07475fcf70fee02801189f6ab1901ce50d921c0",
           "shenyu_gateway/mem_notes/_helpers.py": "ddc03375d3d9b6b0c72ac12285a00a79f01dd51ca0479caad5886d6690b824ea",
-          "shenyu_gateway/mem_notes/_search.py": "c1051f19e0681fcb83e5e858572c543aef20b591cb374d8c9af6fcce09868354",
+          "shenyu_gateway/mem_notes/_search.py": "3a3db10bced77702210086447092270c66ca04ac44eb20d2fcd25c893f919913",
           "shenyu_gateway/mem_notes/_suggestions.py": "9916fb28cee1da62c07a6e6d5fda826c8f0f0cfbf53a5fe91e996e8ca58f55c5",
           "shenyu_gateway/mem_notes/_validation.py": "fc9a3ca770ce9812d8f9047b1f9fc1654178da0d5bce627e5cfb808ae9e0a090",
           "shenyu_gateway/memory_island.py": "fc41141ee05c12d4c41da78c15616b27d9dc06d6987e845c416f7fda004551fb"
         },
-        "commit": "d1adaf34acd73105dc39c29f8220247d6aaa48e2",
-        "revision": "d1adaf34acd73105dc39c29f8220247d6aaa48e2-dirty",
+        "commit": "96335aa5db77026673f345655975462f28ddf3ed",
+        "revision": "96335aa5db77026673f345655975462f28ddf3ed-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-29T09:41:49+08:00",
+        "reviewed_at": "2026-08-29T09:57:01+08:00",
         "reviewed_by": "claude"
       }
     },

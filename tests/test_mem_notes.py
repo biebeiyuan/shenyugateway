@@ -1617,7 +1617,9 @@ def _reminder_service(rows=None):
     )
 
 
-def _reminder_row(note_id: str, content: str, *, remind_on: str, reminded_at=None) -> dict:
+def _reminder_row(
+    note_id: str, content: str, *, remind_on: str, reminded_at=None, created_at=None
+) -> dict:
     return {
         "id": note_id,
         "session_tag": "default",
@@ -1638,8 +1640,9 @@ def _reminder_row(note_id: str, content: str, *, remind_on: str, reminded_at=Non
         "trigger_count": 0,
         "remind_on": remind_on,
         "reminded_at": reminded_at,
-        "created_at": "2026-08-01T00:00:00+00:00",
-        "updated_at": "2026-08-01T00:00:00+00:00",
+        # 便签是哪天写的，决定它"等了多久"——地板按等待时长算，不按日子多旧算。
+        "created_at": created_at or "2026-08-01T00:00:00+00:00",
+        "updated_at": created_at or "2026-08-01T00:00:00+00:00",
     }
 
 
@@ -1735,8 +1738,9 @@ def test_a_month_old_reminder_is_retired_with_a_log_line_instead_of_hung(caplog)
     # 不该静默蒸发。天数写死成 30，不用常量算：地板被抬走时这条必须变红。
     today = local_today()
     stale_day = (today - timedelta(days=30)).isoformat()
+    long_ago = f"{stale_day}T09:00:00+08:00"
     rows = [
-        _reminder_row("stale", "该交电费了", remind_on=stale_day),
+        _reminder_row("stale", "该交电费了", remind_on=stale_day, created_at=long_ago),
         _reminder_row("today", "圆儿生日", remind_on=today.isoformat()),
     ]
     supabase, service = _reminder_service(rows=rows)
@@ -1771,7 +1775,11 @@ def test_a_stale_reminder_does_not_consume_a_place_from_the_cap():
     # 陈旧判定在限额之前：过期的既不占今天的名额，也不用等队列排空才被发现。
     today = local_today()
     stale_day = (today - timedelta(days=30)).isoformat()
-    rows = [_reminder_row(f"stale{i}", f"旧事{i}", remind_on=stale_day) for i in range(3)]
+    long_ago = f"{stale_day}T09:00:00+08:00"
+    rows = [
+        _reminder_row(f"stale{i}", f"旧事{i}", remind_on=stale_day, created_at=long_ago)
+        for i in range(3)
+    ]
     rows.extend(
         _reminder_row(f"today{i}", f"今天{i}", remind_on=today.isoformat()) for i in range(3)
     )
@@ -1783,15 +1791,66 @@ def test_a_stale_reminder_does_not_consume_a_place_from_the_cap():
     assert {update["match"]["id"] for update in supabase.updates} == {"stale0", "stale1", "stale2"}
 
 
+def test_a_note_written_today_about_a_past_day_still_gets_said():
+    # 地板量的是"等了多久没被说出口"，不是"日子有多旧"。今天写下的一张
+    # 便签，说的是上个月某天：按日子算它过期一个月，按等待算它等了零天。
+    # 只按日子算，就会在沈予开口之前给它打上"已提醒"——正好是这个地板本来
+    # 要防的那种静默蒸发，只不过是地板自己造成的。
+    today = local_today()
+    rows = [
+        _reminder_row(
+            "backdated",
+            "上个月那天",
+            remind_on=(today - timedelta(days=30)).isoformat(),
+            created_at=f"{today.isoformat()}T09:00:00+08:00",
+        )
+    ]
+    supabase, service = _reminder_service(rows=rows)
+
+    result = asyncio.run(service.due_reminder_notes())
+
+    assert [item["id"] for item in result["items"]] == ["backdated"]
+    assert supabase.updates == []
+
+
+def test_the_floor_counts_from_whichever_came_later(caplog):
+    # 两个日子取更晚的那个：写下的那天，和到期的那天。写得早、日子晚，算日子；
+    # 日子早、写得晚，算写的那天。日志把两个天数都记下来，方便判断是哪种。
+    today = local_today()
+    written_long_ago = f"{(today - timedelta(days=60)).isoformat()}T09:00:00+08:00"
+    rows = [
+        # 六十天前写的，说的是三十天前那天：两边都过了地板。
+        _reminder_row("old", "旧事", remind_on=(today - timedelta(days=30)).isoformat(), created_at=written_long_ago),
+        # 六十天前写的，说的是昨天：等待时长是一天，该挂。
+        _reminder_row("ripe", "昨天那件", remind_on=(today - timedelta(days=1)).isoformat(), created_at=written_long_ago),
+    ]
+    supabase, service = _reminder_service(rows=rows)
+
+    with caplog.at_level(logging.WARNING, logger="shenyu-gateway"):
+        result = asyncio.run(service.due_reminder_notes())
+
+    assert [item["id"] for item in result["items"]] == ["ripe"]
+    assert [update["match"]["id"] for update in supabase.updates] == ["old"]
+    assert "overdue_days=30" in caplog.text and "unhung_days=30" in caplog.text
+
+
 def test_an_unreadable_reminder_date_is_never_judged_stale():
     # 读不出日子就不做陈旧判定：这条路只能让提醒消失，宁可它多留一轮。
-    # 只测这个 helper——remind_on 是 date 列，读不出的值进不了库，所以整条
+    # 只测这两个 helper——remind_on 是 date 列，读不出的值进不了库，所以整条
     # 查询路径走不到这里；能走到的是"哪天有人往这个函数塞了别的东西"。
     _supabase, service = _reminder_service()
+    today = local_today()
 
-    assert service._days_overdue("not-a-date", local_today()) is None
-    assert service._days_overdue(None, local_today()) is None
-    assert service._days_overdue((local_today() - timedelta(days=2)).isoformat(), local_today()) == 2
+    assert service._days_overdue("not-a-date", today) is None
+    assert service._days_overdue(None, today) is None
+    assert service._days_overdue((today - timedelta(days=2)).isoformat(), today) == 2
+
+    # 读不出 created_at 就退回按日子算：一张说不清自己哪天写的便签，
+    # 不该因此变成永远退不掉的。
+    two_days_ago = (today - timedelta(days=2)).isoformat()
+    assert service._days_unhung({"remind_on": two_days_ago, "created_at": "谁记得"}, today) == 2
+    assert service._days_unhung({"remind_on": two_days_ago, "created_at": None}, today) == 2
+    assert service._days_unhung({"remind_on": None, "created_at": None}, today) is None
 
 
 def test_due_reminder_lookup_failure_does_not_raise():
