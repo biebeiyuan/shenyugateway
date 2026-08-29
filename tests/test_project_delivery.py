@@ -5,10 +5,13 @@ import json
 import pytest
 
 from shenyu_gateway.project_delivery import (
+    ABANDONED_FIELD_LIMIT,
     ProjectDeliveryError,
     append_delivery,
     load_delivery_log,
+    main,
     normalize_delivery,
+    parse_abandoned_argument,
 )
 
 
@@ -72,3 +75,80 @@ def test_append_delivery_rejects_duplicate_ids(tmp_path):
 def test_delivery_validation_rejects_ambiguous_records(overrides, message):
     with pytest.raises(ProjectDeliveryError, match=message):
         normalize_delivery(_delivery(**overrides))
+
+
+def test_abandoned_roads_are_optional_and_keep_their_three_fields():
+    without = normalize_delivery(_delivery())
+    assert without["abandoned"] == []
+
+    record = normalize_delivery(
+        _delivery(
+            abandoned=[
+                {
+                    "what": "从 migrations 推导可用列",
+                    "why": "9 张被查询的表里 3 张仓库没有迁移，推不成全仓不变量。",
+                    "cost": "半小时探查",
+                }
+            ]
+        )
+    )
+
+    assert record["abandoned"] == [
+        {
+            "what": "从 migrations 推导可用列",
+            "why": "9 张被查询的表里 3 张仓库没有迁移，推不成全仓不变量。",
+            "cost": "半小时探查",
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    ("entry", "message"),
+    [
+        ({"what": "甲", "why": "乙"}, "cost is required"),
+        ({"what": "甲", "why": "乙", "cost": ""}, "cost is required"),
+        ({"what": "甲", "why": "乙", "cost": "半小时", "how": "先量后改"}, "unsupported field"),
+        ({"what": "甲", "why": "第一步\n第二步", "cost": "半小时"}, "single line"),
+        ({"what": "甲", "why": "乙" * (ABANDONED_FIELD_LIMIT + 1), "cost": "半小时"}, "at most"),
+        ("放弃了缓存", "must be an object"),
+    ],
+)
+def test_abandoned_format_is_locked_to_three_short_lines(entry, message):
+    # The field exists so the next agent can skip a measured dead end. Prose, a
+    # fourth field, or a missing cost would turn it back into a work diary.
+    with pytest.raises(ProjectDeliveryError, match=message):
+        normalize_delivery(_delivery(abandoned=[entry]))
+
+
+def test_abandoned_cli_argument_splits_into_the_three_fields():
+    assert parse_abandoned_argument("放弃了什么 | 因为量过 | 半小时") == {
+        "what": "放弃了什么",
+        "why": "因为量过",
+        "cost": "半小时",
+    }
+
+    with pytest.raises(ProjectDeliveryError, match="exactly three"):
+        parse_abandoned_argument("放弃了什么|因为量过")
+
+
+def test_cli_reports_a_malformed_abandoned_argument_without_a_traceback(capsys):
+    # A mis-shaped `--abandoned` is a typo in a long command line. The parse
+    # happens before anything is appended, so the real log stays untouched.
+    code = main(
+        [
+            "record",
+            "--id", "cli-abandoned-probe",
+            "--title", "标题",
+            "--product", "家里地图",
+            "--kind", "architecture",
+            "--summary", "摘要",
+            "--touchpoint", "触点",
+            "--why", "为什么",
+            "--verification", "验证",
+            "--path", "shenyu_gateway/project_delivery.py",
+            "--abandoned", "只写了一半|没有第三段",
+        ]
+    )
+
+    assert code == 2
+    assert "exactly three" in capsys.readouterr().out

@@ -157,6 +157,7 @@ export interface ProjectMapDelivery {
   verification: string[]
   paths: string[]
   docs: string[]
+  abandoned: { what: string; why: string; cost: string }[]
   commit: string
   lesson: string
   debug_ref: string

@@ -29,6 +29,53 @@ def _required_text(value: Any, field: str, *, location: str) -> str:
     return text
 
 
+ABANDONED_FIELDS = ("what", "why", "cost")
+# One line each, deliberately short. The point of this field is to stop the next
+# agent from re-walking a road that was already measured and rejected, which needs
+# three facts and nothing else. Room for a paragraph invites a work diary, and the
+# `lesson` field already exists for anything worth carrying forward.
+ABANDONED_FIELD_LIMIT = 120
+
+
+def _abandoned_line(value: Any, field: str, *, location: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        raise ProjectDeliveryError(f"{location}: abandoned.{field} is required")
+    if "\n" in text or "\r" in text:
+        raise ProjectDeliveryError(f"{location}: abandoned.{field} must be a single line")
+    if len(text) > ABANDONED_FIELD_LIMIT:
+        raise ProjectDeliveryError(
+            f"{location}: abandoned.{field} must be at most {ABANDONED_FIELD_LIMIT} characters "
+            f"(got {len(text)}) — record the fact, not the process"
+        )
+    return text
+
+
+def _abandoned_list(value: Any, *, location: str) -> list[dict[str, str]]:
+    """Roads measured and rejected during this delivery, three facts each.
+
+    Shape is fixed: what was abandoned, one sentence of why, roughly what it cost.
+    No fourth key, no multi-line prose. A future agent reads this to skip work, so
+    anything that is not one of those three facts belongs in `lesson` or nowhere.
+    """
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ProjectDeliveryError(f"{location}: abandoned must be an array")
+    entries: list[dict[str, str]] = []
+    for index, item in enumerate(value):
+        where = f"{location}: abandoned[{index}]"
+        if not isinstance(item, dict):
+            raise ProjectDeliveryError(f"{where} must be an object with {', '.join(ABANDONED_FIELDS)}")
+        extra = sorted(set(item) - set(ABANDONED_FIELDS))
+        if extra:
+            raise ProjectDeliveryError(f"{where}: unsupported field(s) {', '.join(extra)}")
+        entries.append(
+            {field: _abandoned_line(item.get(field), field, location=where) for field in ABANDONED_FIELDS}
+        )
+    return entries
+
+
 def _text_list(value: Any, field: str, *, location: str, required: bool = False) -> list[str]:
     if value is None:
         items: list[Any] = []
@@ -75,6 +122,7 @@ def normalize_delivery(value: Any, *, location: str = "delivery") -> dict[str, A
         "verification": _text_list(value.get("verification"), "verification", location=location, required=True),
         "paths": _text_list(value.get("paths"), "paths", location=location, required=True),
         "docs": _text_list(value.get("docs"), "docs", location=location),
+        "abandoned": _abandoned_list(value.get("abandoned"), location=location),
         "commit": str(value.get("commit") or "").strip(),
         "lesson": str(value.get("lesson") or "").strip(),
         "debug_ref": str(value.get("debug_ref") or "").strip(),
@@ -132,6 +180,17 @@ def _parser() -> argparse.ArgumentParser:
     record.add_argument("--verification", action="append", required=True)
     record.add_argument("--path", dest="paths", action="append", required=True)
     record.add_argument("--doc", dest="docs", action="append", default=[])
+    record.add_argument(
+        "--abandoned",
+        dest="abandoned",
+        action="append",
+        default=[],
+        metavar="放弃了什么|为什么|花了多少",
+        help=(
+            "A road measured and rejected, as three `|`-separated one-liners: what was "
+            "abandoned, one sentence why, roughly the cost. Repeatable."
+        ),
+    )
     record.add_argument("--completed-at", default="")
     record.add_argument("--commit", default="")
     record.add_argument("--lesson", default="")
@@ -140,8 +199,28 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def parse_abandoned_argument(value: str) -> dict[str, str]:
+    """Split one `--abandoned` argument into the three fields it must carry."""
+    parts = [part.strip() for part in str(value).split("|")]
+    if len(parts) != len(ABANDONED_FIELDS):
+        raise ProjectDeliveryError(
+            "--abandoned takes exactly three `|`-separated parts "
+            f"(放弃了什么|为什么|花了多少), got {len(parts)}: {value!r}"
+        )
+    return dict(zip(ABANDONED_FIELDS, parts))
+
+
 def main(argv: list[str] | None = None) -> int:
-    args = _parser().parse_args(argv)
+    try:
+        return _run(_parser().parse_args(argv))
+    except ProjectDeliveryError as exc:
+        # A mis-shaped `--abandoned` is a typo in a long command line, not a bug
+        # worth a traceback.
+        print(f"project-delivery: {exc}")
+        return 2
+
+
+def _run(args: argparse.Namespace) -> int:
     if args.command == "check":
         deliveries = load_delivery_log()
         print(f"[ok] {len(deliveries)} project deliveries")
@@ -167,6 +246,7 @@ def main(argv: list[str] | None = None) -> int:
         "verification": args.verification,
         "paths": args.paths,
         "docs": args.docs,
+        "abandoned": [parse_abandoned_argument(item) for item in args.abandoned],
         "commit": args.commit or current_commit(),
         "lesson": args.lesson,
         "debug_ref": args.debug_ref,

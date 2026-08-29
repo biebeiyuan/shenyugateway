@@ -118,6 +118,16 @@ function zoneTitle(id: string): string {
                   <code v-for="doc in delivery.docs" :key="doc" :title="doc">{{ doc }}</code>
                 </div>
               </div>
+              <div v-if="delivery.abandoned?.length" class="delivery-abandoned">
+                <span>放弃了什么</span>
+                <ul>
+                  <li v-for="item in delivery.abandoned" :key="item.what">
+                    <b>{{ item.what }}</b>
+                    <i>{{ item.why }}</i>
+                    <em>{{ item.cost }}</em>
+                  </li>
+                </ul>
+              </div>
               <blockquote v-if="delivery.lesson">
                 <span>留下的经验</span>
                 <p>{{ delivery.lesson }}</p>
@@ -186,6 +196,16 @@ function zoneTitle(id: string): string {
 .delivery-tags b,
 .delivery-tags code { max-width: 100%; padding: 4px 6px; overflow: hidden; border-radius: 4px; background: var(--rose-soft); color: #80606a; font-size: 8px; font-weight: 400; text-overflow: ellipsis; white-space: nowrap; }
 .delivery-tags code { background: #f4f1ef; color: #786d69; }
+.delivery-abandoned { grid-column: 1 / -1; }
+/* Three fixed facts per road, kept on one visual line each so the panel reads as
+   a list of closed doors rather than a second narrative. */
+.delivery-abandoned li { margin-bottom: 4px; }
+.delivery-abandoned b { color: #7a6a68; font-weight: 500; }
+.delivery-abandoned i,
+.delivery-abandoned em { font-style: normal; }
+.delivery-abandoned i::before,
+.delivery-abandoned em::before { content: ' · '; color: var(--muted); }
+.delivery-abandoned em { color: var(--muted); }
 .delivery-body blockquote { grid-column: 1 / -1; margin: 0; padding: 10px 12px; border-left: 2px solid var(--sage); background: var(--sage-soft); }
 .delivery-body blockquote p { color: #607267; }
 .delivery-debug { grid-column: 1 / -1; }
