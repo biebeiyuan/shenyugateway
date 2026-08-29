@@ -2,6 +2,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from shenyu_gateway import project_map
+
 
 ROOT = Path(__file__).resolve().parent.parent
 
@@ -236,6 +238,49 @@ def test_the_timezone_home_and_its_one_exception_still_exist():
         "client_extra.py is exempt only because it may not import from the package; "
         "if that contract is gone, it should import LOCAL_DAY_TZ like everyone else"
     )
+
+
+_MAP_TABLES = (
+    ("docs/architecture/SYSTEM_ZONES.md", "## 跨区关键桥梁"),
+    ("README.md", "### 按产品对象反查"),
+    ("DOCS_MAP.md", "## 现行文档"),
+)
+
+
+def test_every_row_of_the_three_map_tables_parses():
+    # A row whose cell count disagrees with the header cannot be zipped into a
+    # record, so the parser skips it — the table still looks whole and the row is
+    # simply gone from 家里地图. Measured when this guard was written: all 33 rows
+    # across the three tables parse, so the check is silent until someone's hand
+    # edit drops or adds a `|`.
+    warnings: list[str] = []
+    for doc, heading in _MAP_TABLES:
+        text = (ROOT / doc).read_text(encoding="utf-8")
+        rows = project_map._table_after_heading(text, heading, warnings, source=doc)
+        assert rows, f"{doc} {heading} parsed to nothing"
+    assert not warnings, f"map table rows the project map silently drops: {warnings}"
+
+
+def test_a_malformed_table_row_is_reported_not_dropped_in_silence():
+    # The measurement above only stays meaningful if a bad row is actually loud;
+    # otherwise a future refactor could restore the silent skip and the clean
+    # measurement would keep passing.
+    table = "\n".join(
+        (
+            "## 现行文档",
+            "",
+            "| 文档 | 作用 | 何时读 |",
+            "| --- | --- | --- |",
+            "| A.md | 甲 | 开工前 |",
+            "| B.md | 乙 |",
+            "| C.md | 丙 | 收工后 |",
+        )
+    )
+    warnings: list[str] = []
+    rows = project_map._table_after_heading(table, "## 现行文档", warnings, source="测试表")
+    assert [row["文档"] for row in rows] == ["A.md", "C.md"]
+    assert len(warnings) == 1
+    assert "B.md" in warnings[0] and "测试表" in warnings[0]
 
 
 def test_map_tier_docs_anchor_by_function_name_not_line_number():

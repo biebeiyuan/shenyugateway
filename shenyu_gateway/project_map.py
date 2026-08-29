@@ -64,7 +64,13 @@ def _heading_section(text: str, heading: str) -> str:
     return rest[: end.start()] if end else rest
 
 
-def _table_after_heading(text: str, heading: str) -> list[dict[str, str]]:
+def _table_after_heading(
+    text: str,
+    heading: str,
+    warnings: list[str] | None = None,
+    *,
+    source: str = "",
+) -> list[dict[str, str]]:
     section = _heading_section(text, heading)
     lines = [line.strip() for line in section.splitlines()]
     for index, line in enumerate(lines):
@@ -82,6 +88,16 @@ def _table_after_heading(text: str, heading: str) -> list[dict[str, str]]:
         for row in table_lines[2:]:
             cells = [_clean_markdown(cell) for cell in row.strip("|").split("|")]
             if len(cells) != len(headers):
+                # A row with the wrong cell count cannot be zipped into a record:
+                # there is no way to tell which column each value belongs to. But
+                # dropping it quietly makes the row vanish from the map while the
+                # table still looks whole, so say which row and where.
+                if warnings is not None:
+                    first = _clean_markdown(row.strip("|").split("|")[0]) or row.strip()
+                    warnings.append(
+                        f"{source or heading} 表格里“{first}”这行有 {len(cells)} 格、"
+                        f"表头是 {len(headers)} 格，这行暂时读不进家里地图。"
+                    )
                 continue
             records.append(dict(zip(headers, cells)))
         return records
@@ -242,9 +258,15 @@ def project_map_snapshot(*, root: Path = ROOT) -> dict[str, Any]:
     docs_map = _read(root / "DOCS_MAP.md", warnings)
     zones = _parse_zones(system_zones)
     request_flow = _parse_request_flow(system_zones)
-    bridges = _table_after_heading(system_zones, "## 跨区关键桥梁")
-    products = _table_after_heading(readme, "### 按产品对象反查")
-    documents = _table_after_heading(docs_map, "## 现行文档")
+    bridges = _table_after_heading(
+        system_zones, "## 跨区关键桥梁", warnings, source="SYSTEM_ZONES.md 跨区桥梁"
+    )
+    products = _table_after_heading(
+        readme, "### 按产品对象反查", warnings, source="README.md 产品反查"
+    )
+    documents = _table_after_heading(
+        docs_map, "## 现行文档", warnings, source="DOCS_MAP.md 现行文档"
+    )
     try:
         deliveries = load_delivery_log(root / "project_delivery_log.jsonl")[:60]
     except ProjectDeliveryError as exc:
