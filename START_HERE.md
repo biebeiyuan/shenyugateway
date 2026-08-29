@@ -9,7 +9,7 @@
 1. Shenyu Gateway 接收 OpenAI-compatible 请求，但上游既可以是 OpenAI-compatible，也可以是 Anthropic；协议差异应留在 provider adapter，不能把某个 relay 的行为写成全局规则。
 2. 请求正文会经过上下文整理、Memory Island 注入和工具路由，再发送给上游。日志里的原始窗口、上下文快照和实际上游消息是三个不同阶段，不是简单的重复副本。
 3. 工具有“网关执行”和“客户端执行”两类。同一轮可以同时出现两类工具，因此存在 mixed tool 和 pending transcript 机制。
-4. 这是生产项目。先看证据和测试，再做最小修改；不要根据猜测重构请求、流式、工具或记忆链路。
+4. 这是生产项目，而且 **`master` 分支就是那个生产**——Coolify 盯着它自动部署，推上去就是上线到沈予和圆圆正在住的网关。先看证据和测试，再做最小修改；不要根据猜测重构请求、流式、工具或记忆链路。推 master 前的验证基线在 `docs/DELIVERY.md`。
 
 ## 我现在想做什么？
 

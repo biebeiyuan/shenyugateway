@@ -487,7 +487,7 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 3. Use the `Dockerfile` — Coolify detects it automatically.
 4. Set environment variables in Coolify's dashboard (`.env` content).
 5. Port mapping: `8010:8010`.
-6. Coolify auto-deploys on every git push.
+6. Coolify auto-deploys the tracked branch, which is `master`. **A `master` push is a production deployment**, not merely a repository update: the resident gateway, its Supabase project, and the mounted `/app/data` volume are the live ones. Feature branches are not deployed. See `AGENTS.md` § Project Memory and Collaboration and `docs/DELIVERY.md` for what must pass before pushing `master`.
 
 For the resident home snapshot to show the deployed revision inside the image, pass the source SHA as the Docker build argument `SOURCE_COMMIT` (or set the runtime environment variable with the same name). The image intentionally omits `.git`.
 

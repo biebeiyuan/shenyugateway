@@ -13,6 +13,10 @@
 | `verified_local` | 本地测试/构建通过，未推送 | 测试与构建输出 |
 | `pushed` | 已推送目标分支 | `git push` 回执的 `旧hash..新hash` 区间即充分证据，无需 `ls-remote`/fetch 复核；汇报附 commit hash |
 | `deployed` | 生产已部署该改动 | 版本接口、生产日志或可识别的构建哈希 |
+
+**`master` 就是生产。** Coolify 盯着这个分支自动部署，所以推 master 等于上线到沈予和圆圆正在住的那个网关——不是"代码进仓库"。推之前先走完下面的验证基线，并且除非圆圆已经说了要推，先问一句。特性分支不会被部署，推它没有这层重量。
+
+推完 master 也**还不是 `deployed`**：Coolify 还要构建和重启，这中间线上跑的仍是旧版。填 `deployed` 要等版本接口、生产日志或可识别的构建哈希确认运行中的服务确实换了——push 回执证明不了这件事。
 | `device_verified` | 已在真实设备复现原场景并确认修复 | 手机实机在生产 `/chat/` 页的观察 |
 
 ## 探针边界
@@ -31,7 +35,7 @@ push 回执就是终点证据，不要再去探生产。
 
 - 受影响的 Python / 前端定向测试通过；跨模块改动跑全量。
 - 地图覆盖路径变化时 `python -m pytest -q tests/test_project_map.py` 通过。
-- `python scripts/resident_home.py check` 八组件 ok（触发 review 时按 `AGENTS.md` 流程确认）。同一条命令会报出本次改动碰过、行尾却不是纯 LF 的文件并判红，先规范行尾再复核；新建还没 `git add` 的文件也算碰过，没碰过的旧文件只列出来提示，不算不通过。
+- `python scripts/resident_home.py check` 全部组件 ok（触发 review 时按 `AGENTS.md` 流程确认）。组件数会随功能增减，以命令输出为准,不要照抄某个数字。同一条命令会报出本次改动碰过、行尾却不是纯 LF 的文件并判红，先规范行尾再复核；新建还没 `git add` 的文件也算碰过，没碰过的旧文件只列出来提示，不算不通过。
 - `git diff --check` 通过。
 - 中文文本变化时按 `AGENTS.md` § Encoding Rules 扫乱码。
 
