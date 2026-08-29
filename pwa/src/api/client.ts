@@ -1,6 +1,7 @@
 import type { UiMessage } from '../types'
 import { joinEcho } from '../echo'
 import { parsePwaBuildInfo, type PwaBuildInfo } from '../buildInfo'
+import { gatewayErrorMessage } from './errors'
 
 // Thin gateway HTTP layer. Every request carries the PWA client identity
 // headers; interpretation of payload fields stays with the caller.
@@ -118,7 +119,7 @@ export async function postUpstreamConfig(ctx: RequestContext, body: Record<strin
     headers: requestHeaders(ctx),
     body: JSON.stringify(body),
   })
-  if (!response.ok) throw new Error((await response.text()) || `网关返回 ${response.status}`)
+  if (!response.ok) throw new Error(gatewayErrorMessage(response.status, await response.text()))
 }
 
 async function postChat(ctx: RequestContext, body: Record<string, unknown>, signal: AbortSignal): Promise<Response> {
@@ -128,10 +129,9 @@ async function postChat(ctx: RequestContext, body: Record<string, unknown>, sign
     body: JSON.stringify(body),
     signal,
   })
-  if (!response.ok) {
-    const detail = await response.text()
-    throw new Error(detail || `网关返回 ${response.status}`)
-  }
+  // 这里是错误正文的唯一入口：502 时上游代理返回的是整张 HTML 页，提取必须
+  // 发生在这一步，不能让它进 Error.message 再指望渲染侧收拾。
+  if (!response.ok) throw new Error(gatewayErrorMessage(response.status, await response.text()))
   return response
 }
 

@@ -1,3 +1,4 @@
+import { clampErrorText } from '../api/errors'
 import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
 
@@ -23,7 +24,8 @@ export function cloneVariant(variant: Partial<MessageVariant>): MessageVariant {
         }))
       : [],
     events: Array.isArray(variant.events) ? variant.events.map((item) => ({ ...item })) : [],
-    error: variant.error ? String(variant.error) : undefined,
+    // roll variant 也带 error，而它会原样落盘；这里是所有 variant 错误的唯一漏斗。
+    error: variant.error ? clampErrorText(String(variant.error)) : undefined,
     responseMeta: variant.responseMeta && typeof variant.responseMeta === 'object'
       ? { ...variant.responseMeta }
       : undefined,

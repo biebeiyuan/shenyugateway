@@ -1,4 +1,5 @@
 import type { ToolEvent } from '../toolLanguage'
+import { clampErrorText } from '../api/errors'
 import type { EchoSegment, MessageVariant, ResponseMeta, Role, ThinkingSegment, UiMessage } from '../types'
 import { createId } from '../utils'
 import { applyVariant, cloneVariant, selectedVariantIndex, syncCurrentVariant } from './variants'
@@ -90,7 +91,9 @@ export function loadStoredMessages(): UiMessage[] {
               : [],
           events: cloneStoredEvents(item.events),
           streaming: false,
-          error: item.error ? String(item.error) : undefined,
+          // 读回也截断：早于错误护栏落盘的那条整页 HTML 还躺在 localStorage 里，
+          // 每次重开都会重新顶飞界面。截在读回这一步，旧记录自己就好了。
+          error: item.error ? clampErrorText(String(item.error)) : undefined,
           truncated: item.truncated === true ? true : undefined,
           responseMeta: cloneStoredResponseMeta(item.responseMeta),
         }
@@ -155,7 +158,7 @@ export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit
     thinking: message.thinking,
     thinkingSegments: message.thinkingSegments,
     events: message.events,
-    error: message.error,
+    error: message.error ? clampErrorText(message.error) : undefined,
     // streaming 态只在流式中途落盘（节流/pagehide）时出现；正常收尾会先清掉
     // streaming 再落盘。它留在存储里就意味着进程死在了流中间——按截断标记，
     // 重启后 reconcile 会去服务器找回全文。

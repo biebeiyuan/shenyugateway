@@ -219,3 +219,38 @@ describe('storage window limit', () => {
     expect(loadStoredMessages()).toHaveLength(372)
   })
 })
+
+describe('stored error text is bounded', () => {
+  it('bounds an error on the way to storage', () => {
+    persistStoredMessages([
+      uiMessage('user', 'q'),
+      uiMessage('assistant', '', { error: `<!DOCTYPE html>${'x'.repeat(5000)}` }),
+    ], FALLBACK_SESSION_MESSAGE_LIMIT)
+    const stored = JSON.parse(localStorage.getItem(STORAGE_MESSAGES) || '[]')
+    expect(String(stored[1].error).length).toBeLessThanOrEqual(301)
+  })
+
+  // 护栏之前落盘的整页 HTML 还在住户手机的 localStorage 里，每次重开 App 都会
+  // 重新顶飞界面。读回这一步截断，旧记录不需要用户清缓存就自己好了。
+  it('heals a poisoned entry written before the guard existed', () => {
+    localStorage.setItem(STORAGE_MESSAGES, JSON.stringify([
+      { id: 'a1', role: 'assistant', content: '', error: `<!DOCTYPE html>${'x'.repeat(9000)}` },
+    ]))
+    const restored = loadStoredMessages()
+    expect(restored).toHaveLength(1)
+    expect(String(restored[0].error).length).toBeLessThanOrEqual(301)
+  })
+
+  it('bounds an error carried by a roll variant', () => {
+    persistStoredMessages([
+      uiMessage('assistant', 'answer', {
+        variants: [
+          { content: '', echo: '', echoSegments: [], thinking: '', thinkingSegments: [], events: [], error: 'y'.repeat(4000) },
+        ],
+        selectedVariantIndex: 0,
+      }),
+    ], FALLBACK_SESSION_MESSAGE_LIMIT)
+    const stored = JSON.parse(localStorage.getItem(STORAGE_MESSAGES) || '[]')
+    expect(String(stored[0].variants[0].error).length).toBeLessThanOrEqual(301)
+  })
+})
