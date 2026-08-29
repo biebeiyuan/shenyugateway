@@ -6,8 +6,12 @@ from types import SimpleNamespace
 
 import pytest
 
+import subprocess
+
 from shenyu_gateway.resident_home import (
     ResidentHomeError,
+    _format_line_endings,
+    _print_check,
     ack_shared_components,
     bootstrap_manifest,
     changes_by_week,
@@ -18,6 +22,7 @@ from shenyu_gateway.resident_home import (
     review_component,
     format_weekly_report,
     home_overview,
+    working_tree_line_endings,
 )
 
 
@@ -246,3 +251,86 @@ def test_weekly_report_keeps_impact_on_a_stable_resident_line():
     )
 
     assert rendered == "2026-W29 · 1 条变化\n- 共享书架: 接通书架\n  影响：你在任何地方说“翻书架”，都能翻到同一个架子。"
+
+
+def _init_repo(root: Path) -> None:
+    """A repo with this repository's own eol policy, so the check sees real data."""
+    subprocess.run(["git", "init", "-q"], cwd=root, check=True)
+    (root / ".gitattributes").write_bytes(b"* text=auto eol=lf\n")
+    (root / "kept.py").write_bytes(b"KEPT = 1\n")
+    (root / "drifted.py").write_bytes(b"DRIFTED = 1\n")
+    (root / "logo.png").write_bytes(b"\x89PNG\r\n\x1a\n\x00\r\n")
+    subprocess.run(["git", "add", "-A"], cwd=root, check=True)
+    subprocess.run(
+        ["git", "-c", "user.name=test", "-c", "user.email=test@example.com", "commit", "-qm", "seed"],
+        cwd=root,
+        check=True,
+    )
+
+
+def test_line_ending_check_reads_git_and_leaves_lf_and_binary_alone(tmp_path):
+    _init_repo(tmp_path)
+
+    report = working_tree_line_endings(root=tmp_path)
+
+    assert report["checked"] is True
+    assert report["files"] == []
+    assert _format_line_endings(report) == []
+
+
+def test_crlf_in_an_untouched_file_is_reported_without_failing_the_check(tmp_path):
+    # `.gitattributes` normalizes on commit, so re-saving the same content in CRLF
+    # is not a change git would carry anywhere. Inherited churn like this gets
+    # named but must not leave a permanent red light this handoff cannot clear.
+    _init_repo(tmp_path)
+    (tmp_path / "drifted.py").write_bytes(b"DRIFTED = 1\r\n")
+
+    report = working_tree_line_endings(root=tmp_path)
+
+    assert [item["path"] for item in report["files"]] == ["drifted.py"]
+    assert report["pending"] == []
+    lines = _format_line_endings(report)
+    assert len(lines) == 1
+    assert "1 other tracked file(s)" in lines[0] and "drifted.py" in lines[0]
+    assert _print_check([{"id": "demo", "title": "演示", "status": "ok"}], line_endings=report) == 0
+
+
+def test_crlf_in_a_file_this_change_touches_fails_the_check(tmp_path, capsys):
+    _init_repo(tmp_path)
+    (tmp_path / "drifted.py").write_bytes(b"DRIFTED = 2\r\n")
+
+    report = working_tree_line_endings(root=tmp_path)
+
+    assert report["pending"] == ["drifted.py"]
+    assert _print_check([{"id": "demo", "title": "演示", "status": "ok"}], line_endings=report) == 1
+    printed = capsys.readouterr().out
+    assert "1 file(s) you are about to commit are not LF: drifted.py" in printed
+
+
+def test_a_staged_crlf_file_counts_as_pending(tmp_path):
+    # Staging is when the drift is one command away from being someone else's
+    # problem, so a staged file must not fall out of the actionable list.
+    _init_repo(tmp_path)
+    (tmp_path / "drifted.py").write_bytes(b"DRIFTED = 3\r\n")
+    subprocess.run(["git", "add", "drifted.py"], cwd=tmp_path, check=True)
+
+    assert working_tree_line_endings(root=tmp_path)["pending"] == ["drifted.py"]
+
+
+def test_pending_detection_survives_a_stale_index_stat_cache(tmp_path):
+    # `git status --porcelain` calls a CRLF-only rewrite modified until the index
+    # stat cache refreshes, then calls it clean — so it cannot decide this. The
+    # diff path runs the eol clean filter and answers the same way both times.
+    _init_repo(tmp_path)
+    (tmp_path / "drifted.py").write_bytes(b"DRIFTED = 1\r\n")
+
+    first = working_tree_line_endings(root=tmp_path)["pending"]
+    subprocess.run(["git", "update-index", "--refresh"], cwd=tmp_path, capture_output=True)
+    assert working_tree_line_endings(root=tmp_path)["pending"] == first == []
+
+
+def test_line_ending_report_is_absent_outside_a_git_checkout(tmp_path):
+    report = working_tree_line_endings(root=tmp_path)
+
+    assert report == {"checked": False, "files": [], "pending": []}
+    assert _print_check([{"id": "demo", "title": "演示", "status": "ok"}], line_endings=report) == 0

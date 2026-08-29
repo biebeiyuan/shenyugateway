@@ -56,6 +56,19 @@ def worktree_dirty(root: Path = ROOT) -> bool:
     return bool(_git("status", "--porcelain", root=root))
 
 
+def _paths_changed_from_head(root: Path = ROOT) -> set[str]:
+    """Tracked paths whose content differs from HEAD, staged or not.
+
+    Deliberately not `git status --porcelain`: a rewrite that only flipped line
+    endings shows up there as modified until the index stat cache refreshes, then
+    goes clean. `git diff` runs the `eol=lf` clean filter, so it answers the
+    question that matters — would committing this file change anything — with the
+    same answer every time. `-z` keeps paths raw instead of shell-quoted.
+    """
+    listing = _git("diff", "--name-only", "-z", "HEAD", root=root)
+    return {path for path in listing.split("\0") if path}
+
+
 def current_revision(root: Path = ROOT) -> str:
     commit = current_commit(root)
     if not commit:
@@ -124,6 +137,53 @@ def _source_state(component: dict[str, Any], root: Path = ROOT) -> tuple[str, di
 
 def component_fingerprint(component: dict[str, Any], root: Path = ROOT) -> str:
     return _source_state(component, root)[0]
+
+
+# git's own eol column values that need no attention: pure LF, an empty file,
+# and anything git classifies as binary.
+_LINE_ENDING_OK = frozenset({"lf", "none", "-text"})
+
+
+def working_tree_line_endings(root: Path = ROOT) -> dict[str, Any]:
+    """Tracked text files whose working copy is not pure LF.
+
+    ``_source_state`` normalizes line endings before hashing, so this module reads
+    every mapped source and deliberately looks away from how its lines end. This
+    command runs before every resident review, which makes it the cheapest place to
+    close that blind spot instead of trusting anyone to remember.
+
+    ``.gitattributes`` sets ``eol=lf``, so committed content is LF whatever the
+    client does and non-LF bytes never reach the repository. What this finds is
+    local worktree drift — a Windows-side write leaving a stray CR inside a string
+    literal, or half a file rewritten in the other style. git decides what counts
+    as text, so binaries and empty files fall out for free.
+    """
+    listing = _git("ls-files", "--eol", root=root)
+    if not listing:
+        return {"checked": False, "files": [], "pending": []}
+    pending = _paths_changed_from_head(root)
+    offenders: list[dict[str, Any]] = []
+    for line in listing.splitlines():
+        attributes, separator, relative = line.partition("\t")
+        if not separator:
+            continue
+        fields = attributes.split()
+        if len(fields) < 2:
+            continue
+        worktree_eol = fields[1].partition("/")[2]
+        if worktree_eol in _LINE_ENDING_OK:
+            continue
+        path = relative.strip()
+        offenders.append({"path": path, "eol": worktree_eol, "pending": path in pending})
+    offenders.sort(key=lambda item: item["path"])
+    return {
+        "checked": True,
+        "files": offenders,
+        # Drift in a file this handoff is about to commit is the actionable case
+        # and fails `check`. The rest is inherited churn from earlier sessions:
+        # reported, but not a standing red light nobody can clear.
+        "pending": [item["path"] for item in offenders if item["pending"]],
+    }
 
 
 def source_owner_map(manifest: dict[str, Any], root: Path = ROOT) -> dict[str, list[str]]:
@@ -488,10 +548,50 @@ def home_snapshot(
     }
 
 
-def _print_check(statuses: Iterable[dict[str, Any]], *, as_json: bool = False) -> int:
+def _format_line_endings(report: dict[str, Any]) -> list[str]:
+    """Line-ending lines for `check`, most actionable first."""
+    if not report.get("checked"):
+        return []
+    offenders = report.get("files") or []
+    if not offenders:
+        return []
+    pending = report.get("pending") or []
+    lines: list[str] = []
+    if pending:
+        lines.append(
+            f"[line endings] {len(pending)} file(s) you are about to commit are not LF: "
+            + ", ".join(pending[:6])
+            + (f" … +{len(pending) - 6}" if len(pending) > 6 else "")
+            + " — normalize before reviewing: sed -i 's/\\r$//' <path>"
+        )
+    inherited = [item["path"] for item in offenders if not item["pending"]]
+    if inherited:
+        lines.append(
+            f"[line endings] {len(inherited)} other tracked file(s) carry non-LF endings "
+            "from earlier sessions (commits stay LF via .gitattributes; normalize when you "
+            "next touch them): "
+            + ", ".join(inherited[:4])
+            + (f" … +{len(inherited) - 4}" if len(inherited) > 4 else "")
+        )
+    return lines
+
+
+def _print_check(
+    statuses: Iterable[dict[str, Any]],
+    *,
+    as_json: bool = False,
+    line_endings: dict[str, Any] | None = None,
+) -> int:
     records = list(statuses)
+    report = line_endings or {"checked": False, "files": []}
     if as_json:
-        print(json.dumps(records, ensure_ascii=False, indent=2))
+        print(
+            json.dumps(
+                {"components": records, "line_endings": report},
+                ensure_ascii=False,
+                indent=2,
+            )
+        )
     else:
         for record in records:
             if record["status"] == "ok":
@@ -514,7 +614,11 @@ def _print_check(statuses: Iterable[dict[str, Any]], *, as_json: bool = False) -
                     if shared:
                         detail += " (*=shared, ack-shared applies if all are *)"
                 print(f"[review required] {record['id']} / {record['title']} ({detail})")
-    return 1 if any(record["status"] != "ok" for record in records) else 0
+        for line in _format_line_endings(report):
+            print(line)
+    if any(record["status"] != "ok" for record in records):
+        return 1
+    return 1 if report.get("pending") else 0
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -550,7 +654,11 @@ def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
     try:
         if args.command == "check":
-            return _print_check(check_manifest(), as_json=args.as_json)
+            return _print_check(
+                check_manifest(),
+                as_json=args.as_json,
+                line_endings=working_tree_line_endings(),
+            )
         if args.command == "bootstrap":
             bootstrap_manifest(actor=args.actor or None)
             print("resident home fingerprints bootstrapped")

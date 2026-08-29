@@ -31,7 +31,7 @@ push 回执就是终点证据，不要再去探生产。
 
 - 受影响的 Python / 前端定向测试通过；跨模块改动跑全量。
 - 地图覆盖路径变化时 `python -m pytest -q tests/test_project_map.py` 通过。
-- `python scripts/resident_home.py check` 八组件 ok（触发 review 时按 `AGENTS.md` 流程确认）。
+- `python scripts/resident_home.py check` 八组件 ok（触发 review 时按 `AGENTS.md` 流程确认）。同一条命令会报出本次改动碰过、行尾却不是纯 LF 的文件并判红，先规范行尾再复核；没碰过的旧文件只列出来提示，不算不通过。
 - `git diff --check` 通过。
 - 中文文本变化时按 `AGENTS.md` § Encoding Rules 扫乱码。
 
