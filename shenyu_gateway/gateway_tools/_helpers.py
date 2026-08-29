@@ -6,6 +6,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Optional
 
 from shenyu_gateway.recall import recall_terms
+from shenyu_gateway.runtime import LOCAL_DAY_TZ
 
 
 def _keyword_terms(query: str) -> list[str]:
@@ -21,16 +22,13 @@ def _keyword_overlap_score(query: str, text: str) -> float:
     return hits / max(len(terms), 1)
 
 
-_LOCAL_DAY_TZ = timezone(timedelta(hours=8))
-
-
 def _date_range_bounds(created_from: Optional[str], created_to: Optional[str]) -> tuple[Optional[str], Optional[str]]:
     def start_bound(value: Optional[str]) -> Optional[str]:
         raw = (value or "").strip()
         if not raw:
             return None
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
-            dt = datetime.fromisoformat(raw).replace(tzinfo=_LOCAL_DAY_TZ)
+            dt = datetime.fromisoformat(raw).replace(tzinfo=LOCAL_DAY_TZ)
             return dt.astimezone(timezone.utc).isoformat()
         return raw
 
@@ -39,7 +37,7 @@ def _date_range_bounds(created_from: Optional[str], created_to: Optional[str]) -
         if not raw:
             return None
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
-            dt = datetime.fromisoformat(raw).replace(tzinfo=_LOCAL_DAY_TZ)
+            dt = datetime.fromisoformat(raw).replace(tzinfo=LOCAL_DAY_TZ)
             return (dt + timedelta(days=1)).astimezone(timezone.utc).isoformat()
         return raw
 

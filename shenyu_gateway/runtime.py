@@ -58,6 +58,11 @@ def parse_ts(value: Optional[str]) -> Optional[datetime]:
 
 # 我们过的是 Asia/Shanghai 的日子。now() 只给 UTC，所以任何"今天""几天前"
 # 的判断都得先落到这个时区，否则 UTC 的 8 点前会算成前一天。
+#
+# 这是全仓唯一一处本地时区定义，任何需要它的模块都从这里 import，不要再就地写
+# 一个 timezone(timedelta(hours=8)) 或 ZoneInfo("Asia/Shanghai")。写成固定偏移
+# 而不是 ZoneInfo：中国自 1991 年起没有夏令时，两者在任何我们会遇到的时刻输出
+# 完全一致，而固定偏移不依赖运行环境里有没有 tzdata。
 LOCAL_DAY_TZ = timezone(timedelta(hours=8))
 
 

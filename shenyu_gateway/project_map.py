@@ -5,7 +5,6 @@ from datetime import datetime
 from itertools import combinations
 from pathlib import Path, PurePosixPath
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from .project_delivery import ProjectDeliveryError, load_delivery_log
 from .resident_home import (
@@ -16,10 +15,10 @@ from .resident_home import (
     load_manifest,
     worktree_dirty,
 )
+from .runtime import LOCAL_DAY_TZ
 
 
 ROOT = Path(__file__).resolve().parent.parent
-LOCAL_ZONE = ZoneInfo("Asia/Shanghai")
 
 _FLOW_MEANINGS = (
     ("客户端", "你发来的话从这里出发，也从这里收到回答。"),
@@ -313,7 +312,7 @@ def project_map_snapshot(*, root: Path = ROOT) -> dict[str, Any]:
     confirmed = sum(component["status"] == "ok" for component in components)
     pending = sum(component["status"] == "review_required" for component in components)
     errors = sum(component["status"] == "error" for component in components)
-    now = datetime.now(LOCAL_ZONE).replace(microsecond=0).isoformat()
+    now = datetime.now(LOCAL_DAY_TZ).replace(microsecond=0).isoformat()
 
     return {
         "ok": True,

@@ -2,13 +2,10 @@ from __future__ import annotations
 
 import json
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Any, Optional
 
-from ..runtime import iso_now, json_dumps
-
-
-_ROOM_READER_TIMEZONE = timezone(timedelta(hours=8))
+from ..runtime import LOCAL_DAY_TZ, iso_now, json_dumps
 
 
 def _room_newspaper_reader_date(value: Any) -> str:
@@ -21,7 +18,7 @@ def _room_newspaper_reader_date(value: Any) -> str:
         return raw[:10]
     if parsed.tzinfo is None:
         parsed = parsed.replace(tzinfo=timezone.utc)
-    return parsed.astimezone(_ROOM_READER_TIMEZONE).date().isoformat()
+    return parsed.astimezone(LOCAL_DAY_TZ).date().isoformat()
 
 
 def _validated_reader_date(value: str) -> str:

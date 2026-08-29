@@ -33,7 +33,7 @@ from typing import Any, Optional
 from .client_extra import parse_pwa_status_suffix_time
 from .context_layers import _strip_client_extra_bundle_text
 from .echo import strip_leading_echo
-from .runtime import dt_to_iso, iso_now, logger
+from .runtime import LOCAL_DAY_TZ, dt_to_iso, iso_now, logger
 
 CHAT_ARCHIVE_TABLE = "shenyu_chat_archive"
 
@@ -95,7 +95,7 @@ def _client_time_from_text(text: str, *, now: Optional[datetime] = None) -> Opti
         return None
     # Operit's injected clock is the client local clock. The current client is
     # Asia/Shanghai; keep this path explicit rather than treating it as UTC.
-    dt = dt.replace(tzinfo=timezone(timedelta(hours=8)))
+    dt = dt.replace(tzinfo=LOCAL_DAY_TZ)
     return dt_to_iso(dt.astimezone(timezone.utc))
 
 

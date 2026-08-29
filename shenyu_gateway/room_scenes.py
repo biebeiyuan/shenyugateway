@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import random
 import re
-from datetime import timezone, timedelta
 from typing import Any, Optional
 
-from .runtime import now
+from .runtime import LOCAL_DAY_TZ, now
 
 
 # ── 常规场景（从 room_text.py 搬过来）────────────────────────────────
@@ -537,8 +536,6 @@ _POOL_TAG_MAP = {
 
 # ── 场景选择 ─────────────────────────────────────────────────────────
 
-_CST = timezone(timedelta(hours=8))
-
 
 def select_scene(
     charge: float,
@@ -552,7 +549,7 @@ def select_scene(
     prev_scene: {"tag": str, "hours_ago": float} — 来自上次 window trace。
     """
 
-    now_cst = now().astimezone(_CST)
+    now_cst = now().astimezone(LOCAL_DAY_TZ)
     hour = now_cst.hour
     month = now_cst.month
 

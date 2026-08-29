@@ -8,13 +8,13 @@ import subprocess
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterable
-from zoneinfo import ZoneInfo
+
+from .runtime import LOCAL_DAY_TZ
 
 
 ROOT = Path(__file__).resolve().parent.parent
 MANIFEST_PATH = ROOT / "resident_home_manifest.json"
 CHANGES_PATH = ROOT / "resident_home_changes.jsonl"
-LOCAL_ZONE = ZoneInfo("Asia/Shanghai")
 
 
 class ResidentHomeError(ValueError):
@@ -22,7 +22,7 @@ class ResidentHomeError(ValueError):
 
 
 def _now() -> datetime:
-    return datetime.now(LOCAL_ZONE).replace(microsecond=0)
+    return datetime.now(LOCAL_DAY_TZ).replace(microsecond=0)
 
 
 def week_key(value: datetime | None = None) -> str:

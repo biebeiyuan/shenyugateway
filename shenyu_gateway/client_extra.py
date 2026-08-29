@@ -40,6 +40,9 @@ PWA_STATUS_SUFFIX_RE = re.compile(
 PWA_STATUS_DAY_SEGMENT_RE = re.compile(r"第(?P<n>\d+)天")
 PWA_DAY_ONE = (2026, 3, 9)
 
+# The one local copy of the +08:00 offset. Everywhere else in the package imports
+# runtime.LOCAL_DAY_TZ, but this module's contract (see the docstring) is to stay
+# importable with nothing package-internal behind it, so it keeps its own.
 _CST = timezone(timedelta(hours=8))
 
 

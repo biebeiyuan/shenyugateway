@@ -65,6 +65,8 @@ When a file settles and grows past roughly 800–1000 lines, split it along its 
 
 Shared literal contracts — a regex, wire-format string, or config key set that must stay byte-identical across modules or across client/server — live in exactly one home module that every other site imports; `shenyu_gateway/client_extra.py` is the reference (kept free of package-internal imports so importing it can never create a cycle). This rule is deliberately narrow: it covers only literals that must agree verbatim. Code that is merely similar stays where it is, a contract with a single consumer needs no home yet, and such a home must not grow into a general util module.
 
+The local timezone is one such contract. `shenyu_gateway/runtime.py` holds the only definition; import it from there instead of writing `timezone(timedelta(hours=8))` or `ZoneInfo("Asia/Shanghai")` in place. The fixed offset is deliberate — China has had no DST since 1991, so the two forms agree on every moment this code will see, and the offset needs no tzdata in the runtime image. `client_extra.py` keeps its own copy, and only it: importing runtime would break the no-package-internal-imports rule that makes it cycle-proof.
+
 ### Resident home synchronization
 
 When a runtime, configuration, or architecture change may alter what a resident experiences, run:

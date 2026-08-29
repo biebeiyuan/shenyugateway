@@ -11,7 +11,7 @@ archive, edit title/epilogue/notes/status, never the original text.
 """
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 
 from fastapi import APIRouter, HTTPException
@@ -20,9 +20,9 @@ from pydantic import BaseModel, Field
 from .conflict_books import ConflictBookService
 from .project_map import project_map_snapshot
 from .resident_books import ResidentBooksService
+from .runtime import LOCAL_DAY_TZ
 
 ARCHIVE_TABLE = "shenyu_chat_archive"
-_CST = timezone(timedelta(hours=8))
 
 
 class ConflictBookCreate(BaseModel):
@@ -88,7 +88,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         if not raw:
             return ""
         try:
-            return datetime.fromisoformat(raw).astimezone(_CST).strftime("%Y-%m-%d")
+            return datetime.fromisoformat(raw).astimezone(LOCAL_DAY_TZ).strftime("%Y-%m-%d")
         except (ValueError, TypeError):
             return raw[:10]
 

@@ -41,7 +41,7 @@ The codebase is partly layered already:
 ### Config & runtime
 
 - `shenyu_gateway/config.py`: environment-backed runtime config.
-- `shenyu_gateway/runtime.py`: shared runtime utilities (logger, `now_ts`, `iso_now`, `json_dumps`, dotenv loading).
+- `shenyu_gateway/runtime.py`: shared runtime utilities (logger, `now_ts`, `iso_now`, `json_dumps`, dotenv loading, and the repository's single local-timezone definition plus its day helpers).
 - `shenyu_gateway/schemas.py`: Pydantic data models (`ChatMessage`, request/response shapes).
 
 ### Storage

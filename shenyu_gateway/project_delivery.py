@@ -5,14 +5,13 @@ import json
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from zoneinfo import ZoneInfo
 
 from .resident_home import current_actor, current_commit
+from .runtime import LOCAL_DAY_TZ
 
 
 ROOT = Path(__file__).resolve().parent.parent
 DELIVERY_LOG_PATH = ROOT / "project_delivery_log.jsonl"
-LOCAL_ZONE = ZoneInfo("Asia/Shanghai")
 
 DELIVERY_KINDS = {"feature", "fix", "experience", "operations", "architecture"}
 DELIVERY_STATUSES = {"verified_local", "pushed", "deployed", "device_verified"}
@@ -235,7 +234,7 @@ def _run(args: argparse.Namespace) -> int:
 
     record = {
         "id": args.id,
-        "completed_at": args.completed_at or datetime.now(LOCAL_ZONE).replace(microsecond=0).isoformat(),
+        "completed_at": args.completed_at or datetime.now(LOCAL_DAY_TZ).replace(microsecond=0).isoformat(),
         "title": args.title,
         "product": args.product,
         "kind": args.kind,
