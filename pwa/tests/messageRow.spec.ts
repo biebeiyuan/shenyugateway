@@ -1,3 +1,8 @@
+import { readFileSync } from 'node:fs'
+import { dirname, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
+
+const here = dirname(fileURLToPath(import.meta.url))
 import { describe, expect, it, vi } from 'vitest'
 import { createApp, h, nextTick, ref } from 'vue'
 import ChatMessageRow from '../src/components/ChatMessageRow.vue'
@@ -214,5 +219,18 @@ describe('photos in a message row', () => {
     await nextTick()
     expect(host.querySelector('.photo-stack')).toBeNull()
     expect(host.querySelectorAll('.message-image-expired')).toHaveLength(2)
+  })
+})
+
+describe('the stack card must not widen the transcript', () => {
+  // 圆圆在真机底部看到一条灰色横条：探边卡比舞台宽约 27px，把 .message-stream
+  // 撑出了横向滚动条。探边溢出是设计要求，滚动不是——所以 CSS 侧两头都要挡：
+  // 卡片留出侧边距，容器显式关掉 overflow-x。
+  it('reserves side room for the peeking cards in CSS', () => {
+    const css = readFileSync(resolve(here, '../src/styles.css'), 'utf8')
+    const stack = css.match(/\.photo-stack \{[^}]*\}/)?.[0] || ''
+    expect(stack).toContain('margin: 0 27px')
+    const stream = css.match(/\.message-stream \{[^}]*\}/)?.[0] || ''
+    expect(stream).toContain('overflow-x: hidden')
   })
 })

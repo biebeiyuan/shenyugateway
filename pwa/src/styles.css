@@ -124,7 +124,9 @@ button:disabled { cursor: default; }
 .model-capsule-effort { margin-top: 2px; color: var(--text-secondary); font-size: 13px; line-height: 1.2; }
 .topbar > :last-child { justify-self: end; }
 
-.message-stream { width: 100%; max-width: 752px; flex: 1; margin: 0 auto; overflow-y: auto; padding: var(--space-5) var(--page-pad) var(--space-6); scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
+/* overflow-x 必须显式关掉：合并照片卡的探边卡比舞台宽约 27px，会把这里撑出一条
+   横向滚动条（圆圆在真机底部看到的那条灰条）。探边溢出是设计要求，滚动不是。 */
+.message-stream { width: 100%; max-width: 752px; flex: 1; margin: 0 auto; overflow-x: hidden; overflow-y: auto; overscroll-behavior-y: contain; padding: var(--space-5) var(--page-pad) var(--space-6); scroll-behavior: smooth; -webkit-overflow-scrolling: touch; }
 .welcome-panel { display: flex; min-height: 100%; flex-direction: column; align-items: center; justify-content: center; padding: 12px 0 28px; text-align: center; }
 .welcome-mark { display: block; width: 46px; height: 46px; margin-bottom: 14px; }
 .welcome-kicker { display: none; }
@@ -413,7 +415,7 @@ button:disabled { cursor: default; }
 
 /* 合并照片卡。质感规则来自 PhotoStack by Wren036（PolyForm Noncommercial 1.0.0）,
    每一条都对应一个实际踩过的渲染缺陷，见 viewer/photoStack.ts 文件头。 */
-.photo-stack { position: relative; width: 142px; height: 190px; flex: none; touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+.photo-stack { position: relative; width: 142px; height: 190px; flex: none; margin: 0 27px; touch-action: pan-y; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 .photo-stack-card { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; overflow: hidden; border-radius: 14px; /* 白底会在旋转卡边缘抗锯齿处渗出白色细线 */ background: transparent; box-shadow: 0 3px 14px rgba(0, 0, 0, .14); transition: transform .32s cubic-bezier(.2, .7, .3, 1), opacity .3s; }
 /* 拖拽中逐帧直写才跟手；松手后由上面那条过渡负责回弹归位。 */
 .photo-stack-card.scrubbing { transition: none; }
