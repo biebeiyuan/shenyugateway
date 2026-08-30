@@ -15,6 +15,13 @@ PWA（`pwa/`）另有一条血统：聊天界面几何与状态精灵取自 Chat
 精灵动画走 Web Animations API 而不是 CSS，所以 `pwa/src/styles.css` 里那条
 `prefers-reduced-motion` 覆盖**管不到它**；要让它也停下必须在脚本侧判断。
 
+流式正文的「段落封闭后不再重写」学自 **weir**（<https://github.com/VII-Cae/weir-smoothstreaming>,
+MIT）：已经写完的块不再重新解析，只有还在长的尾块动。我们的实现方式与它不同——
+它直写 DOM（`appendData` + 段落封闭），我们是 Vue 组件 + Markdown 缓存，所以学的是
+思路不是代码。它另外两条尚未采用：rAF 按积压量匀速吐字（留待单独一批，因为要改流式
+写入时序），以及「尾部换行扣一帧再判断是段落断还是行内断」——真要做 rAF 那条时必须
+一起做，否则段落断会随网络切片位置随机出现或消失。
+
 合并照片卡（堆叠、探边、跟手翻页、快甩，以及展开收起的运动规格）学自
 **PhotoStack by Wren036**（<https://github.com/Wren036/PhotoStack>，
 PolyForm Noncommercial 1.0.0；`Required Notice` 与许可条款随移植文件的文件头保留）。

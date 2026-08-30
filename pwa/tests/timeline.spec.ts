@@ -63,12 +63,33 @@ describe('processGroups', () => {
 })
 
 describe('assistantParts', () => {
-  it('places process strips before one intact content part', () => {
+  // 2026-08-30 恢复交错渲染：过程条插回正文中间，读起来是「写一段 → 做了点事 →
+  // 再写一段」。7 月删掉它的原因是按字符偏移切会切坏 Markdown；现在切点由
+  // marked.lexer 给，只落在块边界上。
+  it('interleaves a process strip between two blocks', () => {
     const message = assistant('前半段\n\n后半段')
     message.thinkingSegments = [{ id: 's', content: 'mid thought', textOffset: 5, streamOrder: 0 }]
     const parts = assistantParts(message)
-    expect(parts.map((part) => part.kind)).toEqual(['process', 'content'])
-    expect(parts[1].kind === 'content' && parts[1].content).toBe(message.content)
+    expect(parts.map((part) => part.kind)).toEqual(['content', 'process', 'content'])
+    // 正文按块产出，拼回来仍等于原文——一个字都不能丢。
+    const rejoined = parts.filter((p) => p.kind === 'content').map((p: any) => p.content).join('')
+    expect(rejoined).toBe(message.content)
+  })
+
+  it('snaps a mid-block offset to after that block, never inside it', () => {
+    const message = assistant('第一段。\n\n```python\ndef a():\n\n    pass\n```\n\n最后。')
+    // 偏移落在代码块内部
+    message.thinkingSegments = [{ id: 's', content: 'x', textOffset: 12, streamOrder: 0 }]
+    const parts = assistantParts(message)
+    const contents = parts.filter((p) => p.kind === 'content').map((p: any) => p.content)
+    expect(contents.join('')).toBe(message.content)
+    // 代码块所在的那一块必须完整（首尾都有 ```），否则渲染会坏
+    const codeBlock = contents.find((c) => c.includes('```python'))
+    expect(codeBlock?.trimEnd().endsWith('```')).toBe(true)
+    // 过程条落在代码块之后，而不是把它切开
+    const processIndex = parts.findIndex((p) => p.kind === 'process')
+    const codeIndex = contents.findIndex((c) => c.includes('```python'))
+    expect(processIndex).toBeGreaterThan(codeIndex)
   })
 
   it('always yields at least one content part for a plain message', () => {
@@ -77,12 +98,22 @@ describe('assistantParts', () => {
     expect(parts[0].kind).toBe('content')
   })
 
+  it('keeps a still-empty reply renderable while tools run', () => {
+    const message = assistant('')
+    message.thinkingSegments = [{ id: 's', content: 'thinking first', textOffset: 0, streamOrder: 0 }]
+    const parts = assistantParts(message)
+    expect(parts.map((part) => part.kind)).toEqual(['process', 'content'])
+  })
+
   it('keeps unicode content whole while retaining code-point process offsets', () => {
     const message = assistant('😀😀text')
     message.thinkingSegments = [{ id: 's', content: 'after emoji', textOffset: 2, streamOrder: 0 }]
     const parts = assistantParts(message)
-    expect(parts[0].kind === 'process' && parts[0].group.textOffset).toBe(2)
-    expect(parts[1].kind === 'content' && parts[1].content).toBe('😀😀text')
+    // 单块正文：偏移落在块内 → 吸附到块之后，所以正文在前、过程条在后。
+    const contents = parts.filter((p) => p.kind === 'content').map((p: any) => p.content)
+    expect(contents.join('')).toBe('😀😀text')
+    const strip = parts.find((part) => part.kind === 'process')
+    expect(strip?.kind === 'process' && strip.group.textOffset).toBe(2)
   })
 
   it('keeps Markdown delimiters paired when thinking arrives inside the source', () => {
@@ -90,12 +121,20 @@ describe('assistantParts', () => {
     message.thinkingSegments = [{ id: 'late', content: 'late thought', textOffset: 8, streamOrder: 0 }]
 
     const parts = assistantParts(message)
-    const content = parts.find((part) => part.kind === 'content')
-    expect(parts[0].kind).toBe('process')
-    expect(content?.kind === 'content' && content.content).toBe(message.content)
-    expect(renderMarkdown(content?.kind === 'content' ? content.content : '')).toContain(
+    const contents = parts.filter((part) => part.kind === 'content').map((p: any) => p.content)
+    // 这一段只有一个块，绝不能被切开——切开就会渲染成裸的 **
+    expect(contents).toHaveLength(1)
+    expect(contents[0]).toBe(message.content)
+    expect(renderMarkdown(contents[0])).toContain(
       '<strong>是“克服社交”，是找表演含量低的活法</strong>：远程、小团队。',
     )
+  })
+
+  it('never drops a process strip whose offset is out of range', () => {
+    const message = assistant('短正文')
+    message.thinkingSegments = [{ id: 'far', content: 'beyond', textOffset: 9999, streamOrder: 0 }]
+    const parts = assistantParts(message)
+    expect(parts.some((part) => part.kind === 'process')).toBe(true)
   })
 })
 

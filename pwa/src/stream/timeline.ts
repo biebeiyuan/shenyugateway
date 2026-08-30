@@ -2,6 +2,7 @@ import type { ToolEvent } from '../toolLanguage'
 import { toolName, toolWarmCopy } from '../toolLanguage'
 import type { AssistantPart, ProcessGroup, ProcessTimelineItem, UiMessage } from '../types'
 import { textLength } from '../utils'
+import { markdownBlocks, snapToBlockBoundary } from './blocks'
 import { toolEventKey } from './sse'
 
 // Groups streamed thinking segments and tool events by the content offset where
@@ -62,15 +63,64 @@ export function processGroups(message: UiMessage): ProcessGroup[] {
     }))
 }
 
+/**
+ * 一条 assistant 消息渲染成什么：过程条与正文块交错，按到达顺序。
+ *
+ * 过程条插在 **Markdown 块边界**上，绝不切进块内部——按字符偏移直接切会把代码块
+ * 和松散列表切成两半（2026-07-29 就是因此把交错渲染删掉的，见 `blocks.ts`）。
+ * 落在块中间的过程偏移吸附到该块之后，读起来是自然顺序：写一段 → 做了点事 →
+ * 再写一段。
+ *
+ * 正文按块产出，每块一个 part：`MarkdownBody` 因此能对已经写完的块命中缓存，
+ * 流式时只有尾块真的重新解析（借 weir 的"段落封闭后不再重写"，MIT，见
+ * `docs/frontend/STYLE_AND_CRAFT.md` § 风格血统声明）。
+ */
 export function assistantParts(message: UiMessage): AssistantPart[] {
-  return [
-    ...processGroups(message).map((group) => ({
-      kind: 'process' as const,
-      key: `process-${group.textOffset}`,
-      group,
-    })),
-    { kind: 'content', key: 'content', content: message.content },
-  ]
+  const groups = processGroups(message)
+  const blocks = markdownBlocks(message.content)
+
+  if (!blocks.length) {
+    // 还没有正文（只有 Thinking 或工具在跑）：过程条在前，末尾仍保留一个空正文
+    // part。调用方靠它渲染流式占位，少了它开头那一下会闪。
+    return [
+      ...groups.map((group) => ({
+        kind: 'process' as const,
+        key: `process-${group.textOffset}`,
+        group,
+      })),
+      { kind: 'content' as const, key: 'content', content: message.content },
+    ]
+  }
+
+  // 每组过程条吸附到一个块边界；同一边界上的多组保持原有先后。
+  const pending = new Map<number, ProcessGroup[]>()
+  for (const group of groups) {
+    const at = snapToBlockBoundary(blocks, group.textOffset)
+    const list = pending.get(at)
+    if (list) list.push(group)
+    else pending.set(at, [group])
+  }
+
+  const parts: AssistantPart[] = []
+  const emitProcessAt = (boundary: number) => {
+    for (const group of pending.get(boundary) || []) {
+      parts.push({ kind: 'process', key: `process-${group.textOffset}`, group })
+    }
+    pending.delete(boundary)
+  }
+
+  emitProcessAt(blocks[0].start)
+  for (const block of blocks) {
+    parts.push({ kind: 'content', key: `content-${block.start}`, content: block.text })
+    emitProcessAt(block.end)
+  }
+  // 吸附到正文之外的（例如偏移越界）兜在最后，绝不丢过程条。
+  for (const [, groups_] of pending) {
+    for (const group of groups_) {
+      parts.push({ kind: 'process', key: `process-${group.textOffset}`, group })
+    }
+  }
+  return parts
 }
 
 export function processTimeline(group?: ProcessGroup): ProcessTimelineItem[] {
