@@ -533,12 +533,26 @@ def _content_blocks(content: Any) -> list[dict]:
                         continue
                 # Do not send an invalid OpenAI image wrapper to Anthropic.
                 continue
+            if block_type == "image":
+                source = block.get("source")
+                source_type = str(source.get("type") or "") if isinstance(source, dict) else ""
+                if source_type not in {"base64", "url", "file"}:
+                    # Anthropic only accepts those source types. A gateway-internal
+                    # image marker (an expired album placeholder, a lineage-log
+                    # marker) carries no bytes and must never be forwarded — trim
+                    # is expected to have replaced it, and this is the backstop for
+                    # any path that did not.
+                    continue
             if block_type:
                 blocks.append(block)
             elif isinstance(block.get("text"), str):
                 blocks.append({"type": "text", "text": block["text"]})
         if blocks:
             return blocks
+        # 每个块都被丢掉了（例如整条消息只有一个无效图片包装或一个网关内部标记）。
+        # 不要跌到下面那条 _normalize_text 兜底：它会把整个块序列结构序列化成
+        # 文字，等于把 JSON 塞进提示词。空内容比一段 JSON 干净。
+        return []
     text = _normalize_text(content)
     return [{"type": "text", "text": text}] if text else []
 

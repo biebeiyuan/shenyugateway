@@ -1090,6 +1090,70 @@ def test_expired_image_marker_never_reaches_upstream_even_in_the_newest_turn():
     assert "改写这条" in serialized
 
 
+# 2026-08-30 外部审阅抓到的回归，方向与上一条相反：占位块把整条消息拉进替换
+# 流程，而剥离是消息级的，于是同一条消息里仍带字节的真图被连带剥掉——沈予看不到
+# 那张本该送到的图。触发路径同上：编辑一条带两张图的旧消息重发，其中一张已被
+# 本机 30 张上限淘汰。
+def test_a_live_photo_survives_beside_an_expired_marker_in_the_same_turn():
+    live = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,STILL_HERE"}}
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "改写这条"}, _expired("aa"), live]},
+    ]
+
+    trimmed, meta = trim_client_image_blocks(messages, keep_recent_messages=2)
+
+    serialized = json.dumps(trimmed, ensure_ascii=False)
+    # 占位块必须走（否则上游报错），真图必须留（否则他看不到这张图）。
+    assert EXPIRED_IMAGE_MARKER not in serialized
+    assert "STILL_HERE" in serialized
+    assert "改写这条" in serialized
+    assert meta["client_image_blocks_trimmed"] == 1
+
+
+def test_a_live_photo_survives_and_the_album_note_still_arrives():
+    live = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,STILL_HERE"}}
+    notes = {"aa": expired_image_note_text("海边那天的光")}
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "还记得这张吗"}, _expired("aa"), live]},
+    ]
+
+    trimmed, _ = trim_client_image_blocks(messages, keep_recent_messages=2, album_notes=notes)
+
+    serialized = json.dumps(trimmed, ensure_ascii=False)
+    assert "STILL_HERE" in serialized
+    assert "海边那天的光" in serialized
+
+
+def test_outside_the_keep_window_a_live_photo_is_still_trimmed():
+    """窗口外的老行为不能被这次修复放松。"""
+    live = {"type": "image_url", "image_url": {"url": "data:image/jpeg;base64,OLD"}}
+    messages = [
+        {"role": "user", "content": [live]},
+        {"role": "assistant", "content": "seen"},
+        {"role": "user", "content": "next"},
+        {"role": "assistant", "content": "reply"},
+        {"role": "user", "content": "third"},
+    ]
+
+    trimmed, _ = trim_client_image_blocks(messages, keep_recent_messages=2)
+
+    assert trimmed[0]["content"] == "圆圆发来的照片我已经看过。"
+
+
+def test_one_saved_and_one_unsaved_photo_both_leave_a_trace():
+    """外部审阅指出的第三点：没存过的那张原先会被静默吞掉。"""
+    notes = {"aa": expired_image_note_text("海边那天的光")}
+    messages = [{"role": "user", "content": [_expired("aa"), _expired("bb")]}]
+
+    trimmed, meta = trim_client_image_blocks(messages, keep_recent_messages=0, album_notes=notes)
+
+    assert trimmed[0]["content"].splitlines() == [
+        "圆圆发来的照片我已经看过。——海边那天的光",
+        "圆圆发来的照片我已经看过。",
+    ]
+    assert meta["client_image_album_notes_used"] == 1
+
+
 def test_expired_image_marker_is_replaced_by_what_shenyu_wrote_in_his_album():
     notes = {"aa": expired_image_note_text("海边那天的光落在她手上", "安静")}
     messages = [
@@ -1188,6 +1252,26 @@ def test_album_note_placeholder_stays_invisible_to_branch_detection():
 
     assert classify_history_event(real, trimmed_note)["event_class"] == "retry"
     assert classify_history_event(trimmed_note, other_note)["event_class"] == "retry"
+
+
+# 前缀判断的真实触发入口，2026-08-30 外部审阅追问后查清：分类阶段跑在图片裁剪
+# 之前，所以线上主路径看到的是 marker 块，保 epoch 的是图片块判别器。而快照写在
+# 裁剪之后，存的是替换后的文字；PWA 交接时把快照当历史送回来，那时分类才会看到
+# 沈予那句话——所以「认前缀不认整句」在这条路上是活的，不是纯防御。
+def test_snapshot_handoff_with_different_album_notes_keeps_the_epoch():
+    turn = [{"role": "user", "content": [{"type": "text", "text": "看这个"}, _expired("aa")]}]
+
+    # 快照写入用 keep_recent_messages=0（与 prepare_messages 一致）。
+    snapshot_a, _ = trim_client_image_blocks(
+        turn, keep_recent_messages=0, album_notes={"aa": expired_image_note_text("海边那天的光")},
+    )
+    snapshot_b, _ = trim_client_image_blocks(
+        turn, keep_recent_messages=0, album_notes={"aa": expired_image_note_text("完全换了一句别的话")},
+    )
+
+    assert snapshot_a != snapshot_b
+    assert normalize_history_event_messages(snapshot_a) == normalize_history_event_messages(snapshot_b)
+    assert classify_history_event(snapshot_a, snapshot_b)["event_class"] == "retry"
 
 
 def test_latest_user_text_ignores_image_urls():

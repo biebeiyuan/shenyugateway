@@ -495,30 +495,48 @@ def _strip_image_content_blocks(
     content: Any,
     placeholder: str,
     notes: Optional[dict[str, str]] = None,
+    *,
+    markers_only: bool = False,
 ) -> tuple[Any, int, bool]:
+    """剥掉图片块，留下一条稳定的文字痕迹。
+
+    `markers_only=True` 时只剥过期占位块，同一条消息里仍带字节的真图原样保留——
+    这条消息还在「最近两轮」窗口内，那张真图本该送给上游。
+    """
     if not isinstance(content, list):
         return content, 0, False
 
     cleaned_blocks: list[Any] = []
     removed_total = 0
-    # 沈予存过相册的那些图，占位用他自己写的那句话；同一条消息里多张都存过就按
-    # 出现顺序各留一句。
-    resident_notes: list[str] = []
+    # 每张被剥掉的过期图各留一行：存过相册的用沈予自己写的那句，没存过的用通用
+    # 占位。一条消息里一张存过一张没存过时，两者都要留下痕迹——否则没存过那张
+    # 会凭空消失。
+    trace_lines: list[str] = []
+    has_resident_note = False
     for item in content:
-        if _is_image_content_block(item):
-            removed_total += 1
-            digest = expired_image_fingerprint(item)
-            note = (notes or {}).get(digest) if digest else None
-            if note:
-                resident_notes.append(note)
+        if not _is_image_content_block(item):
+            cleaned_blocks.append(item)
             continue
-        cleaned_blocks.append(item)
+        digest = expired_image_fingerprint(item)
+        if markers_only and not digest:
+            # 真图，且这条消息还在保留窗口内：留着。
+            cleaned_blocks.append(item)
+            continue
+        removed_total += 1
+        note = (notes or {}).get(digest) if digest else None
+        if note:
+            trace_lines.append(note)
+            has_resident_note = True
+        elif digest:
+            trace_lines.append(placeholder)
 
     if not removed_total:
         return content, 0, False
 
-    if resident_notes:
-        placeholder = "\n".join(resident_notes)
+    # 只有出现过他自己写的话时才逐张留行；否则保持原来的行为（多张图收敛成一句
+    # 通用占位），免得改动波及与相册无关的普通裁剪。
+    if has_resident_note and trace_lines:
+        placeholder = "\n".join(trace_lines)
 
     has_content = False
     for item in cleaned_blocks:
@@ -537,7 +555,7 @@ def _strip_image_content_blocks(
         # 这一轮还有别的正文。沈予写过的话仍要送到——否则「再看到这张图读到自己
         # 的描述」在带文字的消息里就落空了。追加成 text block 是安全的：那句话带
         # 固定前缀，历史归一化认得出并归一化掉（`context_window`）。
-        if resident_notes:
+        if has_resident_note:
             cleaned_blocks.append({"type": "text", "text": placeholder})
         return cleaned_blocks, removed_total, False
     return placeholder, removed_total, True
@@ -575,6 +593,9 @@ def trim_client_image_blocks(
         if msg.get("role") == "user" and _message_expired_image_fingerprints(msg)
     ]
     keep_indices = set(user_message_indices[-keep_recent_messages:]) if keep_recent_messages else set()
+    # 窗口内的消息只因为「带过期占位」被拉进来处理，那就只剥占位——同一条消息里
+    # 仍带字节的真图本该送给上游，不能被连带剥掉。
+    markers_only_indices = set(expired_marker_indices) & keep_indices
     trim_index_set = (set(image_message_indices) - keep_indices) | set(expired_marker_indices)
     meta = {
         "client_image_keep_messages": keep_recent_messages,
@@ -602,6 +623,7 @@ def trim_client_image_blocks(
             clean.get("content"),
             placeholder,
             album_notes,
+            markers_only=idx in markers_only_indices,
         )
         if removed:
             clean["content"] = clean_content

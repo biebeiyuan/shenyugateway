@@ -10,6 +10,7 @@ from shenyu_gateway.upstream_adapter import (
     _anthropic_to_openai_chunk,
     _anthropic_to_openai_completion,
     _completion_to_stream_events,
+    _content_blocks,
     _openai_to_anthropic,
 )
 from shenyu_gateway.upstream_client import (
@@ -569,7 +570,51 @@ def test_anthropic_mixed_text_and_tool_stream_uses_compact_tool_indexes():
     assert second_payload["choices"][0]["delta"]["tool_calls"][0]["index"] == 1
 
 
+def test_gateway_internal_image_markers_never_reach_anthropic():
+    """协议边界自己的守卫，不经过裁剪。
+
+    2026-08-30 外部审阅指出上一版这条测试先调 trim 再调转换，所以它守的是 trim，
+    不是边界本身；`_content_blocks` 当时会把网关内部标记原样透传。Anthropic 只接受
+    base64 / url / file 三种 source，其余一律丢弃。
+    """
+    from shenyu_gateway.client_extra import EXPIRED_IMAGE_MARKER
+
+    internal_markers = [
+        {"type": "image", "source": {"type": EXPIRED_IMAGE_MARKER, "fingerprint": "aa"}},
+        {"type": "image", "source": {"type": "shenyu_history_image", "fingerprint": "bb"}},
+    ]
+    for block in internal_markers:
+        assert _content_blocks([block]) == []
+        # 同一条消息里的正文不受影响。
+        assert _content_blocks([{"type": "text", "text": "改写这条"}, block]) == [
+            {"type": "text", "text": "改写这条"}
+        ]
+
+
+def test_valid_image_sources_still_pass_through():
+    for source in (
+        {"type": "base64", "media_type": "image/jpeg", "data": "AAAA"},
+        {"type": "url", "url": "https://example.com/p.jpg"},
+        {"type": "file", "file_id": "file_1"},
+    ):
+        blocks = _content_blocks([{"type": "image", "source": source}])
+        assert blocks == [{"type": "image", "source": source}]
+
+    # OpenAI 的 data URL 仍被转成 Anthropic base64。
+    assert _content_blocks([{"type": "image_url", "image_url": {"url": "data:image/png;base64,ABC"}}]) == [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "ABC"}}
+    ]
+
+
+def test_dropping_every_block_yields_empty_content_not_serialized_json():
+    """全部块被丢掉时不能跌到 _normalize_text 兜底——那会把 JSON 塞进提示词。"""
+    blocks = _content_blocks([{"type": "image_url", "image_url": {"url": ""}}])
+    assert blocks == []
+    assert "image_url" not in json.dumps(blocks)
+
+
 def test_expired_image_marker_never_survives_into_an_anthropic_request():
+
     """相册过期占位块绝不能到达上游。
 
     2026-08-30 的实际缺陷：PWA 送来的占位块落在「最近两轮」时不参与替换，被原样
