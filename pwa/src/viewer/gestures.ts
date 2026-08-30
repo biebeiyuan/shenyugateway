@@ -119,6 +119,25 @@ export function dismissProgress(dy: number, container: Rect): number {
   return clamp(dy / travel, 0, 1)
 }
 
+/**
+ * 翻页时的横向位移：手指走多远图就跟多远，到边界时阻力递增（橡皮筋）。
+ *
+ * 借 PhotoStack 的边界弹性思路：能翻的方向跟手 1:1，翻不动的方向只给一小段带
+ * 阻尼的行程，让"到头了"这件事被手感告知而不是靠猜。
+ */
+export function pageOffset(dx: number, canGo: boolean, container: Rect): number {
+  if (canGo) return dx
+  const limit = Math.max(24, container.width * 0.08)
+  // 阻尼：位移越大增量越小，渐近到 limit。
+  return Math.sign(dx) * limit * (1 - 1 / (1 + Math.abs(dx) / limit))
+}
+
+/** 翻页落位动画的时长：剩下的行程越长走得越久，和 PhotoStack 的完成动画同构。 */
+export function settleDuration(remaining: number, container: Rect): number {
+  const ratio = clamp(remaining / Math.max(1, container.width), 0, 1)
+  return Math.round(160 + ratio * 180)
+}
+
 /** 两指之间的距离，用于捏合缩放。 */
 export function pinchDistance(a: { x: number; y: number }, b: { x: number; y: number }): number {
   return Math.hypot(a.x - b.x, a.y - b.y)

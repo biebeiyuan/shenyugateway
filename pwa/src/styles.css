@@ -396,7 +396,9 @@ button:disabled { cursor: default; }
 }
 
 /* 看大图。手势数学在 viewer/gestures.ts；这里只管质感与层次。 */
-.photo-viewer { position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
+/* overflow 必须在最外层裁：拖拽会把图 translate 到视口外，只裁 stage 的话页面
+   自己会长出横向滚动条（圆圆在真机上看到的那条灰条）。 */
+.photo-viewer { position: fixed; inset: 0; z-index: 90; display: flex; flex-direction: column; overflow: hidden; overscroll-behavior: contain; touch-action: none; -webkit-user-select: none; user-select: none; -webkit-tap-highlight-color: transparent; }
 .photo-viewer-stage { display: grid; flex: 1; place-items: center; overflow: hidden; }
 .photo-viewer-image { max-width: 100%; max-height: 100%; object-fit: contain; will-change: transform; transition: transform 220ms cubic-bezier(.2, .7, .3, 1); }
 /* 拖拽/捏合期间关掉过渡才跟手；松手后由上面那条负责回弹。 */
