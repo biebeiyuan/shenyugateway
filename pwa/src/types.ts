@@ -106,7 +106,9 @@ export type GatewaySession = {
   user_message_count?: number
 }
 
-export type WorkspaceId = 'chats' | 'projects' | 'artifacts' | 'memory' | 'diary'
+// 侧栏现在只有一个真实工作区：聊天。星星/房间/日志/配置都指向同源控制台，
+// 不在 PWA 里重做（见 App.vue 的 consoleLinks）。
+export type WorkspaceId = 'chats'
 
 export type UpstreamPreset = {
   name: string

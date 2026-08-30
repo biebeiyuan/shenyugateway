@@ -17,6 +17,7 @@ import {
   Pencil,
   Plus,
   RotateCcw,
+  ScrollText,
   Send,
   SlidersHorizontal,
   Settings2,
@@ -38,7 +39,6 @@ import type {
   ThinkingSegment,
   UiMessage,
   UpstreamPreset,
-  WorkspaceId,
 } from './types'
 import { createId } from './utils'
 import {
@@ -130,7 +130,6 @@ const recentSessions = ref<GatewaySession[]>([])
 const authToken = ref(localStorage.getItem(STORAGE_TOKEN) || localStorage.getItem('shenyu_token') || '')
 const gatewayUrl = ref(localStorage.getItem(STORAGE_GATEWAY) || '')
 const sessionTag = ref(requestedSessionTag || storedSessionTag || createId('pwa'))
-const activeWorkspace = ref<WorkspaceId>('chats')
 const menuOpen = ref(false)
 const settingsOpen = ref(false)
 const deployedPwaBuildInfo = ref<PwaBuildInfo | null>(null)
@@ -255,43 +254,15 @@ const processSheetTitle = computed(() => {
 })
 
 
-const workspaceContent: Record<WorkspaceId, { eyebrow: string; title: string; description: string; action: string; detail: string }> = {
-  chats: {
-    eyebrow: 'Chats',
-    title: '',
-    description: '',
-    action: '',
-    detail: '',
-  },
-  projects: {
-    eyebrow: 'Projects',
-    title: 'Keep your work together.',
-    description: 'Projects give a conversation a home, with shared instructions and reference material close at hand.',
-    action: 'Create a project',
-    detail: 'Project storage is ready for the next gateway-backed workspace layer.',
-  },
-  artifacts: {
-    eyebrow: 'Artifacts',
-    title: 'A place for things you make.',
-    description: 'Documents, code, and other working pieces will live here when the artifact store is connected.',
-    action: 'Browse artifacts',
-    detail: 'No artifacts are connected to this gateway yet.',
-  },
-  memory: {
-    eyebrow: 'Memory',
-    title: 'The things worth carrying forward.',
-    description: 'Review the memories this space keeps available to Claude, without interrupting the conversation.',
-    action: 'Open memory',
-    detail: 'Memory is currently managed by the gateway tools in chat.',
-  },
-  diary: {
-    eyebrow: 'Diary',
-    title: 'A quieter place to look back.',
-    description: 'A private timeline for notes, reflections, and the small details that should not disappear between chats.',
-    action: 'Open diary',
-    detail: 'Diary entries will appear here when its dedicated store is enabled.',
-  },
-}
+// 侧栏里除 Chats 之外的入口，都指向同源控制台的对应页面。刻意不在 PWA 里重做
+// 那些界面：控制台已经有它们，而且共用登录 cookie，点开就是。
+// 名称与控制台首页的卡片一致（星星 / 日志 / 房间 / 配置），避免同一个东西两个叫法。
+const consoleLinks = [
+  { label: '星星', path: '/stars', icon: Sparkles },
+  { label: '房间', path: '/room', icon: DoorOpen },
+  { label: '日志', path: '/logs', icon: ScrollText },
+  { label: '配置', path: '/config', icon: Settings2 },
+]
 
 const effortOptions = [
   { id: 'low', label: 'Low', note: 'Quick replies to simple questions' },
@@ -634,16 +605,6 @@ function modelSheetTitle(): string {
   return 'Select model'
 }
 
-function openWorkspace(id: WorkspaceId) {
-  activeWorkspace.value = id
-  menuOpen.value = false
-  if (id === 'chats') nextTick(() => inputRef.value?.focus())
-}
-
-function workspaceAction(id: WorkspaceId) {
-  if (id === 'chats') return
-  errorNotice.value = `${workspaceContent[id].detail}`
-}
 
 function saveSettings() {
   localStorage.setItem(STORAGE_TOKEN, authToken.value.trim())
@@ -685,9 +646,12 @@ function newChat() {
   nextTick(() => inputRef.value?.focus())
 }
 
-function openConsole() {
+// 控制台在同源的 /admin/ 下，共用登录 cookie，所以直接开新标签就行——不需要在
+// PWA 里再实现一遍那些页面。path 例如 '/stars'、'/room'。
+function openConsole(path = '') {
   const base = gatewayUrl.value.trim().replace(/\/$/, '')
-  window.open(base ? `${base}/admin/` : '/admin/', '_blank', 'noopener,noreferrer')
+  const suffix = path ? `#${path}` : ''
+  window.open(`${base}/admin/${suffix}` || `/admin/${suffix}`, '_blank', 'noopener,noreferrer')
 }
 
 
@@ -1211,31 +1175,26 @@ onUnmounted(() => {
       </div>
 
       <nav class="sidebar-nav" aria-label="导航">
-        <button class="sidebar-nav-item" :class="{ active: activeWorkspace === 'chats' }" type="button" @click="openWorkspace('chats')">
+        <button class="sidebar-nav-item active" type="button" @click="menuOpen = false">
           <svg class="sidebar-nav-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M232.07,186.76a80,80,0,0,0-62.5-114.17A80,80,0,1,0,23.93,138.76l-7.27,24.71a16,16,0,0,0,19.87,19.87l24.71-7.27a80.39,80.39,0,0,0,25.18,7.35,80,80,0,0,0,108.34,40.65l24.71,7.27a16,16,0,0,0,19.87-19.86ZM62,159.5a8.28,8.28,0,0,0-2.26.32L32,168l8.17-27.76a8,8,0,0,0-.63-6,64,64,0,1,1,26.26,26.26A8,8,0,0,0,62,159.5Zm153.79,28.73L224,216l-27.76-8.17a8,8,0,0,0-6,.63,64.05,64.05,0,0,1-85.87-24.88A79.93,79.93,0,0,0,174.7,89.71a64,64,0,0,1,41.75,92.48A8,8,0,0,0,215.82,188.23Z" /></svg>
           <span>Chats</span>
         </button>
-        <button class="sidebar-nav-item" :class="{ active: activeWorkspace === 'projects' }" type="button" @click="openWorkspace('projects')">
-          <svg class="sidebar-nav-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M216,72H130.67L102.93,51.2a16.12,16.12,0,0,0-9.6-3.2H40A16,16,0,0,0,24,64V200a16,16,0,0,0,16,16H216.89A15.13,15.13,0,0,0,232,200.89V88A16,16,0,0,0,216,72Zm0,128H40V64H93.33L123.2,86.4A8,8,0,0,0,128,88h88Z" /></svg>
-          <span>Projects</span>
-        </button>
-        <button class="sidebar-nav-item" :class="{ active: activeWorkspace === 'artifacts' }" type="button" @click="openWorkspace('artifacts')">
-          <svg class="sidebar-nav-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M223.68,66.15,135.68,18h0a15.88,15.88,0,0,0-15.36,0l-88,48.17a16,16,0,0,0-8.32,14v95.64a16,16,0,0,0,8.32,14l88,48.17a15.88,15.88,0,0,0,15.36,0l88-48.17a16,16,0,0,0,8.32-14V80.18A16,16,0,0,0,223.68,66.15ZM128,32h0l80.34,44L128,120,47.66,76ZM40,90l80,43.78v85.79L40,175.82Zm96,129.57V133.82L216,90v85.78Z" /></svg>
-          <span>Artifacts</span>
-        </button>
-        <button class="sidebar-nav-item" :class="{ active: activeWorkspace === 'memory' }" type="button" @click="openWorkspace('memory')">
-          <svg class="sidebar-nav-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M184,32H72A16,16,0,0,0,56,48V224a8,8,0,0,0,12.24,6.78L128,193.43l59.77,37.35A8,8,0,0,0,200,224V48A16,16,0,0,0,184,32Zm0,177.57-51.77-32.35a8,8,0,0,0-8.48,0L72,209.57V48H184Z" /></svg>
-          <span>Memory</span>
-        </button>
-        <button class="sidebar-nav-item" :class="{ active: activeWorkspace === 'diary' }" type="button" @click="openWorkspace('diary')">
-          <svg class="sidebar-nav-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M200,32H168V24a8,8,0,0,0-16,0v8H104V24a8,8,0,0,0-16,0v8H56A16,16,0,0,0,40,48V208a16,16,0,0,0,16,16H200a16,16,0,0,0,16-16V48A16,16,0,0,0,200,32Zm0,176H56V48H88v8a8,8,0,0,0,16,0V48h48v8a8,8,0,0,0,16,0V48h32Z" /></svg>
-          <span>Diary</span>
+        <button
+          v-for="link in consoleLinks"
+          :key="link.path"
+          class="sidebar-nav-item sidebar-console-link"
+          type="button"
+          @click="openConsole(link.path)"
+        >
+          <component :is="link.icon" :size="21" />
+          <span>{{ link.label }}</span>
+          <ExternalLink class="sidebar-external-icon" :size="15" />
         </button>
         <button class="sidebar-nav-item" type="button" @click="openHandoffSheet">
           <ArrowLeftRight :size="21" />
           <span>接入线程</span>
         </button>
-        <button class="sidebar-nav-item sidebar-console-link" type="button" @click="openConsole">
+        <button class="sidebar-nav-item sidebar-console-link" type="button" @click="openConsole()">
           <SlidersHorizontal :size="21" />
           <span>Console</span>
           <ExternalLink :size="14" class="sidebar-external-icon" />
@@ -1298,24 +1257,8 @@ onUnmounted(() => {
         </button>
       </header>
 
-      <section v-if="activeWorkspace !== 'chats'" class="workspace-view">
-        <div class="workspace-hero">
-          <span class="workspace-eyebrow">{{ workspaceContent[activeWorkspace].eyebrow }}</span>
-          <h1>{{ workspaceContent[activeWorkspace].title }}</h1>
-          <p>{{ workspaceContent[activeWorkspace].description }}</p>
-        </div>
-        <div class="workspace-empty">
-          <div class="workspace-empty-mark"><img :src="brandMarkUrl" alt="" /></div>
-          <h2>{{ workspaceContent[activeWorkspace].detail }}</h2>
-          <p>This view is ready for the gateway-backed data when that workspace is enabled.</p>
-          <button class="workspace-action" type="button" @click="workspaceAction(activeWorkspace)">
-            <Plus :size="16" />
-            <span>{{ workspaceContent[activeWorkspace].action }}</span>
-          </button>
-        </div>
-      </section>
 
-      <section v-else ref="streamRef" class="message-stream">
+      <section ref="streamRef" class="message-stream">
         <div v-if="isEmpty" class="welcome-panel">
           <img class="welcome-mark" :src="brandMarkUrl" alt="Claude" />
           <h1>What's on your mind?</h1>
@@ -1336,12 +1279,12 @@ onUnmounted(() => {
         </template>
       </section>
 
-      <div v-if="activeWorkspace === 'chats' && (status || errorNotice)" class="notice-line" :class="{ error: errorNotice }">
+      <div v-if="status || errorNotice" class="notice-line" :class="{ error: errorNotice }">
         <span>{{ errorNotice || status }}</span>
         <button v-if="errorNotice" aria-label="关闭提示" title="关闭提示" @click="errorNotice = ''"><X :size="15" /></button>
       </div>
 
-      <footer v-if="activeWorkspace === 'chats'" class="composer-wrap">
+      <footer class="composer-wrap">
         <div class="composer-box">
           <div v-if="editId" class="edit-banner">
             <Pencil :size="15" />
@@ -1624,7 +1567,7 @@ onUnmounted(() => {
             </div>
             <div v-else class="preset-empty">
               <p>No presets are saved in the Console yet.</p>
-              <button class="workspace-action" type="button" @click="openConsole"><ExternalLink :size="16" /> <span>Open Console</span></button>
+              <button class="workspace-action" type="button" @click="openConsole()"><ExternalLink :size="16" /> <span>Open Console</span></button>
             </div>
             <p class="effort-note">Presets use the same Console storage and update the fixed default gateway upstream.</p>
           </template>
