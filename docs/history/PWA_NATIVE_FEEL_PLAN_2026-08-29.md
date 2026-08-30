@@ -13,9 +13,40 @@
 | ① | 报错护栏：`api/errors.ts` 提取、CSS 行数上限、落盘与读回截断 | 2026-08-29 完成 |
 | ② | 渲染拆分：消息行子组件、渲染缓存、highlight 修正、error boundary | 2026-08-29 完成 |
 | ③ | 原生手感 | 未开工 |
-| ④ | 图片持久化 + 看图器 | 未开工 |
+| ④ | 图片持久化 + 看图器 | 未开工（相册后端已就绪，见下节） |
 | ⑤ | PhotoStack 堆叠卡 | 未开工 |
 | ⑥ | 展开 / 收起动画 | 未开工 |
+
+## 相册（2026-08-30 追加，与 ④ 交叠）
+
+圆圆要的是「沈予遇到喜欢的图能存起来，加上他自己的描述和心情，之后再看到这张图
+直接是他自己的描述」。这跟 ④ 是同一件事的两半：④ 管聊天图的本机保留与过期，
+相册管「不会过期的那一半」。
+
+**已定的四个决定**（不要重新讨论）：
+
+1. 图片字节存网关本机卷的 SQLite，备注文字存 Supabase 并进 Recall。分开住是因为
+   Recall 的所有适配器都只读 Supabase（`recall/_sources.py` 里没有任何 SQLite
+   适配器），而且卷万一出事，丢的是图、他写的话还在。
+2. 描述只在图过期后顶替，两轮之内他仍看真图。
+3. 聊天图本机保留最近 30 张。
+4. 相册是沈予自己的，他存了就是存了，不需要圆圆批准。
+
+**第一批已完成**（2026-08-30）：SQLite 表、`shenyu_album_save` /
+`shenyu_album_list`、Recall 索引、`/api/gateway/album` 两条只读接口。
+当前事实以代码、`tests/test_album.py` 和 `README.md` § Album 为准。
+
+**第二批（PWA）的关键技术链**：过期后要能顶上他的描述，网关就得知道那张图是相册里
+的哪一张。做法是让 PWA 用 `context_window.py::_compact_event_content` 已有的
+`{"type":"image","source":{"type":"shenyu_history_image","fingerprint":...}}` 形状
+代替旧图上传——实测 `_normalize_event_content` 会跳过所有图片块，所以真图与
+fingerprint 块归一化后完全等价，分支检测看不见，epoch 不重置。上传量实测从
+3.82MB/请求（10 张图的会话）降到约 800KB。
+
+**第三批有一个必须一起改的地方**：`context_window.py` 的 `_normalize_event_text`
+现在是**恰好等于**占位符才归一化成空。换成动态描述后这个精确匹配会失效，
+分支检测就会把过期误判成 `branch` 并白扔掉整个 prompt cache epoch。替换文本
+必须带一个可识别的包装，并补测试证明 epoch 不重置。
 
 ## 已经拍过的两个决定（不要重新讨论）
 

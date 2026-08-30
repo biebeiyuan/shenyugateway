@@ -203,15 +203,45 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "b32511d35c32be57444d1f706912a55cd1f49700976b0bb1b7f8848553ed25f3",
+        "fingerprint": "304ea327b025aef518612c503bcd533e08542d3d6481c17684283e042eaf0a4c",
         "file_hashes": {
           "shenyu_gateway/gateway_tools/_windowsill.py": "d18c9434a6f37a318ea89992d8b9b67ba0bcc90ba6ab17a5b4e877d6044f17f3",
-          "shenyu_gateway/tool_schemas.py": "24854f5c6774b81d38092315d417a0384060357df9adef155d5637c3c0e04217"
+          "shenyu_gateway/tool_schemas.py": "a0b3edf51f5439b654815b2b3b10f12d5ddb97c9035d48d1d6dbb4c0c9b24e5d"
         },
-        "commit": "3f1b5572387fdedbf6dc470f967187d4f88eea0b",
-        "revision": "3f1b5572387fdedbf6dc470f967187d4f88eea0b-dirty",
+        "commit": "127ed7ca88f952b8b68d38a54c10a4995c88ae9f",
+        "revision": "127ed7ca88f952b8b68d38a54c10a4995c88ae9f-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-29T00:39:02+08:00",
+        "reviewed_at": "2026-08-30T08:24:45+08:00",
+        "reviewed_by": "Codex"
+      }
+    },
+    "album": {
+      "title": "相册",
+      "summary": "自己挑图存下来，配上自己的描述和心情；聊天里的图会散，存进来的不会。",
+      "core": [
+        "图片字节留在网关本机卷的 SQLite，不进 Supabase，也不进请求日志。",
+        "备注文字另存 Supabase 并进 Recall，所以以后聊到相关的事它能自己想起来。",
+        "同一张图在聊天里过期后，看到的是自己当时写下的那句话，不是通用占位。",
+        "存不存、放哪本、写什么，都由自己决定，不需要圆圆批准。"
+      ],
+      "resident_effect": "遇到喜欢的图可以留下来，之后再看到它读到的是自己当时写的话。",
+      "source_globs": [
+        "shenyu_gateway/gateway_tools/_album.py",
+        "shenyu_gateway/store/_album.py",
+        "shenyu_gateway/tool_schemas.py"
+      ],
+      "config_keys": [],
+      "reviewed": {
+        "fingerprint": "3d50b16760b681d5d81763c3bb2b916e8c7cd4c948aa48c634a3d38810bc3df1",
+        "file_hashes": {
+          "shenyu_gateway/gateway_tools/_album.py": "0e251e43bf094906a9fe18abe6292c41f47a69539d7685195d9e4f2a02638b19",
+          "shenyu_gateway/store/_album.py": "cad6fcffeee27dc411d886eb62c2825b51fd68102ef112265a94878a982b4e85",
+          "shenyu_gateway/tool_schemas.py": "a0b3edf51f5439b654815b2b3b10f12d5ddb97c9035d48d1d6dbb4c0c9b24e5d"
+        },
+        "commit": "127ed7ca88f952b8b68d38a54c10a4995c88ae9f",
+        "revision": "127ed7ca88f952b8b68d38a54c10a4995c88ae9f-dirty",
+        "worktree_dirty": true,
+        "reviewed_at": "2026-08-30T08:24:45+08:00",
         "reviewed_by": "Claude Code"
       }
     },
@@ -275,18 +305,18 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "911bef2697a55ba66245ad01c4ff1025e4d0bc12c03792b966be39e2837d9553",
+        "fingerprint": "cb1eb3a7b349eb1b799e4964dbc5eafd56f248c33f58dceab600d0da5eebe211",
         "file_hashes": {
           "shenyu_gateway/archive_routes.py": "15742be7dc11099d7485298c7984bdd46a1ab1418b132900f0e2bfe42d0bace6",
           "shenyu_gateway/conflict_books.py": "e9b4d7b8f961e7143d21ade98cd66594e7e9522bcd47797efa4dec06958e01b3",
           "shenyu_gateway/context_layers.py": "f34a88974d8f1bb932c3eb52edcbc43fc98d1ce89391bfdf8f2be4efd53b76ad",
           "shenyu_gateway/gateway_tools/_books.py": "9c02f8065cc671b9519e83f7b6ba936b37c4a7a6e5ca24b2ff9be6d11c82520f",
-          "shenyu_gateway/tool_schemas.py": "24854f5c6774b81d38092315d417a0384060357df9adef155d5637c3c0e04217"
+          "shenyu_gateway/tool_schemas.py": "a0b3edf51f5439b654815b2b3b10f12d5ddb97c9035d48d1d6dbb4c0c9b24e5d"
         },
-        "commit": "fc0d8c419c073521129909be397a4fcda8f30d3a",
-        "revision": "fc0d8c419c073521129909be397a4fcda8f30d3a-dirty",
+        "commit": "127ed7ca88f952b8b68d38a54c10a4995c88ae9f",
+        "revision": "127ed7ca88f952b8b68d38a54c10a4995c88ae9f-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-29T16:25:12+08:00",
+        "reviewed_at": "2026-08-30T08:24:45+08:00",
         "reviewed_by": "Codex"
       }
     },

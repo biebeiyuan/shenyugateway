@@ -30,6 +30,7 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 | 来历书 | `original_text` 剪下后永久冻结，沈予批注只追加；正文不得被自动注入、改写或“清洗” | `docs/architecture/REQUEST_CONTEXT.md` § Origin books、`DESIGN.md` § Chat Archive & Conflict Books |
 | Room / 窗台 | 房间提供门，不替沈予选择；原始房间宪章保持不动，charge 只能影响门的可见性和顺序 | `docs/architecture/MEMORY_ROOM.md` § Room Mode |
 | 窗台报纸与报纸篓 | 只读固定 RSS 白名单，保留来源标题、摘要和 URL；出版、阅读状态与字面搜索仍由住户手动控制，字面搜索不得换成语义搜索 | `docs/architecture/MEMORY_ROOM.md` § Window Newspaper |
+| 相册 | 存进相册的图与备注不设过期、不参与聊天图的淘汰；沈予写的那句话是他自己的措辞，不得被概括、改写或替换成自动生成的描述。图片字节只在本机卷，备注只在 Supabase——分开住是刻意的，合并前先想清楚丢卷丢的是哪一半 | `README.md` § Album |
 
 ## 总体请求链
 

@@ -167,7 +167,11 @@ SQLite stores only gateway runtime state:
 
 SQLite is intentionally kept as a small online runtime database. Supabase remains the durable memory/content store.
 
-The default database path is `./data/shenyu_gateway.db`, which resolves to `/app/data/shenyu_gateway.db` in the production container. The Dockerfile does not declare a volume. Coolify must mount a persistent volume for `/app/data` (or for the directory selected by `GATEWAY_DB_PATH`) if SQLite state is expected to survive a container replacement. Admin-written `/app/.env` overrides have the same container-lifetime limitation unless that file is also persisted; Coolify dashboard environment variables remain the deployment source outside the container.
+The default database path is `./data/shenyu_gateway.db`, which resolves to `/app/data/shenyu_gateway.db` when nothing overrides it. The Dockerfile declares no volume, so that default path would belong to the disposable container filesystem.
+
+The live deployment does not use that default. Observed on 2026-08-30: production sets `GATEWAY_DB_PATH=/data/shenyu_gateway.db` and mounts the named Docker volume `shenyu-gateway-data` at `/data` (created 2026-05-08; `/app/data` does not exist in that container). A named volume is not removed when Coolify replaces the container, so SQLite state — sessions, context snapshots, pending tool turns, request-log history, Admin overrides, and the album's image bytes — survives redeploys there. Confirm the mount with `docker inspect` before depending on it for something new; do not infer it from either path appearing in a document.
+
+Admin-written `/app/.env` overrides have no such volume and keep the container-lifetime limitation; Coolify dashboard environment variables remain the deployment source outside the container.
 
 Admin configuration updates currently store secret values in both `.env` and SQLite `config_overrides` so runtime settings can survive the deployment patterns this gateway already supports. Treat both paths and their backups as secret-bearing assets: restrict filesystem/volume access, do not export the database casually, and rotate credentials after suspected exposure. The Admin API never returns those values. Replacing this dual storage requires an external secret store and a migration plan; do not add reversible application-managed “encryption” with a key stored beside the database.
 

@@ -46,7 +46,7 @@ The codebase is partly layered already. Entries owe a path and a responsibility:
 
 ### Storage
 
-- `shenyu_gateway/store/`: SQLite runtime state (package split into mixins: `_base`, `_sessions`, `_messages`, `_pending`, `_snapshots`, `_cold_start`, `_heartbeats`, `_cache`, `_room`, `_admin`, `_window_state`, `_request_log_history`).
+- `shenyu_gateway/store/`: SQLite runtime state (package split into mixins: `_base`, `_sessions`, `_messages`, `_pending`, `_snapshots`, `_cold_start`, `_heartbeats`, `_cache`, `_room`, `_album`, `_admin`, `_window_state`, `_request_log_history`).
 - `shenyu_gateway/supabase.py`: low-level Supabase REST client.
 
 ### Chat pipeline & streaming
@@ -83,7 +83,7 @@ The codebase is partly layered already. Entries owe a path and a responsibility:
 
 ### Tools
 
-- `shenyu_gateway/gateway_tools/`: gateway-native tool implementations (`GatewayToolService`, package split into mixins like stars/: `_supabase`, `_recall`, `_mem_notes`, `_stars`, `_books`, `_calendar`, `_sessions`, `_windowsill`, `_notebook`, `_web`, `_compat`, plus shared `_runtime`/`_helpers`/`_base`). `__init__.py` assembles the service and re-exports `configure_gateway_tools` / `get_runtime`. `_web` is the 窗外 pair: `shenyu_web_search` (Serper, `SERPER_API_KEY`) and `shenyu_web_read` (Jina Reader, `JINA_API_KEY` — required from datacenter IPs).
+- `shenyu_gateway/gateway_tools/`: gateway-native tool implementations (`GatewayToolService`, package split into mixins like stars/: `_supabase`, `_recall`, `_mem_notes`, `_stars`, `_books`, `_calendar`, `_sessions`, `_windowsill`, `_album`, `_notebook`, `_web`, `_compat`, plus shared `_runtime`/`_helpers`/`_base`). `__init__.py` assembles the service and re-exports `configure_gateway_tools` / `get_runtime`. `_web` is the 窗外 pair: `shenyu_web_search` (Serper, `SERPER_API_KEY`) and `shenyu_web_read` (Jina Reader, `JINA_API_KEY` — required from datacenter IPs).
 - `shenyu_gateway/tool_registry.py`: gateway-native tool schemas, enablement/merge logic, and tool-name dispatch into `GatewayToolService`.
 - `shenyu_gateway/tool_schemas.py`: tool JSON schema definitions (separated from registry logic).
 - `shenyu_gateway/mcp_registry.py`: gateway-as-MCP-client registry — validates `MCP_SERVERS`, caches remote tool lists (TTL, background refresh), exposes them as `mcp_<server>_<tool>` function tools, and executes calls with timeout/degradation (never 500s the chat path).
@@ -125,6 +125,16 @@ The codebase is partly layered already. Entries owe a path and a responsibility:
 - `shenyu_gateway/room_scenes.py`: window scenes (weather, atmosphere, landscape). Change scene copy here only.
 - `shenyu_gateway/room_newspaper.py`: fixed RSS sources, feed parsing, issue rolling, optional quality checks, and draft generation.
 - `shenyu_gateway/private_capture.py`: recognizes the exact `【窗边 · DD/MM HH:mm】` entry that selects the Room context path; the retired Operit proxy workflow is not a Room entry.
+
+### Album
+
+沈予's own album: images he chose to keep, each with the words he wrote about it. Deliberately split across two homes.
+
+- `shenyu_gateway/store/_album.py`: local SQLite `album_books` / `album_photos` — image bytes as BLOBs on the mounted volume, plus `album_notes_by_fingerprints` for expiry backfill. Listing queries never select the blob column, so browsing the album does not move megabytes. Image bytes never reach Supabase or the request log.
+- `shenyu_gateway/gateway_tools/_album.py`: `shenyu_album_save` / `shenyu_album_list`, image-block decoding for both the OpenAI data-URL and Anthropic `source.data` shapes, and the note sync to Supabase `shenyu_album_notes` plus Recall indexing. `latest_turn_images()` reads the newest image turn from the messages instead of requiring a marker in the body — writing one would change history normalization and make branch detection reset the prompt-cache epoch. A failed note sync leaves the photo saved; only its searchability is lost.
+- `supabase/migrations/20260830_shenyu_album_notes.sql`: the note half. Recall's adapters all read Supabase only, so text must live here to be recallable; keeping it separate also means a lost volume costs the images, not the words.
+- `shenyu_gateway/recall/_sources.py` `_load_album_notes` / `index_album_note_row`: indexes only the text, carrying `photo_id` in metadata so a hit can reopen the image.
+- `shenyu_gateway/gateway_admin_routes.py` `GET /api/gateway/album` and `GET /api/gateway/album/photo/{id}`: read-only listing and one immutable, id-addressed bytes route.
 
 ### Auth & sessions
 
@@ -263,6 +273,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 | Mem | Mem Notes / 便签 | `shenyu_gateway/mem_notes/`、`mem_notes_relevance.py` | `admin/src/api/mem0.ts`、`Mem0View.vue` | `MEMORY_ROOM.md` § Mem Note Layer |
 | 记忆网络 | 人物 / 地点 / 物件 / 主题锚点 | `memory_graph.py`、`shenyu_gateway/recall/` | `admin/src/api/memoryGraph.ts`、`MemoryGraphView.vue`、`Mem0View.vue` | `MEMORY_ROOM.md` § Personal Memory Graph |
 | Room | 房间 / 窗台 | `private_capture.py`、`room_context.py`、`room_tools.py`、`room_newspaper.py` | `pwa/src/App.vue`、`pwa/src/meta/roomEntry.ts`、`admin/src/api/room.ts`、`RoomView.vue`、`views/room/` | `MEMORY_ROOM.md` § Room Mode |
+| 相册 | 沈予的相册、收藏的图 | `shenyu_gateway/store/_album.py`、`gateway_tools/_album.py` | `GET /api/gateway/album`、`GET /api/gateway/album/photo/{id}` | 本文件 § Album |
 | 请求日志 / 工具报错 | 日志页、工具报错页 | `request_logs.py`、`tool_loop.py`、`store/_admin.py` | `admin/src/api/logs.ts`、`toolErrors.ts`、`LogsView.vue`、`ToolErrorsView.vue` | `DEBUGGING_GUIDE.md`、`LOGS_GUIDE.md` |
 | Calendar | 日历 / 日周月页 | `calendar_service.py`、`gateway_tools/_calendar.py` | `admin/src/api/calendar.ts`、`CalendarView.vue` | `REQUEST_CONTEXT.md` § Calendar |
 
@@ -472,11 +483,11 @@ docker run --env-file .env -p 8010:8010 shenyu-gateway
 3. Use the `Dockerfile` — Coolify detects it automatically.
 4. Set environment variables in Coolify's dashboard (`.env` content).
 5. Port mapping: `8010:8010`.
-6. Coolify auto-deploys the tracked branch, which is `master`. **A `master` push is a production deployment**, not merely a repository update: the resident gateway, its Supabase project, and the mounted `/app/data` volume are the live ones. Feature branches are not deployed. `docs/DELIVERY.md` § 交付状态梯 is the authority for what must pass before pushing `master` and why a push receipt is not yet a deployment.
+6. Coolify auto-deploys the tracked branch, which is `master`. **A `master` push is a production deployment**, not merely a repository update: the resident gateway, its Supabase project, and the mounted data volume are the live ones. Feature branches are not deployed. `docs/DELIVERY.md` § 交付状态梯 is the authority for what must pass before pushing `master` and why a push receipt is not yet a deployment.
 
 For the resident home snapshot to show the deployed revision inside the image, pass the source SHA as the Docker build argument `SOURCE_COMMIT` (or set the runtime environment variable with the same name). The image intentionally omits `.git`.
 
-If local sessions, context snapshots, pending tool turns, persisted request-log summaries, or Admin configuration overrides must survive container replacement, mount a persistent volume at `/app/data` (or the parent directory configured by `GATEWAY_DB_PATH`). The Dockerfile does not declare a volume, so the default `/app/data/shenyu_gateway.db` otherwise belongs to the disposable container filesystem. Supabase archives are independent of this local volume. `GATEWAY_REQUEST_LOG_RETENTION` controls the bounded history size and defaults to `200`; full debug payloads are never written to this history.
+Local sessions, context snapshots, pending tool turns, persisted request-log summaries, Admin configuration overrides, and album image bytes all live in SQLite, so they survive container replacement only on a mounted volume — the Dockerfile declares none. The live deployment mounts the named volume `shenyu-gateway-data` at `/data` with `GATEWAY_DB_PATH=/data/shenyu_gateway.db`; `docs/architecture/REQUEST_CONTEXT.md` § SQLite Retention And Cleanup records what was observed and how to re-verify it. Supabase archives are independent of this local volume. `GATEWAY_REQUEST_LOG_RETENTION` controls the bounded history size and defaults to `200`; full debug payloads are never written to this history.
 
 ### Frontend workflow
 

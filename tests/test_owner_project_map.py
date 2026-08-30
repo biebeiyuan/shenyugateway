@@ -35,7 +35,7 @@ def test_project_map_assembles_live_authorities_and_connections():
 
     assert snapshot["ok"] is True
     assert snapshot["summary"]["zone_count"] == 8
-    assert snapshot["summary"]["component_count"] == 9
+    assert snapshot["summary"]["component_count"] == 10
     assert snapshot["request_flow"][0]["label"] == "客户端"
     assert snapshot["request_flow"][-1]["meaning"] == "整理好的回答回到你正在使用的客户端。"
     assert any(bridge["桥梁"] == "context_builder.py" for bridge in snapshot["bridges"])

@@ -64,6 +64,7 @@ def test_manifest_has_resident_facing_core_rules_and_live_source_paths():
         "heartbeat",
         "calendar",
         "windowsill",
+        "album",
         "room",
         "origin_books",
         "home",

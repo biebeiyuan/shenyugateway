@@ -229,7 +229,7 @@
 - request logs 的实时层是进程内 bounded deque；SQLite 另存有界安全摘要，完整 payload 仍随进程消失。
 - chat archive 将去重后的 user/assistant 正文写入 Supabase。
 - session 删除代码逐表删除 SQLite session 关联数据；长期 Supabase archive 是独立边界。
-- Dockerfile 不声明 volume；默认 `/app/data/shenyu_gateway.db` 和 Admin 写入的 `/app/.env` 只有在 Coolify 显式挂载对应路径时才跨容器替换保留。
+- Dockerfile 不声明 volume。生产实际用 `GATEWAY_DB_PATH=/data/shenyu_gateway.db` 加 named volume `shenyu-gateway-data`（2026-08-30 查证，容器里没有 `/app/data`），所以 SQLite 跨容器替换保留；Admin 写入的 `/app/.env` 没有卷，仍是容器生命周期。正本见 `REQUEST_CONTEXT.md` § SQLite Retention And Cleanup。
 - 完整 request-log payload 已改为 `GATEWAY_LOG_FULL_PAYLOADS=true` 显式 opt-in；默认只保留摘要、预览和计数。
 - request-log 安全摘要已进入 SQLite `request_log_history`，默认全局保留最近 200 条；完整 Messages、Upstream payload、Response、图片、原始 Thinking/signature 在落库前统一剔除。
 
@@ -483,7 +483,7 @@
 
 - 文档：`docs/architecture/REQUEST_CONTEXT.md`、`README.md`
 - 已完成：按数据产品记录正文范围、默认保留、功能责任和 session 删除边界。
-- 部署：默认 SQLite 位于容器 `/app/data`；Dockerfile 无 volume 声明，Coolify 未挂卷时容器替换会丢失 SQLite 与容器内 `.env`，但不会删除 Supabase archive。
+- 部署：生产 SQLite 在 named volume `shenyu-gateway-data`（挂 `/data`），跨容器替换保留；容器内 `.env` 没有卷，替换即丢，但不影响 Supabase archive。路径细节见本文件区域八与 `REQUEST_CONTEXT.md` § SQLite Retention And Cleanup。
 - 结论：当前多副本均有不同功能责任，不建议在缺少替代数据源时合并或删除；优先通过 retention、默认日志最小化和明确删除范围控制风险。
 
 ### 历史事件与 epoch 契约
