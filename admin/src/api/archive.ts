@@ -46,7 +46,9 @@ export async function fetchArchiveDays(month?: string) {
   return data.days
 }
 
-export async function fetchArchiveMessages(params: { date?: string; before?: string; limit?: number }) {
+// around_days 让选日期变成「定位」而不是「框死」：跨过午夜的对话是一整段，
+// 单日硬筛会把它切断，来历书就截不全。
+export async function fetchArchiveMessages(params: { date?: string; before?: string; limit?: number; around_days?: number }) {
   const { data } = await api.get<{ messages: ArchiveMessage[]; count: number }>('/api/archive/messages', { params })
   return data.messages
 }

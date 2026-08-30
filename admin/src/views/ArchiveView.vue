@@ -144,13 +144,40 @@ async function selectDay(date: string, count: number) {
   await loadMessages()
 }
 
+// 选中的那天前后各带一天：跨午夜的对话不被切断，同时读者可以继续往两头滑。
+const ARCHIVE_WINDOW_DAYS = 1
+
+function localDayOf(eventAt: string): string {
+  if (!eventAt) return ''
+  // toLocalDateTime 已是 YYYY-MM-DD HH:mm（浏览器本地时区），取前 10 位即当天。
+  return toLocalDateTime(eventAt).slice(0, 10)
+}
+
+// 选日期是「定位」不是「框死」：滚到那天的第一条，上下都还能继续滑出去。
+function scrollToSelectedDay() {
+  const list = msgListRef.value
+  if (!list) return
+  const target = list.querySelector<HTMLElement>(`[data-day="${selectedDate.value}"]`)
+  if (target) {
+    // 留一点上边距，让人看得出上面还有更早的内容可以滑。
+    list.scrollTop = Math.max(0, target.offsetTop - list.offsetTop - 24)
+    return
+  }
+  // 那天没有消息（窗口里只有邻日）：退回底部，跟原来一样。
+  list.scrollTop = list.scrollHeight
+}
+
 async function loadMessages() {
   if (!selectedDate.value) return
   loading.value = true
   try {
-    messages.value = await fetchArchiveMessages({ date: selectedDate.value, limit: 1000 })
+    messages.value = await fetchArchiveMessages({
+      date: selectedDate.value,
+      around_days: ARCHIVE_WINDOW_DAYS,
+      limit: 1000,
+    })
     await nextTick()
-    if (msgListRef.value) msgListRef.value.scrollTop = msgListRef.value.scrollHeight
+    scrollToSelectedDay()
   } catch {
     message.error('加载消息失败')
   } finally {
@@ -314,6 +341,7 @@ async function saveClip() {
             v-else
             class="bubble-row"
             :class="[item.msg.role, { grouped: item.grouped }]"
+            :data-day="localDayOf(item.msg.event_at || '')"
           >
             <NCheckbox
               v-if="selecting"
@@ -506,8 +534,13 @@ async function saveClip() {
   transition: all 0.2s ease;
 }
 
+/* 月初的前导空格子只用来占位对齐星期，不该有高度——2026-08-01 是周六，于是五个
+   36px 高的空 div 排成一行，就是展开后那块白。用 visibility 而不是 display:none，
+   grid 的列位置才还在。 */
 .cal-cell.empty {
   pointer-events: none;
+  height: 0;
+  visibility: hidden;
 }
 
 .cal-cell.has-data {

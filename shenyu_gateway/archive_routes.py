@@ -148,8 +148,16 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         date: Optional[str] = None,
         before: Optional[str] = None,
         limit: int = 200,
+        around_days: int = 0,
     ):
-        """Messages for one day (date=YYYY-MM-DD), or paged backwards via before. All sessions merged."""
+        """Messages for one day (date=YYYY-MM-DD), or paged backwards via before. All sessions merged.
+
+        `around_days` widens a `date` request symmetrically, so picking a day positions
+        the reader instead of fencing it. A conversation that ran past midnight is one
+        conversation; a hard one-day filter cut it in half, which truncated what could
+        be clipped into an origin book. The reader scrolls to the chosen day and can
+        still scroll out of it in both directions.
+        """
         client = _supabase()
         params = {
             "select": "id,session_tag,role,content,content_hash,event_at,archived_at",
@@ -158,12 +166,15 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         }
         if date:
             from datetime import date as date_cls
-            params["event_at"] = f"gte.{date}T00:00:00+08:00"
+            span = max(0, min(int(around_days or 0), 7))
             try:
-                next_day = (date_cls.fromisoformat(date) + timedelta(days=1)).isoformat()
+                anchor = date_cls.fromisoformat(date)
+                window_start = (anchor - timedelta(days=span)).isoformat()
+                window_end = (anchor + timedelta(days=span + 1)).isoformat()
             except ValueError:
-                next_day = date
-            params["and"] = f"(event_at.lt.{next_day}T00:00:00+08:00)"
+                window_start, window_end = date, date
+            params["event_at"] = f"gte.{window_start}T00:00:00+08:00"
+            params["and"] = f"(event_at.lt.{window_end}T00:00:00+08:00)"
             params["order"] = _ORDER_ASC
         elif before:
             params["event_at"] = f"lt.{before}"

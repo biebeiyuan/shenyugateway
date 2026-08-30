@@ -553,6 +553,55 @@ def test_archive_routes_use_cst_day_boundaries():
     asyncio.run(run())
 
 
+def test_archive_messages_can_widen_around_a_day():
+    """选日期是「定位」不是「框死」。
+
+    圆圆报的：跨过午夜的对话被单日筛断，来历书就截不全。around_days 把窗口对称
+    放宽，而 around_days=0 必须与原来的单日行为逐字一致。
+    """
+    async def run():
+        supabase = FakeSupabase()
+        for content, event_at in (
+            ("前一天深夜", "2026-06-13T15:30:00+00:00"),   # CST 6-13 23:30
+            ("跨夜之前", "2026-06-14T15:50:00+00:00"),      # CST 6-14 23:50
+            ("跨夜之后", "2026-06-14T16:10:00+00:00"),      # CST 6-15 00:10
+            ("再后一天", "2026-06-16T02:00:00+00:00"),      # CST 6-16 10:00
+        ):
+            await supabase.insert(
+                "shenyu_chat_archive",
+                {
+                    "thread": "main",
+                    "session_tag": "default",
+                    "role": "user",
+                    "content": content,
+                    "event_at": event_at,
+                    "deleted_at": None,
+                },
+            )
+        router = build_archive_router(ArchiveRouteDeps(get_supabase_client=lambda: supabase))
+        endpoint = {route.path: route.endpoint for route in router.routes}["/api/archive/messages"]
+
+        # 不传参数：与改动前完全一致，只有那一天
+        narrow = await endpoint(date="2026-06-14")
+        assert [row["content"] for row in narrow["messages"]] == ["跨夜之前"]
+        assert await endpoint(date="2026-06-14", around_days=0) == narrow
+
+        # 放宽一天：跨夜的下半段回来了，前一天深夜也在
+        wide = await endpoint(date="2026-06-14", around_days=1)
+        assert [row["content"] for row in wide["messages"]] == ["前一天深夜", "跨夜之前", "跨夜之后"]
+        # 时间序仍然递增，读者可以直接往两头滑
+        assert [row["event_at"] for row in wide["messages"]] == sorted(
+            row["event_at"] for row in wide["messages"]
+        )
+
+        # 窗口有上限，传个荒唐的值不会把整库拉出来
+        clamped = await endpoint(date="2026-06-14", around_days=999)
+        assert "再后一天" in [row["content"] for row in clamped["messages"]]
+        assert len(clamped["messages"]) == 4
+
+    asyncio.run(run())
+
+
 def test_resident_books_routes_split_generated_home_from_living_identity():
     async def run():
         supabase = FakeSupabase()
