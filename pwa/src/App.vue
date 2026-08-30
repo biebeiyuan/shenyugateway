@@ -92,6 +92,7 @@ import {
   loadStoredMessages,
   persistStoredMessages,
 } from './session/persistence'
+import { getPhotos, prunePhotos, putPhoto } from './session/photoStore'
 import { hydrateToolEvents } from './session/toolHydration'
 import { applyReconciledTail, tailNeedsReconcile } from './session/reconcile'
 import {
@@ -122,6 +123,9 @@ const STORAGE_EFFORT = 'shenyu_pwa_effort'
 const STORAGE_EXTENDED = 'shenyu_pwa_extended'
 const STORAGE_PRESET = 'shenyu_pwa_preset'
 const STORAGE_STREAM = 'shenyu_pwa_stream'
+
+// 一条消息最多几张图。本机总量另有上限（photoStore 的最近 30 张）。
+const MESSAGE_IMAGE_LIMIT = 9
 
 const requestedSessionTag = sessionTagFromLocation()
 const storedSessionTag = localStorage.getItem(STORAGE_SESSION) || ''
@@ -880,6 +884,29 @@ function onComposerKeydown(event: KeyboardEvent) {
   }
 }
 
+function dataUrlToBlob(dataUrl: string, mime: string): Blob {
+  const payload = dataUrl.slice(dataUrl.indexOf(',') + 1)
+  const binary = atob(payload)
+  const bytes = new Uint8Array(binary.length)
+  for (let index = 0; index < binary.length; index++) bytes[index] = binary.charCodeAt(index)
+  return new Blob([bytes], { type: mime })
+}
+
+// 存进 IndexedDB 并算好指纹。落盘失败不该挡住发送——图还在这次会话的内存里，
+// 只是刷新后本机不再有它（届时按过期处理，送指纹）。
+async function keepPhotoLocally(attachment: Attachment): Promise<Attachment> {
+  if (!attachment.dataUrl) return attachment
+  try {
+    const meta = await putPhoto(attachment.id, dataUrlToBlob(attachment.dataUrl, attachment.mime), attachment.mime)
+    void prunePhotos().then((removed) => {
+      if (removed.length) forgetExpiredPhotos(removed)
+    })
+    return { ...attachment, fingerprint: meta.fingerprint }
+  } catch {
+    return attachment
+  }
+}
+
 async function resizeImage(file: File): Promise<Attachment> {
   const dataUrl = await new Promise<string>((resolve, reject) => {
     const reader = new FileReader()
@@ -908,11 +935,44 @@ async function resizeImage(file: File): Promise<Attachment> {
   }
 }
 
+// 本机淘汰掉的图：清掉 dataUrl，气泡改说「图过期了」。指纹留着——过期后正是靠它
+// 让网关认出这张图，从而把占位换成沈予存相册时写的那句话（第三批）。
+function forgetExpiredPhotos(removedIds: string[]) {
+  if (!removedIds.length) return
+  const gone = new Set(removedIds)
+  for (const message of messages.value) {
+    for (const attachment of message.attachments) {
+      if (gone.has(attachment.id) && attachment.dataUrl) attachment.dataUrl = undefined
+    }
+  }
+}
+
+// 启动时把本机还留着的图接回气泡。元数据一直在 localStorage，字节按 30 张淘汰，
+// 所以「有 attachment 没有 dataUrl」就是「这张图在本机过期了」。
+async function restoreLocalPhotos() {
+  const wanted = messages.value.flatMap((message) =>
+    message.attachments.filter((attachment) => !attachment.dataUrl).map((attachment) => attachment.id))
+  if (!wanted.length) return
+  try {
+    const found = await getPhotos(wanted)
+    if (!found.size) return
+    for (const message of messages.value) {
+      for (const attachment of message.attachments) {
+        const stored = found.get(attachment.id)
+        if (stored) attachment.dataUrl = URL.createObjectURL(stored.blob)
+      }
+    }
+  } catch {
+    // 本机图取不回来就按过期显示，不影响对话本身。
+  }
+}
+
 async function chooseImages(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files || [])
   input.value = ''
-  for (const file of files.slice(0, 4 - pendingAttachments.value.length)) {
+  // 一条消息最多 9 张：4 张的堆太薄，看不出是一叠（照片堆那批要用）。
+  for (const file of files.slice(0, MESSAGE_IMAGE_LIMIT - pendingAttachments.value.length)) {
     if (!file.type.startsWith('image/')) {
       errorNotice.value = `${file.name} 不是图片，第一版先只收图片。`
       continue
@@ -921,7 +981,7 @@ async function chooseImages(event: Event) {
       errorNotice.value = `${file.name} 太大了，先压到 12MB 以内吧。`
       continue
     }
-    pendingAttachments.value.push(await resizeImage(file))
+    pendingAttachments.value.push(await keepPhotoLocally(await resizeImage(file)))
   }
 }
 
@@ -1259,6 +1319,8 @@ onMounted(async () => {
   await loadModels()
   await loadSessions()
   await adoptInitialSession()
+  // 把本机还留着的图接回气泡；淘汰掉的保持「过期」样子。
+  void restoreLocalPhotos()
   // 本地恢复的消息可能停在半截（流式中途进程被杀）：去服务器找回全文。
   if (tailNeedsReconcile(messages.value)) void reconcileTailFromServer()
   nextTick(() => inputRef.value?.focus())

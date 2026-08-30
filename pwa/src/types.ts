@@ -6,7 +6,12 @@ export type Attachment = {
   id: string
   name: string
   mime: string
-  dataUrl: string
+  // 本机 IndexedDB 里的字节指纹（sha256），与网关侧 photo_fingerprint 同一算法。
+  // 图过期后用它代替真图上传，网关据此认出这张图是相册里的哪一张。
+  fingerprint?: string
+  // 只在本机还留着这张图时有值。附件元数据一直落盘，图本身按 30 张淘汰——
+  // 所以「有 attachment 但没有 dataUrl」就是「这张图在本机过期了」。
+  dataUrl?: string
 }
 
 export type ThinkingSegment = {

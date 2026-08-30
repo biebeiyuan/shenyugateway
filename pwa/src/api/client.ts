@@ -32,14 +32,35 @@ export function requestHeaders(ctx: RequestContext): Record<string, string> {
   return { ...headers, ...authHeader(ctx) }
 }
 
+// 过期图的线上形状。网关的两个图片块判别器都认它是图片块，所以历史归一化会
+// 跳过它，与「这里原本是一张图」完全等价——分支检测看不见，prompt cache epoch
+// 不会被重置（`context_window.py` § 分支检测）。fingerprint 是图片字节的
+// sha256，网关据此认出这张图是不是沈予存进相册的那张。
+//
+// 刻意不复用网关自己的 `shenyu_history_image`：那个标记的 fingerprint 是 JSON
+// 块的哈希，与相册的字节哈希不是一回事，同名会把两者悄悄混为一谈。
+export const EXPIRED_IMAGE_MARKER = 'shenyu_expired_image'
+
+function expiredImageBlock(fingerprint: string): Record<string, unknown> {
+  return { type: 'image', source: { type: EXPIRED_IMAGE_MARKER, fingerprint } }
+}
+
 export function wireContent(message: UiMessage): string | Array<Record<string, unknown>> {
   const content = message.role === 'assistant' ? joinEcho(message.content, message.echo || '') : message.content
   if (!message.attachments.length) return content
   const blocks: Array<Record<string, unknown>> = []
   if (content.trim()) blocks.push({ type: 'text', text: content })
   for (const attachment of message.attachments) {
-    blocks.push({ type: 'image_url', image_url: { url: attachment.dataUrl } })
+    if (attachment.dataUrl) {
+      blocks.push({ type: 'image_url', image_url: { url: attachment.dataUrl } })
+    } else if (attachment.fingerprint) {
+      // 本机已淘汰这张图：送指纹，不送字节。10 张图的会话实测从 3.82MB/请求
+      // 降到约 800KB，而网关本来也只把最近两轮的图转给上游。
+      blocks.push(expiredImageBlock(attachment.fingerprint))
+    }
   }
+  // 图全过期又没有指纹时，别退化成 [] —— 那会丢掉这一轮的文字。
+  if (!blocks.length) return content
   return blocks
 }
 

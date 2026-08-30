@@ -58,7 +58,11 @@ function spriteMode(): SpriteMode {
   <div v-if="message.role === 'assistant'" class="assistant-avatar"><Sparkles :size="15" /></div>
   <div class="message-column">
     <div v-if="message.role === 'user' && message.attachments.length" class="message-images">
-      <img v-for="attachment in message.attachments" :key="attachment.id" :src="attachment.dataUrl" :alt="attachment.name" />
+      <template v-for="attachment in message.attachments" :key="attachment.id">
+        <img v-if="attachment.dataUrl" :src="attachment.dataUrl" :alt="attachment.name" />
+        <!-- 本机只留最近 30 张，更早的图散了。存进相册的那些不受这个限制。 -->
+        <span v-else class="message-image-expired">图过期了</span>
+      </template>
     </div>
     <div v-if="message.role === 'user'" class="user-bubble">
       <template v-if="bubbleBody()">{{ bubbleBody() }}</template>

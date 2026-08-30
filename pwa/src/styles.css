@@ -155,8 +155,9 @@ button:disabled { cursor: default; }
 .assistant-avatar { display: none; }
 .user-bubble { width: max-content; max-width: 85%; padding: 12px 18px; border-radius: var(--radius-bubble); background: var(--bubble-user); color: var(--text-primary); font: var(--text-read)/1.65 var(--font-serif); white-space: pre-wrap; overflow-wrap: break-word; word-break: break-word; }
 .msg-suffix { display: block; width: max-content; max-width: 100%; margin-top: 6px; padding: 2px 10px; border-radius: 999px; background: var(--bg-surface); color: var(--text-secondary); font-size: .78em; line-height: 1.6; font-family: var(--font-sans, inherit); }
-.message-images { display: flex; justify-content: flex-end; gap: 6px; margin-bottom: 6px; }
+.message-images { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; margin-bottom: 6px; }
 .message-images img { max-width: 220px; max-height: 180px; border-radius: 14px; object-fit: cover; }
+.message-image-expired { display: grid; width: 96px; height: 72px; place-items: center; border: 1px dashed var(--border-strong); border-radius: 14px; color: var(--text-faint); font-size: 12px; }
 .assistant-body { min-width: 0; color: var(--text-primary); }
 .markdown-content { font: var(--text-read)/1.65 var(--font-serif); font-synthesis: weight style; overflow-wrap: anywhere; word-break: break-word; }
 .markdown-content :first-child { margin-top: 0; }

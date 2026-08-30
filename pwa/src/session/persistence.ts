@@ -1,6 +1,6 @@
 import type { ToolEvent } from '../toolLanguage'
 import { clampErrorText } from '../api/errors'
-import type { EchoSegment, MessageVariant, ResponseMeta, Role, ThinkingSegment, UiMessage } from '../types'
+import type { Attachment, EchoSegment, MessageVariant, ResponseMeta, Role, ThinkingSegment, UiMessage } from '../types'
 import { createId } from '../utils'
 import { applyVariant, cloneVariant, selectedVariantIndex, syncCurrentVariant } from './variants'
 
@@ -28,6 +28,21 @@ function cloneStoredThinkingSegments(value: unknown): ThinkingSegment[] {
           content: String(item.content || ''),
           textOffset: Number(item.textOffset || 0),
           streamOrder: Number(item.streamOrder || 0),
+        }))
+    : []
+}
+
+// 附件只落元数据，绝不落 dataUrl：base64 图片进 localStorage 就是当初
+// 「附件干脆不存」的原因（一张约 560KB，5MB 配额装九张）。字节在 IndexedDB。
+function cloneStoredAttachments(value: unknown): Attachment[] {
+  return Array.isArray(value)
+    ? value
+        .filter((item): item is Partial<Attachment> => Boolean(item && typeof item === 'object'))
+        .map((item) => ({
+          id: String(item.id || createId('image')),
+          name: String(item.name || ''),
+          mime: String(item.mime || 'image/jpeg'),
+          fingerprint: item.fingerprint ? String(item.fingerprint) : undefined,
         }))
     : []
 }
@@ -82,7 +97,10 @@ export function loadStoredMessages(): UiMessage[] {
             : item.echo
               ? [{ id: createId('echo'), content: String(item.echo), textOffset: 0, streamOrder: 0 }]
               : [],
-          attachments: [],
+          // 附件元数据（id / 指纹 / 名字）一直落盘，图片字节在 IndexedDB。
+          // dataUrl 留空，由 App 启动时按 id 回填本机还留着的那些——这就是
+          // 「本机最近 30 张」的实现方式：元数据一直在，图会过期。
+          attachments: cloneStoredAttachments(item.attachments),
           thinking: String(item.thinking || ''),
           thinkingSegments: storedSegments.length
             ? storedSegments
@@ -121,6 +139,8 @@ type StoredRow = {
   content: string
   echo: string
   echoSegments: EchoSegment[]
+  // 只有元数据，没有 dataUrl。
+  attachments: Attachment[]
   thinking: string
   thinkingSegments: ThinkingSegment[]
   events: ToolEvent[]
@@ -155,6 +175,14 @@ export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit
     content: message.content,
     echo: message.echo || '',
     echoSegments: message.echoSegments || [],
+    // dataUrl 刻意剥掉：base64 图片进 localStorage 正是当初「附件干脆不存」的
+    // 原因。字节在 IndexedDB，这里只留够回填和过期上传用的元数据。
+    attachments: (message.attachments || []).map((attachment) => ({
+      id: attachment.id,
+      name: attachment.name,
+      mime: attachment.mime,
+      fingerprint: attachment.fingerprint,
+    })),
     thinking: message.thinking,
     thinkingSegments: message.thinkingSegments,
     events: message.events,

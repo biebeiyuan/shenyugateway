@@ -220,6 +220,54 @@ describe('storage window limit', () => {
   })
 })
 
+describe('attachment metadata survives a refresh, bytes do not live here', () => {
+  it('keeps id, name, mime and fingerprint but never the dataUrl', () => {
+    persistStoredMessages([
+      uiMessage('user', '看这个', {
+        attachments: [{
+          id: 'img-1',
+          name: 'p.jpg',
+          mime: 'image/jpeg',
+          fingerprint: 'f'.repeat(64),
+          dataUrl: `data:image/jpeg;base64,${'A'.repeat(5000)}`,
+        }],
+      }),
+    ], FALLBACK_SESSION_MESSAGE_LIMIT)
+
+    // base64 图片进 localStorage 正是当初「附件干脆不存」的原因。
+    const rawStored = localStorage.getItem(STORAGE_MESSAGES) || ''
+    expect(rawStored).not.toContain('base64')
+    expect(rawStored.length).toBeLessThan(2000)
+
+    const restored = loadStoredMessages()
+    expect(restored[0].attachments).toEqual([
+      { id: 'img-1', name: 'p.jpg', mime: 'image/jpeg', fingerprint: 'f'.repeat(64) },
+    ])
+    // dataUrl 为空即「这张图在本机过期了」，由 App 启动时按 id 回填还留着的那些。
+    expect(restored[0].attachments[0].dataUrl).toBeUndefined()
+  })
+
+  it('tolerates attachments stored before fingerprints existed', () => {
+    localStorage.setItem(STORAGE_MESSAGES, JSON.stringify([
+      { id: 'u1', role: 'user', content: '旧消息', attachments: [{ id: 'old-1' }] },
+    ]))
+    const restored = loadStoredMessages()
+    expect(restored[0].attachments[0].id).toBe('old-1')
+    expect(restored[0].attachments[0].fingerprint).toBeUndefined()
+    expect(restored[0].attachments[0].mime).toBe('image/jpeg')
+  })
+
+  it('ignores a corrupt attachments field instead of throwing', () => {
+    localStorage.setItem(STORAGE_MESSAGES, JSON.stringify([
+      { id: 'u1', role: 'user', content: 'x', attachments: 'not-an-array' },
+      { id: 'u2', role: 'user', content: 'y', attachments: [null, 42] },
+    ]))
+    const restored = loadStoredMessages()
+    expect(restored[0].attachments).toEqual([])
+    expect(restored[1].attachments).toEqual([])
+  })
+})
+
 describe('stored error text is bounded', () => {
   it('bounds an error on the way to storage', () => {
     persistStoredMessages([
