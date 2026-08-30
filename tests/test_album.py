@@ -94,6 +94,15 @@ def test_photo_size_limit_is_enforced(tmp_path):
         store.save_album_photo(raw=os.urandom(3 * 1024 * 1024))
 
 
+def test_fingerprint_matches_the_pwa_algorithm():
+    """两侧必须是同一个算法，否则过期后网关永远认不出相册里那张图。
+
+    PWA 侧同一断言在 `pwa/tests/photoStore.spec.ts`（crypto.subtle SHA-256）。
+    改动任一侧都会让其中一个测试变红。
+    """
+    assert photo_fingerprint(b"abc") == "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+
+
 def test_lookup_by_fingerprint_returns_the_note(tmp_path):
     """过期回填的入口：给指纹，拿回沈予当时写的话。"""
     store = _store(tmp_path)

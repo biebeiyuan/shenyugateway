@@ -13,7 +13,7 @@
 | ① | 报错护栏：`api/errors.ts` 提取、CSS 行数上限、落盘与读回截断 | 2026-08-29 完成 |
 | ② | 渲染拆分：消息行子组件、渲染缓存、highlight 修正、error boundary | 2026-08-29 完成 |
 | ③ | 原生手感 | 未开工 |
-| ④ | 图片持久化 + 看图器 | 未开工（相册后端已就绪，见下节） |
+| ④ | 图片持久化 + 看图器 | 持久化 2026-08-30 完成；看图器未开工 |
 | ⑤ | PhotoStack 堆叠卡 | 未开工 |
 | ⑥ | 展开 / 收起动画 | 未开工 |
 
@@ -36,17 +36,25 @@
 `shenyu_album_list`、Recall 索引、`/api/gateway/album` 两条只读接口。
 当前事实以代码、`tests/test_album.py` 和 `README.md` § Album 为准。
 
-**第二批（PWA）的关键技术链**：过期后要能顶上他的描述，网关就得知道那张图是相册里
-的哪一张。做法是让 PWA 用 `context_window.py::_compact_event_content` 已有的
-`{"type":"image","source":{"type":"shenyu_history_image","fingerprint":...}}` 形状
-代替旧图上传——实测 `_normalize_event_content` 会跳过所有图片块，所以真图与
-fingerprint 块归一化后完全等价，分支检测看不见，epoch 不重置。上传量实测从
-3.82MB/请求（10 张图的会话）降到约 800KB。
+**第二批已完成**（2026-08-30）：`pwa/src/session/photoStore.ts` 用 IndexedDB 存字节
+（最近 30 张），附件元数据留 localStorage，过期气泡显示「图过期了」而正文一字不动。
+过期后送 `shenyu_expired_image` 标记块代替真图，只带图片字节的 sha256。
+实测 10 张图的会话从 3.82MB/请求降到 1MB 以下。一条消息上限从 4 张提到 9 张。
 
-**第三批有一个必须一起改的地方**：`context_window.py` 的 `_normalize_event_text`
-现在是**恰好等于**占位符才归一化成空。换成动态描述后这个精确匹配会失效，
+标记**刻意不复用**网关自己的 `shenyu_history_image`：那个标记的 fingerprint 是
+JSON 块的哈希，不是图片字节的哈希，同名会把两件事悄悄混为一谈。两侧的字节指纹
+算法都对 `b"abc"` 断言同一个已知摘要（`tests/test_album.py` 与
+`pwa/tests/photoStore.spec.ts`），改任一侧都会红。
+
+**第三批（下一批）要做的事**：网关侧 `trim_client_image_blocks` 按
+`shenyu_expired_image` 块里的 fingerprint 查相册（`album_notes_by_fingerprints`
+已就位，一次批量查完，不在循环里逐张查库），把固定占位
+`圆圆发来的照片我已经看过。` 换成沈予自己写的那句。
+
+**这一批有一个必须一起改的地方**：`context_window.py` 的 `_normalize_event_text`
+现在是**恰好等于**那句占位符才归一化成空。换成动态描述后这个精确匹配会失效，
 分支检测就会把过期误判成 `branch` 并白扔掉整个 prompt cache epoch。替换文本
-必须带一个可识别的包装，并补测试证明 epoch 不重置。
+必须带一个可识别的包装（形如固定前缀 + 他的话），并补测试证明 epoch 不重置。
 
 ## 已经拍过的两个决定（不要重新讨论）
 
