@@ -488,6 +488,31 @@ class FakeToolService:
         )
         return {"ok": True, "limit": limit}
 
+    async def album_save(self, note="", mood="", book="", which=1, *, images=None, session_tag=""):
+        self.calls.append(
+            {
+                "tool": "shenyu_album_save",
+                "note": note,
+                "mood": mood,
+                "book": book,
+                "which": which,
+                # 图不进 calls：断言里不该出现图片字节。只记数量，证明它被传进来了。
+                "image_count": len(images or []),
+                "session_tag": session_tag,
+            }
+        )
+        return {"ok": True, "note": note}
+
+    async def album_list(self, book="", limit: int = 20):
+        self.calls.append(
+            {
+                "tool": "shenyu_album_list",
+                "book": book,
+                "limit": limit,
+            }
+        )
+        return {"ok": True, "limit": limit}
+
     async def web_search(self, query="", limit: int = 5):
         self.calls.append(
             {
@@ -666,6 +691,8 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "mood": "安静",
         },
         "shenyu_windowsill_list": {"mood": "安静", "limit": 6},
+        "shenyu_album_save": {"note": "海边那天的光", "mood": "安静", "book": "想留的", "which": 2},
+        "shenyu_album_list": {"book": "想留的", "limit": 7},
         "shenyu_web_search": {"q": "邵阳 明天 天气", "limit": 3},
         "shenyu_web_read": {"url": "https://example.com/article", "part": 2},
         "shenyu_list_mem_notes": {"query": "list", "status": "all", "mem_type": "memory", "limit": 8},
@@ -884,6 +911,20 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "tool": "shenyu_windowsill_list",
             "mood": "安静",
             "limit": 6,
+        },
+        "shenyu_album_save": {
+            "tool": "shenyu_album_save",
+            "note": "海边那天的光",
+            "mood": "安静",
+            "book": "想留的",
+            "which": 2,
+            "image_count": 0,
+            "session_tag": "default",
+        },
+        "shenyu_album_list": {
+            "tool": "shenyu_album_list",
+            "book": "想留的",
+            "limit": 7,
         },
         "shenyu_web_search": {
             "tool": "shenyu_web_search",

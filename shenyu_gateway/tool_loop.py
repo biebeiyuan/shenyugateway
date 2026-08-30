@@ -376,7 +376,13 @@ async def _execute_mixed_gateway_tool_calls(
         name = _tool_call_name(tool_call)
         args = _tool_call_arguments(tool_call)
         try:
-            result = await ctx.execute_gateway_tool(name, args, session_tag=ctx.session_tag, cfg=ctx.cfg)
+            result = await ctx.execute_gateway_tool(
+                name,
+                args,
+                session_tag=ctx.session_tag,
+                cfg=ctx.cfg,
+                turn_messages=ctx.prepared_messages,
+            )
         except Exception as exc:
             logger.exception("[GatewayTool] Mixed tool call failed: %s", name)
             result = {"ok": False, "error": str(exc), "error_kind": "exception"}
@@ -970,7 +976,15 @@ async def _execute_internal_tool_call(
     else:
         t0 = time.monotonic()
         try:
-            result = await ctx.execute_gateway_tool(name, args, session_tag=ctx.session_tag, cfg=ctx.cfg)
+            # 相册要存的那张图只存在于消息里。只读传入，工具不许改它——改了正文
+            # 会让历史归一化结果变化，分支检测误判成 branch 并重置缓存 epoch。
+            result = await ctx.execute_gateway_tool(
+                name,
+                args,
+                session_tag=ctx.session_tag,
+                cfg=ctx.cfg,
+                turn_messages=ctx.prepared_messages,
+            )
         except Exception as exc:
             logger.exception("[GatewayTool] %s: %s", log_label, name)
             result = {"ok": False, "error": str(exc), "error_kind": "exception"}

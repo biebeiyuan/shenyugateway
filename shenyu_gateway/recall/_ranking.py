@@ -137,6 +137,15 @@ class RankingMixin:
                 item["mood"] = metadata.get("mood")
             if metadata.get("origin") == "room":
                 item["origin"] = "写自房间"
+        elif source_type == "album":
+            item["content_kind"] = "album"
+            # 相册命中时带上 photo_id，好让调用方能翻回那张图。
+            if metadata.get("photo_id"):
+                item["photo_id"] = metadata.get("photo_id")
+            if metadata.get("book_name"):
+                item["book_name"] = metadata.get("book_name")
+            if metadata.get("mood"):
+                item["mood"] = metadata.get("mood")
         elif source_type == "heartbeat":
             item["content_kind"] = "heartbeat"
         elif source_type == "board":

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from ._album import ALBUM_NOTES_TABLE, AlbumToolsMixin, latest_turn_images
 from ._base import GatewayToolServiceBase
 from ._books import BooksToolsMixin
 from ._calendar import CalendarToolsMixin
@@ -39,6 +40,7 @@ class GatewayToolService(
     SessionToolsMixin,
     WindowsillToolsMixin,
     NotebookToolsMixin,
+    AlbumToolsMixin,
     WebToolsMixin,
     GatewayToolServiceBase,
 ):
@@ -46,8 +48,10 @@ class GatewayToolService(
 
 
 __all__ = [
+    "ALBUM_NOTES_TABLE",
     "GatewayToolRuntime",
     "GatewayToolService",
+    "latest_turn_images",
     "WINDOWSILL_ORIGIN_NORMAL",
     "WINDOWSILL_ORIGIN_ROOM",
     "WINDOWSILL_TABLE",

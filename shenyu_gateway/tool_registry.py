@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
 
 from shenyu_gateway.gateway_tools import GatewayToolService
+from shenyu_gateway.store import DEFAULT_ALBUM_NAME
 from shenyu_gateway.calendar import period_key_from_date
 from shenyu_gateway.mem_notes import MEM_NOTE_MEMORY_KINDS, MEM_NOTE_PATCH_FIELDS, MEM_NOTE_TYPES
 from shenyu_gateway.tool_schemas import (
@@ -45,6 +46,8 @@ DAILY_GATEWAY_TOOL_NAMES = {
     "shenyu_add_calendar",
     "shenyu_windowsill_write",
     "shenyu_windowsill_list",
+    "shenyu_album_save",
+    "shenyu_album_list",
     "shenyu_read_heartbeat",
     "shenyu_write_mem_note",
     "shenyu_search_mem_notes",
@@ -109,6 +112,10 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   windowsill_write(content*, title?, mood?)
   windowsill_list(mood?, limit?)
 
+相册
+  album_save(note?, mood?, book?, which?)  — 存这一轮看到的图；which 选第几张
+  album_list(book?, limit?)  — 不给 book 就是列出所有本子
+
 手边
   notebook_write(content*)
   notebook_list(limit?)
@@ -151,6 +158,10 @@ _BROKER_DAILY_DESCRIPTION = """\
 窗台
   windowsill_write(content*, title?, mood?)
   windowsill_list(mood?, limit?)
+
+相册
+  album_save(note?, mood?, book?, which?)  — 存这一轮看到的图；which 选第几张
+  album_list(book?, limit?)  — 不给 book 就是列出所有本子
 
 手边
   notebook_write(content*)
@@ -463,6 +474,10 @@ class ToolContext:
     resolved_session_tag: Optional[str]
     cfg: Any
     service: GatewayToolService
+    # 当前这一轮的消息，只读。相册要存的那张图只存在于消息里，而不是参数里——
+    # 把图的标记写进正文会改变历史归一化结果并让分支检测误判成 branch，
+    # 从而白扔掉整个 prompt cache epoch。默认 None，绝大多数工具用不到。
+    turn_messages: Optional[list[dict]] = None
 
 
 _TOOL_HANDLERS: dict[str, Callable[[ToolContext], Awaitable[dict]]] = {}
@@ -886,6 +901,28 @@ async def _handle_windowsill_list(ctx: ToolContext) -> dict:
     )
 
 
+@_tool_handler("shenyu_album_save")
+async def _handle_album_save(ctx: ToolContext) -> dict:
+    from .gateway_tools import latest_turn_images
+
+    return await ctx.service.album_save(
+        note=ctx.arguments.get("note", ""),
+        mood=ctx.arguments.get("mood", ""),
+        book=ctx.arguments.get("book") or DEFAULT_ALBUM_NAME,
+        which=_int_arg(ctx.arguments, "which", 1),
+        images=latest_turn_images(ctx.turn_messages),
+        session_tag=ctx.resolved_session_tag or "",
+    )
+
+
+@_tool_handler("shenyu_album_list")
+async def _handle_album_list(ctx: ToolContext) -> dict:
+    return await ctx.service.album_list(
+        book=ctx.arguments.get("book", ""),
+        limit=_int_arg(ctx.arguments, "limit", 20),
+    )
+
+
 @_tool_handler("shenyu_notebook_write")
 async def _handle_notebook_write(ctx: ToolContext) -> dict:
     return await ctx.service.notebook_write(
@@ -932,6 +969,7 @@ async def execute_gateway_tool(
     session_tag: Optional[str],
     cfg: Any,
     service: Optional[GatewayToolService] = None,
+    turn_messages: Optional[list[dict]] = None,
 ) -> dict:
     arguments = arguments if isinstance(arguments, dict) else {}
     service = service or GatewayToolService(runtime_config=cfg)
@@ -977,6 +1015,7 @@ async def execute_gateway_tool(
             session_tag=session_tag,
             cfg=cfg,
             service=service,
+            turn_messages=turn_messages,
         )
 
     if name.startswith("mcp_"):
@@ -1016,6 +1055,7 @@ async def execute_gateway_tool(
         resolved_session_tag=arguments.get("session_tag") or session_tag,
         cfg=cfg,
         service=service,
+        turn_messages=turn_messages,
     )
     if name in DEPRECATED_COMPAT_TOOL_MESSAGES:
         return {"ok": False, "error": DEPRECATED_COMPAT_TOOL_MESSAGES[name], "error_kind": "validation"}

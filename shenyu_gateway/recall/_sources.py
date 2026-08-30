@@ -49,6 +49,14 @@ class SourcesMixin:
         await self._sync_graph_documents_fail_soft(docs)
         return {"ok": True, "indexed": len(docs)}
 
+    async def index_album_note_row(self, row: dict[str, Any]) -> dict[str, Any]:
+        docs = self._album_note_documents(row)
+        if not docs:
+            return {"ok": False, "indexed": 0, "error": "album note row has no content."}
+        await self._upsert_documents(docs)
+        await self._sync_graph_documents_fail_soft(docs)
+        return {"ok": True, "indexed": len(docs)}
+
     async def index_mem_note_row(self, row: dict[str, Any]) -> dict[str, Any]:
         source_id = str(row.get("id") or "").strip()
         if not source_id:
@@ -148,6 +156,7 @@ class SourcesMixin:
             "calendar": "calendar_pages",
             "mem_note": "shenyu_mem_notes",
             "notebook": "shenyu_notebook",
+            "album": "shenyu_album_notes",
         }
         requested = self._requested_source_types(source_types)
         if not requested:
@@ -161,6 +170,7 @@ class SourcesMixin:
                 "calendar_pages",
                 "shenyu_mem_notes",
                 "shenyu_notebook",
+                "shenyu_album_notes",
             ]
         names = []
         for source_type in requested:
@@ -181,6 +191,7 @@ class SourcesMixin:
             "shenyu_mem_notes": self._load_mem_notes,
             "atomic_memories": self._load_atomic_memories,
             "shenyu_notebook": self._load_notebook,
+            "shenyu_album_notes": self._load_album_notes,
             "meta_summaries": self._load_meta_summaries,
         }
         return await loaders[source_table]()
@@ -216,6 +227,44 @@ class SourcesMixin:
         docs = []
         for row in rows:
             docs.extend(self._windowsill_documents(row))
+        return docs
+
+    # 相册备注：只索引沈予写的文字，图片字节从不进这里（它们在本机卷的 SQLite）。
+    # photo_id 放进 metadata，Recall 命中后据此翻回那张图。
+    def _album_note_documents(self, row: dict[str, Any]) -> list[RecallDocument]:
+        mood = _normalize_text(row.get("mood")).strip()
+        book_name = _normalize_text(row.get("book_name")).strip()
+        photo_id = _normalize_text(row.get("photo_id")).strip()
+        metadata: dict[str, Any] = {}
+        if photo_id:
+            metadata["photo_id"] = photo_id
+        if book_name:
+            metadata["book_name"] = book_name
+        if mood:
+            metadata["mood"] = mood
+        return _make_documents(
+            source_table="shenyu_album_notes",
+            source_id=row.get("id"),
+            source_type="album",
+            title=book_name,
+            body=row.get("note"),
+            tags=[mood] if mood else [],
+            metadata=metadata,
+            event_date=row.get("saved_at"),
+            created_at=row.get("saved_at"),
+            updated_at=row.get("saved_at"),
+            status="active",
+            importance=0.7,
+        )
+
+    async def _load_album_notes(self) -> list[RecallDocument]:
+        rows = await self._query_all_rows(
+            "shenyu_album_notes",
+            {"select": "*", "order": "saved_at.desc"},
+        )
+        docs = []
+        for row in rows:
+            docs.extend(self._album_note_documents(row))
         return docs
 
     async def _load_heartbeat_archive(self) -> list[RecallDocument]:

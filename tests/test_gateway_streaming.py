@@ -2667,7 +2667,7 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
                 yield {"choices": [{"delta": {"content": "done"}, "finish_reason": None}]}
                 yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
 
-        async def execute_gateway_tool(name, args, session_tag=None, cfg=None):
+        async def execute_gateway_tool(name, args, session_tag=None, cfg=None, turn_messages=None):
             executed_tools.append((name, args))
             return {"ok": True, "items": []}
 
@@ -2787,7 +2787,7 @@ def test_internal_stream_loop_continues_after_client_disconnect():
                 yield {"choices": [{"delta": {"content": "done"}, "finish_reason": None}]}
                 yield {"choices": [{"delta": {}, "finish_reason": "stop"}]}
 
-        async def execute_gateway_tool(name, args, session_tag=None, cfg=None):
+        async def execute_gateway_tool(name, args, session_tag=None, cfg=None, turn_messages=None):
             executed_tools.append((name, args))
             return {"ok": True, "items": []}
 
@@ -3312,7 +3312,7 @@ def test_execute_mixed_gateway_tool_calls_stores_hidden_result_and_returns_only_
             old_store = gateway.session_store
             old_execute = gateway.execute_gateway_tool
 
-            async def fake_execute(name, args, session_tag=None, cfg=None):
+            async def fake_execute(name, args, session_tag=None, cfg=None, turn_messages=None):
                 return {"ok": True, "items": [{"content": "hidden gateway result", "source_table": "journal"}]}
 
             gateway.session_store = store
@@ -3410,7 +3410,7 @@ def test_execute_mixed_gateway_tool_calls_keeps_client_call_when_gateway_call_fa
             old_store = gateway.session_store
             old_execute = gateway.execute_gateway_tool
 
-            async def fake_execute(name, args, session_tag=None, cfg=None):
+            async def fake_execute(name, args, session_tag=None, cfg=None, turn_messages=None):
                 return {"ok": False, "error": "recall unavailable", "error_kind": "upstream"}
 
             gateway.session_store = store
@@ -3482,7 +3482,7 @@ def test_execute_mixed_gateway_tool_calls_stores_clean_pending_assistant_copy():
             old_store = gateway.session_store
             old_execute = gateway.execute_gateway_tool
 
-            async def fake_execute(name, args, session_tag=None, cfg=None):
+            async def fake_execute(name, args, session_tag=None, cfg=None, turn_messages=None):
                 return {"ok": True}
 
             gateway.session_store = store

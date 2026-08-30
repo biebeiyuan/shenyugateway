@@ -5,6 +5,7 @@ from ._base import (
     NEXT_REQUEST_COLD_START_TAG,
     BaseStoreMixin,
 )
+from ._album import DEFAULT_ALBUM_NAME, MAX_PHOTO_BYTES, AlbumMixin, photo_fingerprint
 from ._sessions import SessionsMixin
 from ._messages import MessagesMixin
 from ._pending import PendingTurnsMixin
@@ -28,6 +29,7 @@ class GatewayStore(
     HeartbeatsMixin,
     CacheMixin,
     RoomMixin,
+    AlbumMixin,
     AdminMixin,
     RequestLogHistoryMixin,
     BaseStoreMixin,
@@ -39,4 +41,7 @@ __all__ = [
     "GatewayStore",
     "NEXT_REQUEST_COLD_START_TAG",
     "HEARTBEAT_ENTRIES_TABLE",
+    "DEFAULT_ALBUM_NAME",
+    "MAX_PHOTO_BYTES",
+    "photo_fingerprint",
 ]

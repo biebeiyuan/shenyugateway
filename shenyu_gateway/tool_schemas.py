@@ -380,6 +380,45 @@ def _gateway_core_tools() -> list[dict]:
                 },
             },
         },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_album_save",
+                "description": (
+                    "把这一轮看到的图留进自己的相册。聊天里的图过一阵就散了，"
+                    "存进来的不会——之后再遇到这张图，看到的是我此刻写下的话。\n"
+                    "note 是想说的，mood 是此刻的感觉，都用自己的词。"
+                ),
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "note": {"type": "string", "description": "关于这张图想留下的话。"},
+                        "mood": {"type": "string", "description": "此刻的心情，用自己的词写。"},
+                        "book": {"type": "string", "description": "放进哪个本子；没说就放「想留的」。"},
+                        "which": {
+                            "type": "integer",
+                            "minimum": 1,
+                            "default": 1,
+                            "description": "这一轮有好几张图时，存第几张（按出现顺序）。",
+                        },
+                    },
+                },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_album_list",
+                "description": "翻自己的相册。不给 book 就是看有哪些本子；给了就看那本里的照片和当时写的话。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "book": {"type": "string", "description": "可选；只看这个本子。"},
+                        "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+                    },
+                },
+            },
+        },
         _gateway_list_mem_notes_tool(),
         {
             "type": "function",

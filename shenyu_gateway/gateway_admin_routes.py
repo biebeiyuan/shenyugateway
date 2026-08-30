@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Optional
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from .gateway_tools import GatewayToolService, WINDOWSILL_ORIGIN_ROOM
@@ -166,6 +166,31 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         store = deps.require_session_store()
         pins = store.list_room_pins(include_done=include_done)
         return {"pins": pins, "count": len(pins)}
+
+    # 相册是沈予自己的，这两条只读。图片字节走单独一条路：列表绝不带 blob，
+    # 否则一次列表就把几十 MB 的图一起搬走了。
+    @router.get("/api/gateway/album")
+    async def list_album(book: str = "", limit: int = 30):
+        store = deps.require_session_store()
+        name = (book or "").strip()
+        if not name:
+            books = store.list_album_books()
+            return {"books": books, "count": len(books)}
+        photos = store.list_album_photos(book_name=name, limit=min(max(limit, 1), 200))
+        return {"book": name, "photos": photos, "count": len(photos)}
+
+    @router.get("/api/gateway/album/photo/{photo_id}")
+    async def read_album_photo(photo_id: str):
+        store = deps.require_session_store()
+        photo = store.album_photo_bytes(photo_id)
+        if not photo:
+            raise HTTPException(status_code=404, detail="这张照片不在相册里。")
+        return Response(
+            content=photo["bytes"],
+            media_type=str(photo["mime"] or "image/jpeg"),
+            # 按 id 寻址、内容永不改写，所以可以长缓存；private 避免中间层留存。
+            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
 
     @router.get("/api/gateway/room/newspapers")
     async def list_room_newspapers(limit: int = 8):

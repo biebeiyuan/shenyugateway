@@ -327,6 +327,39 @@ class BaseStoreMixin:
 
                 CREATE INDEX IF NOT EXISTS idx_room_newspaper_items_issue_position
                     ON room_newspaper_items(issue_id, position);
+
+                -- 沈予自己的相册。图片字节留在本机卷（生产是 named volume
+                -- shenyu-gateway-data 挂在 /data），不进 Supabase 也不进请求日志。
+                -- 备注文字另有一份在 Supabase，那份才是 Recall 能想起来的。
+                CREATE TABLE IF NOT EXISTS album_books (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS album_photos (
+                    id TEXT PRIMARY KEY,
+                    book_id TEXT NOT NULL,
+                    mime TEXT NOT NULL DEFAULT 'image/jpeg',
+                    bytes BLOB NOT NULL,
+                    byte_size INTEGER NOT NULL DEFAULT 0,
+                    -- 客户端算的图片指纹。过期后网关靠它认出这张图是相册里的哪一张，
+                    -- 从而把通用占位换成沈予自己写的话。
+                    fingerprint TEXT NOT NULL DEFAULT '',
+                    note TEXT NOT NULL DEFAULT '',
+                    mood TEXT NOT NULL DEFAULT '',
+                    source_session_tag TEXT NOT NULL DEFAULT '',
+                    note_ref TEXT NOT NULL DEFAULT '',
+                    saved_at TEXT NOT NULL,
+                    FOREIGN KEY(book_id) REFERENCES album_books(id) ON DELETE CASCADE
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_album_photos_book_saved
+                    ON album_photos(book_id, saved_at DESC);
+
+                CREATE INDEX IF NOT EXISTS idx_album_photos_fingerprint
+                    ON album_photos(fingerprint)
+                    WHERE fingerprint <> '';
                 """
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")

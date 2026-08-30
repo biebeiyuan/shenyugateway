@@ -230,6 +230,70 @@ def test_windowsill_adapter_indexes_title_content_mood_and_created_at():
     assert docs[0].event_date == "2026-07-10T00:00:00+00:00"
 
 
+def test_album_note_adapter_indexes_only_the_text_sheny_wrote():
+    """相册备注进 Recall，图片字节留在本机卷的 SQLite——它从不出现在索引里。"""
+    service = RecallIndexService(
+        FakeSourceSupabase(
+            [
+                {
+                    "id": "album-note-1",
+                    "photo_id": "phot_abc123",
+                    "book_name": "想留的",
+                    "note": "海边那天的光落在她手上。",
+                    "mood": "安静",
+                    "fingerprint": "deadbeef",
+                    "saved_at": "2026-08-30T00:00:00+00:00",
+                }
+            ]
+        )
+    )
+
+    docs = asyncio.run(service._load_album_notes())
+
+    assert len(docs) == 1
+    assert docs[0].source_type == "album"
+    assert docs[0].source_table == "shenyu_album_notes"
+    assert "海边那天的光" in docs[0].search_text
+    assert "想留的" in docs[0].search_text
+    assert "安静" in docs[0].search_text
+    # photo_id 留在 metadata 里，命中后据此翻回那张图。
+    assert docs[0].metadata_json == {
+        "photo_id": "phot_abc123",
+        "book_name": "想留的",
+        "mood": "安静",
+    }
+    assert docs[0].event_date == "2026-08-30T00:00:00+00:00"
+
+
+def test_album_note_row_indexing_is_incremental():
+    supabase = FakeSupabase([])
+    service = RecallIndexService(supabase)
+
+    result = asyncio.run(
+        service.index_album_note_row(
+            {
+                "id": "album-note-2",
+                "photo_id": "phot_def456",
+                "book_name": "我们俩",
+                "note": "这张想一直留着。",
+                "mood": "",
+                "saved_at": "2026-08-30T01:00:00+00:00",
+            }
+        )
+    )
+
+    assert result == {"ok": True, "indexed": 1}
+    assert supabase.upserts[0]["source_type"] == "album"
+    assert "这张想一直留着" in supabase.upserts[0]["search_text"]
+
+
+def test_album_note_row_without_text_is_not_indexed():
+    service = RecallIndexService(FakeSupabase([]))
+    result = asyncio.run(service.index_album_note_row({"id": "x", "photo_id": "p", "note": "", "mood": ""}))
+    assert result["ok"] is False
+    assert result["indexed"] == 0
+
+
 def test_heartbeat_adapter_only_builds_normal_archive_documents():
     supabase = FakeSourceSupabase(
         [
@@ -545,6 +609,40 @@ def test_recall_public_item_includes_title_only_for_journal():
             "has_more": False,
         }
     ]
+
+
+def test_recall_album_hit_carries_photo_id_so_the_image_can_be_reopened():
+    """备注被想起来时要能翻回那张图，否则只剩一句没有出处的话。"""
+    rows = [
+        {
+            "source_table": "shenyu_album_notes",
+            "source_id": "album-note-1",
+            "source_type": "album",
+            "chunk_index": 0,
+            "session_tag": None,
+            "title": "想留的",
+            "body": "海边那天的光落在她手上。",
+            "excerpt": "海边那天的光落在她手上。",
+            "search_text": "想留的 海边那天的光落在她手上 安静",
+            "search_tokens": ["海边", "那天", "安静"],
+            "tags_json": ["安静"],
+            "entities_json": [],
+            "metadata_json": {"photo_id": "phot_abc123", "book_name": "想留的", "mood": "安静"},
+            "event_date": "2026-08-30T00:00:00+00:00",
+            "importance": 0.7,
+            "status": "active",
+            "visibility": None,
+        },
+    ]
+    service = RecallIndexService(FakeSupabase(rows))
+
+    result = asyncio.run(service.recall("海边", auto_sync=False))
+
+    item = result["items"][0]
+    assert item["content_kind"] == "album"
+    assert item["photo_id"] == "phot_abc123"
+    assert item["book_name"] == "想留的"
+    assert item["mood"] == "安静"
 
 
 def test_recall_hydrates_all_source_chunks_after_selecting_a_match():
@@ -944,7 +1042,8 @@ def test_recall_source_type_filter_hides_atomic_meta_and_includes_mem_note():
     service = RecallIndexService(FakeSupabase([]))
 
     assert service._source_type_filter(None) == [
-        "memory", "journal", "windowsill", "heartbeat", "room", "board", "calendar", "mem_note", "notebook"
+        "memory", "journal", "windowsill", "album", "heartbeat", "room", "board", "calendar",
+        "mem_note", "notebook",
     ]
     assert service._source_type_filter(["mem_note"]) == ["mem_note"]
     assert service._source_type_filter(["note"]) == ["mem_note"]
@@ -952,6 +1051,9 @@ def test_recall_source_type_filter_hides_atomic_meta_and_includes_mem_note():
     assert service._source_type_filter(["note"], allow_mem_note=True) == ["mem_note"]
     assert service._source_type_filter(["atomic", "meta", "memory"]) == ["memory"]
     assert service._source_type_filter(["atomic", "meta"]) == []
+    # 相册备注只索引沈予写的文字；图片字节留在本机卷的 SQLite，从不进 Recall。
+    assert service._source_type_filter(["album"]) == ["album"]
+    assert service._adapter_names(["album"]) == ["shenyu_album_notes"]
     assert service._adapter_names() == [
         "journal",
         "windowsill",
@@ -962,6 +1064,7 @@ def test_recall_source_type_filter_hides_atomic_meta_and_includes_mem_note():
         "calendar_pages",
         "shenyu_mem_notes",
         "shenyu_notebook",
+        "shenyu_album_notes",
     ]
     assert service._adapter_names(["atomic", "meta", "mem_note"]) == ["shenyu_mem_notes"]
     assert service._adapter_names(["atomic", "meta"]) == []
@@ -1031,7 +1134,8 @@ def test_recall_default_includes_mem_note_but_filters_out_atomic_rows_from_rpc()
 
     assert [item["source_table"] for item in result["items"]] == ["shenyu_mem_notes", "memories"]
     assert supabase.rpc_calls[0][1]["source_types"] == [
-        "memory", "journal", "windowsill", "heartbeat", "room", "board", "calendar", "mem_note", "notebook"
+        "memory", "journal", "windowsill", "album", "heartbeat", "room", "board", "calendar",
+        "mem_note", "notebook",
     ]
 
 
