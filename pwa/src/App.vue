@@ -249,7 +249,7 @@ const processSheetEcho = computed(() => {
 })
 const processSheetTitle = computed(() => {
   if (processSheet.value?.view === 'echo') return '回响'
-  if (processSheet.value?.view === 'thinking') return '思考片段'
+  if (processSheet.value?.view === 'thinking') return 'Thought process'
   if (processSheet.value?.view === 'tool') return toolWarmCopy(processSheetEvent.value || { phase: '', tool_call_id: '', name: '' })
   return '沈予刚才做了什么'
 })
@@ -1438,7 +1438,7 @@ onUnmounted(() => {
                   <span class="process-timeline-line" />
                 </span>
                 <span class="process-timeline-copy">
-                  <strong>{{ item.kind === 'echo' ? '回响' : item.kind === 'thinking' ? '思考片段' : toolLabel(item.tool) }}</strong>
+                  <strong>{{ item.kind === 'echo' ? '回响' : item.kind === 'thinking' ? 'Thought process' : toolLabel(item.tool) }}</strong>
                   <small>{{ item.kind === 'echo' ? thinkingPreview(item.echo.content) || '留下了一点回响' : item.kind === 'thinking' ? thinkingPreview(item.thinking.content) || '正在整理想法…' : `${toolState(item.tool)} · ${toolResultPreview(item.tool)}` }}</small>
                 </span>
                 <ChevronRight :size="17" />
@@ -1448,10 +1448,16 @@ onUnmounted(() => {
 
           <template v-else-if="processSheet?.view === 'echo'">
             <pre class="process-text echo-text">{{ processSheetEcho?.content }}</pre>
+            <div class="process-text-actions">
+              <button title="复制" aria-label="复制" @click="copyText(processSheetEcho?.content || '')"><Clipboard :size="15" /></button>
+            </div>
           </template>
 
           <template v-else-if="processSheet?.view === 'thinking'">
             <pre class="process-text">{{ processSheetThinking?.content }}</pre>
+            <div class="process-text-actions">
+              <button title="复制" aria-label="复制" @click="copyText(processSheetThinking?.content || '')"><Clipboard :size="15" /></button>
+            </div>
           </template>
 
           <template v-else>

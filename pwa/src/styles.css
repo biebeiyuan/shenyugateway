@@ -282,8 +282,8 @@ button:disabled { cursor: default; }
 .process-timeline { display: flex; flex-direction: column; }
 .process-timeline-item { display: flex; align-items: stretch; gap: 13px; width: 100%; min-width: 0; padding: 9px 2px; color: var(--text-primary); text-align: left; }
 .process-timeline-item:hover { color: var(--accent); }
-.process-timeline-item.echo { margin: 3px 0; padding: 10px 9px 10px 7px; border: 1px solid var(--echo-border); border-radius: 8px; background: var(--echo-bg); color: var(--echo-text); }
-.process-timeline-item.echo:hover { background: var(--echo-bg-hover); color: var(--echo-text); }
+.process-timeline-item.echo { margin: 3px 0; padding: 10px 9px 10px 7px; border: 0; border-radius: 8px; background: none; color: var(--echo-text); }
+.process-timeline-item.echo:hover { background: var(--echo-bg); color: var(--echo-text); }
 .process-timeline-item.echo .process-timeline-icon, .process-timeline-item.echo .process-timeline-copy small { color: var(--echo-text); }
 .process-timeline-rail { display: flex; width: 20px; flex: none; flex-direction: column; align-items: center; }
 .process-timeline-icon { display: grid; width: 20px; height: 20px; flex: none; place-items: center; color: var(--text-secondary); }
@@ -294,11 +294,14 @@ button:disabled { cursor: default; }
 .process-timeline-copy small { margin-top: 2px; color: var(--text-secondary); font: 13px/1.35 var(--font-sans); }
 .process-timeline-item > svg { align-self: center; flex: none; color: var(--text-faint); }
 .process-disclosure { margin: 0; color: var(--text-secondary); font: 13px/1.5 var(--font-sans); }
-.process-text, .process-code { width: 100%; margin: 0; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-sunken); color: var(--text-primary); font: 13px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
-.process-text { min-height: 150px; max-height: 56dvh; padding: 14px; font-family: var(--font-serif); }
+/* 圆圆要的「Claude 原生的感觉」：思考过程和回响是读的，不是代码——去掉边框和
+   底色，只留文字和留白。工具的参数/结果仍然留框，那是真代码，框住更好读。 */
+.process-code { width: 100%; margin: 0; overflow: auto; border: 1px solid var(--border); border-radius: 8px; background: var(--bg-sunken); color: var(--text-primary); font: 13px/1.55 var(--font-mono); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
+.process-text { width: 100%; margin: 0; overflow: auto; min-height: 150px; max-height: 56dvh; padding: 0; border: 0; background: none; color: var(--text-primary); font: var(--text-read)/1.75 var(--font-serif); white-space: pre-wrap; overflow-wrap: anywhere; word-break: break-word; }
 .process-sheet.echo-detail { background: var(--echo-bg); }
 .process-sheet.echo-detail .sheet-back:hover { background: rgba(255, 255, 255, .3); }
-.process-text.echo-text { border-color: var(--echo-border); background: rgba(255, 255, 255, .32); color: var(--text-primary); font: 15px/1.7 var(--font-serif); }
+/* 回响的粉色留在弹层本身（身份色），正文不再套一层白框——那就是「框中框」的来源。 */
+.process-text.echo-text { border: 0; background: none; color: var(--text-primary); }
 .process-code-section { display: flex; flex-direction: column; gap: 7px; }
 .process-code-label { color: var(--text-secondary); font: 600 12px/1.3 var(--font-sans); }
 .process-code { max-height: 36dvh; padding: 11px 12px; }
@@ -392,7 +395,7 @@ button:disabled { cursor: default; }
 
 @media (prefers-color-scheme: dark) {
   .composer-box { border-color: var(--border); }
-  .process-text.echo-text { background: rgba(0, 0, 0, .12); }
+  /* 回响正文已无底色，深色模式不需要再压一层。 */
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -427,3 +430,9 @@ button:disabled { cursor: default; }
 @media (prefers-reduced-motion: reduce) {
   .photo-stack-card { transition: none; }
 }
+
+/* 复制按钮：跟消息动作栏同一套（20×30、只在 hover 时着色），刻意不显眼——
+   它是需要时才找的东西，不该跟正文抢注意力。 */
+.process-text-actions { display: flex; margin-top: 2px; color: var(--text-faint); }
+.process-text-actions button { display: grid; width: 20px; height: 30px; place-items: center; padding: 0; border-radius: 50%; color: currentColor; }
+.process-text-actions button:hover { color: var(--accent); }
