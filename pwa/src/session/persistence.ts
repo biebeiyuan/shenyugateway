@@ -167,9 +167,43 @@ function truncateEventOutputs(events: ToolEvent[]): ToolEvent[] {
   ))
 }
 
+// 落盘是「从 UiMessage 重建一行」，所以任何本版本不认识的字段都会在重建时消失。
+// 装成 PWA 时这不是理论问题：Service Worker 先用缓存里的旧包把界面画出来，旧包
+// 落一次盘就把新包写的字段抹掉了，等新包刷新上来已经晚了。2026-08-30 圆圆手机上
+// 的图就是这样丢的（旧包连 attachments 都不写）。
+//
+// 所以按 id 保留上一次落盘里的未知字段。这不是通用的「向前兼容」承诺——只是让
+// 一个旧包最多做到「不更新」，而不是「擦掉」。
+const KNOWN_ROW_KEYS = new Set([
+  'id', 'role', 'content', 'echo', 'echoSegments', 'attachments', 'thinking',
+  'thinkingSegments', 'events', 'error', 'truncated', 'variants',
+  'selectedVariantIndex', 'responseMeta',
+])
+
+function unknownFieldsById(): Map<string, Record<string, unknown>> {
+  const carried = new Map<string, Record<string, unknown>>()
+  try {
+    const raw = JSON.parse(localStorage.getItem(STORAGE_MESSAGES) || '[]')
+    if (!Array.isArray(raw)) return carried
+    for (const row of raw) {
+      if (!row || typeof row !== 'object' || !row.id) continue
+      const extras: Record<string, unknown> = {}
+      for (const [key, value] of Object.entries(row)) {
+        if (!KNOWN_ROW_KEYS.has(key)) extras[key] = value
+      }
+      if (Object.keys(extras).length) carried.set(String(row.id), extras)
+    }
+  } catch {
+    // 读不出来就当没有可保留的字段。
+  }
+  return carried
+}
+
 export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit: number) {
   messages.forEach(syncCurrentVariant)
+  const carried = unknownFieldsById()
   const safe: StoredRow[] = messages.map((message) => ({
+    ...carried.get(message.id),
     id: message.id,
     role: message.role,
     content: message.content,

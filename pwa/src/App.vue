@@ -967,6 +967,13 @@ async function restoreLocalPhotos() {
   }
 }
 
+// 回填只在 onMounted 跑一次是不够的：装成 PWA 时 Service Worker 接管会强制刷新
+// 页面（main.ts），刷新打断那一次就没有第二次机会，气泡会一直停在「图过期了」。
+// 回前台和切会话后各补一次——它本身按 id 幂等，重复跑没有代价。
+function scheduleLocalPhotoRestore() {
+  void restoreLocalPhotos()
+}
+
 async function chooseImages(event: Event) {
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files || [])
@@ -1292,6 +1299,8 @@ function handleVisibilityChange() {
     persistMessages()
     return
   }
+  // 回前台补一次回填：SW 接管的强制刷新可能打断了 onMounted 那一次。
+  scheduleLocalPhotoRestore()
   if (busy.value) return
   if (tailNeedsReconcile(messages.value)) void reconcileTailFromServer()
   const now = Date.now()
@@ -1320,7 +1329,7 @@ onMounted(async () => {
   await loadSessions()
   await adoptInitialSession()
   // 把本机还留着的图接回气泡；淘汰掉的保持「过期」样子。
-  void restoreLocalPhotos()
+  scheduleLocalPhotoRestore()
   // 本地恢复的消息可能停在半截（流式中途进程被杀）：去服务器找回全文。
   if (tailNeedsReconcile(messages.value)) void reconcileTailFromServer()
   nextTick(() => inputRef.value?.focus())

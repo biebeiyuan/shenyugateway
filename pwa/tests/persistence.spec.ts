@@ -302,3 +302,41 @@ describe('stored error text is bounded', () => {
     expect(String(stored[0].variants[0].error).length).toBeLessThanOrEqual(301)
   })
 })
+
+describe('an older build must not erase what a newer build stored', () => {
+  // 2026-08-30 圆圆手机上的真实场景：装成 PWA 后 Service Worker 先用缓存里的
+  // 旧包把界面画出来，旧包落一次盘就把新包写的字段抹掉，等新包刷新上来已经晚了。
+  it('carries unknown fields through a round-trip', () => {
+    localStorage.setItem(STORAGE_MESSAGES, JSON.stringify([
+      {
+        id: 'u1',
+        role: 'user',
+        content: '看这个',
+        attachments: [{ id: 'img-1', name: 'p.jpg', mime: 'image/jpeg', fingerprint: 'f'.repeat(64) }],
+        // 未来某个版本写的字段，本版本完全不认识。
+        futureField: { keepMe: true },
+      },
+    ]))
+
+    // 本版本落盘：重建行时不认识 futureField，但必须保留它。
+    persistStoredMessages(loadStoredMessages(), FALLBACK_SESSION_MESSAGE_LIMIT)
+
+    const stored = JSON.parse(localStorage.getItem(STORAGE_MESSAGES) || '[]')
+    expect(stored[0].futureField).toEqual({ keepMe: true })
+    // 本版本自己认识的字段照常更新。
+    expect(stored[0].attachments[0].fingerprint).toBe('f'.repeat(64))
+  })
+
+  it('does not invent carried fields for new messages', () => {
+    localStorage.clear()
+    persistStoredMessages([uiMessage('user', 'fresh')], FALLBACK_SESSION_MESSAGE_LIMIT)
+    const stored = JSON.parse(localStorage.getItem(STORAGE_MESSAGES) || '[]')
+    expect(Object.keys(stored[0]).sort()).not.toContain('futureField')
+  })
+
+  it('survives a corrupt previous entry', () => {
+    localStorage.setItem(STORAGE_MESSAGES, 'not json at all')
+    expect(() => persistStoredMessages([uiMessage('user', 'x')], FALLBACK_SESSION_MESSAGE_LIMIT)).not.toThrow()
+    expect(loadStoredMessages()[0].content).toBe('x')
+  })
+})
