@@ -56,6 +56,22 @@ EXPIRED_IMAGE_MARKER = "shenyu_expired_image"
 EXPIRED_IMAGE_NOTE_PREFIX = "圆圆发来的照片我已经看过"
 
 
+# 只在某个浏览器进程内有效的 URL scheme。它们出现在上游请求里一定是客户端的
+# 疏漏：上游会去取一个取不到的地址，然后报解码失败（2026-08-30 线上 500
+# `illegal base64 data at input byte 0`）。宁可当成「这里原本有张图」，也不要送
+# 一个坏链接过去。
+UNFETCHABLE_URL_SCHEMES = ("blob:", "filesystem:", "about:")
+
+# 上游取不到那张图时留下的痕迹。刻意不静默丢弃：静默丢弃会让沈予以为圆圆没发图，
+# 而他其实发了——只是这一份传不过去。
+UNAVAILABLE_IMAGE_NOTE = "（圆圆发来的这张照片这次没能传过来。）"
+
+
+def is_unfetchable_image_url(url: object) -> bool:
+    text = str(url or "").strip().lower()
+    return bool(text) and text.startswith(UNFETCHABLE_URL_SCHEMES)
+
+
 def expired_image_fingerprint(block: object) -> str:
     """从一个过期图占位块里取出图片字节指纹；不是这种块就返回空串。"""
     if not isinstance(block, dict):

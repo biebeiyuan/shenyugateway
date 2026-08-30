@@ -10,6 +10,7 @@ import {
   STORED_PHOTO_LIMIT,
   closePhotoStore,
   getPhotos,
+  photoDataUrl,
   prunePhotos,
   putPhoto,
 } from '../src/session/photoStore'
@@ -74,7 +75,9 @@ describe('local photo lifecycle', () => {
     const found = await getPhotos(wanted)
     for (const message of restored) {
       for (const attachment of message.attachments) {
-        if (found.has(attachment.id)) attachment.dataUrl = 'blob:restored'
+        const stored = found.get(attachment.id)
+        // 与 App.vue::restoreLocalPhotos 一致：回填 data URL，不是 blob: 地址。
+        if (stored) attachment.dataUrl = photoDataUrl(stored)
       }
     }
 
@@ -92,7 +95,9 @@ describe('local photo lifecycle', () => {
     expect(oldest).toContain('第 0 轮')
 
     const newest = JSON.stringify(wireContent(restored[total - 1]))
-    expect(newest).toContain('blob:restored')
+    // 回填后仍是能上线的 data URL —— blob: 地址上游取不到（线上 500）。
+    expect(newest).toContain('data:image/jpeg;base64,')
+    expect(newest).not.toContain('blob:')
     expect(newest).not.toContain(EXPIRED_IMAGE_MARKER)
   })
 })

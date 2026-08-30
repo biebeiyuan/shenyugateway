@@ -4,6 +4,7 @@ import {
   STORED_PHOTO_LIMIT,
   getPhoto,
   getPhotos,
+  photoDataUrl,
   photoFingerprint,
   prunePhotos,
   putPhoto,
@@ -95,5 +96,32 @@ describe('photoStore', () => {
 
     expect([...found.keys()]).toEqual(['img-here'])
     expect(await getPhotos([])).toEqual(new Map())
+  })
+})
+
+describe('photoDataUrl', () => {
+  // 回填必须给 data URL：createObjectURL 的 blob: 地址只在本进程有效，写进
+  // attachment.dataUrl 就会被当真图上传，上游取不到（2026-08-30 线上 500）。
+  it('rebuilds a data URL that carries the bytes', async () => {
+    const bytes = new Uint8Array([255, 216, 255, 224, 0, 16])
+    await putPhoto('img-d', new Blob([bytes], { type: 'image/jpeg' }), 'image/jpeg')
+    const loaded = await getPhoto('img-d')
+    const url = photoDataUrl(loaded!)
+
+    expect(url.startsWith('data:image/jpeg;base64,')).toBe(true)
+    expect(url).not.toContain('blob:')
+    // 解回来必须与原字节逐位相同。
+    const decoded = Uint8Array.from(atob(url.split(',')[1]), (c) => c.charCodeAt(0))
+    expect([...decoded]).toEqual([...bytes])
+  })
+
+  it('handles a photo large enough to need chunking', async () => {
+    // 一次性 String.fromCharCode.apply 几十万字节会爆调用栈。
+    const big = new Uint8Array(200_000).map((_, index) => index % 251)
+    await putPhoto('img-big', new Blob([big], { type: 'image/jpeg' }), 'image/jpeg')
+    const url = photoDataUrl((await getPhoto('img-big'))!)
+    const decoded = Uint8Array.from(atob(url.split(',')[1]), (c) => c.charCodeAt(0))
+    expect(decoded.length).toBe(big.length)
+    expect(decoded[199_999]).toBe(big[199_999])
   })
 })

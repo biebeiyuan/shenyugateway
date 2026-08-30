@@ -118,3 +118,36 @@ describe('wireContent with local photo expiry', () => {
     expect(wired.split(EXPIRED_IMAGE_MARKER).length - 1).toBe(8)
   })
 })
+
+describe('process-local URLs must never go on the wire', () => {
+  // 2026-08-30 线上 500：回填用了 createObjectURL，那个 blob: 地址被当真图上传，
+  // 上游取不到 → illegal base64 data at input byte 0。回填现在走 data URL；
+  // 这几条守的是「万一又出现进程内地址，也不能上线」。
+  it('sends the fingerprint instead of a blob URL', () => {
+    const blobbed: Attachment = {
+      id: 'img-blob', name: 'p.jpg', mime: 'image/jpeg',
+      fingerprint: 'c'.repeat(64), dataUrl: 'blob:https://host/9f8c-4d2a',
+    }
+    const blocks = wireContent(userWith([blobbed])) as Array<Record<string, any>>
+    const serialized = JSON.stringify(blocks)
+    expect(serialized).not.toContain('blob:')
+    expect(blocks[1]).toEqual({
+      type: 'image',
+      source: { type: EXPIRED_IMAGE_MARKER, fingerprint: 'c'.repeat(64) },
+    })
+  })
+
+  it('drops a blob URL with no fingerprint rather than sending it', () => {
+    const blobbed: Attachment = { id: 'x', name: 'p.jpg', mime: 'image/jpeg', dataUrl: 'blob:null/abc' }
+    expect(JSON.stringify(wireContent(userWith([blobbed])))).not.toContain('blob:')
+  })
+
+  it('still sends genuine data URLs', () => {
+    const real: Attachment = {
+      id: 'img-real', name: 'p.jpg', mime: 'image/jpeg',
+      fingerprint: 'd'.repeat(64), dataUrl: 'data:image/jpeg;base64,AAAA',
+    }
+    const blocks = wireContent(userWith([real])) as Array<Record<string, any>>
+    expect(blocks[1]).toEqual({ type: 'image_url', image_url: { url: 'data:image/jpeg;base64,AAAA' } })
+  })
+})

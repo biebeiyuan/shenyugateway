@@ -642,3 +642,50 @@ def test_expired_image_marker_never_survives_into_an_anthropic_request():
             assert block["type"] in {"text", "image", "tool_use", "tool_result", "thinking"}
             if block["type"] == "image":
                 assert block["source"]["type"] in {"base64", "url"}
+
+
+def _img(url: str) -> dict:
+    return {"type": "image_url", "image_url": {"url": url}}
+
+
+# 2026-08-30 线上 500：`illegal base64 data at input byte 0`。回填气泡时用了
+# createObjectURL，那个 blob: 地址被写进 attachment.dataUrl，下一次发消息就当真图
+# 上传，上游去取一个进程内地址、拿到空内容、解码失败。PWA 侧已改成回填 data URL，
+# 这两条是两个协议各自的最后一道。
+def test_process_local_image_urls_never_reach_either_protocol():
+    from shenyu_gateway.client_extra import UNAVAILABLE_IMAGE_NOTE
+    from shenyu_gateway.upstream_adapter import _sanitize_openai_content_blocks
+
+    for url in ("blob:https://host/9f8c-4d2a", "blob:null/abc", "filesystem:https://h/t/x.jpg"):
+        for converted in (_content_blocks([_img(url)]), _sanitize_openai_content_blocks([_img(url)])):
+            serialized = json.dumps(converted, ensure_ascii=False)
+            assert "blob:" not in serialized
+            assert "filesystem:" not in serialized
+            # 不静默丢弃：沈予要知道圆圆发过一张图，只是这次没传过来。
+            assert converted == [{"type": "text", "text": UNAVAILABLE_IMAGE_NOTE}]
+
+
+def test_real_photos_are_untouched_by_that_guard():
+    """兜底只对取不到的地址生效，日常图片一个字节都不该动。"""
+    from shenyu_gateway.upstream_adapter import _sanitize_openai_content_blocks
+
+    data_url = "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ=="
+    assert _content_blocks([_img(data_url)]) == [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/jpeg", "data": "/9j/4AAQSkZJRgABAQ=="}}
+    ]
+    assert _content_blocks([_img("https://example.com/p.jpg")]) == [
+        {"type": "image", "source": {"type": "url", "url": "https://example.com/p.jpg"}}
+    ]
+    # OpenAI 路径原样透传真图。
+    assert _sanitize_openai_content_blocks([_img(data_url)]) == [_img(data_url)]
+    assert _sanitize_openai_content_blocks([_img("https://example.com/p.jpg")]) == [_img("https://example.com/p.jpg")]
+
+
+def test_openai_path_also_drops_gateway_internal_image_markers():
+    from shenyu_gateway.upstream_adapter import _sanitize_openai_content_blocks
+
+    marker = {"type": "image", "source": {"type": "shenyu_expired_image", "fingerprint": "aa"}}
+    assert _sanitize_openai_content_blocks([marker]) == []
+    assert _sanitize_openai_content_blocks([{"type": "text", "text": "x"}, marker]) == [
+        {"type": "text", "text": "x"}
+    ]

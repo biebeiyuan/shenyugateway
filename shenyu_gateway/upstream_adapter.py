@@ -5,6 +5,7 @@ import uuid
 from typing import Any, Optional
 
 from .runtime import now_ts as _now_ts
+from .client_extra import UNAVAILABLE_IMAGE_NOTE, is_unfetchable_image_url
 from .context_window import (
     INTERNAL_LAYER_KEY,
     MEMORY_ISLAND_BUMP_KEY,
@@ -106,6 +107,20 @@ def _sanitize_openai_content_blocks(content: list[Any]) -> list[Any]:
             if not text.strip():
                 continue
             block["text"] = text
+        elif block_type == "image_url":
+            # 这条路径原来把图片块原样透传，所以进程内地址（blob:）会直接送到上游
+            # 并触发解码失败。两个协议都要拦，不能只拦 Anthropic 那半。
+            image_url = block.get("image_url")
+            url = image_url.get("url") if isinstance(image_url, dict) else image_url
+            if is_unfetchable_image_url(url):
+                blocks.append({"type": "text", "text": UNAVAILABLE_IMAGE_NOTE})
+                continue
+        elif block_type == "image":
+            # 网关内部图片标记（过期占位、血统标记）不该出现在上游请求里。
+            source = block.get("source")
+            source_type = str(source.get("type") or "") if isinstance(source, dict) else ""
+            if source_type.startswith("shenyu_"):
+                continue
         blocks.append(block)
     return blocks
 
@@ -504,6 +519,11 @@ def _content_blocks(content: Any) -> list[dict]:
             if block_type == "image_url":
                 image_url = block.get("image_url")
                 url = image_url.get("url") if isinstance(image_url, dict) else image_url
+                if is_unfetchable_image_url(url):
+                    # 进程内地址（blob:/filesystem:）上游取不到。留一句痕迹，
+                    # 别让沈予以为圆圆没发图。
+                    blocks.append({"type": "text", "text": UNAVAILABLE_IMAGE_NOTE})
+                    continue
                 if isinstance(url, str) and url.strip():
                     normalized_url = url.strip()
                     if normalized_url.startswith("data:"):

@@ -51,7 +51,11 @@ export function wireContent(message: UiMessage): string | Array<Record<string, u
   const blocks: Array<Record<string, unknown>> = []
   if (content.trim()) blocks.push({ type: 'text', text: content })
   for (const attachment of message.attachments) {
-    if (attachment.dataUrl) {
+    // `blob:` / `filesystem:` 只在本浏览器进程内有效。它们绝不能上线：上游会拿到
+    // 一个取不到的地址（2026-08-30 线上 500）。回填走 data URL，所以正常不会出现
+    // 这种值；这里是最后一道，出现了就按「本机已过期」处理，送指纹而不是坏链接。
+    const usable = attachment.dataUrl && attachment.dataUrl.startsWith('data:')
+    if (usable) {
       blocks.push({ type: 'image_url', image_url: { url: attachment.dataUrl } })
     } else if (attachment.fingerprint) {
       // 本机已淘汰这张图：送指纹，不送字节。10 张图的会话实测从 3.82MB/请求

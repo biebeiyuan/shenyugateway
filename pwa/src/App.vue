@@ -92,7 +92,7 @@ import {
   loadStoredMessages,
   persistStoredMessages,
 } from './session/persistence'
-import { getPhotos, prunePhotos, putPhoto } from './session/photoStore'
+import { getPhotos, photoDataUrl, prunePhotos, putPhoto } from './session/photoStore'
 import { hydrateToolEvents } from './session/toolHydration'
 import { applyReconciledTail, tailNeedsReconcile } from './session/reconcile'
 import {
@@ -959,7 +959,9 @@ async function restoreLocalPhotos() {
     for (const message of messages.value) {
       for (const attachment of message.attachments) {
         const stored = found.get(attachment.id)
-        if (stored) attachment.dataUrl = URL.createObjectURL(stored.blob)
+        // 必须是 data URL 而不是 createObjectURL 的 blob: 地址——后者只在本进程
+        // 有效，写进 dataUrl 就会当真图上传，上游取不到（线上 500）。
+        if (stored) attachment.dataUrl = photoDataUrl(stored)
       }
     }
   } catch {

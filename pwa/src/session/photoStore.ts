@@ -35,7 +35,7 @@ export type StoredPhoto = {
 
 export type PhotoMeta = Omit<StoredPhoto, 'bytes'>
 
-export type LoadedPhoto = PhotoMeta & { blob: Blob }
+export type LoadedPhoto = PhotoMeta & { blob: Blob; bytes: ArrayBuffer }
 
 let dbPromise: Promise<IDBDatabase> | null = null
 
@@ -82,7 +82,27 @@ export async function photoFingerprint(blob: Blob): Promise<string> {
 
 function toLoaded(row: StoredPhoto): LoadedPhoto {
   const { bytes, ...meta } = row
-  return { ...meta, blob: new Blob([bytes], { type: row.mime }) }
+  return { ...meta, blob: new Blob([bytes], { type: row.mime }), bytes }
+}
+
+const BASE64_CHUNK = 0x8000
+
+/**
+ * 回填气泡用的 data URL。
+ *
+ * 刻意不用 `URL.createObjectURL`：那个 `blob:` 地址只在这个浏览器进程内有效，
+ * 一旦被写进 `attachment.dataUrl`，下一次发消息就会当成真图上传，上游拿到一个
+ * 取不到的链接（2026-08-30 线上 500：`illegal base64 data at input byte 0`）。
+ * data URL 到哪儿都成立，代价是内存里多一份 base64；本机上限 30 张，可以接受。
+ */
+export function photoDataUrl(photo: LoadedPhoto): string {
+  const view = new Uint8Array(photo.bytes)
+  // 分块转换：一次性 apply 几十万字节会爆调用栈。
+  let binary = ''
+  for (let offset = 0; offset < view.length; offset += BASE64_CHUNK) {
+    binary += String.fromCharCode(...view.subarray(offset, offset + BASE64_CHUNK))
+  }
+  return `data:${photo.mime || 'image/jpeg'};base64,${btoa(binary)}`
 }
 
 export async function putPhoto(id: string, blob: Blob, mime: string): Promise<PhotoMeta> {
