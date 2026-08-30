@@ -25,6 +25,7 @@ import {
   X,
 } from 'lucide-vue-next'
 import ChatMessageRow from './components/ChatMessageRow.vue'
+import PhotoViewer from './components/PhotoViewer.vue'
 import { activePwaBuildInfo, samePwaBuild, type PwaBuildInfo } from './buildInfo'
 import { toolState, toolWarmCopy, type ToolEvent } from './toolLanguage'
 import type {
@@ -133,6 +134,8 @@ const storedSessionTag = localStorage.getItem(STORAGE_SESSION) || ''
 const messages = ref<UiMessage[]>(loadStoredMessages())
 const draft = ref('')
 const pendingAttachments = ref<Attachment[]>([])
+// 看图器：点开的是哪条消息的第几张。null = 关着。
+const photoViewer = ref<{ messageId: string; position: number } | null>(null)
 const models = ref<ModelOption[]>([])
 const recentSessions = ref<GatewaySession[]>([])
 const selectedModel = ref(localStorage.getItem(STORAGE_MODEL) || 'default')
@@ -972,6 +975,21 @@ async function restoreLocalPhotos() {
 // 回填只在 onMounted 跑一次是不够的：装成 PWA 时 Service Worker 接管会强制刷新
 // 页面（main.ts），刷新打断那一次就没有第二次机会，气泡会一直停在「图过期了」。
 // 回前台和切会话后各补一次——它本身按 id 幂等，重复跑没有代价。
+// 看图器只收还有字节的图：本机已淘汰的那些没有可看的内容。
+const viewerPhotos = computed(() => {
+  const target = messages.value.find((message) => message.id === photoViewer.value?.messageId)
+  return (target?.attachments || []).filter((attachment) => attachment.dataUrl)
+})
+
+function openPhotoViewer(message: UiMessage, position: number) {
+  const usable = message.attachments.filter((attachment) => attachment.dataUrl)
+  // position 是在全部附件里的下标；换算成「可看的那些」里的下标。
+  const clicked = message.attachments[position]
+  const index = Math.max(0, usable.findIndex((attachment) => attachment.id === clicked?.id))
+  if (!usable.length) return
+  photoViewer.value = { messageId: message.id, position: index }
+}
+
 function scheduleLocalPhotoRestore() {
   void restoreLocalPhotos()
 }
@@ -1485,6 +1503,7 @@ onUnmounted(() => {
             @retry="retryMessage(index)"
             @switch-variant="switchMessageVariant(index, $event)"
             @edit="beginEdit(message)"
+            @open-photo="openPhotoViewer(message, $event)"
           />
         </template>
       </section>
@@ -1555,6 +1574,14 @@ onUnmounted(() => {
         </div>
       </footer>
     </main>
+
+    <PhotoViewer
+      v-if="photoViewer && viewerPhotos.length"
+      :urls="viewerPhotos.map((attachment) => attachment.dataUrl || '')"
+      :index="photoViewer.position"
+      @close="photoViewer = null"
+      @change="(next) => { if (photoViewer) photoViewer.position = next }"
+    />
 
     <div v-if="processSheetMessage" class="sheet-layer" @click.self="closeProcessSheet">
       <section class="bottom-sheet process-sheet" :class="{ 'echo-detail': processSheet?.view === 'echo' }">

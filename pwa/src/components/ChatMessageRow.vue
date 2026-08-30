@@ -21,6 +21,7 @@ const emit = defineEmits<{
   retry: []
   switchVariant: [direction: -1 | 1]
   edit: []
+  openPhoto: [position: number]
 }>()
 
 const broken = ref(false)
@@ -43,6 +44,7 @@ onErrorCaptured((error) => {
       @retry="emit('retry')"
       @switch-variant="emit('switchVariant', $event)"
       @edit="emit('edit')"
+      @open-photo="emit('openPhoto', $event)"
     />
   </article>
 </template>

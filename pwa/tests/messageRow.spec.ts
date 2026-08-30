@@ -176,3 +176,43 @@ describe('MarkdownBody', () => {
     expect(host.innerHTML).toContain('hljs')
   })
 })
+
+describe('photos in a message row', () => {
+  const live = (n: number) => ({ id: `l${n}`, name: 'p.jpg', mime: 'image/jpeg', fingerprint: 'f'.repeat(64), dataUrl: `data:image/jpeg;base64,A${n}` })
+  const expired = (n: number) => ({ id: `d${n}`, name: 'p.jpg', mime: 'image/jpeg', fingerprint: 'g'.repeat(64) })
+
+  function render(attachments: any[]) {
+    const message = uiMessage('user', '看这个', { attachments })
+    const { host } = mount({ setup: () => () => h(ChatMessageRow, { message, metaLabel: '' }) })
+    return host
+  }
+
+  it('shows a single photo plainly, not as a fake stack', async () => {
+    const host = render([live(1)])
+    await nextTick()
+    expect(host.querySelector('.photo-stack')).toBeNull()
+    expect(host.querySelectorAll('.message-images img')).toHaveLength(1)
+  })
+
+  it('collapses several photos into one stack card', async () => {
+    const host = render([live(1), live(2), live(3)])
+    await nextTick()
+    expect(host.querySelector('.photo-stack')).not.toBeNull()
+    expect(host.querySelectorAll('.photo-stack-card')).toHaveLength(3)
+  })
+
+  it('still notes the expired ones beside a stack', async () => {
+    // 一叠里有过期的图时要留痕迹，否则会以为圆圆没发那几张。
+    const host = render([live(1), live(2), expired(1)])
+    await nextTick()
+    expect(host.querySelectorAll('.photo-stack-card')).toHaveLength(2)
+    expect(host.querySelector('.message-image-expired')?.textContent).toContain('另有 1 张过期了')
+  })
+
+  it('falls back to plain expiry markers when nothing is left to show', async () => {
+    const host = render([expired(1), expired(2)])
+    await nextTick()
+    expect(host.querySelector('.photo-stack')).toBeNull()
+    expect(host.querySelectorAll('.message-image-expired')).toHaveLength(2)
+  })
+})

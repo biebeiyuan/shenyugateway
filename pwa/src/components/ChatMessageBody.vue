@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { computed } from 'vue'
 import {
   ChevronLeft,
   ChevronRight,
@@ -10,6 +11,7 @@ import {
 } from 'lucide-vue-next'
 import ChatNestSprite from '../ChatNestSprite.vue'
 import MarkdownBody from './MarkdownBody.vue'
+import PhotoStackCard from './PhotoStackCard.vue'
 import { CHATNEST_STATUS_SPRITES } from '../chatnestSprite'
 import { assistantParts, groupHasEcho, groupHasThinking, processSummary, traceRows } from '../stream/timeline'
 import { canSwitchMessageVariant, selectedVariantIndex, variantCount } from '../session/variants'
@@ -33,7 +35,19 @@ const emit = defineEmits<{
   retry: []
   switchVariant: [direction: -1 | 1]
   edit: []
+  openPhoto: [position: number]
 }>()
+
+// 一叠里只有还有字节的图能显示；本机淘汰掉的单独留一句痕迹。
+const livePhotos = computed(() => props.message.attachments.filter((attachment) => attachment.dataUrl))
+const expiredCount = computed(() => props.message.attachments.length - livePhotos.value.length)
+
+// 堆叠卡点的是「可看的那几张」里的第几张，换算回全部附件里的下标。
+function onStackTap(stackIndex: number) {
+  const target = livePhotos.value[stackIndex]
+  const position = props.message.attachments.findIndex((attachment) => attachment.id === target?.id)
+  emit('openPhoto', Math.max(0, position))
+}
 
 function bubbleBody(): string {
   return splitStatusSuffix(props.message.content).body
@@ -58,11 +72,26 @@ function spriteMode(): SpriteMode {
   <div v-if="message.role === 'assistant'" class="assistant-avatar"><Sparkles :size="15" /></div>
   <div class="message-column">
     <div v-if="message.role === 'user' && message.attachments.length" class="message-images">
-      <template v-for="attachment in message.attachments" :key="attachment.id">
-        <img v-if="attachment.dataUrl" :src="attachment.dataUrl" :alt="attachment.name" />
+      <!-- 两张以上收成一叠合并照片卡；一张就直接显示，不必让它假装是一叠。 -->
+      <PhotoStackCard
+        v-if="livePhotos.length > 1"
+        :urls="livePhotos.map((attachment) => attachment.dataUrl || '')"
+        @tap="onStackTap"
+      />
+      <template v-else v-for="(attachment, position) in message.attachments" :key="attachment.id">
+        <img
+          v-if="attachment.dataUrl"
+          :src="attachment.dataUrl"
+          :alt="attachment.name"
+          @click="emit('openPhoto', position)"
+        />
         <!-- 本机只留最近 30 张，更早的图散了。存进相册的那些不受这个限制。 -->
         <span v-else class="message-image-expired">图过期了</span>
       </template>
+      <!-- 一叠里过期的那些仍要留痕迹，否则会以为圆圆没发那几张。 -->
+      <span v-if="livePhotos.length > 1 && expiredCount" class="message-image-expired">
+        另有 {{ expiredCount }} 张过期了
+      </span>
     </div>
     <div v-if="message.role === 'user'" class="user-bubble">
       <template v-if="bubbleBody()">{{ bubbleBody() }}</template>
