@@ -446,6 +446,29 @@ test('archive page loads', async ({ page }) => {
   })
 })
 
+// 2026-08-30：日历展开后第一行被顶成 120px 高，留下一大块白。原因是月初前导空格子
+// 用了 .empty，而本页空状态块（「这天很安静」）也叫 .empty 且带 padding: 60px 0。
+// 只读 CSS 源码看不出来——两条规则各自都对，是类名撞了。所以这里断言计算后的行高。
+test('archive calendar has no blank row when a month starts late in the week', async ({ page }) => {
+  await openAdminRoute(page, '/archive', async () => {
+    await expect(page.getByTestId('page-archive')).toBeVisible()
+    const toggle = page.locator('.cal-toggle')
+    if (!(await toggle.count())) return
+    await toggle.click()
+    const grid = page.locator('.cal-grid')
+    await expect(grid).toBeVisible()
+    const rows = await grid.evaluate((el) => getComputedStyle(el).gridTemplateRows)
+    // 每一行都该是格子的高度，没有哪一行被撑成三倍
+    const heights = rows.split(' ').map((value) => Math.round(parseFloat(value)))
+    expect(heights.every((height) => height <= 40)).toBe(true)
+    // 占位格子不占高度，但仍占列位（否则 1 号会跑到周一）
+    const blank = grid.locator('.cal-cell.blank').first()
+    if (await blank.count()) {
+      expect(await blank.evaluate((el) => Math.round(el.getBoundingClientRect().height))).toBe(0)
+    }
+  })
+})
+
 test('resident bookshelf keeps all three tiers and living-book reader alive', async ({ page }) => {
   await page.route('**/api/books', async (route) => {
     await route.fulfill({

@@ -297,7 +297,7 @@ async function saveClip() {
               :key="idx"
               class="cal-cell"
               :class="{
-                empty: !cell,
+                blank: !cell,
                 'has-data': cell && cell.count > 0,
                 active: cell && cell.date === selectedDate,
                 today: cell && cell.date === localDateStr(),
@@ -534,12 +534,15 @@ async function saveClip() {
   transition: all 0.2s ease;
 }
 
-/* 月初的前导空格子只用来占位对齐星期，不该有高度——2026-08-01 是周六，于是五个
-   36px 高的空 div 排成一行，就是展开后那块白。用 visibility 而不是 display:none，
-   grid 的列位置才还在。 */
-.cal-cell.empty {
+/* 月初的前导空格子只用来占位对齐星期，不该有高度。
+   刻意叫 blank 而不是 empty：本文件下方的空状态块（「这天很安静」）也叫 .empty，
+   它带 padding: 60px 0，于是这些格子各撑出 120px，把第一行顶成 120px 高——
+   2026-08-01 是周六、有五个前导格，那就是展开日历后那一大块白。
+   类名撞了两次都不容易看出来，所以这里换名而不是靠权重压过去。 */
+.cal-cell.blank {
   pointer-events: none;
   height: 0;
+  padding: 0;
   visibility: hidden;
 }
 
