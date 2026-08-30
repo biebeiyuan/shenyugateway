@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import json
 from types import SimpleNamespace
 
 import pytest
 
+from shenyu_gateway.client_extra import EXPIRED_IMAGE_MARKER, expired_image_note_text
 from shenyu_gateway.context_layers import (
     assemble_layered_messages,
+    expired_image_fingerprints,
     tool_safe_trim_start,
     trim_client_extra_bundle_attachments,
     trim_client_image_blocks,
@@ -21,6 +24,7 @@ from shenyu_gateway.context_window import (
     classify_history_event,
     compact_history_event_messages,
     insert_bridge_messages,
+    normalize_history_event_messages,
     overflow_messages_for_limit,
     select_chunked_window,
 )
@@ -1061,6 +1065,129 @@ def test_trim_client_image_blocks_can_remove_all_images_for_storage():
     assert meta["client_image_blocks_trimmed"] == 2
     assert trimmed[0]["content"] == [{"type": "text", "text": "看这个。"}]
     assert trimmed[1]["content"] == "圆圆发来的照片我已经看过。"
+
+
+def _expired(fingerprint: str) -> dict:
+    return {"type": "image", "source": {"type": EXPIRED_IMAGE_MARKER, "fingerprint": fingerprint}}
+
+
+# 2026-08-30 的实际缺陷：PWA 送来的过期占位块落在「最近两轮」里时不参与替换，
+# 于是被原样转给上游——那是个上游不认识的 image block，Anthropic 直接报错。
+# 触发路径真实存在：沈予编辑一条旧消息重发，那条就成了最新一轮，而它的图早已
+# 本机过期。占位块里根本没有图，「保留最近两轮的图」对它不适用。
+def test_expired_image_marker_never_reaches_upstream_even_in_the_newest_turn():
+    messages = [
+        {"role": "user", "content": [{"type": "text", "text": "改写这条"}, _expired("aa")]},
+    ]
+
+    trimmed, meta = trim_client_image_blocks(messages, keep_recent_messages=2)
+
+    assert meta["client_image_expired_markers_seen"] == 1
+    assert meta["client_image_messages_trimmed"] == 1
+    serialized = json.dumps(trimmed, ensure_ascii=False)
+    assert EXPIRED_IMAGE_MARKER not in serialized
+    # 这一轮说过的话一个字都不能少。
+    assert "改写这条" in serialized
+
+
+def test_expired_image_marker_is_replaced_by_what_shenyu_wrote_in_his_album():
+    notes = {"aa": expired_image_note_text("海边那天的光落在她手上", "安静")}
+    messages = [
+        {"role": "user", "content": [_expired("aa")]},
+        {"role": "assistant", "content": "记得"},
+        {"role": "user", "content": "后来呢"},
+    ]
+
+    trimmed, meta = trim_client_image_blocks(messages, keep_recent_messages=2, album_notes=notes)
+
+    assert meta["client_image_album_notes_used"] == 1
+    assert trimmed[0]["content"] == "圆圆发来的照片我已经看过。——海边那天的光落在她手上｜安静"
+
+
+def test_album_note_still_reaches_the_model_when_the_turn_also_has_text():
+    """带文字的消息也要送到他写的那句，否则「读到自己的描述」在这种消息里落空。"""
+    notes = {"aa": expired_image_note_text("那天很亮")}
+    messages = [{"role": "user", "content": [{"type": "text", "text": "还记得这张吗"}, _expired("aa")]}]
+
+    trimmed, _ = trim_client_image_blocks(messages, keep_recent_messages=0, album_notes=notes)
+
+    texts = [block["text"] for block in trimmed[0]["content"] if block.get("type") == "text"]
+    assert texts == ["还记得这张吗", "圆圆发来的照片我已经看过。——那天很亮"]
+
+
+def test_unsaved_expired_image_falls_back_to_the_generic_placeholder():
+    messages = [{"role": "user", "content": [_expired("never-saved")]}]
+
+    trimmed, meta = trim_client_image_blocks(messages, keep_recent_messages=0, album_notes={"other": "x"})
+
+    assert trimmed[0]["content"] == "圆圆发来的照片我已经看过。"
+    assert meta["client_image_album_notes_used"] == 0
+
+
+def test_several_saved_photos_in_one_turn_keep_one_line_each():
+    notes = {
+        "aa": expired_image_note_text("第一张"),
+        "bb": expired_image_note_text("第二张"),
+    }
+    messages = [{"role": "user", "content": [_expired("aa"), _expired("bb")]}]
+
+    trimmed, meta = trim_client_image_blocks(messages, keep_recent_messages=0, album_notes=notes)
+
+    assert meta["client_image_album_notes_used"] == 2
+    assert trimmed[0]["content"].splitlines() == [
+        "圆圆发来的照片我已经看过。——第一张",
+        "圆圆发来的照片我已经看过。——第二张",
+    ]
+
+
+def test_expired_image_fingerprints_are_collected_once_in_order():
+    messages = [
+        {"role": "user", "content": [_expired("aa"), _expired("bb")]},
+        {"role": "assistant", "content": [_expired("zz")]},
+        {"role": "user", "content": [_expired("aa"), _expired("cc")]},
+    ]
+
+    # 助手消息里的不算；重复只出现一次，顺序稳定（便于批量查库）。
+    assert expired_image_fingerprints(messages) == ["aa", "bb", "cc"]
+    assert expired_image_fingerprints([]) == []
+
+
+# 这条守的是整批改动里最容易静默出事的东西：换成动态描述后，历史归一化必须仍把
+# 占位当成空，否则沈予每换一句话都会被分支检测判成 branch，白扔掉整个 prompt
+# cache epoch。
+def test_album_note_placeholder_stays_invisible_to_branch_detection():
+    def with_image(url: str) -> list[dict]:
+        return [
+            {"role": "user", "content": [
+                {"type": "text", "text": "看这个"},
+                {"type": "image_url", "image_url": {"url": url}},
+            ]},
+        ]
+
+    real = with_image("data:image/jpeg;base64,AAAA")
+    trimmed_generic, _ = trim_client_image_blocks(
+        [{"role": "user", "content": [{"type": "text", "text": "看这个"}, _expired("aa")]}],
+        keep_recent_messages=0,
+    )
+    trimmed_note, _ = trim_client_image_blocks(
+        [{"role": "user", "content": [{"type": "text", "text": "看这个"}, _expired("aa")]}],
+        keep_recent_messages=0,
+        album_notes={"aa": expired_image_note_text("海边那天的光")},
+    )
+    other_note, _ = trim_client_image_blocks(
+        [{"role": "user", "content": [{"type": "text", "text": "看这个"}, _expired("aa")]}],
+        keep_recent_messages=0,
+        album_notes={"aa": expired_image_note_text("换了一句完全不同的话")},
+    )
+
+    baseline = normalize_history_event_messages(real)
+    assert normalize_history_event_messages(trimmed_generic) == baseline
+    assert normalize_history_event_messages(trimmed_note) == baseline
+    # 换一句描述不改变归一化结果 —— 这正是 epoch 不被重置的原因。
+    assert normalize_history_event_messages(other_note) == baseline
+
+    assert classify_history_event(real, trimmed_note)["event_class"] == "retry"
+    assert classify_history_event(trimmed_note, other_note)["event_class"] == "retry"
 
 
 def test_latest_user_text_ignores_image_urls():

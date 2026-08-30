@@ -7,7 +7,10 @@ from typing import Any, Optional
 
 # Only the dynamic Operit bundle is normalized away for event comparison; the
 # PWA status suffix is a stable part of the stored message text, so it stays.
-from .client_extra import CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE as _CLIENT_EXTRA_BUNDLE_RE
+from .client_extra import (
+    CLIENT_EXTRA_BUNDLE_ATTACHMENT_RE as _CLIENT_EXTRA_BUNDLE_RE,
+    is_expired_image_note as _is_expired_image_note,
+)
 from .echo import strip_leading_echo
 
 
@@ -60,7 +63,11 @@ def _is_image_block(value: Any) -> bool:
 
 def _normalize_event_text(value: Any) -> str:
     text = _CLIENT_EXTRA_BUNDLE_RE.sub("", str(value or "")).strip()
-    return "" if text == _IMAGE_SEEN_PLACEHOLDER else text
+    # 过期图占位一律归一化成空。这里刻意认前缀而不是整句相等：占位后面会跟上
+    # 沈予存相册时写的那句话（`client_extra.expired_image_note_text`），如果按
+    # 整句比对，他每换一句描述都会让归一化结果变化，被分支检测误判成 branch，
+    # 白扔掉整个 prompt cache epoch。
+    return "" if _is_expired_image_note(text) else text
 
 
 def _normalize_event_content(content: Any) -> Any:

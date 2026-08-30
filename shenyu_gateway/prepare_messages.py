@@ -9,9 +9,11 @@ from typing import Any, Callable, Optional
 from fastapi import Request
 
 from .chat_archive import ChatArchiveService, archive_window_safely
+from .client_extra import expired_image_note_text
 from .context_layers import (
     assemble_layered_messages,
     bridge_messages_from_snapshot,
+    expired_image_fingerprints as _expired_image_fingerprints,
     non_system_message_count as _non_system_message_count,
     trim_client_extra_bundle_attachments as _trim_client_extra_bundle_attachments,
     trim_client_image_blocks as _trim_client_image_blocks,
@@ -367,6 +369,28 @@ def inject_pending_gateway_tool_turns(
     return rebuilt, meta
 
 
+def _album_notes_for_expired_images(messages: list[dict], store: Any) -> dict[str, str]:
+    """过期占位块的指纹 → 沈予存这张图时写下的那句话。
+
+    查不到、没有 store、或查库出错都返回空字典：占位退回通用那句，图不会因此丢，
+    也绝不让相册查询挡住一次对话。
+    """
+    fingerprints = _expired_image_fingerprints(messages)
+    if not fingerprints or store is None:
+        return {}
+    try:
+        rows = store.album_notes_by_fingerprints(fingerprints)
+    except Exception as exc:
+        logger.warning("[Album] 过期图备注查询失败，退回通用占位: %s", exc)
+        return {}
+    notes: dict[str, str] = {}
+    for digest, row in (rows or {}).items():
+        text = expired_image_note_text(row.get("note"), row.get("mood"))
+        if text:
+            notes[str(digest)] = text
+    return notes
+
+
 async def prepare_messages(
     request: Request,
     body: Any,
@@ -489,7 +513,15 @@ async def prepare_messages(
     )
     trim_meta.update(mcp_trim_meta)
     await _mcp_registry.ensure_fresh(cfg)
-    messages, image_trim_meta = _trim_client_image_blocks(messages, keep_recent_messages=2)
+    # 过期图占位块带着图片字节指纹。沈予存过相册的那些图，占位换成他当时写的那句
+    # 话，而不是通用占位——这是「再看到这张图，读到的是自己写的」的落点。
+    # 一次批量查库，不在裁剪循环里逐张查；查不到就沿用通用占位。
+    album_notes = _album_notes_for_expired_images(messages, store)
+    messages, image_trim_meta = _trim_client_image_blocks(
+        messages,
+        keep_recent_messages=2,
+        album_notes=album_notes,
+    )
     trim_meta.update(image_trim_meta)
     _mark_request_log_phase(
         log_entry,

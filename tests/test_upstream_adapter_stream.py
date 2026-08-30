@@ -567,3 +567,33 @@ def test_anthropic_mixed_text_and_tool_stream_uses_compact_tool_indexes():
     assert first_payload["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
     assert delta_payload["choices"][0]["delta"]["tool_calls"][0]["index"] == 0
     assert second_payload["choices"][0]["delta"]["tool_calls"][0]["index"] == 1
+
+
+def test_expired_image_marker_never_survives_into_an_anthropic_request():
+    """相册过期占位块绝不能到达上游。
+
+    2026-08-30 的实际缺陷：PWA 送来的占位块落在「最近两轮」时不参与替换，被原样
+    转成一个上游不认识的 image block（Anthropic 直接报错）。裁剪已经修好，这条
+    守在协议边界上——万一将来哪条路径又漏过一个，这里会红。
+    """
+    from shenyu_gateway.client_extra import EXPIRED_IMAGE_MARKER
+    from shenyu_gateway.context_layers import trim_client_image_blocks
+
+    raw = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "改写这条"},
+            {"type": "image", "source": {"type": EXPIRED_IMAGE_MARKER, "fingerprint": "aa"}},
+        ]},
+    ]
+    trimmed, _ = trim_client_image_blocks(raw, keep_recent_messages=2)
+    _, anthropic_messages = _openai_to_anthropic(trimmed)
+
+    serialized = json.dumps(anthropic_messages, ensure_ascii=False)
+    assert EXPIRED_IMAGE_MARKER not in serialized
+    assert "改写这条" in serialized
+    # 上游只应看到合法的块类型。
+    for message in anthropic_messages:
+        for block in message["content"]:
+            assert block["type"] in {"text", "image", "tool_use", "tool_result", "thinking"}
+            if block["type"] == "image":
+                assert block["source"]["type"] in {"base64", "url"}

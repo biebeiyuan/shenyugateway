@@ -4,7 +4,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from typing import Any, Optional
 
-from .client_extra import has_client_extra_text, strip_client_extra_text
+from .client_extra import (
+    expired_image_fingerprint,
+    has_client_extra_text,
+    strip_client_extra_text,
+)
 from .context_window import (
     INTERNAL_LAYER_KEY,
     MEMORY_ISLAND_BUMP_KEY,
@@ -475,20 +479,46 @@ def _message_image_block_count(msg: dict) -> int:
     return sum(1 for item in content if _is_image_content_block(item))
 
 
-def _strip_image_content_blocks(content: Any, placeholder: str) -> tuple[Any, int, bool]:
+def _message_expired_image_fingerprints(msg: dict) -> list[str]:
+    content = msg.get("content")
+    if not isinstance(content, list):
+        return []
+    found = []
+    for item in content:
+        digest = expired_image_fingerprint(item)
+        if digest:
+            found.append(digest)
+    return found
+
+
+def _strip_image_content_blocks(
+    content: Any,
+    placeholder: str,
+    notes: Optional[dict[str, str]] = None,
+) -> tuple[Any, int, bool]:
     if not isinstance(content, list):
         return content, 0, False
 
     cleaned_blocks: list[Any] = []
     removed_total = 0
+    # 沈予存过相册的那些图，占位用他自己写的那句话；同一条消息里多张都存过就按
+    # 出现顺序各留一句。
+    resident_notes: list[str] = []
     for item in content:
         if _is_image_content_block(item):
             removed_total += 1
+            digest = expired_image_fingerprint(item)
+            note = (notes or {}).get(digest) if digest else None
+            if note:
+                resident_notes.append(note)
             continue
         cleaned_blocks.append(item)
 
     if not removed_total:
         return content, 0, False
+
+    if resident_notes:
+        placeholder = "\n".join(resident_notes)
 
     has_content = False
     for item in cleaned_blocks:
@@ -504,6 +534,11 @@ def _strip_image_content_blocks(content: Any, placeholder: str) -> tuple[Any, in
                 break
 
     if has_content:
+        # 这一轮还有别的正文。沈予写过的话仍要送到——否则「再看到这张图读到自己
+        # 的描述」在带文字的消息里就落空了。追加成 text block 是安全的：那句话带
+        # 固定前缀，历史归一化认得出并归一化掉（`context_window`）。
+        if resident_notes:
+            cleaned_blocks.append({"type": "text", "text": placeholder})
         return cleaned_blocks, removed_total, False
     return placeholder, removed_total, True
 
@@ -512,8 +547,16 @@ def trim_client_image_blocks(
     messages: list[dict],
     keep_recent_messages: int = 2,
     placeholder: str = IMAGE_SEEN_PLACEHOLDER,
+    *,
+    album_notes: Optional[dict[str, str]] = None,
 ) -> tuple[list[dict], dict]:
-    """Keep images only in the newest user turns, then leave a stable text trace."""
+    """Keep images only in the newest user turns, then leave a stable text trace.
+
+    `album_notes` maps an image-byte fingerprint to what 沈予 wrote when he saved
+    that photo to his album; those turns get his own words instead of the generic
+    placeholder. Callers build it with
+    `GatewayStore.album_notes_by_fingerprints`, one batch query per request.
+    """
     keep_recent_messages = max(int(keep_recent_messages or 0), 0)
     user_message_indices = [
         idx for idx, msg in enumerate(messages) if msg.get("role") == "user"
@@ -523,8 +566,16 @@ def trim_client_image_blocks(
         for idx, msg in enumerate(messages)
         if msg.get("role") == "user" and _message_image_block_count(msg) > 0
     ]
+    # 过期占位块里根本没有图，所以「保留最近两轮的图」对它不适用——留着它反而会
+    # 把一个上游不认识的 image block 原样送出去（Anthropic 直接报错）。这类消息
+    # 无条件参与替换，不受 keep_recent 豁免。
+    expired_marker_indices = [
+        idx
+        for idx, msg in enumerate(messages)
+        if msg.get("role") == "user" and _message_expired_image_fingerprints(msg)
+    ]
     keep_indices = set(user_message_indices[-keep_recent_messages:]) if keep_recent_messages else set()
-    trim_index_set = set(image_message_indices) - keep_indices
+    trim_index_set = (set(image_message_indices) - keep_indices) | set(expired_marker_indices)
     meta = {
         "client_image_keep_messages": keep_recent_messages,
         "client_image_keep_user_turns": keep_recent_messages,
@@ -532,6 +583,10 @@ def trim_client_image_blocks(
         "client_image_messages_trimmed": 0,
         "client_image_blocks_trimmed": 0,
         "client_image_placeholders_added": 0,
+        "client_image_expired_markers_seen": sum(
+            len(_message_expired_image_fingerprints(messages[idx])) for idx in expired_marker_indices
+        ),
+        "client_image_album_notes_used": 0,
     }
     if not trim_index_set:
         return messages, meta
@@ -542,15 +597,37 @@ def trim_client_image_blocks(
             trimmed.append(msg)
             continue
         clean = dict(msg)
-        clean_content, removed, placeholder_added = _strip_image_content_blocks(clean.get("content"), placeholder)
+        before_notes = _message_expired_image_fingerprints(msg)
+        clean_content, removed, placeholder_added = _strip_image_content_blocks(
+            clean.get("content"),
+            placeholder,
+            album_notes,
+        )
         if removed:
             clean["content"] = clean_content
             meta["client_image_messages_trimmed"] += 1
             meta["client_image_blocks_trimmed"] += removed
             if placeholder_added:
                 meta["client_image_placeholders_added"] += 1
+            meta["client_image_album_notes_used"] += sum(
+                1 for digest in before_notes if (album_notes or {}).get(digest)
+            )
         trimmed.append(clean)
     return trimmed, meta
+
+
+def expired_image_fingerprints(messages: list[dict]) -> list[str]:
+    """请求里所有过期占位块的指纹，去重保序。
+
+    调用方拿它一次性查库（`album_notes_by_fingerprints`），不在裁剪循环里逐张查。
+    """
+    seen: dict[str, None] = {}
+    for msg in messages:
+        if msg.get("role") != "user":
+            continue
+        for digest in _message_expired_image_fingerprints(msg):
+            seen.setdefault(digest, None)
+    return list(seen)
 
 
 def non_system_message_count(messages: list[dict]) -> int:

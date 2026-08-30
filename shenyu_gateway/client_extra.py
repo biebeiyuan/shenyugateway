@@ -40,6 +40,50 @@ PWA_STATUS_SUFFIX_RE = re.compile(
 PWA_STATUS_DAY_SEGMENT_RE = re.compile(r"第(?P<n>\d+)天")
 PWA_DAY_ONE = (2026, 3, 9)
 
+# 过期图占位块的线上标记。PWA 只在本机淘汰掉一张图之后送它，块里只有图片字节的
+# sha256，没有任何字节。三个地方必须逐字一致，所以住在这里：PWA 的
+# `pwa/src/api/client.ts::EXPIRED_IMAGE_MARKER`、裁剪
+# (`context_layers.trim_client_image_blocks`)、以及历史归一化
+# (`context_window`)。
+#
+# 刻意与 `context_window` 的 `shenyu_history_image` 分开：那个标记的 fingerprint
+# 是 JSON 块的哈希，只服务血统日志；这个是图片字节的哈希，用来在相册里认出这张图。
+EXPIRED_IMAGE_MARKER = "shenyu_expired_image"
+
+# 过期图替换文本的固定前缀。带前缀是必须的，不是装饰：历史归一化要能认出
+# 「这里是一张过期图的占位」并把它归一化掉，否则沈予每次换一句描述都会让
+# 归一化结果变化、被分支检测误判成 branch，白扔掉整个 prompt cache epoch。
+EXPIRED_IMAGE_NOTE_PREFIX = "圆圆发来的照片我已经看过"
+
+
+def expired_image_fingerprint(block: object) -> str:
+    """从一个过期图占位块里取出图片字节指纹；不是这种块就返回空串。"""
+    if not isinstance(block, dict):
+        return ""
+    source = block.get("source")
+    if not isinstance(source, dict):
+        return ""
+    if str(source.get("type") or "") != EXPIRED_IMAGE_MARKER:
+        return ""
+    return str(source.get("fingerprint") or "").strip()
+
+
+def expired_image_note_text(note: str = "", mood: str = "") -> str:
+    """沈予存过这张图时，占位换成他自己写的话。
+
+    形状固定为 `前缀。——他的话`：前缀让归一化认得出这是过期图占位，
+    后半是他自己的措辞，不概括、不改写。
+    """
+    parts = [part.strip() for part in (note, mood) if str(part or "").strip()]
+    if not parts:
+        return f"{EXPIRED_IMAGE_NOTE_PREFIX}。"
+    return f"{EXPIRED_IMAGE_NOTE_PREFIX}。——{'｜'.join(parts)}"
+
+
+def is_expired_image_note(text: str) -> bool:
+    """这段文字是不是过期图占位（不论后面跟着谁的话）。"""
+    return str(text or "").strip().startswith(EXPIRED_IMAGE_NOTE_PREFIX)
+
 # The one local copy of the +08:00 offset. Everywhere else in the package imports
 # runtime.LOCAL_DAY_TZ, but this module's contract (see the docstring) is to stay
 # importable with nothing package-internal behind it, so it keeps its own.

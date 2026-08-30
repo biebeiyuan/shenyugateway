@@ -272,6 +272,51 @@ async def test_album_save_without_note_skips_supabase_entirely(tmp_path):
     assert result["data"]["note_searchable"] is False
 
 
+def test_expired_image_notes_come_from_the_album_by_fingerprint(tmp_path):
+    """整条链路的接缝：PWA 送指纹 → 网关查相册 → 占位换成他写的话。"""
+    from shenyu_gateway.client_extra import EXPIRED_IMAGE_MARKER
+    from shenyu_gateway.prepare_messages import _album_notes_for_expired_images
+
+    store = _store(tmp_path)
+    raw = os.urandom(1024)
+    store.save_album_photo(raw=raw, note="海边那天的光", mood="安静")
+    digest = photo_fingerprint(raw)
+
+    messages = [
+        {"role": "user", "content": [
+            {"type": "text", "text": "还记得这张吗"},
+            {"type": "image", "source": {"type": EXPIRED_IMAGE_MARKER, "fingerprint": digest}},
+        ]},
+        {"role": "user", "content": [
+            {"type": "image", "source": {"type": EXPIRED_IMAGE_MARKER, "fingerprint": "never-saved"}},
+        ]},
+    ]
+
+    notes = _album_notes_for_expired_images(messages, store)
+
+    assert notes == {digest: "圆圆发来的照片我已经看过。——海边那天的光｜安静"}
+    # 没存过的图查不到，占位退回通用那句。
+    assert "never-saved" not in notes
+
+
+def test_expired_image_note_lookup_never_blocks_a_conversation(tmp_path):
+    from shenyu_gateway.prepare_messages import _album_notes_for_expired_images
+
+    class BrokenStore:
+        def album_notes_by_fingerprints(self, fingerprints):
+            raise RuntimeError("database is locked")
+
+    messages = [{"role": "user", "content": [
+        {"type": "image", "source": {"type": "shenyu_expired_image", "fingerprint": "aa"}},
+    ]}]
+
+    # 查库炸了也只是退回通用占位，绝不让相册挡住一次对话。
+    assert _album_notes_for_expired_images(messages, BrokenStore()) == {}
+    assert _album_notes_for_expired_images(messages, None) == {}
+    # 没有过期块时根本不查库。
+    assert _album_notes_for_expired_images([{"role": "user", "content": "纯文字"}], BrokenStore()) == {}
+
+
 def test_album_api_serves_listings_and_one_immutable_bytes_route(tmp_path):
     from types import SimpleNamespace
 
