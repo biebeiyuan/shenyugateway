@@ -32,7 +32,6 @@ import type {
   Attachment,
   EchoSegment,
   GatewaySession,
-  ModelOption,
   ProcessGroup,
   ProcessSheet,
   Role,
@@ -44,32 +43,23 @@ import type {
 import { createId } from './utils'
 import {
   deleteSession,
-  fetchModels,
   fetchDeployedPwaBuildInfo,
-  fetchRuntimeConfig,
   fetchSessionDetail,
   fetchSessions,
   postChatCompletion,
   postChatStream,
-  postUpstreamConfig,
   renameSession,
   wireMessages,
   type RequestContext,
 } from './api/client'
-import { readUpstreamPresets } from './api/presets'
+import { useUpstream } from './api/useUpstream'
+import { useComposer } from './session/useComposer'
 import {
   CLAUDE_CODE_USER_AGENT,
-  claudeCodeHeaders,
   claudeCodeMetadata,
   claudeCodeSessionIdFromHeaders,
-  isClaudeCodeHeaderPreset,
-  persistUpstreamHeaders,
-  readUpstreamHeaders,
   readClaudeCodeSessionId,
-  refreshClaudeCodeSessionId,
-  upstreamHeaderSummary,
   upstreamHeadersPayload,
-  type UpstreamHeaderEntry,
 } from './api/upstreamHeaders'
 import {
   initBatteryWatch,
@@ -119,11 +109,6 @@ import {
 
 const STORAGE_TOKEN = 'shenyu_pwa_gateway_token'
 const STORAGE_GATEWAY = 'shenyu_pwa_gateway_url'
-const STORAGE_MODEL = 'shenyu_pwa_model'
-const STORAGE_EFFORT = 'shenyu_pwa_effort'
-const STORAGE_EXTENDED = 'shenyu_pwa_extended'
-const STORAGE_PRESET = 'shenyu_pwa_preset'
-const STORAGE_STREAM = 'shenyu_pwa_stream'
 
 // 一条消息最多几张图。本机总量另有上限（photoStore 的最近 30 张）。
 const MESSAGE_IMAGE_LIMIT = 9
@@ -136,16 +121,9 @@ const draft = ref('')
 const pendingAttachments = ref<Attachment[]>([])
 // 看图器：点开的是哪条消息的第几张。null = 关着。
 const photoViewer = ref<{ messageId: string; position: number } | null>(null)
-const models = ref<ModelOption[]>([])
 const recentSessions = ref<GatewaySession[]>([])
-const selectedModel = ref(localStorage.getItem(STORAGE_MODEL) || 'default')
-const effort = ref(localStorage.getItem(STORAGE_EFFORT) || 'medium')
-const extendedThinking = ref(localStorage.getItem(STORAGE_EXTENDED) !== 'false')
-const selectedPresetName = ref(localStorage.getItem(STORAGE_PRESET) || '')
-const streamResponses = ref(localStorage.getItem(STORAGE_STREAM) !== 'false')
 const authToken = ref(localStorage.getItem(STORAGE_TOKEN) || localStorage.getItem('shenyu_token') || '')
 const gatewayUrl = ref(localStorage.getItem(STORAGE_GATEWAY) || '')
-const maxClientMessages = ref<number | null>(null)
 const sessionTag = ref(requestedSessionTag || storedSessionTag || createId('pwa'))
 const activeWorkspace = ref<WorkspaceId>('chats')
 const menuOpen = ref(false)
@@ -166,30 +144,55 @@ const inputRef = ref<HTMLTextAreaElement | null>(null)
 const fileRef = ref<HTMLInputElement | null>(null)
 const composerMenuRef = ref<HTMLElement | null>(null)
 const streamRef = ref<HTMLElement | null>(null)
-const presets = ref<UpstreamPreset[]>([])
-const upstreamHeaders = ref<UpstreamHeaderEntry[]>(readUpstreamHeaders())
-const switchingPreset = ref('')
-const runtimeUpstream = ref({ url: '', protocol: '', extraBody: '' })
+// 上游配置（模型 / effort / 预设 / 请求头）整块在 api/useUpstream.ts。
+// 它只通过 status / errorNotice / busy 与聊天说话，所以那三个注入进去。
+const {
+  models, presets, selectedModel, effort, extendedThinking, selectedPresetName,
+  streamResponses, switchingPreset, runtimeUpstream, upstreamHeaders, maxClientMessages,
+  currentModel, currentPreset, primaryModels, secondaryModels, effectiveEffort,
+  customHeaderSummary, hasActiveUpstreamHeaders, claudeCodeHeaderSelected,
+  modelLabel, modelDescription, modelUpstreamId,
+  loadPresets, loadRuntimeUpstream, loadModels,
+  selectModel: applyModel, selectPreset: applyPreset, selectEffort: applyEffort,
+  toggleExtended, toggleStreamResponses,
+  clearUpstreamHeaders, selectClaudeCodeHeaders, refreshClaudeCodeHeaders,
+  addUpstreamHeader, removeUpstreamHeader,
+} = useUpstream({ clientContext: () => clientContext(), status, errorNotice, busy })
+
+// 输入框与滚动手感在 session/useComposer.ts（软键盘抬升、自动增高、滚到底）。
+const {
+  scrollToBottom, resizeInput, resetInputSize, updateDraft, clearKeyboardTimers,
+  keepComposerVisible, scheduleComposerVisible, handleComposerBlur, onComposerKeydown,
+} = useComposer({ draft, inputRef, streamRef, onSubmit: () => submit() })
+
+const currentModelLabel = computed(() => modelLabel(currentModel.value))
+
+// 选模型/预设/effort 会关掉弹层——那是界面编排，留在主壳。
+function selectModel(id: string) {
+  applyModel(id)
+  modelOpen.value = false
+}
+
+async function selectPreset(preset: UpstreamPreset) {
+  const switched = await applyPreset(preset)
+  if (switched) {
+    modelOpen.value = false
+    modelSheetPage.value = 'main'
+  }
+}
+
+function selectEffort(id: string) {
+  applyEffort(id)
+  modelOpen.value = false
+}
+
 const brandMarkUrl = `${import.meta.env.BASE_URL}brand-mark.svg`
 const brandWordmarkUrl = `${import.meta.env.BASE_URL}brand-wordmark.svg`
 let activeController: AbortController | null = null
 let activeAssistantId: string | null = null
 
-const currentModel = computed(() => models.value.find((model) => model.id === selectedModel.value))
-const currentModelLabel = computed(() => modelLabel(currentModel.value))
 const hasContent = computed(() => Boolean(draft.value.trim()) || pendingAttachments.value.length > 0)
 const isEmpty = computed(() => !messages.value.some((message) => !isRoomEntry(message.content)))
-const primaryModels = computed(() => models.value.filter((model) => model.primary !== false))
-const secondaryModels = computed(() => models.value.filter((model) => model.primary === false))
-const currentPreset = computed(() => {
-  const stored = presets.value.find((preset) => preset.name === selectedPresetName.value)
-  if (stored && (!runtimeUpstream.value.url || stored.url === runtimeUpstream.value.url)) return stored
-  return presets.value.find((preset) => preset.url === runtimeUpstream.value.url && preset.protocol === runtimeUpstream.value.protocol)
-})
-const effectiveEffort = computed(() => extendedThinking.value ? 'max' : effort.value)
-const customHeaderSummary = computed(() => upstreamHeaderSummary(upstreamHeaders.value))
-const hasActiveUpstreamHeaders = computed(() => Object.keys(upstreamHeadersPayload(upstreamHeaders.value)).length > 0)
-const claudeCodeHeaderSelected = computed(() => isClaudeCodeHeaderPreset(upstreamHeaders.value))
 const pwaBuildStatus = computed(() => {
   if (pwaBuildCheck.value === 'checking') return '正在核验线上版本'
   if (pwaBuildCheck.value === 'current') return '当前页面就是线上版本'
@@ -236,7 +239,6 @@ const processSheetTitle = computed(() => {
   return '沈予刚才做了什么'
 })
 
-watch(upstreamHeaders, (entries) => persistUpstreamHeaders(entries), { deep: true })
 
 const workspaceContent: Record<WorkspaceId, { eyebrow: string; title: string; description: string; action: string; detail: string }> = {
   chats: {
@@ -289,33 +291,8 @@ const quickPrompts = [
   '把这段文字改得更自然一点',
 ]
 
-function modelLabel(model?: ModelOption): string {
-  if (!model) return selectedModel.value === 'default' ? 'Sonnet 4.6' : selectedModel.value
-  if (model.label) return model.label
-  const id = model.id || selectedModel.value
-  if (id === 'default') return 'Sonnet 4.6'
-  const family = /sonnet/i.test(id) ? 'Sonnet' : /opus/i.test(id) ? 'Opus' : /haiku/i.test(id) ? 'Haiku' : ''
-  if (family) {
-    const match = id.match(new RegExp(`${family}[-_ ]?(\\d+(?:[-_]\\d+)?)`, 'i'))
-    const version = match?.[1]?.replace(/[-_]/g, '.')
-    return version ? `${family} ${version}` : family
-  }
-  if (/gpt[-_]?4o/i.test(id)) return 'GPT-4o'
-  if (/gpt[-_]?4/i.test(id)) return 'GPT-4'
-  if (/gemini/i.test(id)) return 'Gemini'
-  return id.replace(/[-_]+/g, ' ')
-}
 
-function modelDescription(model?: ModelOption): string {
-  if (model?.desc) return model.desc
-  if (model?.id === 'default' || selectedModel.value === 'default') return 'Fast and capable'
-  if (model?.owned_by === 'shenyu' || model?.owned_by === 'shenyu-alias') return 'Gateway alias'
-  return currentPreset.value ? `${currentPreset.value.name} model` : 'Default gateway model'
-}
 
-function modelUpstreamId(model?: ModelOption): string {
-  return model?.id || selectedModel.value
-}
 
 function persistMessages() {
   persistStoredMessages(messages.value, sessionMessageLimit())
@@ -338,49 +315,12 @@ function clientContext(): RequestContext {
   return { gatewayUrl: gatewayUrl.value, authToken: authToken.value, sessionTag: sessionTag.value }
 }
 
-function loadPresets() {
-  presets.value = readUpstreamPresets()
-}
 
-async function loadRuntimeUpstream() {
-  try {
-    const payload = await fetchRuntimeConfig(clientContext())
-    const configuredMessageLimit = Number(payload.max_client_messages)
-    maxClientMessages.value = Number.isFinite(configuredMessageLimit) && configuredMessageLimit > 0
-      ? Math.floor(configuredMessageLimit)
-      : null
-    runtimeUpstream.value = {
-      url: String(payload.upstream_url || ''),
-      protocol: String(payload.upstream_protocol || 'auto'),
-      extraBody: JSON.stringify(payload.upstream_extra_body || {}),
-    }
-    const matching = presets.value.find((preset) => preset.url === runtimeUpstream.value.url && preset.protocol === runtimeUpstream.value.protocol)
-    if (matching) {
-      selectedPresetName.value = matching.name
-      localStorage.setItem(STORAGE_PRESET, matching.name)
-    }
-  } catch {
-    // The preset selector remains usable even when config read access is protected.
-  }
-}
 
 function sessionMessageLimit(): number {
   return maxClientMessages.value || FALLBACK_SESSION_MESSAGE_LIMIT
 }
 
-async function loadModels() {
-  try {
-    const payload = await fetchModels(clientContext())
-    models.value = Array.isArray(payload.data)
-      ? payload.data.filter((model: unknown): model is ModelOption => Boolean(model && typeof model === 'object' && (model as ModelOption).id))
-      : []
-    if (models.value.length && !models.value.some((model) => model.id === selectedModel.value)) {
-      selectedModel.value = models.value[0].id
-    }
-  } catch {
-    models.value = [{ id: selectedModel.value || 'default', owned_by: 'shenyu', label: selectedModel.value === 'default' ? 'Sonnet 4.6' : undefined }]
-  }
-}
 
 async function loadSessions() {
   try {
@@ -650,90 +590,15 @@ async function copyCurrentSessionTag() {
   await copyText(sessionTag.value)
 }
 
-function selectModel(id: string) {
-  selectedModel.value = id
-  localStorage.setItem(STORAGE_MODEL, id)
-  modelOpen.value = false
-}
 
-async function selectPreset(preset: UpstreamPreset) {
-  if (switchingPreset.value) return
-  let extraBody: Record<string, unknown> = {}
-  if (preset.extra_body?.trim()) {
-    try {
-      const parsed = JSON.parse(preset.extra_body)
-      if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) throw new Error('extra body must be an object')
-      extraBody = parsed as Record<string, unknown>
-    } catch {
-      errorNotice.value = `预设 ${preset.name} 的 extra body 不是有效 JSON。`
-      return
-    }
-  }
-  const body: Record<string, unknown> = {
-    upstream_url: preset.url,
-    upstream_protocol: preset.protocol || 'auto',
-    upstream_extra_body: extraBody,
-    upstream_passthrough_headers: [...(preset.passthrough_headers || [])],
-  }
-  if (preset.key) body.upstream_api_key = preset.key
-  switchingPreset.value = preset.name
-  errorNotice.value = ''
-  try {
-    await postUpstreamConfig(clientContext(), body)
-    runtimeUpstream.value = { url: preset.url, protocol: preset.protocol || 'auto', extraBody: JSON.stringify(extraBody) }
-    selectedPresetName.value = preset.name
-    localStorage.setItem(STORAGE_PRESET, preset.name)
-    models.value = []
-    await loadModels()
-    modelOpen.value = false
-    modelSheetPage.value = 'main'
-    status.value = `已切换到 ${preset.name}`
-    window.setTimeout(() => { if (!busy.value) status.value = '' }, 1800)
-  } catch (error) {
-    errorNotice.value = error instanceof Error ? `预设切换失败：${error.message}` : '预设切换失败。'
-  } finally {
-    switchingPreset.value = ''
-  }
-}
 
-function selectEffort(id: string) {
-  effort.value = id
-  localStorage.setItem(STORAGE_EFFORT, id)
-}
 
-function toggleExtended() {
-  extendedThinking.value = !extendedThinking.value
-  localStorage.setItem(STORAGE_EXTENDED, String(extendedThinking.value))
-}
 
-function toggleStreamResponses() {
-  streamResponses.value = !streamResponses.value
-  localStorage.setItem(STORAGE_STREAM, String(streamResponses.value))
-}
 
-function clearUpstreamHeaders() {
-  upstreamHeaders.value = []
-}
 
-function selectClaudeCodeHeaders() {
-  upstreamHeaders.value = claudeCodeHeaders(readClaudeCodeSessionId())
-}
 
-function refreshClaudeCodeHeaders() {
-  upstreamHeaders.value = claudeCodeHeaders(refreshClaudeCodeSessionId())
-}
 
-function addUpstreamHeader() {
-  if (upstreamHeaders.value.length >= 20) {
-    errorNotice.value = '自定义请求头最多 20 项。'
-    return
-  }
-  upstreamHeaders.value.push({ id: createId('header'), name: '', value: '' })
-}
 
-function removeUpstreamHeader(id: string) {
-  upstreamHeaders.value = upstreamHeaders.value.filter((entry) => entry.id !== id)
-}
 
 function openModelSheet(page: 'main' | 'effort' | 'more' | 'preset' | 'headers' = 'main') {
   loadPresets()
@@ -810,82 +675,16 @@ function openConsole() {
   window.open(base ? `${base}/admin/` : '/admin/', '_blank', 'noopener,noreferrer')
 }
 
-function scrollToBottom() {
-  nextTick(() => {
-    if (streamRef.value) streamRef.value.scrollTop = streamRef.value.scrollHeight
-  })
-}
 
-function updateDraft(event: Event) {
-  draft.value = (event.target as HTMLTextAreaElement).value
-  resizeInput()
-}
 
-function resizeInput() {
-  const input = inputRef.value
-  if (!input) return
-  input.style.height = 'auto'
-  input.style.height = `${Math.min(input.scrollHeight, 144)}px`
-  input.scrollTop = input.scrollHeight
-}
 
-function resetInputSize() {
-  nextTick(() => {
-    const input = inputRef.value
-    if (!input) return
-    input.style.height = 'auto'
-    input.scrollTop = 0
-  })
-}
 
-let keyboardTimers: number[] = []
 
-function clearKeyboardTimers() {
-  keyboardTimers.forEach((timer) => window.clearTimeout(timer))
-  keyboardTimers = []
-}
 
-function keyboardViewportBottom(): number {
-  const viewport = window.visualViewport
-  return viewport ? viewport.offsetTop + viewport.height : window.innerHeight
-}
 
-function keepComposerVisible() {
-  const input = inputRef.value
-  const stream = streamRef.value
-  const wrap = input?.closest<HTMLElement>('.composer-wrap')
-  if (!input || !stream || !wrap) return
-  if (document.activeElement !== input) {
-    wrap.style.transform = ''
-    stream.style.paddingBottom = ''
-    return
-  }
-  wrap.style.transform = ''
-  const lift = Math.max(0, Math.ceil(wrap.getBoundingClientRect().bottom - keyboardViewportBottom() + 8))
-  wrap.style.transform = lift ? `translateY(${-lift}px)` : ''
-  stream.style.paddingBottom = lift ? `calc(var(--space-6) + ${lift}px)` : ''
-  scrollToBottom()
-}
 
-function scheduleComposerVisible() {
-  clearKeyboardTimers()
-  for (const delay of [0, 80, 180, 320, 520, 800]) {
-    keyboardTimers.push(window.setTimeout(keepComposerVisible, delay))
-  }
-  window.requestAnimationFrame(keepComposerVisible)
-}
 
-function handleComposerBlur() {
-  clearKeyboardTimers()
-  keyboardTimers.push(window.setTimeout(keepComposerVisible, 80))
-}
 
-function onComposerKeydown(event: KeyboardEvent) {
-  if (event.key === 'Enter' && !event.shiftKey && !event.isComposing) {
-    event.preventDefault()
-    submit()
-  }
-}
 
 function dataUrlToBlob(dataUrl: string, mime: string): Blob {
   const payload = dataUrl.slice(dataUrl.indexOf(',') + 1)

@@ -149,7 +149,8 @@ PWA 三铁律——(1) `npm test` / `npm run build` / HTML 断言只证明技术
 - `admin/src/theme/tokens.css` 只守全站设计 token；单个页面的视觉差异留在自己的 scoped style。
 - `admin/src/components/AppShell.vue` 只守全局壳、导航和主题按钮；业务页面不把交互塞回壳里。
 - `admin/src/api/http.ts` 是请求总闸；域名 API 函数留在各自 `api/*.ts`，页面不直接拼 axios 请求。
-- `pwa/src/App.vue` 只做界面状态与编排；会话、SSE 和持久化契约分别留在 `session/` 、`stream/` 和 `api/` ，单条消息自己怎么画留在 `components/` 。
+- `pwa/src/App.vue` 只做界面状态与编排；会话、SSE 和持久化契约分别留在 `session/` 、`stream/` 和 `api/` ，单条消息自己怎么画留在 `components/` ，不写 transcript 的自洽块搬进 composable（`api/useUpstream.ts` 上游配置、`session/useComposer.ts` 输入框手感）。
+- 什么该搬出主壳，判据是**注入几个换搬走几行**，不是"看起来该分层"。已拆的两块都是注入 4 个换走 70–250 行；图片捕获那块要注入 6 个才换 135 行，且其中 `messages` 就是 transcript 本身，所以留在主壳。拆到"再拆就要把主壳的状态传回去"就该停——那是把一个大文件换成一个宽接口，找东西并没有变容易。
 - 改一条消息的外观进 `pwa/src/components/`，不要写回 `App.vue` 的模板。这不是分层洁癖：内联在根组件 render 里的消息，一是打字就会牵动整条历史重新渲染（实测 40 条约 200ms 阻塞），二是其中任意一条抛异常会让 Vue 卸载整棵树——顶栏、输入框、全部消息一起消失，手机上就是白屏。两条都有单测守着（`pwa/tests/messageRow.spec.ts`）。
 - 错误文案在 `pwa/src/api/errors.ts` 提取，不在渲染侧收拾。502 时上游代理返回的是整张 HTML 页，让它进 `Error.message` 就等于让它进消息、进 localStorage、每次重开复发一遍。CSS 的行数上限是第二道墙，不是第一道。
 
