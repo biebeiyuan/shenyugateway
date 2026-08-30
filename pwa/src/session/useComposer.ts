@@ -29,6 +29,23 @@ export function useComposer(deps: ComposerDeps) {
     })
   }
 
+  /**
+   * 立刻贴底，不等 nextTick、不走动画。首屏定位用它：第一帧就要画在正确位置，
+   * 中间过程不该被看到。
+   */
+  function jumpToBottom() {
+    const stream = streamRef.value
+    if (!stream) return
+    stream.scrollTop = stream.scrollHeight
+  }
+
+  /** 视口是否已经贴着底部。补内容前先问它，别把正在往上翻的人拽回来。 */
+  function atBottom(slack = 80): boolean {
+    const stream = streamRef.value
+    if (!stream) return true
+    return stream.scrollHeight - stream.scrollTop - stream.clientHeight <= slack
+  }
+
   function resizeInput() {
     const input = inputRef.value
     if (!input) return
@@ -102,6 +119,8 @@ export function useComposer(deps: ComposerDeps) {
 
   return {
     scrollToBottom,
+    jumpToBottom,
+    atBottom,
     resizeInput,
     resetInputSize,
     updateDraft,

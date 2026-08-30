@@ -121,6 +121,11 @@ const draft = ref('')
 const pendingAttachments = ref<Attachment[]>([])
 // 看图器：点开的是哪条消息的第几张。null = 关着。
 const photoViewer = ref<{ messageId: string; position: number } | null>(null)
+// 首屏只画最后这么多条，其余在下一帧补上。240 条全画要 235ms（实测），而屏幕上
+// 一次只看得到三五条——先把你要看的那几条摆对位置，比一次画完更快到位。
+const FIRST_PAINT_MESSAGES = 20
+// null = 全部渲染。启动时先设成 FIRST_PAINT_MESSAGES，补齐后置回 null。
+const renderTail = ref<number | null>(FIRST_PAINT_MESSAGES)
 const recentSessions = ref<GatewaySession[]>([])
 const authToken = ref(localStorage.getItem(STORAGE_TOKEN) || localStorage.getItem('shenyu_token') || '')
 const gatewayUrl = ref(localStorage.getItem(STORAGE_GATEWAY) || '')
@@ -161,7 +166,7 @@ const {
 
 // 输入框与滚动手感在 session/useComposer.ts（软键盘抬升、自动增高、滚到底）。
 const {
-  scrollToBottom, resizeInput, resetInputSize, updateDraft, clearKeyboardTimers,
+  scrollToBottom, jumpToBottom, atBottom, resizeInput, resetInputSize, updateDraft, clearKeyboardTimers,
   keepComposerVisible, scheduleComposerVisible, handleComposerBlur, onComposerKeydown,
 } = useComposer({ draft, inputRef, streamRef, onSubmit: () => submit() })
 
@@ -193,6 +198,16 @@ let activeAssistantId: string | null = null
 
 const hasContent = computed(() => Boolean(draft.value.trim()) || pendingAttachments.value.length > 0)
 const isEmpty = computed(() => !messages.value.some((message) => !isRoomEntry(message.content)))
+// 首屏窗口。index 必须是在完整 messages 里的下标——重试/编辑/变体都按它定位，
+// 用窗口内的相对下标会错位。
+const visibleMessages = computed(() => {
+  const tail = renderTail.value
+  if (tail === null || messages.value.length <= tail) {
+    return messages.value.map((message, index) => ({ message, index }))
+  }
+  const start = messages.value.length - tail
+  return messages.value.slice(start).map((message, offset) => ({ message, index: start + offset }))
+})
 const pwaBuildStatus = computed(() => {
   if (pwaBuildCheck.value === 'checking') return '正在核验线上版本'
   if (pwaBuildCheck.value === 'current') return '当前页面就是线上版本'
@@ -1147,6 +1162,20 @@ onMounted(async () => {
   await loadModels()
   await loadSessions()
   await adoptInitialSession()
+  // 首屏定位：瞬时跳到底，不走动画。重开 App 期待的是「回到上次看的地方」，
+  // 而不是看它从顶部滑下来——那条滑动本身就是圆圆看到的「顶上有进度条」。
+  // 在这之前不能依赖 focus 的副作用来滚动：那条链路（focus → 视口变化 →
+  // keepComposerVisible → scrollToBottom）时机随设备和键盘设置变化。
+  await nextTick()
+  jumpToBottom()
+  // 首屏那 20 条已经在正确位置了，下一帧再把更早的补进 DOM。
+  requestAnimationFrame(() => {
+    // 先取样再补齐：更早的消息插在**上方**，DOM 变高之后 scrollTop 不动就意味着
+    // 距底距离变大，那时再问 atBottom() 永远是 false。
+    const wasAtBottom = atBottom()
+    renderTail.value = null
+    if (wasAtBottom) nextTick(jumpToBottom)
+  })
   // 把本机还留着的图接回气泡；淘汰掉的保持「过期」样子。
   scheduleLocalPhotoRestore()
   // 本地恢复的消息可能停在半截（流式中途进程被杀）：去服务器找回全文。
@@ -1292,7 +1321,7 @@ onUnmounted(() => {
           <h1>What's on your mind?</h1>
         </div>
 
-        <template v-for="(message, index) in messages" :key="message.id">
+        <template v-for="{ message, index } in visibleMessages" :key="message.id">
           <ChatMessageRow
             v-if="!isRoomEntry(message.content)"
             :message="message"
