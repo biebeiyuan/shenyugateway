@@ -150,7 +150,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_star_review",
-                "description": "网关推上来几颗最近新星+可能相关的旧星。可以——读、评（connected/positive/negative/should_surface）、连成星座。也可以——只看，不评。也可以——直接跳过。不处理是合法的。",
+                "description": "回头看看最近落下的几颗星，和它们可能有关系的旧星。每颗和候选都带着编号（1.2）和落下多久了。看过之后用 shenyu_star_feedback 说说像不像一回事——连成星座、有点关系、不相关、或看了先不说。只看不说也行。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -158,11 +158,6 @@ def _gateway_core_tools() -> list[dict]:
                         "candidates_per_star": {"type": "integer", "minimum": 1, "maximum": 5, "default": 2},
                         "total_candidate_limit": {"type": "integer", "minimum": 1, "maximum": 30, "default": 8},
                         "session_tag": {"type": "string"},
-                        "expected_star_id": {"type": "string", "description": "review 时顺手补 missed：该反但没反上来的星。"},
-                        "run_id": {"type": "string", "description": "missed 对应的召回 run_id。"},
-                        "scored_by": {"type": "string", "default": "沈予"},
-                        "note": {"type": "string"},
-                        "metadata": {"type": "object", "additionalProperties": True},
                     },
                 },
             },

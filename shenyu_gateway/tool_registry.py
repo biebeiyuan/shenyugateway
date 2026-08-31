@@ -565,25 +565,15 @@ async def _handle_search_stars(ctx: ToolContext) -> dict:
 
 @_tool_handler("shenyu_star_review")
 async def _handle_star_review(ctx: ToolContext) -> dict:
-    feedback_result = None
-    if ctx.arguments.get("expected_star_id"):
-        feedback_result = await ctx.service.star_feedback(
-            feedback="missed",
-            run_id=ctx.arguments.get("run_id"),
-            expected_star_id=ctx.arguments.get("expected_star_id"),
-            scored_by=ctx.arguments.get("scored_by", "沈予"),
-            note=ctx.arguments.get("note", ""),
-            metadata=ctx.arguments.get("metadata") if isinstance(ctx.arguments.get("metadata"), dict) else None,
-        )
-    review_result = await ctx.service.star_review(
+    # 曾经这里认 expected_star_id 走一条 missed 后门（review 时顺手补漏反）。
+    # missed 是圆圆的视角（要先知道库里有哪颗星），沈予那侧已删干净，
+    # 他 schema 里没有这个参数，所以那条分支是死代码，一并去掉。
+    return await ctx.service.star_review(
         limit_new=ctx.arguments.get("limit_new"),
         candidates_per_star=ctx.arguments.get("candidates_per_star"),
         total_candidate_limit=ctx.arguments.get("total_candidate_limit"),
         session_tag=ctx.arguments.get("session_tag") or ctx.session_tag,
     )
-    if feedback_result is not None:
-        review_result["feedback"] = feedback_result
-    return review_result
 
 
 @_tool_handler("shenyu_star_feedback")
