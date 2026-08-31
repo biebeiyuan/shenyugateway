@@ -130,8 +130,6 @@ class QueryMixin:
         requested_limit = max(1, min(int(limit or DEFAULT_RECALL_LIMIT), MAX_RECALL_LIMIT))
         if resolved_mode == "exact":
             requested_limit = 1
-        elif resolved_mode == "mood":
-            requested_limit = min(requested_limit, 3)
         selected = self._dedupe(scored, requested_limit)
         items = await asyncio.gather(
             *(self._hydrate_selected_item(row, session_tag=session_tag) for _, _, row in selected)

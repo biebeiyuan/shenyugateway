@@ -58,8 +58,6 @@ class RecallToolsMixin:
         total_limit = max(1, min(int(limit or DEFAULT_RECALL_LIMIT), MAX_RECALL_LIMIT))
         if resolved_mode == "exact":
             total_limit = min(total_limit, 2)
-        elif resolved_mode == "mood":
-            total_limit = min(total_limit, 3)
         else:
             total_limit = min(total_limit, DEFAULT_RECALL_LIMIT)
 
@@ -76,7 +74,7 @@ class RecallToolsMixin:
             if not requested_main:
                 companion_slots = min(total_limit, 3)
             else:
-                companion_slots = 1 if resolved_mode != "mood" else min(2, total_limit - 1)
+                companion_slots = 1
         main_limit = total_limit - companion_slots if requested_main else 0
         if requested_main and main_limit <= 0:
             main_limit = 1

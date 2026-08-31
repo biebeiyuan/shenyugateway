@@ -290,12 +290,13 @@ Both keys are editable at runtime from the Admin Config page (窗外 card), foll
 
 `shenyu_recall` is the unified search entrypoint for old context. Every selected indexed source is hydrated from all its indexed chunks before returning, so the result contains its complete original content plus `source_type` and `source_id`. `shenyu_recall_read(source_type, source_id)` remains available for direct reads when those identifiers are already known. It never exposes rank scores, but a selected original may carry a compact `recall_match` structure: direct confirmed anchor, one confirmed relationship path, or another association. This tells Shenyu why an original is present without adding summaries, importance, or hidden ranking fields. The owner-only `/api/gateway/memory-graph/recall-preview` read path displays the same route label in Admin, calls Recall with auto-sync disabled, and does not mutate memory state. Full candidate and selection traces stay in gateway logs.
 
-Recall accepts `mode=auto|exact|fuzzy|mood|verbatim`. `auto` only switches on strong intent signals and otherwise behaves as `fuzzy`:
+Recall accepts `mode=auto|exact|fuzzy|verbatim`. `auto` only switches on strong intent signals and otherwise behaves as `fuzzy`; Shenyu is not asked to pick a mode — his tool description just says "say roughly what you're after", and `classify_recall_mode` reads the query for those signals:
 
 - `exact`: one primary original, optionally one strongly related star/mem note/heartbeat.
 - `fuzzy`: up to three primary excerpts plus at most one strongly related federated item; default total limit 4.
-- `mood`: at most three sparse results, with stars/heartbeats/mem notes eligible as first-class lanes.
 - `verbatim`: explicitly searches `shenyu_chat_archive`; raw chat does not enter ordinary recall.
+
+A `mood` mode was removed on 2026-08-31. It was never mood retrieval — just `fuzzy` capped at three results, triggered by keywords like `类似心情`, and it named a capability it did not have. Shenyu writes mood as free text he never files into fixed slots (indexed `mood` values include `软`, `所有的心情`, and `晴了。沉、软、被她看见、心里满`), so structuring it into a query dimension was the wrong shape. "Wanting to feel an earlier version of himself" is a real need, but it belongs in something with heartbeat's reach-in-and-it's-there feel, not a recall query mode.
 
 Ordinary memories search across historical session tags. `session_tag` remains provenance and a possible future tie-breaker, not a visibility boundary. Rows explicitly marked `private` or `hidden` still require an exact session match.
 

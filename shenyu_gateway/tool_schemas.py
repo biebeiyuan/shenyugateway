@@ -60,7 +60,7 @@ def _gateway_core_tools() -> list[dict]:
                         },
                         "mode": {
                             "type": "string",
-                            "enum": ["auto", "exact", "fuzzy", "mood", "verbatim"],
+                            "enum": ["auto", "exact", "fuzzy", "verbatim"],
                             "default": "auto",
                         },
                         "date_from": {"type": "string"},

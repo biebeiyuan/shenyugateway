@@ -339,7 +339,9 @@ def test_recall_mode_auto_uses_only_strong_intent_signals():
     assert classify_recall_mode("《玻璃瓶》") == "exact"
     assert classify_recall_mode("4月5号的日记") == "exact"
     assert classify_recall_mode("我们当时的原话") == "verbatim"
-    assert classify_recall_mode("以前的我在类似心情下写过什么") == "mood"
+    # mood 模式删了：它名不副实（不是按情绪检索，只是 fuzzy 少给两条），
+    # 而他写心情从不往固定格子里填。「想看看以前的我」现在走正常 fuzzy。
+    assert classify_recall_mode("以前的我在类似心情下写过什么") == "fuzzy"
     assert classify_recall_mode("那次说害怕打开自己") == "fuzzy"
     assert infer_recall_date("4月5号的日记") == "2026-04-05"
 

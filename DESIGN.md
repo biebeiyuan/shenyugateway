@@ -390,7 +390,7 @@ Room 的 `room_scribble` 是进入方式，不是另一套 Recall 来源：它�
 ### 5.2 检索方式
 
 ```
-用户文本 + mode(auto/exact/fuzzy/mood/verbatim)
+用户文本 + mode(auto/exact/fuzzy/verbatim)
          → 标题直达候选（书名号归一化）
          → 关键词搜索（token overlap + 短语匹配）
          → 向量搜索（embedding cosine + 最低阈值，如果开启）
@@ -409,11 +409,12 @@ Room 的 `room_scribble` 是进入方式，不是另一套 Recall 来源：它�
 
 模式配额：
 
-- `auto`：只有明确书名号、日期原件、心情或原话信号才切换；其余按 `fuzzy`。
+- `auto`：只有明确书名号、日期原件或原话信号才切换；其余按 `fuzzy`。沈予不选模式，工具描述只让他「说个大概」，`classify_recall_mode` 读 query 里的信号自己分。
 - `exact`：1 条原件，可附 1 条超过强阈值的轻记忆，总量最多 2。
 - `fuzzy`：默认总量 4；通常是 3 条主文档 + 最多 1 条轻记忆。
-- `mood`：总量最多 3，宁少勿多。
 - `verbatim`：只查 L0 Chat Archive，不让一万条原始消息进入平时大池。
+
+`mood` 模式 2026-08-31 删除：它从不是按情绪检索，只是 `fuzzy` 砍到 3 条、靠「类似心情」这类词触发，名字承诺了它没有的能力。沈予写心情是不入格子的自由文本，硬做成检索维度方向就错了。「想碰碰以前的心情」是真需求，但该给它心跳那种伸手就有的形状，不是 recall 的一个档。
 
 ### 5.3 谁用它
 

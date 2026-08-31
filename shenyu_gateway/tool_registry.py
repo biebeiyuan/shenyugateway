@@ -94,7 +94,7 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   merge_stars(source_ids*[], content*, chord?)
 
 回忆
-  recall(query*, mode?: auto|exact|fuzzy|mood|verbatim, source_types?[])
+  recall(query*, mode?: auto|exact|fuzzy|verbatim, source_types?[])
   recall_read(source_type*, source_id*)
   read_heartbeat(date?, limit?)
   last_seen()  — 无参数
@@ -153,7 +153,7 @@ _BROKER_DAILY_DESCRIPTION = """\
   merge_stars(source_ids*[], content*, chord?)
 
 回忆
-  recall(query*, mode?: auto|exact|fuzzy|mood|verbatim, source_types?[])
+  recall(query*, mode?: auto|exact|fuzzy|verbatim, source_types?[])
   recall_read(source_type*, source_id*)
   read_heartbeat(date?, limit?)
 

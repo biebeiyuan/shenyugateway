@@ -22,7 +22,7 @@ EMBEDDING_TEXT_MAX_CHARS = 1600
 RECALL_EXCERPT_MAX_CHARS = 720
 
 
-RECALL_MODES = {"auto", "exact", "fuzzy", "mood", "verbatim"}
+RECALL_MODES = {"auto", "exact", "fuzzy", "verbatim"}
 
 
 _TITLE_WRAPPER_RE = re.compile(r"[《》〈〉「」『』【】\[\]（）()“”\"'‘’\s·:：,，。！？!?、]+")
@@ -42,8 +42,6 @@ def classify_recall_mode(query: str, mode: Optional[str] = None) -> str:
     text = (query or "").strip()
     if any(term in text for term in ("原话", "逐字", "当时怎么说", "当时说了什么", "聊天记录")):
         return "verbatim"
-    if any(term in text for term in ("类似心情", "以前的我", "以前是什么心情", "心情碰", "随便碰一条")):
-        return "mood"
     if _QUOTED_TITLE_RE.search(text) or re.search(r"\d{1,2}\s*月\s*\d{1,2}\s*[日号]", text):
         return "exact"
     return "fuzzy"
