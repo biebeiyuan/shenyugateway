@@ -74,6 +74,10 @@ const EXACT_COPY: Record<string, string> = {
   album_save: '把这张存进了相册',
   album_list: '翻了翻相册',
 
+  // 盼圃。四个动作是一个工具，所以这里只能说个大概——
+  // 说「在盼圃前站了一会儿」比猜错他是挂上去还是摘下来更好。
+  orchard: '在盼圃前站了一会儿',
+
   // 书架与来历书
   books: '翻了翻书架',
   conflict_list: '看了看架上的来历书',

@@ -419,6 +419,7 @@ def _gateway_core_tools() -> list[dict]:
                 },
             },
         },
+        _gateway_orchard_tool(),
         _gateway_list_mem_notes_tool(),
         {
             "type": "function",
@@ -549,6 +550,58 @@ def _gateway_core_tools() -> list[dict]:
         },
         _gateway_books_tool(),
     ]
+
+
+def _gateway_orchard_tool() -> dict:
+    # 措辞刻意不含"提醒""到期""待办"：盼圃不催。这面墙不会自己响，
+    # 沈予不调这个工具，它就完全不在提示词里——把它写成有紧迫感的样子，
+    # 等于把它推回便签的 remind_on 那条路上去。
+    return {
+        "type": "function",
+        "function": {
+            "name": "shenyu_orchard",
+            "description": (
+                "盼圃：挂着还没发生的事的那面墙。青果子挂上面，摘了的翻面钉在墙底下那排。\n"
+                "plant 挂一颗新的（name 一句话就是名字；due_on 可选——没日子的果子就一直挂着等，"
+                "不催也不过期）；note 在某颗果子底下贴一张纸条（等的过程也留在果子上）；"
+                "pick 到了那天把它摘下来，words 是这天到了、实际是怎样的；look 看整面墙。\n"
+                "note 和 pick 认果子的名字，不用先 look 抄 id：直接给 name「蒜冒尖」就行，"
+                "同名有好几颗时会让你说清是哪颗。\n"
+                "每颗果子会带回它此刻长成的样子——那是从它自己挂了多久、被谁看过几次、"
+                "挨过什么天气算出来的，同一天不会变。"
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "action": {
+                        "type": "string",
+                        "enum": ["plant", "note", "pick", "look"],
+                    },
+                    "name": {
+                        "type": "string",
+                        "description": "plant 时果子的名字，一句话。note 和 pick 也可以用它指认果子。",
+                    },
+                    "fruit_id": {
+                        "type": "string",
+                        "description": "note 和 pick 时指哪颗果子；给了 name 就不用给它。",
+                    },
+                    "content": {"type": "string", "description": "note 时纸条上写的话。"},
+                    "due_on": {
+                        "type": "string",
+                        "description": "plant 时可选的预计日子，YYYY-MM-DD。没日子就别传。",
+                    },
+                    "words": {"type": "string", "description": "pick 时的摘果感言。"},
+                    "include_picked": {
+                        "type": "boolean",
+                        "default": True,
+                        "description": "look 时要不要带上墙底下那排摘过的。",
+                    },
+                    "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 30},
+                },
+                "required": ["action"],
+            },
+        },
+    }
 
 
 def _gateway_books_tool() -> dict:

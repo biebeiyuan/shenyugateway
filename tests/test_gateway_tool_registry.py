@@ -401,6 +401,10 @@ class FakeToolService:
         self.calls.append({"tool": "shenyu_books", **kwargs})
         return {"ok": True}
 
+    async def orchard(self, **kwargs):
+        self.calls.append({"tool": "shenyu_orchard", **kwargs})
+        return {"ok": True}
+
     async def supabase_query(
         self,
         table="",
@@ -719,6 +723,8 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
         },
         "shenyu_last_seen": {},
             "shenyu_books": {"action": "read", "book": "home"},
+        # fruitId 是别名：模型驼峰写法不该静默变成"没给 fruit_id"。
+        "shenyu_orchard": {"action": "note", "fruitId": "fruit-1", "content": "今天还没动静"},
         "shenyu_update_mem_note": {"noteId": "note-1", "content": "正文", "status": "active"},
         "shenyu_bulk_update_mem_notes": {
             "note_ids": "note-1，note-2",
@@ -983,6 +989,19 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
                 "view": "current",
                 "actor": "沈予",
             },
+        "shenyu_orchard": {
+            "tool": "shenyu_orchard",
+            "action": "note",
+            "name": "",
+            "fruit_id": "fruit-1",
+            "content": "今天还没动静",
+            "due_on": None,
+            "words": "",
+            "include_picked": True,
+            "limit": 30,
+            # 走工具进来的一律是沈予，不做参数——不让模型自己填是谁。
+            "actor": "沈予",
+        },
         "shenyu_update_mem_note": {
             "tool": "shenyu_update_mem_note",
             "note_id": "note-1",

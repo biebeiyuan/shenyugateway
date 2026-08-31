@@ -1042,8 +1042,8 @@ def test_recall_source_type_filter_hides_atomic_meta_and_includes_mem_note():
     service = RecallIndexService(FakeSupabase([]))
 
     assert service._source_type_filter(None) == [
-        "memory", "journal", "windowsill", "album", "heartbeat", "room", "board", "calendar",
-        "mem_note", "notebook",
+        "memory", "journal", "windowsill", "album", "orchard", "heartbeat", "room", "board",
+        "calendar", "mem_note", "notebook",
     ]
     assert service._source_type_filter(["mem_note"]) == ["mem_note"]
     assert service._source_type_filter(["note"]) == ["mem_note"]
@@ -1054,6 +1054,9 @@ def test_recall_source_type_filter_hides_atomic_meta_and_includes_mem_note():
     # 相册备注只索引沈予写的文字；图片字节留在本机卷的 SQLite，从不进 Recall。
     assert service._source_type_filter(["album"]) == ["album"]
     assert service._adapter_names(["album"]) == ["shenyu_album_notes"]
+    # 盼圃只索引摘了的果子——青果子还在等，等的过程属于那面墙。
+    assert service._source_type_filter(["orchard"]) == ["orchard"]
+    assert service._adapter_names(["orchard"]) == ["shenyu_orchard_fruits"]
     assert service._adapter_names() == [
         "journal",
         "windowsill",
@@ -1065,6 +1068,7 @@ def test_recall_source_type_filter_hides_atomic_meta_and_includes_mem_note():
         "shenyu_mem_notes",
         "shenyu_notebook",
         "shenyu_album_notes",
+        "shenyu_orchard_fruits",
     ]
     assert service._adapter_names(["atomic", "meta", "mem_note"]) == ["shenyu_mem_notes"]
     assert service._adapter_names(["atomic", "meta"]) == []
@@ -1134,8 +1138,8 @@ def test_recall_default_includes_mem_note_but_filters_out_atomic_rows_from_rpc()
 
     assert [item["source_table"] for item in result["items"]] == ["shenyu_mem_notes", "memories"]
     assert supabase.rpc_calls[0][1]["source_types"] == [
-        "memory", "journal", "windowsill", "album", "heartbeat", "room", "board", "calendar",
-        "mem_note", "notebook",
+        "memory", "journal", "windowsill", "album", "orchard", "heartbeat", "room", "board",
+        "calendar", "mem_note", "notebook",
     ]
 
 

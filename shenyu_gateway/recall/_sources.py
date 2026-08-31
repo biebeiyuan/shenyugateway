@@ -157,6 +157,7 @@ class SourcesMixin:
             "mem_note": "shenyu_mem_notes",
             "notebook": "shenyu_notebook",
             "album": "shenyu_album_notes",
+            "orchard": "shenyu_orchard_fruits",
         }
         requested = self._requested_source_types(source_types)
         if not requested:
@@ -171,6 +172,7 @@ class SourcesMixin:
                 "shenyu_mem_notes",
                 "shenyu_notebook",
                 "shenyu_album_notes",
+                "shenyu_orchard_fruits",
             ]
         names = []
         for source_type in requested:
@@ -192,6 +194,7 @@ class SourcesMixin:
             "atomic_memories": self._load_atomic_memories,
             "shenyu_notebook": self._load_notebook,
             "shenyu_album_notes": self._load_album_notes,
+            "shenyu_orchard_fruits": self._load_orchard,
             "meta_summaries": self._load_meta_summaries,
         }
         return await loaders[source_table]()
@@ -508,6 +511,94 @@ class SourcesMixin:
                     importance=importance,
                     chunk=False,
                 )
+            )
+        return docs
+
+    # 盼圃：只索引**摘了的**果子。青果子还在等，等的过程属于那面墙，
+    # 不该被聊天半路翻出来；摘下来之后它才变成一件等到过的往事。
+    # 正文是果名 + 摘果感言 + 当时贴过的所有纸条——纸条是"等的过程"，
+    # 摘的时候连纸条一起收进果壳里，所以它们一起进索引。
+    def _orchard_fruit_documents(
+        self,
+        row: dict[str, Any],
+        notes: Optional[list[dict[str, Any]]] = None,
+    ) -> list[RecallDocument]:
+        if str(row.get("status") or "").strip() != "picked":
+            return []
+        name = _normalize_text(row.get("name")).strip()
+        words = _normalize_text(row.get("picked_words")).strip()
+        condition = _normalize_text(row.get("picked_condition_text")).strip()
+        parts: list[str] = []
+        if words:
+            parts.append(words)
+        if condition:
+            parts.append(condition)
+        for note in notes or []:
+            content = _normalize_text(note.get("content")).strip()
+            if not content:
+                continue
+            author = _normalize_text(note.get("author")).strip()
+            parts.append(f"{author}：{content}" if author else content)
+        metadata: dict[str, Any] = {}
+        planted_by = _normalize_text(row.get("planted_by")).strip()
+        picked_by = _normalize_text(row.get("picked_by")).strip()
+        if planted_by:
+            metadata["planted_by"] = planted_by
+        if picked_by:
+            metadata["picked_by"] = picked_by
+        if row.get("planted_at"):
+            metadata["planted_at"] = row.get("planted_at")
+        if row.get("due_on"):
+            metadata["due_on"] = row.get("due_on")
+        if condition:
+            metadata["condition"] = _normalize_text(row.get("picked_condition")).strip()
+        return _make_documents(
+            source_table="shenyu_orchard_fruits",
+            source_id=row.get("id"),
+            source_type="orchard",
+            title=name,
+            body="\n".join(parts),
+            metadata=metadata,
+            # 事情发生的那天是摘下来的那天，不是挂上去的那天。
+            event_date=row.get("picked_at"),
+            created_at=row.get("planted_at"),
+            updated_at=row.get("picked_at"),
+            status="active",
+            importance=0.75,
+        )
+
+    async def index_orchard_fruit_row(
+        self,
+        row: dict[str, Any],
+        notes: Optional[list[dict[str, Any]]] = None,
+    ) -> dict[str, Any]:
+        source_id = str(row.get("id") or "").strip()
+        if not source_id:
+            return {"ok": False, "indexed": 0, "error": "orchard fruit row has no id."}
+        docs = self._orchard_fruit_documents(row, notes)
+        if not docs:
+            return {"ok": False, "indexed": 0, "error": "orchard fruit is not picked yet."}
+        await self._upsert_documents(docs)
+        await self._sync_graph_documents_fail_soft(docs)
+        return {"ok": True, "indexed": len(docs)}
+
+    async def _load_orchard(self) -> list[RecallDocument]:
+        rows = await self._query_all_rows(
+            "shenyu_orchard_fruits",
+            {"select": "*", "status": "eq.picked", "order": "picked_at.desc"},
+        )
+        notes_by_fruit: dict[str, list[dict[str, Any]]] = {}
+        if rows:
+            note_rows = await self._query_all_rows(
+                "shenyu_orchard_notes",
+                {"select": "*", "order": "created_at.asc"},
+            )
+            for note in note_rows:
+                notes_by_fruit.setdefault(str(note.get("fruit_id") or ""), []).append(note)
+        docs = []
+        for row in rows:
+            docs.extend(
+                self._orchard_fruit_documents(row, notes_by_fruit.get(str(row.get("id") or "")))
             )
         return docs
 

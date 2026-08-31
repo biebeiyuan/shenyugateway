@@ -146,6 +146,14 @@ class RankingMixin:
                 item["book_name"] = metadata.get("book_name")
             if metadata.get("mood"):
                 item["mood"] = metadata.get("mood")
+        elif source_type == "orchard":
+            # 命中的一定是摘了的果子（青果子不进索引），所以这里说的是
+            # 「等到了」这件事，带上是谁摘的和当时预计的日子。
+            item["content_kind"] = "orchard"
+            if metadata.get("picked_by"):
+                item["picked_by"] = metadata.get("picked_by")
+            if metadata.get("due_on"):
+                item["due_on"] = metadata.get("due_on")
         elif source_type == "heartbeat":
             item["content_kind"] = "heartbeat"
         elif source_type == "board":

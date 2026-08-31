@@ -360,6 +360,26 @@ class BaseStoreMixin:
                 CREATE INDEX IF NOT EXISTS idx_album_photos_fingerprint
                     ON album_photos(fingerprint)
                     WHERE fingerprint <> '';
+
+                -- 盼圃园子里过过的天气。只有会在果子上留下后果的那几类进来
+                -- （冰雹、暴雨、大风、雪、寒潮、高温…），普通阴晴不记。
+                -- 存在本机卷而不是 Supabase：没人会去回忆搜索一场天气，它只是
+                -- 用来决定摘下来的果子长什么样的算料。果子和纸条在 Supabase，
+                -- 因为那些以后要被想起来。
+                CREATE TABLE IF NOT EXISTS orchard_weather (
+                    id TEXT PRIMARY KEY,
+                    -- 本地日（Asia/Shanghai）。一场天气属于哪一天。
+                    on_day TEXT NOT NULL,
+                    kind TEXT NOT NULL,
+                    detail TEXT NOT NULL DEFAULT '',
+                    observed_text TEXT NOT NULL DEFAULT '',
+                    temp_c INTEGER,
+                    recorded_at TEXT NOT NULL,
+                    UNIQUE(on_day, kind)
+                );
+
+                CREATE INDEX IF NOT EXISTS idx_orchard_weather_day
+                    ON orchard_weather(on_day);
                 """
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")

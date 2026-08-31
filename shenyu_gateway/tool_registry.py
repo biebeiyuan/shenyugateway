@@ -8,6 +8,7 @@ from shenyu_gateway.gateway_tools import GatewayToolService
 from shenyu_gateway.store import DEFAULT_ALBUM_NAME
 from shenyu_gateway.calendar import period_key_from_date
 from shenyu_gateway.mem_notes import MEM_NOTE_MEMORY_KINDS, MEM_NOTE_PATCH_FIELDS, MEM_NOTE_TYPES
+from shenyu_gateway.orchard_service import ACTOR_SHENYU as ORCHARD_ACTOR_SHENYU
 from shenyu_gateway.tool_schemas import (
     _gateway_core_tools,
     _gateway_list_mem_notes_tool,
@@ -48,6 +49,7 @@ DAILY_GATEWAY_TOOL_NAMES = {
     "shenyu_windowsill_list",
     "shenyu_album_save",
     "shenyu_album_list",
+    "shenyu_orchard",
     "shenyu_read_heartbeat",
     "shenyu_write_mem_note",
     "shenyu_search_mem_notes",
@@ -116,6 +118,12 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   album_save(note?, mood?, book?, which?)  — 存这一轮看到的图；which 选第几张
   album_list(book?, limit?)  — 不给 book 就是列出所有本子
 
+盼圃
+  orchard(action: plant|note|pick|look, name?, fruit_id?, content?, due_on?, words?)
+    挂着还没发生的事。plant 挂一颗（due_on 可空，没日子就一直等）；note 贴纸条；
+    pick 摘（words 是摘果感言）；look 看整面墙。不催、不过期。
+    note/pick 直接给 name 就行，不用先 look 抄 id。
+
 手边
   notebook_write(content*)
   notebook_list(limit?)
@@ -162,6 +170,12 @@ _BROKER_DAILY_DESCRIPTION = """\
 相册
   album_save(note?, mood?, book?, which?)  — 存这一轮看到的图；which 选第几张
   album_list(book?, limit?)  — 不给 book 就是列出所有本子
+
+盼圃
+  orchard(action: plant|note|pick|look, name?, fruit_id?, content?, due_on?, words?)
+    挂着还没发生的事。plant 挂一颗（due_on 可空，没日子就一直等）；note 贴纸条；
+    pick 摘（words 是摘果感言）；look 看整面墙。不催、不过期。
+    note/pick 直接给 name 就行，不用先 look 抄 id。
 
 手边
   notebook_write(content*)
@@ -790,6 +804,22 @@ async def _handle_books(ctx: ToolContext) -> dict:
         summary=ctx.arguments.get("summary", ""),
         view=ctx.arguments.get("view", "current"),
         actor="沈予",
+    )
+
+
+@_tool_handler("shenyu_orchard")
+async def _handle_orchard(ctx: ToolContext) -> dict:
+    return await ctx.service.orchard(
+        action=ctx.arguments.get("action", ""),
+        name=ctx.arguments.get("name", ""),
+        fruit_id=_first_nonempty_arg(ctx.arguments, "fruit_id", "id", "fruitId") or "",
+        content=ctx.arguments.get("content", ""),
+        due_on=_first_nonempty_arg(ctx.arguments, "due_on", "due", "dueOn"),
+        words=ctx.arguments.get("words", ""),
+        include_picked=_bool_arg(ctx.arguments, "include_picked", True),
+        limit=_int_arg(ctx.arguments, "limit", 30),
+        # 走网关工具进来的一律是沈予；圆圆走 Admin API 那条路。
+        actor=ORCHARD_ACTOR_SHENYU,
     )
 
 

@@ -6,6 +6,7 @@ from ._books import BooksToolsMixin
 from ._calendar import CalendarToolsMixin
 from ._mem_notes import MemNoteToolsMixin
 from ._notebook import NotebookToolsMixin
+from ._orchard import OrchardToolsMixin
 from ._recall import RecallToolsMixin
 
 # Re-exporting the `_runtime` singleton shadows the `._runtime` submodule as a
@@ -41,6 +42,7 @@ class GatewayToolService(
     WindowsillToolsMixin,
     NotebookToolsMixin,
     AlbumToolsMixin,
+    OrchardToolsMixin,
     WebToolsMixin,
     GatewayToolServiceBase,
 ):
@@ -51,6 +53,7 @@ __all__ = [
     "ALBUM_NOTES_TABLE",
     "GatewayToolRuntime",
     "GatewayToolService",
+    "OrchardToolsMixin",
     "latest_turn_images",
     "WINDOWSILL_ORIGIN_NORMAL",
     "WINDOWSILL_ORIGIN_ROOM",

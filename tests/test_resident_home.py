@@ -65,6 +65,7 @@ def test_manifest_has_resident_facing_core_rules_and_live_source_paths():
         "calendar",
         "windowsill",
         "album",
+        "orchard",
         "room",
         "origin_books",
         "home",

@@ -40,6 +40,7 @@ const GATEWAY_TOOL_HINTS: Record<string, string> = {
   shenyu_add_calendar: '写一页日历日记',
   shenyu_read_heartbeat: '读自己留的心跳',
   shenyu_last_seen: '看上次聊了什么',
+  shenyu_orchard: '盼圃（种 / 贴纸条 / 摘 / 看）',
   shenyu_books: '查看或书写共享书架',
   shenyu_conflict_list: '看来历书书架',
   shenyu_conflict_read: '翻开一本来历书',

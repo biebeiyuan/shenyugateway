@@ -167,6 +167,31 @@ class DrawerNoteMarkReadRequest(BaseModel):
     ids: list[str] = Field(default_factory=list)
 
 
+class OrchardPlantRequest(BaseModel):
+    name: str
+    # 可空是常态，不是遗漏：没日子的果子就一直挂着等。
+    due_on: Optional[str] = None
+
+
+class OrchardNoteRequest(BaseModel):
+    content: str
+
+
+class OrchardPickRequest(BaseModel):
+    words: str = ""
+
+
+class OrchardNoteByNameRequest(BaseModel):
+    # 按名字指认果子，跟 shenyu_orchard 那条路对等：果子的名字本来就是一句话。
+    name: str
+    content: str
+
+
+class OrchardPickByNameRequest(BaseModel):
+    name: str
+    words: str = ""
+
+
 class ColdStartPreviewRequest(BaseModel):
     target_session_tag: Optional[str] = None
     source_session_tag: Optional[str] = None

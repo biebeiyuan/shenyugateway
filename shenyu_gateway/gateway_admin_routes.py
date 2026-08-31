@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from .gateway_tools import GatewayToolService, WINDOWSILL_ORIGIN_ROOM
 from .mem_notes import MemNoteService
 from .memory_graph import MemoryGraphService
+from .orchard_service import ACTOR_YUANYUAN, OrchardService
 from .recall import RecallIndexService, recall_terms
 from .request_logs import (
     _finalize_stale_tool_stream_logs,
@@ -36,6 +37,11 @@ from .schemas import (
     MemoryGraphRelationCreate,
     MemoryGraphRelationPatch,
     MemoryGraphSourceEntitiesPut,
+    OrchardNoteByNameRequest,
+    OrchardNoteRequest,
+    OrchardPickByNameRequest,
+    OrchardPickRequest,
+    OrchardPlantRequest,
     StarConnectRequest,
     StarConstantRequest,
     StarCreateRequest,
@@ -190,6 +196,89 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             media_type=str(photo["mime"] or "image/jpeg"),
             # 按 id 寻址、内容永不改写，所以可以长缓存；private 避免中间层留存。
             headers={"Cache-Control": "private, max-age=31536000, immutable"},
+        )
+
+    # 盼圃：圆圆这一侧的四个动作。走这条路进来的一律记作圆圆，走
+    # `shenyu_orchard` 工具进来的是沈予——谁挂上去的不做参数，由入口决定。
+    #
+    # 这里没有"提醒""到期"或任何轮询接口，这是刻意的：盼圃不催。没有预计日期
+    # 的果子一直挂着等，过了日子的也不过期、不删、不变红。加提醒之前先读
+    # `AGENTS.md` 里关于盼圃的那一条。
+    def _orchard() -> OrchardService:
+        return OrchardService(
+            deps.get_supabase_client(), cfg=cfg, store=deps.get_session_store()
+        )
+
+    def _orchard_result(result: dict) -> dict:
+        if result.get("ok"):
+            return result
+        kind = str(result.get("error_kind") or "")
+        status = {
+            "validation": 400,
+            "not_found": 404,
+            # 同名多颗时不猜是哪颗，让调用方说清——409 而不是 400：
+            # 请求本身没写错，是墙上真的有两颗同名的。
+            "ambiguous": 409,
+            "config": 503,
+        }.get(kind, 500)
+        raise HTTPException(status_code=status, detail=result.get("error") or "盼圃现在打不开。")
+
+    @router.get("/api/gateway/orchard")
+    async def look_orchard(include_picked: bool = True, limit: int = 30):
+        return _orchard_result(
+            await _orchard().look(include_picked=include_picked, limit=limit)
+        )
+
+    @router.post("/api/gateway/orchard/fruits")
+    async def plant_orchard_fruit(payload: OrchardPlantRequest):
+        return _orchard_result(
+            await _orchard().plant(
+                name=payload.name,
+                due_on=payload.due_on,
+                actor=ACTOR_YUANYUAN,
+            )
+        )
+
+    @router.post("/api/gateway/orchard/fruits/{fruit_id}/notes")
+    async def add_orchard_note(fruit_id: str, payload: OrchardNoteRequest):
+        return _orchard_result(
+            await _orchard().add_note(
+                fruit_id=fruit_id,
+                content=payload.content,
+                actor=ACTOR_YUANYUAN,
+            )
+        )
+
+    @router.post("/api/gateway/orchard/fruits/{fruit_id}/pick")
+    async def pick_orchard_fruit(fruit_id: str, payload: OrchardPickRequest):
+        return _orchard_result(
+            await _orchard().pick(
+                fruit_id=fruit_id,
+                words=payload.words,
+                actor=ACTOR_YUANYUAN,
+            )
+        )
+
+    # 按名字贴和摘，跟 shenyu_orchard 的 name 那条路对等。以后接前端时页面会
+    # 拿着 id 调上面那两条，这两条是给「我就想说蒜冒尖」留的。
+    @router.post("/api/gateway/orchard/notes")
+    async def add_orchard_note_by_name(payload: OrchardNoteByNameRequest):
+        return _orchard_result(
+            await _orchard().add_note(
+                name=payload.name,
+                content=payload.content,
+                actor=ACTOR_YUANYUAN,
+            )
+        )
+
+    @router.post("/api/gateway/orchard/pick")
+    async def pick_orchard_fruit_by_name(payload: OrchardPickByNameRequest):
+        return _orchard_result(
+            await _orchard().pick(
+                name=payload.name,
+                words=payload.words,
+                actor=ACTOR_YUANYUAN,
+            )
         )
 
     @router.get("/api/gateway/room/newspapers")

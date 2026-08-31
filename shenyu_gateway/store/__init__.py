@@ -15,6 +15,7 @@ from ._cold_start import ColdStartMixin
 from ._heartbeats import HeartbeatsMixin
 from ._cache import CacheMixin
 from ._room import RoomMixin
+from ._orchard import OrchardMixin
 from ._admin import AdminMixin
 from ._request_log_history import RequestLogHistoryMixin
 
@@ -29,6 +30,7 @@ class GatewayStore(
     HeartbeatsMixin,
     CacheMixin,
     RoomMixin,
+    OrchardMixin,
     AlbumMixin,
     AdminMixin,
     RequestLogHistoryMixin,

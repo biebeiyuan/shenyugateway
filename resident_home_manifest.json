@@ -203,15 +203,15 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "304ea327b025aef518612c503bcd533e08542d3d6481c17684283e042eaf0a4c",
+        "fingerprint": "88c44274950ecc07502acb0dbc3de326431aacd4c2e64c2c766f3d70a1d89e86",
         "file_hashes": {
           "shenyu_gateway/gateway_tools/_windowsill.py": "d18c9434a6f37a318ea89992d8b9b67ba0bcc90ba6ab17a5b4e877d6044f17f3",
-          "shenyu_gateway/tool_schemas.py": "a0b3edf51f5439b654815b2b3b10f12d5ddb97c9035d48d1d6dbb4c0c9b24e5d"
+          "shenyu_gateway/tool_schemas.py": "a516b1641c475ed38e2fd67e890d165e9d15ea74d435df65e62fa23a1356aaa8"
         },
-        "commit": "127ed7ca88f952b8b68d38a54c10a4995c88ae9f",
-        "revision": "127ed7ca88f952b8b68d38a54c10a4995c88ae9f-dirty",
+        "commit": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298",
+        "revision": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-30T08:24:45+08:00",
+        "reviewed_at": "2026-08-31T00:55:23+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -234,18 +234,60 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "07bb5f9c4346a17efd119c7bf34c492604f3d50d234a9679e66d00123a27f3e5",
+        "fingerprint": "dde5759177b956e9863f0116039fa856763f25fbd1b8d35bbbc47d370c650833",
         "file_hashes": {
           "shenyu_gateway/context_layers.py": "7103d452eca4a332fca710ee5f7b3c3283eb2817f3d6571e518b01179356818b",
           "shenyu_gateway/gateway_tools/_album.py": "0e251e43bf094906a9fe18abe6292c41f47a69539d7685195d9e4f2a02638b19",
           "shenyu_gateway/store/_album.py": "cad6fcffeee27dc411d886eb62c2825b51fd68102ef112265a94878a982b4e85",
-          "shenyu_gateway/tool_schemas.py": "a0b3edf51f5439b654815b2b3b10f12d5ddb97c9035d48d1d6dbb4c0c9b24e5d"
+          "shenyu_gateway/tool_schemas.py": "a516b1641c475ed38e2fd67e890d165e9d15ea74d435df65e62fa23a1356aaa8"
         },
-        "commit": "c38e31915451403a679501a6671b3230782a94a4",
-        "revision": "c38e31915451403a679501a6671b3230782a94a4-dirty",
+        "commit": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298",
+        "revision": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-30T10:28:53+08:00",
-        "reviewed_by": "Claude Code"
+        "reviewed_at": "2026-08-31T00:55:23+08:00",
+        "reviewed_by": "Codex"
+      }
+    },
+    "orchard": {
+      "title": "盼圃",
+      "summary": "挂着还没发生的事的那面墙。青果子挂上面，摘了的翻面钉在墙底下那排。",
+      "core": [
+        "它不催：没有预计日期的果子就一直挂着等，过了日期的也不过期、不删、不变红。",
+        "它不响：不调这个工具，盼圃就完全不在提示词里，没有任何自动提醒路径。",
+        "每颗果子底下两个人都能贴纸条，等的过程留在果子上；摘的时候连纸条一起收进果壳里。",
+        "果子此刻长成什么样，是从它自己挂了多久、被谁看过几次算出来的，同一天说法不变，不是每次随机抽。",
+        "摘下那天的样子定格存进库里，之后翻墙底下那排永远是同一句，不重算。",
+        "摘了的果子（连纸条）进 Recall，以后聊到相关的事它能自己想起来；青着的不进——等的过程不该被聊天半路翻出来。",
+        "园子里有天气：跟着圆圆所在地的实况走，四个动作都顺带告诉你今天园子什么天。",
+        "极端天气（冰雹、暴雨、大风、雪、寒潮、高温…）会在果子上留下后果，摘的时候看得见；同一场天气只打到一部分果子，而且永远是同一批。天气取不到就当平常天，绝不会让盼圃打不开。",
+        "贴纸条和摘果子可以直接说果子的名字，不用先看一遍墙抄编号；同名有好几颗时不猜，会让你说清是哪颗。",
+        "列表里纸条只带最近几张，省略了几张会明说，不会让人以为底下就这几句；摘的时候整串都在。",
+        "看整面墙时每颗只给一眼扫过的信息（名字、谁哪天挂的、还有几天、几张纸条、此刻什么样）；纸条正文和它挨过的天气在碰那颗果子的时候才带。",
+        "天气存在网关本机卷，不占 Supabase：果子和纸条以后要被想起来，天气只是算料。没有本机卷时天气整层缺席，墙照旧能挂能贴能摘。"
+      ],
+      "resident_effect": "想等的事可以挂上去，不催你也不过期；每次碰它都顺带看到园子今天什么天。等到了那天谁先看见谁摘，摘完那颗果子、当时贴的纸条和它挨过的天气一起沉到墙底下那排。",
+      "source_globs": [
+        "shenyu_gateway/orchard.py",
+        "shenyu_gateway/orchard_service.py",
+        "shenyu_gateway/gateway_tools/_orchard.py",
+        "shenyu_gateway/tool_schemas.py",
+        "shenyu_gateway/store/_orchard.py"
+      ],
+      "config_keys": [],
+      "reviewed": {
+        "fingerprint": "5fb7dbf229e96892485d0ca0737fa9b2d5bb5b48eaab411706437669ca3adcdb",
+        "file_hashes": {
+          "shenyu_gateway/gateway_tools/_orchard.py": "4c1760f22388c3d66fbb36b3aa09703da86a214810e8f49fa50799e4bc09b7f0",
+          "shenyu_gateway/orchard.py": "15d12744eb145539baab57d97696712bcf916f1fd8b5dab5a56001fc4a783736",
+          "shenyu_gateway/orchard_service.py": "0584f1f512501c8388a3355917beec7d31672aceff6aa153007d814d0b0e43ee",
+          "shenyu_gateway/store/_orchard.py": "b4092657d271d5b48d23ac6d50ff08cdda4b89997b077f8e93c7a0e4298f4a5f",
+          "shenyu_gateway/tool_schemas.py": "a516b1641c475ed38e2fd67e890d165e9d15ea74d435df65e62fa23a1356aaa8"
+        },
+        "commit": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298",
+        "revision": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298-dirty",
+        "worktree_dirty": true,
+        "reviewed_at": "2026-08-31T12:27:49+08:00",
+        "reviewed_by": "Codex"
       }
     },
     "room": {
@@ -308,19 +350,19 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "d325fbddcd2c9c12e488d149d1eab8c16edad8ed3d0169bba961cae73ff69fb6",
+        "fingerprint": "97bea056ad6dda9127659d2705bb0f0d299a79499b57fa8d898776cda70075e1",
         "file_hashes": {
           "shenyu_gateway/archive_routes.py": "c514bc7697e4e1e0b02275cd865d641d1e125acfb6bb1fe6bedb8a0ebab8188f",
           "shenyu_gateway/conflict_books.py": "e9b4d7b8f961e7143d21ade98cd66594e7e9522bcd47797efa4dec06958e01b3",
           "shenyu_gateway/context_layers.py": "7103d452eca4a332fca710ee5f7b3c3283eb2817f3d6571e518b01179356818b",
           "shenyu_gateway/gateway_tools/_books.py": "9c02f8065cc671b9519e83f7b6ba936b37c4a7a6e5ca24b2ff9be6d11c82520f",
-          "shenyu_gateway/tool_schemas.py": "a0b3edf51f5439b654815b2b3b10f12d5ddb97c9035d48d1d6dbb4c0c9b24e5d"
+          "shenyu_gateway/tool_schemas.py": "a516b1641c475ed38e2fd67e890d165e9d15ea74d435df65e62fa23a1356aaa8"
         },
-        "commit": "7d1782dd754bd30fa4642cf35330e82e8db99a9a",
-        "revision": "7d1782dd754bd30fa4642cf35330e82e8db99a9a-dirty",
+        "commit": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298",
+        "revision": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-30T20:44:38+08:00",
-        "reviewed_by": "Claude Code"
+        "reviewed_at": "2026-08-31T00:55:23+08:00",
+        "reviewed_by": "Codex"
       }
     },
     "home": {

@@ -26,6 +26,7 @@ PUBLIC_RECALL_SOURCE_TYPES = [
     "journal",
     "windowsill",
     "album",
+    "orchard",
     "heartbeat",
     "room",
     "board",
