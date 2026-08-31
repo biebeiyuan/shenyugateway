@@ -45,44 +45,52 @@ def room_tool_definitions(tool_names: Optional[Iterable[str]] = None) -> list[di
             "type": "function",
             "function": {
                 "name": "room_star_map",
-                "description": "看星图、搜星、审星、评分、连星座；星图发亮或想整理记忆时用。",
+                "description": "看星图、落一颗星、搜星、审星、评分、连星座；星图发亮或想整理记忆时用。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["look", "search", "review", "feedback", "connect"],
+                            "enum": ["look", "create", "search", "review", "feedback", "connect"],
                             "default": "look",
                         },
+                        "content": {"type": "string", "description": "create 时那颗星的正文"},
+                        "chord": {"type": "string", "description": "create 时的和弦，可选"},
+                        "chords": {"type": "array", "items": {"type": "string"}, "description": "create 时的和弦序列，可选"},
                         "query": {"type": "string", "description": "search 时搜索词"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 20, "default": 10},
                         "limit_new": {"type": "integer", "minimum": 1, "maximum": 10, "default": 4, "description": "review 时新星数"},
                         "candidates_per_star": {"type": "integer", "minimum": 1, "maximum": 5, "default": 2},
+                        # feedback 值和普通聊天那条 shenyu_star_feedback 保持一致：
+                        # missed / should_surface 需要先知道库里有哪颗星，是圆圆的视角，
+                        # 不给沈予。connected 会真的连上星座。
                         "feedback": {
                             "type": "string",
-                            "enum": ["positive", "negative", "missed", "connected", "skipped", "should_surface"],
+                            "enum": ["connected", "positive", "negative", "skipped"],
                             "description": "feedback 时单条评分",
                         },
+                        "constellation_name": {"type": "string", "description": "connected 时可选：这条线叫什么"},
                         "items": {
                             "type": "array",
                             "description": "feedback 时批量评分",
                             "items": {
                                 "type": "object",
                                 "properties": {
-                                    "feedback": {"type": "string", "enum": ["positive", "negative", "missed", "connected", "skipped", "should_surface"]},
+                                    "feedback": {"type": "string", "enum": ["connected", "positive", "negative", "skipped"]},
+                                    "candidate": {"type": "string"},
+                                    "constellation_name": {"type": "string"},
                                     "run_id": {"type": "string"},
                                     "candidate_id": {"type": "string"},
                                     "candidate_star_id": {"type": "string"},
-                                    "expected_star_id": {"type": "string"},
                                     "note": {"type": "string"},
                                 },
                                 "required": ["feedback"],
                             },
                         },
+                        "candidate": {"type": "string", "description": "feedback 时用 review 给的编号，比如 1.2"},
                         "run_id": {"type": "string"},
                         "candidate_id": {"type": "string"},
                         "candidate_star_id": {"type": "string"},
-                        "expected_star_id": {"type": "string"},
                         "star_ids": {"type": "array", "items": {"type": "string"}, "description": "connect 时选的星"},
                         "name": {"type": "string", "description": "connect 时星座名"},
                         "note": {"type": "string"},
@@ -213,7 +221,7 @@ def room_broker_tool() -> dict:
         "room_wooden_box": "木盒子/心跳（limit?）",
         "room_drawer_notes": "圆儿的纸条（limit?）",
         "room_locked_drawer": "上锁的抽屉（action: write|read, content?）",
-        "room_star_map": "星图墙（action: look|search|review|feedback|connect, query?, feedback?: connected|positive|negative|should_surface|skipped|missed, items?=批量, star_ids?=连星座）",
+        "room_star_map": "星图墙（action: look|create|search|review|feedback|connect, content?=落一颗, query?, feedback?: connected|positive|negative|skipped, candidate?=review 给的编号, items?=批量, star_ids?=连星座）",
         "shenyu_books": "共享书架（action: list|read|write|annotate；list 无参数；read origin 要 book_id/title；write 仅限 identity）",
         "room_wall_pins": "墙上便签（action: list|add|done, content?, pin_id?）",
         "room_octopus_pillow": "章鱼抱枕（无参数）",
@@ -474,11 +482,24 @@ def _handle_wooden_box(store: Any, arguments: dict) -> dict:
 
 
 async def _handle_star_map(arguments: dict, *, cfg: Any, supabase_client: Any, session_tag: Optional[str]) -> dict:
-    from .stars import StarService
-    service = StarService(cfg, supabase_client)
+    # 走 GatewayToolService 而不是直接用 StarService：编号解析、feedback 收窄、
+    # 返回去噪那些都在工具层，房间和普通聊天该对星星说同一种话，不重写一遍。
+    from .gateway_tools import GatewayToolService
+    service = GatewayToolService(runtime_config=cfg, supabase=supabase_client, store=None)
     action = arguments.get("action", "look")
     limit = min(int(arguments.get("limit", 10)), 20)
     tag = arguments.get("session_tag") or session_tag
+
+    if action == "create":
+        content = arguments.get("content", "")
+        if not str(content or "").strip():
+            return {"ok": False, "error": "create 需要 content"}
+        return await service.create_star(
+            content=content,
+            chord=arguments.get("chord", ""),
+            chords=arguments.get("chords"),
+            session_tag=tag,
+        )
 
     if action == "search":
         query = arguments.get("query", "")
@@ -487,7 +508,7 @@ async def _handle_star_map(arguments: dict, *, cfg: Any, supabase_client: Any, s
         return await service.search_stars(query=query, session_tag=tag, limit=limit, log_run=False)
 
     if action == "review":
-        return await service.review(
+        return await service.star_review(
             limit_new=arguments.get("limit_new"),
             candidates_per_star=arguments.get("candidates_per_star"),
             total_candidate_limit=arguments.get("total_candidate_limit"),
@@ -495,12 +516,13 @@ async def _handle_star_map(arguments: dict, *, cfg: Any, supabase_client: Any, s
         )
 
     if action == "feedback":
-        return await service.feedback(
+        return await service.star_feedback(
             feedback=arguments.get("feedback", ""),
+            candidate=arguments.get("candidate"),
+            constellation_name=arguments.get("constellation_name", ""),
             run_id=arguments.get("run_id"),
             candidate_id=arguments.get("candidate_id"),
             candidate_star_id=arguments.get("candidate_star_id"),
-            expected_star_id=arguments.get("expected_star_id"),
             scored_by="沈予",
             note=arguments.get("note", ""),
             items=arguments.get("items") if isinstance(arguments.get("items"), list) else None,
@@ -513,7 +535,6 @@ async def _handle_star_map(arguments: dict, *, cfg: Any, supabase_client: Any, s
         return await service.connect_constellation(
             star_ids=star_ids,
             name=arguments.get("name", ""),
-            relation_type="constellation",
             scored_by="沈予",
             note=arguments.get("note", ""),
         )

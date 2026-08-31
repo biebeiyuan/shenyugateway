@@ -397,7 +397,7 @@ Charge affects door visibility:
 | `room_wooden_box` | drawers | Open the wooden box of heartbeats. |
 | `room_drawer_notes` | drawers | Read notes Yuan left in the middle drawer. |
 | `room_locked_drawer` | drawers | Private drawer. No admin API. Only Shenyu's tool can open it. |
-| `room_star_map` | star_wall | Star map: look, search, review, feedback, connect constellations. |
+| `room_star_map` | star_wall | Star map: look, create a star, search, review, feedback, connect constellations. Routes through `GatewayToolService` so numbering, feedback values (`connected`/`positive`/`negative`/`skipped`), and constellation-building match the plain-chat `shenyu_*` star tools rather than drifting. |
 | `shenyu_books` | list / read / write / annotate | When the shelf door is visible, browse the lightweight directory, open the generated home, revise `我是谁`, read an origin book, or append annotations; list entries never include book bodies. |
 | `room_wall_pins` | wall | View/add/complete wall pin reminders. |
 | `room_octopus_pillow` | bed | Hug the octopus pillow. Random Yuan note as easter egg. |
