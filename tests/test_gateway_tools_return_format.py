@@ -673,6 +673,69 @@ def test_a_star_that_is_ordinary_says_nothing_about_it():
     assert special["updated_at"] == "2026-08-20T02:00:00+00:00"
 
 
+def test_recall_hits_do_not_hand_him_the_supabase_table_name():
+    """他要的是「这条从哪来」，不是库里表叫什么。
+
+    source_table 是 Supabase 表名（shenyu_album_notes 这种）。Admin 的记忆网络
+    拿它和 source_id 拼源的唯一键，所以服务层必须照旧返回——只在工具那一份收窄。
+    留下的 source_type 正是 recall_read 的参数名，两步之间对得上。
+    """
+    from shenyu_gateway.gateway_tools._recall import _for_shenyu
+    from shenyu_gateway.recall._ranking import RankingMixin
+
+    class Ranking(RankingMixin):
+        pass
+
+    row = {
+        "source_table": "shenyu_album_notes",
+        "source_id": "a-7",
+        "source_type": "album",
+        "chunk_index": 0,
+        "body": "海边那天的光。",
+        "metadata_json": {"photo_id": "p-1"},
+        "event_date": "2026-08-20T02:00:00+00:00",
+    }
+    served = Ranking()._public_item(row, {})
+    # 服务层照旧：Admin 靠它拼唯一键。
+    assert served["source_table"] == "shenyu_album_notes"
+
+    his = _for_shenyu(served)
+    assert "source_table" not in his
+    # 认出这条从哪来、能翻回那张图、能走第二步读全文，三件事都还在。
+    assert his["source_type"] == "album"
+    assert his["photo_id"] == "p-1"
+    assert his["source_id"] == "a-7"
+
+
+def test_content_kind_only_survives_where_it_carries_real_information():
+    """11 个源里 9 个 content_kind 和 source_type 逐字相同；journal 是例外，
+    它的 category 由来源自己决定。"""
+    from shenyu_gateway.recall._ranking import RankingMixin
+
+    class Ranking(RankingMixin):
+        pass
+
+    def item(source_type, metadata=None):
+        return Ranking()._public_item(
+            {
+                "source_table": "t",
+                "source_id": "x",
+                "source_type": source_type,
+                "body": "正文",
+                "metadata_json": metadata or {},
+                "event_date": "2026-08-20",
+            },
+            {},
+        )
+
+    for source_type in ("windowsill", "album", "orchard", "heartbeat", "board", "mem_note", "calendar"):
+        assert "content_kind" not in item(source_type), source_type
+        assert item(source_type)["source_type"] == source_type
+
+    assert item("journal", {"category": "diary"})["content_kind"] == "diary"
+    assert item("journal")["content_kind"] == "diary"
+
+
 def test_mem_note_listing_strips_internal_bookkeeping(monkeypatch):
     service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=None, store=None)
 

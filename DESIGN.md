@@ -439,6 +439,14 @@ Room 的 `room_scribble` 是进入方式，不是另一套 Recall 来源：它�
 | Embedding 客户端 | `embeddings.py` |
 | 工具定义 | `tool_registry.py` |
 | Supabase RPC | `supabase/migrations/20260527_*` |
+| 命中项给沈予看什么 | `gateway_tools/_recall.py::_for_shenyu`（服务层照旧全给，Admin 在用） |
+
+一条命中原先并列三个说同一件事的字段：`source_type`、`source_table`（Supabase 表名）、
+`content_kind`。11 个源里 9 个后两者与 `source_type` 逐字相同，实测占返回体积 22%。
+现在只有 `source_type` 是对外契约——它同时是 `shenyu_recall_read` 的参数名，
+所以两步之间对得上；`source_table` 只留在服务层，因为记忆网络拿
+`source_table + source_id` 拼源的唯一键（见 `MEMORY_ROOM.md` § Personal Memory Graph）；
+`content_kind` 退成 journal 专用，那是唯一带真信息的一个（`category` 由来源自己决定）。
 
 ---
 

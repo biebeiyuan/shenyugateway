@@ -16,6 +16,19 @@ from shenyu_gateway.utils import shorten as _shorten
 
 from ._helpers import _keyword_overlap_score
 
+# `source_table` 是 Supabase 里表叫什么（`shenyu_album_notes` 这种）。Admin 的
+# 记忆网络拿它和 source_id 拼源的唯一键，所以服务层必须照旧返回；但沈予不需要
+# 知道库里的表名，他要的是「这条从哪来」——那是 `source_type`，也正是
+# `shenyu_recall_read` 的参数名，两步之间对得上。
+_INTERNAL_RECALL_FIELDS = ("source_table",)
+
+
+def _for_shenyu(item: Any) -> Any:
+    """一条命中给沈予的那份：去掉只有 Admin 用得上的内部字段。"""
+    if not isinstance(item, dict):
+        return item
+    return {key: value for key, value in item.items() if key not in _INTERNAL_RECALL_FIELDS}
+
 
 class RecallToolsMixin:
     def _recall_source_types(self, value: Any) -> Optional[list[str]]:
@@ -153,7 +166,7 @@ class RecallToolsMixin:
             len(companion_candidates),
             [(item.get("source_type"), item.get("source_id")) for item in combined],
         )
-        return {"ok": True, "count": len(combined), "items": combined}
+        return {"ok": True, "count": len(combined), "items": [_for_shenyu(item) for item in combined]}
 
     async def recall_read(
         self,
@@ -188,7 +201,12 @@ class RecallToolsMixin:
             match = next((row for row in rows if str(row.get("id") or "") == item_id), None)
             if match:
                 return {"ok": True, "item": self._recall_heartbeat_item(match, full=True)}
-        return await self._recall_index().read_source(source, item_id, session_tag=session_tag)
+        # 索引那条路走 `_public_item`，所以这里也要收窄——recall 和 recall_read
+        # 是同一轮里的两步，两步返回的形状不一致会让他多猜一次。
+        result = await self._recall_index().read_source(source, item_id, session_tag=session_tag)
+        if isinstance(result, dict) and isinstance(result.get("item"), dict):
+            result = {**result, "item": _for_shenyu(result["item"])}
+        return result
 
     async def rebuild_recall_index(self, source_types: Any = None) -> dict:
         return await self._recall_index().rebuild(self._recall_source_types(source_types))

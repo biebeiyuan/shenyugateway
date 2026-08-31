@@ -558,7 +558,6 @@ def test_recall_ranks_keyword_title_and_tag_hits():
         "title": "长隆海洋馆",
         "source_type": "memory",
         "source_table": "memories",
-        "content_kind": "memory",
         "event_date": "2026-05-21T00:00:00+00:00",
         "has_more": False,
     }
@@ -639,7 +638,9 @@ def test_recall_album_hit_carries_photo_id_so_the_image_can_be_reopened():
     result = asyncio.run(service.recall("海边", auto_sync=False))
 
     item = result["items"][0]
-    assert item["content_kind"] == "album"
+    # content_kind 退成 journal 专用了：其他源它和 source_type 逐字相同。
+    assert "content_kind" not in item
+    assert item["source_type"] == "album"
     assert item["photo_id"] == "phot_abc123"
     assert item["book_name"] == "想留的"
     assert item["mood"] == "安静"
@@ -695,7 +696,6 @@ def test_recall_hydrates_all_source_chunks_after_selecting_a_match():
             "title": "海洋馆房间",
             "source_type": "room",
             "source_table": "room",
-            "content_kind": "room",
             "event_date": "2026-05-20T00:00:00+00:00",
             "has_more": False,
         }
@@ -782,7 +782,6 @@ def test_recall_returns_vector_only_candidate_when_keywords_miss():
                 "title": "海洋馆房间",
                 "source_type": "room",
                 "source_table": "room",
-                "content_kind": "room",
                     "event_date": "2026-05-20T00:00:00+00:00",
                     "has_more": False,
             }

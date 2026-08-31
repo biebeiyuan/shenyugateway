@@ -129,16 +129,18 @@ class RankingMixin:
         item["source_type"] = source_type
         item["source_table"] = source_table
         metadata = _json_dict(row.get("metadata_json"))
+        # `content_kind` 曾经和 `source_type` 并列，而 11 个源里有 9 个两者逐字
+        # 相同；剩下两个（journal→diary、board→message）只是换个说法。Admin 那边
+        # 只有一处可选类型声明，没有任何地方渲染它。所以它退成 journal 的分类
+        # 载体——那是唯一带真信息的一个，日记的 category 由来源自己决定。
         if source_type == "journal":
             item["content_kind"] = (metadata.get("category") or "diary")
         elif source_type == "windowsill":
-            item["content_kind"] = "windowsill"
             if metadata.get("mood"):
                 item["mood"] = metadata.get("mood")
             if metadata.get("origin") == "room":
                 item["origin"] = "写自房间"
         elif source_type == "album":
-            item["content_kind"] = "album"
             # 相册命中时带上 photo_id，好让调用方能翻回那张图。
             if metadata.get("photo_id"):
                 item["photo_id"] = metadata.get("photo_id")
@@ -149,17 +151,10 @@ class RankingMixin:
         elif source_type == "orchard":
             # 命中的一定是摘了的果子（青果子不进索引），所以这里说的是
             # 「等到了」这件事，带上是谁摘的和当时预计的日子。
-            item["content_kind"] = "orchard"
             if metadata.get("picked_by"):
                 item["picked_by"] = metadata.get("picked_by")
             if metadata.get("due_on"):
                 item["due_on"] = metadata.get("due_on")
-        elif source_type == "heartbeat":
-            item["content_kind"] = "heartbeat"
-        elif source_type == "board":
-            item["content_kind"] = "message"
-        else:
-            item["content_kind"] = source_type or source_table
         item["event_date"] = row.get("event_date") or row.get("source_updated_at") or ""
         item["has_more"] = len(source_rows) > 1 or len(matched_content) > len(content)
         return item
