@@ -163,7 +163,7 @@ actr_score = clamp((base_activation + 2.5) / 4.5, 0, 1)
 每次搜索/注入都记录到 `shenyu_star_recall_runs` 和 `shenyu_star_recall_candidates`。
 
 反馈类型：`positive`、`negative`、`skipped`、`connected`、`missed`、`should_surface`。
-沈予的工具只暴露前四类里去掉 `missed` 的那四个（`connected` / `positive` / `negative` / `skipped`）；
+沈予的工具只暴露 `connected` / `positive` / `negative` / `skipped` 四个；
 `missed` 和 `should_surface` 只给圆圆，理由和证据见
 `docs/architecture/MEMORY_ROOM.md` § Star Memory Layer 的 Review flow。
 
