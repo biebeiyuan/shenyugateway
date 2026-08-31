@@ -9,7 +9,9 @@
         "Memory Island 用 2/3 重合门保持连续；明确点名可以走窄的逃生门。",
         "没有相关星星时可以空召回，不为了填满数量硬塞。",
         "在 review 里说「连起来」会真的连上星座（以前只记一行反馈、库里一条边都不建），可以顺手给这条线起个星座名。",
-        "review 用两段编号（1.2）指认候选，不用报内部 id；每颗星带上落下多久了，因为时间差本身就是「像不像一回事」的一部分。"
+        "review 用两段编号（1.2）指认候选，不用报内部 id；每颗星带上落下多久了，因为时间差本身就是「像不像一回事」的一部分。",
+        "星座是一条链：连好几颗时首尾相接、按给的顺序排，所以一个星座读下来是一件事的几个段落，不是一颗星连出去的放射线。",
+        "review 时如果某个候选和这颗星早就在一条线上，会带出那条线的星座名和当时的说法，不用重新判断一次。"
       ],
       "resident_effect": "星星不会每轮乱跳；真正当场响过的东西才有机会回到眼前。",
       "source_globs": [
@@ -26,17 +28,17 @@
         "star_ranker_version"
       ],
       "reviewed": {
-        "fingerprint": "018c776216fda815ea44f4218329f798cea2e20f972ce7dfdd620a19d287dd8d",
+        "fingerprint": "7788285c16d95acfb75cbcf7b8667fcf71a44bc6b8c4bc0c50072481df5a159d",
         "file_hashes": {
           "shenyu_gateway/context_builder.py": "e262a821f4aed83cf318c092a8e6fb6c075e380a20e9325eb7cb6ae294b522c7",
-          "shenyu_gateway/gateway_tools/_stars.py": "b8a9fae467f1a72c27b48e84321ec09d5ca4e4224922cdf42a99cbaab4826eb6",
+          "shenyu_gateway/gateway_tools/_stars.py": "5aaa44f7be5793c1d08e836f55dcd76133a3c1bfc6f697198ce384ff8b5d688b",
           "shenyu_gateway/memory_island.py": "fc41141ee05c12d4c41da78c15616b27d9dc06d6987e845c416f7fda004551fb",
           "shenyu_gateway/stars/__init__.py": "2eaf12cd27b755017ea19f7419256292202196b853e554d2627d46f72304698c",
           "shenyu_gateway/stars/_activity.py": "3227dd0c39b018caa06cb929cbe0ee2daa9b350f372443f781183626d35e851c",
           "shenyu_gateway/stars/_chord.py": "dc58a679e22ece6ed68e4d6e6b14385263133ded11e8d9dac8aaa4d946445131",
           "shenyu_gateway/stars/_crud.py": "10d00ff9fff627371c071a004fd758d2666cb85b27577be4817ea83141974c99",
           "shenyu_gateway/stars/_embedding.py": "49cc4d119a21107ac5d88b1956221242284720e11fc0f4f1aaa4e3bc9640ab28",
-          "shenyu_gateway/stars/_feedback.py": "205c5dae9a1ab518018e8746ded874bab9e548d15085b8c9e08f46f5537a3c8c",
+          "shenyu_gateway/stars/_feedback.py": "e003f3fdf3205ec14133d48f5af855e3a32fdb7c0b0b5e2c87eeb80956fbae1b",
           "shenyu_gateway/stars/_helpers.py": "1d391054c704b1cfc0f699fa34804ed88e1d9f2d163cfa09d49ae7f85b7b1049",
           "shenyu_gateway/stars/_logging.py": "0f2a595c32b0ace852e70887b68d557988e16044e53c1dbec296cd94ec54add6",
           "shenyu_gateway/stars/_recall.py": "37f91968628476a0c76a7314ac3fa40c7fc5bc0f2adc55965c260cedaec5994f",
@@ -45,10 +47,10 @@
           "shenyu_gateway/stars/_scene.py": "87243e44b755e412b3db8598d901904814f704ac30ff238a83a2ca6449b98183",
           "shenyu_gateway/stars/_weights.py": "9794ec22f7e92b5aa5aa8b191f11a15d7d55935524b48ccf9ace772b544e537e"
         },
-        "commit": "17420bd38da5e7243e21c69417106e6537073ed2",
-        "revision": "17420bd38da5e7243e21c69417106e6537073ed2-dirty",
+        "commit": "5f850855ce76b084bd9b2b5eddf7b2fe5832dc5d",
+        "revision": "5f850855ce76b084bd9b2b5eddf7b2fe5832dc5d-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-31T14:45:33+08:00",
+        "reviewed_at": "2026-08-31T15:24:52+08:00",
         "reviewed_by": "Codex"
       }
     },

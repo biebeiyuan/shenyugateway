@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
-from shenyu_gateway.runtime import local_day_of, local_today
+from shenyu_gateway.runtime import local_day_of, local_today, logger
 from shenyu_gateway.utils import human_time_ago
 
 # Resident contract: tool results stay clean - content, chord, timestamps and
@@ -161,13 +161,21 @@ class StarToolsMixin:
         )
         if not isinstance(result, dict) or not result.get("ok"):
             return result
+        # 已经连过的那些线：候选如果和种子星早就在一条线上，把星座名和他当时
+        # 的说法带出来。不然他会重新判断一次上次已经判断过的关系，而且可能说出
+        # 不一样的话——而那条线本来就是他自己连的。
+        lines = await self._existing_lines(result.get("items") or [])
         items = []
         for seed_index, entry in enumerate(result.get("items") or [], start=1):
             if not isinstance(entry, dict):
                 continue
+            seed_id = str((entry.get("star") or {}).get("id") or "")
             candidates = []
             for rank, candidate in enumerate(entry.get("candidates") or [], start=1):
                 cleaned = _clean_star(candidate, seen_ago=True)
+                line = lines.get((seed_id, str(candidate.get("id") or "")))
+                if line:
+                    cleaned["已经在一条线上"] = line
                 # 两段编号（1.2 = 第 1 颗下面的第 2 个）。review 和 feedback 在
                 # 同一轮里，所以这批候选就在他眼前的上文里，编号不用他记也不用
                 # 网关存——feedback 拿着编号重新问一次库就够了。
@@ -248,6 +256,61 @@ class StarToolsMixin:
         if result.get("edge_count"):
             out["connected"] = result["edge_count"]
         return out
+
+    async def _existing_lines(self, entries: list[Any]) -> dict[tuple[str, str], str]:
+        """这批里哪些「种子星 ↔ 候选」已经在同一条线上了，返回那条线怎么说。
+
+        星座名是这条线的名字（一句话，比如「替我记着」），note 是他当时的说法。
+        两样分开存在边的 metadata 里，所以这里也分开读——名字答"这是哪条线"，
+        说法答"当时我为什么这么连"。
+
+        查不到不影响 review：只是这次看不见旧的线。
+        """
+        pairs: list[tuple[str, str]] = []
+        ids: set[str] = set()
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            seed_id = str((entry.get("star") or {}).get("id") or "")
+            if not seed_id:
+                continue
+            ids.add(seed_id)
+            for candidate in entry.get("candidates") or []:
+                cid = str((candidate or {}).get("id") or "")
+                if cid:
+                    pairs.append((seed_id, cid))
+                    ids.add(cid)
+        if not pairs or not self.supabase:
+            return {}
+        try:
+            rows = await self.supabase.query(
+                "shenyu_star_links",
+                {
+                    "select": "from_node_id,to_node_id,metadata",
+                    "from_node_id": "in.(" + ",".join(sorted(ids)) + ")",
+                    "status": "eq.active",
+                    "limit": "200",
+                },
+            )
+        except Exception as exc:
+            logger.warning("[Star] review 读已有的线失败: %s", exc)
+            return {}
+        said: dict[tuple[str, str], str] = {}
+        for row in rows or []:
+            if not isinstance(row, dict):
+                continue
+            metadata = row.get("metadata") if isinstance(row.get("metadata"), dict) else {}
+            name = str(metadata.get("constellation_name") or "").strip()
+            note = str(metadata.get("note") or "").strip()
+            if not name and not note:
+                continue
+            text = name if not note else (f"{name}——{note}" if name else note)
+            left = str(row.get("from_node_id") or "")
+            right = str(row.get("to_node_id") or "")
+            # 边是双向的，两个方向都记上，因为 review 里谁是种子星不固定。
+            said[(left, right)] = text
+            said[(right, left)] = text
+        return {pair: said[pair] for pair in pairs if pair in said}
 
     async def _resolve_review_number(self, number: Any) -> tuple[str, str]:
         """「1.2」→ 真的 candidate_id，返回 (id, 错误)。

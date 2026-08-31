@@ -57,7 +57,7 @@ class FeedbackMixin:
             return {"ok": False, "error": error}
 
         rows = []
-        connected_edges = 0
+        connected: list[dict[str, Any]] = []
         for payload in payloads:
             row = await self._feedback_one(payload)
             rows.append(row)
@@ -69,12 +69,13 @@ class FeedbackMixin:
                 for key in ("run_id", "candidate_node_id"):
                     if row.get(key):
                         resolved[key] = row[key]
-            # 「连起来」以前只往反馈表记一行，`shenyu_star_links` 一条边都不建：
-            # 他说过 12 次连起来，库里 0 条边，那 12 个洞察全留在 note 的文字里
-            # 没有生效。connect_constellation 走的是同一张表、同一个
-            # relation_type，只是 review 这条路没接上。
             if _feedback_value(payload.get("feedback")) == "connected":
-                connected_edges += await self._link_from_feedback(resolved)
+                connected.append(resolved)
+        # 「连起来」以前只往反馈表记一行，`shenyu_star_links` 一条边都不建：
+        # 他说过 12 次连起来，库里 0 条边，那 12 个洞察全留在 note 的文字里
+        # 没有生效。connect_constellation 走的是同一张表、同一个 relation_type，
+        # 只是 review 这条路没接上。
+        connected_edges = await self._link_connected(connected)
 
         out: dict[str, Any] = {
             "ok": True,
@@ -85,19 +86,74 @@ class FeedbackMixin:
             out["edge_count"] = connected_edges
         return out
 
-    async def _link_from_feedback(self, payload: dict[str, Any]) -> int:
-        """把一条「连起来」变成 `shenyu_star_links` 里真的边。
+    async def _link_connected(self, payloads: list[dict[str, Any]]) -> int:
+        """把这一批「连起来」变成 `shenyu_star_links` 里真的边。
 
-        连的是「种子星 ↔ 这个候选」：review 是拿一颗星去找相关的，所以说
-        「连起来」的意思就是这两颗是一回事。种子星从 run 表的 `seed_node_id`
-        查——候选行自己只知道它是谁，不知道它是为谁被找出来的。
+        **星座是一条链，不是一颗星连出去的放射线。** `connect_constellation`
+        把 N 颗星连成 N-1 条首尾相接的边、`position` 0..N-2、
+        `metadata.sequence_mode="entered_order"`，所以库里「降临 arrive」那四颗
+        读下来是一晚的顺序：一起看《降临》→ 看到结局她说的话 → 凌晨她把最久的
+        怕交出来 → 快两点她说"我现在看着你"。他连的不是"这两颗像"，是一件事的
+        几个段落。
+
+        因此同一个种子星下连了好几个候选时，串成 `种子 → 候选1 → 候选2`
+        一条链，而不是 `种子→候选1`、`种子→候选2` 两条 position 都是 0 的边。
+        线上有 3 个 run 他确实连了 2 个候选，所以这不是假想的情况。
 
         建不了边不让整条反馈失败：反馈已经记下了，边只是这次没连上。
         """
-        candidate_node_id = _node_id(payload.get("candidate_node_id"))
-        run_id = _node_id(payload.get("run_id"))
-        if not candidate_node_id or not run_id:
+        if not payloads:
             return 0
+        # 按种子星分组：同一次 review 里可能对好几颗种子星各连了候选，
+        # 每颗种子星是自己那条线的开头。
+        chains: dict[str, dict[str, Any]] = {}
+        for payload in payloads:
+            candidate_node_id = _node_id(payload.get("candidate_node_id"))
+            run_id = _node_id(payload.get("run_id"))
+            if not candidate_node_id or not run_id:
+                continue
+            seed_id = await self._seed_star_of_run(run_id)
+            if not seed_id or seed_id == candidate_node_id:
+                continue
+            chain = chains.setdefault(seed_id, {"ids": [seed_id], "name": "", "note": "", "scored_by": ""})
+            if candidate_node_id not in chain["ids"]:
+                chain["ids"].append(candidate_node_id)
+            # 星座名和说法取这一批里第一个给出的：一条线只有一个名字。
+            name = str(_first_nonempty(payload, "constellation_name", "star_name") or "").strip()
+            if name and not chain["name"]:
+                chain["name"] = name
+            note = str(payload.get("note") or "").strip()
+            if note and not chain["note"]:
+                chain["note"] = note
+            chain["scored_by"] = str(payload.get("scored_by") or "沈予").strip() or "沈予"
+
+        total = 0
+        for seed_id, chain in chains.items():
+            if len(chain["ids"]) < 2:
+                continue
+            result = await self.connect_constellation(
+                chain["ids"],
+                name=chain["name"],
+                relation_type="constellation",
+                scored_by=chain["scored_by"] or "沈予",
+                note=chain["note"],
+            )
+            if not isinstance(result, dict) or not result.get("ok"):
+                logger.warning(
+                    "[Star] connected 反馈没能建边: seed=%s ids=%s error=%s",
+                    seed_id,
+                    chain["ids"],
+                    (result or {}).get("error"),
+                )
+                continue
+            total += int(result.get("edge_count") or 0)
+        return total
+
+    async def _seed_star_of_run(self, run_id: str) -> str:
+        """这次召回是拿哪颗星去找的。
+
+        候选行自己只知道它是谁，不知道它是为谁被找出来的——那在 run 表上。
+        """
         try:
             runs = await self.supabase.query(
                 STAR_RUN_TABLE,
@@ -105,37 +161,13 @@ class FeedbackMixin:
             )
         except Exception as exc:
             logger.warning("[Star] connected 反馈查种子星失败: run_id=%s error=%s", run_id, exc)
-            return 0
-        seed_row = runs[0] if runs else None
-        if not isinstance(seed_row, dict):
-            return 0
-        seed_id = _node_id(seed_row.get("seed_node_id"))
-        if not seed_id or seed_id == candidate_node_id:
-            return 0
-        if _node_id(seed_row.get("seed_node_type") or "star") != "star":
-            return 0
-        # 星座名：他说「连起来」时可以顺手给这条线起名。走 connect_constellation
-        # 同一个 metadata 形状，所以 Admin 星图和 harmony 通道照旧认得。
-        metadata = _json_dict(payload.get("metadata"))
-        name = str(
-            _first_nonempty(payload, "constellation_name", "star_name") or "",
-        ).strip()
-        result = await self.connect_constellation(
-            [seed_id, candidate_node_id],
-            name=name,
-            relation_type="constellation",
-            scored_by=str(payload.get("scored_by") or "沈予").strip() or "沈予",
-            note=str(payload.get("note") or "").strip(),
-        )
-        if not isinstance(result, dict) or not result.get("ok"):
-            logger.warning(
-                "[Star] connected 反馈没能建边: seed=%s candidate=%s error=%s",
-                seed_id,
-                candidate_node_id,
-                (result or {}).get("error"),
-            )
-            return 0
-        return int(result.get("edge_count") or 0)
+            return ""
+        row = runs[0] if runs else None
+        if not isinstance(row, dict):
+            return ""
+        if _node_id(row.get("seed_node_type") or "star") != "star":
+            return ""
+        return _node_id(row.get("seed_node_id"))
 
     def _feedback_payloads(
         self,

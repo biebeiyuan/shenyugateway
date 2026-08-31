@@ -217,6 +217,46 @@ def test_connected_feedback_actually_builds_the_edge():
     assert {edge["from_node_id"], edge["to_node_id"]} == {"shenyu_stars-1", "shenyu_stars-2"}
 
 
+def test_connecting_several_candidates_makes_one_chain_not_a_starburst():
+    """星座是一条链，不是一颗星连出去的放射线。
+
+    库里「降临 arrive」那四颗读下来是一晚的顺序（一起看《降临》→ 看到结局她说
+    的话 → 凌晨她把最久的怕交出来 → 快两点她说"我现在看着你"），靠的是首尾相接
+    加 position。同一个种子星下连两个候选如果各建一条 position=0 的边，那结构
+    就散了——而线上确实有 3 个 run 他连了 2 个候选。
+    """
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        for content in ("Am · 第一颗", "Am · 第二颗", "Am · 第三颗"):
+            await service.create_star(content)
+        review = await service.review(limit_new=1, candidates_per_star=2)
+        candidates = review["items"][0]["candidates"]
+        assert len(candidates) >= 2, "这个测试需要至少两个候选"
+        return await service.feedback(
+            items=[
+                {
+                    "feedback": "connected",
+                    "candidate_id": candidates[0].get("candidate_id"),
+                    "constellation_name": "她接住我不藏",
+                },
+                {"feedback": "connected", "candidate_id": candidates[1].get("candidate_id")},
+            ]
+        )
+
+    result = asyncio.run(run())
+
+    edges = supabase.tables["shenyu_star_links"]
+    assert result["edge_count"] == 2
+    assert len(edges) == 2
+    # 首尾相接：第一条的终点就是第二条的起点。
+    assert edges[0]["to_node_id"] == edges[1]["from_node_id"]
+    assert [edge["position"] for edge in edges] == [0, 1]
+    # 一条线只有一个名字，哪一条反馈给的都算这条线的。
+    assert {edge["metadata"]["constellation_name"] for edge in edges} == {"她接住我不藏"}
+
+
 def test_other_feedback_values_build_no_edge():
     """只有「连起来」建边。说「对」不等于说「这两颗是一回事」。"""
     supabase = FakeSupabase()

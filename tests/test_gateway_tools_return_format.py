@@ -522,6 +522,99 @@ def test_review_gives_him_numbers_not_internal_ids():
     assert all("score" not in c and "scores" not in c for c in entry["candidates"])
 
 
+def test_review_shows_the_line_a_candidate_is_already_on():
+    """已经连过的线要说出来，不然他会重新判断一次自己判断过的关系。
+
+    星座名是这条线的名字（一句话），note 是他当时的说法——两样分开存在边的
+    metadata 里，名字答"这是哪条线"，说法答"当时我为什么这么连"。
+    """
+    from shenyu_gateway.gateway_tools import GatewayToolService
+
+    class FakeStars:
+        async def review(self, **kwargs):
+            def star(sid, content):
+                return {
+                    "id": sid,
+                    "content": content,
+                    "chord": "Fmaj7",
+                    "status": "active",
+                    "is_constant": False,
+                    "created_at": "2026-08-05T02:00:00+00:00",
+                    "updated_at": "2026-08-05T02:00:00+00:00",
+                }
+
+            return {
+                "ok": True,
+                "count": 1,
+                "items": [
+                    {
+                        "star": star("s-129", "第129天中午，发小约她吃松饼"),
+                        "run_id": "run-1",
+                        "candidates": [
+                            {**star("s-131", "第131天傍晚，她交出了我在她世界里的公开史"), "candidate_id": "c1"},
+                            {**star("s-140", "第140天，她说起那三个朋友"), "candidate_id": "c2"},
+                        ],
+                    }
+                ],
+            }
+
+    class FakeSupabase:
+        async def query(self, table, params=None):
+            if table == "shenyu_star_links":
+                # 边存的方向是 129 → 131，而 review 里 129 是种子星；反过来也该认。
+                return project_select(
+                    [
+                        {
+                            "from_node_id": "s-131",
+                            "to_node_id": "s-129",
+                            "metadata": {
+                                "constellation_name": "替我记着",
+                                "note": "两颗都是我在她朋友圈里的存在方式",
+                            },
+                        }
+                    ],
+                    params,
+                )
+            return []
+
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=FakeSupabase(), store=None)
+    service._stars = lambda: FakeStars()
+    candidates = asyncio.run(service.star_review())["items"][0]["candidates"]
+
+    assert candidates[0]["已经在一条线上"] == "替我记着——两颗都是我在她朋友圈里的存在方式"
+    # 还没连过的那颗不该凭空多出一条线。
+    assert "已经在一条线上" not in candidates[1]
+
+
+def test_review_survives_the_line_lookup_failing():
+    from shenyu_gateway.gateway_tools import GatewayToolService
+
+    class FakeStars:
+        async def review(self, **kwargs):
+            return {
+                "ok": True,
+                "count": 1,
+                "items": [
+                    {
+                        "star": {"id": "s-1", "content": "正文", "created_at": "2026-08-05T02:00:00+00:00"},
+                        "run_id": "run-1",
+                        "candidates": [{"id": "s-2", "content": "另一句", "candidate_id": "c1"}],
+                    }
+                ],
+            }
+
+    class BrokenSupabase:
+        async def query(self, table, params=None):
+            raise RuntimeError("links unavailable")
+
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=BrokenSupabase(), store=None)
+    service._stars = lambda: FakeStars()
+    out = asyncio.run(service.star_review())
+
+    assert out["ok"] is True
+    assert out["items"][0]["candidates"][0]["编号"] == "1.1"
+
+
 def test_review_says_how_long_ago_each_star_landed():
     """时间差本身就是 review 的内容：一年半前那颗和上周那颗，"像是有关系"的
     意味完全不同。"""
