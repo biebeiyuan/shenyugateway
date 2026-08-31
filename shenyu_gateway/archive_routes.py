@@ -147,16 +147,22 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
     async def archive_messages(
         date: Optional[str] = None,
         before: Optional[str] = None,
+        after: Optional[str] = None,
         limit: int = 200,
         around_days: int = 0,
     ):
-        """Messages for one day (date=YYYY-MM-DD), or paged backwards via before. All sessions merged.
+        """Messages for one day (date=YYYY-MM-DD), or paged by event_at. All sessions merged.
 
         `around_days` widens a `date` request symmetrically, so picking a day positions
         the reader instead of fencing it. A conversation that ran past midnight is one
         conversation; a hard one-day filter cut it in half, which truncated what could
         be clipped into an origin book. The reader scrolls to the chosen day and can
         still scroll out of it in both directions.
+
+        `before`/`after` page a continuous reader by event_at: `before` fetches the
+        newest rows strictly older than the cursor (scroll up into the past),
+        `after` fetches the oldest rows strictly newer (scroll down toward now).
+        Both return rows in ascending time so the caller prepends/appends directly.
         """
         client = _supabase()
         params = {
@@ -164,6 +170,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             "deleted_at": "is.null",
             "limit": str(max(1, min(int(limit or 200), 1000))),
         }
+        reverse_after_fetch = False
         if date:
             from datetime import date as date_cls
             span = max(0, min(int(around_days or 0), 7))
@@ -176,13 +183,21 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             params["event_at"] = f"gte.{window_start}T00:00:00+08:00"
             params["and"] = f"(event_at.lt.{window_end}T00:00:00+08:00)"
             params["order"] = _ORDER_ASC
+        elif after:
+            # oldest rows strictly newer than the cursor; already ascending.
+            params["event_at"] = f"gt.{after}"
+            params["order"] = _ORDER_ASC
         elif before:
+            # newest rows strictly older than the cursor; fetched desc then flipped
+            # back to ascending so the reader prepends a correctly-ordered block.
             params["event_at"] = f"lt.{before}"
             params["order"] = _ORDER_DESC
+            reverse_after_fetch = True
         else:
             params["order"] = _ORDER_DESC
+            reverse_after_fetch = True
         rows = await client.query(ARCHIVE_TABLE, params=params)
-        if not date:
+        if reverse_after_fetch:
             rows = list(reversed(rows or []))
         messages = [
             {key: value for key, value in row.items() if key != "content_hash"}

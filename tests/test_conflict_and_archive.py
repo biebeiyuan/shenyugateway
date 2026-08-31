@@ -37,9 +37,17 @@ class FakeSupabase:
         if key == "event_at" and value:
             left = datetime.fromisoformat(str(value))
             right = datetime.fromisoformat(raw_value)
-            return left >= right if op == "gte" else left < right
+            if op == "gte":
+                return left >= right
+            if op == "gt":
+                return left > right
+            return left < right
         text = str(value or "")
-        return text >= raw_value if op == "gte" else text < raw_value
+        if op == "gte":
+            return text >= raw_value
+        if op == "gt":
+            return text > raw_value
+        return text < raw_value
 
     async def insert(self, table: str, data: dict) -> dict:
         row = dict(data)
@@ -65,6 +73,8 @@ class FakeSupabase:
                 rows = [r for r in rows if r.get(key) is None]
             elif isinstance(value, str) and value.startswith("gte."):
                 rows = [r for r in rows if self._filter_compare(r, key, "gte", value[4:])]
+            elif isinstance(value, str) and value.startswith("gt."):
+                rows = [r for r in rows if self._filter_compare(r, key, "gt", value[3:])]
             elif isinstance(value, str) and value.startswith("lt."):
                 rows = [r for r in rows if self._filter_compare(r, key, "lt", value[3:])]
         if and_clause.startswith("(event_at.lt.") and and_clause.endswith(")"):
@@ -599,6 +609,48 @@ def test_archive_messages_can_widen_around_a_day():
     asyncio.run(run())
 
 
+def test_archive_messages_page_forward_and_backward():
+    """连续阅读：before 往过去翻、after 往当下翻，两头都能一直加载。
+
+    两个方向都返回升序，读者可以直接把整块 prepend / append 上去。
+    """
+    async def run():
+        supabase = FakeSupabase()
+        stamps = [
+            "2026-06-13T01:00:00+00:00",
+            "2026-06-13T02:00:00+00:00",
+            "2026-06-13T03:00:00+00:00",
+            "2026-06-13T04:00:00+00:00",
+            "2026-06-13T05:00:00+00:00",
+        ]
+        for i, event_at in enumerate(stamps):
+            await supabase.insert(
+                "shenyu_chat_archive",
+                {
+                    "thread": "main", "session_tag": "default", "role": "user",
+                    "content": f"第{i}条", "content_hash": f"h{i}",
+                    "event_at": event_at, "archived_at": event_at, "deleted_at": None,
+                },
+            )
+        endpoint = {
+            route.path: route.endpoint
+            for route in build_archive_router(ArchiveRouteDeps(get_supabase_client=lambda: supabase)).routes
+        }["/api/archive/messages"]
+
+        # 往过去翻：严格早于第3条的，取最近的两条，升序返回
+        back = await endpoint(before=stamps[3], limit=2)
+        assert [row["content"] for row in back["messages"]] == ["第1条", "第2条"]
+
+        # 往当下翻：严格晚于第1条的，取最早的两条，升序返回
+        fwd = await endpoint(after=stamps[1], limit=2)
+        assert [row["content"] for row in fwd["messages"]] == ["第2条", "第3条"]
+
+        # 翻到头：after 最后一条，什么都没有
+        assert (await endpoint(after=stamps[-1]))["messages"] == []
+
+    asyncio.run(run())
+
+
 def test_archive_search_is_literal_and_folds_handoff_copies():
     """回看的搜索是字面子串，不是语义；跨会话交接的重复行折叠掉。
 
@@ -728,5 +780,6 @@ if __name__ == "__main__":
     test_archive_routes_merge_sessions_and_page_days()
     test_archive_routes_fold_handoff_copies_and_twin_delete()
     test_archive_routes_use_cst_day_boundaries()
+    test_archive_messages_page_forward_and_backward()
     test_archive_search_is_literal_and_folds_handoff_copies()
     print("ALL_OK")
