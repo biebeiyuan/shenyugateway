@@ -18,6 +18,7 @@ import {
   Plus,
   RotateCcw,
   ScrollText,
+  Search,
   Send,
   SlidersHorizontal,
   Settings2,
@@ -27,6 +28,7 @@ import {
 } from 'lucide-vue-next'
 import ChatMessageRow from './components/ChatMessageRow.vue'
 import PhotoViewer from './components/PhotoViewer.vue'
+import ReviewSheet from './components/ReviewSheet.vue'
 import { activePwaBuildInfo, samePwaBuild, type PwaBuildInfo } from './buildInfo'
 import { toolState, toolWarmCopy, type ToolEvent } from './toolLanguage'
 import type {
@@ -132,6 +134,7 @@ const gatewayUrl = ref(localStorage.getItem(STORAGE_GATEWAY) || '')
 const sessionTag = ref(requestedSessionTag || storedSessionTag || createId('pwa'))
 const menuOpen = ref(false)
 const settingsOpen = ref(false)
+const reviewOpen = ref(false)
 const deployedPwaBuildInfo = ref<PwaBuildInfo | null>(null)
 const pwaBuildCheck = ref<'idle' | 'checking' | 'current' | 'outdated' | 'unavailable'>('idle')
 const handoffOpen = ref(false)
@@ -618,6 +621,11 @@ function saveSettings() {
 function openSettings() {
   settingsOpen.value = true
   void checkPwaBuildInfo()
+}
+
+function openReview() {
+  menuOpen.value = false
+  reviewOpen.value = true
 }
 
 async function checkPwaBuildInfo() {
@@ -1201,6 +1209,11 @@ onUnmounted(() => {
         </button>
       </nav>
 
+      <button class="sidebar-review-entry" type="button" @click="openReview">
+        <Search :size="19" />
+        <span>搜索</span>
+      </button>
+
       <div class="sidebar-section-title">Recents</div>
       <div class="sidebar-empty" v-if="!recentSessions.length && isEmpty">
         还没有最近对话。
@@ -1353,6 +1366,8 @@ onUnmounted(() => {
       @close="photoViewer = null"
       @change="(next) => { if (photoViewer) photoViewer.position = next }"
     />
+
+    <ReviewSheet :open="reviewOpen" :ctx="clientContext()" @close="reviewOpen = false" />
 
     <div v-if="processSheetMessage" class="sheet-layer" @click.self="closeProcessSheet">
       <section class="bottom-sheet process-sheet" :class="{ 'echo-detail': processSheet?.view === 'echo' }">

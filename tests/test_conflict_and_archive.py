@@ -599,6 +599,66 @@ def test_archive_messages_can_widen_around_a_day():
     asyncio.run(run())
 
 
+def test_archive_search_is_literal_and_folds_handoff_copies():
+    """回看的搜索是字面子串，不是语义；跨会话交接的重复行折叠掉。
+
+    fake client 不实现 ilike/or，会把全表交回来，正好逼出端点里那道
+    Python 子串复核——它才是权威，DB 的 ilike 只是先收窄。
+    """
+    async def run():
+        supabase = FakeSupabase()
+        rows = [
+            ("你还记得那个焦糖布丁的方子吗", "user", "u1", "2026-08-19T01:12:00+00:00"),
+            ("糖别一次下锅，先干焦糖，琥珀色就离火", "assistant", "a1", "2026-08-19T01:13:00+00:00"),
+            ("今天项目又延期了", "user", "u2", "2026-08-12T15:41:00+00:00"),
+        ]
+        for content, role, digest, event_at in rows:
+            await supabase.insert(
+                "shenyu_chat_archive",
+                {
+                    "thread": "main", "session_tag": "default", "role": role,
+                    "content": content, "content_hash": digest,
+                    "event_at": event_at, "archived_at": event_at, "deleted_at": None,
+                },
+            )
+        # 同一句被历史交接又归档了一次（另一个 session_tag，同日同 hash）
+        await supabase.insert(
+            "shenyu_chat_archive",
+            {
+                "thread": "main", "session_tag": "carried", "role": "assistant",
+                "content": "糖别一次下锅，先干焦糖，琥珀色就离火", "content_hash": "a1",
+                "event_at": "2026-08-19T01:13:00+00:00", "archived_at": "2026-08-19T01:13:00+00:00",
+                "deleted_at": None,
+            },
+        )
+        endpoint = {
+            route.path: route.endpoint
+            for route in build_archive_router(ArchiveRouteDeps(get_supabase_client=lambda: supabase)).routes
+        }["/api/archive/search"]
+
+        # 空 query 不触发全表
+        assert await endpoint(q="  ") == {"results": [], "count": 0, "query": ""}
+
+        # 字面命中「焦糖」：两条，交接副本被折叠成一条
+        hit = await endpoint(q="焦糖")
+        assert hit["count"] == 2, hit
+        assert all("焦糖" in row["content"] for row in hit["results"])
+        assert [row["content"] for row in hit["results"]].count("糖别一次下锅，先干焦糖，琥珀色就离火") == 1
+
+        # role 过滤
+        only_user = await endpoint(q="焦糖", role="user")
+        assert [row["role"] for row in only_user["results"]] == ["user"]
+
+        # 字面而非语义：搜「布丁」命中，搜近义的「甜点」一条不给
+        assert (await endpoint(q="布丁"))["count"] == 1
+        assert (await endpoint(q="甜点"))["count"] == 0
+
+        # content_hash 不外泄给前端
+        assert all("content_hash" not in row for row in hit["results"])
+
+    asyncio.run(run())
+
+
 def test_resident_books_routes_split_generated_home_from_living_identity():
     async def run():
         supabase = FakeSupabase()
@@ -668,4 +728,5 @@ if __name__ == "__main__":
     test_archive_routes_merge_sessions_and_page_days()
     test_archive_routes_fold_handoff_copies_and_twin_delete()
     test_archive_routes_use_cst_day_boundaries()
+    test_archive_search_is_literal_and_folds_handoff_copies()
     print("ALL_OK")

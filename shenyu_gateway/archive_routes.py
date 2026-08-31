@@ -190,6 +190,39 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         ]
         return {"messages": messages, "count": len(messages)}
 
+    @router.get("/api/archive/search")
+    async def archive_search(q: str = "", role: Optional[str] = None, limit: int = 60):
+        """Literal, case-insensitive substring search over the verbatim archive.
+
+        Deliberately not semantic: someone looking for a phrase they remember
+        saying needs the exact words they typed, not a neighbour — the same rule
+        that keeps the window-newspaper basket literal (AGENTS.md § basket).
+        The DB `ilike` narrows the fetch; the Python check is the authority, so
+        wildcard characters in the phrase cannot widen the match.
+        """
+        needle = (q or "").strip()
+        if not needle:
+            return {"results": [], "count": 0, "query": ""}
+        client = _supabase()
+        params = {
+            "select": "id,session_tag,role,content,content_hash,event_at,archived_at",
+            "deleted_at": "is.null",
+            "content": f"ilike.*{needle}*",
+            "order": _ORDER_DESC,
+        }
+        if role in ("user", "assistant"):
+            params["role"] = f"eq.{role}"
+        rows = await _query_all(client, params, page_size=1000, max_rows=4000)
+        folded = _fold_handoff_copies(rows or [])
+        lowered = needle.casefold()
+        hits = [row for row in folded if lowered in str(row.get("content") or "").casefold()]
+        cap = max(1, min(int(limit or 60), 200))
+        results = [
+            {key: value for key, value in row.items() if key != "content_hash"}
+            for row in hits[:cap]
+        ]
+        return {"results": results, "count": len(results), "query": needle}
+
     @router.delete("/api/archive/messages/{message_id}")
     async def archive_soft_delete(message_id: str):
         """Soft-delete one archived message (e.g. accidental capture).
