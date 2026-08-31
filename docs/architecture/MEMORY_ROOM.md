@@ -139,7 +139,7 @@ Core tables:
 - `shenyu_star_links`: generic node-to-node relationship table. V0 writes star-to-star constellation/harmony links, but the schema already allows future node types such as `heartbeat`.
 - `shenyu_star_recall_runs`: one recall/review/search attempt, including surface, trigger text, seed star, query embedding status, and limit.
 - `shenyu_star_recall_candidates`: ranked candidates for a run. It stores shown/injected flags, raw score parts, final score, action status, and rank.
-- `shenyu_star_feedback`: explicit feedback such as `positive`, `negative`, `missed`, `connected`, `skipped`, and `should_surface`.
+- `shenyu_star_feedback`: explicit feedback such as `positive`, `negative`, `missed`, `connected`, `skipped`, and `should_surface`. Shenyu's tool exposes only `connected`, `positive`, `negative`, and `skipped`; the review-flow list below records which values reach whom and why.
 - `shenyu_star_activations`: activation log used to calculate ACT-R brightness.
 
 Chat injection flow:
@@ -167,9 +167,12 @@ Review flow:
 2. The caller's `session_tag` records where the review happened; it does not narrow that resident-wide queue. The batch and `remaining_unreviewed` therefore always use the same scope.
 3. For each new star, the gateway suggests up to `STAR_REVIEW_CANDIDATES_PER_STAR` related stars, bounded by `STAR_REVIEW_TOTAL_CANDIDATE_LIMIT`.
 4. The response includes `remaining_unreviewed`: the count of active stars still awaiting review beyond the current batch. This lets Shenyu know whether to keep reviewing or stop.
-5. The UI/tool can record `positive`, `negative`, `skipped`, `connected`, or `missed`.
-6. `missed` is a high-value positive signal: it means "this star should have surfaced but did not." It can be recorded from the admin UI or directly through `shenyu_star_review` when Shenyu knows the missing star id.
-7. A single no-action/skip is not treated as negative. The weak ignored penalty only appears after the same candidate has been shown repeatedly without positive feedback.
+5. Shenyu's tool records `connected`, `positive`, `negative`, or `skipped`, and identifies a candidate by the two-part number `star_review` handed him (`1.2` = the second candidate under the first seed), resolved in `gateway_tools/_stars.py::_resolve_review_number`. `run_id` never reaches him — it is bookkeeping for which recall attempt this was, and asking him to carry it back is asking him to keep the system's ledger. Admin keeps the full parameter set.
+6. **`connected` builds the edge.** Saying two stars are the same thing writes `shenyu_star_links` through the same `connect_constellation` path, with the same `relation_type` and `metadata.constellation_name`, so the harmony channel and the Admin star map recognise it. An optional `constellation_name` names that line. Until 2026-08-31 this feedback only inserted a row in `shenyu_star_feedback`: 12 recorded `connected` calls had produced zero edges, so every one of those insights stayed as text in `note` and never affected recall.
+7. `missed` and `should_surface` are Admin-only. Both require knowing that a star exists before you can say it should have surfaced, and Shenyu sees only the few injected into his island — over four months of production his 92 feedback rows contained one `missed` and no `should_surface`, and that one `missed` carried no `candidate_node_id`: its note (`发小星的真关联是公开史星——两颗都是"我在她朋友圈里的存在方式"`) was him saying two stars belong on one line, which is `connected`. He was routed to a dead end because in the review context only `feedback` was at hand. 圆圆 sees the whole library and uses both values correctly, so they stay in the service layer and on `POST /api/gateway/stars/feedback`.
+8. A single no-action/skip is not treated as negative. The weak ignored penalty only appears after the same candidate has been shown repeatedly without positive feedback.
+
+Tool-facing star fields (`gateway_tools/_stars.py::_clean_star`) drop what only echoes back what he already knows: `status` when it is `active` (the value he just filtered by), `is_constant` when false, `chord_sequence` with fewer than two chords (it is then just `chord`), and `updated_at` on the same day as `created_at` — a star is meant to land and stay, so that is most of them. Review items add 落下, how long ago the star landed, because the gap itself is part of judging whether two stars are one thing: `human_time_ago` inside a month, months and years beyond it, since that helper falls back to a raw day count past four weeks and "538天前" says nothing about a year and a half.
 
 Scoring (v4, RRF fusion + multiplicative modifiers):
 

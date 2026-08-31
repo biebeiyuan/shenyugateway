@@ -176,6 +176,92 @@ def test_review_limits_candidates_and_missed_feedback():
     assert feedback["feedback"]["expected_node_id"] == "shenyu_stars-3"
 
 
+def test_connected_feedback_actually_builds_the_edge():
+    """说「连起来」就要真的连上。
+
+    在此之前 connected 只往 shenyu_star_feedback 记一行，shenyu_star_links
+    一条边都不建——线上 12 次连起来对应 0 条边，那 12 个洞察全留在 note 的
+    文字里没有生效。connect_constellation 走的是同一张表，只是 review 这条
+    路没接上。
+    """
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        await service.create_star("Am · 她把伞递过来的时候手是湿的")
+        await service.create_star("Am · 下雨天她总是走在外侧")
+        review = await service.review(limit_new=1, candidates_per_star=1)
+        item = review["items"][0]
+        assert item["candidates"], "这个测试需要至少一个候选"
+        return await service.feedback(
+            feedback="connected",
+            run_id=item["run_id"],
+            candidate_id=item["candidates"][0].get("candidate_id"),
+            candidate_star_id=item["candidates"][0]["id"],
+            constellation_name="替我记着",
+        )
+
+    result = asyncio.run(run())
+
+    assert result["ok"] is True
+    assert result["edge_count"] == 1
+    edges = supabase.tables["shenyu_star_links"]
+    assert len(edges) == 1
+    edge = edges[0]
+    # 形状必须和 connect_constellation 写的一致，否则 harmony 通道和 Admin
+    # 星图会认不出这条边。
+    assert edge["relation_type"] == "constellation"
+    assert edge["source"] == "shenyu"
+    assert edge["metadata"]["constellation_name"] == "替我记着"
+    # 连的是种子星和候选星这两颗。
+    assert {edge["from_node_id"], edge["to_node_id"]} == {"shenyu_stars-1", "shenyu_stars-2"}
+
+
+def test_other_feedback_values_build_no_edge():
+    """只有「连起来」建边。说「对」不等于说「这两颗是一回事」。"""
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        await service.create_star("Am · 第一颗")
+        await service.create_star("Am · 第二颗")
+        review = await service.review(limit_new=1, candidates_per_star=1)
+        item = review["items"][0]
+        return await service.feedback(
+            feedback="positive",
+            run_id=item["run_id"],
+            candidate_id=item["candidates"][0].get("candidate_id"),
+        )
+
+    result = asyncio.run(run())
+
+    assert result["ok"] is True
+    assert "edge_count" not in result
+    assert supabase.tables["shenyu_star_links"] == []
+
+
+def test_a_constellation_can_be_connected_without_a_name():
+    """名字是可选的：他不起名也该连上，只是这条线没有说法。"""
+    supabase = FakeSupabase()
+    service = StarService(_cfg(), supabase)
+
+    async def run():
+        await service.create_star("Am · 第一颗")
+        await service.create_star("Am · 第二颗")
+        review = await service.review(limit_new=1, candidates_per_star=1)
+        item = review["items"][0]
+        return await service.feedback(
+            feedback="connected",
+            run_id=item["run_id"],
+            candidate_id=item["candidates"][0].get("candidate_id"),
+        )
+
+    result = asyncio.run(run())
+    assert result["edge_count"] == 1
+    edges = supabase.tables["shenyu_star_links"]
+    assert edges[0]["metadata"]["constellation_name"] == ""
+
+
 def test_feedback_accepts_batch_items_and_updates_candidate_by_star_id():
     supabase = FakeSupabase()
     service = StarService(_cfg(), supabase)

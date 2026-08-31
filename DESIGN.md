@@ -163,10 +163,15 @@ actr_score = clamp((base_activation + 2.5) / 4.5, 0, 1)
 每次搜索/注入都记录到 `shenyu_star_recall_runs` 和 `shenyu_star_recall_candidates`。
 
 反馈类型：`positive`、`negative`、`skipped`、`connected`、`missed`、`should_surface`。
+沈予的工具只暴露前四类里去掉 `missed` 的那四个（`connected` / `positive` / `negative` / `skipped`）；
+`missed` 和 `should_surface` 只给圆圆，理由和证据见
+`docs/architecture/MEMORY_ROOM.md` § Star Memory Layer 的 Review flow。
 
 反馈影响：
 - `negative` → 直接标记 explicitly_negative，惩罚 1.0（几乎不再出现）
 - `positive` / `connected` → 清除 ignored penalty
+- `connected` → **同时往 `shenyu_star_links` 建边**，走 `connect_constellation` 同一条写入，
+  可带 `constellation_name` 给这条线命名。此前它只记反馈不建边，线上 12 次 connected 对应 0 条边
 - 反复 skipped → 弱惩罚 `max(0, silent_count × 0.15 - 0.15)`，上限 0.60
 - `missed` → 高价值正信号："这颗星应该出现但没出现"
 - 单次无动作 ≠ negative（避免从沉默中过度学习）
