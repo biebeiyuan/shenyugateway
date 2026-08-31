@@ -7,7 +7,7 @@ from pathlib import Path
 from shenyu_gateway.gateway_tools import GatewayToolService
 from shenyu_gateway.resident_books import ResidentBooksService, render_bookshelf_overview
 
-from .fake_postgrest import project_select
+from .fake_postgrest import apply_order, project_select
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,10 +41,7 @@ class FakeSupabase:
                 continue
             if isinstance(value, str) and value.startswith("eq."):
                 rows = [row for row in rows if str(row.get(key)) == value[3:]]
-        order = str(params.get("order") or "")
-        if order:
-            field, _, direction = order.partition(".")
-            rows.sort(key=lambda row: str(row.get(field) or ""), reverse=direction == "desc")
+        rows = apply_order(rows, params)
         if params.get("limit") is not None:
             rows = rows[: int(params["limit"])]
         return project_select(rows, params)

@@ -39,7 +39,7 @@ from shenyu_gateway.resident_profile import (
     ORIGIN_BOOK_PROFILE,
 )
 
-from .fake_postgrest import project_select
+from .fake_postgrest import apply_order, project_select
 
 
 def _load_gateway_helpers():
@@ -155,7 +155,7 @@ class _FakeCalendarSupabase:
         latest_filter = params.get("is_latest")
         if latest_filter == "eq.true":
             rows = [row for row in rows if row.get("is_latest") is True]
-        rows.sort(key=lambda row: row.get("period_start") or "", reverse=True)
+        rows = apply_order(rows, {"order": "period_start.desc"})
         offset = int(params.get("offset") or 0)
         limit = int(params.get("limit") or len(rows))
         return project_select(rows[offset : offset + limit], params)

@@ -5,7 +5,7 @@ from types import SimpleNamespace
 
 from shenyu_gateway.gateway_tools import GatewayToolService
 
-from .fake_postgrest import project_select
+from .fake_postgrest import apply_order, project_select
 
 
 class FakeCalendarSupabase:
@@ -21,8 +21,7 @@ class FakeCalendarSupabase:
         period_type = params.get("period_type")
         period_key = params.get("period_key")
         rows = [row for row in self.rows if row.get("period_type") == period_type[3:] and row.get("period_key") == period_key[3:]]
-        if params.get("order") == "version.desc":
-            rows = sorted(rows, key=lambda row: row.get("version", 0), reverse=True)
+        rows = apply_order(rows, params)
         limit = int(params.get("limit") or len(rows) or 0)
         return project_select(rows[:limit], params)
 

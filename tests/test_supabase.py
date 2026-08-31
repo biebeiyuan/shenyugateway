@@ -8,7 +8,7 @@ from pathlib import Path
 
 from shenyu_gateway.supabase import SupabaseClient
 
-from .fake_postgrest import project_row, project_select, select_columns
+from .fake_postgrest import apply_order, project_row, project_select, select_columns
 
 TESTS_DIR = Path(__file__).resolve().parent
 ROOT = TESTS_DIR.parent
@@ -155,6 +155,111 @@ def test_no_select_string_this_repository_sends_falls_into_the_unparseable_branc
     assert not fell_through, (
         "these select strings hit tests/fake_postgrest.py::_UNPARSEABLE, so the fakes "
         f"silently stop projecting them and drop back to returning every column: {fell_through}"
+    )
+
+
+# The fake-order contract
+#
+# Same shape of gap as `select`, found on 2026-08-30 while building 盼圃. The
+# fake sorted with `str(row.get(field) or "")`, which cannot tell "no value"
+# apart from "empty string", so rows with a NULL sort key came back *first*
+# where the database puts them last. Nothing was red: the wall's dateless
+# fruits were listed ahead of the ones actually coming due, and only reading
+# the output by hand caught it.
+
+
+def test_nulls_last_really_puts_nulls_last_in_both_directions():
+    rows = [{"n": "b", "due": None}, {"n": "a", "due": "2026-09-01"}, {"n": "c", "due": "2026-09-20"}]
+
+    ascending = apply_order(rows, {"order": "due.asc.nullslast"})
+    assert [row["n"] for row in ascending] == ["a", "c", "b"]
+
+    descending = apply_order(rows, {"order": "due.desc.nullslast"})
+    assert [row["n"] for row in descending] == ["c", "a", "b"]
+
+    # Without `nullslast` a missing value is just an empty string, which is what
+    # PostgREST does too (nulls first on ascending by default).
+    plain = apply_order(rows, {"order": "due.asc"})
+    assert [row["n"] for row in plain] == ["b", "a", "c"]
+
+
+def test_the_naive_sort_this_helper_replaces_would_fail_that():
+    # The guard has to catch the bug that actually shipped, or it proves nothing.
+    rows = [{"n": "b", "due": None}, {"n": "a", "due": "2026-09-01"}, {"n": "c", "due": "2026-09-20"}]
+    naive = sorted(rows, key=lambda row: str(row.get("due") or ""))
+    assert [row["n"] for row in naive] == ["b", "a", "c"]
+    assert [row["n"] for row in naive] != [
+        row["n"] for row in apply_order(rows, {"order": "due.asc.nullslast"})
+    ]
+
+
+def test_numbers_sort_as_numbers_not_as_text():
+    # `version.desc` over 1/2/10 must give 10/2/1. Sorting those as strings
+    # answers 2/10/1, which would let a fake hand back the wrong calendar page
+    # revision without failing.
+    rows = [{"version": 2}, {"version": 10}, {"version": 1}]
+    assert [row["version"] for row in apply_order(rows, {"order": "version.desc"})] == [10, 2, 1]
+    assert [row["version"] for row in apply_order(rows, {"order": "version.asc"})] == [1, 2, 10]
+
+
+def test_several_order_keys_apply_left_to_right():
+    rows = [
+        {"n": "late", "due": "2026-09-01", "at": "2026-08-20"},
+        {"n": "early", "due": "2026-09-01", "at": "2026-08-01"},
+        {"n": "other", "due": "2026-08-01", "at": "2026-08-30"},
+    ]
+    ordered = apply_order(rows, {"order": "due.asc,at.asc"})
+    assert [row["n"] for row in ordered] == ["other", "early", "late"]
+
+
+def test_every_order_string_this_repository_sends_is_one_this_helper_models():
+    # `order` is sent from dozens of places. A modifier the helper does not know
+    # would be silently ignored, which is the same silent-pass failure the
+    # `select` guards above exist to remove.
+    known = {"asc", "desc", "nullsfirst", "nullslast"}
+    unknown: dict[str, str] = {}
+    for path in sorted((ROOT / "shenyu_gateway").rglob("*.py")):
+        text = path.read_text(encoding="utf-8")
+        for match in re.finditer(r"""["']order["']\s*:\s*f?(["'])(?P<value>[^"']+)\1""", text):
+            value = match.group("value")
+            if "{" in value:  # an f-string built at runtime; not a literal to check
+                continue
+            for clause in value.split(","):
+                bits = [bit.strip().lower() for bit in clause.strip().split(".")]
+                for modifier in bits[1:]:
+                    if modifier and modifier not in known:
+                        line = text[: match.start()].count("\n") + 1
+                        unknown[f"{path.name}:{line}"] = value
+    assert not unknown, (
+        "these order strings use modifiers tests/fake_postgrest.py::apply_order does not "
+        f"model, so the fakes would sort them wrongly without failing: {unknown}"
+    )
+
+
+def test_no_fake_reimplements_order_sorting_by_hand():
+    # One place decides what an order string means. Reading `order` to pass it
+    # into `apply_order` is fine; sorting on it directly drifts from the helper,
+    # and the drift is invisible until someone reads the output.
+    hand_rolled: list[str] = []
+    pattern = re.compile(
+        r"""\.sort\(|sorted\(""",
+    )
+    for path in sorted(TESTS_DIR.glob("test_*.py")):
+        # This file is where the naive sort is *supposed* to appear: the guard
+        # above proves the shipped bug by reproducing it. Exempting the whole
+        # file is safe because it contains no Supabase fake of its own.
+        if path.name == "test_supabase.py":
+            continue
+        text = path.read_text(encoding="utf-8")
+        if "fake_postgrest" not in text:
+            continue
+        for match in pattern.finditer(text):
+            window = text[match.start() : match.start() + 240]
+            if "order" in window or "reverse=" in window:
+                line = text[: match.start()].count("\n") + 1
+                hand_rolled.append(f"{path.name}:{line}")
+    assert not hand_rolled, (
+        f"order sorting belongs in tests/fake_postgrest.py::apply_order: {hand_rolled}"
     )
 
 

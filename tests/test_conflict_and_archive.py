@@ -16,7 +16,7 @@ from scripts.backfill_chat_archive import _candidate_rows
 from shenyu_gateway.conflict_books import ConflictBookService, render_conflict_shelf
 from shenyu_gateway.store import GatewayStore
 
-from .fake_postgrest import project_select
+from .fake_postgrest import apply_order, project_select
 
 
 class FakeSupabase:
@@ -70,10 +70,7 @@ class FakeSupabase:
         if and_clause.startswith("(event_at.lt.") and and_clause.endswith(")"):
             before = and_clause[len("(event_at.lt.") : -1]
             rows = [r for r in rows if self._filter_compare(r, "event_at", "lt", before)]
-        order = str(params.get("order") or "").split(",", 1)[0]
-        if order:
-            field, _, direction = order.partition(".")
-            rows.sort(key=lambda r: str(r.get(field) or ""), reverse=direction == "desc")
+        rows = apply_order(rows, params)
         offset = int(params.get("offset") or 0)
         limit = params.get("limit")
         if limit is not None:
