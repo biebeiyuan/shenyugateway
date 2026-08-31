@@ -602,6 +602,12 @@ async def _handle_star_feedback(ctx: ToolContext) -> dict:
             "star_id",
         ),
         expected_star_id=ctx.arguments.get("expected_star_id"),
+        constellation_name=str(
+            _first_nonempty_arg(ctx.arguments, "constellation_name", "star_name") or ""
+        ),
+        # star_review 给的两段编号（1.2）。它只在那一批里有意义，所以
+        # service 层不认识它——解析留在这里。
+        candidate=_first_nonempty_arg(ctx.arguments, "candidate", "编号", "number"),
         scored_by=ctx.arguments.get("scored_by", "沈予"),
         note=str(note or ""),
         metadata=ctx.arguments.get("metadata") if isinstance(ctx.arguments.get("metadata"), dict) else None,

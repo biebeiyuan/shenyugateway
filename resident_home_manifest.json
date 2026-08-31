@@ -7,13 +7,16 @@
       "core": [
         "六通道加权 RRF：正文、关键词、和弦、关系、场景、明确点名。",
         "Memory Island 用 2/3 重合门保持连续；明确点名可以走窄的逃生门。",
-        "没有相关星星时可以空召回，不为了填满数量硬塞。"
+        "没有相关星星时可以空召回，不为了填满数量硬塞。",
+        "在 review 里说「连起来」会真的连上星座（以前只记一行反馈、库里一条边都不建），可以顺手给这条线起个星座名。",
+        "review 用两段编号（1.2）指认候选，不用报内部 id；每颗星带上落下多久了，因为时间差本身就是「像不像一回事」的一部分。"
       ],
       "resident_effect": "星星不会每轮乱跳；真正当场响过的东西才有机会回到眼前。",
       "source_globs": [
         "shenyu_gateway/stars/**/*.py",
         "shenyu_gateway/memory_island.py",
-        "shenyu_gateway/context_builder.py"
+        "shenyu_gateway/context_builder.py",
+        "shenyu_gateway/gateway_tools/_stars.py"
       ],
       "config_keys": [
         "inject_stars",
@@ -23,16 +26,17 @@
         "star_ranker_version"
       ],
       "reviewed": {
-        "fingerprint": "694db99a11e730d4afe462807ff0270efaa1d1cfc5adf85fcc74d17ab5c1d87a",
+        "fingerprint": "018c776216fda815ea44f4218329f798cea2e20f972ce7dfdd620a19d287dd8d",
         "file_hashes": {
           "shenyu_gateway/context_builder.py": "e262a821f4aed83cf318c092a8e6fb6c075e380a20e9325eb7cb6ae294b522c7",
+          "shenyu_gateway/gateway_tools/_stars.py": "b8a9fae467f1a72c27b48e84321ec09d5ca4e4224922cdf42a99cbaab4826eb6",
           "shenyu_gateway/memory_island.py": "fc41141ee05c12d4c41da78c15616b27d9dc06d6987e845c416f7fda004551fb",
           "shenyu_gateway/stars/__init__.py": "2eaf12cd27b755017ea19f7419256292202196b853e554d2627d46f72304698c",
           "shenyu_gateway/stars/_activity.py": "3227dd0c39b018caa06cb929cbe0ee2daa9b350f372443f781183626d35e851c",
           "shenyu_gateway/stars/_chord.py": "dc58a679e22ece6ed68e4d6e6b14385263133ded11e8d9dac8aaa4d946445131",
           "shenyu_gateway/stars/_crud.py": "10d00ff9fff627371c071a004fd758d2666cb85b27577be4817ea83141974c99",
           "shenyu_gateway/stars/_embedding.py": "49cc4d119a21107ac5d88b1956221242284720e11fc0f4f1aaa4e3bc9640ab28",
-          "shenyu_gateway/stars/_feedback.py": "d94e6c4b0605aed31ef4e56eacda8c50b9d2a8464140730b1318b76ac92a8f6b",
+          "shenyu_gateway/stars/_feedback.py": "205c5dae9a1ab518018e8746ded874bab9e548d15085b8c9e08f46f5537a3c8c",
           "shenyu_gateway/stars/_helpers.py": "1d391054c704b1cfc0f699fa34804ed88e1d9f2d163cfa09d49ae7f85b7b1049",
           "shenyu_gateway/stars/_logging.py": "0f2a595c32b0ace852e70887b68d557988e16044e53c1dbec296cd94ec54add6",
           "shenyu_gateway/stars/_recall.py": "37f91968628476a0c76a7314ac3fa40c7fc5bc0f2adc55965c260cedaec5994f",
@@ -41,10 +45,10 @@
           "shenyu_gateway/stars/_scene.py": "87243e44b755e412b3db8598d901904814f704ac30ff238a83a2ca6449b98183",
           "shenyu_gateway/stars/_weights.py": "9794ec22f7e92b5aa5aa8b191f11a15d7d55935524b48ccf9ace772b544e537e"
         },
-        "commit": "fc0d8c419c073521129909be397a4fcda8f30d3a",
-        "revision": "fc0d8c419c073521129909be397a4fcda8f30d3a-dirty",
+        "commit": "17420bd38da5e7243e21c69417106e6537073ed2",
+        "revision": "17420bd38da5e7243e21c69417106e6537073ed2-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-29T16:25:12+08:00",
+        "reviewed_at": "2026-08-31T14:45:33+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -203,15 +207,15 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "88c44274950ecc07502acb0dbc3de326431aacd4c2e64c2c766f3d70a1d89e86",
+        "fingerprint": "2f41d721e5939b0d1b328a898c4ec2ffee3d8fae6bfd0bc855e0540c84e1df28",
         "file_hashes": {
           "shenyu_gateway/gateway_tools/_windowsill.py": "d18c9434a6f37a318ea89992d8b9b67ba0bcc90ba6ab17a5b4e877d6044f17f3",
-          "shenyu_gateway/tool_schemas.py": "a516b1641c475ed38e2fd67e890d165e9d15ea74d435df65e62fa23a1356aaa8"
+          "shenyu_gateway/tool_schemas.py": "8133fe7c15ba1b9a2c140a742cdc612733dc4868993fdae703e1eeb7e42ea11f"
         },
-        "commit": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298",
-        "revision": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298-dirty",
+        "commit": "17420bd38da5e7243e21c69417106e6537073ed2",
+        "revision": "17420bd38da5e7243e21c69417106e6537073ed2-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-31T00:55:23+08:00",
+        "reviewed_at": "2026-08-31T14:46:27+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -234,17 +238,17 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "dde5759177b956e9863f0116039fa856763f25fbd1b8d35bbbc47d370c650833",
+        "fingerprint": "176f79286002a2506527e01643d3ee2c95055789f9861574abcde25deab19e9b",
         "file_hashes": {
           "shenyu_gateway/context_layers.py": "7103d452eca4a332fca710ee5f7b3c3283eb2817f3d6571e518b01179356818b",
           "shenyu_gateway/gateway_tools/_album.py": "0e251e43bf094906a9fe18abe6292c41f47a69539d7685195d9e4f2a02638b19",
           "shenyu_gateway/store/_album.py": "cad6fcffeee27dc411d886eb62c2825b51fd68102ef112265a94878a982b4e85",
-          "shenyu_gateway/tool_schemas.py": "a516b1641c475ed38e2fd67e890d165e9d15ea74d435df65e62fa23a1356aaa8"
+          "shenyu_gateway/tool_schemas.py": "8133fe7c15ba1b9a2c140a742cdc612733dc4868993fdae703e1eeb7e42ea11f"
         },
-        "commit": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298",
-        "revision": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298-dirty",
+        "commit": "17420bd38da5e7243e21c69417106e6537073ed2",
+        "revision": "17420bd38da5e7243e21c69417106e6537073ed2-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-31T00:55:23+08:00",
+        "reviewed_at": "2026-08-31T14:46:27+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -275,18 +279,18 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "5fb7dbf229e96892485d0ca0737fa9b2d5bb5b48eaab411706437669ca3adcdb",
+        "fingerprint": "63b68d60b29b6d71b6f1b52380dd89a9189ca41252bd1a19db1a448d189a48a0",
         "file_hashes": {
           "shenyu_gateway/gateway_tools/_orchard.py": "4c1760f22388c3d66fbb36b3aa09703da86a214810e8f49fa50799e4bc09b7f0",
           "shenyu_gateway/orchard.py": "15d12744eb145539baab57d97696712bcf916f1fd8b5dab5a56001fc4a783736",
           "shenyu_gateway/orchard_service.py": "0584f1f512501c8388a3355917beec7d31672aceff6aa153007d814d0b0e43ee",
           "shenyu_gateway/store/_orchard.py": "b4092657d271d5b48d23ac6d50ff08cdda4b89997b077f8e93c7a0e4298f4a5f",
-          "shenyu_gateway/tool_schemas.py": "a516b1641c475ed38e2fd67e890d165e9d15ea74d435df65e62fa23a1356aaa8"
+          "shenyu_gateway/tool_schemas.py": "8133fe7c15ba1b9a2c140a742cdc612733dc4868993fdae703e1eeb7e42ea11f"
         },
-        "commit": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298",
-        "revision": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298-dirty",
+        "commit": "17420bd38da5e7243e21c69417106e6537073ed2",
+        "revision": "17420bd38da5e7243e21c69417106e6537073ed2-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-31T12:27:49+08:00",
+        "reviewed_at": "2026-08-31T14:46:27+08:00",
         "reviewed_by": "Codex"
       }
     },
@@ -350,18 +354,18 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "97bea056ad6dda9127659d2705bb0f0d299a79499b57fa8d898776cda70075e1",
+        "fingerprint": "581661b30817df1c9155e9ec0f0d05e53d98c786cc310c6ec2f15e4c5dbc5031",
         "file_hashes": {
           "shenyu_gateway/archive_routes.py": "c514bc7697e4e1e0b02275cd865d641d1e125acfb6bb1fe6bedb8a0ebab8188f",
           "shenyu_gateway/conflict_books.py": "e9b4d7b8f961e7143d21ade98cd66594e7e9522bcd47797efa4dec06958e01b3",
           "shenyu_gateway/context_layers.py": "7103d452eca4a332fca710ee5f7b3c3283eb2817f3d6571e518b01179356818b",
           "shenyu_gateway/gateway_tools/_books.py": "9c02f8065cc671b9519e83f7b6ba936b37c4a7a6e5ca24b2ff9be6d11c82520f",
-          "shenyu_gateway/tool_schemas.py": "a516b1641c475ed38e2fd67e890d165e9d15ea74d435df65e62fa23a1356aaa8"
+          "shenyu_gateway/tool_schemas.py": "8133fe7c15ba1b9a2c140a742cdc612733dc4868993fdae703e1eeb7e42ea11f"
         },
-        "commit": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298",
-        "revision": "3b33490f5256aadec94bd1d0c3a34a7cb5a28298-dirty",
+        "commit": "17420bd38da5e7243e21c69417106e6537073ed2",
+        "revision": "17420bd38da5e7243e21c69417106e6537073ed2-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-08-31T00:55:23+08:00",
+        "reviewed_at": "2026-08-31T14:46:27+08:00",
         "reviewed_by": "Codex"
       }
     },

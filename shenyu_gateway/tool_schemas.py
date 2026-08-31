@@ -171,37 +171,56 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_star_feedback",
-                "description": "我给星星候选做评分。feedback 枚举：connected=我觉得强相关，想连星座；positive=我觉得有点关，但不强；negative=我觉得不相关；should_surface=我觉得这颗应该被推上来（missed）；skipped=我看了但先不评；missed=我发现漏反。单条用 feedback；一次打完用 items 数组。missed 时填 expected_star_id；候选反错了可填 candidate_id 或 candidate_star_id。",
+                "description": (
+                    "回头看过之后，说说那几颗像不像一回事。\n"
+                    "connected=是同一回事，连成星座（这会真的连上，可以顺手给这条线起个星座名）；"
+                    "positive=有点关系，但不强；negative=不相关；skipped=看了先不说。\n"
+                    "说的是哪一个用 star_review 给的编号（比如 1.2），或者那颗星的 id。"
+                    "一次说好几个用 items 数组。"
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "feedback": {
                             "type": "string",
-                            "enum": ["positive", "negative", "missed", "connected", "skipped", "should_surface"],
+                            # missed / should_surface 不给他：两个都要求他先知道"库里有一颗
+                            # 我没看到的星"，而他只看得见网关注入的那几颗。线上四个月 92 条
+                            # 反馈里 missed 只有 1 条、should_surface 一条都没有，而那 1 条
+                            # 他真正想说的是"这两颗是一回事"——那是 connected。
+                            # 两个值仍在服务层和 Admin，圆圆看得见整个库，他用得对。
+                            "enum": ["connected", "positive", "negative", "skipped"],
                             "description": "单条反馈时使用；一次提交多条时可放在 items 里。",
+                        },
+                        "candidate": {
+                            "type": "string",
+                            "description": "star_review 给的编号，比如 1.2（第 1 颗下面的第 2 个）。",
+                        },
+                        "constellation_name": {
+                            "type": "string",
+                            "description": "connected 时可选：这条线叫什么。星星聚起来就是星座。",
                         },
                         "run_id": {"type": "string"},
                         "candidate_id": {"type": "string"},
                         "candidate_star_id": {"type": "string"},
-                        "expected_star_id": {"type": "string", "description": "该反但没反上来的那颗星。"},
                         "scored_by": {"type": "string", "default": "沈予"},
                         "note": {"type": "string"},
                         "metadata": {"type": "object", "additionalProperties": True},
                         "items": {
                             "type": "array",
-                            "description": "批量反馈数组。每个 item 都是一个独立反馈对象，字段和单条反馈一样。",
+                            "description": "一次说好几个。每个都和单条反馈同样的字段。",
                             "minItems": 1,
                             "items": {
                                 "type": "object",
                                 "properties": {
                                     "feedback": {
                                         "type": "string",
-                                        "enum": ["positive", "negative", "missed", "connected", "skipped", "should_surface"],
+                                        "enum": ["connected", "positive", "negative", "skipped"],
                                     },
+                                    "candidate": {"type": "string"},
+                                    "constellation_name": {"type": "string"},
                                     "run_id": {"type": "string"},
                                     "candidate_id": {"type": "string"},
                                     "candidate_star_id": {"type": "string"},
-                                    "expected_star_id": {"type": "string"},
                                     "scored_by": {"type": "string", "default": "沈予"},
                                     "note": {"type": "string"},
                                     "metadata": {"type": "object", "additionalProperties": True},

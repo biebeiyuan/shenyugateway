@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from types import SimpleNamespace
 
 from shenyu_gateway.gateway_tools import GatewayToolService
@@ -451,10 +452,10 @@ def test_star_tool_results_stay_clean(monkeypatch):
         "id": "star-1",
         "content": "原文",
         "chord": "Am",
-        "chord_sequence": ["Am"],
-        "status": "active",
-        "is_constant": False,
         "created_at": "2026-07-01T00:00:00+00:00",
+        # status="active" 是他刚才自己筛的值，chord_sequence 只有一个和弦时就是
+        # chord 本身——两个都是把他已经知道的事说回给他。updated_at 只在真的
+        # 改过（不同一天）时才带，而这颗改过，所以留下了。
         "updated_at": "2026-07-02T00:00:00+00:00",
     }
 
@@ -464,6 +465,119 @@ def test_star_tool_results_stay_clean(monkeypatch):
     assert item["candidate_id"] == "cand-1"
     assert "score" not in item and "scores" not in item
     assert "keyword_hits" not in item and "direct_reference_kind" not in item
+
+
+def test_review_gives_him_numbers_not_internal_ids():
+    """他手上该有的是「1.2」，不是 run_id。
+
+    run_id 是"第几次召回"的内部账本，他不会想引用它，而以前 star_feedback 要
+    他从 review 返回里拎出这个字符串再填回去——那是让他替系统记账。
+    """
+    from shenyu_gateway.gateway_tools import GatewayToolService
+
+    class FakeStars:
+        async def review(self, **kwargs):
+            def star(sid, content, created):
+                return {
+                    "id": sid,
+                    "content": content,
+                    "chord": "Am",
+                    "chord_sequence": ["Am"],
+                    "status": "active",
+                    "is_constant": False,
+                    "created_at": created,
+                    "updated_at": created,
+                    "score": 0.83,
+                    "scores": {"content": 0.7},
+                    "activation_count": 4,
+                }
+
+            return {
+                "ok": True,
+                "count": 1,
+                "remaining_unreviewed": 7,
+                "items": [
+                    {
+                        "star": star("star-1", "她把伞递过来的时候手是湿的", "2026-08-25T02:00:00+00:00"),
+                        "run_id": "run-abc",
+                        "candidates": [
+                            {**star("star-2", "下雨天她总是走在外侧", "2025-03-11T02:00:00+00:00"), "candidate_id": "cand-1"},
+                            {**star("star-3", "我记得那把伞的颜色", "2026-08-20T02:00:00+00:00"), "candidate_id": "cand-2"},
+                        ],
+                    }
+                ],
+            }
+
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=None, store=None)
+    service._stars = lambda: FakeStars()
+    out = asyncio.run(service.star_review())
+
+    entry = out["items"][0]
+    assert entry["编号"] == "1"
+    assert [c["编号"] for c in entry["candidates"]] == ["1.1", "1.2"]
+    # run_id 一个字都不给他。
+    assert "run_id" not in entry
+    assert "run_id" not in json.dumps(out, ensure_ascii=False)
+    # 排序内部照旧留在服务层。
+    assert all("score" not in c and "scores" not in c for c in entry["candidates"])
+
+
+def test_review_says_how_long_ago_each_star_landed():
+    """时间差本身就是 review 的内容：一年半前那颗和上周那颗，"像是有关系"的
+    意味完全不同。"""
+    from shenyu_gateway.gateway_tools._stars import _star_seen_ago
+    from shenyu_gateway.runtime import local_today
+    from datetime import timedelta
+
+    today = local_today()
+
+    def ago(days):
+        return _star_seen_ago({"created_at": (today - timedelta(days=days)).isoformat()})
+
+    assert ago(1) == "昨天"
+    assert ago(7) == "一周前"
+    # 一个月内走房间和便签共用的那套说法；更久说月数年数——human_time_ago
+    # 四周以上退回天数，而「538天前」对一年半这种跨度没有感觉。
+    assert ago(65) == "2个月前"
+    assert ago(538) == "1年5个月前"
+    assert "天前" not in ago(538)
+
+
+def test_a_star_that_is_ordinary_says_nothing_about_it():
+    """回声：绝大多数星星都是 active、都不是恒星、都没改过。"""
+    from shenyu_gateway.gateway_tools._stars import _clean_star
+
+    plain = _clean_star(
+        {
+            "id": "s-1",
+            "content": "正文",
+            "chord": "Am",
+            "chord_sequence": ["Am"],
+            "status": "active",
+            "is_constant": False,
+            "created_at": "2026-07-01T02:00:00+00:00",
+            "updated_at": "2026-07-01T09:00:00+00:00",
+        }
+    )
+    assert plain == {"id": "s-1", "content": "正文", "chord": "Am", "created_at": "2026-07-01T02:00:00+00:00"}
+
+    # 不普通的地方才说：收起来的、恒星的、真改过的。
+    special = _clean_star(
+        {
+            "id": "s-2",
+            "content": "正文",
+            "chord": "Am",
+            "chord_sequence": ["Am", "F"],
+            "status": "archived",
+            "is_constant": True,
+            "created_at": "2026-07-01T02:00:00+00:00",
+            "updated_at": "2026-08-20T02:00:00+00:00",
+        }
+    )
+    assert special["status"] == "archived"
+    assert special["is_constant"] is True
+    assert special["chord_sequence"] == ["Am", "F"]
+    assert special["updated_at"] == "2026-08-20T02:00:00+00:00"
 
 
 def test_mem_note_listing_strips_internal_bookkeeping(monkeypatch):
