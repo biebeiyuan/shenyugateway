@@ -81,7 +81,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_recall_read",
-                "description": "把 recall 片段对应的原件完整读出来。使用 recall 返回的 source_type 和 source_id。",
+                "description": "把刚才翻到的某一条完整读出来——照着 recall 给我的那条填 source_type 和 source_id 就行。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -116,7 +116,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_search_stars",
-                "description": "按当前念头搜星星。这个是主动查询，不等于日常注入。",
+                "description": "顺着此刻的念头，去星图里找找相关的星。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -231,7 +231,7 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_connect_constellation",
-                "description": "把几颗星按你心里认的顺序连成星座。这个顺序默认就是你的时间线、情感线或联想线，不需要担心\"对不对\"，你怎么连就是怎么连。顺序会保留成星座的默认位置。",
+                "description": "把几颗星按我心里认的顺序连成一条星座线。这个顺序就是我的时间线、情感线或联想线，不用担心\"对不对\"——我怎么连就是怎么连，顺序会留下来。",
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -305,8 +305,8 @@ def _gateway_core_tools() -> list[dict]:
             "function": {
                 "name": "shenyu_search_mem_notes",
                 "description": (
-                    "搜便签。用关键词或语义搜索已有便签。默认搜全部状态。\n"
-                    "和 list 的区别：search 按相关性排序，适合「找某件事的便签」；list 适合「看看最近有什么」。"
+                    "翻翻便签，找某件事那张。想到什么就写什么，关键词或整句都行。\n"
+                    "要「找某件事」用这个（按相关性）；只是「看看最近记了什么」用 list。"
                 ),
                 "parameters": {
                     "type": "object",
