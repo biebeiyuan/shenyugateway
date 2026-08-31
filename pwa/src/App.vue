@@ -18,6 +18,7 @@ import {
   Plus,
   RotateCcw,
   ScrollText,
+  Search,
   Send,
   SlidersHorizontal,
   Settings2,
@@ -27,6 +28,8 @@ import {
 } from 'lucide-vue-next'
 import ChatMessageRow from './components/ChatMessageRow.vue'
 import PhotoViewer from './components/PhotoViewer.vue'
+import ReviewSheet from './components/ReviewSheet.vue'
+import { isDemoMode, demoSeedTranscript } from './demo'
 import { activePwaBuildInfo, samePwaBuild, type PwaBuildInfo } from './buildInfo'
 import { toolState, toolWarmCopy, type ToolEvent } from './toolLanguage'
 import type {
@@ -116,7 +119,12 @@ const MESSAGE_IMAGE_LIMIT = 9
 const requestedSessionTag = sessionTagFromLocation()
 const storedSessionTag = localStorage.getItem(STORAGE_SESSION) || ''
 
-const messages = ref<UiMessage[]>(loadStoredMessages())
+// 演示模式下若本地没有历史，就铺一段示例对话，进来就有内容看（?demo=1，见 src/demo/）。
+const messages = ref<UiMessage[]>((() => {
+  const stored = loadStoredMessages()
+  if (stored.length || !isDemoMode()) return stored
+  return demoSeedTranscript()
+})())
 const draft = ref('')
 const pendingAttachments = ref<Attachment[]>([])
 // 看图器：点开的是哪条消息的第几张。null = 关着。
@@ -132,6 +140,7 @@ const gatewayUrl = ref(localStorage.getItem(STORAGE_GATEWAY) || '')
 const sessionTag = ref(requestedSessionTag || storedSessionTag || createId('pwa'))
 const menuOpen = ref(false)
 const settingsOpen = ref(false)
+const reviewOpen = ref(false)
 const deployedPwaBuildInfo = ref<PwaBuildInfo | null>(null)
 const pwaBuildCheck = ref<'idle' | 'checking' | 'current' | 'outdated' | 'unavailable'>('idle')
 const handoffOpen = ref(false)
@@ -166,7 +175,7 @@ const {
 // 输入框与滚动手感在 session/useComposer.ts（软键盘抬升、自动增高、滚到底）。
 const {
   scrollToBottom, jumpToBottom, atBottom, resizeInput, resetInputSize, updateDraft, clearKeyboardTimers,
-  keepComposerVisible, scheduleComposerVisible, handleComposerBlur, onComposerKeydown,
+  keepComposerVisible, scheduleComposerVisible, onComposerFocus, handleComposerBlur, onComposerKeydown,
 } = useComposer({ draft, inputRef, streamRef, onSubmit: () => submit() })
 
 const currentModelLabel = computed(() => modelLabel(currentModel.value))
@@ -618,6 +627,11 @@ function saveSettings() {
 function openSettings() {
   settingsOpen.value = true
   void checkPwaBuildInfo()
+}
+
+function openReview() {
+  menuOpen.value = false
+  reviewOpen.value = true
 }
 
 async function checkPwaBuildInfo() {
@@ -1175,6 +1189,10 @@ onUnmounted(() => {
       </div>
 
       <nav class="sidebar-nav" aria-label="导航">
+        <button class="sidebar-nav-item" type="button" @click="openReview">
+          <Search :size="21" />
+          <span>搜索</span>
+        </button>
         <button class="sidebar-nav-item active" type="button" @click="menuOpen = false">
           <svg class="sidebar-nav-icon" viewBox="0 0 256 256" aria-hidden="true"><path d="M232.07,186.76a80,80,0,0,0-62.5-114.17A80,80,0,1,0,23.93,138.76l-7.27,24.71a16,16,0,0,0,19.87,19.87l24.71-7.27a80.39,80.39,0,0,0,25.18,7.35,80,80,0,0,0,108.34,40.65l24.71,7.27a16,16,0,0,0,19.87-19.86ZM62,159.5a8.28,8.28,0,0,0-2.26.32L32,168l8.17-27.76a8,8,0,0,0-.63-6,64,64,0,1,1,26.26,26.26A8,8,0,0,0,62,159.5Zm153.79,28.73L224,216l-27.76-8.17a8,8,0,0,0-6,.63,64.05,64.05,0,0,1-85.87-24.88A79.93,79.93,0,0,0,174.7,89.71a64,64,0,0,1,41.75,92.48A8,8,0,0,0,215.82,188.23Z" /></svg>
           <span>Chats</span>
@@ -1308,7 +1326,7 @@ onUnmounted(() => {
                 placeholder="Reply to Claude..."
                 enterkeyhint="send"
                 @blur="handleComposerBlur"
-                @focus="scheduleComposerVisible"
+                @focus="onComposerFocus"
                 @input="updateDraft"
                 @keydown="onComposerKeydown"
               />
@@ -1353,6 +1371,8 @@ onUnmounted(() => {
       @close="photoViewer = null"
       @change="(next) => { if (photoViewer) photoViewer.position = next }"
     />
+
+    <ReviewSheet :open="reviewOpen" :ctx="clientContext()" @close="reviewOpen = false" />
 
     <div v-if="processSheetMessage" class="sheet-layer" @click.self="closeProcessSheet">
       <section class="bottom-sheet process-sheet" :class="{ 'echo-detail': processSheet?.view === 'echo' }">

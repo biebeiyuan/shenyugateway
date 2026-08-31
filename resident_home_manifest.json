@@ -356,18 +356,18 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "d8db6c62441807f096721a494b885edf69bbab7985667db0ecb61d8898bcd463",
+        "fingerprint": "aab0ee40718b7b11bbf086eaf50f2e1a8f4127a20129a4cacd85acc6608eea41",
         "file_hashes": {
-          "shenyu_gateway/archive_routes.py": "c514bc7697e4e1e0b02275cd865d641d1e125acfb6bb1fe6bedb8a0ebab8188f",
+          "shenyu_gateway/archive_routes.py": "5e9972034593b7069961e90a7e25c90707ff9bd90808901328182e292479ba54",
           "shenyu_gateway/conflict_books.py": "e9b4d7b8f961e7143d21ade98cd66594e7e9522bcd47797efa4dec06958e01b3",
           "shenyu_gateway/context_layers.py": "7103d452eca4a332fca710ee5f7b3c3283eb2817f3d6571e518b01179356818b",
           "shenyu_gateway/gateway_tools/_books.py": "9c02f8065cc671b9519e83f7b6ba936b37c4a7a6e5ca24b2ff9be6d11c82520f",
           "shenyu_gateway/tool_schemas.py": "4ce6383112cc5deff3a2e47d0c4f292ecf00ce2ec95b0bbafaef139476fed64d"
         },
-        "commit": "c64c18abf32410cac4c80af4cbf2cfecb21aee0b",
-        "revision": "c64c18abf32410cac4c80af4cbf2cfecb21aee0b-dirty",
-        "worktree_dirty": true,
-        "reviewed_at": "2026-08-31T18:09:49+08:00",
+        "commit": "bd5197f2869c929bf4fc156a711d9a5b3407889b",
+        "revision": "bd5197f2869c929bf4fc156a711d9a5b3407889b",
+        "worktree_dirty": false,
+        "reviewed_at": "2026-09-01T00:19:17+08:00",
         "reviewed_by": "Codex"
       }
     },

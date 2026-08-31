@@ -22,6 +22,10 @@ export type ComposerDeps = {
 export function useComposer(deps: ComposerDeps) {
   const { draft, inputRef, streamRef, onSubmit } = deps
   let keyboardTimers: number[] = []
+  // 点进输入框那一刻是否本来就贴着底：只有贴底才在键盘弹出时继续钉住底部；
+  // 若你是往上翻着读再点进来打字，就别把你拽回底部（圆圆报的「返回上面打字会跳下来」）。
+  // 在 focus 时采样，此刻键盘还没弹、视口没缩，atBottom 读数才准。
+  let stickToBottom = true
 
   function scrollToBottom() {
     nextTick(() => {
@@ -94,7 +98,14 @@ export function useComposer(deps: ComposerDeps) {
     const lift = Math.max(0, Math.ceil(wrap.getBoundingClientRect().bottom - keyboardViewportBottom() + 8))
     wrap.style.transform = lift ? `translateY(${-lift}px)` : ''
     stream.style.paddingBottom = lift ? `calc(var(--space-6) + ${lift}px)` : ''
-    scrollToBottom()
+    // 只有本来就贴底才跟着钉到底；往上翻着打字的人保持在原处，不被拽下来。
+    if (stickToBottom) scrollToBottom()
+  }
+
+  // 点进输入框：此刻采样是否贴底，决定接下来键盘弹出期间要不要钉底。
+  function onComposerFocus() {
+    stickToBottom = atBottom()
+    scheduleComposerVisible()
   }
 
   function scheduleComposerVisible() {
@@ -127,6 +138,7 @@ export function useComposer(deps: ComposerDeps) {
     clearKeyboardTimers,
     keepComposerVisible,
     scheduleComposerVisible,
+    onComposerFocus,
     handleComposerBlur,
     onComposerKeydown,
   }
