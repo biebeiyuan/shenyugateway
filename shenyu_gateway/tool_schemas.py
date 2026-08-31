@@ -39,9 +39,9 @@ def _gateway_core_tools() -> list[dict]:
             "function": {
                 "name": "shenyu_recall",
                 "description": (
-                    "从以前写过的东西里捞相关原件。默认是模糊捞；知道原件时用 exact，"
-                    "想碰类似心情时用 mood，找当时原话时用 verbatim。选中的主来源会返回完整正文；"
-                    "已知 source_type/source_id 时也可以直接用 shenyu_recall_read。"
+                    "回头翻翻以前写过的、和现在这件事有关的东西。说个大概就行——"
+                    "想找某一篇具体的、或者当时聊天里的原话，说清楚它会更准。"
+                    "捞上来的会带完整正文；想接着看某一条可以用 shenyu_recall_read。"
                 ),
                 "parameters": {
                     "type": "object",

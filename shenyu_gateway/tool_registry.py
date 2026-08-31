@@ -82,10 +82,11 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
 星星
   create_star(content*, chord?, chords?[])
   search_stars(query*)
-  star_review()  — 无参数
+  star_review()  — 回头看看最近落下的几颗，和它们可能连着的旧星
   star_feedback
-    单条: feedback*(connected|positive|negative|should_surface|skipped|missed), candidate_id?, note?
-    批量: items*=[{feedback, candidate_id?, ...}]  ← 不要把数组放进 feedback 字段
+    单条: feedback*(connected|positive|negative|skipped), candidate(review 给的编号如 1.2)或 candidate_id, constellation_name?
+    批量: items*=[{feedback, candidate, ...}]  ← 不要把数组放进 feedback 字段
+    connected=它们是同一回事，说了就真的连成一条星座线
   connect_constellation(star_ids*[], name?)
   list_stars(status?: active|paused|archived|all, reviewed?: all|reviewed|unreviewed, limit?)
   mark_constant(star_id*, is_constant?: bool)
@@ -146,8 +147,8 @@ _BROKER_DAILY_DESCRIPTION = """\
 星星
   create_star(content*, chord?, chords?[])
   search_stars(query*)
-  star_review()
-  star_feedback(feedback* 或 items*[])
+  star_review()  — 回头看看最近落下的几颗，和可能连着的旧星
+  star_feedback(feedback*: connected|positive|negative|skipped, candidate 如 1.2)  — connected 说了就真的连成一条星座线
   connect_constellation(star_ids*[], name?)
   merge_stars(source_ids*[], content*, chord?)
 
