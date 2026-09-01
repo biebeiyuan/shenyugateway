@@ -557,8 +557,11 @@ Room 的 `room_scribble` 是进入方式，不是另一套 Recall 来源：它�
 | `shenyu_create_star` | `chord` + `content`（复用 `stars/_render.py` 的措辞） | `星星 Cmaj7 · 她说想养一只橘猫` |
 | `shenyu_write_mem_note` | `mem_type` + `summary`，有 `remind_on` 带上日期 | `便签 承诺：周五帮她看简历（记的是 2026-09-04）` |
 | `shenyu_add_calendar` | `period_key` + `mode` + `digest` | `日历 2026-08-29 续写：今天她提到换工作的事` |
+| `shenyu_orchard`（仅 `action=plant`） | `data.fruit.name`，有 `due_on` 带上 | `盼圃 种下：蒜冒尖（预计 2026-09-10）` |
 
 只收 `ok: true`；`cached_duplicate` 的重放不重复出条；便签被同日去重拦下时（`duplicate_of`）明说「本来就有一张」，否则她会以为刚写成功了一张新的；上限 `ISLAND_BUMP_LIMIT`（默认 8），超了留最近的。
+
+盼圃是一名四动作（plant/note/pick/look），不像上面三个各占一个工具名，所以挑出 plant 靠工具行上记的 `action`（`island_bumps.py::_orchard_action`，broker 默认模式下参数裹在 `params` 里，两层都认），不是工具名。只有 `plant` 进来：种果子库层没查重（`orchard_service.py::plant` 直接 insert），忘了种过又种一遍是一颗静默的重复——她不 `look` 就看不见，跟记重星星同一种坑。`note` 一天本来就想贴好几张、哪张算重复无从判断；`pick` 有条件更新挡着摘不了第二次；`look` 是读操作——都不进。措辞跟着盼圃「不催」的调子，只说种下了什么、有预计日子就带上，不写"提醒/到期/待办"。这是盼圃唯一的自动注入路径，且只沾这一个动作的回执——**墙的状态本身照旧不进任何上下文层**（见 `AGENTS.md` 盼圃条与 `test_orchard.py::test_the_orchard_wall_has_no_automatic_context_path`）。
 
 **不进来的**：`supabase_*` 原始表操作（能触达任意表，语义是表操作不是"我记下了什么"）、`star_feedback` / `mark_constant` / `archive_star`（纯簿记，返回里没有可读内容）、`bulk_update_mem_notes`（刷屏）、`delete_mem_note`（复述刚删掉的东西正好是反效果）、`room_locked_drawer`（写入即隐私边界，放进去就不该再被提起）。
 
@@ -567,6 +570,7 @@ Room 的 `room_scribble` 是进入方式，不是另一套 Recall 来源：它�
 | 改什么 | 在哪改 |
 |--------|--------|
 | 白名单、一行的措辞、上限行为 | `island_bumps.py`（纯函数，无 IO） |
+| 盼圃哪个 action 出条、怎么从工具行读 action | `island_bumps.py::_ORCHARD_BUMP_ACTIONS` / `_orchard_action`（读 row 的 `tool_args_json`，兼容 full 顶层与 broker `params` 嵌套） |
 | 日界小时 | `runtime.py::NIGHT_OWL_DAY_START_HOUR` |
 | 挂在倒数第几条之前（连岛一起） | `ISLAND_TAIL_MESSAGES`（Admin 在 ConfigView 的「节奏与窗口」；只在 epoch 重置时生效） |
 | 读取源 | `store/_messages.py::get_tool_messages_since` |

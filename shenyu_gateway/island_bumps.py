@@ -32,12 +32,19 @@ from .utils import shorten
 BUMP_HEADING = "## 今天的小突起"
 
 # 上锁的抽屉写入即隐私边界——放进去就不再被提起，回执会正好破坏这一点。
-# 这里只列记忆三件套，其余写操作（原始表操作、评分簿记、批量改、删除）都不进来：
-# 要么没有可读内容，要么复述它正是反效果。
+# 这里只列记忆三件套加盼圃「种下」，其余写操作（原始表操作、评分簿记、批量改、
+# 删除）都不进来：要么没有可读内容，要么复述它正是反效果。
 _STAR_TOOLS = frozenset({"shenyu_create_star"})
 _MEM_TOOLS = frozenset({"shenyu_write_mem_note"})
 _CALENDAR_TOOLS = frozenset({"shenyu_add_calendar"})
-BUMP_TOOL_NAMES = _STAR_TOOLS | _MEM_TOOLS | _CALENDAR_TOOLS
+# 盼圃是一名四动作（plant/note/pick/look），不像上面三个各占一个工具名。种果子
+# 库层没有查重（`orchard_service.py::plant` 直接 insert），忘了种过又种一遍就是
+# 一颗静默的重复——她不 look 就看不见，跟记重星星同一种坑。只有 plant 进来：
+# note 一天本来就想贴好几张、哪张算重复无从判断；pick 有条件更新挡着摘不了第二
+# 次；look 是读操作。挑出 plant 靠工具行上记的 action，不是工具名。
+_ORCHARD_TOOLS = frozenset({"shenyu_orchard"})
+_ORCHARD_BUMP_ACTIONS = frozenset({"plant"})
+BUMP_TOOL_NAMES = _STAR_TOOLS | _MEM_TOOLS | _CALENDAR_TOOLS | _ORCHARD_TOOLS
 
 _CALENDAR_MODE_WORDS = {"new": "新建", "append": "续写", "replace": "覆盖"}
 
@@ -94,6 +101,24 @@ def _mem_bump(result: dict[str, Any]) -> str:
     return line
 
 
+def _orchard_bump(result: dict[str, Any]) -> str:
+    # plant 的果子在 data.fruit 里（`orchard_service.py::plant`），不像星星在顶层。
+    data = result.get("data")
+    data = data if isinstance(data, dict) else {}
+    fruit = data.get("fruit")
+    fruit = fruit if isinstance(fruit, dict) else {}
+    name = _clean(fruit.get("name"))
+    if not name:
+        return ""
+    # 措辞跟着盼圃「不催」的调子（`tool_schemas.py::_gateway_orchard_tool`）：只说
+    # 种下了什么，有预计日子就带上，没有就一直挂着等——不写"提醒""到期"。
+    line = f"盼圃 种下：{shorten(name, 60)}"
+    due_on = _clean(fruit.get("due_on"))
+    if due_on:
+        line += f"（预计 {due_on[:10]}）"
+    return line
+
+
 def _calendar_bump(result: dict[str, Any]) -> str:
     digest = _clean(result.get("digest"))
     if not digest:
@@ -104,13 +129,29 @@ def _calendar_bump(result: dict[str, Any]) -> str:
     return f"{head} {mode}：{shorten(digest, 60)}" if mode else f"{head}：{shorten(digest, 60)}"
 
 
-def _bump_line(tool_name: str, result: dict[str, Any]) -> str:
+def _orchard_action(row: dict[str, Any]) -> str:
+    """这行盼圃工具调用的 action。full 模式在顶层，broker 模式（默认）把真参数
+    裹在 `params`/`arguments` 里——两种都认，不然默认模式下永远读不到 plant。"""
+    args = _loads(row.get("tool_args") or row.get("tool_args_json"))
+    action = _clean(args.get("action"))
+    if not action:
+        nested = args.get("params")
+        if not isinstance(nested, dict):
+            nested = args.get("arguments") if isinstance(args.get("arguments"), dict) else {}
+        action = _clean(nested.get("action")) if isinstance(nested, dict) else ""
+    return action.lower()
+
+
+def _bump_line(tool_name: str, result: dict[str, Any], row: dict[str, Any]) -> str:
     if tool_name in _STAR_TOOLS:
         return _star_bump(result)
     if tool_name in _MEM_TOOLS:
         return _mem_bump(result)
     if tool_name in _CALENDAR_TOOLS:
         return _calendar_bump(result)
+    if tool_name in _ORCHARD_TOOLS:
+        # 盼圃四动作共用一个工具名，只有 plant 出条；其余动作留在墙上，不进回执。
+        return _orchard_bump(result) if _orchard_action(row) in _ORCHARD_BUMP_ACTIONS else ""
     return ""
 
 
@@ -140,7 +181,7 @@ def bump_lines_from_tool_rows(
             result = _loads(result.get("result")) or result
             if result.get("ok") is not True:
                 continue
-        line = _bump_line(tool_name, result)
+        line = _bump_line(tool_name, result, row)
         if line and line not in lines:
             lines.append(line)
     return lines[-limit:]

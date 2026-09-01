@@ -136,6 +136,7 @@ class BaseStoreMixin:
                     island_anchor_offset INTEGER NOT NULL DEFAULT 0,
                     raw_protected_turns INTEGER NOT NULL DEFAULT 0,
                     island_state_json TEXT NOT NULL DEFAULT '{}',
+                    system_prefix_state_json TEXT NOT NULL DEFAULT '{}',
                     last_event_class TEXT NOT NULL DEFAULT '',
                     reset_reason TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
@@ -383,6 +384,13 @@ class BaseStoreMixin:
                 """
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")
+            # 系统前缀缓冲闸的旧快照（slow/heartbeat 文本 + 上次刷新时间戳）。
+            self._ensure_column(
+                conn,
+                "context_window_states",
+                "system_prefix_state_json",
+                "TEXT NOT NULL DEFAULT '{}'",
+            )
             # Owner-facing alias for a conversation. The session_tag stays the
             # immutable wire identity; renaming only changes what lists show.
             self._ensure_column(conn, "gateway_sessions", "display_name", "TEXT")

@@ -107,6 +107,43 @@ def test_calendar_bump_states_whether_the_page_was_new_appended_or_overwritten(m
     assert bump_lines_from_tool_rows([row]) == [f"日历 2026-08-29 {word}：今天她提到换工作的事"]
 
 
+def _orchard_row(action: str, fruit: dict, *, broker: bool = False) -> dict:
+    row = _tool_row("shenyu_orchard", {"ok": True, "data": {"fruit": fruit, "garden": "平常天气"}})
+    # full 模式 action 在顶层；broker 模式（默认）真参数裹在 params 里。
+    if broker:
+        row["tool_args_json"] = json.dumps(
+            {"tool": "shenyu_orchard", "params": {"action": action, "name": fruit.get("name")}},
+            ensure_ascii=False,
+        )
+    else:
+        row["tool_args_json"] = json.dumps({"action": action, "name": fruit.get("name")}, ensure_ascii=False)
+    return row
+
+
+def test_planting_a_fruit_becomes_a_one_line_bump_in_the_orchard_s_own_voice():
+    row = _orchard_row("plant", {"name": "蒜冒尖", "due_on": None})
+    assert bump_lines_from_tool_rows([row]) == ["盼圃 种下：蒜冒尖"]
+
+
+def test_a_planted_fruit_with_a_due_day_names_that_day():
+    row = _orchard_row("plant", {"name": "9月1号抽血", "due_on": "2026-09-01"})
+    assert bump_lines_from_tool_rows([row]) == ["盼圃 种下：9月1号抽血（预计 2026-09-01）"]
+
+
+def test_plant_is_read_from_the_broker_nested_params_not_just_the_top_level():
+    # Broker mode is the default: the real action rides inside params, so reading
+    # only the top level would never see a plant.
+    row = _orchard_row("plant", {"name": "蒜冒尖", "due_on": None}, broker=True)
+    assert bump_lines_from_tool_rows([row]) == ["盼圃 种下：蒜冒尖"]
+
+
+@pytest.mark.parametrize("action", ["note", "pick", "look"])
+def test_only_planting_bumps_the_other_orchard_actions_stay_on_the_wall(action):
+    # note: 一天本来就想贴好几张；pick: 条件更新挡着摘不了第二次；look: 读操作。
+    row = _orchard_row(action, {"name": "蒜冒尖", "due_on": None})
+    assert bump_lines_from_tool_rows([row]) == []
+
+
 def test_failed_writes_never_become_a_bump():
     row = _tool_row("shenyu_create_star", {"ok": False, "error": "Supabase is not configured."})
     assert bump_lines_from_tool_rows([row]) == []

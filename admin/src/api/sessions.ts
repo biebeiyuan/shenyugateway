@@ -110,6 +110,8 @@ export interface GatewaySessionDetail {
   cold_start_snapshots: GatewayColdStartSnapshot[]
   recent_messages: GatewayMessage[]
   heartbeats: GatewayHeartbeat[]
+  // 系统前缀缓冲闸上次把内容顶进前缀的时间。晚于它的已注入 heartbeat 仍憋在闸后。
+  system_prefix_refreshed_at?: string
 }
 
 export async function fetchGatewaySessions(params: { limit?: number; q?: string } = {}) {

@@ -893,6 +893,12 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             order="desc",
         )
         stats = store.get_session_stats(session["id"])
+        # 系统前缀缓冲闸上次真正把内容顶进前缀的时间。晚于这个时间注入的 heartbeat
+        # 虽已盖 injected_at，却还憋在闸后、没进当前生效的系统前缀——前端据此标「缓冲中」。
+        window_state = store.get_context_window_state(session["id"]) or {}
+        system_prefix_refreshed_at = (
+            (window_state.get("system_prefix_state") or {}).get("refreshed_at") or ""
+        )
         return {
             "session": session,
             "stats": stats,
@@ -902,6 +908,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             "cold_start_snapshots": cold_start_snapshots,
             "recent_messages": messages,
             "heartbeats": heartbeats,
+            "system_prefix_refreshed_at": system_prefix_refreshed_at,
         }
 
     @router.patch("/api/gateway/sessions/{session_tag}")

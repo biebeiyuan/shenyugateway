@@ -181,11 +181,16 @@ def test_every_bucket_the_algorithm_can_return_has_words():
 # ── 二、盼圃不响 ──────────────────────────────────────────────────────
 
 
-def test_the_orchard_has_no_automatic_context_path():
-    """沈予不调工具，盼圃就不在提示词里。
+def test_the_orchard_wall_has_no_automatic_context_path():
+    """墙的状态不自动进提示词：沈予不 look，墙上挂着什么就不在上下文里。
 
     这是这面墙成立的前提：便签的 remind_on 会为了"今天该说的事"强制重写
-    Memory Island，盼圃一旦沾上自动注入，半年后就是第二个提醒系统。
+    Memory Island，墙的状态一旦沾上自动注入，半年后就是第二个提醒系统。
+
+    小突起是唯一的例外，且只沾一个动作：种下一颗时留一行回执（见
+    `test_planting_bumps_but_the_wall_state_still_does_not`）。那是"今天我做了
+    什么"的动作回执，跟落星星同类，不是把墙的状态推进提示词——所以
+    `island_bumps.py` 不在下面这份"禁止碰盼圃"的清单里。
     """
     from pathlib import Path
 
@@ -194,7 +199,6 @@ def test_the_orchard_has_no_automatic_context_path():
         root / "context_builder.py",
         root / "context_layers.py",
         root / "memory_island.py",
-        root / "island_bumps.py",
         root / "prepare_messages.py",
         root / "room_context.py",
     ]
@@ -203,11 +207,20 @@ def test_the_orchard_has_no_automatic_context_path():
         assert "orchard" not in text.lower(), f"{path.name} 把盼圃接进了上下文组装"
 
 
-def test_the_orchard_is_not_an_island_bump():
-    """小突起是"今天我已经记下的"，盼圃是"还没发生的"，两件事。"""
-    from shenyu_gateway.island_bumps import BUMP_TOOL_NAMES
+def test_planting_bumps_but_the_wall_state_still_does_not():
+    """小突起收"种下"这个动作回执，不收墙的状态，也不收其余三个动作。
 
-    assert "shenyu_orchard" not in BUMP_TOOL_NAMES
+    种果子库层没查重（`plant` 直接 insert），忘了种过又种一遍是一颗静默的重复
+    ——跟记重星星同一种坑，所以它进。note/pick/look 不进：分别是"一天本来就想
+    贴好几张""条件更新挡着摘不了第二次""读操作"。
+    """
+    from shenyu_gateway.island_bumps import (
+        BUMP_TOOL_NAMES,
+        _ORCHARD_BUMP_ACTIONS,
+    )
+
+    assert "shenyu_orchard" in BUMP_TOOL_NAMES
+    assert _ORCHARD_BUMP_ACTIONS == frozenset({"plant"})
 
 
 # ── 三、库与四个动作 ──────────────────────────────────────────────────

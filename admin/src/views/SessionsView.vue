@@ -257,7 +257,13 @@ function roleType(role: string) {
 }
 
 function heartbeatState(item: GatewayHeartbeat) {
-  return item.injected_at ? `已注入 ${formatTime(item.injected_at)}` : '待注入'
+  if (!item.injected_at) return '待注入'
+  // 已盖 injected_at，但注入时间晚于系统前缀上次刷新 → 还憋在缓冲闸后，没进当前生效前缀。
+  const refreshedAt = detail.value?.system_prefix_refreshed_at
+  if (refreshedAt && item.injected_at > refreshedAt) {
+    return `缓冲中 ${formatTime(item.injected_at)}`
+  }
+  return `已注入 ${formatTime(item.injected_at)}`
 }
 
 function snapshotTitle(item: GatewayContextSnapshot) {

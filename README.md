@@ -70,9 +70,10 @@ The codebase is partly layered already. Entries owe a path and a responsibility:
 - `shenyu_gateway/resident_profile.py`: stable wake/profile text for memory practice and the origin book.
 - `shenyu_gateway/context_snapshots.py`: context snapshot creation and helpers for cold-start sources.
 - `shenyu_gateway/context_window.py`: semantic history-event classification, chunk-safe client-history windowing with high-water/epoch/anchor state, and cold-start bridge overlap deduplication.
+- `shenyu_gateway/system_prefix_buffer.py`: system-prefix buffer gate — holds newly written heartbeat/calendar layers behind the `ANTHROPIC_CACHE_TTL` window (or until the next trim) so a fresh receipt does not rewrite the `system.end` cache prefix every turn, while forcing an immediate refresh when injected content is removed.
 - `shenyu_gateway/client_extra.py`: shared recognition/stripping of client-injected per-message extras (Operit `message_insert_extra_bundle` attachments and the PWA tail status suffix) plus the expired-photo placeholder contract, imported by trimming, archiving, history normalization, and recall-query cleaning.
 - `shenyu_gateway/memory_island.py`: Stars/Mem island rendering and per-lane retain/rewrite state, including overlap decisions and current/added/updated/removed log summaries.
-- `shenyu_gateway/island_bumps.py`: 小突起 — stateless one-line receipts for the memory writes Shenyu already made this waking day (stars, mem notes, calendar), rendered as a block trailing the island so repeats stop happening.
+- `shenyu_gateway/island_bumps.py`: 小突起 — stateless one-line receipts for the memory writes Shenyu already made this waking day (stars, mem notes, calendar, and 盼圃's `plant` action only), rendered as a block trailing the island so repeats stop happening.
 - `shenyu_gateway/prepare_messages.py`: cold-start snapshot preparation, runtime state pruning, pending gateway tool turn injection, and message/tool-call helpers.
 
 ### Upstream communication

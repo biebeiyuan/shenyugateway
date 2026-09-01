@@ -37,6 +37,7 @@ from .mcp_registry import registry as _mcp_registry
 from .private_capture import is_room_mode as _is_room_mode
 from .request_logs import _mark_request_log_phase
 from .runtime import iso_now as _iso_now, json_dumps as _json_dumps, logger, now as _now, parse_ts as _parse_ts
+from .system_prefix_buffer import buffer_seconds_from_ttl, resolve_system_prefix
 from .sessions import SessionManager
 from .store import NEXT_REQUEST_COLD_START_TAG
 from .tool_loop import _latest_user_text, _tool_call_name
@@ -677,6 +678,21 @@ async def prepare_messages(
         client_tool_surface=client_profile["client_tool_surface"],
     )
     window_state["island_state"] = package.get("memory_island_state") or {}
+
+    # 系统前缀缓冲闸：heartbeat / 日历新写的内容先憋着，等到点或裁剪再顶上去，
+    # 别让每次心跳注入都刷掉 system.end 前那一大块缓存。撤东西（删已注入 heartbeat、
+    # 清日历页）不受缓冲拦，立即刷新。位置和顺序不动——这里只换文本内容。
+    chosen_slow, chosen_heartbeat, system_prefix_state, prefix_decision = resolve_system_prefix(
+        window_state.get("system_prefix_state"),
+        layers.get("slow") or "",
+        layers.get("heartbeat") or "",
+        buffer_seconds=buffer_seconds_from_ttl(getattr(cfg, "anthropic_cache_ttl", "")),
+        epoch_reset=bool(window_state.get("epoch_reset")),
+    )
+    layers["slow"] = chosen_slow
+    layers["heartbeat"] = chosen_heartbeat
+    window_state["system_prefix_state"] = system_prefix_state
+
     _mark_request_log_phase(
         log_entry,
         "prepare.layers_rendered",
@@ -701,6 +717,7 @@ async def prepare_messages(
             **trim_meta,
             "memory_island_decision": package.get("memory_island_decision") or {},
             "memory_island_version": (package.get("memory_island_state") or {}).get("version"),
+            "system_prefix_decision": prefix_decision,
         },
     )
     _mark_request_log_phase(
