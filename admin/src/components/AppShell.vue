@@ -38,7 +38,7 @@ async function checkHealth() {
   <div class="app-shell">
     <header class="header" :class="{ 'header-minimal': isHome }">
       <RouterLink to="/" class="header-home">
-        <h1>沈予的家</h1>
+        <h1>UwU</h1>
       </RouterLink>
       <RouterLink v-if="!isHome" to="/" class="back-link">&larr; 返回</RouterLink>
       <button

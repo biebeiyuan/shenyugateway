@@ -243,8 +243,5 @@ function go(path: string) {
   .cell.third {
     grid-column: span 2;
   }
-  .cell.third:last-child {
-    grid-column: span 4;
-  }
 }
 </style>
