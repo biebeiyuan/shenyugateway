@@ -81,9 +81,3 @@ class EmbeddingMixin:
             )
         return {"ok": failed == 0, "enabled": True, "seen": len(rows), "embedded": embedded, "failed": failed}
 
-    async def _mark_source_deleted(self, source_table: str) -> None:
-        await self.supabase.update(
-            RECALL_INDEX_TABLE,
-            {"source_table": source_table},
-            {"deleted_at": datetime.now(timezone.utc).isoformat()},
-        )

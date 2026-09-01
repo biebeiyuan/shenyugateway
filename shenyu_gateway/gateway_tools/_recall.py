@@ -206,9 +206,6 @@ class RecallToolsMixin:
             result = {**result, "item": _for_shenyu(result["item"])}
         return result
 
-    async def rebuild_recall_index(self, source_types: Any = None) -> dict:
-        return await self._recall_index().rebuild(self._recall_source_types(source_types))
-
     def _recall_star_item(self, row: dict[str, Any], *, full: bool = False) -> dict[str, Any]:
         body = str(row.get("content") or "").strip()
         content = body if full else _shorten(body, 720)

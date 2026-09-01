@@ -11,6 +11,7 @@ from ._helpers import (
     STAR_TABLE, STAR_LINK_TABLE, STAR_SELECT,
     STAR_CANDIDATE_TABLE, STAR_RUN_TABLE,
     STAR_RANKER_VERSION, STAR_FEATURE_SCHEMA_VERSION,
+    DIRECT_REFERENCE_HARD_KINDS, DIRECT_REFERENCE_SOFT_KIND,
 )
 from ._chord import _chord_similarity, _extract_chord_from_query
 from ._scene import _scene_score, _date_anchor_score
@@ -72,8 +73,8 @@ class RecallMixin:
             trace_log,
             "stars.direct_reference_done",
             detail={
-                "hard": sum(1 for kind in direct_reference_kinds.values() if kind in {"star_id", "exact_phrase"}),
-                "soft": sum(1 for kind in direct_reference_kinds.values() if kind == "recall_unique"),
+                "hard": sum(1 for kind in direct_reference_kinds.values() if kind in DIRECT_REFERENCE_HARD_KINDS),
+                "soft": sum(1 for kind in direct_reference_kinds.values() if kind == DIRECT_REFERENCE_SOFT_KIND),
             },
         )
         scored = await self._score_rows(

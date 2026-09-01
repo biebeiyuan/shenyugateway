@@ -28,7 +28,7 @@ class PendingTurnsMixin:
         gateway_tool_messages: list[dict],
         ttl_minutes: int = 1440,
     ) -> dict:
-        normalized_ids, ids_json = _canonical_tool_call_ids_json(client_tool_call_ids)
+        _, ids_json = _canonical_tool_call_ids_json(client_tool_call_ids)
         pending_id = f"pgt_{uuid.uuid4().hex[:12]}"
         created_at = iso_now()
         expires_at = dt_to_iso(now() + timedelta(minutes=int(ttl_minutes or 1440)))

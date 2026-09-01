@@ -13,7 +13,6 @@ from ._snapshots import SnapshotsMixin
 from ._window_state import WindowStateMixin
 from ._cold_start import ColdStartMixin
 from ._heartbeats import HeartbeatsMixin
-from ._cache import CacheMixin
 from ._room import RoomMixin
 from ._orchard import OrchardMixin
 from ._admin import AdminMixin
@@ -28,7 +27,6 @@ class GatewayStore(
     WindowStateMixin,
     ColdStartMixin,
     HeartbeatsMixin,
-    CacheMixin,
     RoomMixin,
     OrchardMixin,
     AlbumMixin,

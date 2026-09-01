@@ -15,7 +15,6 @@ from ..mem_notes_relevance import (
     CONTEXT_RELATION_NAME_TERMS,
     CONTEXT_SEMANTIC_MIN_SCORE,
     CONTEXT_SEMANTIC_MIN_VECTOR_SCORE,
-    CONTEXT_WEAK_KEYWORD_HITS,
     _anchor_match,
     _auto_generate_summary,
     _clean_context_query,
@@ -387,27 +386,6 @@ class SearchMixin:
     # ------------------------------------------------------------------
     # Rendering
     # ------------------------------------------------------------------
-
-    def render_notes_for_context(self, notes: list[dict[str, Any]]) -> str:
-        if not notes:
-            return ""
-        lines: list[str] = []
-        for note in notes:
-            summary = (note.get("summary") or "").strip()
-            content = _shorten(note.get("content") or "", 200)
-            text = summary or content
-            if not text:
-                continue
-            anchors: list[str] = []
-            for person in (note.get("people") or [])[:2]:
-                anchors.append(f"人：{person}")
-            for place in (note.get("places") or [])[:1]:
-                anchors.append(f"地：{place}")
-            for obj in (note.get("objects") or [])[:1]:
-                anchors.append(f"物：{obj}")
-            anchor_suffix = f"（{'；'.join(anchors)}）" if anchors else ""
-            lines.append(f"（{text}{anchor_suffix}）")
-        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Scoring
@@ -894,19 +872,6 @@ class SearchMixin:
     # ------------------------------------------------------------------
     # Search text helpers
     # ------------------------------------------------------------------
-
-    def _context_strong_keyword_hits(self, reasons: list[str]) -> list[str]:
-        hits: list[str] = []
-        for reason in reasons:
-            if not reason.startswith("keyword:"):
-                continue
-            raw_hits = reason.removeprefix("keyword:").split(",")
-            for hit in raw_hits:
-                normalized = hit.strip().lower()
-                if not normalized or normalized in CONTEXT_WEAK_KEYWORD_HITS:
-                    continue
-                hits.append(normalized)
-        return hits
 
     def _search_text(self, row: dict) -> str:
         return "\n".join(

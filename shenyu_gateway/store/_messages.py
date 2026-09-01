@@ -175,27 +175,6 @@ class MessagesMixin:
             ).fetchall()
             return [dict(row) for row in rows]
 
-    def get_latest_message_by_role(self, session_id: str, role: str) -> Optional[dict]:
-        with self._connect() as conn:
-            row = conn.execute(
-                """
-                SELECT * FROM gateway_messages
-                WHERE session_id = ? AND role = ?
-                ORDER BY created_at DESC
-                LIMIT 1
-                """,
-                (session_id, role),
-            ).fetchone()
-            return dict(row) if row else None
-
-    def get_message_count(self, session_id: str) -> int:
-        with self._connect() as conn:
-            row = conn.execute(
-                "SELECT COUNT(*) AS count FROM gateway_messages WHERE session_id = ?",
-                (session_id,),
-            ).fetchone()
-            return int(row["count"]) if row else 0
-
     def count_messages_since(self, session_id: str, since: str, role: Optional[str] = None) -> int:
         where = "session_id = ? AND created_at > ?"
         params: list[Any] = [session_id, since]

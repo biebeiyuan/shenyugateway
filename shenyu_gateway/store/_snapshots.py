@@ -93,46 +93,6 @@ class SnapshotsMixin:
 
     # -- cross-session context queries ---------------------------------
 
-    def latest_request_context_snapshots(self, limit: int = 5, session_tag: Optional[str] = None) -> list[dict]:
-        limit = max(1, min(int(limit or 5), 50))
-        with self._connect() as conn:
-            if session_tag:
-                rows = conn.execute(
-                    """
-                    SELECT r.*, s.last_active_at, s.message_count AS stored_message_count
-                    FROM request_context_snapshots r
-                    JOIN gateway_sessions s ON s.id = r.session_id
-                    WHERE r.session_tag = ?
-                    ORDER BY r.created_at DESC, r.rowid DESC
-                    LIMIT ?
-                    """,
-                    (session_tag, limit),
-                ).fetchall()
-            else:
-                rows = conn.execute(
-                    """
-                    SELECT r.*, s.last_active_at, s.message_count AS stored_message_count
-                    FROM request_context_snapshots r
-                    JOIN (
-                        SELECT session_tag, MAX(created_at) AS latest_created_at
-                        FROM request_context_snapshots
-                        GROUP BY session_tag
-                    ) latest
-                        ON latest.session_tag = r.session_tag
-                        AND latest.latest_created_at = r.created_at
-                    JOIN gateway_sessions s ON s.id = r.session_id
-                    ORDER BY r.created_at DESC, r.rowid DESC
-                    LIMIT ?
-                    """,
-                    (limit,),
-                ).fetchall()
-        snapshots = []
-        for row in rows:
-            item = dict(row)
-            item["messages"] = json.loads(item.get("messages_json") or "[]")
-            snapshots.append(item)
-        return snapshots
-
     def latest_context_source_session(
         self,
         exclude_session_id: Optional[str] = None,
@@ -217,72 +177,6 @@ class SnapshotsMixin:
                 "messages": selected,
             }
         ]
-
-    def recent_cross_session_context(
-        self,
-        exclude_session_id: Optional[str],
-        since: Optional[str],
-        limit_messages: int = 8,
-        limit_sessions: int = 4,
-    ) -> list[dict]:
-        limit_messages = max(1, min(int(limit_messages or 8), 50))
-        limit_sessions = max(1, min(int(limit_sessions or 4), 20))
-        where = []
-        params: list[Any] = []
-        if exclude_session_id:
-            where.append("session_id != ?")
-            params.append(exclude_session_id)
-        if since:
-            where.append("created_at > ?")
-            params.append(since)
-        where_sql = "WHERE " + " AND ".join(where) if where else ""
-        with self._connect() as conn:
-            rows = conn.execute(
-                f"""
-                SELECT r.*, s.session_tag AS resolved_session_tag, s.client_name AS resolved_client_name
-                FROM request_context_snapshots r
-                JOIN (
-                    SELECT session_id, MAX(created_at) AS latest_created_at
-                    FROM request_context_snapshots
-                    {where_sql}
-                    GROUP BY session_id
-                ) latest
-                    ON latest.session_id = r.session_id
-                    AND latest.latest_created_at = r.created_at
-                JOIN gateway_sessions s ON s.id = r.session_id
-                ORDER BY r.created_at DESC, r.rowid DESC
-                LIMIT ?
-                """,
-                (*params, limit_sessions),
-            ).fetchall()
-
-        remaining = limit_messages
-        sources = []
-        for row in rows:
-            item = dict(row)
-            raw_messages = json.loads(item.get("messages_json") or "[]")
-            messages = [
-                {"role": msg.get("role"), "content": msg.get("content")}
-                for msg in raw_messages
-                if msg.get("role") in {"user", "assistant"} and msg.get("content")
-            ]
-            if not messages:
-                continue
-            selected = messages[-remaining:]
-            remaining -= len(selected)
-            sources.append(
-                {
-                    "session_id": item.get("session_id"),
-                    "session_tag": item.get("resolved_session_tag") or item.get("session_tag"),
-                    "client_name": item.get("resolved_client_name") or item.get("client_name"),
-                    "snapshot_at": item.get("created_at"),
-                    "latest_user_text": item.get("latest_user_text"),
-                    "messages": selected,
-                }
-            )
-            if remaining <= 0:
-                break
-        return sources
 
     def latest_cross_session_context(
         self,

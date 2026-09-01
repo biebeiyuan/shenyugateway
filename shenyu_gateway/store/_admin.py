@@ -41,7 +41,6 @@ class AdminMixin:
             pending_count = conn.execute(
                 "SELECT COUNT(*) AS count FROM pending_gateway_tool_turns WHERE consumed_at IS NULL"
             ).fetchone()
-            cache_count = conn.execute("SELECT COUNT(*) AS count FROM cache_entries").fetchone()
         return {
             "messages_total": int(message_counts["total"] or 0),
             "messages_today": int(message_counts["today"] or 0),
@@ -54,7 +53,6 @@ class AdminMixin:
             "context_window_events": int(window_event_count["count"] or 0),
             "heartbeats": int(heartbeat_count["count"] or 0),
             "pending_gateway_tool_turns": int(pending_count["count"] or 0),
-            "cache_entries": int(cache_count["count"] or 0),
         }
 
     def prune_runtime_state(
@@ -75,7 +73,6 @@ class AdminMixin:
             "raw_request_windows": 0,
             "cold_start_snapshots": 0,
             "pending_gateway_tool_turns": 0,
-            "cache_entries": 0,
         }
         session_filter = "WHERE id = ?" if session_id else ""
         session_params: tuple[Any, ...] = (session_id,) if session_id else ()
@@ -154,8 +151,6 @@ class AdminMixin:
                 )
                 deleted["cold_start_snapshots"] += int(cursor.rowcount or 0)
 
-            cursor = conn.execute("DELETE FROM cache_entries WHERE expires_at < ?", (iso_now(),))
-            deleted["cache_entries"] = int(cursor.rowcount or 0)
         deleted["pending_gateway_tool_turns"] = self.prune_pending_gateway_tool_turns(session_id)
         return deleted
 

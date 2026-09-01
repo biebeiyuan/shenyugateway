@@ -469,10 +469,6 @@ class ContextBuilder:
             return 0
         return 1 + (1 if overview.get("identity") else 0) + len(overview.get("origin_books") or [])
 
-    def _normal_heartbeat_digest(self, session_id: str, consume_pending: bool = True) -> str:
-        digest, _ = self._normal_heartbeat_context(session_id=session_id, consume_pending=consume_pending)
-        return digest
-
     def _island_bump_lines(self, session_id: str) -> list[str]:
         """今天沈予已经记下的东西，一条一句话。失败就当没有，不影响其他 lane。
 

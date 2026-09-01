@@ -176,7 +176,6 @@ export interface GatewayOverview {
   cold_start_snapshots: number
   context_snapshots?: number
   heartbeats?: number
-  cache_entries?: number
   earliest_message_at: string | null
   latest_message_at: string | null
 }

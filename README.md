@@ -46,7 +46,7 @@ The codebase is partly layered already. Entries owe a path and a responsibility:
 
 ### Storage
 
-- `shenyu_gateway/store/`: SQLite runtime state (package split into mixins: `_base`, `_sessions`, `_messages`, `_pending`, `_snapshots`, `_cold_start`, `_heartbeats`, `_cache`, `_room`, `_album`, `_admin`, `_window_state`, `_request_log_history`).
+- `shenyu_gateway/store/`: SQLite runtime state (package split into mixins: `_base`, `_sessions`, `_messages`, `_pending`, `_snapshots`, `_cold_start`, `_heartbeats`, `_room`, `_album`, `_admin`, `_window_state`, `_request_log_history`).
 - `shenyu_gateway/supabase.py`: low-level Supabase REST client.
 
 ### Chat pipeline & streaming

@@ -142,7 +142,6 @@ class RuntimeConfig:
         self.star_scene_llm_url: str = os.getenv("STAR_SCENE_LLM_URL", "").strip()
         self.star_scene_llm_api_key: str = os.getenv("STAR_SCENE_LLM_API_KEY", "").strip()
         self.star_scene_llm_protocol: str = os.getenv("STAR_SCENE_LLM_PROTOCOL", "").strip().lower()
-        self.star_ranker_version: str = os.getenv("STAR_RANKER_VERSION", "v2").strip()
         self.inject_conflict_shelf: bool = _env_bool("INJECT_CONFLICT_SHELF", True)
         self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
         self.enable_upstream_tools: bool = _env_bool("ENABLE_UPSTREAM_TOOLS", True)

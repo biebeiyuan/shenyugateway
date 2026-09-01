@@ -74,14 +74,6 @@ class BaseStoreMixin:
                 CREATE INDEX IF NOT EXISTS idx_gateway_messages_session_role_created
                     ON gateway_messages(session_id, role, created_at DESC);
 
-                CREATE TABLE IF NOT EXISTS cache_entries (
-                    cache_key TEXT PRIMARY KEY,
-                    cache_type TEXT NOT NULL,
-                    payload_json TEXT NOT NULL,
-                    expires_at TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-
                 CREATE TABLE IF NOT EXISTS heartbeat_entries (
                     id TEXT PRIMARY KEY,
                     session_id TEXT NOT NULL,
