@@ -18,7 +18,6 @@ import {
   upstreamHeadersPayload,
   type UpstreamHeaderEntry,
 } from '../src/api/upstreamHeaders'
-import { STORAGE_UPSTREAM_AUTH } from '../src/api/useUpstream'
 
 const claudeCode: UpstreamHeaderEntry[] = [
   ...claudeCodeHeaders('550e8400-e29b-41d4-a716-446655440000'),
@@ -27,13 +26,6 @@ const claudeCode: UpstreamHeaderEntry[] = [
 beforeEach(() => localStorage.clear())
 
 describe('PWA upstream headers', () => {
-  it('keeps upstream authentication separate from Claude Code headers', () => {
-    const auth = { xApiKey: 'special-key', authorization: '' }
-    localStorage.setItem(STORAGE_UPSTREAM_AUTH, JSON.stringify(auth))
-    expect(JSON.parse(localStorage.getItem(STORAGE_UPSTREAM_AUTH) || '{}')).toEqual(auth)
-    expect(isClaudeCodeHeaderPreset(claudeCode)).toBe(true)
-    expect(upstreamHeadersPayload(claudeCode)).not.toHaveProperty('x-api-key')
-  })
   it('recognizes the Claude Code preset and builds its request payload', () => {
     expect(isClaudeCodeHeaderPreset(claudeCode)).toBe(true)
     expect(upstreamHeaderSummary(claudeCode)).toBe('Claude Code · 完整模拟')

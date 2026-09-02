@@ -335,10 +335,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .request-header-add:disabled { opacity: .45; }
 .request-header-refresh { display: flex; align-items: center; justify-content: center; gap: 7px; width: 100%; min-height: 44px; color: var(--text-secondary); font-size: 13px; }
 .request-header-refresh:hover { color: var(--text-primary); }
-.upstream-auth-group { padding: 10px 12px; }
-.upstream-auth-row { display: grid; grid-template-columns: minmax(96px, .7fr) minmax(0, 1.3fr); gap: 8px; align-items: center; min-height: 44px; }
-.upstream-auth-row + .upstream-auth-row { border-top: 1px solid var(--border); }
-.upstream-auth-row label { color: var(--text-secondary); font: 600 12px/1.2 var(--font-mono); }
 .extended-row { display: flex; align-items: center; justify-content: space-between; gap: 16px; min-height: 62px; padding: 10px 18px; }
 .extended-info { display: flex; flex-direction: column; }
 .extended-label { font: 400 16px/1.25 var(--font-sans); }
@@ -395,7 +391,6 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
   .settings-actions { flex-direction: column-reverse; }
   .quiet-button, .primary-button { justify-content: center; }
   .request-header-row { grid-template-areas: "name delete" "value delete"; grid-template-columns: minmax(0, 1fr) 36px; grid-template-rows: 36px 36px; min-height: 86px; }
-  .upstream-auth-row { grid-template-columns: 1fr; gap: 4px; padding: 8px 0; }
   .request-header-name { grid-area: name; }
   .request-header-input:not(.request-header-name) { grid-area: value; font-size: 10px; }
   .request-header-delete { grid-area: delete; }

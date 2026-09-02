@@ -1,5 +1,5 @@
 import { computed, ref, watch, type Ref } from 'vue'
-import { fetchModels, fetchRuntimeConfig, postUpstreamConfig, type RequestContext, type UpstreamAuth } from './client'
+import { fetchModels, fetchRuntimeConfig, postUpstreamConfig, type RequestContext } from './client'
 import { readUpstreamPresets } from './presets'
 import {
   claudeCodeHeaders,
@@ -25,7 +25,6 @@ export const STORAGE_EFFORT = 'shenyu_pwa_effort'
 export const STORAGE_EXTENDED = 'shenyu_pwa_extended'
 export const STORAGE_PRESET = 'shenyu_pwa_preset'
 export const STORAGE_STREAM = 'shenyu_pwa_stream'
-export const STORAGE_UPSTREAM_AUTH = 'shenyu_pwa_upstream_auth'
 
 // 自定义请求头上限。超过就拒绝新增，避免把一屏塞满。
 const MAX_UPSTREAM_HEADERS = 20
@@ -50,34 +49,15 @@ export function useUpstream(deps: UpstreamDeps) {
   const switchingPreset = ref('')
   const runtimeUpstream = ref({ url: '', protocol: '', extraBody: '' })
   const upstreamHeaders = ref<UpstreamHeaderEntry[]>(readUpstreamHeaders())
-  const storedUpstreamAuth = (() => {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(STORAGE_UPSTREAM_AUTH) || '{}')
-      return {
-        xApiKey: typeof parsed?.xApiKey === 'string' ? parsed.xApiKey : '',
-        authorization: typeof parsed?.authorization === 'string' ? parsed.authorization : '',
-      }
-    } catch {
-      return { xApiKey: '', authorization: '' }
-    }
-  })()
-  const upstreamAuth = ref<UpstreamAuth>(storedUpstreamAuth)
   const maxClientMessages = ref<number | null>(null)
 
   watch(upstreamHeaders, (entries) => persistUpstreamHeaders(entries), { deep: true })
-  watch(upstreamAuth, (value) => localStorage.setItem(STORAGE_UPSTREAM_AUTH, JSON.stringify(value)), { deep: true })
 
   const currentModel = computed(() => models.value.find((model) => model.id === selectedModel.value))
   const primaryModels = computed(() => models.value.filter((model) => model.primary !== false))
   const secondaryModels = computed(() => models.value.filter((model) => model.primary === false))
   const effectiveEffort = computed(() => (extendedThinking.value ? 'max' : effort.value))
-  const hasActiveUpstreamAuth = computed(() => Boolean(upstreamAuth.value.xApiKey.trim() || upstreamAuth.value.authorization.trim()))
-  const customHeaderSummary = computed(() => {
-    const headersSummary = upstreamHeaderSummary(upstreamHeaders.value)
-    const authName = upstreamAuth.value.xApiKey.trim() ? 'x-api-key' : upstreamAuth.value.authorization.trim() ? 'Authorization' : ''
-    if (!authName) return headersSummary
-    return headersSummary === '未设置' ? `${authName} · 已设置` : `${headersSummary} + ${authName}`
-  })
+  const customHeaderSummary = computed(() => upstreamHeaderSummary(upstreamHeaders.value))
   const hasActiveUpstreamHeaders = computed(() => Object.keys(upstreamHeadersPayload(upstreamHeaders.value)).length > 0)
   const claudeCodeHeaderSelected = computed(() => isClaudeCodeHeaderPreset(upstreamHeaders.value))
   const currentPreset = computed(() => {
@@ -142,7 +122,7 @@ export function useUpstream(deps: UpstreamDeps) {
 
   async function loadModels() {
     try {
-      const payload = await fetchModels(clientContext(), upstreamAuth.value)
+      const payload = await fetchModels(clientContext())
       const list = Array.isArray(payload.data) ? payload.data : []
       models.value = list as ModelOption[]
     } catch {
@@ -212,14 +192,6 @@ export function useUpstream(deps: UpstreamDeps) {
 
   function clearUpstreamHeaders() {
     upstreamHeaders.value = []
-    upstreamAuth.value = { xApiKey: '', authorization: '' }
-  }
-
-  function setUpstreamAuth(kind: keyof UpstreamAuth, value: string) {
-    upstreamAuth.value = {
-      xApiKey: kind === 'xApiKey' ? value : '',
-      authorization: kind === 'authorization' ? value : '',
-    }
   }
 
   function selectClaudeCodeHeaders() {
@@ -254,7 +226,6 @@ export function useUpstream(deps: UpstreamDeps) {
     switchingPreset,
     runtimeUpstream,
     upstreamHeaders,
-    upstreamAuth,
     maxClientMessages,
     currentModel,
     currentPreset,
@@ -263,7 +234,6 @@ export function useUpstream(deps: UpstreamDeps) {
     effectiveEffort,
     customHeaderSummary,
     hasActiveUpstreamHeaders,
-    hasActiveUpstreamAuth,
     claudeCodeHeaderSelected,
     modelLabel,
     modelDescription,
@@ -277,7 +247,6 @@ export function useUpstream(deps: UpstreamDeps) {
     toggleExtended,
     toggleStreamResponses,
     clearUpstreamHeaders,
-    setUpstreamAuth,
     selectClaudeCodeHeaders,
     refreshClaudeCodeHeaders,
     addUpstreamHeader,

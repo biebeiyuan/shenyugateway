@@ -12,11 +12,6 @@ export type RequestContext = {
   sessionTag: string
 }
 
-export type UpstreamAuth = {
-  xApiKey: string
-  authorization: string
-}
-
 export function apiUrl(ctx: RequestContext, path: string): string {
   const base = ctx.gatewayUrl.trim().replace(/\/$/, '')
   return `${base}${path}`
@@ -97,11 +92,8 @@ export async function fetchDeployedPwaBuildInfo(ctx: RequestContext): Promise<Pw
   return buildInfo
 }
 
-export async function fetchModels(ctx: RequestContext, auth?: UpstreamAuth): Promise<Record<string, unknown>> {
-  const headers = requestHeaders(ctx)
-  if (auth?.xApiKey.trim()) headers['X-Shenyu-Upstream-X-Api-Key'] = auth.xApiKey.trim()
-  if (auth?.authorization.trim()) headers['X-Shenyu-Upstream-Authorization'] = auth.authorization.trim()
-  const response = await fetch(apiUrl(ctx, '/v1/models'), { headers })
+export async function fetchModels(ctx: RequestContext): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl(ctx, '/v1/models'), { headers: requestHeaders(ctx) })
   if (!response.ok) throw new Error('模型列表暂时拿不到')
   return await response.json()
 }
