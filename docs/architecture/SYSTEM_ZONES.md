@@ -141,6 +141,7 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 
 - OpenAI-compatible 与 Anthropic 可以共享网关内部 message 语义，但 payload、cache 和 usage 必须分层适配。
 - 单次 `upstream_headers` 只能附加普通上游 header；认证、协议版本、Cookie、hop-by-hop 与 `X-Shenyu-*` 仍由网关独占，且自定义 header 值不得进入请求日志或持久历史。PWA Claude Code preset 的标准 Anthropic `metadata.user_id` 仅进入 native Anthropic payload；不进入安全持久日志，full-payload 临时诊断除外。
+- PWA 还可在模型面板填写一个（仅一个）上游认证槽：`x-api-key` 或 `Authorization`。它通过独立的 `upstream_auth` / `X-Shenyu-Upstream-*` 边界同时作用于模型目录 GET 与聊天请求；为空时仍使用网关配置的协议默认认证，并与 Claude Code 身份模拟头互不覆盖。
 - Pioneer、TreeGPT 或单一 relay 的非标准字段不能成为全局标准。
 - 缺失 cache usage 代表 provider unknown，不等同于 cache miss。
 

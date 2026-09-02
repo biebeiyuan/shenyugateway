@@ -163,12 +163,12 @@ const {
   models, presets, selectedModel, effort, extendedThinking, selectedPresetName,
   streamResponses, switchingPreset, runtimeUpstream, upstreamHeaders, maxClientMessages,
   currentModel, currentPreset, primaryModels, secondaryModels, effectiveEffort,
-  customHeaderSummary, hasActiveUpstreamHeaders, claudeCodeHeaderSelected,
+  customHeaderSummary, hasActiveUpstreamHeaders, hasActiveUpstreamAuth, claudeCodeHeaderSelected, upstreamAuth,
   modelLabel, modelDescription, modelUpstreamId,
   loadPresets, loadRuntimeUpstream, loadModels,
   selectModel: applyModel, selectPreset: applyPreset, selectEffort: applyEffort,
   toggleExtended, toggleStreamResponses,
-  clearUpstreamHeaders, selectClaudeCodeHeaders, refreshClaudeCodeHeaders,
+  clearUpstreamHeaders, setUpstreamAuth, selectClaudeCodeHeaders, refreshClaudeCodeHeaders,
   addUpstreamHeader, removeUpstreamHeader,
 } = useUpstream({ clientContext: () => clientContext(), status, errorNotice, busy })
 
@@ -879,6 +879,8 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     }
     const requestHeaders = upstreamHeadersPayload(upstreamHeaders.value)
     if (Object.keys(requestHeaders).length) body.upstream_headers = requestHeaders
+    if (upstreamAuth.value.xApiKey.trim()) body.upstream_auth = { 'x-api-key': upstreamAuth.value.xApiKey.trim() }
+    else if (upstreamAuth.value.authorization.trim()) body.upstream_auth = { authorization: upstreamAuth.value.authorization.trim() }
     if (claudeCodeHeaderSelected.value) {
       const claudeCodeSessionId = claudeCodeSessionIdFromHeaders(upstreamHeaders.value)
       if (claudeCodeSessionId) body.metadata = claudeCodeMetadata(claudeCodeSessionId)
@@ -1593,13 +1595,23 @@ onUnmounted(() => {
           </template>
 
           <template v-else-if="modelSheetPage === 'headers'">
+            <div class="model-group upstream-auth-group">
+              <div class="upstream-auth-row">
+                <label for="upstream-auth-x-api-key">x-api-key</label>
+                <input id="upstream-auth-x-api-key" class="request-header-input" type="password" autocomplete="off" placeholder="留空则使用默认上游 key" :value="upstreamAuth.xApiKey" @input="setUpstreamAuth('xApiKey', ($event.target as HTMLInputElement).value)" @change="void loadModels()">
+              </div>
+              <div class="upstream-auth-row">
+                <label for="upstream-auth-authorization">Authorization</label>
+                <input id="upstream-auth-authorization" class="request-header-input" type="password" autocomplete="off" placeholder="Bearer ...；留空则使用默认上游 key" :value="upstreamAuth.authorization" @input="setUpstreamAuth('authorization', ($event.target as HTMLInputElement).value)" @change="void loadModels()">
+              </div>
+            </div>
             <div class="model-group">
-              <button class="model-group-item" :class="{ selected: !hasActiveUpstreamHeaders }" @click="clearUpstreamHeaders">
+              <button class="model-group-item" :class="{ selected: !hasActiveUpstreamHeaders && !hasActiveUpstreamAuth }" @click="clearUpstreamHeaders">
                 <span class="model-info">
                   <span class="model-name">不附加</span>
                   <span class="model-desc">默认网关请求</span>
                 </span>
-                <Check v-if="!hasActiveUpstreamHeaders" class="model-check" :size="18" />
+                <Check v-if="!hasActiveUpstreamHeaders && !hasActiveUpstreamAuth" class="model-check" :size="18" />
               </button>
               <button class="model-group-item" :class="{ selected: claudeCodeHeaderSelected }" @click="selectClaudeCodeHeaders">
                 <span class="model-info">

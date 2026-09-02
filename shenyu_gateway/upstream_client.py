@@ -329,6 +329,11 @@ _HTTP_HEADER_NAME_RE = re.compile(r"^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
 _CUSTOM_UPSTREAM_HEADER_LIMIT = 20
 _CUSTOM_UPSTREAM_HEADER_VALUE_LIMIT = 2048
 _CUSTOM_UPSTREAM_HEADERS_TOTAL_LIMIT = 8192
+_UPSTREAM_AUTH_HEADER_NAMES = {"x-api-key", "authorization"}
+_UPSTREAM_AUTH_REQUEST_HEADERS = {
+    "x-shenyu-upstream-x-api-key": "x-api-key",
+    "x-shenyu-upstream-authorization": "authorization",
+}
 
 
 def _is_passthrough_reserved_header(normalized: str) -> bool:
@@ -407,6 +412,62 @@ def validated_custom_upstream_headers(value: Any) -> dict[str, str]:
     return headers
 
 
+def validated_upstream_auth(value: Any) -> dict[str, str]:
+    """Validate the optional per-request upstream authentication override."""
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise HTTPException(status_code=400, detail="upstream_auth 必须是对象。")
+    auth: dict[str, str] = {}
+    for raw_name, raw_value in value.items():
+        name = str(raw_name or "").strip().lower()
+        if name not in _UPSTREAM_AUTH_HEADER_NAMES:
+            raise HTTPException(status_code=400, detail="upstream_auth 只支持 x-api-key 或 authorization。")
+        header_value = str(raw_value or "").strip()
+        if any(marker in header_value for marker in ("\r", "\n", "\x00")):
+            raise HTTPException(status_code=400, detail=f"upstream_auth {name} 包含非法换行或空字符。")
+        try:
+            value_bytes = header_value.encode("ascii")
+        except UnicodeEncodeError:
+            raise HTTPException(status_code=400, detail=f"upstream_auth {name} 的值只支持 ASCII 字符。")
+        if len(value_bytes) > _CUSTOM_UPSTREAM_HEADER_VALUE_LIMIT:
+            raise HTTPException(status_code=400, detail=f"upstream_auth {name} 的值过长。")
+        if header_value:
+            auth[name] = header_value
+    if len(auth) > 1:
+        raise HTTPException(status_code=400, detail="upstream_auth 只能填写 x-api-key 或 authorization 其中一个。")
+    return auth
+
+
+def upstream_auth_from_request(request: Any) -> dict[str, str]:
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return {}
+    return validated_upstream_auth(
+        {
+            target_name: headers.get(request_name, "")
+            for request_name, target_name in _UPSTREAM_AUTH_REQUEST_HEADERS.items()
+            if headers.get(request_name)
+        }
+    )
+
+
+def _default_upstream_auth(upstream: dict) -> dict[str, str]:
+    api_key = str(upstream.get("api_key") or "").strip()
+    if not api_key:
+        return {}
+    if upstream.get("protocol") == "anthropic":
+        return {"x-api-key": api_key}
+    return {"authorization": f"Bearer {api_key}"}
+
+
+def _upstream_auth_headers(upstream: dict, auth: dict[str, str]) -> dict[str, str]:
+    selected = auth or _default_upstream_auth(upstream)
+    if "authorization" in selected:
+        return {"Authorization": selected["authorization"]}
+    return selected
+
+
 def make_upstream_http_client(cfg: Any) -> httpx.AsyncClient:
     kwargs: dict[str, Any] = {
         "timeout": httpx.Timeout(connect=15.0, read=None, write=30.0, pool=15.0),
@@ -434,17 +495,29 @@ async def fetch_upstream_models(
         if proto == "anthropic" and "anthropic.com" in (upstream.get("base_url") or "").lower():
             return []
         url = _models_url_for(upstream)
-        if not url or not upstream["api_key"]:
+        auth = upstream_auth_from_request(request)
+        if not url or (not auth and not upstream["api_key"]):
             return []
-        headers = {"Authorization": f"Bearer {upstream['api_key']}"}
+        headers = _upstream_auth_headers(upstream, auth)
         response = await client.get(url, headers=headers)
         response.raise_for_status()
         data = response.json()
-        return [
-            {"id": model["id"], "object": "model", "created": model.get("created", 1700000000), "owned_by": "upstream"}
-            for model in data.get("data", [])
-            if model.get("id")
-        ]
+        models = []
+        for model in data.get("data", []):
+            if not isinstance(model, dict):
+                continue
+            model_id = model.get("id") or model.get("model")
+            if not isinstance(model_id, str) or not model_id.strip():
+                continue
+            models.append(
+                {
+                    "id": model_id,
+                    "object": "model",
+                    "created": model.get("created", 1700000000),
+                    "owned_by": "upstream",
+                }
+            )
+        return models
     except Exception:
         return []
 
@@ -491,6 +564,7 @@ async def build_upstream_request(
 ) -> tuple[dict, dict, str, dict, dict]:
     model_name = mapped_model_name(cfg, body.model)
     custom_headers = validated_custom_upstream_headers(getattr(body, "upstream_headers", None))
+    custom_auth = validated_upstream_auth(getattr(body, "upstream_auth", None))
     upstream = (meta or {}).get("upstream") or resolve_upstream(cfg)
     proto = upstream["protocol"]
     raw_messages = messages_override or [message.model_dump(exclude_none=True) for message in body.messages]
@@ -587,7 +661,7 @@ async def build_upstream_request(
                 payload["metadata"] = {"user_id": user_id}
         apply_upstream_extra_body(payload, cfg)
         headers = {
-            "x-api-key": upstream["api_key"],
+            **_upstream_auth_headers(upstream, custom_auth),
             "anthropic-version": cfg.upstream_version,
             "content-type": "application/json",
         }
@@ -632,7 +706,7 @@ async def build_upstream_request(
     apply_upstream_extra_body(payload, cfg)
     cache_meta["prefix_fingerprints"] = _cache_prefix_fingerprints(payload, cache_meta["breakpoints"], proto)
     cache_meta["cache_control_marker_count"] = _cache_control_marker_count(payload)
-    headers = {"Authorization": f"Bearer {upstream['api_key']}", "content-type": "application/json"}
+    headers = {**_upstream_auth_headers(upstream, custom_auth), "content-type": "application/json"}
     headers.update(forwarded_client_headers(request, cfg))
     headers.update(custom_headers)
     return payload, headers, model_name, cache_meta, upstream
