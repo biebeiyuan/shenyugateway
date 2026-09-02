@@ -356,7 +356,16 @@ app.add_middleware(
     ],
     allow_credentials=True,
     allow_methods=["GET", "POST", "PATCH", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "X-Shenyu-Client", "X-Shenyu-Session-Tag", "X-Shenyu-Tool-Events"],
+    allow_headers=[
+        "Authorization",
+        "Content-Type",
+        "X-Shenyu-Client",
+        "X-Shenyu-Session-Tag",
+        "X-Shenyu-Tool-Events",
+        "X-Shenyu-Tool-Details",
+        "X-Shenyu-Upstream-X-Api-Key",
+        "X-Shenyu-Upstream-Authorization",
+    ],
 )
 
 ADMIN_DIST_DIR = Path(__file__).parent / "admin" / "dist"
