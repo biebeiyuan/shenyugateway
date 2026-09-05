@@ -93,9 +93,11 @@ def test_an_epoch_reset_rides_along_and_refreshes_even_before_the_ttl():
     assert decision["reason"] == "epoch_rebuild"
 
 
-def test_deleting_an_injected_heartbeat_refreshes_immediately_despite_the_buffer():
+def test_removing_content_before_the_ttl_is_also_buffered():
+    # 心跳内容变少（比如上一批滚出了窗口）还没到点：和「加东西」一视同仁，先憋着。
+    # 早先这里有条 content_removed 强刷分支，把整批替换误判成撤销、短路掉时间闸；
+    # 已删除——撤下来的旧内容最多多留一个 buffer 窗口，换前缀一小时内不抖。
     prev = _state("日历A", "心跳1\n心跳2")
-    # 删掉了心跳2，还没到 1h——撤东西不能憋。
     slow, hb, state, decision = resolve_system_prefix(
         prev,
         "日历A",
@@ -104,12 +106,13 @@ def test_deleting_an_injected_heartbeat_refreshes_immediately_despite_the_buffer
         epoch_reset=False,
         now="2026-09-01T10:10:00+00:00",
     )
-    assert (slow, hb) == ("日历A", "心跳1")
-    assert decision["reason"] == "content_removed"
-    assert state["refreshed_at"] == "2026-09-01T10:10:00+00:00"
+    assert (slow, hb) == ("日历A", "心跳1\n心跳2")  # 沿用旧的，不因变少而强刷
+    assert decision["reason"] == "buffered"
+    assert state["refreshed_at"] == _T0
 
 
-def test_clearing_a_calendar_page_also_forces_a_refresh():
+def test_removed_content_still_surfaces_once_the_ttl_elapses():
+    # 憋着的「变少」不是永久钉死：到点照常换成新文本，撤下来的旧内容随之消失。
     prev = _state("日历A\n日历B", "心跳1")
     slow, hb, state, decision = resolve_system_prefix(
         prev,
@@ -117,10 +120,29 @@ def test_clearing_a_calendar_page_also_forces_a_refresh():
         "心跳1",
         buffer_seconds=3600,
         epoch_reset=False,
-        now="2026-09-01T10:10:00+00:00",
+        now="2026-09-01T11:01:00+00:00",
     )
     assert slow == "日历A"
-    assert decision["reason"] == "content_removed"
+    assert decision["reason"] == "ttl_elapsed"
+    assert state["refreshed_at"] == "2026-09-01T11:01:00+00:00"
+
+
+def test_heartbeat_batch_rollover_is_buffered_not_treated_as_a_removal():
+    # 心跳是整批替换的滑动窗口：上一批 digest（心跳1..3）满了之后，
+    # 这一轮换成全新的一批（心跳4..6），旧行一条都不在新文本里。
+    # 这不是「沈予撤掉了东西」，是窗口往前滚——没到点、没裁剪，就该憋着。
+    prev = _state("日历A", "心跳1\n心跳2\n心跳3")
+    slow, hb, state, decision = resolve_system_prefix(
+        prev,
+        "日历A",
+        "心跳4\n心跳5\n心跳6",
+        buffer_seconds=3600,
+        epoch_reset=False,
+        now="2026-09-01T10:20:00+00:00",
+    )
+    assert (slow, hb) == ("日历A", "心跳1\n心跳2\n心跳3")  # 沿用旧的，新批次先憋着
+    assert decision["reason"] == "buffered"
+    assert state["refreshed_at"] == _T0  # 时间戳不动，继续按原起点计时
 
 
 def test_buffer_disabled_when_seconds_is_zero_refreshes_every_time():

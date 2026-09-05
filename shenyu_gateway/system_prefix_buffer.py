@@ -5,14 +5,24 @@
 一批注入、或写了日历，系统前缀内容一变，那个断点前的一大块缓存就得重写。
 
 这里给 `slow` 和 `heartbeat` 两层加一道版本闸——形状照抄 `memory_island.py::
-resolve_memory_island`（存旧版、够格才换、删了强刷）。规则是**加东西可以憋、撤东西
-不能憋**：
+resolve_memory_island`（存旧版、够格才换）。规则很朴素：**内容一变就先憋着，直到
+下面两个之一发生，才把新前缀顶上去**：
 
-- 新写的 heartbeat / 新的日历页：攒着，等「距上次刷新超过 buffer_seconds」或「这次
-  正好在裁剪（epoch_reset）」才真正顶上去。憋着期间沿用上一次生效的文本，于是
-  `system.end` 前缀逐字节不变，缓存照旧命中。
-- 已注入的 heartbeat 被删、日历页被清：立即刷新，不受缓冲拦——那是圆圆主动撤掉的
-  东西，不该让它在上下文里僵着。
+- 距上次刷新超过 `buffer_seconds`（到点，`ttl_elapsed`）；
+- 这次本来就在裁剪、缓存反正要重建（`epoch_reset`，白嫖顺手换，`epoch_rebuild`）。
+
+憋着期间沿用上一次生效的文本，于是 `system.end` 前缀逐字节不变，缓存照旧命中。
+
+这两个触发点正是缓存本来就会失效的时刻，所以憋着期间被换掉的旧内容（沈予清掉的
+日历页、滚出窗口的旧心跳）最多多留一个 buffer 窗口就消失，不额外损耗缓存——这是
+刻意的取舍，换来「一小时内前缀不因心跳/日历抖动」。
+
+早先这里还有一条 `content_removed` 强刷分支（「旧文本里有、新文本里没有的行 =
+撤东西，立即刷」）。它对心跳从来都是误判：心跳层是 pending↔digest 两个互斥集合的
+整批替换（`context_builder.py::_normal_heartbeat_context`），窗口一滚旧行全不在了，
+被当成「撤东西」而短路掉时间闸——正是这道闸想省的那次刷新反被它顶掉。心跳内容从不
+被真正删除（`mark_heartbeats_injected` 只打注入戳），所以那条分支删掉，闸退回上面
+两个触发点。
 
 只缓冲 `slow` 和 `heartbeat`。`stable / tool_policy / format` 只在配置或 charter 变时
 才动，本来就稳定，纳入闸只会把判定复杂化、并无收益。
@@ -38,20 +48,6 @@ def buffer_seconds_from_ttl(ttl: Any) -> int:
     宁可不省缓存，也不把旧内容永久钉死在前缀里。
     """
     return _TTL_SECONDS.get(str(ttl or "").strip().lower(), 0)
-
-
-def _lines(text: str) -> list[str]:
-    """把一层文本拆成非空行，用来判「少了内容」——按行比而不是按 hash。
-
-    hash 只能告诉你「变了」，判不出变的是加还是减。撤东西要强刷，所以得看得见
-    旧文本里有、新文本里没有的那些行。
-    """
-    return [line for line in str(text or "").split("\n") if line.strip()]
-
-
-def _removed_something(old_text: str, new_text: str) -> bool:
-    """旧文本里有、新文本里没有的行——即「撤掉了东西」。"""
-    return bool(set(_lines(old_text)) - set(_lines(new_text)))
 
 
 def _elapsed_seconds(refreshed_at: str, now: str) -> Optional[float]:
@@ -112,10 +108,6 @@ def resolve_system_prefix(
     if not changed:
         return _hold("unchanged")
 
-    # 撤掉了东西（删已注入 heartbeat、清日历页）：立即刷新，不受缓冲拦。
-    if _removed_something(old_slow, new_slow) or _removed_something(old_heartbeat, new_heartbeat):
-        return _apply("content_removed")
-
     # 这次本来就要重建缓存：白嫖，顺手把新前缀顶上去。
     if epoch_reset:
         return _apply("epoch_rebuild")
@@ -129,5 +121,5 @@ def resolve_system_prefix(
         # 时间戳坏了也当作到点——宁可多刷一次，不把旧内容钉死。
         return _apply("ttl_elapsed")
 
-    # 纯粹「加了新东西、还没到点」：憋着，沿用旧文本，缓存继续命中。
+    # 内容变了、但还没到点、也没在裁剪：憋着，沿用旧文本，缓存继续命中。
     return _hold("buffered")

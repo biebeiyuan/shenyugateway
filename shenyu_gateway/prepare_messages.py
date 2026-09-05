@@ -679,9 +679,9 @@ async def prepare_messages(
     )
     window_state["island_state"] = package.get("memory_island_state") or {}
 
-    # 系统前缀缓冲闸：heartbeat / 日历新写的内容先憋着，等到点或裁剪再顶上去，
-    # 别让每次心跳注入都刷掉 system.end 前那一大块缓存。撤东西（删已注入 heartbeat、
-    # 清日历页）不受缓冲拦，立即刷新。位置和顺序不动——这里只换文本内容。
+    # 系统前缀缓冲闸：heartbeat / 日历新写的内容先憋着，等到点（buffer_seconds）或
+    # 裁剪（epoch_reset）再顶上去，别让每次心跳注入都刷掉 system.end 前那一大块缓存。
+    # 位置和顺序不动——这里只换文本内容。
     chosen_slow, chosen_heartbeat, system_prefix_state, prefix_decision = resolve_system_prefix(
         window_state.get("system_prefix_state"),
         layers.get("slow") or "",
@@ -692,6 +692,13 @@ async def prepare_messages(
     layers["slow"] = chosen_slow
     layers["heartbeat"] = chosen_heartbeat
     window_state["system_prefix_state"] = system_prefix_state
+
+    # 憋住时这一批 pending 心跳的文本并没进上下文（沿用的是旧文本），绝不能让
+    # mark_context_consumed 给它们打「已注入」戳——打了戳它们就离开 pending 池，
+    # 而文本从没露过面，等于沈予写的这批心跳凭空丢了。清空 pending_ids，让它们
+    # 留在池里，等某轮真正 apply 时再连文本带戳一起落定。
+    if prefix_decision.get("decision") == "held":
+        package["heartbeat_pending_ids"] = []
 
     _mark_request_log_phase(
         log_entry,

@@ -1054,6 +1054,30 @@ def test_normal_context_surfaces_store_heartbeats_end_to_end(tmp_path):
     assert "normal hb" in layers["heartbeat"]
 
 
+def test_held_prefix_keeps_heartbeats_pending_instead_of_marking_injected(tmp_path):
+    # 缓冲闸憋住时，prepare_messages 会把 package["heartbeat_pending_ids"] 清空——
+    # 那批心跳的文本这轮没进上下文，绝不能被 mark_context_consumed 打上「已注入」戳，
+    # 否则它们离开 pending 池、文本却从没露过面，等于沈予写的心跳凭空丢了。
+    # 这里钉住 consumer 侧的契约：pending_ids 为空时 mark_heartbeats_injected 不被调用，
+    # 心跳留在 pending。
+    from shenyu_gateway.private_capture import mark_context_consumed
+
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("main", "operit")
+    hb = store.append_heartbeat(session["id"], "held hb")
+
+    # 憋住的那一轮：闸清空了 pending_ids。
+    meta_held = {"session": session, "package": {"heartbeat_pending_ids": []}}
+    mark_context_consumed(meta_held, store=store)
+    assert [item["content"] for item in store.get_pending_heartbeats()] == ["held hb"]
+
+    # 之后某轮真正 apply：pending_ids 带着这批心跳，才落「已注入」戳。
+    meta_applied = {"session": session, "package": {"heartbeat_pending_ids": [hb["id"]]}}
+    mark_context_consumed(meta_applied, store=store)
+    assert store.get_pending_heartbeats() == []
+    assert store.get_latest_heartbeat_digest() == "held hb"
+
+
 def test_read_heartbeat_returns_time_and_content_only(tmp_path):
     store = GatewayStore(str(tmp_path / "gateway.db"))
     session = store.get_or_create_session("default", "operit")
