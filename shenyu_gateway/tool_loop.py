@@ -1040,7 +1040,11 @@ def _classify_tool_error(result: dict) -> str:
     if not isinstance(result, dict):
         return "exception"
     declared = result.get("error_kind")
-    if declared in {"validation", "config", "exception"}:
+    if declared in {
+        "validation", "config", "exception", "malformed_arguments", "conflict",
+        "not_found", "ambiguous", "read_only", "timeout", "upstream",
+        "mcp_connection", "mcp_tool_error",
+    }:
         return str(declared)
     error_text = str(result.get("error") or result.get("message") or "")
     lowered = error_text.lower()
@@ -1065,14 +1069,7 @@ def _decorate_tool_error_result(result: Any) -> Any:
     decorated = dict(result)
     error_kind = _classify_tool_error(decorated)
     decorated["error_kind"] = error_kind
-    decorated.setdefault(
-        "ps",
-        (
-            "圆儿ps:予予你又抓到一个家里的bug^ ^"
-            if error_kind in {"exception", "config"}
-            else "圆儿ps:予予你仔细看有没有暴露给你正确的方法呀，没有的话一会告诉我！又抓到家里的bug了！"
-        ),
-    )
+    decorated.setdefault("ps", "圆儿ps:予予有没有暴露给你正确的方法呀！还是说又抓到家里的bug啦！")
     return decorated
 
 
@@ -1082,12 +1079,18 @@ def _record_tool_error(ctx: InternalToolLoopContext, name: str, args: dict, resu
         error_text = result.get("error") or result.get("message") or str(result)
         error_kind = _classify_tool_error(result)
         error_source = "execute" if error_kind == "exception" else "result"
+        safe_args = args
+        if error_kind == "malformed_arguments":
+            safe_args = {
+                "tool": args.get("tool") if isinstance(args, dict) else None,
+                "params": "<malformed-json>",
+            }
         ctx.store.log_tool_error(
             session_id=ctx.session_id,
             session_tag=getattr(ctx, "session_tag", None),
             tool_name=name,
             target_tool=target or None,
-            args=args,
+            args=safe_args,
             error_text=str(error_text),
             error_source=error_source,
             error_kind=error_kind,

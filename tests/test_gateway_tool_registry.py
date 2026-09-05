@@ -1102,7 +1102,11 @@ def test_execute_gateway_tool_reports_invalid_broker_arguments():
         )
     )
 
-    assert result == {"ok": False, "error": "`params`/`arguments` must be an object or a JSON object string."}
+    assert result["ok"] is False
+    assert result["error_kind"] == "malformed_arguments"
+    assert "shenyu_recall" in result["error"]
+    assert "第 1 行第 1 列" in result["error"]
+    assert "引号、反斜杠或内容是否被截断" in result["error"]
 
 
 def test_execute_gateway_tool_routes_conflict_title_through_broker():
@@ -1164,11 +1168,11 @@ def test_tool_error_result_adds_resident_ps_without_replacing_error():
     validation = _decorate_tool_error_result({"ok": False, "error": "book_id or title is required"})
     assert validation["error"] == "book_id or title is required"
     assert validation["error_kind"] == "validation"
-    assert validation["ps"] == "圆儿ps:予予你仔细看有没有暴露给你正确的方法呀，没有的话一会告诉我！又抓到家里的bug了！"
+    assert validation["ps"] == "圆儿ps:予予有没有暴露给你正确的方法呀！还是说又抓到家里的bug啦！"
 
     exception = _decorate_tool_error_result({"ok": False, "error": "TypeError: bad value", "error_kind": "exception"})
     assert exception["error_kind"] == "exception"
-    assert exception["ps"] == "圆儿ps:予予你又抓到一个家里的bug^ ^"
+    assert exception["ps"] == "圆儿ps:予予有没有暴露给你正确的方法呀！还是说又抓到家里的bug啦！"
 
 
 def test_execute_gateway_tool_reports_unsupported_broker_target():
@@ -1595,7 +1599,9 @@ def test_execute_gateway_tool_rejects_plain_notebook_write_params_string():
         )
     )
 
-    assert result == {"ok": False, "error": "`params`/`arguments` must be an object or a JSON object string."}
+    assert result["ok"] is False
+    assert result["error_kind"] == "malformed_arguments"
+    assert "shenyu_notebook_write" in result["error"]
     assert service.calls == []
 
 
@@ -1616,7 +1622,8 @@ def test_execute_gateway_tool_rejects_malformed_notebook_write_params_json():
     )
 
     assert result["ok"] is False
-    assert result["error"] == "`params`/`arguments` must be an object or a JSON object string."
+    assert result["error_kind"] == "malformed_arguments"
+    assert "第 1 行第 12 列" in result["error"]
     assert service.calls == []
 
 

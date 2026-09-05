@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Awaitable, Callable, Optional
@@ -1032,9 +1033,16 @@ async def execute_gateway_tool(
             }
         target_args = _coerce_broker_arguments(raw_target_args)
         if target_args is None:
+            detail = ""
+            if isinstance(raw_target_args, str):
+                try:
+                    json.loads(raw_target_args)
+                except json.JSONDecodeError as exc:
+                    detail = f"（第 {exc.lineno} 行第 {exc.colno} 列）"
             return {
                 "ok": False,
-                "error": "`params`/`arguments` must be an object or a JSON object string.",
+                "error": f"{target_name} 的 params 正文 JSON 解析失败{detail}，本次没有写入。请检查该位置附近的引号、反斜杠或内容是否被截断后重发。",
+                "error_kind": "malformed_arguments",
             }
         return await execute_gateway_tool(
             target_name,

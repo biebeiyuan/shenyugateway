@@ -204,6 +204,12 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 - `shenyu_gateway/store/_window_state.py`
 - `shenyu_gateway/store/_cold_start.py`
 - `shenyu_gateway/store/_snapshots.py`
+- `shenyu_gateway/system_prefix_buffer.py`
+
+`system_prefix_buffer.py` 是这条链与 `heartbeat_pending_ids` 消费时机、上游缓存 TTL
+之间的桥：它在 layered messages 组装前决定 slow/calendar 和 heartbeat 使用新快照还是
+沿用旧快照。内容变化在缓冲窗口内会暂存，到 TTL 到点或 epoch 重建时才刷新；因此它不会
+改变 Memory Island 的 retain/rewrite 语义，也不会把被缓冲的 heartbeat 标成已注入。
 
 **顺序不变量**
 
@@ -216,8 +222,15 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
   -> context snapshot
   -> pending tool transcript 补回
   -> context package / memory island
+  -> system prefix buffer（slow/calendar + heartbeat 的刷新闸）
   -> layered messages
 ```
+
+当前 epoch reset 原因还包括 `cold_cache_rebuild`：它表示闲置超过本轮真实上游缓存 TTL，
+会重建 context epoch，但刻意不强制 Memory Island 重写；这与真实历史分支和
+`message_high_water` 的内容重建要求不同。前缀缓冲应使用同一个真实上游 TTL；目前实现
+仍固定读取 `anthropic_cache_ttl`，因此 OpenAI 上游配置 `openai_cache_ttl=5m` 时，
+心跳/日历可能比缓存冷却多滞留到 1 小时。该边界已知，待需要支持该场景时修正。
 
 ### 三类消息镜像
 

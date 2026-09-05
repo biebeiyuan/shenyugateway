@@ -94,12 +94,12 @@ feedback[0] must be one of ['connected','missed','negative','positive','should_s
 ```
 沈予在 `feedback` 字段里塞了一整数组（描述 `tool_registry.py:72` 那句"不要把数组放进 feedback 字段"正是为此加的警告），又把每项的取值字段叫成 `action`——**单条/批量两种形状 + legacy `label`/`reason` 别名，把沈予彻底搞混了。** 这就是 1.3 例子 3 的实锤。
 
-**(b) broker 多通道兼容的代价——`target_tool=NULL`（7 条）**
+**(b) broker 参数解析失败——`target_tool=NULL`（7 条）**
 其中一条 args 是：
 ```json
 {"raw_arguments": "{\"tool\": \"shenyu_notebook_write\", \"params\": {...}}"}
 ```
-沈予把**整个调用 JSON 编码成字符串**塞进了一个 `raw_arguments` 字段。broker 的三条参数通道（`params`→`arguments`→inline 平铺，`tool_registry.py:838-846`）全没命中这个形状，于是 `target_tool` 解析为空，报 `Unsupported gateway broker target: .`。**兼容通道越多，沈予越不知道该走哪条，反而发明了第四种（`raw_arguments`）。** 这是 1.3 例子 2 的实锤。
+`raw_arguments` 是网关在 `_tool_call_arguments()` 无法解析外层 `function.arguments` 时生成的兜底键，不是沈予原始协议里的字段。对 `params` 为 JSON 字符串的 broker 调用，`_coerce_broker_arguments()` 再次解析失败时会返回 `None`，随后统一报 ``params`/`arguments` must be an object or a JSON object string.``。因此这些记录首先证明“传入 JSON 字符串语法无效或被截断”，不能单凭 `raw_arguments` 归因于 broker 多通道或沈予发明了第四种通道。应结合 `JSONDecodeError.pos`、长度、流式完成原因和请求日志继续区分裸引号与截断。
 
 **(c) 真 bug 被错误归类——`'list' object has no attribute 'strip'`**
 `shenyu_star_feedback` handler 在某次调用（`params.feedback` 传成 list of `{label,reason}` 旧形状）里对 list 调了 `.strip()`，抛 `AttributeError`，被外层 `except` 兜成 `{"ok":False,"error":"'list' object has no attribute 'strip'"}`（`tool_loop.py:602`）。**这是一条真正的代码异常，该归 `exception`、该修 handler**，但被字符串猜分类判成了 `result`，和"沈予用错"混在一起，淹没在 34 条里根本看不出来。**这正是第一步"报错分类"要解决的核心：把这种真 bug 从"沈予用错"里捞出来。**
