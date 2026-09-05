@@ -58,6 +58,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.enable_anthropic_cache_control is True
     assert cfg.openai_cache_ttl == "5m"
     assert cfg.anthropic_cache_ttl == "1h"
+    assert cfg.epoch_reset_on_cold_cache is True
     assert cfg.enable_anthropic_auto_thinking is False
     assert cfg.anthropic_auto_thinking_effort == ""
     assert cfg.anthropic_default_max_tokens == 128000
@@ -524,6 +525,34 @@ def test_config_update_saves_anthropic_cache_control(monkeypatch):
     assert "enable_anthropic_cache_control" in payload["changed"]
     assert gateway.cfg.enable_anthropic_cache_control is False
     assert persisted[-1]["ENABLE_ANTHROPIC_CACHE_CONTROL"] == "false"
+
+
+def test_config_update_toggles_epoch_reset_on_cold_cache(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "epoch_reset_on_cold_cache", True)
+
+    try:
+        off = client.post(
+            "/api/config",
+            json={"epoch_reset_on_cold_cache": False},
+        )
+        assert off.status_code == 200
+        off_payload = off.json()
+        assert off_payload["config"]["epoch_reset_on_cold_cache"] is False
+        assert "epoch_reset_on_cold_cache" in off_payload["changed"]
+        assert gateway.cfg.epoch_reset_on_cold_cache is False
+        assert persisted[-1]["EPOCH_RESET_ON_COLD_CACHE"] == "false"
+
+        # Restore the default so the escape valve can be flipped back on.
+        on = client.post(
+            "/api/config",
+            json={"epoch_reset_on_cold_cache": True},
+        )
+        assert on.status_code == 200
+        assert gateway.cfg.epoch_reset_on_cold_cache is True
+        assert persisted[-1]["EPOCH_RESET_ON_COLD_CACHE"] == "true"
+    finally:
+        client.close()
 
 
 def test_config_update_saves_independent_cache_ttls(monkeypatch):

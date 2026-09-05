@@ -83,6 +83,7 @@ class RuntimeConfig:
         self.enable_anthropic_cache_control: bool = _env_bool("ENABLE_ANTHROPIC_CACHE_CONTROL", True)
         self.openai_cache_ttl: str = _env_choice("OPENAI_CACHE_TTL", "5m", {"5m", "1h"})
         self.anthropic_cache_ttl: str = _env_choice("ANTHROPIC_CACHE_TTL", "1h", {"5m", "1h"})
+        self.epoch_reset_on_cold_cache: bool = _env_bool("EPOCH_RESET_ON_COLD_CACHE", True)
         self.enable_anthropic_auto_thinking: bool = _env_bool("ENABLE_ANTHROPIC_AUTO_THINKING", False)
         self.anthropic_auto_thinking_effort: str = _env_choice(
             "ANTHROPIC_AUTO_THINKING_EFFORT",
@@ -245,6 +246,7 @@ class RuntimeConfig:
             "enable_anthropic_cache_control": self.enable_anthropic_cache_control,
             "openai_cache_ttl": self.openai_cache_ttl,
             "anthropic_cache_ttl": self.anthropic_cache_ttl,
+            "epoch_reset_on_cold_cache": self.epoch_reset_on_cold_cache,
             "enable_anthropic_auto_thinking": self.enable_anthropic_auto_thinking,
             "anthropic_auto_thinking_effort": self.anthropic_auto_thinking_effort,
             "anthropic_default_max_tokens": self.anthropic_default_max_tokens,

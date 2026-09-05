@@ -13,6 +13,7 @@ export interface GatewayConfig {
   enable_anthropic_cache_control?: boolean
   openai_cache_ttl?: '5m' | '1h'
   anthropic_cache_ttl?: '5m' | '1h'
+  epoch_reset_on_cold_cache?: boolean
   enable_anthropic_auto_thinking?: boolean
   anthropic_auto_thinking_effort?: '' | 'max' | 'xhigh'
   upstream_extra_body?: Record<string, unknown>
@@ -137,6 +138,7 @@ export interface HealthStatus {
   enable_anthropic_cache_control?: boolean
   openai_cache_ttl?: '5m' | '1h'
   anthropic_cache_ttl?: '5m' | '1h'
+  epoch_reset_on_cold_cache?: boolean
   enable_anthropic_auto_thinking?: boolean
   anthropic_auto_thinking_effort?: '' | 'max' | 'xhigh'
   upstream_extra_body?: Record<string, unknown>

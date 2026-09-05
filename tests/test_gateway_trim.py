@@ -19,7 +19,9 @@ from shenyu_gateway.prepare_messages import (
     _assistant_lineage,
     _memory_island_force_reason,
     _resolve_client_profile,
+    session_idle_seconds,
 )
+from shenyu_gateway.runtime import now as _now
 from shenyu_gateway.context_window import (
     classify_history_event,
     compact_history_event_messages,
@@ -79,8 +81,28 @@ def test_memory_island_force_reason_covers_branch_and_message_high_water():
         {"event_class": "branch"}, {"reset_reason": "history_branch"}
     ) == "history_branch"
     assert _memory_island_force_reason(
+        {"event_class": "new_user"}, {"reset_reason": "cold_cache_rebuild"}
+    ) == "cold_cache_rebuild"
+    assert _memory_island_force_reason(
         {"event_class": "new_user"}, {"reset_reason": ""}
     ) == ""
+
+
+def test_session_idle_seconds_uses_previous_turn_last_active():
+    from datetime import timedelta
+
+    # last_active_at is still the previous turn's value when prepare opens the
+    # session (touch_session runs afterwards), so idle == time since last turn.
+    past = (_now() - timedelta(seconds=7200)).isoformat()
+    idle = session_idle_seconds({"last_active_at": past})
+    assert idle is not None
+    assert 7100 <= idle <= 7300
+
+
+def test_session_idle_seconds_is_none_on_first_turn():
+    # No last_active_at means there is no previous turn to be cold against.
+    assert session_idle_seconds({}) is None
+    assert session_idle_seconds({"last_active_at": None}) is None
 
 
 def test_pwa_client_profile_hides_client_tools_and_enables_tool_events():
@@ -550,6 +572,77 @@ def test_chunked_window_keeps_start_until_high_water_then_resets():
     assert len(third) == 168
     assert reset_state["epoch_id"] != state["epoch_id"]
     assert third_meta["context_epoch_reset_reason"] == "message_high_water"
+
+
+def _cold_cache_state():
+    messages = [{"role": "user", "content": f"m{index}"} for index in range(10)]
+    _first, state, _meta = select_chunked_window(
+        messages,
+        limit=168,
+        previous_state=None,
+        event_class="initial",
+    )
+    # One more turn so there is a live epoch to either keep or roll.
+    appended = messages + [{"role": "user", "content": "m10"}]
+    return appended, state
+
+
+def test_chunked_window_rolls_epoch_when_cache_is_cold():
+    appended, state = _cold_cache_state()
+    _second, next_state, meta = select_chunked_window(
+        appended,
+        limit=168,
+        previous_state=state,
+        event_class="new_user",
+        idle_seconds=3600,
+        cold_cache_threshold_seconds=3600,
+    )
+    assert next_state["epoch_id"] != state["epoch_id"]
+    assert meta["context_epoch_reset_reason"] == "cold_cache_rebuild"
+
+
+def test_chunked_window_keeps_epoch_when_cache_is_still_warm():
+    appended, state = _cold_cache_state()
+    _second, next_state, meta = select_chunked_window(
+        appended,
+        limit=168,
+        previous_state=state,
+        event_class="new_user",
+        idle_seconds=120,
+        cold_cache_threshold_seconds=3600,
+    )
+    assert next_state["epoch_id"] == state["epoch_id"]
+    assert meta["context_epoch_reset"] is False
+
+
+def test_chunked_window_ignores_cold_cache_when_toggle_is_off():
+    appended, state = _cold_cache_state()
+    # Toggle off is wired as threshold=None: the cold-cache branch never fires
+    # even when idle far exceeds any TTL.
+    _second, next_state, _meta = select_chunked_window(
+        appended,
+        limit=168,
+        previous_state=state,
+        event_class="new_user",
+        idle_seconds=999_999,
+        cold_cache_threshold_seconds=None,
+    )
+    assert next_state["epoch_id"] == state["epoch_id"]
+
+
+def test_chunked_window_does_not_roll_on_first_turn_without_idle():
+    messages = [{"role": "user", "content": f"m{index}"} for index in range(10)]
+    # idle_seconds=None models the first turn (no previous last_active_at); the
+    # cold-cache branch must not treat "no history" as "infinitely cold".
+    _first, state, meta = select_chunked_window(
+        messages,
+        limit=168,
+        previous_state=None,
+        event_class="initial",
+        idle_seconds=None,
+        cold_cache_threshold_seconds=3600,
+    )
+    assert meta["context_epoch_reset_reason"] != "cold_cache_rebuild"
 
 
 def test_chunked_window_never_splits_latest_tool_group():

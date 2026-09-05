@@ -39,6 +39,7 @@ class ConfigUpdate(BaseModel):
     enable_anthropic_cache_control: Optional[bool] = None
     openai_cache_ttl: Optional[str] = None
     anthropic_cache_ttl: Optional[str] = None
+    epoch_reset_on_cold_cache: Optional[bool] = None
     enable_anthropic_auto_thinking: Optional[bool] = None
     anthropic_auto_thinking_effort: Optional[str] = None
     anthropic_default_max_tokens: Optional[int] = Field(default=None, ge=1)

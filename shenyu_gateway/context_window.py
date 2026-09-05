@@ -325,6 +325,8 @@ def select_chunked_window(
     head_slide_messages: int = 0,
     island_tail_messages: int = DEFAULT_ISLAND_TAIL_MESSAGES,
     raw_tool_protection_turns: int = DEFAULT_RAW_TOOL_PROTECTION_TURNS,
+    idle_seconds: Optional[float] = None,
+    cold_cache_threshold_seconds: Optional[int] = None,
 ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]]:
     system_prefix = [message for message in messages if message.get("role") == "system"]
     history = non_system_messages(messages)
@@ -341,6 +343,19 @@ def select_chunked_window(
         and previous_state.get("base_limit") == limit
         and event_class not in {"initial", "branch"}
     )
+    # 冷缓存搭便车：闲置超过缓存 TTL，system.end 前缀这次无论如何要冷重建。
+    # message_high_water 那一刀迟早会落（只要还在聊，窗口终会满），与其让它砍在
+    # 未来某个缓存还热的时刻白白作废一个热缓存，不如趁这次反正已凉，顺手把窗口
+    # 也裁到位——一次冷重建把该做的都做完。阈值为 None（开关关）时这段不生效。
+    if (
+        state_compatible
+        and cold_cache_threshold_seconds is not None
+        and cold_cache_threshold_seconds > 0
+        and idle_seconds is not None
+        and idle_seconds >= cold_cache_threshold_seconds
+    ):
+        state_compatible = False
+        reset_reason = "cold_cache_rebuild"
     if state_compatible:
         # A client head slide shifts every absolute history index; move the
         # stored window start with it so the retained window keeps the same

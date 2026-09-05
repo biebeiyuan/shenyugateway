@@ -56,6 +56,7 @@ const config = ref<GatewayConfig>({
   enable_anthropic_cache_control: true,
   openai_cache_ttl: '5m',
   anthropic_cache_ttl: '1h',
+  epoch_reset_on_cold_cache: true,
   enable_anthropic_auto_thinking: false,
   anthropic_auto_thinking_effort: '',
   upstream_extra_body: {},
@@ -303,6 +304,7 @@ async function doSave() {
       enable_anthropic_cache_control: config.value.enable_anthropic_cache_control,
       openai_cache_ttl: config.value.openai_cache_ttl,
       anthropic_cache_ttl: config.value.anthropic_cache_ttl,
+      epoch_reset_on_cold_cache: config.value.epoch_reset_on_cold_cache,
       enable_anthropic_auto_thinking: config.value.enable_anthropic_auto_thinking,
       anthropic_auto_thinking_effort: config.value.anthropic_auto_thinking_effort || '',
       upstream_extra_body: upstreamExtraBody,
@@ -618,6 +620,12 @@ async function copyColdHeader(sessionTag: string) {
                   :disabled="!config.enable_anthropic_cache_control"
                   style="width: 120px"
                 />
+              </div>
+            </NFormItem>
+            <NFormItem label="冷缓存顺手滚 epoch">
+              <div class="switch-row">
+                <NSwitch v-model:value="config.epoch_reset_on_cold_cache" />
+                <span class="switch-hint">闲置超过缓存 TTL、前缀反正要冷重建时，顺手把上下文窗口也裁到位，省得缓存还热时再白白作废一次。</span>
               </div>
             </NFormItem>
             <NFormItem label="Anthropic adaptive thinking">

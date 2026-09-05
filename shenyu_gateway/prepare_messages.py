@@ -143,6 +143,16 @@ def cold_start_idle_minutes(session: dict) -> float:
     return max((_now() - last_active).total_seconds() / 60.0, 0.0)
 
 
+def session_idle_seconds(session: dict) -> Optional[float]:
+    """距上次活跃多少秒。session 在 prepare 开头打开，last_active_at 还是上一轮的值
+    （touch_session 在 prepare 之后才更新），正好是我们要的"这次请求前空了多久"。
+    首轮没有 last_active_at 就返回 None——没有上一轮，也就无所谓冷不冷缓存。"""
+    last_active = _parse_ts(session.get("last_active_at"))
+    if not last_active:
+        return None
+    return max((_now() - last_active).total_seconds(), 0.0)
+
+
 def maybe_prepare_cold_start_snapshot(
     session: dict,
     is_first_turn: bool,
@@ -218,8 +228,14 @@ def prune_runtime_state(*, cfg: Any, store: Any, session_id: Optional[str] = Non
 
 
 def _memory_island_force_reason(event_meta: dict[str, Any], window_state: dict[str, Any]) -> str:
-    if window_state.get("reset_reason") == "message_high_water":
+    reset_reason = window_state.get("reset_reason")
+    if reset_reason == "message_high_water":
         return "message_high_water"
+    # 冷缓存滚 epoch 时，记忆岛跟着一起重写——和 high_water 同样处理：epoch 一换，
+    # 岛锚点本就要重定位，趁这次冷重建把岛也刷新到位，保持"裁剪即整体重写"的一致性。
+    # force 只是放行、不强改内容：岛渲染文本没变的话版本号不动，缓存照命中。
+    if reset_reason == "cold_cache_rebuild":
+        return "cold_cache_rebuild"
     if event_meta.get("event_class") == "branch":
         return "history_branch"
     return ""
@@ -466,6 +482,13 @@ async def prepare_messages(
     )
     window_input = insert_bridge_messages(raw_messages, bridge_messages)
     previous_window_state = None if pwa_handoff_retired else store.get_context_window_state(session["id"])
+    # 冷缓存滚 epoch：只在开关开时把阈值传进去（阈值 = 缓存 TTL）。开关关就传 None，
+    # select_chunked_window 那段判据整体不生效，行为跟没这功能一样。
+    cold_cache_threshold = (
+        buffer_seconds_from_ttl(getattr(cfg, "anthropic_cache_ttl", ""))
+        if getattr(cfg, "epoch_reset_on_cold_cache", True)
+        else None
+    )
     messages, window_state, trim_meta = select_chunked_window(
         window_input,
         limit=cfg.max_client_messages,
@@ -475,6 +498,8 @@ async def prepare_messages(
         island_tail_messages=getattr(
             cfg, "island_tail_messages", DEFAULT_ISLAND_TAIL_MESSAGES
         ),
+        idle_seconds=session_idle_seconds(session),
+        cold_cache_threshold_seconds=cold_cache_threshold,
     )
     trim_meta.update(event_meta)
     trim_meta["assistant_lineage"] = lineage_meta
