@@ -153,6 +153,15 @@ def session_idle_seconds(session: dict) -> Optional[float]:
     return max((_now() - last_active).total_seconds(), 0.0)
 
 
+def _upstream_cache_ttl(cfg: Any, protocol: Optional[str]) -> str:
+    """本轮上游的缓存 TTL 字符串（"5m"/"1h"）。按协议选，和 chat_pipeline、
+    upstream_client 塞缓存断点时同一套惯用法：Anthropic 读 anthropic_cache_ttl，
+    其余（OpenAI 兼容）读 openai_cache_ttl——两者默认不同（1h vs 5m）且各自配置。"""
+    if str(protocol or "").strip().lower() == "anthropic":
+        return getattr(cfg, "anthropic_cache_ttl", "1h")
+    return getattr(cfg, "openai_cache_ttl", "5m")
+
+
 def maybe_prepare_cold_start_snapshot(
     session: dict,
     is_first_turn: bool,
@@ -228,14 +237,13 @@ def prune_runtime_state(*, cfg: Any, store: Any, session_id: Optional[str] = Non
 
 
 def _memory_island_force_reason(event_meta: dict[str, Any], window_state: dict[str, Any]) -> str:
-    reset_reason = window_state.get("reset_reason")
-    if reset_reason == "message_high_water":
+    # cold_cache_rebuild 刻意不在此列：闲置过久只说明缓存凉了，不代表旧岛的星星/便签
+    # 不再贴切。那一刻缓存本就全过期，锁岛也没缓存可保，强制换血纯属内容决定、不该由
+    # 缓存信号驱动。岛照常走粘性；epoch 重置会重算 anchor_offset（context_window.py），
+    # 位置跟着新窗口走，内容保留。真需要换岛时，正常信号（overlap 跌破阈值、内容变了、
+    # 条目失活、硬点名）任何一轮都会触发，跟这次 epoch 重置自然撞在一起一起换。
+    if window_state.get("reset_reason") == "message_high_water":
         return "message_high_water"
-    # 冷缓存滚 epoch 时，记忆岛跟着一起重写——和 high_water 同样处理：epoch 一换，
-    # 岛锚点本就要重定位，趁这次冷重建把岛也刷新到位，保持"裁剪即整体重写"的一致性。
-    # force 只是放行、不强改内容：岛渲染文本没变的话版本号不动，缓存照命中。
-    if reset_reason == "cold_cache_rebuild":
-        return "cold_cache_rebuild"
     if event_meta.get("event_class") == "branch":
         return "history_branch"
     return ""
@@ -482,10 +490,13 @@ async def prepare_messages(
     )
     window_input = insert_bridge_messages(raw_messages, bridge_messages)
     previous_window_state = None if pwa_handoff_retired else store.get_context_window_state(session["id"])
-    # 冷缓存滚 epoch：只在开关开时把阈值传进去（阈值 = 缓存 TTL）。开关关就传 None，
-    # select_chunked_window 那段判据整体不生效，行为跟没这功能一样。
+    upstream = deps.resolve_upstream()
+    # 冷缓存滚 epoch：阈值 = 本轮真实上游的缓存 TTL。Anthropic 默认 1h、OpenAI 默认 5m
+    # 且各自独立配置，按协议选（和 chat_pipeline/upstream_client 里塞缓存断点时同一套惯用法）
+    # ——不然走 OpenAI 上游时缓存 5 分钟就凉，却要等满 1h 才认"冷"，中间的裁剪照样砍在热缓存上。
+    # 开关关就传 None，select_chunked_window 那段判据整体不生效，行为跟没这功能一样。
     cold_cache_threshold = (
-        buffer_seconds_from_ttl(getattr(cfg, "anthropic_cache_ttl", ""))
+        buffer_seconds_from_ttl(_upstream_cache_ttl(cfg, upstream.get("protocol")))
         if getattr(cfg, "epoch_reset_on_cold_cache", True)
         else None
     )
@@ -561,7 +572,6 @@ async def prepare_messages(
     )
     user_text = _latest_user_text(messages)
     current_message_count = _non_system_message_count(messages)
-    upstream = deps.resolve_upstream()
     archive_service = ChatArchiveService(store, deps.supabase_client, cfg)
     if archive_service.enabled():
         _spawn_background_task(

@@ -80,9 +80,11 @@ def test_memory_island_force_reason_covers_branch_and_message_high_water():
     assert _memory_island_force_reason(
         {"event_class": "branch"}, {"reset_reason": "history_branch"}
     ) == "history_branch"
+    # cold_cache_rebuild 刻意不强制重写记忆岛：闲置久只是缓存凉，不是内容失效，
+    # 岛照常走粘性（epoch 重置只重算锚点位置，内容保留）。
     assert _memory_island_force_reason(
         {"event_class": "new_user"}, {"reset_reason": "cold_cache_rebuild"}
-    ) == "cold_cache_rebuild"
+    ) == ""
     assert _memory_island_force_reason(
         {"event_class": "new_user"}, {"reset_reason": ""}
     ) == ""
