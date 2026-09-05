@@ -1069,7 +1069,14 @@ def _decorate_tool_error_result(result: Any) -> Any:
     decorated = dict(result)
     error_kind = _classify_tool_error(decorated)
     decorated["error_kind"] = error_kind
-    decorated.setdefault("ps", "圆儿ps:予予有没有暴露给你正确的方法呀！还是说又抓到家里的bug啦！")
+    decorated.setdefault(
+        "ps",
+        (
+            "圆儿ps:予予你又抓到一个家里的bug^ ^"
+            if error_kind in {"exception", "config"}
+            else "圆儿ps:予予仔细看有没有暴露给你正确的方法呀，没有的话一会告诉我！又抓到家里的bug了！"
+        ),
+    )
     return decorated
 
 

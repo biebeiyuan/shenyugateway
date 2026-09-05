@@ -1168,11 +1168,11 @@ def test_tool_error_result_adds_resident_ps_without_replacing_error():
     validation = _decorate_tool_error_result({"ok": False, "error": "book_id or title is required"})
     assert validation["error"] == "book_id or title is required"
     assert validation["error_kind"] == "validation"
-    assert validation["ps"] == "圆儿ps:予予有没有暴露给你正确的方法呀！还是说又抓到家里的bug啦！"
+    assert validation["ps"] == "圆儿ps:予予仔细看有没有暴露给你正确的方法呀，没有的话一会告诉我！又抓到家里的bug了！"
 
     exception = _decorate_tool_error_result({"ok": False, "error": "TypeError: bad value", "error_kind": "exception"})
     assert exception["error_kind"] == "exception"
-    assert exception["ps"] == "圆儿ps:予予有没有暴露给你正确的方法呀！还是说又抓到家里的bug啦！"
+    assert exception["ps"] == "圆儿ps:予予你又抓到一个家里的bug^ ^"
 
 
 def test_execute_gateway_tool_reports_unsupported_broker_target():

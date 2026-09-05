@@ -339,7 +339,7 @@ def test_web_read_reports_http_error_and_empty_page():
 
 def test_outside_failures_do_not_blame_the_house_but_our_own_faults_still_do():
     """A dead link is a normal outside condition, not a bug 沈予 should report."""
-    house_line = "圆儿ps:予予有没有暴露给你正确的方法呀！还是说又抓到家里的bug啦！"
+    house_line = "圆儿ps:予予你又抓到一个家里的bug^ ^"
 
     def dead_link(request: httpx.Request) -> httpx.Response:
         return httpx.Response(403, text="forbidden")
@@ -362,7 +362,7 @@ def test_outside_failures_do_not_blame_the_house_but_our_own_faults_still_do():
     # A malformed call from 沈予 keeps the "check the exposed arguments" wording.
     bad_args = _decorate_tool_error_result(asyncio.run(_service().web_read(url="ftp://x")))
     assert bad_args["error_kind"] == "validation"
-    assert bad_args["ps"] == house_line
+    assert "仔细看有没有暴露给你正确的方法" in bad_args["ps"]
 
 
 def test_web_read_does_not_cache_an_empty_render_so_a_retry_can_succeed():
