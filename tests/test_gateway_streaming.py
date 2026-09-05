@@ -3467,8 +3467,8 @@ def test_execute_mixed_gateway_tool_calls_keeps_client_call_when_gateway_call_fa
             failed_result = json.loads(pending["gateway_tool_messages"][0]["content"])
             assert failed_result["ok"] is False
             assert failed_result["error"] == "recall unavailable"
-            assert failed_result["error_kind"] == "validation"
-            assert failed_result["ps"].startswith("圆儿ps:予予你仔细看")
+            assert failed_result["error_kind"] == "upstream"
+            assert failed_result["ps"] == "圆儿ps:予予有没有暴露给你正确的方法呀！还是说又抓到家里的bug啦！"
 
     asyncio.run(run_case())
 
