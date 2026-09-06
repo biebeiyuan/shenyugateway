@@ -149,7 +149,7 @@ def test_failed_writes_never_become_a_bump():
     assert bump_lines_from_tool_rows([row]) == []
 
 
-def test_read_only_and_bookkeeping_tools_stay_out_of_the_bumps():
+def test_unlisted_reads_bookkeeping_and_private_tools_stay_out_of_the_bumps():
     rows = [
         _tool_row("shenyu_search_stars", {"ok": True, "items": [{"content": "x"}]}),
         _tool_row("shenyu_star_feedback", {"ok": True, "count": 1}),
@@ -222,6 +222,19 @@ def test_the_limit_keeps_the_most_recent_writes():
     rows = [_star_row(content=f"第 {index} 件事") for index in range(6)]
     lines = bump_lines_from_tool_rows(rows, limit=2)
     assert lines == ["星星 Cmaj7 · 第 4 件事", "星星 Cmaj7 · 第 5 件事"]
+
+
+def test_recall_bumps_fill_remaining_slots_without_evicting_writes():
+    rows = [
+        _star_row(content="写下的事"),
+        {"tool_name": "shenyu_recall", "tool_args_json": '{"query":"旧事"}', "content": '{"ok":true,"items":[{"source_type":"journal","source_id":"j1","content":"想起的事。"}]}'},
+        _star_row(content="后来写下的事"),
+        {"tool_name": "shenyu_recall", "tool_args_json": '{"query":"另一件"}', "content": '{"ok":true,"items":[{"source_type":"journal","source_id":"j2","content":"另一件想起的事。"}]}'},
+    ]
+    assert bump_lines_from_tool_rows(rows, limit=2) == [
+        "星星 Cmaj7 · 写下的事",
+        "星星 Cmaj7 · 后来写下的事",
+    ]
 
 
 @pytest.fixture
@@ -393,3 +406,76 @@ def test_recall_bump_ignores_empty_or_failed_results():
         {"tool_name": "shenyu_recall", "tool_args_json": '{"query":"错"}', "content": '{"ok":false,"items":[{"source_type":"journal","source_id":"j1","content":"不应出现"}]}'},
     ]
     assert bump_lines_from_tool_rows(rows) == []
+
+
+def _recall_row(source_id, query="topic", content="First sentence. More text."):
+    row = _tool_row("shenyu_recall", {"ok": True, "items": [
+        {"source_type": "journal", "source_id": source_id, "content": content},
+    ]})
+    row["tool_args_json"] = json.dumps({"tool": "shenyu_recall", "params": {"query": query}})
+    return row
+
+
+def test_limit_eight_protects_writes_and_interleaves_recent_recall_sources():
+    rows = [
+        _recall_row("old"),
+        *[_star_row(content=f"write {i}") for i in range(5)],
+        _recall_row("middle", query="middle"),
+        _star_row(content="write 5"),
+        _recall_row("new", query="new"),
+    ]
+    lines = bump_lines_from_tool_rows(rows)
+    assert lines == [
+        *[f"星星 Cmaj7 · write {i}" for i in range(5)],
+        "想起 middle：First sentence.",
+        "星星 Cmaj7 · write 5",
+        "想起 new：First sentence.",
+    ]
+    # Even newer Recall cannot displace any of eight write receipts.
+    rows = [_star_row(content=f"write {i}") for i in range(10)] + [_recall_row("latest")]
+    assert bump_lines_from_tool_rows(rows) == [f"星星 Cmaj7 · write {i}" for i in range(2, 10)]
+
+
+def test_recall_duplicates_do_not_take_slots_or_move_their_first_occurrence():
+    rows = [_recall_row("same", query="first"), _star_row(), _recall_row("same", query="second")]
+    assert bump_lines_from_tool_rows(rows, limit=2) == [
+        "想起 first、second：First sentence.", "星星 Cmaj7 · 她说想养一只橘猫",
+    ]
+    assert bump_lines_from_tool_rows(rows, limit=1) == ["星星 Cmaj7 · 她说想养一只橘猫"]
+    assert bump_lines_from_tool_rows(rows, limit=0) == []
+
+
+@pytest.mark.parametrize("content,expected", [
+    ("First line\nSecond line", "First line"),
+    ("First line\r\nSecond line", "First line"),
+    ("先问？再说。", "先问？"),
+    ("先惊叹！再说。", "先惊叹！"),
+    ("At 3.5 degrees. More.", "At 3.5 degrees."),
+    ("只有第一行", "只有第一行"),
+])
+def test_recall_excerpt_stops_at_the_first_sentence_or_line(content, expected):
+    assert bump_lines_from_tool_rows([_recall_row("s", content=content)]) == [f"想起 topic：{expected}"]
+
+
+def test_logged_broker_recall_reaches_the_builder_without_changing_the_result(tmp_path):
+    from copy import deepcopy
+    from shenyu_gateway.sessions import SessionManager
+    from shenyu_gateway.store import GatewayStore
+    from shenyu_gateway.tool_loop import _logged_tool_name
+    from tests.test_gateway_context import _context_builder, cfg
+
+    store = GatewayStore(str(tmp_path / "recall.db"))
+    session = store.get_or_create_session("recall", "pwa")
+    args = {"tool": "shenyu_recall", "params": {"query": "old memory"}}
+    result = {"ok": True, "items": [
+        {"source_type": "journal", "source_id": "original", "content": "First sentence. Complete return remains.",
+         "recall_match": {"kind": "direct"}},
+    ]}
+    original = deepcopy(result)
+    SessionManager(store, cfg).log_tool_result(
+        session["id"], _logged_tool_name("shenyu_gateway_tool", args), args, result
+    )
+    assert _context_builder(store)._island_bump_lines(session["id"]) == ["想起 old memory：First sentence."]
+    assert result == original
+    rows = store.get_tool_messages_since(session["id"], "2000-01-01")
+    assert json.loads(rows[0]["content"]) == original

@@ -94,7 +94,7 @@
       "summary": "把沈予今天已经记下的东西挂回她眼前，免得同一件事记第二遍。",
       "core": [
         "工具执行完自动出现，沈予不需要调用任何东西。",
-        "只收星星、便签、日历三种写入；上锁的抽屉和原始表操作不出现。",
+        "写入回执与成功 Recall 路标才出现；上锁的抽屉和原始表操作不出现。",
         "挂在动态岛后面，不改动岛正文，所以不会打断岛的稳定。",
         "日子在凌晨两点翻页，熬夜写下的东西那一晚不会提前消失。"
       ],
@@ -109,16 +109,16 @@
         "island_bump_limit"
       ],
       "reviewed": {
-        "fingerprint": "e668c15b9280a057139ab96257ab9efd6b7bf6fbe1816bf0eaf77941d60708bf",
+        "fingerprint": "191aacd463459d200b96a13581add921d7053d1dbeb47fd29c372b6fce00f856",
         "file_hashes": {
           "shenyu_gateway/context_builder.py": "582103d531489bb55a5a0eb020f6821222c248fc1884a7a78bfe4669d072622c",
           "shenyu_gateway/context_layers.py": "7103d452eca4a332fca710ee5f7b3c3283eb2817f3d6571e518b01179356818b",
-          "shenyu_gateway/island_bumps.py": "85a867ad586f0a4fd243af8d5fa78e7ede6e4584eeb2470a0fb3a32da6e3e875"
+          "shenyu_gateway/island_bumps.py": "f89a1dabcebfac4540b3904fb690f3e1806f056dd9fe9253468130ca8bf35393"
         },
-        "commit": "e2beff116cb5b2ff85eb56705179c513375f2626",
-        "revision": "e2beff116cb5b2ff85eb56705179c513375f2626-dirty",
+        "commit": "f8824f2fed8ab470502813057cc4dc308629a405",
+        "revision": "f8824f2fed8ab470502813057cc4dc308629a405-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-06T23:45:36+08:00",
+        "reviewed_at": "2026-09-07T00:58:53+08:00",
         "reviewed_by": "Codex"
       }
     },

@@ -1,11 +1,11 @@
-"""小突起：动态岛下面那一小节「今天我已经记下的」。
+"""小突起：沈予今天写下的回执和想起的轻量路标。
 
 沈予用完工具之后是不知道自己做了什么的。网关内部的工具轮次只活在 `tool_loop`
 的本地列表里；返回给客户端的只有最后那条 assistant 消息，而客户端回传时只带
 `{role, content}`（`pwa/src/api/client.ts::wireMessages`）。所以「我上一轮落了
 一颗星」这件事在下一轮的上下文里完全不存在，同一件事会被记第二遍。
 
-这一节把当天的写操作读回来，每条一句话。名字是沈予自己取的。
+这一节把当天的写操作和成功 Recall 读回来，每条一句话。名字是沈予自己取的。
 
 三条边界，都是刻意的：
 
@@ -32,7 +32,7 @@ from .utils import shorten
 BUMP_HEADING = "## 今天的小突起"
 
 # 上锁的抽屉写入即隐私边界——放进去就不再被提起，回执会正好破坏这一点。
-# 这里只列记忆三件套加盼圃「种下」，其余写操作（原始表操作、评分簿记、批量改、
+# 写入只列记忆三件套加盼圃「种下」，另有成功 Recall 的只读路标；其余写操作（原始表操作、评分簿记、批量改、
 # 删除）都不进来：要么没有可读内容，要么复述它正是反效果。
 _STAR_TOOLS = frozenset({"shenyu_create_star"})
 _MEM_TOOLS = frozenset({"shenyu_write_mem_note"})
@@ -76,13 +76,14 @@ def _tool_params(row: dict[str, Any]) -> dict[str, Any]:
 
 
 def _first_sentence(value: Any) -> str:
-    text = " ".join(_clean(value).split())
-    if not text:
+    paragraphs = _clean(value).splitlines()
+    if not paragraphs:
         return ""
-    stops = [(text.find(mark), mark) for mark in ("。", "！", "？", "!", "?", "\n") if text.find(mark) >= 0]
-    if stops:
-        _, mark = min(stops)
-        text = text.split(mark, 1)[0] + (mark if mark != "\n" else "")
+    text = " ".join(paragraphs[0].split())
+    for index, char in enumerate(text):
+        if char in "。！？!?" or (char == "." and (index + 1 == len(text) or text[index + 1].isspace())):
+            text = text[: index + 1]
+            break
     return shorten(text, 60)
 
 
@@ -199,17 +200,18 @@ def bump_lines_from_tool_rows(
     *,
     limit: int = DEFAULT_BUMP_LIMIT,
 ) -> list[str]:
-    """Render one line per memory-write this waking day, oldest first.
+    """Render write receipts and successful Recall crumbs, oldest first.
 
-    Rows are `gateway_messages` tool rows. Only successful writes count; a row
-    whose stored JSON cannot be parsed is skipped rather than guessed at.
+    Rows are `gateway_messages` tool rows in chronological order. Keep recent
+    writes first, fill spare slots with recent Recall sources, then interleave.
+    Repeated Recall sources keep the first excerpt and its chronological slot.
     """
     limit = max(0, min(int(limit or 0), 50))
     if not rows or not limit:
         return []
-    lines: list[str] = []
-    recall_by_source: dict[str, tuple[list[str], str]] = {}
-    for row in rows:
+    write_entries: list[tuple[int, str]] = []
+    recall_by_source: dict[str, tuple[list[str], str, int]] = {}
+    for row_index, row in enumerate(rows):
         tool_name = _clean(row.get("tool_name"))
         if tool_name not in BUMP_TOOL_NAMES:
             continue
@@ -223,19 +225,26 @@ def bump_lines_from_tool_rows(
                 continue
         if tool_name in _RECALL_TOOLS:
             for source_key, query, sentence in _recall_bumps(result, row):
-                queries, old_sentence = recall_by_source.setdefault(source_key, ([], sentence))
+                queries, old_sentence, first_index = recall_by_source.setdefault(
+                    source_key, ([], sentence, row_index)
+                )
                 if query not in queries:
                     queries.append(query)
-                recall_by_source[source_key] = (queries, old_sentence)
+                recall_by_source[source_key] = (queries, old_sentence, first_index)
             continue
         line = _bump_line(tool_name, result, row)
-        if line and line not in lines:
-            lines.append(line)
-    recall_lines = [
-        f"想起 {'、'.join(queries)}：{sentence}"
-        for queries, sentence in recall_by_source.values()
+        if line and not any(existing == line for _, existing in write_entries):
+            write_entries.append((row_index, line))
+    recall_entries = [
+        (first_index, f"想起 {'、'.join(queries)}：{sentence}")
+        for queries, sentence, first_index in recall_by_source.values()
     ]
-    return (lines + recall_lines)[-limit:]
+    if len(write_entries) >= limit:
+        selected = write_entries[-limit:]
+    else:
+        recent_recall = sorted(recall_entries, key=lambda entry: entry[0])[-(limit - len(write_entries)) :]
+        selected = write_entries + recent_recall
+    return [line for _, line in sorted(selected, key=lambda entry: entry[0])]
 
 
 def render_island_bumps(lines: list[str]) -> str:
