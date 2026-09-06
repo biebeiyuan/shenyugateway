@@ -221,6 +221,8 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 
 | 症状 | 根因文件与错误 | 一句话教训 |
 |------|----------------|------------|
+| 日历、心跳的新内容没有等到缓冲到点就更新 | `shenyu_gateway/context_window.py`、`shenyu_gateway/prepare_messages.py`：裁窗返回漏传系统前缀快照，每轮误走 first_snapshot；缓冲 TTL 还固定读取 Anthropic 配置 | 先看事件 system_prefix_decision，再用两轮真实 prepare 验证存库、裁窗、held 与心跳消费；同时分别验证两种协议 TTL |
+| Recall 多次查询后，刚写下的事项从小突起里消失 | `shenyu_gateway/island_bumps.py`：把 Recall 行拼到全部写入行后再截尾，超限时写入回执被优先挤掉 | 用超过总上限的混合时间线验证保留优先级、去重与排序，不能只测各来源单独出条 |
 | PWA 回答里的 `**重点**` 已被解析却看不出加粗或斜体，聊天框在输入和换行时又会改变外观或高度 | `pwa/src/styles.css`、`pwa/src/App.vue`、`pwa/index.html`：Anthropic 字体只声明了 normal 字形，而全局 `font-synthesis: none` 让 `<em>` 无法合成斜体；输入框结构、自动高度上限和移动键盘视口处理也曾与参考实现分叉 | 先检查 Markdown 是否已生成 `<strong>/<em>`，再看计算后的字体、字重和 `font-synthesis`；输入框跳动则逐项对照 DOM 层级、统一高度上限与 `visualViewport` 处理，不要先改消息协议 |
 | PWA 助手回答前半段正常、后半段仍显示 `**` 等 Markdown 符号，刷新后还像是旧界面 | `pwa/src/stream/timeline.ts`、`pwa/src/markdown.ts`、`pwa/src/main.ts`、`pwa/public/sw.js`：过程条/思考片段把 Markdown 定界符拆到不同内容片段，`marked` 对中文标点紧邻强调闭合符以及混合/未配对星号的边界也不会按直觉闭合，Service Worker 又长期复用同一 `v2` shell 缓存，旧 worker 接管新 shell 后页面仍不重载 | 先确认流式阶段只展示原文、完成后才对整条正文解析，再验证中文强调边界、嵌套/未配对分隔符和完整回复；最后查 Service Worker 缓存版本、导航是否强制取最新 `index.html`，以及新 worker 接管时页面是否重载 |
 | PWA 接入已有线程后上下文重复、前缀从零开始或被误判为分支 | `pwa/src/App.vue`、`shenyu_gateway/gateway_admin_routes.py`、`shenyu_gateway/sessions.py`：接入动作把仅供检查的 `gateway_messages`/`recent_messages` 当成客户端历史，丢失了 `request_context_snapshots` 保存的裁剪窗口 | 线程交接先读最新 `context_snapshots[0].messages`；`recent_messages` 只能作为旧数据回退，不能重建请求历史 |
