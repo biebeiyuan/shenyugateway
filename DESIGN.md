@@ -559,7 +559,7 @@ Room 的 `room_scribble` 是进入方式，不是另一套 Recall 来源：它�
 | `shenyu_add_calendar` | `period_key` + `mode` + `digest` | `日历 2026-08-29 续写：今天她提到换工作的事` |
 | `shenyu_orchard`（仅 `action=plant`） | `data.fruit.name`，有 `due_on` 带上 | `盼圃 种下：蒜冒尖（预计 2026-09-10）` |
 
-只收 `ok: true`；`cached_duplicate` 的重放不重复出条；便签被同日去重拦下时（`duplicate_of`）明说「本来就有一张」，否则她会以为刚写成功了一张新的；上限 `ISLAND_BUMP_LIMIT`（默认 8），超了留最近的。
+只收 `ok: true`；`cached_duplicate` 的重放不重复出条；成功的 `shenyu_recall` 也可出一条更轻的回执：每个 `source_type + source_id` 只留正文第一句，并把找到它的查询词写在前面；同一来源再次命中时合并查询词，不复制完整返回、分数或匹配元数据；空结果和失败不出条。便签被同日去重拦下时（`duplicate_of`）明说「本来就有一张」，否则她会以为刚写成功了一张新的；上限 `ISLAND_BUMP_LIMIT`（默认 8），超了留最近的。
 
 盼圃是一名四动作（plant/note/pick/look），不像上面三个各占一个工具名，所以挑出 plant 靠工具行上记的 `action`（`island_bumps.py::_orchard_action`，broker 默认模式下参数裹在 `params` 里，两层都认），不是工具名。只有 `plant` 进来：种果子库层没查重（`orchard_service.py::plant` 直接 insert），忘了种过又种一遍是一颗静默的重复——她不 `look` 就看不见，跟记重星星同一种坑。`note` 一天本来就想贴好几张、哪张算重复无从判断；`pick` 有条件更新挡着摘不了第二次；`look` 是读操作——都不进。措辞跟着盼圃「不催」的调子，只说种下了什么、有预计日子就带上，不写"提醒/到期/待办"。这是盼圃唯一的自动注入路径，且只沾这一个动作的回执——**墙的状态本身照旧不进任何上下文层**（见 `AGENTS.md` 盼圃条与 `test_orchard.py::test_the_orchard_wall_has_no_automatic_context_path`）。
 

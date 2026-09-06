@@ -109,16 +109,16 @@
         "island_bump_limit"
       ],
       "reviewed": {
-        "fingerprint": "b6438ab56834b6e9cec97a99b671f59a9430daca7ff576ae35f39e902a34c330",
+        "fingerprint": "e668c15b9280a057139ab96257ab9efd6b7bf6fbe1816bf0eaf77941d60708bf",
         "file_hashes": {
           "shenyu_gateway/context_builder.py": "582103d531489bb55a5a0eb020f6821222c248fc1884a7a78bfe4669d072622c",
           "shenyu_gateway/context_layers.py": "7103d452eca4a332fca710ee5f7b3c3283eb2817f3d6571e518b01179356818b",
-          "shenyu_gateway/island_bumps.py": "0a09e0f9d1571234bf04d017a4f92c7776d94116e247ca34a295e249c4363ff3"
+          "shenyu_gateway/island_bumps.py": "85a867ad586f0a4fd243af8d5fa78e7ede6e4584eeb2470a0fb3a32da6e3e875"
         },
-        "commit": "6c99e80d424622819c0c6d379ae82124f950d7db",
-        "revision": "6c99e80d424622819c0c6d379ae82124f950d7db-dirty",
+        "commit": "e2beff116cb5b2ff85eb56705179c513375f2626",
+        "revision": "e2beff116cb5b2ff85eb56705179c513375f2626-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-01T20:39:34+08:00",
+        "reviewed_at": "2026-09-06T23:45:36+08:00",
         "reviewed_by": "Codex"
       }
     },

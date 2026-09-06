@@ -374,3 +374,22 @@ def test_the_island_block_text_is_unchanged_by_the_presence_of_a_bump():
         raise AssertionError("no island block")
 
     assert island_text(with_bump) == island_text(without)
+
+
+def test_recall_bump_keeps_first_sentence_and_deduplicates_sources():
+    rows = [
+        {"tool_name": "shenyu_recall", "tool_args_json": '{"query":"水獭"}', "content": '{"ok":true,"items":[{"source_type":"journal","source_id":"j1","content":"第一句。第二句和内部元数据不进来。"},{"source_type":"journal","source_id":"j2","content":"另一条记忆！更多。"}]}'},
+        {"tool_name": "shenyu_recall", "tool_args_json": '{"query":"长隆"}', "content": '{"ok":true,"items":[{"source_type":"journal","source_id":"j1","content":"第一句。第二句。"}]}'},
+    ]
+    assert bump_lines_from_tool_rows(rows) == [
+        "想起 水獭、长隆：第一句。",
+        "想起 水獭：另一条记忆！",
+    ]
+
+
+def test_recall_bump_ignores_empty_or_failed_results():
+    rows = [
+        {"tool_name": "shenyu_recall", "tool_args_json": '{"query":"无"}', "content": '{"ok":true,"items":[]}'},
+        {"tool_name": "shenyu_recall", "tool_args_json": '{"query":"错"}', "content": '{"ok":false,"items":[{"source_type":"journal","source_id":"j1","content":"不应出现"}]}'},
+    ]
+    assert bump_lines_from_tool_rows(rows) == []

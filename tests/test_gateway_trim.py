@@ -342,6 +342,11 @@ def test_chunked_window_head_slide_clamps_start_to_zero():
         "window_start_index": 166,
         "island_anchor_offset": 40,
         "island_state": {"rendered_text": "old island"},
+        "system_prefix_state": {
+            "slow_text": "old calendar",
+            "heartbeat_text": "old heartbeat",
+            "refreshed_at": "2026-09-01T00:00:00+00:00",
+        },
     }
 
     retained, state, meta = select_chunked_window(
@@ -356,6 +361,7 @@ def test_chunked_window_head_slide_clamps_start_to_zero():
     assert meta["context_epoch_reset"] is False
     assert state["window_start_index"] == 0
     assert len(retained) == 76
+    assert state["system_prefix_state"] == previous_state["system_prefix_state"]
 
 
 def test_cold_start_bridge_deduplicates_exact_tail_against_client_history_prefix():

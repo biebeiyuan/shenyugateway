@@ -37,6 +37,7 @@ BUMP_HEADING = "## 今天的小突起"
 _STAR_TOOLS = frozenset({"shenyu_create_star"})
 _MEM_TOOLS = frozenset({"shenyu_write_mem_note"})
 _CALENDAR_TOOLS = frozenset({"shenyu_add_calendar"})
+_RECALL_TOOLS = frozenset({"shenyu_recall"})
 # 盼圃是一名四动作（plant/note/pick/look），不像上面三个各占一个工具名。种果子
 # 库层没有查重（`orchard_service.py::plant` 直接 insert），忘了种过又种一遍就是
 # 一颗静默的重复——她不 look 就看不见，跟记重星星同一种坑。只有 plant 进来：
@@ -44,7 +45,7 @@ _CALENDAR_TOOLS = frozenset({"shenyu_add_calendar"})
 # 次；look 是读操作。挑出 plant 靠工具行上记的 action，不是工具名。
 _ORCHARD_TOOLS = frozenset({"shenyu_orchard"})
 _ORCHARD_BUMP_ACTIONS = frozenset({"plant"})
-BUMP_TOOL_NAMES = _STAR_TOOLS | _MEM_TOOLS | _CALENDAR_TOOLS | _ORCHARD_TOOLS
+BUMP_TOOL_NAMES = _STAR_TOOLS | _MEM_TOOLS | _CALENDAR_TOOLS | _ORCHARD_TOOLS | _RECALL_TOOLS
 
 _CALENDAR_MODE_WORDS = {"new": "新建", "append": "续写", "replace": "覆盖"}
 
@@ -66,6 +67,23 @@ def _loads(value: Any) -> dict[str, Any]:
 
 def _clean(value: Any) -> str:
     return str(value or "").strip()
+
+
+def _tool_params(row: dict[str, Any]) -> dict[str, Any]:
+    args = _loads(row.get("tool_args") or row.get("tool_args_json"))
+    params = args.get("params") or args.get("arguments")
+    return params if isinstance(params, dict) else args
+
+
+def _first_sentence(value: Any) -> str:
+    text = " ".join(_clean(value).split())
+    if not text:
+        return ""
+    stops = [(text.find(mark), mark) for mark in ("。", "！", "？", "!", "?", "\n") if text.find(mark) >= 0]
+    if stops:
+        _, mark = min(stops)
+        text = text.split(mark, 1)[0] + (mark if mark != "\n" else "")
+    return shorten(text, 60)
 
 
 def _star_bump(result: dict[str, Any]) -> str:
@@ -129,6 +147,27 @@ def _calendar_bump(result: dict[str, Any]) -> str:
     return f"{head} {mode}：{shorten(digest, 60)}" if mode else f"{head}：{shorten(digest, 60)}"
 
 
+def _recall_bumps(result: dict[str, Any], row: dict[str, Any]) -> list[tuple[str, str, str]]:
+    """Return (source key, query, first sentence) tuples; never expose recall metadata."""
+    items = result.get("items")
+    if not isinstance(items, list):
+        return []
+    query = _clean(_tool_params(row).get("query"))
+    if not query:
+        return []
+    found: list[tuple[str, str, str]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        source_type = _clean(item.get("source_type"))
+        source_id = _clean(item.get("source_id"))
+        sentence = _first_sentence(item.get("content"))
+        if not source_type or not source_id or not sentence:
+            continue
+        found.append((f"{source_type}:{source_id}", query, sentence))
+    return found
+
+
 def _orchard_action(row: dict[str, Any]) -> str:
     """这行盼圃工具调用的 action。full 模式在顶层，broker 模式（默认）把真参数
     裹在 `params`/`arguments` 里——两种都认，不然默认模式下永远读不到 plant。"""
@@ -169,6 +208,7 @@ def bump_lines_from_tool_rows(
     if not rows or not limit:
         return []
     lines: list[str] = []
+    recall_by_source: dict[str, tuple[list[str], str]] = {}
     for row in rows:
         tool_name = _clean(row.get("tool_name"))
         if tool_name not in BUMP_TOOL_NAMES:
@@ -181,10 +221,21 @@ def bump_lines_from_tool_rows(
             result = _loads(result.get("result")) or result
             if result.get("ok") is not True:
                 continue
+        if tool_name in _RECALL_TOOLS:
+            for source_key, query, sentence in _recall_bumps(result, row):
+                queries, old_sentence = recall_by_source.setdefault(source_key, ([], sentence))
+                if query not in queries:
+                    queries.append(query)
+                recall_by_source[source_key] = (queries, old_sentence)
+            continue
         line = _bump_line(tool_name, result, row)
         if line and line not in lines:
             lines.append(line)
-    return lines[-limit:]
+    recall_lines = [
+        f"想起 {'、'.join(queries)}：{sentence}"
+        for queries, sentence in recall_by_source.values()
+    ]
+    return (lines + recall_lines)[-limit:]
 
 
 def render_island_bumps(lines: list[str]) -> str:

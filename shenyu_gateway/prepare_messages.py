@@ -721,7 +721,7 @@ async def prepare_messages(
         window_state.get("system_prefix_state"),
         layers.get("slow") or "",
         layers.get("heartbeat") or "",
-        buffer_seconds=buffer_seconds_from_ttl(getattr(cfg, "anthropic_cache_ttl", "")),
+        buffer_seconds=buffer_seconds_from_ttl(_upstream_cache_ttl(cfg, upstream.get("protocol"))),
         epoch_reset=bool(window_state.get("epoch_reset")),
     )
     layers["slow"] = chosen_slow

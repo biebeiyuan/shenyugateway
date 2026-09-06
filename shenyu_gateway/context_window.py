@@ -408,6 +408,7 @@ def select_chunked_window(
         "epoch_reset": epoch_reset,
         "raw_protected_turns": min(len(groups), max(int(raw_tool_protection_turns or 0), 0)),
         "island_state": previous_state.get("island_state") or {},
+        "system_prefix_state": previous_state.get("system_prefix_state") or {},
     }
     meta = {
         "client_messages_original": len(messages),
