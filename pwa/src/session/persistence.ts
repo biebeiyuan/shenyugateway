@@ -114,6 +114,7 @@ export function loadStoredMessages(): UiMessage[] {
           error: item.error ? clampErrorText(String(item.error)) : undefined,
           truncated: item.truncated === true ? true : undefined,
           responseMeta: cloneStoredResponseMeta(item.responseMeta),
+          replyVersionId: item.replyVersionId ? String(item.replyVersionId) : undefined,
         }
         if (message.role === 'assistant' && Array.isArray(item.variants) && item.variants.length) {
           const variants = item.variants.map((variant: Partial<MessageVariant>) => cloneVariant(variant))
@@ -149,6 +150,7 @@ type StoredRow = {
   variants?: MessageVariant[]
   selectedVariantIndex?: number
   responseMeta?: ResponseMeta
+  replyVersionId?: string
 }
 
 function mapRowEvents(row: StoredRow, mapper: (events: ToolEvent[]) => ToolEvent[]): StoredRow {
@@ -228,6 +230,7 @@ export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit
     variants: message.variants,
     selectedVariantIndex: message.selectedVariantIndex,
     responseMeta: message.responseMeta,
+    replyVersionId: message.replyVersionId,
   }))
   // Keep a little more than the gateway high-water window so a resident PWA
   // can stop relying on a temporary cold-start handoff.

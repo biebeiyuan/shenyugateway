@@ -448,6 +448,7 @@ async function openSession(session: GatewaySession): Promise<boolean> {
           thinkingSegments: [],
           events: [],
           streaming: false,
+          replyVersionId: row.role === 'assistant' && row.source_id ? String(row.source_id) : undefined,
         }
         // Roll 版本只存在本机；服务器 session detail 只有当前正文。
         // 同一会话重新打开时，按相邻 user turn + 当前正文把本地版本接回，
@@ -874,6 +875,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       thinkingSegments: [],
       events: [],
       streaming: true,
+      replyVersionId: undefined,
     }
     messages.value.push(assistantDraft)
     // Read the object back through Vue's proxy. Mutating the detached draft would
@@ -890,11 +892,14 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
 
   try {
     const useStreaming = streamResponses.value
+    const replyVersionId = createId('reply')
+    assistant.replyVersionId = replyVersionId
     const body: Record<string, unknown> = {
       model: selectedModel.value,
       messages: wireMessages(source.filter((message) => message.id !== assistant.id)),
       stream: useStreaming,
       reasoning_effort: effectiveEffort.value,
+      metadata: { reply_version_id: replyVersionId },
     }
     const requestHeaders = upstreamHeadersPayload(upstreamHeaders.value)
     if (Object.keys(requestHeaders).length) body.upstream_headers = requestHeaders
@@ -902,7 +907,9 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     else if (upstreamAuth.value.authorization.trim()) body.upstream_auth = { authorization: upstreamAuth.value.authorization.trim() }
     if (claudeCodeHeaderSelected.value) {
       const claudeCodeSessionId = claudeCodeSessionIdFromHeaders(upstreamHeaders.value)
-      if (claudeCodeSessionId) body.metadata = claudeCodeMetadata(claudeCodeSessionId)
+      if (claudeCodeSessionId) {
+        body.metadata = { ...claudeCodeMetadata(claudeCodeSessionId), reply_version_id: replyVersionId }
+      }
     }
     if (useStreaming) {
       const stream = await postChatStream(clientContext(), body, activeController.signal)

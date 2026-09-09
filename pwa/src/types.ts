@@ -29,6 +29,7 @@ export type EchoSegment = {
 }
 
 export type MessageVariant = {
+  replyVersionId?: string
   content: string
   echo: string
   echoSegments: EchoSegment[]
@@ -68,6 +69,7 @@ export type UiMessage = {
   variants?: MessageVariant[]
   selectedVariantIndex?: number
   responseMeta?: ResponseMeta
+  replyVersionId?: string
 }
 
 export type ProcessGroup = {

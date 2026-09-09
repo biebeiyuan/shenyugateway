@@ -4,6 +4,7 @@ import { createId } from '../utils'
 
 export function cloneVariant(variant: Partial<MessageVariant>): MessageVariant {
   return {
+    replyVersionId: variant.replyVersionId ? String(variant.replyVersionId) : undefined,
     content: String(variant.content || ''),
     echo: String(variant.echo || ''),
     echoSegments: Array.isArray(variant.echoSegments)
@@ -63,6 +64,7 @@ export function applyVariant(message: UiMessage, variant: MessageVariant, index:
   message.events = normalized.events.map((item) => ({ ...item }))
   message.error = normalized.error
   message.responseMeta = normalized.responseMeta ? { ...normalized.responseMeta } : undefined
+  message.replyVersionId = normalized.replyVersionId
 }
 
 export function emptyVariant(): MessageVariant {

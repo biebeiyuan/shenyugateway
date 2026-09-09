@@ -143,6 +143,7 @@ class ChatPipeline:
             "session_tag": request.headers.get("X-Shenyu-Session-Tag")
             or request.headers.get("X-Session-Tag")
             or "unknown",
+            "reply_version_id": str((body.metadata or {}).get("reply_version_id") or "").strip() or None,
             "is_first_turn": False,
             "original_messages_count": len(body.messages),
             "prepared_messages_count": 0,
@@ -485,6 +486,7 @@ class ChatPipeline:
                                 session_id,
                                 {"role": "assistant", "content": collected_text},
                                 echo=echo_content,
+                                reply_version_id=str(log_entry.get("reply_version_id") or ""),
                             )
                         return
                     log_entry["status"] = "ok"
@@ -513,7 +515,12 @@ class ChatPipeline:
                         }
                     if collected_text or echo_content:
                         assistant_msg = {"role": "assistant", "content": collected_text}
-                        sessions.log_assistant_output(session_id, assistant_msg, echo=echo_content)
+                        sessions.log_assistant_output(
+                            session_id,
+                            assistant_msg,
+                            echo=echo_content,
+                            reply_version_id=str(log_entry.get("reply_version_id") or ""),
+                        )
                         self.write_completion_context_snapshot(meta, collected_text, echo_content)
                         _record_response_text(log_entry, collected_text)
                     else:
@@ -573,7 +580,12 @@ class ChatPipeline:
             log_entry["empty_visible_response_fallback"] = True
             log_entry["empty_visible_response_fallback_detail"] = dict(fallback_meta)
 
-        sessions.log_assistant_output(session_id, {"role": "assistant", "content": clean_content}, echo=echo_content)
+        sessions.log_assistant_output(
+            session_id,
+            {"role": "assistant", "content": clean_content},
+            echo=echo_content,
+            reply_version_id=str(log_entry.get("reply_version_id") or ""),
+        )
         self.write_completion_context_snapshot(meta, clean_content, echo_content)
         self.mark_context_consumed(meta)
         if echo_content and echo_events_enabled(meta):

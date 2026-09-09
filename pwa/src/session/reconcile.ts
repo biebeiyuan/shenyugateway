@@ -66,8 +66,12 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
   const anchorIndex = anchorRowIndex(rows, anchorUser.content)
   if (anchorIndex < 0) return false
   const replyRow = replyRowAfter(rows, anchorIndex)
-  if (!replyRow) return false
-  const parts = sessionMessageParts(replyRow.content)
+  const versionedReply = target?.replyVersionId
+    ? rows.find((row) => row.role === 'assistant' && String(row.source_id || '') === target.replyVersionId)
+    : undefined
+  const selectedReply = versionedReply || replyRow
+  if (!selectedReply) return false
+  const parts = sessionMessageParts(selectedReply.content)
   if (!parts.content && !parts.echo) return false
 
   if (target) {
@@ -86,7 +90,7 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
     syncCurrentVariant(target)
   } else {
     messages.push({
-      id: String(replyRow.id || createId('message')),
+      id: String(selectedReply.id || createId('message')),
       role: 'assistant',
       content: parts.content,
       echo: parts.echo,

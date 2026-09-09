@@ -51,9 +51,15 @@ class SessionManager:
         )
         self.store.touch_session(session_id, message_increment=1)
 
-    def log_assistant_output(self, session_id: str, message: dict, *, echo: str = ""):
+    def log_assistant_output(self, session_id: str, message: dict, *, echo: str = "", reply_version_id: str = ""):
         content = restore_assistant_echo(message.get("content"), echo)
-        self.store.append_message(session_id=session_id, role="assistant", content=content)
+        self.store.append_message(
+            session_id=session_id,
+            role="assistant",
+            content=content,
+            source_table="reply_version" if reply_version_id else None,
+            source_id=reply_version_id or None,
+        )
         self.store.touch_session(session_id, message_increment=1)
 
     def recent_tail(self, session_id: str, limit: int = 4) -> list[dict]:

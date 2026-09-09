@@ -938,6 +938,7 @@ async def _finalize_non_gateway_tool_reply(
         ctx.session_id,
         {**assistant_message, "content": clean_content},
         echo=combined_echo,
+        reply_version_id=str((ctx.log_entry or {}).get("reply_version_id") or ""),
     )
     ctx.write_completion_context_snapshot(ctx.meta, clean_content, combined_echo)
 
