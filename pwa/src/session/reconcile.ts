@@ -152,6 +152,11 @@ function recoveryVariant(reply: RecoveryReply): MessageVariant | undefined {
   return variant
 }
 
+function variantKey(variant: MessageVariant): string {
+  if (variant.replyVersionId) return `id:${variant.replyVersionId}`
+  return `text:${variant.content}\u0000${variant.echo}`
+}
+
 // Merge the durable same-user roll group into one assistant bubble. This path
 // runs even when the currently selected reply is complete: a complete snapshot
 // can still be missing older variants.
@@ -184,13 +189,28 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   const variants = ensureVariants(target)
   const originalSelectedId = target.replyVersionId
   let changed = false
+  const uniqueVariants: MessageVariant[] = []
+  const seenKeys = new Set<string>()
+  for (const variant of variants) {
+    const key = variantKey(variant)
+    if (seenKeys.has(key)) {
+      changed = true
+      continue
+    }
+    seenKeys.add(key)
+    uniqueVariants.push(variant)
+  }
+  if (uniqueVariants.length !== variants.length) variants.splice(0, variants.length, ...uniqueVariants)
   const recoveredIds = new Set<string>()
   for (const candidate of replies) {
     const candidateId = candidate.replyVersionId
     let index = candidateId
       ? variants.findIndex((variant) => variant.replyVersionId === candidateId)
       : variants.findIndex((variant) => variant.content === candidate.content && variant.echo === candidate.echo)
-    if (index < 0) {
+    if (index < 0 && candidateId) {
+      index = variants.findIndex((variant) => !variant.replyVersionId && variant.content === candidate.content && variant.echo === candidate.echo)
+    }
+    if (index < 0 && !candidateId) {
       index = variants.findIndex((variant) => variant.content === candidate.content && variant.echo === candidate.echo)
     }
     if (index < 0) {

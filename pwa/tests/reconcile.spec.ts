@@ -218,4 +218,19 @@ describe('applyReplyRecovery — durable roll group', () => {
     expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '一版' }] })).toBe(false)
     expect(messages[1].variants).toHaveLength(1)
   })
+
+  it('cleans duplicate legacy snapshot entries while upgrading the durable id', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '同一版', {
+        variants: [
+          { content: '同一版', echo: '', echoSegments: [], thinking: '', thinkingSegments: [], events: [] },
+          { content: '同一版', echo: '', echoSegments: [], thinking: '', thinkingSegments: [], events: [] },
+        ],
+      }),
+    ]
+    expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'stable', content: '同一版' }] })).toBe(true)
+    expect(messages[1].variants).toHaveLength(1)
+    expect(messages[1].variants?.[0].replyVersionId).toBe('stable')
+  })
 })

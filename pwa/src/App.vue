@@ -431,22 +431,6 @@ async function openSession(session: GatewaySession): Promise<boolean> {
     const payload = await fetchSessionDetail(clientContext(), session.session_tag, sessionMessageLimit())
     const rows = sessionHistoryRows(payload)
     const localMessages = sessionTag.value === session.session_tag ? messages.value : []
-    const serverRows = Array.isArray(payload.recent_messages)
-      ? payload.recent_messages.filter((row): row is Record<string, unknown> => Boolean(row && typeof row === 'object'))
-      : []
-    const serverRollsForUser = (userContent: string): Record<string, unknown>[] => {
-      const replies: Record<string, unknown>[] = []
-      for (let index = 0; index < serverRows.length; index++) {
-        if (serverRows[index].role !== 'user' || stripStatusSuffix(sessionMessageContent(serverRows[index].content)) !== stripStatusSuffix(userContent)) continue
-        for (let cursor = index + 1; cursor < serverRows.length && serverRows[cursor].role !== 'user'; cursor++) {
-          if (serverRows[cursor].role === 'assistant') {
-            replies.push(serverRows[cursor])
-            break
-          }
-        }
-      }
-      return replies
-    }
     invalidateReconcile()
     messages.value = rows
       .filter((row: Record<string, unknown>) => row.role === 'user' || row.role === 'assistant')
@@ -480,30 +464,6 @@ async function openSession(session: GatewaySession): Promise<boolean> {
           if (local?.variants?.length) {
             restored.variants = local.variants
             restored.selectedVariantIndex = local.selectedVariantIndex
-          }
-        }
-        if (row.role === 'assistant' && index > 0) {
-          const previous = filteredRows[index - 1]
-          const userContent = previous.role === 'user' ? sessionMessageContent(previous.content) : ''
-          const rolls = userContent ? serverRollsForUser(userContent) : []
-          if (rolls.length > 1) {
-            restored.variants = rolls.map((candidate) => {
-              const candidateParts = sessionMessageParts(candidate.content)
-              return {
-                replyVersionId: candidate.source_id ? String(candidate.source_id) : undefined,
-                content: candidateParts.content,
-                echo: candidateParts.echo,
-                echoSegments: candidateParts.echo
-                  ? [{ id: createId('echo'), content: candidateParts.echo, textOffset: 0, streamOrder: 0 }]
-                  : [],
-                thinking: '',
-                thinkingSegments: [],
-                events: [],
-                responseMeta: undefined,
-              }
-            })
-            const selected = rolls.findIndex((candidate) => sessionMessageParts(candidate.content).content === parts.content)
-            restored.selectedVariantIndex = selected >= 0 ? selected : rolls.length - 1
           }
         }
         return restored
