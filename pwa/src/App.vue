@@ -429,12 +429,13 @@ async function openSession(session: GatewaySession): Promise<boolean> {
   try {
     const payload = await fetchSessionDetail(clientContext(), session.session_tag, sessionMessageLimit())
     const rows = sessionHistoryRows(payload)
+    const localMessages = sessionTag.value === session.session_tag ? messages.value : []
     invalidateReconcile()
     messages.value = rows
       .filter((row: Record<string, unknown>) => row.role === 'user' || row.role === 'assistant')
-      .map((row: Record<string, unknown>) => {
+      .map((row: Record<string, unknown>, index: number, filteredRows: Record<string, unknown>[]) => {
         const parts = sessionMessageParts(row.content)
-        return {
+        const restored: UiMessage = {
           id: String(row.id || createId('message')),
           role: row.role as Role,
           content: parts.content,
@@ -448,6 +449,22 @@ async function openSession(session: GatewaySession): Promise<boolean> {
           events: [],
           streaming: false,
         }
+        // Roll 版本只存在本机；服务器 session detail 只有当前正文。
+        // 同一会话重新打开时，按相邻 user turn + 当前正文把本地版本接回，
+        // 避免一次切会话就把可切换的旧回答全部抹掉。
+        if (row.role === 'assistant' && localMessages.length) {
+          const userContent = index > 0 ? sessionMessageContent(filteredRows[index - 1].content) : ''
+          const local = localMessages.find((candidate, localIndex) => {
+            if (candidate.role !== 'assistant' || candidate.content !== parts.content) return false
+            const previous = localMessages[localIndex - 1]
+            return previous?.role === 'user' && previous.content === userContent
+          })
+          if (local?.variants?.length) {
+            restored.variants = local.variants
+            restored.selectedVariantIndex = local.selectedVariantIndex
+          }
+        }
+        return restored
       })
     // 快照只带正文；用 recent_messages 里的 tool 原始行补回工具事件，
     // 随后的 persistMessages 会把补好的 events 一起落盘。
