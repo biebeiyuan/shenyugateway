@@ -436,7 +436,7 @@ async function openSession(session: GatewaySession): Promise<boolean> {
     const serverRollsForUser = (userContent: string): Record<string, unknown>[] => {
       const replies: Record<string, unknown>[] = []
       for (let index = 0; index < serverRows.length; index++) {
-        if (serverRows[index].role !== 'user' || sessionMessageContent(serverRows[index].content) !== userContent) continue
+        if (serverRows[index].role !== 'user' || stripStatusSuffix(sessionMessageContent(serverRows[index].content)) !== stripStatusSuffix(userContent)) continue
         for (let cursor = index + 1; cursor < serverRows.length && serverRows[cursor].role !== 'user'; cursor++) {
           if (serverRows[cursor].role === 'assistant') {
             replies.push(serverRows[cursor])
@@ -470,11 +470,11 @@ async function openSession(session: GatewaySession): Promise<boolean> {
         // 同一会话重新打开时，按相邻 user turn + 当前正文把本地版本接回，
         // 避免一次切会话就把可切换的旧回答全部抹掉。
         if (row.role === 'assistant' && localMessages.length) {
-          const userContent = index > 0 ? sessionMessageContent(filteredRows[index - 1].content) : ''
+          const userContent = index > 0 ? stripStatusSuffix(sessionMessageContent(filteredRows[index - 1].content)) : ''
           const local = localMessages.find((candidate, localIndex) => {
             if (candidate.role !== 'assistant' || candidate.content !== parts.content) return false
             const previous = localMessages[localIndex - 1]
-            return previous?.role === 'user' && previous.content === userContent
+            return previous?.role === 'user' && stripStatusSuffix(previous.content) === userContent
           })
           if (local?.variants?.length) {
             restored.variants = local.variants
