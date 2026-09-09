@@ -179,7 +179,7 @@ function truncateEventOutputs(events: ToolEvent[]): ToolEvent[] {
 const KNOWN_ROW_KEYS = new Set([
   'id', 'role', 'content', 'echo', 'echoSegments', 'attachments', 'thinking',
   'thinkingSegments', 'events', 'error', 'truncated', 'variants',
-  'selectedVariantIndex', 'responseMeta',
+  'selectedVariantIndex', 'responseMeta', 'replyVersionId',
 ])
 
 function unknownFieldsById(): Map<string, Record<string, unknown>> {

@@ -73,6 +73,32 @@ describe('applyReconciledTail — append branch', () => {
 })
 
 describe('applyReconciledTail — replace branch', () => {
+  it('uses reply version id before any user-anchor check', () => {
+    const messages = [
+      uiMessage('user', '本地问题带有不同表示'),
+      uiMessage('assistant', '本地残片比服务器长', {
+        replyVersionId: 'reply-roll-2',
+        truncated: true,
+        selectedVariantIndex: 1,
+        variants: [
+          { content: '旧版本', echo: '', echoSegments: [], thinking: '', thinkingSegments: [], events: [], replyVersionId: 'reply-roll-1' },
+          { content: '本地残片比服务器长', echo: '', echoSegments: [], thinking: '', thinkingSegments: [], events: [], replyVersionId: 'reply-roll-2' },
+        ],
+      }),
+    ]
+    const changed = applyReconciledTail(messages, payloadOf([
+      { role: 'user', content: '服务器侧已经整理过的表示' },
+      { role: 'assistant', source_id: 'reply-roll-1', content: '旧版本' },
+      { role: 'assistant', source_id: 'reply-roll-2', content: '[回响]回来[/回响]短答' },
+    ]))
+    expect(changed).toBe(true)
+    expect(messages[1].content).toBe('短答')
+    expect(messages[1].echo).toBe('回来')
+    expect(messages[1].truncated).toBeUndefined()
+    expect(messages[1].variants?.[0].content).toBe('旧版本')
+    expect(messages[1].variants?.[1].content).toBe('短答')
+  })
+
   it('replaces a truncated assistant tail when the server text is longer', () => {
     const messages = [
       uiMessage('user', '讲个长故事'),

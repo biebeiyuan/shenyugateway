@@ -60,25 +60,26 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
 
   const last = messages[messages.length - 1]
   const target = last.role === 'assistant' ? last : undefined
-  const anchorUser = target ? messages[messages.length - 2] : last
-  if (!anchorUser || anchorUser.role !== 'user') return false
-
-  const anchorIndex = anchorRowIndex(rows, anchorUser.content)
-  if (anchorIndex < 0) return false
-  const replyRow = replyRowAfter(rows, anchorIndex)
   const versionedReply = target?.replyVersionId
     ? rows.find((row) => row.role === 'assistant' && String(row.source_id || '') === target.replyVersionId)
     : undefined
-  const selectedReply = versionedReply || replyRow
+  let selectedReply = versionedReply
+  if (!selectedReply) {
+    const anchorUser = target ? messages[messages.length - 2] : last
+    if (!anchorUser || anchorUser.role !== 'user') return false
+    const anchorIndex = anchorRowIndex(rows, anchorUser.content)
+    if (anchorIndex < 0) return false
+    selectedReply = replyRowAfter(rows, anchorIndex)
+  }
   if (!selectedReply) return false
   const parts = sessionMessageParts(selectedReply.content)
   if (!parts.content && !parts.echo) return false
 
   if (target) {
-    // 只有服务端文本更长才替换——drain 比本地流断点走得更远才有找回的意义。
     const serverLength = parts.content.length + parts.echo.length
     const localLength = (target.content || '').length + (target.echo || '').length
-    if (serverLength <= localLength) return false
+    // 精确版本号已经证明这是同一版 roll；即使服务端文本更短也要采用。
+    if (!versionedReply && serverLength <= localLength) return false
     target.content = parts.content
     target.echo = parts.echo
     target.echoSegments = parts.echo
