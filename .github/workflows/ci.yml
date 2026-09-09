@@ -42,8 +42,22 @@ jobs:
       - run: pip install -e .
       - run: npm ci
         working-directory: admin
-      - run: npm run test:e2e:install
+      - name: Install Playwright Chromium dependencies
         working-directory: admin
+        shell: bash
+        run: |
+          # The hosted runner's Google apt mirror can briefly publish an index
+          # whose hash does not match the Release file. Retry the install so a
+          # transient mirror race does not hide the actual smoke result.
+          for attempt in 1 2 3; do
+            if npm run test:e2e:install; then
+              exit 0
+            fi
+            if [ "$attempt" -lt 3 ]; then
+              sleep $((attempt * 5))
+            fi
+          done
+          exit 1
       - run: npm run test:e2e
         working-directory: admin
       - name: Upload Playwright failure report
