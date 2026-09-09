@@ -910,6 +910,10 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       const restoredIndex = Math.max(0, Math.min(previousVariantIndex, variants.length - 1))
       if (variants[restoredIndex]) applyVariant(target, variants[restoredIndex], restoredIndex)
       target.streaming = false
+      // 重试期间客户端可能已断开，但网关仍会在后台 drain 并落库完整回复。
+      // 旧变体看起来是完整的，若不留下这个标记，finally 的 reconcile
+      // 会误以为尾部无需找回，从而把已成功写入服务器的新回答隐藏掉。
+      target.truncated = true
       if (!(error instanceof DOMException && error.name === 'AbortError')) {
         errorNotice.value = error instanceof Error ? error.message : '请求没有完成'
       }
