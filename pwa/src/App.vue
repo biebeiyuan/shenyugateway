@@ -47,6 +47,7 @@ import { createId } from './utils'
 import {
   deleteSession,
   fetchDeployedPwaBuildInfo,
+  fetchReplyRecovery,
   fetchSessionDetail,
   fetchSessions,
   postChatCompletion,
@@ -88,7 +89,7 @@ import {
 } from './session/persistence'
 import { getPhotos, photoDataUrl, prunePhotos, putPhoto } from './session/photoStore'
 import { hydrateToolEvents } from './session/toolHydration'
-import { applyReconciledTail, tailNeedsReconcile } from './session/reconcile'
+import { applyReconciledTail, applyReplyRecovery, tailNeedsReconcile } from './session/reconcile'
 import {
   applyVariant,
   emptyVariant,
@@ -517,6 +518,7 @@ async function openSession(session: GatewaySession): Promise<boolean> {
     errorNotice.value = ''
     await nextTick()
     scrollToBottom()
+    void reconcileTailFromServer(0, true)
     return true
   } catch {
     errorNotice.value = '这页对话暂时拿不到，当前页面还在。'
@@ -595,15 +597,20 @@ function invalidateReconcile() {
   }
 }
 
-async function reconcileTailFromServer(attempt = 0) {
+async function reconcileTailFromServer(attempt = 0, forceRecovery = false) {
   invalidateReconcile()
   const generation = reconcileGeneration
-  if (busy.value || !tailNeedsReconcile(messages.value)) return
+  if (busy.value || (!forceRecovery && !tailNeedsReconcile(messages.value))) return
   status.value = RECONCILE_STATUS
   try {
-    const payload = await fetchSessionDetail(clientContext(), sessionTag.value, sessionMessageLimit())
+    const [payload, recovery] = await Promise.all([
+      fetchSessionDetail(clientContext(), sessionTag.value, sessionMessageLimit()),
+      fetchReplyRecovery(clientContext()),
+    ])
     if (generation !== reconcileGeneration || busy.value) return
-    if (applyReconciledTail(messages.value, payload)) {
+    const recovered = applyReplyRecovery(messages.value, recovery)
+    const reconciled = applyReconciledTail(messages.value, payload)
+    if (recovered || reconciled) {
       persistMessages()
       errorNotice.value = ''
       status.value = '已找回后台期间的回复'
@@ -618,7 +625,7 @@ async function reconcileTailFromServer(attempt = 0) {
   if (attempt < RECONCILE_RETRY_DELAYS_MS.length) {
     reconcileTimer = window.setTimeout(() => {
       reconcileTimer = null
-      void reconcileTailFromServer(attempt + 1)
+      void reconcileTailFromServer(attempt + 1, forceRecovery)
     }, RECONCILE_RETRY_DELAYS_MS[attempt])
     return
   }
@@ -1194,7 +1201,7 @@ function handleVisibilityChange() {
   // 回前台补一次回填：SW 接管的强制刷新可能打断了 onMounted 那一次。
   scheduleLocalPhotoRestore()
   if (busy.value) return
-  if (tailNeedsReconcile(messages.value)) void reconcileTailFromServer()
+  void reconcileTailFromServer(0, true)
   const now = Date.now()
   if (now - lastBuildCheckAt >= BUILD_CHECK_INTERVAL_MS) {
     lastBuildCheckAt = now
@@ -1236,8 +1243,8 @@ onMounted(async () => {
   })
   // 把本机还留着的图接回气泡；淘汰掉的保持「过期」样子。
   scheduleLocalPhotoRestore()
-  // 本地恢复的消息可能停在半截（流式中途进程被杀）：去服务器找回全文。
-  if (tailNeedsReconcile(messages.value)) void reconcileTailFromServer()
+  // 本地恢复的消息可能停在半截，或快照缺少同一 user 的旧 roll：统一后台找回。
+  void reconcileTailFromServer(0, true)
   nextTick(() => inputRef.value?.focus())
 })
 

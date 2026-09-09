@@ -120,6 +120,14 @@ export async function fetchSessionDetail(ctx: RequestContext, sessionTag: string
   return await response.json()
 }
 
+export async function fetchReplyRecovery(ctx: RequestContext, limit = 20): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(ctx.sessionTag)}/reply-recovery?limit=${limit}`), {
+    headers: requestHeaders(ctx),
+  })
+  if (!response.ok) throw new Error('reply recovery unavailable')
+  return await response.json()
+}
+
 export async function renameSession(ctx: RequestContext, sessionTag: string, displayName: string): Promise<Record<string, unknown>> {
   const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(sessionTag)}`), {
     method: 'PATCH',

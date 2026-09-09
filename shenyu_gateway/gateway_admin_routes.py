@@ -7,6 +7,7 @@ from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
 
 from .gateway_tools import GatewayToolService, WINDOWSILL_ORIGIN_ROOM
+from .client_extra import strip_pwa_status_suffix
 from .mem_notes import MemNoteService
 from .memory_graph import MemoryGraphService
 from .orchard_service import ACTOR_YUANYUAN, OrchardService
@@ -56,6 +57,69 @@ from .stars import StarService
 from .store import NEXT_REQUEST_COLD_START_TAG
 from .tool_registry import gateway_native_tools
 from .weather import QWeatherService
+
+
+def _recovery_user_key(value: Any) -> str:
+    cleaned, _ = strip_pwa_status_suffix(str(value or ""))
+    return " ".join(cleaned.split()).strip()
+
+
+def collect_reply_recovery_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Collect all completed replies in the trailing same-user roll group.
+
+    A roll is logged as another user row followed by its assistant row.  The
+    latest context snapshot intentionally collapses that history to one
+    assistant message, so recovery must read the durable message stream and
+    walk only the contiguous suffix that belongs to the latest user content.
+    """
+    if not rows:
+        return {"user_content": "", "replies": []}
+    latest_user_index = next(
+        (index for index in range(len(rows) - 1, -1, -1) if rows[index].get("role") == "user"),
+        -1,
+    )
+    if latest_user_index < 0:
+        return {"user_content": "", "replies": []}
+    latest_user = str(rows[latest_user_index].get("content") or "")
+    user_key = _recovery_user_key(latest_user)
+    if not user_key:
+        return {"user_content": latest_user, "replies": []}
+
+    group_user_indices = [latest_user_index]
+    for index in range(latest_user_index - 1, -1, -1):
+        row = rows[index]
+        if row.get("role") != "user":
+            continue
+        if _recovery_user_key(row.get("content")) != user_key:
+            break
+        group_user_indices.append(index)
+    group_user_indices.reverse()
+
+    replies: list[dict[str, Any]] = []
+    for user_index in group_user_indices:
+        assistant: dict[str, Any] | None = None
+        tool_rows: list[dict[str, Any]] = []
+        for row in rows[user_index + 1:]:
+            role = row.get("role")
+            if role == "user":
+                break
+            if role == "tool":
+                tool_rows.append(row)
+            elif role == "assistant":
+                assistant = row
+                break
+        if not assistant or not str(assistant.get("content") or "").strip():
+            continue
+        replies.append(
+            {
+                "id": assistant.get("id"),
+                "reply_version_id": assistant.get("source_id"),
+                "content": assistant.get("content") or "",
+                "tool_rows": tool_rows,
+                "user_message_id": rows[user_index].get("id"),
+            }
+        )
+    return {"user_content": latest_user, "replies": replies}
 
 
 @dataclass(frozen=True)
@@ -910,6 +974,20 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             "heartbeats": heartbeats,
             "system_prefix_refreshed_at": system_prefix_refreshed_at,
         }
+
+    @router.get("/api/gateway/sessions/{session_tag}/reply-recovery")
+    async def session_reply_recovery(session_tag: str, limit: int = 20):
+        """Return every durable reply in the latest same-user roll group."""
+        store = deps.require_session_store()
+        session = store.get_session_by_tag(session_tag)
+        if not session:
+            raise HTTPException(status_code=404, detail="Session not found.")
+        rows = store.get_recent_messages(session["id"], limit=5000)
+        recovery = collect_reply_recovery_rows(rows)
+        cap = max(1, min(int(limit or 20), 100))
+        recovery["replies"] = recovery["replies"][-cap:]
+        recovery["session_tag"] = session_tag
+        return recovery
 
     @router.patch("/api/gateway/sessions/{session_tag}")
     async def rename_gateway_session(session_tag: str, body: SessionRenameRequest):

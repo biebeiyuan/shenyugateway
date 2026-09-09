@@ -1,8 +1,8 @@
-import type { UiMessage } from '../types'
+import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
 import { sessionMessageContent, sessionMessageParts } from './history'
 import { hydrateToolEvents } from './toolHydration'
-import { syncCurrentVariant } from './variants'
+import { applyVariant, ensureVariants, syncCurrentVariant } from './variants'
 
 // 尾部对账：后台断流后，从 session detail 的 recent_messages（gateway_messages
 // 原始行）里把服务端 drain 落库的完整回复找回来。只修尾巴，绝不整体替换——
@@ -13,6 +13,13 @@ import { syncCurrentVariant } from './variants'
 // 方按退避重试——这正是"服务端还没 drain 完"的样子。
 
 type RecentRow = Record<string, unknown>
+
+type RecoveryReply = {
+  id?: unknown
+  reply_version_id?: unknown
+  content?: unknown
+  tool_rows?: unknown
+}
 
 function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
@@ -108,4 +115,127 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
   // 快照只有正文；工具事件从原始 tool 行补回（只补 events 为空的行，安全）。
   hydrateToolEvents(messages, rows)
   return true
+}
+
+function recoveryVariant(reply: RecoveryReply): MessageVariant | undefined {
+  const parts = sessionMessageParts(reply.content)
+  if (!parts.content && !parts.echo) return undefined
+  const variant: MessageVariant = {
+    replyVersionId: reply.reply_version_id ? String(reply.reply_version_id) : undefined,
+    content: parts.content,
+    echo: parts.echo,
+    echoSegments: parts.echo
+      ? [{ id: createId('echo'), content: parts.echo, textOffset: 0, streamOrder: 0 }]
+      : [],
+    thinking: '',
+    thinkingSegments: [],
+    events: [],
+  }
+  const toolRows = Array.isArray(reply.tool_rows)
+    ? reply.tool_rows.filter((row): row is RecentRow => Boolean(row && typeof row === 'object'))
+    : []
+  if (toolRows.length) {
+    const holder: UiMessage = {
+      id: String(reply.id || createId('recovery')),
+      role: 'assistant',
+      content: variant.content,
+      echo: variant.echo,
+      echoSegments: variant.echoSegments,
+      attachments: [],
+      thinking: '',
+      thinkingSegments: [],
+      events: [],
+    }
+    hydrateToolEvents([holder], [...toolRows, { role: 'assistant', content: reply.content }])
+    variant.events = holder.events
+  }
+  return variant
+}
+
+// Merge the durable same-user roll group into one assistant bubble. This path
+// runs even when the currently selected reply is complete: a complete snapshot
+// can still be missing older variants.
+export function applyReplyRecovery(messages: UiMessage[], payload: Record<string, unknown>): boolean {
+  const rawReplies = Array.isArray(payload.replies) ? payload.replies : []
+  const replies = rawReplies
+    .filter((item): item is RecoveryReply => Boolean(item && typeof item === 'object'))
+    .map(recoveryVariant)
+    .filter((item): item is MessageVariant => Boolean(item))
+  if (!replies.length) return false
+
+  const lastUserIndex = messages.map((message) => message.role).lastIndexOf('user')
+  if (lastUserIndex < 0) return false
+  let target = messages[lastUserIndex + 1]
+  if (!target || target.role !== 'assistant') {
+    target = {
+      id: createId('assistant'),
+      role: 'assistant',
+      content: '',
+      echo: '',
+      echoSegments: [],
+      attachments: [],
+      thinking: '',
+      thinkingSegments: [],
+      events: [],
+      streaming: false,
+    }
+    messages.splice(lastUserIndex + 1, 0, target)
+  }
+  const variants = ensureVariants(target)
+  const originalSelectedId = target.replyVersionId
+  let changed = false
+  const recoveredIds = new Set<string>()
+  for (const candidate of replies) {
+    const candidateId = candidate.replyVersionId
+    let index = candidateId
+      ? variants.findIndex((variant) => variant.replyVersionId === candidateId)
+      : variants.findIndex((variant) => variant.content === candidate.content && variant.echo === candidate.echo)
+    if (index < 0) {
+      index = variants.findIndex((variant) => variant.content === candidate.content && variant.echo === candidate.echo)
+    }
+    if (index < 0) {
+      variants.push(candidate)
+      changed = true
+    } else {
+      const previous = variants[index]
+      if (candidateId && previous.replyVersionId !== candidateId) {
+        variants[index] = candidate
+        changed = true
+      } else if (previous.content !== candidate.content || previous.echo !== candidate.echo || previous.events.length !== candidate.events.length) {
+        variants[index] = candidate
+        changed = true
+      }
+    }
+    if (candidateId) recoveredIds.add(candidateId)
+  }
+  // Keep recovered rolls in server order, then retain any local-only variants
+  // (for example an in-flight draft) after them.
+  const ordered = replies.map((candidate) => {
+    const index = candidate.replyVersionId
+      ? variants.findIndex((variant) => variant.replyVersionId === candidate.replyVersionId)
+      : variants.findIndex((variant) => variant.content === candidate.content && variant.echo === candidate.echo)
+    return variants[index]
+  }).filter((variant): variant is MessageVariant => Boolean(variant))
+  const extras = variants.filter((variant) => !variant.replyVersionId || !recoveredIds.has(variant.replyVersionId))
+  if (ordered.length && (ordered.length !== variants.length || ordered.some((variant, index) => variant !== variants[index]))) {
+    variants.splice(0, variants.length, ...ordered, ...extras)
+    changed = true
+  }
+  const selected = originalSelectedId
+    ? variants.findIndex((variant) => variant.replyVersionId === originalSelectedId)
+    : -1
+  const lastRecovered = replies[replies.length - 1]
+  const lastRecoveredIndex = lastRecovered?.replyVersionId
+    ? variants.findIndex((variant) => variant.replyVersionId === lastRecovered.replyVersionId)
+    : variants.findIndex((variant) => variant.content === lastRecovered?.content && variant.echo === lastRecovered.echo)
+  const selectedIndex = selected >= 0 ? selected : lastRecoveredIndex
+  if (selectedIndex >= 0 && (target.selectedVariantIndex !== selectedIndex || changed)) {
+    applyVariant(target, variants[selectedIndex], selectedIndex)
+    target.streaming = false
+    target.error = undefined
+    target.truncated = undefined
+    syncCurrentVariant(target)
+    changed = true
+  }
+  return changed
 }

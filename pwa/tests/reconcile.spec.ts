@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { applyReconciledTail, tailNeedsReconcile } from '../src/session/reconcile'
+import { applyReconciledTail, applyReplyRecovery, tailNeedsReconcile } from '../src/session/reconcile'
 import type { UiMessage } from '../src/types'
 
 function uiMessage(role: 'user' | 'assistant', content: string, extra: Partial<UiMessage> = {}): UiMessage {
@@ -189,5 +189,33 @@ describe('applyReconciledTail — no-op branch', () => {
     const messages = [uiMessage('user', '问题')]
     expect(applyReconciledTail(messages, payloadOf([]))).toBe(false)
     expect(applyReconciledTail(messages, {})).toBe(false)
+  })
+})
+
+describe('applyReplyRecovery — durable roll group', () => {
+  it('merges all same-user rolls into one switchable assistant bubble', () => {
+    const messages = [
+      uiMessage('user', '最后一个问题 【状态】'),
+      uiMessage('assistant', '当前版本', { replyVersionId: 'v3' }),
+    ]
+    const changed = applyReplyRecovery(messages, {
+      replies: [
+        { id: 'a1', reply_version_id: 'v1', content: '第一版' },
+        { id: 'a2', reply_version_id: 'v2', content: '[回响]看着你[/回响]第二版' },
+        { id: 'a3', reply_version_id: 'v3', content: '当前版本' },
+      ],
+    })
+    expect(changed).toBe(true)
+    expect(messages[1].variants).toHaveLength(3)
+    expect(messages[1].variants?.map((item) => item.replyVersionId)).toEqual(['v1', 'v2', 'v3'])
+    expect(messages[1].replyVersionId).toBe('v3')
+    expect(messages[1].content).toBe('当前版本')
+  })
+
+  it('does not duplicate an already recovered roll on polling', () => {
+    const messages = [uiMessage('user', '问题'), uiMessage('assistant', '一版')]
+    expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '一版' }] })).toBe(true)
+    expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '一版' }] })).toBe(false)
+    expect(messages[1].variants).toHaveLength(1)
   })
 })
