@@ -203,6 +203,7 @@ const brandMarkUrl = `${import.meta.env.BASE_URL}brand-mark.svg`
 const brandWordmarkUrl = `${import.meta.env.BASE_URL}brand-wordmark.svg`
 let activeController: AbortController | null = null
 let activeAssistantId: string | null = null
+let userCancelledGeneration = false
 
 const hasContent = computed(() => Boolean(draft.value.trim()) || pendingAttachments.value.length > 0)
 const isEmpty = computed(() => !messages.value.some((message) => !isRoomEntry(message.content)))
@@ -864,6 +865,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
   }
   activeAssistantId = assistant.id
   activeController = new AbortController()
+  userCancelledGeneration = false
   busy.value = true
   status.value = '沈予正在看着这边…'
   errorNotice.value = ''
@@ -906,9 +908,16 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     assistant.streaming = false
     if (target && generatedVariantIndex !== null && previousVariantIndex !== null) {
       const variants = target.variants || []
-      variants.splice(generatedVariantIndex, 1)
-      const restoredIndex = Math.max(0, Math.min(previousVariantIndex, variants.length - 1))
-      if (variants[restoredIndex]) applyVariant(target, variants[restoredIndex], restoredIndex)
+      if (error instanceof DOMException && error.name === 'AbortError' && userCancelledGeneration) {
+        variants.splice(generatedVariantIndex, 1)
+        const restoredIndex = Math.max(0, Math.min(previousVariantIndex, variants.length - 1))
+        if (variants[restoredIndex]) applyVariant(target, variants[restoredIndex], restoredIndex)
+      } else {
+        // 后台断开时保留重新回答产生的新变体；网关会继续 drain，finally
+        // 的 reconcile 将服务器版本填回当前选中的这个变体。
+        target.truncated = true
+        syncCurrentVariant(target)
+      }
       target.streaming = false
       // 重试期间客户端可能已断开，但网关仍会在后台 drain 并落库完整回复。
       // 旧变体看起来是完整的，若不留下这个标记，finally 的 reconcile
@@ -975,6 +984,7 @@ async function submit() {
 }
 
 function cancelGeneration() {
+  userCancelledGeneration = true
   activeController?.abort()
   if (activeAssistantId) {
     const assistant = messages.value.find((message) => message.id === activeAssistantId)

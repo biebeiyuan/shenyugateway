@@ -2,6 +2,7 @@ import type { UiMessage } from '../types'
 import { createId } from '../utils'
 import { sessionMessageContent, sessionMessageParts } from './history'
 import { hydrateToolEvents } from './toolHydration'
+import { syncCurrentVariant } from './variants'
 
 // 尾部对账：后台断流后，从 session detail 的 recent_messages（gateway_messages
 // 原始行）里把服务端 drain 落库的完整回复找回来。只修尾巴，绝不整体替换——
@@ -82,6 +83,7 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
     target.error = undefined
     target.truncated = undefined
     target.streaming = false
+    syncCurrentVariant(target)
   } else {
     messages.push({
       id: String(replyRow.id || createId('message')),
