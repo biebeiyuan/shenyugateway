@@ -588,6 +588,7 @@ const RECONCILE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000]
 const RECONCILE_STATUS = '正在找回后台期间的回复…'
 let reconcileGeneration = 0
 let reconcileTimer: number | null = null
+let reconcileNoticeTimer: number | null = null
 
 function invalidateReconcile() {
   reconcileGeneration++
@@ -595,13 +596,30 @@ function invalidateReconcile() {
     window.clearTimeout(reconcileTimer)
     reconcileTimer = null
   }
+  if (reconcileNoticeTimer !== null) {
+    window.clearTimeout(reconcileNoticeTimer)
+    reconcileNoticeTimer = null
+  }
+}
+
+function clearReconcileNotice() {
+  if (reconcileNoticeTimer !== null) {
+    window.clearTimeout(reconcileNoticeTimer)
+    reconcileNoticeTimer = null
+  }
+  if (status.value === RECONCILE_STATUS || status.value === '已找回后台期间的回复') {
+    status.value = ''
+  }
 }
 
 async function reconcileTailFromServer(attempt = 0, forceRecovery = false) {
   invalidateReconcile()
   const generation = reconcileGeneration
   if (busy.value || (!forceRecovery && !tailNeedsReconcile(messages.value))) return
-  status.value = RECONCILE_STATUS
+  // Opening a session also checks for old roll versions. That check is
+  // automatic and usually fast, so keep it silent; only an incomplete live
+  // tail shows the loading notice.
+  if (!forceRecovery) status.value = RECONCILE_STATUS
   try {
     const [payload, recovery] = await Promise.all([
       fetchSessionDetail(clientContext(), sessionTag.value, sessionMessageLimit()),
@@ -613,7 +631,12 @@ async function reconcileTailFromServer(attempt = 0, forceRecovery = false) {
     if (recovered || reconciled) {
       persistMessages()
       errorNotice.value = ''
+      clearReconcileNotice()
       status.value = '已找回后台期间的回复'
+      reconcileNoticeTimer = window.setTimeout(() => {
+        reconcileNoticeTimer = null
+        if (!busy.value && status.value === '已找回后台期间的回复') status.value = ''
+      }, 1800)
       await nextTick()
       scrollToBottom()
       return
