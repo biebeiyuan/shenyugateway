@@ -322,7 +322,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 | 盼圃 | 果子、青果子、摘果子、那面等的墙、园子里的天气 | `shenyu_gateway/orchard.py`、`orchard_service.py`、`gateway_tools/_orchard.py` | `GET /api/gateway/orchard`、`POST /api/gateway/orchard/fruits` | 本文件 § 盼圃 (Orchard) |
 | 请求日志 / 工具报错 | 日志页、工具报错页 | `request_logs.py`、`tool_loop.py`、`store/_admin.py` | `admin/src/api/logs.ts`、`toolErrors.ts`、`LogsView.vue`、`ToolErrorsView.vue` | `DEBUGGING_GUIDE.md`、`LOGS_GUIDE.md` |
 | Calendar | 日历 / 日周月页 | `calendar_service.py`、`gateway_tools/_calendar.py` | `admin/src/api/calendar.ts`、`CalendarView.vue` | `REQUEST_CONTEXT.md` § Calendar |
-| CI/CD | 持续集成、GitHub Actions | `.github/workflows/ci.yml` | pytest、npm test、Admin E2E | `AGENTS.md` § Admin frontend |
+| CI/CD | 持续集成、GitHub Actions | `.github/workflows/ci.yml` | pytest、npm test、Admin E2E | `AGENTS.md` |
 
 When cleaning or refactoring, preserve behavior first and move code by boundary:
 
