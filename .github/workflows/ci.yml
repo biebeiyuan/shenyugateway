@@ -46,11 +46,11 @@ jobs:
         working-directory: admin
         shell: bash
         run: |
-          # The hosted image may carry a stale Google Chrome apt index. It is
+          # The hosted image may carry a stale Google Chrome apt source. It is
           # unrelated to Playwright's Chromium dependencies and can make apt
-          # fail before Playwright starts; remove only that temporary source.
-          sudo find /etc/apt/sources.list.d -maxdepth 1 -type f -name '*.list' \
-            -exec sed -i '\|dl.google.com/linux/chrome|d' {} +
+          # fail before Playwright starts; remove it entirely.
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list \
+                     /etc/apt/sources.list.d/google-chrome.sources
           # The hosted runner's Google apt mirror can briefly publish an index
           # whose hash does not match the Release file. Retry the install so a
           # transient mirror race does not hide the actual smoke result.
