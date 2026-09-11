@@ -478,7 +478,7 @@ async function openSession(session: GatewaySession): Promise<boolean> {
     errorNotice.value = ''
     await nextTick()
     scrollToBottom()
-    void reconcileTailFromServer(0, true)
+    void reconcileTailFromServer(0, 'variants')
     return true
   } catch {
     errorNotice.value = '这页对话暂时拿不到，当前页面还在。'
