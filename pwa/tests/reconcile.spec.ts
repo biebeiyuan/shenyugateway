@@ -233,4 +233,167 @@ describe('applyReplyRecovery — durable roll group', () => {
     expect(messages[1].variants).toHaveLength(1)
     expect(messages[1].variants?.[0].replyVersionId).toBe('stable')
   })
+
+  it('does not overwrite complete messages that were received normally', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '完整回复', {
+        thinking: 'Let me think...',
+        thinkingSegments: [{ id: 'th1', content: 'Let me think...', textOffset: 0, streamOrder: 0 }],
+        events: [{ phase: 'call', tool_call_id: 'tc1', name: 'test_tool', input: '{}' }],
+      }),
+    ]
+    const changed = applyReplyRecovery(messages, {
+      replies: [{ reply_version_id: 'v1', content: '完整回复' }],
+    })
+    // Should only add variants, not overwrite the complete message
+    expect(changed).toBe(false)
+    expect(messages[1].content).toBe('完整回复')
+    expect(messages[1].thinking).toBe('Let me think...')
+    expect(messages[1].thinkingSegments).toHaveLength(1)
+    expect(messages[1].events).toHaveLength(1)
+  })
+
+  it('preserves thinking when merging server variants into existing variants', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '版本一', {
+        replyVersionId: 'v1',
+        thinking: 'Original thinking',
+        thinkingSegments: [{ id: 'th1', content: 'Original thinking', textOffset: 0, streamOrder: 0 }],
+        variants: [
+          {
+            content: '版本一',
+            echo: '',
+            echoSegments: [],
+            thinking: 'Original thinking',
+            thinkingSegments: [{ id: 'th1', content: 'Original thinking', textOffset: 0, streamOrder: 0 }],
+            events: [],
+            replyVersionId: 'v1',
+          },
+        ],
+      }),
+    ]
+    const changed = applyReplyRecovery(messages, {
+      replies: [
+        { reply_version_id: 'v1', content: '版本一' },
+        { reply_version_id: 'v2', content: '版本二' },
+      ],
+    })
+    expect(changed).toBe(true)
+    expect(messages[1].variants).toHaveLength(2)
+    // First variant should preserve thinking
+    expect(messages[1].variants?.[0].thinking).toBe('Original thinking')
+    expect(messages[1].variants?.[0].thinkingSegments).toHaveLength(1)
+    // Current message should also preserve thinking
+    expect(messages[1].thinking).toBe('Original thinking')
+    expect(messages[1].thinkingSegments).toHaveLength(1)
+  })
+
+  it('recovers incomplete messages with truncated or error flags', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '半截', {
+        truncated: true,
+        thinking: 'Some thinking',
+        thinkingSegments: [{ id: 'th1', content: 'Some thinking', textOffset: 0, streamOrder: 0 }],
+      }),
+    ]
+    const changed = applyReplyRecovery(messages, {
+      replies: [{ reply_version_id: 'v1', content: '完整版本' }],
+    })
+    expect(changed).toBe(true)
+    expect(messages[1].content).toBe('完整版本')
+    expect(messages[1].truncated).toBeUndefined()
+    // Should preserve thinking even when recovering
+    expect(messages[1].thinking).toBe('Some thinking')
+    expect(messages[1].thinkingSegments).toHaveLength(1)
+  })
+
+  it('returns false when tail is complete and no new variants arrive', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '完整回复', {
+        replyVersionId: 'v1',
+        thinking: 'Deep analysis',
+        thinkingSegments: [{ id: 'th1', content: 'Deep analysis', textOffset: 0, streamOrder: 0 }],
+        events: [
+          { phase: 'call', tool_call_id: 'tc1', name: 'search', input: '{"q":"test"}' },
+          { phase: 'result', tool_call_id: 'tc1', ok: true, result: '{}' },
+        ],
+      }),
+    ]
+    // 服务端返回同一个版本，本地已有，没有新变体
+    const changed = applyReplyRecovery(messages, {
+      replies: [{ reply_version_id: 'v1', content: '完整回复' }],
+    })
+    expect(changed).toBe(false)
+    expect(messages[1].thinking).toBe('Deep analysis')
+    expect(messages[1].thinkingSegments).toHaveLength(1)
+    expect(messages[1].events).toHaveLength(2)
+  })
+
+  it('does not flip-flop variants when candidate has no reply_version_id', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '旧快照版本', {
+        variants: [
+          { content: '旧快照版本', echo: '', echoSegments: [], thinking: '', thinkingSegments: [], events: [] },
+        ],
+      }),
+    ]
+    // 第一次恢复：没有 reply_version_id 的候选者
+    applyReplyRecovery(messages, {
+      replies: [{ content: '旧快照版本' }],
+    })
+    const firstLength = messages[1].variants?.length || 0
+    // 第二次恢复：同样的候选者，不应该重复插入
+    const changed = applyReplyRecovery(messages, {
+      replies: [{ content: '旧快照版本' }],
+    })
+    expect(changed).toBe(false)
+    expect(messages[1].variants?.length).toBe(firstLength)
+  })
+
+  it('preserves local thinking and events when server variant has none', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '回复', {
+        replyVersionId: 'v1',
+        thinking: 'Let me analyze this carefully',
+        thinkingSegments: [{ id: 'th1', content: 'Let me analyze this carefully', textOffset: 0, streamOrder: 0 }],
+        events: [
+          { phase: 'call', tool_call_id: 'tc1', name: 'search', input: '{"q":"test"}', textOffset: 50, streamOrder: 2 },
+          { phase: 'result', tool_call_id: 'tc1', ok: true, result: '{"found":true}', textOffset: 50, streamOrder: 3 },
+        ],
+        variants: [
+          {
+            content: '回复',
+            echo: '',
+            echoSegments: [],
+            thinking: 'Let me analyze this carefully',
+            thinkingSegments: [{ id: 'th1', content: 'Let me analyze this carefully', textOffset: 0, streamOrder: 0 }],
+            events: [
+              { phase: 'call', tool_call_id: 'tc1', name: 'search', input: '{"q":"test"}', textOffset: 50, streamOrder: 2 },
+              { phase: 'result', tool_call_id: 'tc1', ok: true, result: '{"found":true}', textOffset: 50, streamOrder: 3 },
+            ],
+            replyVersionId: 'v1',
+          },
+        ],
+      }),
+    ]
+    // 服务端发来同一版本，但没有 thinking 和正确的 events（tool 补水会塌到 offset 0）
+    const changed = applyReplyRecovery(messages, {
+      replies: [{ reply_version_id: 'v1', content: '回复' }],
+    })
+    // 不应该覆盖，因为内容相同且本地有完整数据
+    expect(changed).toBe(false)
+    expect(messages[1].thinking).toBe('Let me analyze this carefully')
+    expect(messages[1].thinkingSegments).toHaveLength(1)
+    expect(messages[1].events).toHaveLength(2)
+    expect(messages[1].events[0].textOffset).toBe(50)
+    expect(messages[1].variants?.[0].thinking).toBe('Let me analyze this carefully')
+    expect(messages[1].variants?.[0].events).toHaveLength(2)
+  })
 })
+

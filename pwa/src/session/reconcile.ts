@@ -152,6 +152,17 @@ function recoveryVariant(reply: RecoveryReply): MessageVariant | undefined {
   return variant
 }
 
+// 服务端永远没有 thinking，events 也只有塌到 offset 0 的补水版本。
+// 本地有的一律以本地为准，服务端只补本地空着的字段。
+function mergeRecoveredVariant(local: MessageVariant, incoming: MessageVariant): MessageVariant {
+  return {
+    ...incoming,
+    thinking: local.thinking || incoming.thinking,
+    thinkingSegments: local.thinkingSegments.length ? local.thinkingSegments : incoming.thinkingSegments,
+    events: local.events.length ? local.events : incoming.events,
+  }
+}
+
 function variantKey(variant: MessageVariant): string {
   if (variant.replyVersionId) return `id:${variant.replyVersionId}`
   return `text:${variant.content}\u0000${variant.echo}`
@@ -186,15 +197,22 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     }
     messages.splice(lastUserIndex + 1, 0, target)
   }
+
+  // 记录原始状态：如果 message 已经有完整的 thinking/events，
+  // 说明是正常流式接收的完整消息，只是静默升级 replyVersionId，不算 changed
+  const hadCompleteContent = Boolean(target.thinking || target.events.length)
+
   const variants = ensureVariants(target)
   const originalSelectedId = target.replyVersionId
   let changed = false
+  // 去重，但去重本身不算"变化"——它只是整理，不是找回。
   const uniqueVariants: MessageVariant[] = []
   const seenKeys = new Set<string>()
+  let hadDuplicates = false
   for (const variant of variants) {
     const key = variantKey(variant)
     if (seenKeys.has(key)) {
-      changed = true
+      hadDuplicates = true
       continue
     }
     seenKeys.add(key)
@@ -210,6 +228,11 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     if (index < 0 && candidateId) {
       index = variants.findIndex((variant) => !variant.replyVersionId && variant.content === candidate.content && variant.echo === candidate.echo)
     }
+    // 如果还是找不到，但 target 有 error/truncated，且只有一个 variant，
+    // 说明服务端的完整版本是对这个不完整 message 的修复，应该 merge 而不是添加
+    if (index < 0 && variants.length === 1 && (target.error || target.truncated)) {
+      index = 0
+    }
     if (index < 0 && !candidateId) {
       index = variants.findIndex((variant) => variant.content === candidate.content && variant.echo === candidate.echo)
     }
@@ -218,11 +241,18 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
       changed = true
     } else {
       const previous = variants[index]
-      if (candidateId && previous.replyVersionId !== candidateId) {
-        variants[index] = candidate
-        changed = true
-      } else if (previous.content !== candidate.content || previous.echo !== candidate.echo || previous.events.length !== candidate.events.length) {
-        variants[index] = candidate
+      const merged = mergeRecoveredVariant(previous, candidate)
+      // 总是更新为 merged 版本，保留本地的 thinking/events
+      variants[index] = merged
+      // 标记 changed 的条件：
+      // 1. 内容变化
+      // 2. 补充了 events
+      // 3. 首次添加 replyVersionId，但仅当原 message 不是完整内容时才算 changed
+      //    （完整内容 = 有 thinking 或 events，说明是正常流式接收的）
+      const addedVersionId = !previous.replyVersionId && merged.replyVersionId
+      if (previous.content !== merged.content || previous.echo !== merged.echo
+          || (!previous.events.length && merged.events.length)
+          || (addedVersionId && !hadCompleteContent)) {
         changed = true
       }
     }
@@ -236,8 +266,15 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
       : variants.findIndex((variant) => variant.content === candidate.content && variant.echo === candidate.echo)
     return variants[index]
   }).filter((variant): variant is MessageVariant => Boolean(variant))
-  const extras = variants.filter((variant) => !variant.replyVersionId || !recoveredIds.has(variant.replyVersionId))
-  if (ordered.length && (ordered.length !== variants.length || ordered.some((variant, index) => variant !== variants[index]))) {
+  // 按对象身份排除，避免重复插入同一个 variant。
+  const orderedSet = new Set(ordered)
+  const extras = variants.filter((variant) => !orderedSet.has(variant))
+  // 只在真正需要重排时才 splice 和设置 changed：顺序变了，或数量变了
+  const needsReorder = ordered.length && (
+    ordered.length + extras.length !== variants.length ||
+    ordered.some((variant, index) => variant !== variants[index])
+  )
+  if (needsReorder) {
     variants.splice(0, variants.length, ...ordered, ...extras)
     changed = true
   }
@@ -249,13 +286,33 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     ? variants.findIndex((variant) => variant.replyVersionId === lastRecovered.replyVersionId)
     : variants.findIndex((variant) => variant.content === lastRecovered?.content && variant.echo === lastRecovered.echo)
   const selectedIndex = selected >= 0 ? selected : lastRecoveredIndex
-  if (selectedIndex >= 0 && (target.selectedVariantIndex !== selectedIndex || changed)) {
+  const currentIndex = target.selectedVariantIndex ?? 0
+
+  // 应用 variant 的条件：
+  // 1. selectedIndex 变了（切换到不同的 variant）
+  // 2. 有新内容（changed = true）
+  // 3. 当前 message 不完整（有 error/truncated），需要用恢复的版本替换
+  const needsApply = selectedIndex >= 0 && (
+    currentIndex !== selectedIndex ||
+    changed ||
+    target.error ||
+    target.truncated
+  )
+
+  if (needsApply) {
     applyVariant(target, variants[selectedIndex], selectedIndex)
     target.streaming = false
-    target.error = undefined
-    target.truncated = undefined
+    // 只有真拿到内容才敢清 error/truncated，否则会把"还需找回"的标记抹掉。
+    if (variants[selectedIndex].content || variants[selectedIndex].echo) {
+      target.error = undefined
+      target.truncated = undefined
+    }
     syncCurrentVariant(target)
     changed = true
   }
+
+  // 去重算作有意义的变化（清理了重复的 variants）
+  if (hadDuplicates) changed = true
+
   return changed
 }

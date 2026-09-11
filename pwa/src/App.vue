@@ -572,14 +572,13 @@ function clearReconcileNotice() {
   }
 }
 
-async function reconcileTailFromServer(attempt = 0, forceRecovery = false) {
+async function reconcileTailFromServer(attempt = 0, mode: 'tail' | 'variants' = 'tail') {
   invalidateReconcile()
   const generation = reconcileGeneration
-  if (busy.value || (!forceRecovery && !tailNeedsReconcile(messages.value))) return
-  // Opening a session also checks for old roll versions. That check is
-  // automatic and usually fast, so keep it silent; only an incomplete live
-  // tail shows the loading notice.
-  if (!forceRecovery) status.value = RECONCILE_STATUS
+  if (busy.value) return
+  // 只有坏尾巴才进退避链；variants 模式是一次性的 roll 版本回填
+  if (mode === 'tail' && !tailNeedsReconcile(messages.value)) return
+  if (mode === 'tail') status.value = RECONCILE_STATUS
   try {
     const [payload, recovery] = await Promise.all([
       fetchSessionDetail(clientContext(), sessionTag.value, sessionMessageLimit()),
@@ -592,23 +591,31 @@ async function reconcileTailFromServer(attempt = 0, forceRecovery = false) {
       persistMessages()
       errorNotice.value = ''
       clearReconcileNotice()
-      status.value = '已找回后台期间的回复'
-      reconcileNoticeTimer = window.setTimeout(() => {
-        reconcileNoticeTimer = null
-        if (!busy.value && status.value === '已找回后台期间的回复') status.value = ''
-      }, 1800)
+      // 只有修好坏尾巴才弹提示；健康对话补 variant 不该弹。
+      if (reconciled) {
+        status.value = '已找回后台期间的回复'
+        reconcileNoticeTimer = window.setTimeout(() => {
+          reconcileNoticeTimer = null
+          if (!busy.value && status.value === '已找回后台期间的回复') status.value = ''
+        }, 1800)
+      }
       await nextTick()
       scrollToBottom()
-      return
     }
   } catch {
-    // 网络可能还没恢复，与"drain 未完成"一样按退避重试。
+    // 网络没恢复，和 drain 未完成一样对待
   }
   if (generation !== reconcileGeneration) return
+
+  // 唯一的重试依据：尾巴是不是还坏着。没东西可找回不是失败。
+  if (mode !== 'tail' || !tailNeedsReconcile(messages.value)) {
+    if (status.value === RECONCILE_STATUS) status.value = ''
+    return
+  }
   if (attempt < RECONCILE_RETRY_DELAYS_MS.length) {
     reconcileTimer = window.setTimeout(() => {
       reconcileTimer = null
-      void reconcileTailFromServer(attempt + 1, forceRecovery)
+      void reconcileTailFromServer(attempt + 1, mode)
     }, RECONCILE_RETRY_DELAYS_MS[attempt])
     return
   }
@@ -1184,7 +1191,7 @@ function handleVisibilityChange() {
   // 回前台补一次回填：SW 接管的强制刷新可能打断了 onMounted 那一次。
   scheduleLocalPhotoRestore()
   if (busy.value) return
-  void reconcileTailFromServer(0, true)
+  void reconcileTailFromServer(0, 'variants')
   const now = Date.now()
   if (now - lastBuildCheckAt >= BUILD_CHECK_INTERVAL_MS) {
     lastBuildCheckAt = now
@@ -1227,7 +1234,7 @@ onMounted(async () => {
   // 把本机还留着的图接回气泡；淘汰掉的保持「过期」样子。
   scheduleLocalPhotoRestore()
   // 本地恢复的消息可能停在半截，或快照缺少同一 user 的旧 roll：统一后台找回。
-  void reconcileTailFromServer(0, true)
+  void reconcileTailFromServer(0, 'variants')
   nextTick(() => inputRef.value?.focus())
 })
 
