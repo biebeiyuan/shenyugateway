@@ -395,5 +395,56 @@ describe('applyReplyRecovery — durable roll group', () => {
     expect(messages[1].variants?.[0].thinking).toBe('Let me analyze this carefully')
     expect(messages[1].variants?.[0].events).toHaveLength(2)
   })
+
+  it('keeps truncated when the server has nothing better yet', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '半截', { replyVersionId: 'v1', truncated: true }),
+    ]
+    applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '半截' }] })
+    expect(messages[1].truncated).toBe(true)
+    expect(tailNeedsReconcile(messages)).toBe(true)
+  })
+
+  it('keeps every roll when repairing a truncated tail', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '半截', { truncated: true }),
+    ]
+    applyReplyRecovery(messages, {
+      replies: [
+        { reply_version_id: 'v1', content: '第一版' },
+        { reply_version_id: 'v2', content: '第二版' },
+      ],
+    })
+    expect(messages[1].variants).toHaveLength(2)
+    expect(messages[1].content).toBe('第二版')
+  })
+
+  it('preserves responseMeta during recovery', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '回复', {
+        replyVersionId: 'v1',
+        variants: [
+          {
+            content: '回复',
+            echo: '',
+            echoSegments: [],
+            thinking: '',
+            thinkingSegments: [],
+            events: [],
+            replyVersionId: 'v1',
+            responseMeta: { model: 'claude-opus-5', usage: { input_tokens: 100, output_tokens: 50 } },
+          },
+        ],
+      }),
+    ]
+    applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '回复' }] })
+    expect(messages[1].variants?.[0].responseMeta).toEqual({
+      model: 'claude-opus-5',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    })
+  })
 })
 

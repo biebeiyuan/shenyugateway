@@ -2,7 +2,7 @@ import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
 import { sessionMessageContent, sessionMessageParts } from './history'
 import { hydrateToolEvents } from './toolHydration'
-import { applyVariant, ensureVariants, syncCurrentVariant } from './variants'
+import { applyVariant, ensureVariants, selectedVariantIndex, snapshotMessage, syncCurrentVariant } from './variants'
 
 // 尾部对账：后台断流后，从 session detail 的 recent_messages（gateway_messages
 // 原始行）里把服务端 drain 落库的完整回复找回来。只修尾巴，绝不整体替换——
@@ -130,6 +130,7 @@ function recoveryVariant(reply: RecoveryReply): MessageVariant | undefined {
     thinking: '',
     thinkingSegments: [],
     events: [],
+    responseMeta: undefined,
   }
   const toolRows = Array.isArray(reply.tool_rows)
     ? reply.tool_rows.filter((row): row is RecentRow => Boolean(row && typeof row === 'object'))
@@ -160,6 +161,8 @@ function mergeRecoveredVariant(local: MessageVariant, incoming: MessageVariant):
     thinking: local.thinking || incoming.thinking,
     thinkingSegments: local.thinkingSegments.length ? local.thinkingSegments : incoming.thinkingSegments,
     events: local.events.length ? local.events : incoming.events,
+    error: local.error ?? incoming.error,
+    responseMeta: local.responseMeta ?? incoming.responseMeta,
   }
 }
 
@@ -202,7 +205,15 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   // 说明是正常流式接收的完整消息，只是静默升级 replyVersionId，不算 changed
   const hadCompleteContent = Boolean(target.thinking || target.events.length)
 
-  const variants = ensureVariants(target)
+  // 确保 variants 存在，但不要用 message 覆盖已有的 variant（保护 responseMeta 等字段）
+  if (!target.variants?.length) {
+    target.variants = [snapshotMessage(target)]
+    target.selectedVariantIndex = 0
+  } else {
+    target.selectedVariantIndex = selectedVariantIndex(target)
+    // 不调用 syncCurrentVariant，避免用 message 覆盖已有 variant 的 responseMeta
+  }
+  const variants = target.variants
   const originalSelectedId = target.replyVersionId
   let changed = false
   // 去重，但去重本身不算"变化"——它只是整理，不是找回。
@@ -220,6 +231,9 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   }
   if (uniqueVariants.length !== variants.length) variants.splice(0, variants.length, ...uniqueVariants)
   const recoveredIds = new Set<string>()
+  // 修复槽位：当 target 有 error/truncated 且只有一个 variant 时，
+  // 第一个 candidate 可以直接替换它，但这个机会只能用一次
+  let repairSlotUsed = false
   for (const candidate of replies) {
     const candidateId = candidate.replyVersionId
     let index = candidateId
@@ -230,8 +244,9 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     }
     // 如果还是找不到，但 target 有 error/truncated，且只有一个 variant，
     // 说明服务端的完整版本是对这个不完整 message 的修复，应该 merge 而不是添加
-    if (index < 0 && variants.length === 1 && (target.error || target.truncated)) {
+    if (index < 0 && !repairSlotUsed && variants.length === 1 && (target.error || target.truncated)) {
       index = 0
+      repairSlotUsed = true
     }
     if (index < 0 && !candidateId) {
       index = variants.findIndex((variant) => variant.content === candidate.content && variant.echo === candidate.echo)
@@ -242,7 +257,7 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     } else {
       const previous = variants[index]
       const merged = mergeRecoveredVariant(previous, candidate)
-      // 总是更新为 merged 版本，保留本地的 thinking/events
+      // 总是更新为 merged 版本，保留本地的 thinking/events/responseMeta
       variants[index] = merged
       // 标记 changed 的条件：
       // 1. 内容变化
@@ -288,24 +303,29 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   const selectedIndex = selected >= 0 ? selected : lastRecoveredIndex
   const currentIndex = target.selectedVariantIndex ?? 0
 
+  const applied = variants[selectedIndex]
+  const priorError = target.error
+  const priorTruncated = target.truncated
+  // 判断是否真的拿到了更好的内容：有内容，且内容或 echo 与当前不同
+  const improved = Boolean(applied?.content || applied?.echo)
+    && (applied.content !== target.content || applied.echo !== target.echo)
+
   // 应用 variant 的条件：
   // 1. selectedIndex 变了（切换到不同的 variant）
   // 2. 有新内容（changed = true）
-  // 3. 当前 message 不完整（有 error/truncated），需要用恢复的版本替换
-  const needsApply = selectedIndex >= 0 && (
-    currentIndex !== selectedIndex ||
-    changed ||
-    target.error ||
-    target.truncated
-  )
+  // 3. 内容真的改善了（improved = true）
+  const needsApply = selectedIndex >= 0 && (currentIndex !== selectedIndex || changed || improved)
 
   if (needsApply) {
-    applyVariant(target, variants[selectedIndex], selectedIndex)
+    applyVariant(target, applied, selectedIndex)
     target.streaming = false
-    // 只有真拿到内容才敢清 error/truncated，否则会把"还需找回"的标记抹掉。
-    if (variants[selectedIndex].content || variants[selectedIndex].echo) {
+    // 只有真的改善了才清除 error/truncated，否则恢复原标记
+    if (improved) {
       target.error = undefined
       target.truncated = undefined
+    } else {
+      target.error = priorError
+      target.truncated = priorTruncated
     }
     syncCurrentVariant(target)
     changed = true
