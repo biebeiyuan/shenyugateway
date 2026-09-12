@@ -61,19 +61,19 @@ describe('applyReconciledTail — append branch', () => {
     expect(messages[1].events[1].ok).toBe(true)
   })
 
-  it('takes the last assistant row of the round when drain wrote several', () => {
+  it('concatenates all assistant rows in a multi-turn tool round', () => {
     const messages = [uiMessage('user', '继续')]
     applyReconciledTail(messages, payloadOf([
       { role: 'user', content: '继续' },
       { role: 'assistant', content: '第一段' },
       { role: 'assistant', content: '第二段更完整' },
     ]))
-    expect(messages[1].content).toBe('第二段更完整')
+    expect(messages[1].content).toBe('第一段第二段更完整')
   })
 })
 
 describe('applyReconciledTail — replace branch', () => {
-  it('uses reply version id before any user-anchor check', () => {
+  it('rejects server reply when it would make content shorter (even with version id match)', () => {
     const messages = [
       uiMessage('user', '本地问题带有不同表示'),
       uiMessage('assistant', '本地残片比服务器长', {
@@ -86,17 +86,16 @@ describe('applyReconciledTail — replace branch', () => {
         ],
       }),
     ]
+    // 服务端虽然有版本号匹配，但内容更短（即使加上回响），拒绝以防止削短
     const changed = applyReconciledTail(messages, payloadOf([
       { role: 'user', content: '服务器侧已经整理过的表示' },
       { role: 'assistant', source_id: 'reply-roll-1', content: '旧版本' },
       { role: 'assistant', source_id: 'reply-roll-2', content: '[回响]回来[/回响]短答' },
     ]))
-    expect(changed).toBe(true)
-    expect(messages[1].content).toBe('短答')
-    expect(messages[1].echo).toBe('回来')
-    expect(messages[1].truncated).toBeUndefined()
-    expect(messages[1].variants?.[0].content).toBe('旧版本')
-    expect(messages[1].variants?.[1].content).toBe('短答')
+    expect(changed).toBe(false)
+    // 本地内容应该保持不变，truncated 标记也保留
+    expect(messages[1].content).toBe('本地残片比服务器长')
+    expect(messages[1].truncated).toBe(true)
   })
 
   it('replaces a truncated assistant tail when the server text is longer', () => {
@@ -445,6 +444,48 @@ describe('applyReplyRecovery — durable roll group', () => {
       model: 'claude-opus-5',
       usage: { input_tokens: 100, output_tokens: 50 },
     })
+  })
+
+  it('preserves full multi-turn tool content from server', () => {
+    const messages = [
+      uiMessage('user', '查一下'),
+      // 本地流式接收时可能包含换行符，但 normalize 后应该与服务端拼接结果等长
+      uiMessage('assistant', '我先查天气。查到了,再查日历。结论是明天可以去。', {
+        truncated: true,
+        events: [
+          { phase: 'call', tool_call_id: 'tc1', name: 'weather', input: '{}', textOffset: 6, streamOrder: 0 },
+          { phase: 'result', tool_call_id: 'tc1', ok: true, result: '{"ok":true}', textOffset: 6, streamOrder: 1 },
+          { phase: 'call', tool_call_id: 'tc2', name: 'calendar', input: '{}', textOffset: 20, streamOrder: 2 },
+          { phase: 'result', tool_call_id: 'tc2', ok: true, result: '{"ok":true}', textOffset: 20, streamOrder: 3 },
+        ],
+      }),
+    ]
+    const changed = applyReconciledTail(messages, payloadOf([
+      { role: 'user', content: '查一下' },
+      { role: 'assistant', content: '我先查天气。' },
+      { role: 'tool', tool_name: 'weather', content: '{"ok":true}' },
+      { role: 'assistant', content: '查到了,再查日历。' },
+      { role: 'tool', tool_name: 'calendar', content: '{"ok":true}' },
+      { role: 'assistant', content: '结论是明天可以去。' },
+    ]))
+    expect(changed).toBe(true)
+    expect(messages[1].content).toContain('我先查天气')
+    expect(messages[1].content).toContain('查到了,再查日历')
+    expect(messages[1].content).toContain('结论是明天可以去')
+    expect(messages[1].events.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('rejects server content when shorter than local', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '完整的长回复内容'),
+    ]
+    const changed = applyReconciledTail(messages, payloadOf([
+      { role: 'user', content: '问题' },
+      { role: 'assistant', content: '短回复' },
+    ]))
+    expect(changed).toBe(false)
+    expect(messages[1].content).toBe('完整的长回复内容')
   })
 })
 

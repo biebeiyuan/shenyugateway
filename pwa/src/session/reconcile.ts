@@ -25,12 +25,54 @@ function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
+// 只增不减护栏：自动找回这条路在物理上没有能力削短任何东西。
+// 任何会让本地内容变少的操作一律拒绝，宁可留着 truncated 让退避链继续。
+// 比较使用 normalized 文本（空白规范化），因为流式接收的格式化不应影响内容完整性判断。
+function acceptRecovery(target: UiMessage, incoming: { content: string; echo: string; events: unknown[] }): boolean {
+  const localContentNorm = normalizeText(target.content || '')
+  const incomingContentNorm = normalizeText(incoming.content)
+  const localEchoNorm = normalizeText(target.echo || '')
+  const incomingEchoNorm = normalizeText(incoming.echo)
+
+  // 正文以 normalized 长度为准（忽略空白符差异），echo 单独比，绝不相加
+  if (incomingContentNorm.length < localContentNorm.length) {
+    console.log('[acceptRecovery] Rejected: content shorter', {
+      incoming: incomingContentNorm.length,
+      local: localContentNorm.length,
+    })
+    return false
+  }
+  if (incomingEchoNorm.length < localEchoNorm.length) {
+    console.log('[acceptRecovery] Rejected: echo shorter')
+    return false
+  }
+  if (incoming.events.length < (target.events?.length || 0)) {
+    console.log('[acceptRecovery] Rejected: fewer events')
+    return false
+  }
+  if (target.thinking && !incoming.thinking) {
+    console.log('[acceptRecovery] Rejected: would lose thinking')
+    return false
+  }
+  return true
+}
+
 // 末轮是否不完整：最后一条是 user（没等到回复），或 assistant 带 error/truncated。
 export function tailNeedsReconcile(messages: UiMessage[]): boolean {
   const last = messages[messages.length - 1]
   if (!last) return false
   if (last.role === 'user') return true
-  return Boolean(last.error || last.truncated)
+  const needsReconcile = Boolean(last.error || last.truncated)
+  if (needsReconcile) {
+    console.log('[reconcile] Tail needs reconcile:', {
+      messageId: last.id,
+      hasError: Boolean(last.error),
+      hasTruncated: Boolean(last.truncated),
+      contentLength: (last.content || '').length,
+      eventsCount: last.events?.length || 0,
+    })
+  }
+  return needsReconcile
 }
 
 function recentRows(payload: Record<string, unknown>): RecentRow[] {
@@ -52,12 +94,19 @@ function anchorRowIndex(rows: RecentRow[], anchorContent: string): number {
 }
 
 function replyRowAfter(rows: RecentRow[], anchorIndex: number): RecentRow | undefined {
-  let reply: RecentRow | undefined
+  const assistantRows: RecentRow[] = []
   for (let index = anchorIndex + 1; index < rows.length; index++) {
     if (rows[index].role === 'user') break
-    if (rows[index].role === 'assistant') reply = rows[index]
+    if (rows[index].role === 'assistant') assistantRows.push(rows[index])
   }
-  return reply
+  if (!assistantRows.length) return undefined
+  // 如果只有一个 assistant 行，直接返回
+  if (assistantRows.length === 1) return assistantRows[0]
+  // 多个 assistant 行：拼接完整的工具回合内容
+  // 段落之间不加分隔符，保持原始连接（流式时的换行是渲染层的事，不属于持久化内容）
+  const fullContent = assistantRows.map(r => String(r.content || '')).join('')
+  // 返回第一个 assistant 行，但 content 是拼接后的完整内容
+  return { ...assistantRows[0], content: fullContent }
 }
 
 export function applyReconciledTail(messages: UiMessage[], payload: Record<string, unknown>): boolean {
@@ -83,14 +132,41 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
   if (!parts.content && !parts.echo) return false
 
   if (target) {
-    const serverLength = parts.content.length + parts.echo.length
-    const localLength = (target.content || '').length + (target.echo || '').length
-    // 精确版本号已经证明这是同一版 roll；即使服务端文本更短也要采用。
-    if (!versionedReply && serverLength <= localLength) return false
-    target.content = parts.content
-    target.echo = parts.echo
-    target.echoSegments = parts.echo
-      ? [{ id: createId('echo'), content: parts.echo, textOffset: 0, streamOrder: 0 }]
+    const nextContent = parts.content
+    const nextEcho = parts.echo
+
+    // 只增不减护栏：检查应用服务端内容是否会让任何东西变少
+    const incoming = {
+      content: nextContent,
+      echo: nextEcho,
+      events: target.events, // 暂用本地 events，hydrateToolEvents 只在本地为空时才补
+      thinking: '', // 服务端永远没有 thinking
+    }
+
+    if (!acceptRecovery(target, incoming)) {
+      console.log('[reconcile] Rejected by acceptRecovery: would make content shorter')
+      return false
+    }
+
+    console.log('[reconcile] Comparing lengths:', {
+      serverContent: nextContent.length,
+      localContent: (target.content || '').length,
+      serverEcho: nextEcho.length,
+      localEcho: (target.echo || '').length,
+      serverPreview: nextContent.substring(0, 100),
+      localPreview: (target.content || '').substring(0, 100),
+    })
+
+    // 兜底：正文变短时清空旧 events，防止 textOffset 坐标系错位
+    if (nextContent.length < (target.content || '').length) {
+      target.events = []
+    }
+
+    console.log('[reconcile] Applying server content')
+    target.content = nextContent
+    target.echo = nextEcho
+    target.echoSegments = nextEcho
+      ? [{ id: createId('echo'), content: nextEcho, textOffset: 0, streamOrder: 0 }]
       : []
     target.error = undefined
     target.truncated = undefined
@@ -160,6 +236,7 @@ function mergeRecoveredVariant(local: MessageVariant, incoming: MessageVariant):
     ...incoming,
     thinking: local.thinking || incoming.thinking,
     thinkingSegments: local.thinkingSegments.length ? local.thinkingSegments : incoming.thinkingSegments,
+    echoSegments: local.echoSegments.length ? local.echoSegments : incoming.echoSegments,
     events: local.events.length ? local.events : incoming.events,
     error: local.error ?? incoming.error,
     responseMeta: local.responseMeta ?? incoming.responseMeta,
