@@ -68,7 +68,7 @@ describe('applyReconciledTail — append branch', () => {
       { role: 'assistant', content: '第一段' },
       { role: 'assistant', content: '第二段更完整' },
     ]))
-    expect(messages[1].content).toBe('第一段第二段更完整')
+    expect(messages[1].content).toBe('第一段\n\n第二段更完整')
   })
 })
 
@@ -449,8 +449,8 @@ describe('applyReplyRecovery — durable roll group', () => {
   it('preserves full multi-turn tool content from server', () => {
     const messages = [
       uiMessage('user', '查一下'),
-      // 本地流式接收时可能包含换行符，但 normalize 后应该与服务端拼接结果等长
-      uiMessage('assistant', '我先查天气。查到了,再查日历。结论是明天可以去。', {
+      // 本地流式接收时包含换行符，服务端拼接时也会加 \n\n
+      uiMessage('assistant', '我先查天气。\n\n查到了,再查日历。\n\n结论是明天可以去。', {
         truncated: true,
         events: [
           { phase: 'call', tool_call_id: 'tc1', name: 'weather', input: '{}', textOffset: 6, streamOrder: 0 },

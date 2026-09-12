@@ -25,35 +25,32 @@ function normalizeText(value: string): string {
   return value.replace(/\s+/g, ' ').trim()
 }
 
+// 服务端这份是否涵盖本地这份：包含关系或更长。
+// 断流时本地是完整回复的前缀，此判据天然成立且不受换行差异影响。
+function covers(incoming: string, local: string): boolean {
+  const a = normalizeText(incoming)
+  const b = normalizeText(local)
+  return !b || a.includes(b) || a.length > b.length
+}
+
 // 只增不减护栏：自动找回这条路在物理上没有能力削短任何东西。
 // 任何会让本地内容变少的操作一律拒绝，宁可留着 truncated 让退避链继续。
-// 比较使用 normalized 文本（空白规范化），因为流式接收的格式化不应影响内容完整性判断。
-function acceptRecovery(target: UiMessage, incoming: { content: string; echo: string; events: unknown[]; thinking?: string }): boolean {
-  const localContentNorm = normalizeText(target.content || '')
-  const incomingContentNorm = normalizeText(incoming.content)
-  const localEchoNorm = normalizeText(target.echo || '')
-  const incomingEchoNorm = normalizeText(incoming.echo)
+function acceptRecovery(
+  local: { content: string; echo: string; events?: unknown[]; thinking?: string },
+  incoming: { content: string; echo: string; events?: unknown[]; thinking?: string }
+): boolean {
+  // content 和 echo 用包含关系判断，容忍换行差异
+  if (!covers(incoming.content, local.content)) return false
+  if (!covers(incoming.echo, local.echo)) return false
 
-  // 正文以 normalized 长度为准（忽略空白符差异），echo 单独比，绝不相加
-  if (incomingContentNorm.length < localContentNorm.length) {
-    console.log('[acceptRecovery] Rejected: content shorter', {
-      incoming: incomingContentNorm.length,
-      local: localContentNorm.length,
-    })
-    return false
+  // events 和 thinking 只在传入时才比较（某些路径不涉及这些字段）
+  if (local.events !== undefined && incoming.events !== undefined) {
+    if (incoming.events.length < local.events.length) return false
   }
-  if (incomingEchoNorm.length < localEchoNorm.length) {
-    console.log('[acceptRecovery] Rejected: echo shorter')
-    return false
+  if (local.thinking && incoming.thinking !== undefined) {
+    if (!incoming.thinking) return false
   }
-  if (incoming.events.length < (target.events?.length || 0)) {
-    console.log('[acceptRecovery] Rejected: fewer events')
-    return false
-  }
-  if (target.thinking && !incoming.thinking) {
-    console.log('[acceptRecovery] Rejected: would lose thinking')
-    return false
-  }
+
   return true
 }
 
@@ -62,17 +59,7 @@ export function tailNeedsReconcile(messages: UiMessage[]): boolean {
   const last = messages[messages.length - 1]
   if (!last) return false
   if (last.role === 'user') return true
-  const needsReconcile = Boolean(last.error || last.truncated)
-  if (needsReconcile) {
-    console.log('[reconcile] Tail needs reconcile:', {
-      messageId: last.id,
-      hasError: Boolean(last.error),
-      hasTruncated: Boolean(last.truncated),
-      contentLength: (last.content || '').length,
-      eventsCount: last.events?.length || 0,
-    })
-  }
-  return needsReconcile
+  return Boolean(last.error || last.truncated)
 }
 
 function recentRows(payload: Record<string, unknown>): RecentRow[] {
@@ -100,12 +87,9 @@ function replyRowAfter(rows: RecentRow[], anchorIndex: number): RecentRow | unde
     if (rows[index].role === 'assistant') assistantRows.push(rows[index])
   }
   if (!assistantRows.length) return undefined
-  // 如果只有一个 assistant 行，直接返回
   if (assistantRows.length === 1) return assistantRows[0]
-  // 多个 assistant 行：拼接完整的工具回合内容
-  // 段落之间不加分隔符，保持原始连接（流式时的换行是渲染层的事，不属于持久化内容）
-  const fullContent = assistantRows.map(r => String(r.content || '')).join('')
-  // 返回第一个 assistant 行，但 content 是拼接后的完整内容
+  // 多个 assistant 行：拼接完整的工具回合内容，段落间用 \n\n 对齐本地流式约定
+  const fullContent = assistantRows.map(r => String(r.content || '')).join('\n\n')
   return { ...assistantRows[0], content: fullContent }
 }
 
@@ -135,34 +119,14 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
     const nextContent = parts.content
     const nextEcho = parts.echo
 
-    // 只增不减护栏：检查应用服务端内容是否会让任何东西变少
-    const incoming = {
-      content: nextContent,
-      echo: nextEcho,
-      events: target.events, // 暂用本地 events，hydrateToolEvents 只在本地为空时才补
-      thinking: '', // 服务端永远没有 thinking
-    }
-
-    if (!acceptRecovery(target, incoming)) {
-      console.log('[reconcile] Rejected by acceptRecovery: would make content shorter')
+    // 只增不减护栏：检查服务端内容是否涵盖本地
+    if (!acceptRecovery(
+      { content: target.content || '', echo: target.echo || '' },
+      { content: nextContent, echo: nextEcho }
+    )) {
       return false
     }
 
-    console.log('[reconcile] Comparing lengths:', {
-      serverContent: nextContent.length,
-      localContent: (target.content || '').length,
-      serverEcho: nextEcho.length,
-      localEcho: (target.echo || '').length,
-      serverPreview: nextContent.substring(0, 100),
-      localPreview: (target.content || '').substring(0, 100),
-    })
-
-    // 兜底：正文变短时清空旧 events，防止 textOffset 坐标系错位
-    if (nextContent.length < (target.content || '').length) {
-      target.events = []
-    }
-
-    console.log('[reconcile] Applying server content')
     target.content = nextContent
     target.echo = nextEcho
     target.echoSegments = nextEcho
@@ -334,18 +298,34 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     } else {
       const previous = variants[index]
       const merged = mergeRecoveredVariant(previous, candidate)
-      // 总是更新为 merged 版本，保留本地的 thinking/events/responseMeta
-      variants[index] = merged
-      // 标记 changed 的条件：
-      // 1. 内容变化
-      // 2. 补充了 events
-      // 3. 首次添加 replyVersionId，但仅当原 message 不是完整内容时才算 changed
-      //    （完整内容 = 有 thinking 或 events，说明是正常流式接收的）
-      const addedVersionId = !previous.replyVersionId && merged.replyVersionId
-      if (previous.content !== merged.content || previous.echo !== merged.echo
-          || (!previous.events.length && merged.events.length)
-          || (addedVersionId && !hadCompleteContent)) {
-        changed = true
+
+      // 护栏：服务端这版是否涵盖本地？不涵盖就只补空字段，正文不动
+      const serverCovers = acceptRecovery(
+        { content: previous.content, echo: previous.echo, events: previous.events, thinking: previous.thinking },
+        { content: merged.content, echo: merged.echo, events: merged.events, thinking: merged.thinking }
+      )
+
+      if (!serverCovers) {
+        // 服务端更短：只补 replyVersionId，正文、回响、events、thinking 一律不动
+        const updated = { ...previous, replyVersionId: merged.replyVersionId ?? previous.replyVersionId }
+        const addedVersionId = !previous.replyVersionId && updated.replyVersionId
+        variants[index] = updated
+        // 只有首次添加 replyVersionId 且原消息不完整时才算 changed
+        if (addedVersionId && !hadCompleteContent) {
+          changed = true
+        }
+      } else {
+        // 服务端涵盖本地：检查是否真的有变化
+        const contentChanged = previous.content !== merged.content || previous.echo !== merged.echo
+        const eventsAdded = !previous.events.length && merged.events.length
+        const addedVersionId = !previous.replyVersionId && merged.replyVersionId
+
+        variants[index] = merged
+
+        // 只有真正变化时才标记 changed
+        if (contentChanged || eventsAdded || (addedVersionId && !hadCompleteContent)) {
+          changed = true
+        }
       }
     }
     if (candidateId) recoveredIds.add(candidateId)
@@ -383,15 +363,16 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   const applied = variants[selectedIndex]
   const priorError = target.error
   const priorTruncated = target.truncated
-  // 判断是否真的拿到了更好的内容：有内容，且内容或 echo 与当前不同
-  const improved = Boolean(applied?.content || applied?.echo)
-    && (applied.content !== target.content || applied.echo !== target.echo)
+  // 判断是否真的拿到了更好的内容：服务端涵盖本地 且 内容确实不同
+  const improved = Boolean(applied) && (
+    (covers(applied.content, target.content || '') && applied.content !== target.content) ||
+    (covers(applied.echo, target.echo || '') && applied.echo !== target.echo)
+  )
 
   // 应用 variant 的条件：
   // 1. selectedIndex 变了（切换到不同的 variant）
-  // 2. 有新内容（changed = true）
-  // 3. 内容真的改善了（improved = true）
-  const needsApply = selectedIndex >= 0 && (currentIndex !== selectedIndex || changed || improved)
+  // 2. 内容真的改善了（improved = true）
+  const needsApply = selectedIndex >= 0 && (currentIndex !== selectedIndex || improved)
 
   if (needsApply) {
     applyVariant(target, applied, selectedIndex)
@@ -407,9 +388,6 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     syncCurrentVariant(target)
     changed = true
   }
-
-  // 去重算作有意义的变化（清理了重复的 variants）
-  if (hadDuplicates) changed = true
 
   return changed
 }
