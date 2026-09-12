@@ -304,14 +304,19 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
       const previous = variants[index]
       const merged = mergeRecoveredVariant(previous, candidate)
 
-      // 修复槽位时跳过护栏（本地是截断残片，服务端是完整版本，可能完全不同）
+      // 修复槽位时放宽包含关系，但绝不接受更短的
       if (isRepairSlot) {
-        variants[index] = merged
-        if (previous.content !== merged.content || previous.echo !== merged.echo
-            || (!previous.events.length && merged.events.length)
-            || (!previous.replyVersionId && merged.replyVersionId && !hadCompleteContent)) {
-          changed = true
+        const localLen = normalizeText(previous.content).length
+        const incomingLen = normalizeText(merged.content).length
+        if (incomingLen >= localLen) {
+          variants[index] = merged
+          if (previous.content !== merged.content || previous.echo !== merged.echo
+              || (!previous.events.length && merged.events.length)
+              || (!previous.replyVersionId && merged.replyVersionId && !hadCompleteContent)) {
+            changed = true
+          }
         }
+        // 更短：什么都不做，留着 truncated 让退避链等下一轮
       } else {
         // 护栏：服务端这版是否涵盖本地？不涵盖就只补空字段，正文不动
         const serverCovers = acceptRecovery(
@@ -390,12 +395,15 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
 
   const applied = variants[selectedIndex]
   // 判断是否真的拿到了更好的内容：
-  // 1. 服务端涵盖本地 且 内容确实不同
-  // 2. 或者本地有 error/truncated，任何不同的内容都算改善
+  // 1. 正常情况：服务端涵盖本地 且 内容确实不同
+  // 2. 有 error/truncated：服务端不更短 且 内容确实不同
+  const hasBrokenTail = priorError || priorTruncated
   const improved = Boolean(applied) && (
-    ((covers(applied.content, target.content || '') || covers(applied.echo, target.echo || ''))
-      && (applied.content !== target.content || applied.echo !== target.echo)) ||
-    ((priorError || priorTruncated) && (applied.content !== target.content || applied.echo !== target.echo))
+    hasBrokenTail
+      ? normalizeText(applied.content).length >= normalizeText(target.content || '').length
+        && (applied.content !== target.content || applied.echo !== target.echo)
+      : (covers(applied.content, target.content || '') || covers(applied.echo, target.echo || ''))
+        && (applied.content !== target.content || applied.echo !== target.echo)
   )
 
   // 应用 variant 的条件：

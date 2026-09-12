@@ -438,6 +438,16 @@ describe('applyReplyRecovery — durable roll group', () => {
     expect(messages[1].echoSegments[1].textOffset).toBe(10)
   })
 
+  it('rejects a repair that would shorten the fragment', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', 'A'.repeat(800), { truncated: true }),
+    ]
+    applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v9', content: 'B'.repeat(200) }] })
+    expect(messages[1].content.length).toBe(800)
+    expect(messages[1].truncated).toBe(true) // 退避链必须还活着
+  })
+
   it('keeps every roll when repairing a truncated tail', () => {
     const messages = [
       uiMessage('user', '问题'),
