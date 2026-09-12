@@ -405,6 +405,39 @@ describe('applyReplyRecovery — durable roll group', () => {
     expect(tailNeedsReconcile(messages)).toBe(true)
   })
 
+  it('rejects server content that is longer but does not include local text', () => {
+    const messages = [uiMessage('user', '问题'), uiMessage('assistant', '第一段\n\n第二段')]
+    const changed = applyReplyRecovery(messages, {
+      replies: [{ reply_version_id: 'v1', content: '完全不同的更长内容，但不包含本地文本' }],
+    })
+    // 新 variant 会被添加（changed = true），但不会覆盖本地内容
+    expect(changed).toBe(true)
+    expect(messages[1].content).toBe('第一段\n\n第二段')
+    expect(messages[1].variants.length).toBe(2)
+  })
+
+  it('preserves multi-segment echoSegments when guard allows recovery', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '我先查', {
+        truncated: true,
+        echo: '看了一眼',
+        echoSegments: [
+          { id: 'e1', content: '看了', textOffset: 0, streamOrder: 0 },
+          { id: 'e2', content: '一眼', textOffset: 10, streamOrder: 2 },
+        ],
+      }),
+    ]
+    const changed = applyReplyRecovery(messages, {
+      replies: [{ reply_version_id: 'v1', content: '[回响]看了一眼[/回响]我先查天气，然后查日历' }],
+    })
+    expect(changed).toBe(true)
+    // 护栏放行后，echoSegments 应该保留原有的多段分布
+    expect(messages[1].echoSegments.length).toBe(2)
+    expect(messages[1].echoSegments[0].textOffset).toBe(0)
+    expect(messages[1].echoSegments[1].textOffset).toBe(10)
+  })
+
   it('keeps every roll when repairing a truncated tail', () => {
     const messages = [
       uiMessage('user', '问题'),
