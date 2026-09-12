@@ -28,7 +28,7 @@ function normalizeText(value: string): string {
 // 只增不减护栏：自动找回这条路在物理上没有能力削短任何东西。
 // 任何会让本地内容变少的操作一律拒绝，宁可留着 truncated 让退避链继续。
 // 比较使用 normalized 文本（空白规范化），因为流式接收的格式化不应影响内容完整性判断。
-function acceptRecovery(target: UiMessage, incoming: { content: string; echo: string; events: unknown[] }): boolean {
+function acceptRecovery(target: UiMessage, incoming: { content: string; echo: string; events: unknown[]; thinking?: string }): boolean {
   const localContentNorm = normalizeText(target.content || '')
   const incomingContentNorm = normalizeText(incoming.content)
   const localEchoNorm = normalizeText(target.echo || '')
