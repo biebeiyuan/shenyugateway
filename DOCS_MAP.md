@@ -12,6 +12,16 @@
 
 需要快速认识文件时，读 `README.md` § Maintenance Map 和 `docs/architecture/SYSTEM_ZONES.md`。需要判断一份 Markdown 是否仍是当前事实时，查本文件后续状态表。`DESIGN.md` 只在准备修改记忆或上下文内核时阅读相关章节；`DEBUGGING_GUIDE.md` 和 `LOGS_GUIDE.md` 都是按需参考。
 
+### 按问题找
+
+上面三步和 Maintenance Map 都是按模块组织的。有几类问题天生跨模块，靠模块清单会绕路：
+
+- **记忆一共有几条召回路、各自的入口和判据在哪** → `DESIGN.md` §1 记忆系统总览，再按子系统进 §2（Stars）/ §3（Mem）/ §5（Recall Index）。每节末尾的「改动边界」表直接给到 `file::symbol`。
+- **一个阈值属于哪套标度、按什么标定的** → `docs/architecture/MEMORY_TUNING.md`。不要按数值猜：`star_min_score` 0.008 和 `star_related_min_score` 0.22 差两个数量级是对的，它们量在不同的尺子上。
+- **动态岛这轮为什么换了 / 为什么没换** → `DESIGN.md` §2.4.1（含两条 lane 不对称的原因），行为细节在 `docs/architecture/MEMORY_ROOM.md` § Mem Note Layer 与 § Star Memory Layer。
+- **改了记忆会不会打到缓存断点** → `docs/architecture/REQUEST_CONTEXT.md` § Prompt Cache；小突起为什么走旁挂字段在 `DESIGN.md` §8.5。
+- **一个 config 字段的默认值住在哪** → 只住在 `shenyu_gateway/config.py`。代码里的 `getattr(cfg, "字段", 兜底)` 必须与之一致，由 `tests/test_config_default_homes.py` 看守。
+
 ## 内容归属
 
 | 内容 | 主要文档 | 不应重复放置 |
@@ -20,6 +30,7 @@
 | 项目入口、维护地图、配置、运行、部署 | `README.md` | 子系统完整设计和阶段性审计结论 |
 | 请求、流式、工具、缓存、上下文、SQLite、归档 | `docs/architecture/REQUEST_CONTEXT.md` | README 长篇章节 |
 | Mem、Stars、Room、private capture | `docs/architecture/MEMORY_ROOM.md` | README 或运维排障指南中的完整设计 |
+| 记忆各阈值的标度、取值理由与标定出处 | `docs/architecture/MEMORY_TUNING.md` | 其他文档不再解释某个分数线属于哪套标度；`DESIGN.md` 讲机制做什么，本表讲数字量在哪把尺子上 |
 | 全仓分区和跨区边界 | `docs/architecture/SYSTEM_ZONES.md` | 各专题文档重复文件清单 |
 | 风险、证据、已确认修复、审计顺序 | `docs/architecture/AUDIT_MATRIX.md` | README 的临时 follow-up 计划 |
 | 长期设计原则与语义不变量 | `DESIGN.md` | 实施日志和临时代码状态 |
@@ -38,6 +49,7 @@
 | `docs/architecture/AUDIT_MATRIX.md` | 分区风险、证据、测试缺口和审计顺序 | 风险被证实、排除、修复或测试覆盖改变时 |
 | `docs/architecture/REQUEST_CONTEXT.md` | 请求、上下文、缓存、存储、归档和外部契约参考 | 这些子系统的现行行为改变时 |
 | `docs/architecture/MEMORY_ROOM.md` | Mem、Stars、Room 和 private capture 参考 | 这些子系统的现行行为改变时 |
+| `docs/architecture/MEMORY_TUNING.md` | 记忆各阈值住在哪、属于哪套标度、为什么是这个值、按什么语料标定 | 新增/删除/调整一个记忆阈值，或换 embedding 模型、改打分公式导致标度变化时 |
 | `DESIGN.md` | 记忆、召回、上下文编排的长期原则和改动边界 | 核心语义或系统不变量改变时 |
 | `DEBUGGING_GUIDE.md` | 当前请求链路、诊断方法和验证清单 | 日志字段、运维方式或排障路径改变时 |
 | `LOGS_GUIDE.md` | 面向日常使用的日志页速查 | 日志页的含义、标签或展示方式改变时 |

@@ -799,7 +799,11 @@ class SearchMixin:
         return self._int_range(getattr(self.cfg, "mem_note_dedupe_turns", 6), 6, 0, 50)
 
     def _default_cooldown_hours(self) -> int:
-        return self._int_range(getattr(self.cfg, "mem_note_default_cooldown_hours", 72), 72, 0, 8760)
+        # 两个兜底都跟 `config.py` 的默认值一致（12），由
+        # `tests/test_config_default_homes.py` 看守。这是**新建**便签的
+        # `cooldown_hours` 初值，和 `_in_cooldown` 里读旧行 `cooldown_hours`
+        # 时的 72 不是一回事：那个 72 是老便签的历史默认，不能一起改。
+        return self._int_range(getattr(self.cfg, "mem_note_default_cooldown_hours", 12), 12, 0, 8760)
 
     def _in_cooldown(self, row: dict, cooldown_hours: Optional[int] = None) -> bool:
         if cooldown_hours is None:

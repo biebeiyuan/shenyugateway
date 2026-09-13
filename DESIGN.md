@@ -129,6 +129,8 @@ Stars 排名先生成最多 3 颗的完整提案，Memory Island 再决定是否
 
 窗口侧的 `branch` 与 `message_high_water` 都会让两条 lane 按当前提案重建：前者表示更早历史发生语义变化，后者表示消息数越过高水位并触发裁剪。普通聊天继续关闭 Stars recent fatigue；多场景标签也不参与这条逃生门。
 
+**上面说的窄只是 Star 侧。** 两条 lane 在 `memory_island.py::_legacy_forced_new_item` 里是不对称的：Mem 侧新进一条 `search_mode == "entity"` 或 `memory_kind == "promise"` 的便签就直接掀门，而 `entity` 是便签召回的第一层无阈值精确锚点——圆圆一提到某个人、某个地方、某样东西就会命中。所以 Mem lane 的实际粘性远低于 Star lane，这是取舍不是遗漏：漏掉一条刚被点到名的便签，比重写一次缓存断点贵。想让它变粘，先回答这个取舍反过来划不划算。`2/3` 这个数写死在 `resolve_memory_island` 的默认参数里，没有 Admin 项也没有环境变量，同样是故意的——它是缓存断点的粘性系数，不是手感旋钮。各阈值的标度与标定出处见 `docs/architecture/MEMORY_TUNING.md`。
+
 ### 2.5 ACT-R 亮度模型
 
 来自认知心理学的 ACT-R 理论。每次激活（显示、注入、搜索）记一条 activation 记录。

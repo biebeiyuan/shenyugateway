@@ -55,7 +55,11 @@ class CrudMixin:
         return _safe_int(limit if limit is not None else configured, 3, 1, 5)
 
     def _min_score(self) -> float:
-        return _cfg_float(self.cfg, "star_min_score", 0.18)
+        # 兜底值必须跟 `config.py` 的默认值一致，由
+        # `tests/test_config_default_homes.py` 看守。这道线量在 RRF 融合之后
+        # （量级 ≈1/(k+rank)），不是 0..1 相似度——改打分公式就得重标，
+        # 标度见 `docs/architecture/MEMORY_TUNING.md`。
+        return _cfg_float(self.cfg, "star_min_score", 0.008)
 
     def _related_min_score(self) -> float:
         return _cfg_float(self.cfg, "star_related_min_score", 0.22)

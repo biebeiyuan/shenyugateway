@@ -170,7 +170,9 @@ class ContextBuilder:
                 "day",
                 self.cfg.calendar_inject_day,
                 self.cfg.calendar_context_day_limit,
-                getattr(self.cfg, "calendar_context_day_offset", 0),
+                # 兜底跟 `config.py` 的默认值一致，由
+                # `tests/test_config_default_homes.py` 看守。
+                getattr(self.cfg, "calendar_context_day_offset", 2),
             ),
             load("week", self.cfg.calendar_inject_week, self.cfg.calendar_context_week_limit),
             load("month", self.cfg.calendar_inject_month, self.cfg.calendar_context_month_limit),

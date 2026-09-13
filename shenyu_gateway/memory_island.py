@@ -19,6 +19,12 @@ def _mem_date_note(item: dict[str, Any]) -> list[str]:
 
     只按 Asia/Shanghai 的整天算，所以同一天里渲染结果不变——动态岛是缓存断点，
     一句话每小时变一次会白烧掉一次缓存。
+
+    跨天时这句话会变，于是这条便签的指纹也变，`content_changed` 为真、Mem lane
+    重排一次——这是**要的**，不是指纹被污染：相对天数是沈予给未来自己的闹钟，
+    日子过了就该换说法。代价封在一天一次的缓存断点上。它不会牵动便签的簿记，
+    因为 `entering` 按 item id 算而不是按指纹算：同一条便签第二天仍在 `old_ids`
+    里，`mark_triggered` 和提醒打戳都不会被重打一遍。
     """
     remind_on = parse_local_date(item.get("remind_on"))
     if not remind_on:
@@ -183,6 +189,16 @@ def _overlap(old_items: list[dict[str, Any]], new_items: list[dict[str, Any]]) -
 
 
 def _legacy_forced_new_item(kind: str, old_items: list[dict[str, Any]], new_items: list[dict[str, Any]]) -> bool:
+    """新进来的这条够不够格直接掀掉 2/3 重叠门。
+
+    两条 lane 在这里是不对称的，这是取舍不是遗漏。Star 侧只认排名器自己打的
+    `force_island_rewrite`（硬点名、软点名），门很窄。Mem 侧认 `entity` 和
+    `promise`：`entity` 是 `mem_notes/_search.py::search_notes_contextual` 的第一层
+    精确锚点命中——用户正在说这个人、这个地方、这件东西——`promise` 是承诺。
+    所以 Mem lane 的粘性实际上比 Star lane 低得多：宁可丢一次缓存断点，
+    也不能让该想起来的没想起来。想让 Mem lane 也变粘，先想清楚漏掉一条
+    精确命中的便签值不值这次缓存。
+    """
     old_ids = {_item_id(item) for item in old_items if _item_id(item)}
     for item in new_items:
         if _item_id(item) in old_ids:
