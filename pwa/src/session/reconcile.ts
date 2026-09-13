@@ -214,7 +214,7 @@ function variantKey(variant: MessageVariant): string {
 // can still be missing older variants.
 export function applyReplyRecovery(messages: UiMessage[], payload: Record<string, unknown>): boolean {
   const rawReplies = Array.isArray(payload.replies) ? payload.replies : []
-  const replies = rawReplies
+  let replies = rawReplies
     .filter((item): item is RecoveryReply => Boolean(item && typeof item === 'object'))
     .map(recoveryVariant)
     .filter((item): item is MessageVariant => Boolean(item))
@@ -238,6 +238,15 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     }
     messages.splice(lastUserIndex + 1, 0, target)
   }
+
+  // Recovery repairs the current reply only.  Historical roll variants remain
+  // local state; matching them by repeated user text is inherently ambiguous.
+  if (target.replyVersionId) {
+    replies = replies.filter((reply) => reply.replyVersionId === target.replyVersionId)
+  } else {
+    replies = replies.slice(-1)
+  }
+  if (!replies.length) return false
 
   // 确保 variants 存在，但不要用 message 覆盖已有的 variant（保护 responseMeta 等字段）
   if (!target.variants?.length) {
@@ -374,12 +383,14 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     : (priorError || priorTruncated) && lastRecoveredCanRepair ? lastRecoveredIndex : currentIndex
 
   const applied = variants[selectedIndex]
-  // 只有涵盖本地且归一化后的正文/回响确实变化，才算内容改善。
-  const improved = Boolean(applied)
+  // 服务端这一版涵盖了本地尾巴：找回成功，无论正文是否变化。
+  const converged = Boolean(applied)
     && acceptRecovery(
       { content: target.content || '', echo: target.echo || '' },
       { content: applied.content, echo: applied.echo }
     )
+  // 涵盖之外还要归一化后的正文/回响确实变化，才算内容改善。
+  const improved = converged
     && (
       normalizeText(applied.content) !== normalizeText(target.content || '')
       || normalizeText(applied.echo) !== normalizeText(target.echo || '')
@@ -402,8 +413,8 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
       target.thinkingSegments = localThinkingSegments
     }
     target.streaming = false
-    // 只有真的改善了才清除 error/truncated，否则恢复原标记
-    if (improved) {
+    // 只有服务端这版涵盖本地时才清除 error/truncated，否则恢复原标记
+    if (converged) {
       target.error = undefined
       target.truncated = undefined
     } else {
@@ -411,6 +422,15 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
       target.truncated = priorTruncated
     }
     syncCurrentVariant(target)
+    changed = true
+  }
+
+  // An identical version is still a successful recovery: clear stale retry
+  // markers even when there is no content or variant change to apply.
+  if (converged && (target.error || target.truncated)) {
+    target.error = undefined
+    target.truncated = undefined
+    target.streaming = false
     changed = true
   }
 

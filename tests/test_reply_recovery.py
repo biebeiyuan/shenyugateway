@@ -2,7 +2,7 @@ from shenyu_gateway.gateway_admin_routes import collect_reply_recovery_rows
 from shenyu_gateway.tool_loop import _visible_round_content
 
 
-def test_collect_reply_recovery_rows_returns_latest_same_user_roll_group_only():
+def test_collect_reply_recovery_rows_returns_latest_request_only():
     rows = [
         {"id": "u0", "role": "user", "content": "旧问题"},
         {"id": "a0", "role": "assistant", "content": "旧回答", "source_id": "old"},
@@ -15,8 +15,11 @@ def test_collect_reply_recovery_rows_returns_latest_same_user_roll_group_only():
     ]
     result = collect_reply_recovery_rows(rows)
     assert result["user_content"].startswith("想吃什么")
-    assert [item["reply_version_id"] for item in result["replies"]] == ["v1", "v2"]
-    assert result["replies"][1]["tool_rows"][0]["id"] == "t2"
+    assert result["replies"] == []
+
+    rows.append({"id": "a3", "role": "assistant", "content": "第三版", "source_id": "v3"})
+    result = collect_reply_recovery_rows(rows)
+    assert [item["reply_version_id"] for item in result["replies"]] == ["v3"]
 
 
 def test_collect_reply_recovery_rows_stops_at_different_user_turn():

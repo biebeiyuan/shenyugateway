@@ -191,8 +191,8 @@ describe('applyReconciledTail — no-op branch', () => {
   })
 })
 
-describe('applyReplyRecovery — durable roll group', () => {
-  it('merges all same-user rolls into one switchable assistant bubble', () => {
+describe('applyReplyRecovery — current reply only', () => {
+  it('recovers only the current version and leaves historical rolls local', () => {
     const messages = [
       uiMessage('user', '最后一个问题 【状态】'),
       uiMessage('assistant', '当前版本', { replyVersionId: 'v3' }),
@@ -204,9 +204,8 @@ describe('applyReplyRecovery — durable roll group', () => {
         { id: 'a3', reply_version_id: 'v3', content: '当前版本' },
       ],
     })
-    expect(changed).toBe(true)
-    expect(messages[1].variants).toHaveLength(3)
-    expect(messages[1].variants?.map((item) => item.replyVersionId)).toEqual(['v1', 'v2', 'v3'])
+    expect(changed).toBe(false)
+    expect(messages[1].variants).toHaveLength(1)
     expect(messages[1].replyVersionId).toBe('v3')
     expect(messages[1].content).toBe('当前版本')
   })
@@ -279,8 +278,8 @@ describe('applyReplyRecovery — durable roll group', () => {
         { reply_version_id: 'v2', content: '版本二' },
       ],
     })
-    expect(changed).toBe(true)
-    expect(messages[1].variants).toHaveLength(2)
+    expect(changed).toBe(false)
+    expect(messages[1].variants).toHaveLength(1)
     // First variant should preserve thinking
     expect(messages[1].variants?.[0].thinking).toBe('Original thinking')
     expect(messages[1].variants?.[0].thinkingSegments).toHaveLength(1)
@@ -408,14 +407,25 @@ describe('applyReplyRecovery — durable roll group', () => {
     expect(messages[1].events[0].name).toBe('weather')
   })
 
-  it('keeps truncated when the server has nothing better yet', () => {
+  it('clears truncated when the matching server version is already complete', () => {
     const messages = [
       uiMessage('user', '问题'),
       uiMessage('assistant', '半截', { replyVersionId: 'v1', truncated: true }),
     ]
     applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '半截' }] })
-    expect(messages[1].truncated).toBe(true)
-    expect(tailNeedsReconcile(messages)).toBe(true)
+    expect(messages[1].truncated).toBeUndefined()
+    expect(tailNeedsReconcile(messages)).toBe(false)
+  })
+
+  it('clears truncated when the matching server version is identical', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '完整回复', { replyVersionId: 'v1', truncated: true }),
+    ]
+    const changed = applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '完整回复' }] })
+    expect(changed).toBe(true)
+    expect(messages[1].truncated).toBeUndefined()
+    expect(tailNeedsReconcile(messages)).toBe(false)
   })
 
   it('rejects server content that is longer but does not include local text', () => {
@@ -461,10 +471,10 @@ describe('applyReplyRecovery — durable roll group', () => {
     ]
     applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v9', content: 'B'.repeat(200) }] })
     expect(messages[1].content.length).toBe(800)
-    expect(messages[1].truncated).toBe(true) // 退避链必须还活着
+    expect(messages[1].truncated).toBeUndefined()
   })
 
-  it('keeps every roll when repairing a truncated tail', () => {
+  it('does not import unrelated historical rolls into a truncated tail', () => {
     const messages = [
       uiMessage('user', '问题'),
       uiMessage('assistant', '半截', { truncated: true }),
@@ -475,9 +485,9 @@ describe('applyReplyRecovery — durable roll group', () => {
         { reply_version_id: 'v2', content: '第二版' },
       ],
     })
-    expect(messages[1].variants).toHaveLength(3)
+    expect(messages[1].variants).toHaveLength(2)
     expect(messages[1].content).toBe('半截')
-    expect(messages[1].truncated).toBe(true)
+    expect(messages[1].truncated).toBeUndefined()
   })
 
   it('preserves responseMeta during recovery', () => {

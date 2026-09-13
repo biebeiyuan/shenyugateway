@@ -65,12 +65,12 @@ def _recovery_user_key(value: Any) -> str:
 
 
 def collect_reply_recovery_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
-    """Collect all completed replies in the trailing same-user roll group.
+    """Collect the completed reply for the latest user request only.
 
-    A roll is logged as another user row followed by its assistant row.  The
-    latest context snapshot intentionally collapses that history to one
-    assistant message, so recovery must read the durable message stream and
-    walk only the contiguous suffix that belongs to the latest user content.
+    Recovery repairs a reply the PWA lost after the gateway completed it.  It
+    does not reconstruct historical roll variants: repeated user text is
+    ambiguous without a per-request user id and must never merge old replies
+    into the current bubble.
     """
     if not rows:
         return {"user_content": "", "replies": []}
@@ -85,46 +85,32 @@ def collect_reply_recovery_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
     if not user_key:
         return {"user_content": latest_user, "replies": []}
 
-    group_user_indices = [latest_user_index]
-    for index in range(latest_user_index - 1, -1, -1):
-        row = rows[index]
-        if row.get("role") != "user":
-            continue
-        if _recovery_user_key(row.get("content")) != user_key:
-            break
-        group_user_indices.append(index)
-    group_user_indices.reverse()
-
     replies: list[dict[str, Any]] = []
-    for user_index in group_user_indices:
-        assistant_rows: list[dict[str, Any]] = []
-        tool_rows: list[dict[str, Any]] = []
-        first_assistant: dict[str, Any] | None = None
-        for row in rows[user_index + 1:]:
-            role = row.get("role")
-            if role == "user":
-                break
-            if role == "tool":
-                tool_rows.append(row)
-            elif role == "assistant":
-                if not first_assistant:
-                    first_assistant = row
-                assistant_rows.append(row)
-        if not first_assistant or not assistant_rows:
-            continue
-        # 拼接整轮工具回合的所有 assistant 内容
+    assistant_rows: list[dict[str, Any]] = []
+    tool_rows: list[dict[str, Any]] = []
+    first_assistant: dict[str, Any] | None = None
+    for row in rows[latest_user_index + 1:]:
+        role = row.get("role")
+        if role == "user":
+            break
+        if role == "tool":
+            tool_rows.append(row)
+        elif role == "assistant":
+            if not first_assistant:
+                first_assistant = row
+            assistant_rows.append(row)
+    if first_assistant and assistant_rows:
         full_content = "".join(str(r.get("content") or "") for r in assistant_rows)
-        if not full_content.strip():
-            continue
-        replies.append(
-            {
-                "id": first_assistant.get("id"),
-                "reply_version_id": first_assistant.get("source_id"),
-                "content": full_content,
-                "tool_rows": tool_rows,
-                "user_message_id": rows[user_index].get("id"),
-            }
-        )
+        if full_content.strip():
+            replies.append(
+                {
+                    "id": first_assistant.get("id"),
+                    "reply_version_id": first_assistant.get("source_id"),
+                    "content": full_content,
+                    "tool_rows": tool_rows,
+                    "user_message_id": rows[latest_user_index].get("id"),
+                }
+            )
     return {"user_content": latest_user, "replies": replies}
 
 
