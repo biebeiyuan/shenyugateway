@@ -88,10 +88,23 @@ function replyRowAfter(rows: RecentRow[], anchorIndex: number): RecentRow | unde
   }
   if (!assistantRows.length) return undefined
   if (assistantRows.length === 1) return assistantRows[0]
-  // 多个 assistant 行：拼接完整的工具回合内容，段落间用 \n\n 对齐本地流式约定
-  // 继承最后一行的元数据（source_id 等），因为最后一段是收口行
-  const fullContent = assistantRows.map(r => String(r.content || '')).join('\n\n')
-  return { ...assistantRows[assistantRows.length - 1], content: fullContent }
+
+  // 多个 assistant 行：只有同一个 source_id 的才是分片，需要拼接。
+  // 不同 source_id 是多轮工具调用的不同回复，只返回最后一条（最新的完整回复）。
+  const lastRow = assistantRows[assistantRows.length - 1]
+  const lastSourceId = String(lastRow.source_id || '')
+
+  // 收集与最后一条 source_id 相同的所有行（同一回复的分片）
+  const sameReplyRows = assistantRows.filter(r => String(r.source_id || '') === lastSourceId && lastSourceId)
+
+  // 如果只有最后一条属于这个 source_id，或者没有 source_id（旧数据），直接返回最后一条
+  if (sameReplyRows.length <= 1 || !lastSourceId) {
+    return lastRow
+  }
+
+  // 同一回复的多个分片：拼接内容，段落间用 \n\n 对齐本地流式约定
+  const fullContent = sameReplyRows.map(r => String(r.content || '')).join('\n\n')
+  return { ...lastRow, content: fullContent }
 }
 
 export function applyReconciledTail(messages: UiMessage[], payload: Record<string, unknown>): boolean {
