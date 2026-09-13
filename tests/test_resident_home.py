@@ -294,8 +294,51 @@ def test_crlf_in_an_untouched_file_is_reported_without_failing_the_check(tmp_pat
     assert report["pending"] == []
     lines = _format_line_endings(report)
     assert len(lines) == 1
-    assert "1 other tracked file(s)" in lines[0] and "drifted.py" in lines[0]
+    # A count and what happens on its own, not a filename list and a chore: the
+    # default view is read every run, and a line that asks for something it does
+    # not need teaches the reader to skip the block the red light lives in.
+    assert "1 untouched file(s) not LF" in lines[0]
+    assert "drifted.py" not in lines[0]
+    assert "--line-endings" in lines[0]
+    # Short enough to take in at a glance. The first attempt at this line was a
+    # full explanatory sentence, which was harder to skim than the list it
+    # replaced — the opposite of the point.
+    assert len(lines[0]) < 110
     assert _print_check([{"id": "demo", "title": "演示", "status": "ok"}], line_endings=report) == 0
+
+
+def test_the_inherited_line_can_still_be_asked_for_every_path(tmp_path):
+    # Quiet by default must not mean unavailable: --line-endings is the answer to
+    # "which files", so collapsing the default view loses no information.
+    _init_repo(tmp_path)
+    (tmp_path / "drifted.py").write_bytes(b"DRIFTED = 1\r\n")
+
+    lines = _format_line_endings(working_tree_line_endings(root=tmp_path), verbose=True)
+
+    assert len(lines) == 1
+    assert "drifted.py" in lines[0]
+    assert "--line-endings" not in lines[0]
+
+
+def test_a_live_pending_failure_is_not_shared_with_an_inherited_count(tmp_path, capsys):
+    # The inherited count has nothing to do; printing it beside a real failure is
+    # noise competing with the one line worth acting on. `most actionable first`
+    # only holds if the rest knows when to stay out of the way.
+    _init_repo(tmp_path)
+    (tmp_path / "drifted.py").write_bytes(b"DRIFTED = 1\r\n")
+    (tmp_path / "fresh.py").write_bytes(b"FRESH = 1\r\n")
+
+    report = working_tree_line_endings(root=tmp_path)
+
+    assert report["pending"] == ["fresh.py"]
+    lines = _format_line_endings(report)
+    assert len(lines) == 1
+    assert "you are about to commit" in lines[0]
+    assert "untouched tracked file(s)" not in lines[0]
+    # Asking explicitly still shows both, so nothing is hidden — only deferred.
+    assert len(_format_line_endings(report, verbose=True)) == 2
+    assert _print_check([{"id": "demo", "title": "演示", "status": "ok"}], line_endings=report) == 1
+    assert "drifted.py" not in capsys.readouterr().out
 
 
 def test_crlf_in_a_file_this_change_touches_fails_the_check(tmp_path, capsys):

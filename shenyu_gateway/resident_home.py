@@ -565,8 +565,23 @@ def home_snapshot(
     }
 
 
-def _format_line_endings(report: dict[str, Any]) -> list[str]:
-    """Line-ending lines for `check`, most actionable first."""
+def _format_line_endings(report: dict[str, Any], *, verbose: bool = False) -> list[str]:
+    """Line-ending lines for `check`, most actionable first.
+
+    ``inherited`` is by definition the files this handoff did *not* touch:
+    ``pending`` is ``untracked or path in changed``, so anything edited here is
+    already in the other bucket. That makes the inherited list the one thing on
+    this report with nothing to do — and it printed four filenames plus a
+    remedy every single run, which trains a reader to skip the whole block, the
+    real red light included. So it collapses to a count and says what actually
+    happens instead of asking for anything: touching one of those files moves it
+    to ``pending`` on the next run and fails `check` there.
+
+    It also stays quiet entirely while something is pending. A standing count
+    beside a live failure is noise competing with the one line worth reading.
+    ``--line-endings`` and ``--json`` still carry every path, so quiet here
+    never means unavailable.
+    """
     if not report.get("checked"):
         # Printing nothing here reads exactly like a clean check, which is the one
         # thing this must not do: a guard that quietly stops guarding is worse than
@@ -585,14 +600,12 @@ def _format_line_endings(report: dict[str, Any]) -> list[str]:
             + " — normalize before reviewing: sed -i 's/\\r$//' <path>"
         )
     inherited = [item["path"] for item in offenders if not item["pending"]]
-    if inherited:
-        lines.append(
-            f"[line endings] {len(inherited)} other tracked file(s) carry non-LF endings "
-            "from earlier sessions (commits stay LF via .gitattributes; normalize when you "
-            "next touch them): "
-            + ", ".join(inherited[:4])
-            + (f" … +{len(inherited) - 4}" if len(inherited) > 4 else "")
-        )
+    if inherited and (verbose or not pending):
+        # Short enough to take in without reading: the count, then that it is
+        # inert. The reason it is inert is in this function's docstring, not on a
+        # line printed every single run.
+        head = f"[line endings] {len(inherited)} untouched file(s) not LF — inert, self-clearing"
+        lines.append(f"{head}: {', '.join(inherited)}" if verbose else f"{head} (--line-endings)")
     return lines
 
 
@@ -601,6 +614,7 @@ def _print_check(
     *,
     as_json: bool = False,
     line_endings: dict[str, Any] | None = None,
+    verbose_line_endings: bool = False,
 ) -> int:
     records = list(statuses)
     report = line_endings or {"checked": False, "files": []}
@@ -634,7 +648,7 @@ def _print_check(
                     if shared:
                         detail += " (*=shared, ack-shared applies if all are *)"
                 print(f"[review required] {record['id']} / {record['title']} ({detail})")
-        for line in _format_line_endings(report):
+        for line in _format_line_endings(report, verbose=verbose_line_endings):
             print(line)
     if any(record["status"] != "ok" for record in records):
         return 1
@@ -647,6 +661,12 @@ def _build_parser() -> argparse.ArgumentParser:
 
     check = subparsers.add_parser("check", help="Check whether mapped source files need resident review.")
     check.add_argument("--json", action="store_true", dest="as_json")
+    check.add_argument(
+        "--line-endings",
+        action="store_true",
+        dest="verbose_line_endings",
+        help="List every path carrying non-LF endings, including untouched inherited ones.",
+    )
 
     bootstrap = subparsers.add_parser("bootstrap", help="Record the current source fingerprints without a change entry.")
     bootstrap.add_argument("--actor", default="")
@@ -678,6 +698,7 @@ def main(argv: list[str] | None = None) -> int:
                 check_manifest(),
                 as_json=args.as_json,
                 line_endings=working_tree_line_endings(),
+                verbose_line_endings=args.verbose_line_endings,
             )
         if args.command == "bootstrap":
             bootstrap_manifest(actor=args.actor or None)

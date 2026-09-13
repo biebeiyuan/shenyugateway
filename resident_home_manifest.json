@@ -390,20 +390,20 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "ea45150352ff41d8cddbaba3a05bf48372f55ec117107000f05a9a83e1ae0597",
+        "fingerprint": "07c39eeeb637b44acdb19c58347cf804a7c325ec25cb3f56ede6b48c22e749d4",
         "file_hashes": {
           "scripts/resident_home.py": "10cdd7627ce6c5c6f8fefbf7d45fb21df6dcd02af289a6e5af91212d7cf0c21e",
           "shenyu_gateway/context_builder.py": "582103d531489bb55a5a0eb020f6821222c248fc1884a7a78bfe4669d072622c",
           "shenyu_gateway/context_layers.py": "7103d452eca4a332fca710ee5f7b3c3283eb2817f3d6571e518b01179356818b",
           "shenyu_gateway/project_map.py": "008627dc64d4d3a8f0331a9afa389bb05e7a83d5cbc66d3e7414e71d4bcf30d1",
           "shenyu_gateway/resident_books.py": "d5c952e25906818c1a5c9d52ea8ec1891285ffa5e2e1c14c4c5fcae879d36a08",
-          "shenyu_gateway/resident_home.py": "a8e32ac2ef47f838814ca96ecd6a32112a03da17c79fb57db5e60f0ab8422514"
+          "shenyu_gateway/resident_home.py": "44c4b9de5b3d0fd52ce005bf0fd5f402ac36a89c8a990de247a71d9c3d69c296"
         },
-        "commit": "6c99e80d424622819c0c6d379ae82124f950d7db",
-        "revision": "6c99e80d424622819c0c6d379ae82124f950d7db-dirty",
+        "commit": "3bb374d044b6e800815eb8733c4620ab09944ef8",
+        "revision": "3bb374d044b6e800815eb8733c4620ab09944ef8-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-01T20:39:34+08:00",
-        "reviewed_by": "Codex"
+        "reviewed_at": "2026-09-13T22:00:43+08:00",
+        "reviewed_by": "Claude"
       }
     }
   }
