@@ -969,7 +969,17 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
 
     @router.get("/api/gateway/sessions/{session_tag}/reply-recovery")
     async def session_reply_recovery(session_tag: str, limit: int = 20):
-        """Return every durable reply in the latest same-user roll group."""
+        """Return the durable reply to the latest user request, and only that one.
+
+        Historical roll variants are deliberately not returned: repeated user
+        text cannot say which past request a reply belonged to, so merging them
+        would attach an older roll's reply to the current bubble.
+
+        `limit` slices `replies`, which holds at most one entry — so it is
+        effectively inert.  It stays only because removing a query parameter
+        from a live endpoint would 422 a cached PWA bundle that still sends it;
+        the row scan below is a fixed 5000 and is not what `limit` controls.
+        """
         store = deps.require_session_store()
         session = store.get_session_by_tag(session_tag)
         if not session:

@@ -3674,3 +3674,135 @@ def test_tool_loop_salvages_spoken_rounds_when_round_budget_is_exhausted():
         assert assistant_outputs == ["第一轮说了话。第二轮也说了。"]
 
     asyncio.run(run_case())
+
+
+def test_salvaged_row_carries_the_reply_version_id_the_client_matches_on():
+    """The salvage is only reachable if the client can identify it.
+
+    `applyReplyRecovery` matches the server candidate against the bubble's
+    `reply_version_id` and does nothing when they differ, so a salvaged row
+    without that id is durable but unreachable — the bubble stays broken.
+    """
+    async def run_case():
+        recorded: list[dict] = []
+
+        ctx = _nonstream_tool_loop_ctx(
+            [_round_completion("说了一句。", tool_call="tooluse_1", finish_reason="tool_calls")],
+            max_rounds=1,
+            assistant_outputs=[],
+        )
+
+        class Sessions:
+            def log_tool_result(self, *args, **kwargs):
+                pass
+
+            def log_assistant_output(self, session_id, message, **kwargs):
+                recorded.append({"content": message.get("content", ""), **kwargs})
+
+        ctx.sessions = Sessions()
+        ctx.log_entry["reply_version_id"] = "reply-abc"
+
+        with pytest.raises(HTTPException):
+            await run_internal_tool_loop(ctx)
+
+        assert recorded == [{"content": "说了一句。", "echo": "", "reply_version_id": "reply-abc"}]
+
+    asyncio.run(run_case())
+
+
+def test_streaming_tool_loop_also_salvages_when_the_round_budget_is_exhausted():
+    """The streaming exit needs its own coverage, not the non-streaming one's.
+
+    Streaming is the path the PWA actually uses, and it is the path where the
+    client has already rendered those rounds on screen before the raise.
+    """
+    async def run_case():
+        assistant_outputs: list[str] = []
+        rounds_started: list[int] = []
+
+        class Body:
+            model = "test-model"
+
+        class Cfg:
+            max_internal_tool_rounds = 2
+
+        async def build_upstream_request(request, body, messages_override=None, meta=None):
+            rounds_started.append(len(rounds_started) + 1)
+            return (
+                {"model": body.model, "messages": messages_override or [], "tools": []},
+                {},
+                "",
+                {"enabled": False},
+                {"chat_url": "https://upstream.test/v1/chat/completions", "protocol": "openai"},
+            )
+
+        async def stream_upstream_openai_chunks(request, payload, headers, model, upstream):
+            # 每一轮都还要调工具，于是两轮用尽后撞顶。
+            yield {
+                "choices": [
+                    {
+                        "delta": {
+                            "content": f"第{len(rounds_started)}轮说了话。",
+                            "tool_calls": [
+                                {
+                                    "index": 1,
+                                    "id": f"tooluse_{len(rounds_started)}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": "shenyu_gateway_tool",
+                                        "arguments": "{\"tool\":\"shenyu_list_mem_notes\",\"arguments\":{}}",
+                                    },
+                                }
+                            ],
+                        },
+                        "finish_reason": "tool_calls",
+                    }
+                ]
+            }
+
+        async def execute_gateway_tool(name, args, session_tag=None, cfg=None, turn_messages=None):
+            return {"ok": True, "items": []}
+
+        class Sessions:
+            def log_tool_result(self, *args, **kwargs):
+                pass
+
+            def log_assistant_output(self, session_id, message, **kwargs):
+                assistant_outputs.append(str(message.get("content", "")))
+
+        ctx = InternalToolLoopContext(
+            request=_DisconnectProbe(),
+            body=Body(),
+            prepared_messages=[{"role": "user", "content": "list mem"}],
+            meta={"session": {"id": "session-1", "session_tag": "5.15"}},
+            log_entry={},
+            cfg=Cfg(),
+            store=None,
+            sessions=Sessions(),
+            build_upstream_request=build_upstream_request,
+            call_upstream_json=None,
+            stream_upstream_openai_chunks=stream_upstream_openai_chunks,
+            execute_gateway_tool=execute_gateway_tool,
+            record_upstream_payload=lambda log_entry, payload, headers: None,
+            aggregate_cache_usage=lambda usages, protocol="": {},
+            finalize_assistant_private_content=lambda assistant_message, **kwargs: (
+                assistant_message.get("content", ""),
+                "",
+                "",
+                {"applied": False},
+            ),
+            store_heartbeat=lambda *args, **kwargs: None,
+            mark_context_consumed=lambda meta: None,
+            write_completion_context_snapshot=lambda *args, **kwargs: None,
+            record_response_text=lambda log_entry, text: log_entry.__setitem__("response_text", text),
+        )
+
+        with pytest.raises(HTTPException) as excinfo:
+            async for _event in run_internal_tool_loop_stream(ctx):
+                pass
+
+        assert excinfo.value.status_code == 500
+        assert rounds_started == [1, 2]
+        assert assistant_outputs == ["第1轮说了话。第2轮说了话。"]
+
+    asyncio.run(run_case())

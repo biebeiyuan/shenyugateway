@@ -678,4 +678,58 @@ describe('applyReplyRecovery — current reply only', () => {
     expect(changed).toBe(false)
     expect(messages[1].content).toBe('完整的长回复内容')
   })
+
+  // 撞满 max_internal_tool_rounds 时网关先抢救落库、再抛 500。客户端收到的是错误，
+  // 气泡标 error；服务端手里则是一份注定不会再变长的抢救稿。这两种收尾组合是新增
+  // 路径里唯一没被覆盖的，单独钉住。
+  describe('after the gateway hit its tool-round ceiling', () => {
+    it('takes the salvaged rounds and stops retrying when they cover the local text', () => {
+      // 抢救稿等于客户端看到的全部：找回成功，error 清掉，退避链停下。
+      const messages = [
+        uiMessage('user', '问题'),
+        uiMessage('assistant', '第一轮说了话。', { replyVersionId: 'v1', error: '网关错误' }),
+      ]
+      const changed = applyReplyRecovery(messages, {
+        replies: [{ reply_version_id: 'v1', content: '第一轮说了话。第二轮也说了。' }],
+      })
+      expect(changed).toBe(true)
+      expect(messages[1].content).toBe('第一轮说了话。第二轮也说了。')
+      expect(messages[1].error).toBeUndefined()
+      expect(messages[1].variants?.[messages[1].selectedVariantIndex ?? 0].error).toBeUndefined()
+      expect(tailNeedsReconcile(messages)).toBe(false)
+    })
+
+    it('keeps the error marker when the client saw more than the salvage captured', () => {
+      // 最后一轮说了一半才撞顶：客户端比抢救稿多。护栏必须拒绝——抢救稿不会再长了，
+      // 但气泡上的 error 是真的，不能因为"找回跑过一次"就抹掉。
+      const messages = [
+        uiMessage('user', '问题'),
+        uiMessage('assistant', '第一轮说了话。第二轮也说了。第三轮说到一半', {
+          replyVersionId: 'v1',
+          error: '网关错误',
+        }),
+      ]
+      const changed = applyReplyRecovery(messages, {
+        replies: [{ reply_version_id: 'v1', content: '第一轮说了话。第二轮也说了。' }],
+      })
+      expect(changed).toBe(false)
+      expect(messages[1].content).toBe('第一轮说了话。第二轮也说了。第三轮说到一半')
+      expect(messages[1].error).toBe('网关错误')
+      expect(messages[1].variants?.length ?? 1).toBe(1)
+    })
+
+    it('recovers a salvaged reply into a bubble that never rendered any text', () => {
+      // 首轮就撞顶的极端：客户端只有一个空的错误气泡，抢救稿是唯一的正文来源。
+      const messages = [
+        uiMessage('user', '问题'),
+        uiMessage('assistant', '', { replyVersionId: 'v1', error: '网关错误' }),
+      ]
+      const changed = applyReplyRecovery(messages, {
+        replies: [{ reply_version_id: 'v1', content: '只说出口了这一句。' }],
+      })
+      expect(changed).toBe(true)
+      expect(messages[1].content).toBe('只说出口了这一句。')
+      expect(messages[1].error).toBeUndefined()
+    })
+  })
 })
