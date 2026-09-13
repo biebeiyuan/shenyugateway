@@ -7,6 +7,8 @@
 import asyncio
 import tempfile
 from pathlib import Path
+
+from .fake_postgrest import project_select
 from shenyu_gateway.chat_archive import ChatArchiveService
 from shenyu_gateway.store import GatewayStore
 
@@ -105,7 +107,7 @@ def test_archive_snippet_handles_casefold_expansion_without_offset_corruption():
 
         class Supabase:
             async def query(self, table, params=None):
-                return [{
+                rows = [{
                     "id": "sharp-s",
                     "session_tag": "test",
                     "role": "user",
@@ -115,6 +117,7 @@ def test_archive_snippet_handles_casefold_expansion_without_offset_corruption():
                     "archived_at": "2026-09-13T00:00:01+08:00",
                     "deleted_at": None,
                 }]
+                return project_select(rows, params)
 
         endpoint = next(
             route.endpoint for route in build_archive_router(
