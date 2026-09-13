@@ -97,8 +97,9 @@ def collect_reply_recovery_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
 
     replies: list[dict[str, Any]] = []
     for user_index in group_user_indices:
-        assistant: dict[str, Any] | None = None
+        assistant_rows: list[dict[str, Any]] = []
         tool_rows: list[dict[str, Any]] = []
+        first_assistant: dict[str, Any] | None = None
         for row in rows[user_index + 1:]:
             role = row.get("role")
             if role == "user":
@@ -106,15 +107,20 @@ def collect_reply_recovery_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
             if role == "tool":
                 tool_rows.append(row)
             elif role == "assistant":
-                assistant = row
-                break
-        if not assistant or not str(assistant.get("content") or "").strip():
+                if not first_assistant:
+                    first_assistant = row
+                assistant_rows.append(row)
+        if not first_assistant or not assistant_rows:
+            continue
+        # 拼接整轮工具回合的所有 assistant 内容
+        full_content = "".join(str(r.get("content") or "") for r in assistant_rows)
+        if not full_content.strip():
             continue
         replies.append(
             {
-                "id": assistant.get("id"),
-                "reply_version_id": assistant.get("source_id"),
-                "content": assistant.get("content") or "",
+                "id": first_assistant.get("id"),
+                "reply_version_id": first_assistant.get("source_id"),
+                "content": full_content,
                 "tool_rows": tool_rows,
                 "user_message_id": rows[user_index].get("id"),
             }

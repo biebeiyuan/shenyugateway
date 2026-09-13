@@ -223,15 +223,14 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         if cursor_filter_in_python:
             from datetime import datetime, timezone as tz
             direction, cursor_event_at, cursor_id = cursor_filter_in_python
+            # Fix URL decoding issue: + becomes space in query params
+            cursor_event_at = cursor_event_at.replace(" ", "+")
 
-            # Parse cursor timestamp, adding default timezone if missing
+            # Parse cursor timestamp as-is (with original timezone)
             try:
-                if 'T' in cursor_event_at and '+' not in cursor_event_at and not cursor_event_at.endswith('Z'):
-                    cursor_dt = datetime.fromisoformat(cursor_event_at).replace(tzinfo=tz.utc)
-                else:
-                    cursor_dt = datetime.fromisoformat(cursor_event_at)
-                    if cursor_dt.tzinfo is None:
-                        cursor_dt = cursor_dt.replace(tzinfo=tz.utc)
+                cursor_dt = datetime.fromisoformat(cursor_event_at)
+                if cursor_dt.tzinfo is None:
+                    cursor_dt = cursor_dt.replace(tzinfo=tz.utc)
             except ValueError:
                 # Fallback: can't parse, skip filtering
                 cursor_dt = None
@@ -324,33 +323,31 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         if not needle:
             return {"results": [], "count": 0, "has_more": False, "query": "", "next_cursor": None}
         client = _supabase()
+
+        # Escape special characters in PostgREST ilike pattern: *, comma, parens, quotes
+        # Wrap in quotes to prevent comma/parens being treated as separators
+        escaped = needle.replace('"', '""')  # Double quotes for escaping inside quoted string
+        escaped = escaped.replace('*', '\\*')  # Escape wildcard
+
         params = {
             "select": "id,session_tag,role,content,content_hash,event_at,archived_at",
             "deleted_at": "is.null",
-            "content": f"ilike.*{needle}*",
+            "content": f'ilike."*{escaped}*"',  # Quoted pattern with escaped needle
             "order": _ORDER_DESC,
         }
         if role in ("user", "assistant"):
             params["role"] = f"eq.{role}"
 
-        # Cursor for pagination: "event_at|id" format (opaque to client, using | to avoid : collision).
-        # event_at is stripped of timezone suffix to avoid + encoding issues in URLs.
-        # Use OR filter: (event_at < cursor_time) OR (event_at = cursor_time AND id < cursor_id)
+        # Cursor for pagination: "event_at|id" format (opaque to client, pipe to avoid colon collision).
+        # event_at is full ISO timestamp with timezone; client must URL-encode the cursor.
         if cursor:
             parts = cursor.split("|", 1)
             if len(parts) == 2:
                 cursor_event_at, cursor_id = parts
-                # Normalize cursor timestamp for comparison (may be missing TZ suffix)
-                if 'T' in cursor_event_at and '+' not in cursor_event_at and not cursor_event_at.endswith('Z'):
-                    # Add back a neutral timezone for comparison
-                    cursor_event_at_cmp = cursor_event_at + '+00:00'
-                else:
-                    cursor_event_at_cmp = cursor_event_at
-                # PostgREST doesn't have native tuple comparison, so we approximate:
-                # fetch rows with event_at <= cursor_time, then filter in Python.
-                params["event_at"] = f"lte.{cursor_event_at_cmp}"
+                # Use the full timestamp for DB filter
+                params["event_at"] = f"lte.{cursor_event_at}"
 
-        rows = await _query_all(client, params, page_size=1000, max_rows=4000)
+        rows = await _query_all(client, params, page_size=1000, max_rows=10000)
         folded = _fold_handoff_copies(rows or [])
         lowered = needle.casefold()
 
@@ -364,14 +361,13 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             parts = cursor.split("|", 1)
             if len(parts) == 2:
                 cursor_event_at, cursor_id = parts
-                # Parse cursor timestamp, adding default timezone if missing
+                # Fix URL decoding issue: + becomes space in query params
+                cursor_event_at = cursor_event_at.replace(" ", "+")
+                # Parse cursor timestamp as-is (with original timezone)
                 try:
-                    if 'T' in cursor_event_at and '+' not in cursor_event_at and not cursor_event_at.endswith('Z'):
-                        cursor_dt = datetime.fromisoformat(cursor_event_at).replace(tzinfo=tz.utc)
-                    else:
-                        cursor_dt = datetime.fromisoformat(cursor_event_at)
-                        if cursor_dt.tzinfo is None:
-                            cursor_dt = cursor_dt.replace(tzinfo=tz.utc)
+                    cursor_dt = datetime.fromisoformat(cursor_event_at)
+                    if cursor_dt.tzinfo is None:
+                        cursor_dt = cursor_dt.replace(tzinfo=tz.utc)
                 except ValueError:
                     cursor_dt = None
 
@@ -418,13 +414,8 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         next_cursor = None
         if has_more and result_rows:
             last = result_rows[-1]
-            # Use ISO format without timezone suffix to avoid + encoding issues in URLs
+            # Keep full ISO timestamp with timezone in cursor (URL-encode it on client side)
             event_at = last.get('event_at') or ''
-            # Strip timezone suffix if present (e.g., "+08:00" or "Z")
-            if '+' in event_at:
-                event_at = event_at.split('+')[0]
-            elif event_at.endswith('Z'):
-                event_at = event_at[:-1]
             next_cursor = f"{event_at}|{last.get('id')}"
 
         return {

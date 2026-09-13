@@ -40,13 +40,11 @@ const searchResults = ref<ArchiveMessage[]>([])
 const searching = ref(false)
 const searchError = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
-let searchToken = 0
 let searchGen = 0 // generation 计数器：过期响应直接丢弃
 
 async function runSearch() {
   const needle = query.value.trim()
   if (!needle) { searchResults.value = []; searchError.value = ''; return }
-  const token = ++searchToken
   const gen = ++searchGen
   searching.value = true
   searchError.value = ''
@@ -84,6 +82,7 @@ const archiveError = ref('')
 const calendarOpen = ref(false)
 const calMonth = ref('') // YYYY-MM，展开的那个月
 const monthDays = ref<{ date: string; count: number }[]>([]) // 该月哪些天有聊天
+let monthGen = 0 // generation 计数器：防止月份切换时过期响应污染日历
 const WEEKDAYS = ['一', '二', '三', '四', '五', '六', '日']
 
 const monthLabel = computed(() => {
@@ -109,8 +108,16 @@ const calendarCells = computed(() => {
 })
 
 async function loadMonth(month: string) {
+  const gen = ++monthGen
   calMonth.value = month
-  try { monthDays.value = await fetchArchiveDays(props.ctx, month) } catch { monthDays.value = [] }
+  try {
+    const result = await fetchArchiveDays(props.ctx, month)
+    if (gen !== monthGen) return // 过期响应：丢弃
+    monthDays.value = result
+  } catch {
+    if (gen !== monthGen) return
+    monthDays.value = []
+  }
 }
 function shiftMonth(delta: number) {
   const [y, m] = calMonth.value.split('-').map(Number)
@@ -151,6 +158,11 @@ let archiveGen = 0 // generation 计数器：每次 loadArchive 递增，过期�
 async function loadArchive(focusDate?: string, focusId?: string) {
   const gen = ++archiveGen
   archiveError.value = ''
+  // 接管者负责清场：重置所有边缘加载状态
+  loadingOlder.value = false
+  loadingNewer.value = false
+  reachedOldest.value = false
+  reachedNewest.value = false
   try {
     if (!days.value.length) days.value = await fetchArchiveDays(props.ctx)
     const target = focusDate || activeDay.value || days.value[days.value.length - 1]?.date
@@ -160,8 +172,6 @@ async function loadArchive(focusDate?: string, focusId?: string) {
     const rows = await fetchArchiveMessages(props.ctx, { date: target, aroundDays: 1 })
     if (gen !== archiveGen) return
     archiveRows.value = rows
-    reachedOldest.value = false
-    reachedNewest.value = false
     archiveLoaded = true
     await nextTick()
     if (focusId) {
@@ -202,7 +212,7 @@ async function loadOlder() {
   const anchorId = archiveRows.value[0]?.id
   const first = archiveRows.value[0]
   if (!first || !anchorId) return
-  const cursor = makeCursor(first) // 复合游标 "event_at:id"
+  const cursor = makeCursor(first) // 复合游标 "event_at|id"
   const gen = archiveGen
   loadingOlder.value = true
   try {
@@ -374,6 +384,14 @@ function renderSnippet(row: ArchiveMessage): string {
   // 降级：没有 snippet 时显示前 80 字符
   return escape((row.content || '').slice(0, 80))
 }
+
+// TODO: day_start_hour 配置支持
+// 如果未来要支持可配置的日界（如凌晨 4 点而非午夜 0 点），需要：
+// 1. 后端 _cst_day 改用配置的 day_start_hour
+// 2. 前端删掉 cstDay() 函数（它现在用浏览器 API 自己算天，与后端日界不一致）
+// 3. 消息行带上服务端算好的 day 字段
+// 4. showDivider / jumpToContext / syncActiveDay 都改用服务端的 day 字段
+// （参考 pitfall #5：客户端自己算天会在日界改后立刻对不上）
 
 function switchTab(next: Tab) {
   tab.value = next

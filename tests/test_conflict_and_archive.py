@@ -115,7 +115,14 @@ class FakeSupabase:
             elif isinstance(value, str) and value.startswith("lt."):
                 rows = [r for r in rows if self._filter_compare(r, key, "lt", value[3:])]
             elif isinstance(value, str) and value.startswith("ilike."):
-                needle = value[6:].strip("*")
+                pattern = value[6:]
+                # Handle quoted patterns: ilike."*needle*" -> extract content inside quotes
+                if pattern.startswith('"') and pattern.endswith('"'):
+                    pattern = pattern[1:-1]
+                    # Unescape doubled quotes
+                    pattern = pattern.replace('""', '"')
+                # Strip wildcards and escaped wildcards for matching
+                needle = pattern.strip("*").replace("\\*", "*")
                 rows = [r for r in rows if needle.lower() in str(r.get(key) or "").lower()]
         if and_clause.startswith("(event_at.lt.") and and_clause.endswith(")"):
             before = and_clause[len("(event_at.lt.") : -1]
@@ -729,13 +736,17 @@ def test_archive_search_is_literal_and_folds_handoff_copies():
         }["/api/archive/search"]
 
         # 空 query 不触发全表
-        assert await endpoint(q="  ") == {"results": [], "count": 0, "query": ""}
+        resp = await endpoint(q="  ")
+        assert resp["results"] == [] and resp["count"] == 0 and resp["query"] == ""
 
         # 字面命中「焦糖」：两条，交接副本被折叠成一条
         hit = await endpoint(q="焦糖")
         assert hit["count"] == 2, hit
-        assert all("焦糖" in row["content"] for row in hit["results"])
-        assert [row["content"] for row in hit["results"]].count("糖别一次下锅，先干焦糖，琥珀色就离火") == 1
+        # Search results use snippet format, not full content
+        assert all("焦糖" in (row.get("snippet_match") or "") for row in hit["results"])
+        # Check that duplicate content is folded (only one assistant message about sugar)
+        assistant_snippets = [row["snippet_match"] for row in hit["results"] if row["role"] == "assistant"]
+        assert len(assistant_snippets) == 1
 
         # role 过滤
         only_user = await endpoint(q="焦糖", role="user")
@@ -964,9 +975,7 @@ def test_archive_messages_composite_cursor():
 
         # 用复合游标 "event_at|id" 往过去翻，应该正确处理同一时刻的多条消息
         # before 使用最新一条（msg-3）的复合游标
-        # 去掉时区后缀以避免 URL 编码问题
-        event_at = all_msgs[2]['event_at'].split('+')[0] if '+' in all_msgs[2]['event_at'] else all_msgs[2]['event_at'].rstrip('Z')
-        cursor = f"{event_at}|{all_msgs[2]['id']}"
+        cursor = f"{all_msgs[2]['event_at']}|{all_msgs[2]['id']}"
         resp = client.get(f"/api/archive/messages?before={cursor}&limit=10")
         assert resp.status_code == 200
         older = resp.json()["messages"]
@@ -976,8 +985,7 @@ def test_archive_messages_composite_cursor():
         assert older[1]["id"] == "msg-2"
 
         # 用复合游标往当下翻
-        event_at = all_msgs[0]['event_at'].split('+')[0] if '+' in all_msgs[0]['event_at'] else all_msgs[0]['event_at'].rstrip('Z')
-        cursor = f"{event_at}|{all_msgs[0]['id']}"
+        cursor = f"{all_msgs[0]['event_at']}|{all_msgs[0]['id']}"
         resp = client.get(f"/api/archive/messages?after={cursor}&limit=10")
         assert resp.status_code == 200
         newer = resp.json()["messages"]
