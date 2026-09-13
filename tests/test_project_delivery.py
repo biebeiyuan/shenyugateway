@@ -14,6 +14,7 @@ from shenyu_gateway.project_delivery import (
     main,
     normalize_delivery,
     parse_abandoned_argument,
+    promote_delivery,
 )
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -74,6 +75,7 @@ def test_append_delivery_rejects_duplicate_ids(tmp_path):
         ({"status": "done"}, "unsupported status"),
         ({"verification": []}, "at least one item"),
         ({"paths": []}, "at least one item"),
+        ({"paths": ["a.py,b.py"]}, "separate --path"),
     ],
 )
 def test_delivery_validation_rejects_ambiguous_records(overrides, message):
@@ -186,3 +188,17 @@ def test_cli_reports_a_malformed_abandoned_argument_without_a_traceback(capsys):
 
     assert code == 2
     assert "exactly three" in capsys.readouterr().out
+
+
+def test_promote_delivery_updates_only_target_and_commit(tmp_path, monkeypatch):
+    path = tmp_path / "deliveries.jsonl"
+    append_delivery(_delivery(id="target"), path)
+    append_delivery(_delivery(id="other"), path)
+    monkeypatch.setattr("shenyu_gateway.project_delivery.current_commit", lambda: "newhash")
+
+    promoted = promote_delivery("target", "pushed", path=path)
+
+    assert promoted["status"] == "pushed"
+    assert promoted["commit"] == "newhash"
+    loaded = {item["id"]: item for item in load_delivery_log(path)}
+    assert loaded["other"]["commit"] == "abc123"

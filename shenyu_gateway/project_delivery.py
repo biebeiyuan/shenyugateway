@@ -108,6 +108,18 @@ def _text_list(value: Any, field: str, *, location: str, required: bool = False)
     return result
 
 
+def _path_list(value: Any, *, location: str) -> list[str]:
+    paths = _text_list(value, "paths", location=location, required=True)
+    for path in paths:
+        if "," in path:
+            raise ProjectDeliveryError(
+                f"{location}: paths must be separate --path values; commas are not accepted in {path!r}"
+            )
+        if "\n" in path or "\r" in path:
+            raise ProjectDeliveryError(f"{location}: paths entries must be single-line repository paths")
+    return paths
+
+
 def normalize_delivery(value: Any, *, location: str = "delivery") -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ProjectDeliveryError(f"{location}: record must be an object")
@@ -139,7 +151,7 @@ def normalize_delivery(value: Any, *, location: str = "delivery") -> dict[str, A
         "why": _required_text(value.get("why"), "why", location=location),
         "status": status,
         "verification": _text_list(value.get("verification"), "verification", location=location, required=True),
-        "paths": _text_list(value.get("paths"), "paths", location=location, required=True),
+        "paths": _path_list(value.get("paths"), location=location),
         "docs": _text_list(value.get("docs"), "docs", location=location),
         "abandoned": _abandoned_list(value.get("abandoned"), location=location),
         "commit": str(value.get("commit") or "").strip(),
@@ -180,12 +192,60 @@ def append_delivery(record: dict[str, Any], path: Path = DELIVERY_LOG_PATH) -> d
     return delivery
 
 
+def promote_delivery(
+    delivery_id: str,
+    status: str,
+    *,
+    commit: str = "",
+    path: Path = DELIVERY_LOG_PATH,
+) -> dict[str, Any]:
+    """Advance one delivery record after a commit or push.
+
+    The log is JSONL for reviewability, so rewrite only the matching record and
+    preserve every other line byte-for-byte. The new commit defaults to the
+    current checkout, which makes ``promote --status pushed`` hard to misrecord.
+    """
+    if status not in DELIVERY_STATUSES:
+        raise ProjectDeliveryError(f"unsupported status {status!r}")
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    found: dict[str, Any] | None = None
+    output: list[str] = []
+    for line_number, line in enumerate(lines, start=1):
+        if not line.strip():
+            output.append(line)
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ProjectDeliveryError(f"{path}:{line_number}: invalid JSON: {exc}") from exc
+        if not isinstance(raw, dict):
+            raise ProjectDeliveryError(f"{path}:{line_number}: record must be an object")
+        if str(raw.get("id") or "").strip() != delivery_id:
+            output.append(line)
+            continue
+        raw["status"] = status
+        raw["commit"] = commit.strip() or current_commit()
+        found = normalize_delivery(raw, location=f"{path}:{line_number}")
+        output.append(json.dumps(found, ensure_ascii=False, separators=(",", ":")) + "\n")
+    if found is None:
+        raise ProjectDeliveryError(f"delivery id {delivery_id!r} was not found")
+    temporary = path.with_name(f".{path.name}.tmp")
+    temporary.write_text("".join(output), encoding="utf-8")
+    temporary.replace(path)
+    return found
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Maintain the owner-facing project delivery log.")
     subparsers = parser.add_subparsers(dest="command", required=True)
     subparsers.add_parser("check", help="Validate every delivery record.")
     list_parser = subparsers.add_parser("list", help="Print recent delivery records.")
     list_parser.add_argument("--limit", type=int, default=12)
+
+    promote = subparsers.add_parser("promote", help="Advance one delivery after commit or push.")
+    promote.add_argument("--id", required=True)
+    promote.add_argument("--status", choices=sorted(DELIVERY_STATUSES), required=True)
+    promote.add_argument("--commit", default="")
 
     record = subparsers.add_parser("record", help="Append one coherent delivered outcome.")
     record.add_argument("--id", required=True)
@@ -250,6 +310,10 @@ def _run(args: argparse.Namespace) -> int:
                 f"{delivery['completed_at'][:10]} · {delivery['product']} · "
                 f"{delivery['title']} [{delivery['status']}]"
             )
+        return 0
+    if args.command == "promote":
+        delivery = promote_delivery(args.id, args.status, commit=args.commit)
+        print(f"[promoted] {delivery['id']} · {delivery['status']} · {delivery['commit']}")
         return 0
 
     record = {
