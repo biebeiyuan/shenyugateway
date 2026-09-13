@@ -9,7 +9,10 @@ export type ArchiveMessage = {
   id: string
   session_tag: string
   role: 'user' | 'assistant'
-  content: string
+  content?: string
+  snippet_before?: string
+  snippet_match?: string
+  snippet_after?: string
   event_at: string | null
   archived_at: string
 }
@@ -29,7 +32,8 @@ export async function fetchArchiveDays(ctx: RequestContext, month?: string): Pro
 }
 
 // around_days 让选日期变成「定位」而不是「框死」：跨过午夜的对话是一整段。
-// before 往过去翻、after 往当下翻，两头都返回升序，直接 prepend / append。
+// before 往过去翻、after 往当下翻，游标是复合的 "event_at:id"（不透明），
+// 两头都返回升序，直接 prepend / append。
 export async function fetchArchiveMessages(
   ctx: RequestContext,
   params: { date?: string; before?: string; after?: string; limit?: number; aroundDays?: number },
@@ -48,19 +52,48 @@ export async function fetchArchiveMessages(
   return Array.isArray(data.messages) ? data.messages : []
 }
 
+function makeCursor(msg: ArchiveMessage): string {
+  return `${msg.event_at}|${msg.id}`
+}
+
+export type SearchResult = {
+  results: ArchiveMessage[]
+  hasMore: boolean
+  nextCursor: string | null
+}
+
 export async function searchArchive(
   ctx: RequestContext,
   query: string,
   role?: 'user' | 'assistant',
-): Promise<ArchiveMessage[]> {
+  cursor?: string,
+): Promise<SearchResult> {
   const needle = query.trim()
-  if (!needle) return []
+  if (!needle) return { results: [], hasMore: false, nextCursor: null }
   const search = new URLSearchParams({ q: needle })
   if (role) search.set('role', role)
-  const demo = demoRead('/api/archive/search', search) as { results?: ArchiveMessage[] } | undefined
-  if (demo) return Array.isArray(demo.results) ? demo.results : []
+  if (cursor) search.set('cursor', cursor)
+  const demo = demoRead('/api/archive/search', search) as {
+    results?: ArchiveMessage[]
+    has_more?: boolean
+    next_cursor?: string | null
+  } | undefined
+  if (demo) {
+    return {
+      results: Array.isArray(demo.results) ? demo.results : [],
+      hasMore: demo.has_more ?? false,
+      nextCursor: demo.next_cursor ?? null,
+    }
+  }
   const response = await fetch(apiUrl(ctx, `/api/archive/search?${search.toString()}`), { headers: requestHeaders(ctx) })
   if (!response.ok) throw new Error('archive search unavailable')
   const data = await response.json()
-  return Array.isArray(data.results) ? data.results : []
+  return {
+    results: Array.isArray(data.results) ? data.results : [],
+    hasMore: data.has_more ?? false,
+    nextCursor: data.next_cursor ?? null,
+  }
 }
+
+// 导出游标构造函数供 ReviewSheet 使用
+export { makeCursor }

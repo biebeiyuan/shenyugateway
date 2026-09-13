@@ -151,7 +151,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         limit: int = 200,
         around_days: int = 0,
     ):
-        """Messages for one day (date=YYYY-MM-DD), or paged by event_at. All sessions merged.
+        """Messages for one day (date=YYYY-MM-DD), or paged by composite cursor. All sessions merged.
 
         `around_days` widens a `date` request symmetrically, so picking a day positions
         the reader instead of fencing it. A conversation that ran past midnight is one
@@ -159,10 +159,12 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         be clipped into an origin book. The reader scrolls to the chosen day and can
         still scroll out of it in both directions.
 
-        `before`/`after` page a continuous reader by event_at: `before` fetches the
-        newest rows strictly older than the cursor (scroll up into the past),
-        `after` fetches the oldest rows strictly newer (scroll down toward now).
-        Both return rows in ascending time so the caller prepends/appends directly.
+        `before`/`after` page by composite cursor "(event_at, id)" — not just event_at,
+        because same-turn user/assistant messages share one event_at (the assistant
+        inherits the user's timestamp). Single-column cursor would skip all messages
+        with event_at == cursor_value, silently dropping boundary rows on page turns.
+        Cursor format is opaque "event_at|id" (pipe separator avoids : collision);
+        both endpoints return ascending order so caller prepends/appends directly.
         """
         client = _supabase()
         params = {
@@ -171,6 +173,8 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             "limit": str(max(1, min(int(limit or 200), 1000))),
         }
         reverse_after_fetch = False
+        cursor_filter_in_python = None
+
         if date:
             from datetime import date as date_cls
             span = max(0, min(int(around_days or 0), 7))
@@ -184,19 +188,82 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             params["and"] = f"(event_at.lt.{window_end}T00:00:00+08:00)"
             params["order"] = _ORDER_ASC
         elif after:
-            # oldest rows strictly newer than the cursor; already ascending.
-            params["event_at"] = f"gt.{after}"
+            # Composite cursor: oldest rows > (cursor_event_at, cursor_id), ascending.
+            # PostgREST doesn't support tuple comparison, so fetch event_at >= cursor
+            # and filter precisely in Python.
+            parts = after.split("|", 1)
+            if len(parts) == 2:
+                cursor_event_at, cursor_id = parts
+                params["event_at"] = f"gte.{cursor_event_at}"
+                cursor_filter_in_python = ("after", cursor_event_at, cursor_id)
+            else:
+                # Legacy single-field cursor (backwards compat during transition).
+                params["event_at"] = f"gt.{after}"
             params["order"] = _ORDER_ASC
         elif before:
-            # newest rows strictly older than the cursor; fetched desc then flipped
-            # back to ascending so the reader prepends a correctly-ordered block.
-            params["event_at"] = f"lt.{before}"
+            # Composite cursor: newest rows < (cursor_event_at, cursor_id), descending
+            # then reversed. Fetch event_at <= cursor, filter in Python, return ascending.
+            parts = before.split("|", 1)
+            if len(parts) == 2:
+                cursor_event_at, cursor_id = parts
+                params["event_at"] = f"lte.{cursor_event_at}"
+                cursor_filter_in_python = ("before", cursor_event_at, cursor_id)
+            else:
+                # Legacy single-field cursor.
+                params["event_at"] = f"lt.{before}"
             params["order"] = _ORDER_DESC
             reverse_after_fetch = True
         else:
             params["order"] = _ORDER_DESC
             reverse_after_fetch = True
+
         rows = await client.query(ARCHIVE_TABLE, params=params)
+
+        # Apply composite cursor filter in Python (tuple comparison).
+        if cursor_filter_in_python:
+            from datetime import datetime, timezone as tz
+            direction, cursor_event_at, cursor_id = cursor_filter_in_python
+
+            # Parse cursor timestamp, adding default timezone if missing
+            try:
+                if 'T' in cursor_event_at and '+' not in cursor_event_at and not cursor_event_at.endswith('Z'):
+                    cursor_dt = datetime.fromisoformat(cursor_event_at).replace(tzinfo=tz.utc)
+                else:
+                    cursor_dt = datetime.fromisoformat(cursor_event_at)
+                    if cursor_dt.tzinfo is None:
+                        cursor_dt = cursor_dt.replace(tzinfo=tz.utc)
+            except ValueError:
+                # Fallback: can't parse, skip filtering
+                cursor_dt = None
+
+            filtered = []
+            for row in rows or []:
+                row_id = str(row.get("id") or "")
+                row_event_at_str = row.get("event_at") or ""
+
+                if cursor_dt is None:
+                    # Can't compare, include all
+                    filtered.append(row)
+                    continue
+
+                try:
+                    row_dt = datetime.fromisoformat(row_event_at_str)
+                    if row_dt.tzinfo is None:
+                        row_dt = row_dt.replace(tzinfo=tz.utc)
+                except ValueError:
+                    # Can't parse row timestamp, skip it
+                    continue
+
+                if direction == "after":
+                    # Want rows > (cursor_event_at, cursor_id) in ascending order.
+                    if row_dt > cursor_dt or (row_dt == cursor_dt and row_id > cursor_id):
+                        filtered.append(row)
+                else:  # "before"
+                    # Want rows < (cursor_event_at, cursor_id) in descending order.
+                    if row_dt < cursor_dt or (row_dt == cursor_dt and row_id < cursor_id):
+                        filtered.append(row)
+            rows = filtered
+
         if reverse_after_fetch:
             rows = list(reversed(rows or []))
         messages = [
@@ -205,8 +272,38 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         ]
         return {"messages": messages, "count": len(messages)}
 
+    def _cut_snippet(text: str, needle_folded: str, context_chars: int = 30) -> dict[str, str]:
+        """Cut text into before/match/after around the first match position.
+
+        Returns original-case match (not lowercased), so frontend highlighting
+        stays byte-identical to what the user typed. Pitfall avoided: Python
+        counts Unicode code points, JS counts UTF-16 code units, Swift counts
+        grapheme clusters — an emoji offset computed here would land wrong if
+        sent as a number. Send the three strings instead; frontend renders them
+        as three runs with no arithmetic.
+        """
+        text_folded = text.casefold()
+        try:
+            match_start = text_folded.index(needle_folded)
+        except ValueError:
+            # Should not happen (caller already filtered), but guard anyway.
+            return {"snippet_before": "", "snippet_match": text[:60], "snippet_after": ""}
+        match_end = match_start + len(needle_folded)
+        before_start = max(0, match_start - context_chars)
+        after_end = min(len(text), match_end + context_chars)
+        return {
+            "snippet_before": text[before_start:match_start],
+            "snippet_match": text[match_start:match_end],
+            "snippet_after": text[match_end:after_end],
+        }
+
     @router.get("/api/archive/search")
-    async def archive_search(q: str = "", role: Optional[str] = None, limit: int = 60):
+    async def archive_search(
+        q: str = "",
+        role: Optional[str] = None,
+        limit: int = 60,
+        cursor: Optional[str] = None,
+    ):
         """Literal, case-insensitive substring search over the verbatim archive.
 
         Deliberately not semantic: someone looking for a phrase they remember
@@ -214,10 +311,18 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         that keeps the window-newspaper basket literal (AGENTS.md § basket).
         The DB `ilike` narrows the fetch; the Python check is the authority, so
         wildcard characters in the phrase cannot widen the match.
+
+        Returns snippet (before/match/after) instead of full content so frontend
+        can highlight without offset arithmetic (which fails across Python/JS/Swift
+        due to different string indexing — code points vs UTF-16 vs graphemes).
+
+        Cursor is opaque "event_at|id" (pipe separator to avoid : collision with
+        ISO timestamps) for pagination; fetches one extra row to determine has_more
+        without a separate count query.
         """
         needle = (q or "").strip()
         if not needle:
-            return {"results": [], "count": 0, "query": ""}
+            return {"results": [], "count": 0, "has_more": False, "query": "", "next_cursor": None}
         client = _supabase()
         params = {
             "select": "id,session_tag,role,content,content_hash,event_at,archived_at",
@@ -227,16 +332,108 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         }
         if role in ("user", "assistant"):
             params["role"] = f"eq.{role}"
+
+        # Cursor for pagination: "event_at|id" format (opaque to client, using | to avoid : collision).
+        # event_at is stripped of timezone suffix to avoid + encoding issues in URLs.
+        # Use OR filter: (event_at < cursor_time) OR (event_at = cursor_time AND id < cursor_id)
+        if cursor:
+            parts = cursor.split("|", 1)
+            if len(parts) == 2:
+                cursor_event_at, cursor_id = parts
+                # Normalize cursor timestamp for comparison (may be missing TZ suffix)
+                if 'T' in cursor_event_at and '+' not in cursor_event_at and not cursor_event_at.endswith('Z'):
+                    # Add back a neutral timezone for comparison
+                    cursor_event_at_cmp = cursor_event_at + '+00:00'
+                else:
+                    cursor_event_at_cmp = cursor_event_at
+                # PostgREST doesn't have native tuple comparison, so we approximate:
+                # fetch rows with event_at <= cursor_time, then filter in Python.
+                params["event_at"] = f"lte.{cursor_event_at_cmp}"
+
         rows = await _query_all(client, params, page_size=1000, max_rows=4000)
         folded = _fold_handoff_copies(rows or [])
         lowered = needle.casefold()
+
+        # Python casefold() is authoritative; filter after DB fetch.
         hits = [row for row in folded if lowered in str(row.get("content") or "").casefold()]
+
+        # Apply cursor filtering in Python (complex tuple comparison).
+        # IMPORTANT: filter BEFORE slicing, otherwise pagination breaks.
+        if cursor:
+            from datetime import datetime, timezone as tz
+            parts = cursor.split("|", 1)
+            if len(parts) == 2:
+                cursor_event_at, cursor_id = parts
+                # Parse cursor timestamp, adding default timezone if missing
+                try:
+                    if 'T' in cursor_event_at and '+' not in cursor_event_at and not cursor_event_at.endswith('Z'):
+                        cursor_dt = datetime.fromisoformat(cursor_event_at).replace(tzinfo=tz.utc)
+                    else:
+                        cursor_dt = datetime.fromisoformat(cursor_event_at)
+                        if cursor_dt.tzinfo is None:
+                            cursor_dt = cursor_dt.replace(tzinfo=tz.utc)
+                except ValueError:
+                    cursor_dt = None
+
+                filtered = []
+                for row in hits:
+                    row_id = str(row.get("id") or "")
+                    row_event_at_str = row.get("event_at") or ""
+
+                    if cursor_dt is None:
+                        # Can't compare, skip filtering
+                        filtered.append(row)
+                        continue
+
+                    try:
+                        row_dt = datetime.fromisoformat(row_event_at_str)
+                        if row_dt.tzinfo is None:
+                            row_dt = row_dt.replace(tzinfo=tz.utc)
+                    except ValueError:
+                        continue
+
+                    # DESC order: want rows < cursor (earlier event_at, or same event_at but smaller id)
+                    if row_dt < cursor_dt or (row_dt == cursor_dt and row_id < cursor_id):
+                        filtered.append(row)
+                hits = filtered
+
         cap = max(1, min(int(limit or 60), 200))
-        results = [
-            {key: value for key, value in row.items() if key != "content_hash"}
-            for row in hits[:cap]
-        ]
-        return {"results": results, "count": len(results), "query": needle}
+        # Fetch limit+1 to detect has_more without separate count query.
+        page_hits = hits[: cap + 1]
+        has_more = len(page_hits) > cap
+        result_rows = page_hits[:cap]
+
+        results = []
+        for row in result_rows:
+            snippet = _cut_snippet(str(row.get("content") or ""), lowered, context_chars=30)
+            results.append({
+                "id": row.get("id"),
+                "session_tag": row.get("session_tag"),
+                "role": row.get("role"),
+                "event_at": row.get("event_at"),
+                "archived_at": row.get("archived_at"),
+                **snippet,
+            })
+
+        next_cursor = None
+        if has_more and result_rows:
+            last = result_rows[-1]
+            # Use ISO format without timezone suffix to avoid + encoding issues in URLs
+            event_at = last.get('event_at') or ''
+            # Strip timezone suffix if present (e.g., "+08:00" or "Z")
+            if '+' in event_at:
+                event_at = event_at.split('+')[0]
+            elif event_at.endswith('Z'):
+                event_at = event_at[:-1]
+            next_cursor = f"{event_at}|{last.get('id')}"
+
+        return {
+            "results": results,
+            "count": len(results),
+            "has_more": has_more,
+            "query": needle,
+            "next_cursor": next_cursor,
+        }
 
     @router.delete("/api/archive/messages/{message_id}")
     async def archive_soft_delete(message_id: str):

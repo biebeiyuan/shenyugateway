@@ -17,6 +17,7 @@ import MarkdownBody from './MarkdownBody.vue'
 import {
   fetchArchiveDays,
   fetchArchiveMessages,
+  makeCursor,
   searchArchive,
   type ArchiveMessage,
 } from '../api/archive'
@@ -40,23 +41,25 @@ const searching = ref(false)
 const searchError = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
 let searchToken = 0
+let searchGen = 0 // generation 计数器：过期响应直接丢弃
 
 async function runSearch() {
   const needle = query.value.trim()
   if (!needle) { searchResults.value = []; searchError.value = ''; return }
   const token = ++searchToken
+  const gen = ++searchGen
   searching.value = true
   searchError.value = ''
   try {
-    const rows = await searchArchive(props.ctx, needle)
-    if (token !== searchToken) return
-    searchResults.value = rows
+    const { results } = await searchArchive(props.ctx, needle)
+    if (gen !== searchGen) return // 过期响应：丢弃，连 flag 都不碰
+    searchResults.value = results
   } catch {
-    if (token !== searchToken) return
+    if (gen !== searchGen) return
     searchResults.value = []
     searchError.value = '这次没搜成，待会儿再试试。'
   } finally {
-    if (token === searchToken) searching.value = false
+    if (gen === searchGen) searching.value = false
   }
 }
 
@@ -137,20 +140,25 @@ function todayStr() {
 const bodyRef = ref<HTMLElement | null>(null)
 let archiveLoaded = false
 // 连续阅读的两端游标与「翻到头了」标记，避免空翻。
-let loadingEdge = false
+const loadingOlder = ref(false)
+const loadingNewer = ref(false)
 const reachedOldest = ref(false)
 const reachedNewest = ref(false)
 const PAGE = 60
+let archiveGen = 0 // generation 计数器：每次 loadArchive 递增，过期响应不写状态
 
 // 以某天为锚点打开（默认最后一天），装一屏；之后靠上下滚动继续加载。
 async function loadArchive(focusDate?: string, focusId?: string) {
+  const gen = ++archiveGen
   archiveError.value = ''
   try {
     if (!days.value.length) days.value = await fetchArchiveDays(props.ctx)
     const target = focusDate || activeDay.value || days.value[days.value.length - 1]?.date
     if (!target) { archiveRows.value = []; return }
+    if (gen !== archiveGen) return // 被更新的请求超车了
     activeDay.value = target
     const rows = await fetchArchiveMessages(props.ctx, { date: target, aroundDays: 1 })
+    if (gen !== archiveGen) return
     archiveRows.value = rows
     reachedOldest.value = false
     reachedNewest.value = false
@@ -167,34 +175,39 @@ async function loadArchive(focusDate?: string, focusId?: string) {
     if (!rows.length) return
     scrollToDivider(target)
     // 非跳转（日历/默认进入）：内容若撑不满容器就补更早的，否则没法滚、也触发不了加载。
-    await fillViewport()
+    await fillViewport(gen)
   } catch {
+    if (gen !== archiveGen) return
     archiveError.value = '这天的对话暂时拿不到，待会儿再试试。'
   }
 }
 
 // 反复补更早的，直到内容溢出容器或翻到最早，最多补几轮以防极端情况空转。
-async function fillViewport() {
+async function fillViewport(gen: number) {
   for (let i = 0; i < 6; i += 1) {
     await nextTick()
+    if (gen !== archiveGen) return // 过期了
     const el = bodyRef.value
     if (!el || reachedOldest.value) return
     if (el.scrollHeight > el.clientHeight + 40) return
     const grew = archiveRows.value.length
     await loadOlder()
-    if (archiveRows.value.length === grew) return
+    if (gen !== archiveGen || archiveRows.value.length === grew) return
   }
 }
 
 // 往过去翻：取最早一条之前的，prepend，并把滚动位置钉回原处，让手指停着不动。
 async function loadOlder() {
-  if (loadingEdge || reachedOldest.value || !archiveRows.value.length) return
+  if (loadingOlder.value || reachedOldest.value || !archiveRows.value.length) return
   const anchorId = archiveRows.value[0]?.id
-  const cursor = archiveRows.value[0]?.event_at
-  if (!cursor || !anchorId) return
-  loadingEdge = true
+  const first = archiveRows.value[0]
+  if (!first || !anchorId) return
+  const cursor = makeCursor(first) // 复合游标 "event_at:id"
+  const gen = archiveGen
+  loadingOlder.value = true
   try {
     const older = await fetchArchiveMessages(props.ctx, { before: cursor, limit: PAGE })
+    if (gen !== archiveGen) return // 过期：丢弃
     if (!older.length) { reachedOldest.value = true; return }
     const el = bodyRef.value
     // 钉住「插入前的第一条」这个真实元素，而不是靠总高度差补偿。总高度在这一帧里
@@ -209,20 +222,27 @@ async function loadOlder() {
       const anchorAfter = el.querySelector(`#rev-${cssId(anchorId)}`) as HTMLElement | null
       if (anchorAfter) el.scrollTop = scrollBefore + (anchorAfter.offsetTop - offsetBefore)
     }
-  } catch { /* 静默：翻不动就停在这儿 */ } finally { loadingEdge = false }
+  } catch { /* 静默：翻不动就停在这儿 */ } finally {
+    if (gen === archiveGen) loadingOlder.value = false
+  }
 }
 
 // 往当下翻：取最新一条之后的，append。
 async function loadNewer() {
-  if (loadingEdge || reachedNewest.value || !archiveRows.value.length) return
-  const cursor = archiveRows.value[archiveRows.value.length - 1]?.event_at
-  if (!cursor) return
-  loadingEdge = true
+  if (loadingNewer.value || reachedNewest.value || !archiveRows.value.length) return
+  const last = archiveRows.value[archiveRows.value.length - 1]
+  if (!last) return
+  const cursor = makeCursor(last)
+  const gen = archiveGen
+  loadingNewer.value = true
   try {
     const newer = await fetchArchiveMessages(props.ctx, { after: cursor, limit: PAGE })
+    if (gen !== archiveGen) return
     if (!newer.length) { reachedNewest.value = true; return }
     archiveRows.value = [...archiveRows.value, ...newer]
-  } catch { /* 静默 */ } finally { loadingEdge = false }
+  } catch { /* 静默 */ } finally {
+    if (gen === archiveGen) loadingNewer.value = false
+  }
 }
 
 // review-body 是三个 tab 共用的滚动容器；只有在按天翻时才管无限加载。
@@ -301,7 +321,14 @@ function savedIds() {
 
 // 收藏页里「回到当时」：把 SavedItem 当成 ArchiveMessage 跳
 function gotoSaved(item: SavedItem) {
-  jumpToContext({ id: item.id, session_tag: '', role: item.role, content: item.content, event_at: item.event_at, archived_at: '' })
+  jumpToContext({
+    id: item.id,
+    session_tag: '',
+    role: item.role,
+    content: item.content,
+    event_at: item.event_at,
+    archived_at: '',
+  })
 }
 
 // ---- helpers ----
@@ -331,16 +358,21 @@ function timeLabel(raw: string | null): string {
   } catch { return '' }
 }
 
-// 命中词高亮：以命中处为中心裁一段，前后各留一点，字面匹配大小写不敏感
-function snippetHtml(text: string, q: string): string {
+// 命中词高亮：服务端已切好 snippet_before/match/after，前端只渲染三个 run。
+// 不自己算偏移——Python 数码点、JS 数 UTF-16、Swift 数字形簇，一个 emoji 就让
+// 高亮偏两个字符。而且后端 casefold() 和前端 toLowerCase() 不等价，会出现
+// "告诉你命中了但前端找不到那个词"的空高亮。服务端切分，前端零算术。
+function renderSnippet(row: ArchiveMessage): string {
   const escape = (s: string) => s.replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c] || c))
-  const needle = q.trim()
-  const i = text.toLowerCase().indexOf(needle.toLowerCase())
-  if (i < 0) return escape(text)
-  const start = Math.max(0, i - 20)
-  const clip = (start > 0 ? '…' : '') + text.slice(start)
-  const rel = clip.toLowerCase().indexOf(needle.toLowerCase())
-  return escape(clip.slice(0, rel)) + '<mark>' + escape(clip.slice(rel, rel + needle.length)) + '</mark>' + escape(clip.slice(rel + needle.length))
+  // 搜索结果有 snippet 字段（before/match/after），按天翻的结果有 content。
+  if (row.snippet_match !== undefined) {
+    const before = escape(row.snippet_before || '')
+    const match = escape(row.snippet_match || '')
+    const after = escape(row.snippet_after || '')
+    return (before ? '…' + before : '') + '<mark>' + match + '</mark>' + (after ? after + '…' : '')
+  }
+  // 降级：没有 snippet 时显示前 80 字符
+  return escape((row.content || '').slice(0, 80))
 }
 
 function switchTab(next: Tab) {
@@ -407,7 +439,7 @@ function copyText(text: string) {
                 <span class="who" :class="whoClass(row.role)"><span class="dot" />{{ whoName(row.role) }}</span>
                 <span class="result-date">{{ dayLabel(cstDay(row.event_at)) }} · {{ timeLabel(row.event_at) }}</span>
               </div>
-              <div class="result-snippet" v-html="snippetHtml(row.content, query)" />
+              <div class="result-snippet" v-html="renderSnippet(row)" />
             </button>
           </template>
         </div>
@@ -448,10 +480,10 @@ function copyText(text: string) {
               <div v-if="showDivider(index)" class="day-divider" :data-anchor="cstDay(row.event_at)">{{ dayLabel(cstDay(row.event_at)) }}</div>
               <div class="archive-msg" :class="whoClass(row.role) === 'self' ? 'user' : 'assistant'" :id="`rev-${cssId(row.id)}`">
                 <div class="col">
-                  <div v-if="row.role === 'user'" class="user-bubble">{{ row.content }}</div>
-                  <div v-else class="assistant-body"><MarkdownBody :content="row.content" /></div>
+                  <div v-if="row.role === 'user'" class="user-bubble">{{ row.content || '' }}</div>
+                  <div v-else class="assistant-body"><MarkdownBody :content="row.content || ''" /></div>
                   <div class="message-actions">
-                    <button title="复制" aria-label="复制" @click="copyText(row.content)"><Clipboard :size="15" /></button>
+                    <button title="复制" aria-label="复制" @click="copyText(row.content || '')"><Clipboard :size="15" /></button>
                     <button :class="{ saved: isSaved(row.id, saved) }" :title="isSaved(row.id, saved) ? '取消收藏' : '收藏'" :aria-label="isSaved(row.id, saved) ? '取消收藏' : '收藏'" @click="onToggleSave(row)">
                       <BookmarkCheck v-if="isSaved(row.id, saved)" :size="15" />
                       <Bookmark v-else :size="15" />

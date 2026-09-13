@@ -35,16 +35,51 @@ class FakeSupabase:
     def _filter_compare(self, row: dict, key: str, op: str, raw_value: str) -> bool:
         value = row.get(key)
         if key == "event_at" and value:
-            left = datetime.fromisoformat(str(value))
-            right = datetime.fromisoformat(raw_value)
+            # raw_value might have been URL-decoded (+ became space), fix it
+            raw_value = raw_value.replace(" ", "+")
+
+            # For event_at comparison, convert to datetime objects for proper timezone-aware comparison
+            from datetime import datetime, timezone as tz
+            try:
+                left = datetime.fromisoformat(str(value))
+                right = datetime.fromisoformat(raw_value)
+            except ValueError:
+                # Fallback to string comparison with normalization if parsing fails
+                def normalize(ts_str):
+                    if '+' in ts_str:
+                        return ts_str.split('+')[0]
+                    if ts_str.endswith('Z'):
+                        return ts_str[:-1]
+                    return ts_str
+                left_normalized = normalize(str(value))
+                right_normalized = normalize(raw_value)
+                if op == "gte":
+                    return left_normalized >= right_normalized
+                if op == "lte":
+                    return left_normalized <= right_normalized
+                if op == "gt":
+                    return left_normalized > right_normalized
+                return left_normalized < right_normalized
+
+            # Ensure both are offset-aware for comparison
+            if left.tzinfo is None:
+                left = left.replace(tzinfo=tz.utc)
+            if right.tzinfo is None:
+                right = right.replace(tzinfo=tz.utc)
+
             if op == "gte":
                 return left >= right
+            if op == "lte":
+                return left <= right
             if op == "gt":
                 return left > right
             return left < right
+
         text = str(value or "")
         if op == "gte":
             return text >= raw_value
+        if op == "lte":
+            return text <= raw_value
         if op == "gt":
             return text > raw_value
         return text < raw_value
@@ -73,10 +108,15 @@ class FakeSupabase:
                 rows = [r for r in rows if r.get(key) is None]
             elif isinstance(value, str) and value.startswith("gte."):
                 rows = [r for r in rows if self._filter_compare(r, key, "gte", value[4:])]
+            elif isinstance(value, str) and value.startswith("lte."):
+                rows = [r for r in rows if self._filter_compare(r, key, "lte", value[4:])]
             elif isinstance(value, str) and value.startswith("gt."):
                 rows = [r for r in rows if self._filter_compare(r, key, "gt", value[3:])]
             elif isinstance(value, str) and value.startswith("lt."):
                 rows = [r for r in rows if self._filter_compare(r, key, "lt", value[3:])]
+            elif isinstance(value, str) and value.startswith("ilike."):
+                needle = value[6:].strip("*")
+                rows = [r for r in rows if needle.lower() in str(r.get(key) or "").lower()]
         if and_clause.startswith("(event_at.lt.") and and_clause.endswith(")"):
             before = and_clause[len("(event_at.lt.") : -1]
             rows = [r for r in rows if self._filter_compare(r, "event_at", "lt", before)]
@@ -783,3 +823,167 @@ if __name__ == "__main__":
     test_archive_messages_page_forward_and_backward()
     test_archive_search_is_literal_and_folds_handoff_copies()
     print("ALL_OK")
+
+
+def test_archive_search_snippet_and_cursor():
+    """Test that search returns snippet fields and supports composite cursor."""
+    async def run():
+        from fastapi.testclient import TestClient
+        
+        supabase = FakeSupabase()
+        deps = ArchiveRouteDeps(get_supabase_client=lambda: supabase)
+        router = build_archive_router(deps)
+        
+        # 准备测试数据：3条消息，其中2条包含"测试"，且同一轮的 user/assistant 共享 event_at
+        await supabase.insert("shenyu_chat_archive", {
+            "id": "msg-1",
+            "role": "user",
+            "content": "这是第一条测试消息，前面有很多字后面也有很多字",
+            "content_hash": "hash1",
+            "event_at": "2026-09-10T10:00:00+08:00",
+            "archived_at": "2026-09-10T10:00:00.000001+00:00",
+            "session_tag": "test",
+            "deleted_at": None,
+        })
+        await supabase.insert("shenyu_chat_archive", {
+            "id": "msg-2",
+            "role": "assistant",
+            "content": "我理解了你的测试需求，这里是回复内容",
+            "content_hash": "hash2",
+            "event_at": "2026-09-10T10:00:00+08:00",  # 同一轮，共享时间戳
+            "archived_at": "2026-09-10T10:00:00.000002+00:00",
+            "session_tag": "test",
+            "deleted_at": None,
+        })
+        await supabase.insert("shenyu_chat_archive", {
+            "id": "msg-3",
+            "role": "user",
+            "content": "另一条不相关的消息",
+            "content_hash": "hash3",
+            "event_at": "2026-09-10T11:00:00+08:00",
+            "archived_at": "2026-09-10T11:00:00.000001+00:00",
+            "session_tag": "test",
+            "deleted_at": None,
+        })
+        
+        from fastapi import FastAPI
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+        
+        # 测试 1: 搜索返回 snippet 字段而不是完整 content
+        resp = client.get("/api/archive/search?q=测试&limit=10")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["query"] == "测试"
+        assert len(data["results"]) == 2
+        assert data["count"] == 2
+        assert data["has_more"] is False
+        
+        # 验证 snippet 字段存在且高亮了匹配词
+        result = data["results"][0]
+        assert "snippet_before" in result
+        assert "snippet_match" in result
+        assert "snippet_after" in result
+        assert result["snippet_match"] == "测试"  # 原样大小写
+        assert "content" not in result  # 不返回完整内容
+        
+        # 测试 2: 带 cursor 分页
+        resp = client.get("/api/archive/search?q=测试&limit=1")
+        assert resp.status_code == 200
+        data = resp.json()
+        assert len(data["results"]) == 1
+        assert data["has_more"] is True
+        assert data["next_cursor"] is not None
+        
+        # 使用游标获取下一页
+        cursor = data["next_cursor"]
+        print(f"\n=== DEBUG: Using cursor: {cursor}")
+        resp = client.get(f"/api/archive/search?q=测试&limit=1&cursor={cursor}")
+        assert resp.status_code == 200
+        data2 = resp.json()
+        print(f"=== DEBUG: Second page response: {data2}")
+        assert len(data2["results"]) == 1
+        assert data2["has_more"] is False
+        assert data["results"][0]["id"] != data2["results"][0]["id"]  # 不同的消息
+        
+    asyncio.run(run())
+
+
+def test_archive_messages_composite_cursor():
+    """Test that archive messages pagination uses composite (event_at, id) cursor."""
+    async def run():
+        from fastapi.testclient import TestClient
+        
+        supabase = FakeSupabase()
+        deps = ArchiveRouteDeps(get_supabase_client=lambda: supabase)
+        router = build_archive_router(deps)
+        
+        # 准备测试数据：同一轮的 user/assistant 共享 event_at
+        await supabase.insert("shenyu_chat_archive", {
+            "id": "msg-1",
+            "role": "user",
+            "content": "第一条",
+            "content_hash": "hash1",
+            "event_at": "2026-09-10T10:00:00+08:00",
+            "archived_at": "2026-09-10T10:00:00.000001+00:00",
+            "session_tag": "test",
+            "deleted_at": None,
+        })
+        await supabase.insert("shenyu_chat_archive", {
+            "id": "msg-2",
+            "role": "assistant",
+            "content": "第一条的回复",
+            "content_hash": "hash2",
+            "event_at": "2026-09-10T10:00:00+08:00",  # 同一时刻
+            "archived_at": "2026-09-10T10:00:00.000002+00:00",
+            "session_tag": "test",
+            "deleted_at": None,
+        })
+        await supabase.insert("shenyu_chat_archive", {
+            "id": "msg-3",
+            "role": "user",
+            "content": "第二条",
+            "content_hash": "hash3",
+            "event_at": "2026-09-10T11:00:00+08:00",
+            "archived_at": "2026-09-10T11:00:00.000001+00:00",
+            "session_tag": "test",
+            "deleted_at": None,
+        })
+        
+        from fastapi import FastAPI
+        app = FastAPI()
+        app.include_router(router)
+        client = TestClient(app)
+        
+        # 获取所有消息
+        resp = client.get("/api/archive/messages?limit=100")
+        assert resp.status_code == 200
+        all_msgs = resp.json()["messages"]
+        assert len(all_msgs) == 3
+
+        # 用复合游标 "event_at|id" 往过去翻，应该正确处理同一时刻的多条消息
+        # before 使用最新一条（msg-3）的复合游标
+        # 去掉时区后缀以避免 URL 编码问题
+        event_at = all_msgs[2]['event_at'].split('+')[0] if '+' in all_msgs[2]['event_at'] else all_msgs[2]['event_at'].rstrip('Z')
+        cursor = f"{event_at}|{all_msgs[2]['id']}"
+        resp = client.get(f"/api/archive/messages?before={cursor}&limit=10")
+        assert resp.status_code == 200
+        older = resp.json()["messages"]
+        # 应该拿到 msg-1 和 msg-2，因为它们的 event_at < cursor 或者 event_at 相同但 id < cursor_id
+        assert len(older) == 2
+        assert older[0]["id"] == "msg-1"
+        assert older[1]["id"] == "msg-2"
+
+        # 用复合游标往当下翻
+        event_at = all_msgs[0]['event_at'].split('+')[0] if '+' in all_msgs[0]['event_at'] else all_msgs[0]['event_at'].rstrip('Z')
+        cursor = f"{event_at}|{all_msgs[0]['id']}"
+        resp = client.get(f"/api/archive/messages?after={cursor}&limit=10")
+        assert resp.status_code == 200
+        newer = resp.json()["messages"]
+        # 应该拿到 msg-2 和 msg-3
+        assert len(newer) == 2
+        assert newer[0]["id"] == "msg-2"  # 同一 event_at 但 id > cursor_id
+        assert newer[1]["id"] == "msg-3"
+        
+    asyncio.run(run())
