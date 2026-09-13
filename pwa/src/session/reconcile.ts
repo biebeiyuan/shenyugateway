@@ -248,10 +248,6 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     messages.splice(lastUserIndex + 1, 0, target)
   }
 
-  // 记录原始状态：如果 message 已经有完整的 thinking/events，
-  // 说明是正常流式接收的完整消息，只是静默升级 replyVersionId，不算 changed
-  const hadCompleteContent = Boolean(target.thinking || target.events.length)
-
   // 确保 variants 存在，但不要用 message 覆盖已有的 variant（保护 responseMeta 等字段）
   if (!target.variants?.length) {
     target.variants = [snapshotMessage(target)]
@@ -314,7 +310,7 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
           variants[index] = merged
           if (previous.content !== merged.content || previous.echo !== merged.echo
               || (!previous.events.length && merged.events.length)
-              || (!previous.replyVersionId && merged.replyVersionId && !hadCompleteContent)) {
+              || (!previous.replyVersionId && merged.replyVersionId && !previous.content && !previous.echo)) {
             changed = true
           }
         }
@@ -332,7 +328,7 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
           const addedVersionId = !previous.replyVersionId && updated.replyVersionId
           variants[index] = updated
           // 只有首次添加 replyVersionId 且原消息不完整时才算 changed
-          if (addedVersionId && !hadCompleteContent) {
+          if (addedVersionId && !previous.content && !previous.echo) {
             changed = true
           }
         } else {
@@ -344,7 +340,7 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
           variants[index] = merged
 
           // 只有真正变化时才标记 changed
-          if (contentChanged || eventsAdded || (addedVersionId && !hadCompleteContent)) {
+          if (contentChanged || eventsAdded || (addedVersionId && !previous.content && !previous.echo)) {
             changed = true
           }
         }

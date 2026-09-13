@@ -111,6 +111,8 @@ Both streaming paths are wrapped by `resilient_sse_response` (`shenyu_gateway/st
 
 All four response paths (plain/tool-loop × streaming/non-streaming) record the same content-free `upstream_response_evidence`. The `upstream` layer observes the provider response before adaptation; the `normalized` layer observes the OpenAI-compatible completion/chunk handed toward the client. Fixed block/delta counters plus `thinking_content_seen`, usage, and finish booleans are safe to persist in request-log history. Raw response bodies, Thinking text, signatures, redacted data, and arbitrary upstream field names remain excluded. This evidence diagnoses which boundary lost a standard Thinking value; it does not alter the response or make relay-private fields part of the gateway contract.
 
+Recovery note: reply recovery is request-level. Internal gateway-tool rounds remain diagnostic log entries and are merged into one durable assistant reply; they do not become separate chat messages.
+
 Tool routing rules:
 
 - Gateway-native calls are recognized by `is_gateway_native_tool()` and executed through `execute_gateway_tool()`.

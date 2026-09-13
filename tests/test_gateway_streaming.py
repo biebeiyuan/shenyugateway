@@ -2720,6 +2720,7 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
         ]
         assert len(payload_messages_counts) == 2
         assert ctx.log_entry["response_text"] == "done"
+        assert ctx.meta["_streamed_reply_parts"] == [".", "done"]
         rounds = ctx.log_entry["internal_tool_rounds"]
         assert rounds[0]["response_full"] == "."
         assert rounds[0].get("final") is not True

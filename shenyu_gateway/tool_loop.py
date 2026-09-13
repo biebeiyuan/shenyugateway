@@ -682,6 +682,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
         tool_calls = _extract_tool_calls(completion)
         _record_completion_finish_reason(ctx.log_entry, completion, round_log=round_log)
         _record_round_response(round_log, completion)
+        _append_streamed_reply_content(ctx, completion)
         tail_events, remaining = flush_stream_tail_events(
             ctx.body.model,
             echo_filter=echo_filter,
@@ -884,6 +885,21 @@ def _record_round_response(round_log: Optional[dict], completion: dict) -> None:
         round_log["upstream_duration_ms"] = max(0, int((time.monotonic() - float(started)) * 1000))
 
 
+def _visible_round_content(completion: dict) -> str:
+    """Return the user-visible text emitted by one upstream tool-loop round."""
+    assistant_message = completion.get("choices", [{}])[0].get("message", {})
+    clean_content, _ = split_private_assistant_tags(
+        strip_leading_echo(_content_text_only(assistant_message.get("content")))
+    )
+    return clean_content
+
+
+def _append_streamed_reply_content(ctx: InternalToolLoopContext, completion: dict) -> None:
+    content = _visible_round_content(completion)
+    if content:
+        ctx.meta.setdefault("_streamed_reply_parts", []).append(content)
+
+
 async def _finalize_non_gateway_tool_reply(
     ctx: InternalToolLoopContext,
     completion: dict,
@@ -934,6 +950,11 @@ async def _finalize_non_gateway_tool_reply(
         ctx.log_entry["empty_visible_response_fallback_detail"] = dict(fallback_meta)
     _strip_anthropic_private_blocks(assistant_message)
     combined_echo = _combined_echo_text(ctx)
+    streamed_parts = ctx.meta.get("_streamed_reply_parts")
+    if isinstance(streamed_parts, list) and streamed_parts:
+        # Round boundaries are internal; recovery stores the same one-message
+        # text that the streaming client received.
+        clean_content = "".join(str(part) for part in streamed_parts)
     ctx.sessions.log_assistant_output(
         ctx.session_id,
         {**assistant_message, "content": clean_content},

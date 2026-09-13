@@ -213,7 +213,7 @@ describe('applyReplyRecovery — durable roll group', () => {
 
   it('does not duplicate an already recovered roll on polling', () => {
     const messages = [uiMessage('user', '问题'), uiMessage('assistant', '一版')]
-    expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '一版' }] })).toBe(true)
+    expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '一版' }] })).toBe(false)
     expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '一版' }] })).toBe(false)
     expect(messages[1].variants).toHaveLength(1)
   })
@@ -228,7 +228,7 @@ describe('applyReplyRecovery — durable roll group', () => {
         ],
       }),
     ]
-    expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'stable', content: '同一版' }] })).toBe(true)
+    expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'stable', content: '同一版' }] })).toBe(false)
     expect(messages[1].variants).toHaveLength(1)
     expect(messages[1].variants?.[0].replyVersionId).toBe('stable')
   })
@@ -531,4 +531,3 @@ describe('applyReplyRecovery — durable roll group', () => {
     expect(messages[1].content).toBe('完整的长回复内容')
   })
 })
-

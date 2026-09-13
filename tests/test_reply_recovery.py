@@ -1,4 +1,5 @@
 from shenyu_gateway.gateway_admin_routes import collect_reply_recovery_rows
+from shenyu_gateway.tool_loop import _visible_round_content
 
 
 def test_collect_reply_recovery_rows_returns_latest_same_user_roll_group_only():
@@ -27,3 +28,14 @@ def test_collect_reply_recovery_rows_stops_at_different_user_turn():
     ]
     result = collect_reply_recovery_rows(rows)
     assert [item["reply_version_id"] for item in result["replies"]] == ["new"]
+
+
+def test_visible_round_content_removes_private_echo_and_tags():
+    completion = {
+        "choices": [{
+            "message": {
+                "content": "[回响]看着你[/回响]先查一下",
+            },
+        }],
+    }
+    assert _visible_round_content(completion) == "先查一下"
