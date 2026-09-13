@@ -682,7 +682,6 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
         tool_calls = _extract_tool_calls(completion)
         _record_completion_finish_reason(ctx.log_entry, completion, round_log=round_log)
         _record_round_response(round_log, completion)
-        _append_streamed_reply_content(ctx, completion)
         tail_events, remaining = flush_stream_tail_events(
             ctx.body.model,
             echo_filter=echo_filter,
@@ -751,6 +750,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
             return
 
         _record_echo_segment(ctx, echo_filter.echo_text)
+        _append_streamed_reply_content(ctx, completion)
         _append_assistant_tool_call_message(working_messages, completion, tool_calls, round_log)
         for tool_call in tool_calls:
             started_event = _record_tool_event(
@@ -954,7 +954,7 @@ async def _finalize_non_gateway_tool_reply(
     if isinstance(streamed_parts, list) and streamed_parts:
         # Round boundaries are internal; recovery stores the same one-message
         # text that the streaming client received.
-        clean_content = "".join(str(part) for part in streamed_parts)
+        clean_content = "".join(str(part) for part in streamed_parts) + clean_content
     ctx.sessions.log_assistant_output(
         ctx.session_id,
         {**assistant_message, "content": clean_content},

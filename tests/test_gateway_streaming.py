@@ -2619,6 +2619,7 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
 
         executed_tools: list[tuple[str, dict]] = []
         payload_messages_counts: list[int] = []
+        assistant_outputs: list[str] = []
 
         async def build_upstream_request(request, body, messages_override=None, meta=None):
             payload_messages_counts.append(len(messages_override or []))
@@ -2676,7 +2677,7 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
                 pass
 
             def log_assistant_output(self, *args, **kwargs):
-                pass
+                assistant_outputs.append(str(args[1].get("content", "")))
 
         ctx = InternalToolLoopContext(
             request=_DisconnectProbe(),
@@ -2720,7 +2721,10 @@ def test_internal_stream_loop_ignores_sparse_empty_placeholder_and_runs_gateway_
         ]
         assert len(payload_messages_counts) == 2
         assert ctx.log_entry["response_text"] == "done"
-        assert ctx.meta["_streamed_reply_parts"] == [".", "done"]
+        assert assistant_outputs == [".done"]
+        # Only intermediate tool rounds are kept here; the final round goes
+        # through finalize_assistant_private_content before persistence.
+        assert ctx.meta["_streamed_reply_parts"] == ["."]
         rounds = ctx.log_entry["internal_tool_rounds"]
         assert rounds[0]["response_full"] == "."
         assert rounds[0].get("final") is not True

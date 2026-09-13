@@ -299,10 +299,10 @@ describe('applyReplyRecovery — durable roll group', () => {
       }),
     ]
     const changed = applyReplyRecovery(messages, {
-      replies: [{ reply_version_id: 'v1', content: '完整版本' }],
+      replies: [{ reply_version_id: 'v1', content: '半截，后续完整版本' }],
     })
     expect(changed).toBe(true)
-    expect(messages[1].content).toBe('完整版本')
+    expect(messages[1].content).toBe('半截，后续完整版本')
     expect(messages[1].truncated).toBeUndefined()
     // Should preserve thinking even when recovering
     expect(messages[1].thinking).toBe('Some thinking')
@@ -395,6 +395,19 @@ describe('applyReplyRecovery — durable roll group', () => {
     expect(messages[1].variants?.[0].events).toHaveLength(2)
   })
 
+  it('hydrates tool events when a recovered variant contains a leading echo', () => {
+    const messages = [uiMessage('user', '查一下'), uiMessage('assistant', '查到了', { truncated: true })]
+    applyReplyRecovery(messages, {
+      replies: [{
+        reply_version_id: 'v1',
+        content: '[回响]我看了一眼[/回响]查到了',
+        tool_rows: [{ id: 'tool-1', role: 'tool', tool_name: 'weather', content: '{"ok":true}' }],
+      }],
+    })
+    expect(messages[1].events).toHaveLength(2)
+    expect(messages[1].events[0].name).toBe('weather')
+  })
+
   it('keeps truncated when the server has nothing better yet', () => {
     const messages = [
       uiMessage('user', '问题'),
@@ -406,13 +419,16 @@ describe('applyReplyRecovery — durable roll group', () => {
   })
 
   it('rejects server content that is longer but does not include local text', () => {
-    const messages = [uiMessage('user', '问题'), uiMessage('assistant', '第一段\n\n第二段')]
+    const messages = [uiMessage('user', '问题'), uiMessage('assistant', '第一段\n\n第二段', {
+      events: [{ phase: 'call', tool_call_id: 'local-tool', name: 'local', input: {} }],
+    })]
     const changed = applyReplyRecovery(messages, {
       replies: [{ reply_version_id: 'v1', content: '完全不同的更长内容，但不包含本地文本' }],
     })
     // 新 variant 会被添加（changed = true），但不会覆盖本地内容
     expect(changed).toBe(true)
     expect(messages[1].content).toBe('第一段\n\n第二段')
+    expect(messages[1].events).toHaveLength(1)
     expect(messages[1].variants.length).toBe(2)
   })
 
@@ -459,8 +475,9 @@ describe('applyReplyRecovery — durable roll group', () => {
         { reply_version_id: 'v2', content: '第二版' },
       ],
     })
-    expect(messages[1].variants).toHaveLength(2)
-    expect(messages[1].content).toBe('第二版')
+    expect(messages[1].variants).toHaveLength(3)
+    expect(messages[1].content).toBe('半截')
+    expect(messages[1].truncated).toBe(true)
   })
 
   it('preserves responseMeta during recovery', () => {

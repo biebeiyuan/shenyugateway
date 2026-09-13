@@ -2,7 +2,7 @@ import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
 import { sessionMessageContent, sessionMessageParts } from './history'
 import { hydrateToolEvents } from './toolHydration'
-import { applyVariant, ensureVariants, selectedVariantIndex, snapshotMessage, syncCurrentVariant } from './variants'
+import { applyVariant, selectedVariantIndex, snapshotMessage, syncCurrentVariant } from './variants'
 
 // 尾部对账：后台断流后，从 session detail 的 recent_messages（gateway_messages
 // 原始行）里把服务端 drain 落库的完整回复找回来。只修尾巴，绝不整体替换——
@@ -36,21 +36,12 @@ function covers(incoming: string, local: string): boolean {
 // 只增不减护栏：自动找回这条路在物理上没有能力削短任何东西。
 // 任何会让本地内容变少的操作一律拒绝，宁可留着 truncated 让退避链继续。
 function acceptRecovery(
-  local: { content: string; echo: string; events?: unknown[]; thinking?: string },
-  incoming: { content: string; echo: string; events?: unknown[]; thinking?: string }
+  local: { content: string; echo: string },
+  incoming: { content: string; echo: string }
 ): boolean {
   // content 和 echo 用包含关系判断，容忍换行差异
   if (!covers(incoming.content, local.content)) return false
   if (!covers(incoming.echo, local.echo)) return false
-
-  // events 和 thinking 只在传入时才比较（某些路径不涉及这些字段）
-  if (local.events !== undefined && incoming.events !== undefined) {
-    if (incoming.events.length < local.events.length) return false
-  }
-  if (local.thinking && incoming.thinking !== undefined) {
-    if (!incoming.thinking) return false
-  }
-
   return true
 }
 
@@ -193,7 +184,7 @@ function recoveryVariant(reply: RecoveryReply): MessageVariant | undefined {
       thinkingSegments: [],
       events: [],
     }
-    hydrateToolEvents([holder], [...toolRows, { role: 'assistant', content: reply.content }])
+    hydrateToolEvents([holder], [...toolRows, { role: 'assistant', content: variant.content }])
     variant.events = holder.events
   }
   return variant
@@ -262,18 +253,15 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   // 去重，但去重本身不算"变化"——它只是整理，不是找回。
   const uniqueVariants: MessageVariant[] = []
   const seenKeys = new Set<string>()
-  let hadDuplicates = false
   for (const variant of variants) {
     const key = variantKey(variant)
     if (seenKeys.has(key)) {
-      hadDuplicates = true
       continue
     }
     seenKeys.add(key)
     uniqueVariants.push(variant)
   }
   if (uniqueVariants.length !== variants.length) variants.splice(0, variants.length, ...uniqueVariants)
-  const recoveredIds = new Set<string>()
   // 修复槽位：当 target 有 error/truncated 且只有一个 variant 时，
   // 第一个 candidate 可以直接替换它，但这个机会只能用一次
   let repairSlotUsed = false
@@ -287,7 +275,14 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     }
     // 如果还是找不到，但 target 有 error/truncated，且只有一个 variant，
     // 说明服务端的完整版本是对这个不完整 message 的修复，应该 merge 而不是添加
-    const isRepairSlot = index < 0 && !repairSlotUsed && variants.length === 1 && (target.error || target.truncated)
+    const repairCandidate = variants[0]
+    const isRepairSlot = index < 0 && !repairSlotUsed && variants.length === 1
+      && Boolean(target.error || target.truncated)
+      && Boolean(repairCandidate)
+      && acceptRecovery(
+        { content: repairCandidate.content, echo: repairCandidate.echo },
+        { content: candidate.content, echo: candidate.echo }
+      )
     if (isRepairSlot) {
       index = 0
       repairSlotUsed = true
@@ -302,51 +297,33 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
       const previous = variants[index]
       const merged = mergeRecoveredVariant(previous, candidate)
 
-      // 修复槽位时放宽包含关系，但绝不接受更短的
-      if (isRepairSlot) {
-        const localLen = normalizeText(previous.content).length
-        const incomingLen = normalizeText(merged.content).length
-        if (incomingLen >= localLen) {
-          variants[index] = merged
-          if (previous.content !== merged.content || previous.echo !== merged.echo
-              || (!previous.events.length && merged.events.length)
-              || (!previous.replyVersionId && merged.replyVersionId && !previous.content && !previous.echo)) {
-            changed = true
-          }
+      // 任何写入都必须经过同一条“服务端涵盖本地”护栏。
+      const serverCovers = acceptRecovery(
+        { content: previous.content, echo: previous.echo },
+        { content: merged.content, echo: merged.echo }
+      )
+
+      if (!serverCovers) {
+        // 服务端更短或不相干：只补版本号，正文和本地过程信息不动。
+        const updated = { ...previous, replyVersionId: merged.replyVersionId ?? previous.replyVersionId }
+        const addedVersionId = !previous.replyVersionId && updated.replyVersionId
+        variants[index] = updated
+        if (addedVersionId && !previous.content && !previous.echo) {
+          changed = true
         }
-        // 更短：什么都不做，留着 truncated 让退避链等下一轮
       } else {
-        // 护栏：服务端这版是否涵盖本地？不涵盖就只补空字段，正文不动
-        const serverCovers = acceptRecovery(
-          { content: previous.content, echo: previous.echo, events: previous.events, thinking: previous.thinking },
-          { content: merged.content, echo: merged.echo, events: merged.events, thinking: merged.thinking }
-        )
+        // 服务端涵盖本地：检查是否真的有变化。
+        const contentChanged = previous.content !== merged.content || previous.echo !== merged.echo
+        const eventsAdded = !previous.events.length && merged.events.length
+        const addedVersionId = !previous.replyVersionId && merged.replyVersionId
 
-        if (!serverCovers) {
-          // 服务端更短：只补 replyVersionId，正文、回响、events、thinking 一律不动
-          const updated = { ...previous, replyVersionId: merged.replyVersionId ?? previous.replyVersionId }
-          const addedVersionId = !previous.replyVersionId && updated.replyVersionId
-          variants[index] = updated
-          // 只有首次添加 replyVersionId 且原消息不完整时才算 changed
-          if (addedVersionId && !previous.content && !previous.echo) {
-            changed = true
-          }
-        } else {
-          // 服务端涵盖本地：检查是否真的有变化
-          const contentChanged = previous.content !== merged.content || previous.echo !== merged.echo
-          const eventsAdded = !previous.events.length && merged.events.length
-          const addedVersionId = !previous.replyVersionId && merged.replyVersionId
+        variants[index] = merged
 
-          variants[index] = merged
-
-          // 只有真正变化时才标记 changed
-          if (contentChanged || eventsAdded || (addedVersionId && !previous.content && !previous.echo)) {
-            changed = true
-          }
+        if (contentChanged || eventsAdded || (addedVersionId && !previous.content && !previous.echo)) {
+          changed = true
         }
       }
     }
-    if (candidateId) recoveredIds.add(candidateId)
   }
   // Keep recovered rolls in server order, then retain any local-only variants
   // (for example an in-flight draft) after them.
@@ -386,23 +363,27 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     : variants.findIndex((variant) => variant.content === lastRecovered?.content && variant.echo === lastRecovered.echo)
   const priorError = target.error
   const priorTruncated = target.truncated
-  // 只有在以下情况才切换到 lastRecovered：
-  // 1. 原本就选中了（selected >= 0）
-  // 2. 或者本地有 error/truncated（需要修复）
-  const selectedIndex = selected >= 0 ? selected : (priorError || priorTruncated ? lastRecoveredIndex : currentIndex)
+  const lastRecoveredCanRepair = Boolean(lastRecovered) && acceptRecovery(
+    { content: target.content || '', echo: target.echo || '' },
+    { content: lastRecovered?.content || '', echo: lastRecovered?.echo || '' }
+  )
+  // 只在原本选中的版本仍存在，或候选明确涵盖本地尾巴时切换；
+  // 不相干的候选只作为可切换 variant 保存，不得自动覆盖当前气泡。
+  const selectedIndex = selected >= 0
+    ? selected
+    : (priorError || priorTruncated) && lastRecoveredCanRepair ? lastRecoveredIndex : currentIndex
 
   const applied = variants[selectedIndex]
-  // 判断是否真的拿到了更好的内容：
-  // 1. 正常情况：服务端涵盖本地 且 内容确实不同
-  // 2. 有 error/truncated：服务端不更短 且 内容确实不同
-  const hasBrokenTail = priorError || priorTruncated
-  const improved = Boolean(applied) && (
-    hasBrokenTail
-      ? normalizeText(applied.content).length >= normalizeText(target.content || '').length
-        && (applied.content !== target.content || applied.echo !== target.echo)
-      : (covers(applied.content, target.content || '') || covers(applied.echo, target.echo || ''))
-        && (applied.content !== target.content || applied.echo !== target.echo)
-  )
+  // 只有涵盖本地且归一化后的正文/回响确实变化，才算内容改善。
+  const improved = Boolean(applied)
+    && acceptRecovery(
+      { content: target.content || '', echo: target.echo || '' },
+      { content: applied.content, echo: applied.echo }
+    )
+    && (
+      normalizeText(applied.content) !== normalizeText(target.content || '')
+      || normalizeText(applied.echo) !== normalizeText(target.echo || '')
+    )
 
   // 应用 variant 的条件：
   // 1. selectedIndex 变了（切换到不同的 variant）
@@ -410,7 +391,16 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   const needsApply = selectedIndex >= 0 && (currentIndex !== selectedIndex || improved)
 
   if (needsApply) {
+    const localEvents = target.events
+    const localThinking = target.thinking
+    const localThinkingSegments = target.thinkingSegments
     applyVariant(target, applied, selectedIndex)
+    // 恢复快照没有的本地过程信息，避免切到空 events/thinking 的候选时清屏。
+    if (!target.events.length && localEvents.length) target.events = localEvents
+    if (!target.thinking && localThinking) {
+      target.thinking = localThinking
+      target.thinkingSegments = localThinkingSegments
+    }
     target.streaming = false
     // 只有真的改善了才清除 error/truncated，否则恢复原标记
     if (improved) {
