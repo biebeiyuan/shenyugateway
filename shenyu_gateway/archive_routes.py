@@ -115,10 +115,10 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
     # archived_at replays the window order inside one inherited-time batch,
     # role.asc keeps a reply-before-next-message shape for legacy rows whose
     # batch shared one server-side archived_at, id is the stable last resort.
-    # Composite cursor pagination using (event_at, id) tuple.
+    # Composite cursor pagination using (event_at, archived_at, id) tuple.
     # Order must match cursor fields exactly to avoid skipped/duplicate rows.
-    _ORDER_ASC = "event_at.asc,id.asc"
-    _ORDER_DESC = "event_at.desc,id.desc"
+    _ORDER_ASC = "event_at.asc,archived_at.asc,id.asc"
+    _ORDER_DESC = "event_at.desc,archived_at.desc,id.desc"
 
     @router.get("/api/archive/days")
     async def archive_days(month: Optional[str] = None):
@@ -161,11 +161,11 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         be clipped into an origin book. The reader scrolls to the chosen day and can
         still scroll out of it in both directions.
 
-        `before`/`after` page by composite cursor "(event_at, id)" — not just event_at,
+        `before`/`after` page by composite cursor "(event_at, archived_at, id)" — not just event_at,
         because same-turn user/assistant messages share one event_at (the assistant
-        inherits the user's timestamp). Single-column cursor would skip all messages
-        with event_at == cursor_value, silently dropping boundary rows on page turns.
-        Cursor format is opaque "event_at|id" (pipe separator avoids : collision);
+        inherits the user's timestamp). Within one event_at, archived_at determines order.
+        Single or two-column cursor would skip messages at page boundaries.
+        Cursor format is opaque "event_at|archived_at|id" (pipe separator avoids : collision);
         both endpoints return ascending order so caller prepends/appends directly.
         """
         client = _supabase()
@@ -190,33 +190,49 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             params["and"] = f"(event_at.lt.{window_end}T00:00:00+08:00)"
             params["order"] = _ORDER_ASC
         elif after:
-            # Composite cursor: oldest rows > (cursor_event_at, cursor_id), ascending.
+            # Composite cursor: oldest rows > (cursor_event_at, cursor_archived_at, cursor_id), ascending.
             # PostgREST doesn't support tuple comparison, so fetch event_at >= cursor
             # and filter precisely in Python.
-            parts = after.split("|", 1)
-            if len(parts) == 2:
+            parts = after.split("|", 2)
+            if len(parts) == 3:
+                cursor_event_at, cursor_archived_at, cursor_id = parts
+                # URL query params decode + as space; restore for timezone parsing
+                cursor_event_at = cursor_event_at.replace(" ", "+")
+                cursor_archived_at = cursor_archived_at.replace(" ", "+")
+                params["event_at"] = f"gte.{cursor_event_at}"
+                cursor_filter_in_python = ("after", cursor_event_at, cursor_archived_at, cursor_id)
+            elif len(parts) == 2:
+                # Legacy two-field cursor (backwards compat during transition).
                 cursor_event_at, cursor_id = parts
-                # Fix URL decoding: query params turn + into space; restore it for timezone parsing
                 cursor_event_at = cursor_event_at.replace(" ", "+")
                 params["event_at"] = f"gte.{cursor_event_at}"
-                cursor_filter_in_python = ("after", cursor_event_at, cursor_id)
+                cursor_filter_in_python = ("after", cursor_event_at, None, cursor_id)
             else:
-                # Legacy single-field cursor (backwards compat during transition).
-                params["event_at"] = f"gt.{after}"
+                # Legacy single-field cursor (oldest format).
+                cursor_event_at = after.replace(" ", "+")
+                params["event_at"] = f"gt.{cursor_event_at}"
             params["order"] = _ORDER_ASC
         elif before:
-            # Composite cursor: newest rows < (cursor_event_at, cursor_id), descending
+            # Composite cursor: newest rows < (cursor_event_at, cursor_archived_at, cursor_id), descending
             # then reversed. Fetch event_at <= cursor, filter in Python, return ascending.
-            parts = before.split("|", 1)
-            if len(parts) == 2:
+            parts = before.split("|", 2)
+            if len(parts) == 3:
+                cursor_event_at, cursor_archived_at, cursor_id = parts
+                # URL query params decode + as space; restore for timezone parsing
+                cursor_event_at = cursor_event_at.replace(" ", "+")
+                cursor_archived_at = cursor_archived_at.replace(" ", "+")
+                params["event_at"] = f"lte.{cursor_event_at}"
+                cursor_filter_in_python = ("before", cursor_event_at, cursor_archived_at, cursor_id)
+            elif len(parts) == 2:
+                # Legacy two-field cursor.
                 cursor_event_at, cursor_id = parts
-                # Fix URL decoding: query params turn + into space; restore it for timezone parsing
                 cursor_event_at = cursor_event_at.replace(" ", "+")
                 params["event_at"] = f"lte.{cursor_event_at}"
-                cursor_filter_in_python = ("before", cursor_event_at, cursor_id)
+                cursor_filter_in_python = ("before", cursor_event_at, None, cursor_id)
             else:
-                # Legacy single-field cursor.
-                params["event_at"] = f"lt.{before}"
+                # Legacy single-field cursor (oldest format).
+                cursor_event_at = before.replace(" ", "+")
+                params["event_at"] = f"lt.{cursor_event_at}"
             params["order"] = _ORDER_DESC
             reverse_after_fetch = True
         else:
@@ -229,37 +245,67 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         if cursor_filter_in_python:
             from datetime import datetime, timezone as tz
             from fastapi import HTTPException
-            direction, cursor_event_at, cursor_id = cursor_filter_in_python
+            direction, cursor_event_at, cursor_archived_at, cursor_id = cursor_filter_in_python
 
-            # Parse cursor timestamp; fail fast if invalid.
+            # Parse cursor timestamps; fail fast if invalid.
             try:
-                cursor_dt = datetime.fromisoformat(cursor_event_at)
-                if cursor_dt.tzinfo is None:
-                    cursor_dt = cursor_dt.replace(tzinfo=tz.utc)
+                cursor_event_dt = datetime.fromisoformat(cursor_event_at)
+                if cursor_event_dt.tzinfo is None:
+                    cursor_event_dt = cursor_event_dt.replace(tzinfo=tz.utc)
             except ValueError:
-                raise HTTPException(status_code=400, detail="Invalid cursor timestamp")
+                raise HTTPException(status_code=400, detail="Invalid cursor event_at timestamp")
+
+            cursor_archived_dt = None
+            if cursor_archived_at:
+                try:
+                    cursor_archived_dt = datetime.fromisoformat(cursor_archived_at)
+                    if cursor_archived_dt.tzinfo is None:
+                        cursor_archived_dt = cursor_archived_dt.replace(tzinfo=tz.utc)
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Invalid cursor archived_at timestamp")
 
             filtered = []
             for row in rows or []:
                 row_id = str(row.get("id") or "")
                 row_event_at_str = row.get("event_at") or ""
+                row_archived_at_str = row.get("archived_at") or ""
 
                 try:
-                    row_dt = datetime.fromisoformat(row_event_at_str)
-                    if row_dt.tzinfo is None:
-                        row_dt = row_dt.replace(tzinfo=tz.utc)
+                    row_event_dt = datetime.fromisoformat(row_event_at_str)
+                    if row_event_dt.tzinfo is None:
+                        row_event_dt = row_event_dt.replace(tzinfo=tz.utc)
+                    row_archived_dt = datetime.fromisoformat(row_archived_at_str)
+                    if row_archived_dt.tzinfo is None:
+                        row_archived_dt = row_archived_dt.replace(tzinfo=tz.utc)
                 except ValueError:
                     # Can't parse row timestamp, skip it
                     continue
 
+                # Three-key tuple comparison: (event_at, archived_at, id)
                 if direction == "after":
-                    # Want rows > (cursor_event_at, cursor_id) in ascending order.
-                    if row_dt > cursor_dt or (row_dt == cursor_dt and row_id > cursor_id):
-                        filtered.append(row)
+                    # Want rows > cursor in ascending order.
+                    if cursor_archived_dt is None:
+                        # Legacy two-field cursor: compare (event_at, id) only
+                        if row_event_dt > cursor_event_dt or (row_event_dt == cursor_event_dt and row_id > cursor_id):
+                            filtered.append(row)
+                    else:
+                        # Full three-field cursor
+                        if (row_event_dt > cursor_event_dt or
+                            (row_event_dt == cursor_event_dt and row_archived_dt > cursor_archived_dt) or
+                            (row_event_dt == cursor_event_dt and row_archived_dt == cursor_archived_dt and row_id > cursor_id)):
+                            filtered.append(row)
                 else:  # "before"
-                    # Want rows < (cursor_event_at, cursor_id) in descending order.
-                    if row_dt < cursor_dt or (row_dt == cursor_dt and row_id < cursor_id):
-                        filtered.append(row)
+                    # Want rows < cursor in descending order.
+                    if cursor_archived_dt is None:
+                        # Legacy two-field cursor: compare (event_at, id) only
+                        if row_event_dt < cursor_event_dt or (row_event_dt == cursor_event_dt and row_id < cursor_id):
+                            filtered.append(row)
+                    else:
+                        # Full three-field cursor
+                        if (row_event_dt < cursor_event_dt or
+                            (row_event_dt == cursor_event_dt and row_archived_dt < cursor_archived_dt) or
+                            (row_event_dt == cursor_event_dt and row_archived_dt == cursor_archived_dt and row_id < cursor_id)):
+                            filtered.append(row)
             rows = filtered
 
         if reverse_after_fetch:
@@ -270,7 +316,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         ]
         return {"messages": messages, "count": len(messages)}
 
-    def _cut_snippet(text: str, needle_folded: str, context_chars: int = 30) -> dict[str, str]:
+    def _cut_snippet(text: str, needle: str, context_chars: int = 30) -> dict[str, str]:
         """Cut text into before/match/after around the first case-insensitive match.
 
         Returns original-case match (not lowercased), so frontend highlighting
@@ -284,7 +330,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         """
         import re
         # Use re.IGNORECASE to match without casefold's length-changing transform
-        m = re.search(re.escape(needle_folded), text, re.IGNORECASE)
+        m = re.search(re.escape(needle), text, re.IGNORECASE)
         if not m:
             # Should not happen (caller already filtered), but guard anyway.
             return {"snippet_before": "", "snippet_match": text[:60], "snippet_after": ""}
@@ -346,26 +392,47 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         if role in ("user", "assistant"):
             params["role"] = f"eq.{role}"
 
-        # Cursor for pagination: "event_at|id" format (opaque to client, pipe to avoid colon collision).
+        # Cursor for pagination: "event_at|archived_at|id" format (opaque to client, pipe to avoid colon collision).
         # Parse and validate cursor before DB query.
-        cursor_dt = None
+        cursor_event_dt = None
+        cursor_archived_dt = None
         cursor_id = None
         if cursor:
-            parts = cursor.split("|", 1)
-            if len(parts) != 2:
+            parts = cursor.split("|", 2)
+            if len(parts) == 3:
+                cursor_event_at, cursor_archived_at, cursor_id = parts
+            elif len(parts) == 2:
+                # Legacy two-field cursor for backwards compat
+                cursor_event_at, cursor_id = parts
+                cursor_archived_at = None
+            else:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=400, detail="Invalid cursor format")
-            cursor_event_at, cursor_id = parts
-            # Fix URL decoding: query params turn + into space; restore it for timezone parsing
+
+            # URL query params decode + as space (application/x-www-form-urlencoded).
+            # Restore + for timezone offset parsing (e.g., +08:00).
             cursor_event_at = cursor_event_at.replace(" ", "+")
-            # Parse cursor timestamp to validate it
+            if cursor_archived_at:
+                cursor_archived_at = cursor_archived_at.replace(" ", "+")
+
+            # Parse cursor timestamps to validate them
             try:
-                cursor_dt = datetime.fromisoformat(cursor_event_at)
-                if cursor_dt.tzinfo is None:
-                    cursor_dt = cursor_dt.replace(tzinfo=tz.utc)
+                cursor_event_dt = datetime.fromisoformat(cursor_event_at)
+                if cursor_event_dt.tzinfo is None:
+                    cursor_event_dt = cursor_event_dt.replace(tzinfo=tz.utc)
             except ValueError:
                 from fastapi import HTTPException
-                raise HTTPException(status_code=400, detail="Invalid cursor timestamp")
+                raise HTTPException(status_code=400, detail="Invalid cursor event_at timestamp")
+
+            if cursor_archived_at:
+                try:
+                    cursor_archived_dt = datetime.fromisoformat(cursor_archived_at)
+                    if cursor_archived_dt.tzinfo is None:
+                        cursor_archived_dt = cursor_archived_dt.replace(tzinfo=tz.utc)
+                except ValueError:
+                    from fastapi import HTTPException
+                    raise HTTPException(status_code=400, detail="Invalid cursor archived_at timestamp")
+
             # Use DB filter to narrow fetch (lte includes cursor row, will be filtered in Python)
             params["event_at"] = f"lte.{cursor_event_at}"
 
@@ -384,22 +451,34 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
 
         # Apply cursor filtering in Python (complex tuple comparison).
         # IMPORTANT: filter BEFORE slicing, otherwise pagination breaks.
-        if cursor_dt is not None and cursor_id is not None:
+        if cursor_event_dt is not None and cursor_id is not None:
             filtered = []
             for row in hits:
                 row_id = str(row.get("id") or "")
                 row_event_at_str = row.get("event_at") or ""
+                row_archived_at_str = row.get("archived_at") or ""
 
                 try:
-                    row_dt = datetime.fromisoformat(row_event_at_str)
-                    if row_dt.tzinfo is None:
-                        row_dt = row_dt.replace(tzinfo=tz.utc)
+                    row_event_dt = datetime.fromisoformat(row_event_at_str)
+                    if row_event_dt.tzinfo is None:
+                        row_event_dt = row_event_dt.replace(tzinfo=tz.utc)
+                    row_archived_dt = datetime.fromisoformat(row_archived_at_str)
+                    if row_archived_dt.tzinfo is None:
+                        row_archived_dt = row_archived_dt.replace(tzinfo=tz.utc)
                 except ValueError:
                     continue
 
-                # DESC order: want rows < cursor (earlier event_at, or same event_at but smaller id)
-                if row_dt < cursor_dt or (row_dt == cursor_dt and row_id < cursor_id):
-                    filtered.append(row)
+                # DESC order: want rows < cursor (earlier in three-key tuple)
+                if cursor_archived_dt is None:
+                    # Legacy two-field cursor: compare (event_at, id) only
+                    if row_event_dt < cursor_event_dt or (row_event_dt == cursor_event_dt and row_id < cursor_id):
+                        filtered.append(row)
+                else:
+                    # Full three-field cursor: compare (event_at, archived_at, id)
+                    if (row_event_dt < cursor_event_dt or
+                        (row_event_dt == cursor_event_dt and row_archived_dt < cursor_archived_dt) or
+                        (row_event_dt == cursor_event_dt and row_archived_dt == cursor_archived_dt and row_id < cursor_id)):
+                        filtered.append(row)
             hits = filtered
 
         # Fetch limit+1 to detect has_more without separate count query.
@@ -422,9 +501,10 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         next_cursor = None
         if has_more and result_rows:
             last = result_rows[-1]
-            # Keep full ISO timestamp with timezone in cursor (URL-encode it on client side)
+            # Three-key cursor: event_at|archived_at|id
             event_at = last.get('event_at') or ''
-            next_cursor = f"{event_at}|{last.get('id')}"
+            archived_at = last.get('archived_at') or ''
+            next_cursor = f"{event_at}|{archived_at}|{last.get('id')}"
 
         return {
             "results": results,
