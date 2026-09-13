@@ -515,6 +515,9 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
         assistant_message = completion.get("choices", [{}])[0].get("message", {})
         intermediate_echo = split_leading_echo(_content_text_only(assistant_message.get("content"))).echo
         _record_echo_segment(ctx, intermediate_echo)
+        # 中间轮的正文也要攒起来，和流式路径同一个口径：落库的 assistant 行必须是
+        # 客户端看到的那一整条，缺了中间轮就等于沈予的记忆里少了那几段。
+        _append_streamed_reply_content(ctx, completion)
         _append_assistant_tool_call_message(working_messages, completion, tool_calls, round_log)
         for tool_call in tool_calls:
             _record_tool_event(
@@ -543,6 +546,8 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
             _append_tool_round_log(round_log, name, args, cached, result, duration_ms=duration_ms)
             working_messages.append(_tool_result_message(tool_call, name, result))
 
+    # 撞上轮数上限：客户端已经看到的那几轮正文必须先落库，再抛错。
+    _salvage_exhausted_tool_rounds(ctx)
     raise HTTPException(status_code=500, detail="Exceeded internal gateway tool rounds.")
 
 
@@ -799,6 +804,8 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
                 )
             yield _stream_keepalive_event(ctx.body.model, chunk_id=stream_chunk_id, created=stream_created)
 
+    # 撞上轮数上限：客户端已经看到的那几轮正文必须先落库，再抛错。
+    _salvage_exhausted_tool_rounds(ctx)
     raise HTTPException(status_code=500, detail="Exceeded internal gateway tool rounds.")
 
 
@@ -898,6 +905,31 @@ def _append_streamed_reply_content(ctx: InternalToolLoopContext, completion: dic
     content = _visible_round_content(completion)
     if content:
         ctx.meta.setdefault("_streamed_reply_parts", []).append(content)
+
+
+def _salvage_exhausted_tool_rounds(ctx: InternalToolLoopContext) -> None:
+    """Persist the rounds already spoken before the loop ran out of rounds.
+
+    `_finalize_non_gateway_tool_reply` is the only consumer of the accumulated
+    round text, and hitting the round ceiling raises before reaching it.  The
+    client already saw those words, so dropping them loses history the resident
+    can no longer recover — an interrupted reply beats a lost one.
+    """
+    streamed_parts = ctx.meta.get("_streamed_reply_parts")
+    salvaged = (
+        "".join(str(part) for part in streamed_parts)
+        if isinstance(streamed_parts, list) and streamed_parts
+        else ""
+    )
+    combined_echo = _combined_echo_text(ctx)
+    if not salvaged and not combined_echo:
+        return
+    ctx.sessions.log_assistant_output(
+        ctx.session_id,
+        {"role": "assistant", "content": salvaged},
+        echo=combined_echo,
+        reply_version_id=str((ctx.log_entry or {}).get("reply_version_id") or ""),
+    )
 
 
 async def _finalize_non_gateway_tool_reply(

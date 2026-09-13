@@ -64,6 +64,7 @@ from shenyu_gateway.tool_loop import (
     _record_tool_event,
     _record_round_usage,
     _tool_call_name,
+    run_internal_tool_loop,
     run_internal_tool_loop_stream,
 )
 from shenyu_gateway.upstream_adapter import (
@@ -3537,5 +3538,139 @@ def test_execute_mixed_gateway_tool_calls_stores_clean_pending_assistant_copy():
             assert pending is not None
             assert pending["original_assistant_message"].get("content", "").strip() == "Visible [mem]private note[/mem]"
             assert result["choices"][0]["message"]["content"] == "Visible [mem]private note[/mem]"
+
+    asyncio.run(run_case())
+
+
+def _round_completion(content, tool_call=None, finish_reason="stop"):
+    message = {"role": "assistant", "content": content}
+    if tool_call:
+        message["tool_calls"] = [
+            {
+                "index": 0,
+                "id": tool_call,
+                "type": "function",
+                "function": {
+                    "name": "shenyu_gateway_tool",
+                    "arguments": "{\"tool\":\"shenyu_list_mem_notes\",\"arguments\":{}}",
+                },
+            }
+        ]
+    return {
+        "choices": [{"index": 0, "message": message, "finish_reason": finish_reason}],
+        "usage": {},
+    }
+
+
+def _nonstream_tool_loop_ctx(round_payloads, *, max_rounds, assistant_outputs):
+    class Body:
+        model = "test-model"
+
+    class Cfg:
+        max_internal_tool_rounds = max_rounds
+
+    calls: list[int] = []
+
+    async def build_upstream_request(request, body, messages_override=None, meta=None):
+        return (
+            {"model": body.model, "messages": messages_override or [], "tools": []},
+            {},
+            "",
+            {"enabled": False},
+            {"chat_url": "https://upstream.test/v1/chat/completions", "protocol": "openai"},
+        )
+
+    async def call_upstream_json(request, url, payload, headers):
+        calls.append(1)
+        return round_payloads[min(len(calls) - 1, len(round_payloads) - 1)]
+
+    async def execute_gateway_tool(name, args, session_tag=None, cfg=None, turn_messages=None):
+        return {"ok": True, "items": []}
+
+    class Sessions:
+        def log_tool_result(self, *args, **kwargs):
+            pass
+
+        def log_assistant_output(self, *args, **kwargs):
+            assistant_outputs.append(str(args[1].get("content", "")))
+
+    return InternalToolLoopContext(
+        request=_DisconnectProbe(),
+        body=Body(),
+        prepared_messages=[{"role": "user", "content": "list mem"}],
+        meta={"session": {"id": "session-1", "session_tag": "5.15"}},
+        log_entry={},
+        cfg=Cfg(),
+        store=None,
+        sessions=Sessions(),
+        build_upstream_request=build_upstream_request,
+        call_upstream_json=call_upstream_json,
+        stream_upstream_openai_chunks=None,
+        execute_gateway_tool=execute_gateway_tool,
+        record_upstream_payload=lambda log_entry, payload, headers: None,
+        aggregate_cache_usage=lambda usages, protocol="": {},
+        finalize_assistant_private_content=lambda assistant_message, **kwargs: (
+            assistant_message.get("content", ""),
+            "",
+            "",
+            {"applied": False},
+        ),
+        store_heartbeat=lambda *args, **kwargs: None,
+        mark_context_consumed=lambda meta: None,
+        write_completion_context_snapshot=lambda *args, **kwargs: None,
+        record_response_text=lambda log_entry, text: log_entry.__setitem__("response_text", text),
+    )
+
+
+def test_nonstream_tool_loop_persists_intermediate_round_text():
+    """The persisted reply must be the whole thing the client saw.
+
+    The streaming path accumulates each tool round's visible text; the
+    non-streaming path used to drop it, so a multi-round reply lost every
+    round but the last one from session history.
+    """
+    async def run_case():
+        assistant_outputs: list[str] = []
+        ctx = _nonstream_tool_loop_ctx(
+            [
+                _round_completion("我先查一下。", tool_call="tooluse_1", finish_reason="tool_calls"),
+                _round_completion("查到了，明天可以去。"),
+            ],
+            max_rounds=3,
+            assistant_outputs=assistant_outputs,
+        )
+
+        result = await run_internal_tool_loop(ctx)
+
+        assert ctx.meta["_streamed_reply_parts"] == ["我先查一下。"]
+        assert assistant_outputs == ["我先查一下。查到了，明天可以去。"]
+        # The wire response still carries only the final round.
+        assert result["choices"][0]["message"]["content"] == "查到了，明天可以去。"
+
+    asyncio.run(run_case())
+
+
+def test_tool_loop_salvages_spoken_rounds_when_round_budget_is_exhausted():
+    """Hitting the round ceiling must not silently discard what was said.
+
+    `_finalize_non_gateway_tool_reply` is the only consumer of the accumulated
+    round text, and the exhaustion path raises before reaching it.
+    """
+    async def run_case():
+        assistant_outputs: list[str] = []
+        ctx = _nonstream_tool_loop_ctx(
+            [
+                _round_completion("第一轮说了话。", tool_call="tooluse_1", finish_reason="tool_calls"),
+                _round_completion("第二轮也说了。", tool_call="tooluse_2", finish_reason="tool_calls"),
+            ],
+            max_rounds=2,
+            assistant_outputs=assistant_outputs,
+        )
+
+        with pytest.raises(HTTPException) as excinfo:
+            await run_internal_tool_loop(ctx)
+
+        assert excinfo.value.status_code == 500
+        assert assistant_outputs == ["第一轮说了话。第二轮也说了。"]
 
     asyncio.run(run_case())

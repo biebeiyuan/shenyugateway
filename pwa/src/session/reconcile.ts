@@ -80,10 +80,12 @@ function replyRowAfter(rows: RecentRow[], anchorIndex: number): RecentRow | unde
   if (!assistantRows.length) return undefined
   if (assistantRows.length === 1) return assistantRows[0]
 
-  // 多个 assistant 行：拼接所有内容，段落间用 \n\n 对齐本地流式约定。
-  // 这包括多轮工具调用的所有回复（第1轮、第3轮等）。
+  // 多个 assistant 行：直接首尾相连，不加分隔符。这包括多轮工具调用的所有回复
+  // （第1轮、第3轮等）。轮边界是网关内部的事——流式客户端收到的就是各轮 content
+  // 事件相连，后端落库也是 "".join，这里加 \n\n 会让护栏的 includes() 对不上，
+  // 把本该放行的完整版当成不相干候选拒掉。
   // 继承最后一行的元数据（source_id 等），因为最后一段是收口行。
-  const fullContent = assistantRows.map(r => String(r.content || '')).join('\n\n')
+  const fullContent = assistantRows.map(r => String(r.content || '')).join('')
   return { ...assistantRows[assistantRows.length - 1], content: fullContent }
 }
 
@@ -209,16 +211,18 @@ function variantKey(variant: MessageVariant): string {
   return `text:${variant.content}\u0000${variant.echo}`
 }
 
-// Merge the durable same-user roll group into one assistant bubble. This path
-// runs even when the currently selected reply is complete: a complete snapshot
-// can still be missing older variants.
+// 找回只修当前这一条回复，服务端也只返回这一条。历史 roll 版本是纯本地状态
+// （variants.ts 负责）：没有 per-request user id 时，重复的用户正文无法判定某条
+// 旧回复属于哪一次请求，合进来就会把旧 roll 的正文挂到当前气泡上。
+//
+// 语义只有三种，没有例外分支：服务端涵盖本地且更长 → 写入并清标记；涵盖且完全
+// 相同 → 确认无恙、清标记让退避链停下；不涵盖 → 什么都不做，标记留着继续退避。
 export function applyReplyRecovery(messages: UiMessage[], payload: Record<string, unknown>): boolean {
-  const rawReplies = Array.isArray(payload.replies) ? payload.replies : []
-  let replies = rawReplies
+  const candidates = (Array.isArray(payload.replies) ? payload.replies : [])
     .filter((item): item is RecoveryReply => Boolean(item && typeof item === 'object'))
     .map(recoveryVariant)
     .filter((item): item is MessageVariant => Boolean(item))
-  if (!replies.length) return false
+  if (!candidates.length) return false
 
   const lastUserIndex = messages.map((message) => message.role).lastIndexOf('user')
   if (lastUserIndex < 0) return false
@@ -239,16 +243,8 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     messages.splice(lastUserIndex + 1, 0, target)
   }
 
-  // Recovery repairs the current reply only.  Historical roll variants remain
-  // local state; matching them by repeated user text is inherently ambiguous.
-  if (target.replyVersionId) {
-    replies = replies.filter((reply) => reply.replyVersionId === target.replyVersionId)
-  } else {
-    replies = replies.slice(-1)
-  }
-  if (!replies.length) return false
-
-  // 确保 variants 存在，但不要用 message 覆盖已有的 variant（保护 responseMeta 等字段）
+  // 确保 variants 存在，但不要用 message 覆盖已有的 variant（保护 responseMeta 等字段）。
+  // 这一步在任何提前返回之前完成：留下 variants: undefined 会让后续读它的代码炸。
   if (!target.variants?.length) {
     target.variants = [snapshotMessage(target)]
     target.selectedVariantIndex = 0
@@ -257,182 +253,58 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     // 不调用 syncCurrentVariant，避免用 message 覆盖已有 variant 的 responseMeta
   }
   const variants = target.variants
-  const originalSelectedId = target.replyVersionId
   let changed = false
-  // 去重，但去重本身不算"变化"——它只是整理，不是找回。
+  // 去重老快照留下的重复项，但去重本身不算"变化"——它只是整理，不是找回。
   const uniqueVariants: MessageVariant[] = []
   const seenKeys = new Set<string>()
   for (const variant of variants) {
     const key = variantKey(variant)
-    if (seenKeys.has(key)) {
-      continue
-    }
+    if (seenKeys.has(key)) continue
     seenKeys.add(key)
     uniqueVariants.push(variant)
   }
-  if (uniqueVariants.length !== variants.length) variants.splice(0, variants.length, ...uniqueVariants)
-  // 修复槽位：当 target 有 error/truncated 且只有一个 variant 时，
-  // 第一个 candidate 可以直接替换它，但这个机会只能用一次
-  let repairSlotUsed = false
-  for (const candidate of replies) {
-    const candidateId = candidate.replyVersionId
-    let index = candidateId
-      ? variants.findIndex((variant) => variant.replyVersionId === candidateId)
-      : variants.findIndex((variant) => variant.content === candidate.content && variant.echo === candidate.echo)
-    if (index < 0 && candidateId) {
-      index = variants.findIndex((variant) => !variant.replyVersionId && variant.content === candidate.content && variant.echo === candidate.echo)
-    }
-    // 如果还是找不到，但 target 有 error/truncated，且只有一个 variant，
-    // 说明服务端的完整版本是对这个不完整 message 的修复，应该 merge 而不是添加
-    const repairCandidate = variants[0]
-    const isRepairSlot = index < 0 && !repairSlotUsed && variants.length === 1
-      && Boolean(target.error || target.truncated)
-      && Boolean(repairCandidate)
-      && acceptRecovery(
-        { content: repairCandidate.content, echo: repairCandidate.echo },
-        { content: candidate.content, echo: candidate.echo }
-      )
-    if (isRepairSlot) {
-      index = 0
-      repairSlotUsed = true
-    }
-    if (index < 0 && !candidateId) {
-      index = variants.findIndex((variant) => variant.content === candidate.content && variant.echo === candidate.echo)
-    }
-    if (index < 0) {
-      variants.push(candidate)
-      changed = true
-    } else {
-      const previous = variants[index]
-      const merged = mergeRecoveredVariant(previous, candidate)
-
-      // 任何写入都必须经过同一条“服务端涵盖本地”护栏。
-      const serverCovers = acceptRecovery(
-        { content: previous.content, echo: previous.echo },
-        { content: merged.content, echo: merged.echo }
-      )
-
-      if (!serverCovers) {
-        // 服务端更短或不相干：只补版本号，正文和本地过程信息不动。
-        const updated = { ...previous, replyVersionId: merged.replyVersionId ?? previous.replyVersionId }
-        const addedVersionId = !previous.replyVersionId && updated.replyVersionId
-        variants[index] = updated
-        if (addedVersionId && !previous.content && !previous.echo) {
-          changed = true
-        }
-      } else {
-        // 服务端涵盖本地：检查是否真的有变化。
-        const contentChanged = previous.content !== merged.content || previous.echo !== merged.echo
-        const eventsAdded = !previous.events.length && merged.events.length
-        const addedVersionId = !previous.replyVersionId && merged.replyVersionId
-
-        variants[index] = merged
-
-        if (contentChanged || eventsAdded || (addedVersionId && !previous.content && !previous.echo)) {
-          changed = true
-        }
-      }
-    }
-  }
-  // Keep recovered rolls in server order, then retain any local-only variants
-  // (for example an in-flight draft) after them.
-  // 在重排前记录当前选中的 variant 对象
-  const currentlySelected = variants[target.selectedVariantIndex ?? 0]
-
-  const ordered = replies.map((candidate) => {
-    const index = candidate.replyVersionId
-      ? variants.findIndex((variant) => variant.replyVersionId === candidate.replyVersionId)
-      : variants.findIndex((variant) => variant.content === candidate.content && variant.echo === candidate.echo)
-    return variants[index]
-  }).filter((variant): variant is MessageVariant => Boolean(variant))
-  // 按对象身份排除，避免重复插入同一个 variant。
-  const orderedSet = new Set(ordered)
-  const extras = variants.filter((variant) => !orderedSet.has(variant))
-  // 只在真正需要重排时才 splice 和设置 changed：顺序变了，或数量变了
-  const needsReorder = ordered.length && (
-    ordered.length + extras.length !== variants.length ||
-    ordered.some((variant, index) => variant !== variants[index])
-  )
-  if (needsReorder) {
-    variants.splice(0, variants.length, ...ordered, ...extras)
-    changed = true
+  if (uniqueVariants.length !== variants.length) {
+    variants.splice(0, variants.length, ...uniqueVariants)
+    target.selectedVariantIndex = selectedVariantIndex(target)
   }
 
-  // 重排后重新找到之前选中的 variant 的新索引
-  const currentIndex = currentlySelected
-    ? variants.findIndex(v => v === currentlySelected)
-    : 0
-
-  const selected = originalSelectedId
-    ? variants.findIndex((variant) => variant.replyVersionId === originalSelectedId)
-    : -1
-  const lastRecovered = replies[replies.length - 1]
-  const lastRecoveredIndex = lastRecovered?.replyVersionId
-    ? variants.findIndex((variant) => variant.replyVersionId === lastRecovered.replyVersionId)
-    : variants.findIndex((variant) => variant.content === lastRecovered?.content && variant.echo === lastRecovered.echo)
-  const priorError = target.error
-  const priorTruncated = target.truncated
-  const lastRecoveredCanRepair = Boolean(lastRecovered) && acceptRecovery(
+  // 候选只认一条：本地有 replyVersionId 就必须精确匹配，否则取最新那条。
+  // 匹配不上 = 服务端手里不是这条回复，不碰，让退避链继续。
+  const candidate = target.replyVersionId
+    ? candidates.find((item) => item.replyVersionId === target.replyVersionId)
+    : candidates[candidates.length - 1]
+  if (!candidate) return changed
+  // 只增不减：唯一的写入闸门，没有例外分支。服务端不涵盖本地就原样返回，
+  // truncated/error 留着，让调用方按退避继续问——这正是"drain 还没写完"的样子。
+  if (!acceptRecovery(
     { content: target.content || '', echo: target.echo || '' },
-    { content: lastRecovered?.content || '', echo: lastRecovered?.echo || '' }
-  )
-  // 只在原本选中的版本仍存在，或候选明确涵盖本地尾巴时切换；
-  // 不相干的候选只作为可切换 variant 保存，不得自动覆盖当前气泡。
-  const selectedIndex = selected >= 0
-    ? selected
-    : (priorError || priorTruncated) && lastRecoveredCanRepair ? lastRecoveredIndex : currentIndex
+    { content: candidate.content, echo: candidate.echo }
+  )) return changed
 
-  const applied = variants[selectedIndex]
-  // 服务端这一版涵盖了本地尾巴：找回成功，无论正文是否变化。
-  const converged = Boolean(applied)
-    && acceptRecovery(
-      { content: target.content || '', echo: target.echo || '' },
-      { content: applied.content, echo: applied.echo }
-    )
-  // 涵盖之外还要归一化后的正文/回响确实变化，才算内容改善。
-  const improved = converged
-    && (
-      normalizeText(applied.content) !== normalizeText(target.content || '')
-      || normalizeText(applied.echo) !== normalizeText(target.echo || '')
-    )
-
-  // 应用 variant 的条件：
-  // 1. selectedIndex 变了（切换到不同的 variant）
-  // 2. 内容真的改善了（improved = true）
-  const needsApply = selectedIndex >= 0 && (currentIndex !== selectedIndex || improved)
-
-  if (needsApply) {
-    const localEvents = target.events
-    const localThinking = target.thinking
-    const localThinkingSegments = target.thinkingSegments
-    applyVariant(target, applied, selectedIndex)
-    // 恢复快照没有的本地过程信息，避免切到空 events/thinking 的候选时清屏。
-    if (!target.events.length && localEvents.length) target.events = localEvents
-    if (!target.thinking && localThinking) {
-      target.thinking = localThinking
-      target.thinkingSegments = localThinkingSegments
-    }
-    target.streaming = false
-    // 只有服务端这版涵盖本地时才清除 error/truncated，否则恢复原标记
-    if (converged) {
-      target.error = undefined
-      target.truncated = undefined
-    } else {
-      target.error = priorError
-      target.truncated = priorTruncated
-    }
-    syncCurrentVariant(target)
-    changed = true
-  }
-
-  // An identical version is still a successful recovery: clear stale retry
-  // markers even when there is no content or variant change to apply.
-  if (converged && (target.error || target.truncated)) {
+  // 到这里服务端这版确认涵盖本地（含完全相同）——本次找回成功。
+  // 先清标记再写入：清在后面的话，快照已经带着旧 error 落进 variants 了。
+  if (target.error || target.truncated) {
     target.error = undefined
     target.truncated = undefined
-    target.streaming = false
     changed = true
   }
+  target.streaming = false
 
+  const index = selectedVariantIndex(target)
+  const contentChanged = normalizeText(candidate.content) !== normalizeText(target.content || '')
+    || normalizeText(candidate.echo) !== normalizeText(target.echo || '')
+  if (contentChanged) {
+    // 服务端永远没有 thinking，events 只有塌到 offset 0 的补水版，echoSegments 只有单段，
+    // responseMeta 压根不在恢复载荷里。本地有的一律以本地为准，服务端只补本地空着的。
+    // error 例外：上面刚判定找回成功清掉了它，快照里那份不能再传染回来。
+    const merged = { ...mergeRecoveredVariant(variants[index], candidate), error: undefined }
+    applyVariant(target, merged, index)
+    syncCurrentVariant(target)
+    changed = true
+  } else if (!target.replyVersionId && candidate.replyVersionId) {
+    // 补版本号是簿记，不算找回，不因此置 changed。
+    target.replyVersionId = candidate.replyVersionId
+    syncCurrentVariant(target)
+  }
   return changed
 }

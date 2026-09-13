@@ -68,7 +68,9 @@ describe('applyReconciledTail — append branch', () => {
       { role: 'assistant', content: '第一段' },
       { role: 'assistant', content: '第二段更完整' },
     ]))
-    expect(messages[1].content).toBe('第一段\n\n第二段更完整')
+    // 轮之间不加分隔符：网关流式也是各轮 content 直接相连，落库同样是 "".join。
+    // 换行只有模型自己写进正文时才有，那时它已经在行内容里了。
+    expect(messages[1].content).toBe('第一段第二段更完整')
   })
 })
 
@@ -435,11 +437,12 @@ describe('applyReplyRecovery — current reply only', () => {
     const changed = applyReplyRecovery(messages, {
       replies: [{ reply_version_id: 'v1', content: '完全不同的更长内容，但不包含本地文本' }],
     })
-    // 新 variant 会被添加（changed = true），但不会覆盖本地内容
-    expect(changed).toBe(true)
+    // 不涵盖本地就什么都不做：既不覆盖正文，也不塞幽灵候选进 variants
+    // （多出来的候选会让气泡冒出无意义的左右切换箭头）。
+    expect(changed).toBe(false)
     expect(messages[1].content).toBe('第一段\n\n第二段')
     expect(messages[1].events).toHaveLength(1)
-    expect(messages[1].variants.length).toBe(2)
+    expect(messages[1].variants.length).toBe(1)
   })
 
   it('preserves multi-segment echoSegments when guard allows recovery', () => {
@@ -471,7 +474,20 @@ describe('applyReplyRecovery — current reply only', () => {
     ]
     applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v9', content: 'B'.repeat(200) }] })
     expect(messages[1].content.length).toBe(800)
-    expect(messages[1].truncated).toBeUndefined()
+    expect(messages[1].truncated).toBe(true) // 退避链必须还活着
+  })
+
+  it('keeps the backoff chain alive when the server has only drained a shorter prefix', () => {
+    // 断流时本地已经流式收到 500 字，后端 drain 只写到 300 字。护栏拒绝这份短的，
+    // 此时 truncated 必须留着——否则后端十秒后写完的完整版再没人来取，气泡永远半截。
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', 'X'.repeat(500), { replyVersionId: 'v1', truncated: true }),
+    ]
+    applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: 'X'.repeat(300) }] })
+    expect(messages[1].content.length).toBe(500)
+    expect(messages[1].truncated).toBe(true)
+    expect(tailNeedsReconcile(messages)).toBe(true)
   })
 
   it('does not import unrelated historical rolls into a truncated tail', () => {
@@ -485,9 +501,94 @@ describe('applyReplyRecovery — current reply only', () => {
         { reply_version_id: 'v2', content: '第二版' },
       ],
     })
-    expect(messages[1].variants).toHaveLength(2)
+    expect(messages[1].variants).toHaveLength(1) // 历史 roll 不进 variants
     expect(messages[1].content).toBe('半截')
-    expect(messages[1].truncated).toBeUndefined()
+    expect(messages[1].truncated).toBe(true) // 候选都不涵盖本地，退避链必须还活着
+  })
+
+  it('preserves responseMeta on the real repair path, not just the no-op path', () => {
+    // 内容相同的那条测试走不到 applyVariant，盖不住这里：真正写入时如果把裸候选
+    // 喂给 applyVariant，responseMeta 会被静默清空，而套件全绿。
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '半截', {
+        replyVersionId: 'v1',
+        truncated: true,
+        responseMeta: { model: 'claude-opus-5', usage: { input_tokens: 100, output_tokens: 50 } },
+        variants: [
+          {
+            content: '半截',
+            echo: '',
+            echoSegments: [],
+            thinking: '',
+            thinkingSegments: [],
+            events: [],
+            replyVersionId: 'v1',
+            responseMeta: { model: 'claude-opus-5', usage: { input_tokens: 100, output_tokens: 50 } },
+          },
+        ],
+      }),
+    ]
+    const changed = applyReplyRecovery(messages, {
+      replies: [{ reply_version_id: 'v1', content: '半截，后续完整版' }],
+    })
+    expect(changed).toBe(true)
+    expect(messages[1].content).toBe('半截，后续完整版')
+    expect(messages[1].responseMeta).toEqual({
+      model: 'claude-opus-5',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    })
+    expect(messages[1].variants?.[0].responseMeta).toEqual({
+      model: 'claude-opus-5',
+      usage: { input_tokens: 100, output_tokens: 50 },
+    })
+  })
+
+  it('clears a stale error from the variant snapshot too, not just the bubble', () => {
+    // 快照是切换 variant 时的还原源。清了气泡上的 error 却留着快照里那份，
+    // 用户切一圈回来错误横幅就复活了。
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '半截', { replyVersionId: 'v1', error: '连接停滞' }),
+    ]
+    const changed = applyReplyRecovery(messages, {
+      replies: [{ reply_version_id: 'v1', content: '半截，后续完整版' }],
+    })
+    expect(changed).toBe(true)
+    expect(messages[1].error).toBeUndefined()
+    expect(messages[1].variants?.[0].error).toBeUndefined()
+  })
+
+  it('leaves local roll variants in order and keeps the selection pointing at them', () => {
+    // 旧实现按服务端顺序重排 variants 却不更新 selectedVariantIndex，指针会指到
+    // 邻居槽位上，下一次 syncCurrentVariant 就把那条 roll 的正文覆盖掉。
+    const roll = (id: string, content: string) => ({
+      content, echo: '', echoSegments: [], thinking: '', thinkingSegments: [], events: [], replyVersionId: id,
+    })
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '版本三', {
+        replyVersionId: 'v3',
+        selectedVariantIndex: 2,
+        variants: [roll('v1', '版本一'), roll('v2', '版本二'), roll('v3', '版本三')],
+      }),
+    ]
+    applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v3', content: '版本三' }] })
+    expect(messages[1].variants?.map((item) => item.replyVersionId)).toEqual(['v1', 'v2', 'v3'])
+    expect(messages[1].selectedVariantIndex).toBe(2)
+    expect(messages[1].variants?.[1].content).toBe('版本二')
+  })
+
+  it('does nothing when the local bubble has a version id the server does not hold', () => {
+    const messages = [
+      uiMessage('user', '问题'),
+      uiMessage('assistant', '半截', { replyVersionId: 'v2', truncated: true }),
+    ]
+    const changed = applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '别的回复' }] })
+    expect(changed).toBe(false)
+    expect(messages[1].content).toBe('半截')
+    expect(messages[1].truncated).toBe(true)
+    expect(messages[1].variants).toHaveLength(1)
   })
 
   it('preserves responseMeta during recovery', () => {
@@ -519,8 +620,9 @@ describe('applyReplyRecovery — current reply only', () => {
   it('preserves full multi-turn tool content from server', () => {
     const messages = [
       uiMessage('user', '查一下'),
-      // 本地流式接收时包含换行符，服务端拼接时也会加 \n\n
-      uiMessage('assistant', '我先查天气。\n\n查到了,再查日历。\n\n结论是明天可以去。', {
+      // 本地流式收到的是各轮 content 事件直接相连，轮之间没有分隔符；这里在第三轮
+      // 之前断流，服务端已经 drain 完整三轮。
+      uiMessage('assistant', '我先查天气。查到了,再查日历。', {
         truncated: true,
         events: [
           { phase: 'call', tool_call_id: 'tc1', name: 'weather', input: '{}', textOffset: 6, streamOrder: 0 },
@@ -543,6 +645,25 @@ describe('applyReplyRecovery — current reply only', () => {
     expect(messages[1].content).toContain('查到了,再查日历')
     expect(messages[1].content).toContain('结论是明天可以去')
     expect(messages[1].events.length).toBeGreaterThanOrEqual(4)
+  })
+
+  it('accepts a multi-row server reply whose prefix matches the local fragment', () => {
+    // 拼接口径必须和网关一致。这里加任何分隔符，normalizeText 都会在本地片段末尾
+    // 和服务端下一段之间插进一个空格，includes() 就对不上——护栏把本该放行的
+    // 完整版当成不相干候选拒掉，气泡永远停在半截。
+    const messages = [
+      uiMessage('user', '查一下'),
+      uiMessage('assistant', '我先查天气。查到了', { truncated: true }),
+    ]
+    const changed = applyReconciledTail(messages, payloadOf([
+      { role: 'user', content: '查一下' },
+      { role: 'assistant', content: '我先查天气。' },
+      { role: 'tool', tool_name: 'weather', content: '{"ok":true}' },
+      { role: 'assistant', content: '查到了，再查日历。结论是明天可以去。' },
+    ]))
+    expect(changed).toBe(true)
+    expect(messages[1].content).toBe('我先查天气。查到了，再查日历。结论是明天可以去。')
+    expect(messages[1].truncated).toBeUndefined()
   })
 
   it('rejects server content when shorter than local', () => {
