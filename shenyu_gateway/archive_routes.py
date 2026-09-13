@@ -115,8 +115,10 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
     # archived_at replays the window order inside one inherited-time batch,
     # role.asc keeps a reply-before-next-message shape for legacy rows whose
     # batch shared one server-side archived_at, id is the stable last resort.
-    _ORDER_ASC = "event_at.asc,archived_at.asc,role.asc,id.asc"
-    _ORDER_DESC = "event_at.desc,archived_at.desc,role.desc,id.desc"
+    # Composite cursor pagination using (event_at, id) tuple.
+    # Order must match cursor fields exactly to avoid skipped/duplicate rows.
+    _ORDER_ASC = "event_at.asc,id.asc"
+    _ORDER_DESC = "event_at.desc,id.desc"
 
     @router.get("/api/archive/days")
     async def archive_days(month: Optional[str] = None):
@@ -194,6 +196,8 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             parts = after.split("|", 1)
             if len(parts) == 2:
                 cursor_event_at, cursor_id = parts
+                # Fix URL decoding: query params turn + into space; restore it for timezone parsing
+                cursor_event_at = cursor_event_at.replace(" ", "+")
                 params["event_at"] = f"gte.{cursor_event_at}"
                 cursor_filter_in_python = ("after", cursor_event_at, cursor_id)
             else:
@@ -206,6 +210,8 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             parts = before.split("|", 1)
             if len(parts) == 2:
                 cursor_event_at, cursor_id = parts
+                # Fix URL decoding: query params turn + into space; restore it for timezone parsing
+                cursor_event_at = cursor_event_at.replace(" ", "+")
                 params["event_at"] = f"lte.{cursor_event_at}"
                 cursor_filter_in_python = ("before", cursor_event_at, cursor_id)
             else:
@@ -222,28 +228,21 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         # Apply composite cursor filter in Python (tuple comparison).
         if cursor_filter_in_python:
             from datetime import datetime, timezone as tz
+            from fastapi import HTTPException
             direction, cursor_event_at, cursor_id = cursor_filter_in_python
-            # Fix URL decoding issue: + becomes space in query params
-            cursor_event_at = cursor_event_at.replace(" ", "+")
 
-            # Parse cursor timestamp as-is (with original timezone)
+            # Parse cursor timestamp; fail fast if invalid.
             try:
                 cursor_dt = datetime.fromisoformat(cursor_event_at)
                 if cursor_dt.tzinfo is None:
                     cursor_dt = cursor_dt.replace(tzinfo=tz.utc)
             except ValueError:
-                # Fallback: can't parse, skip filtering
-                cursor_dt = None
+                raise HTTPException(status_code=400, detail="Invalid cursor timestamp")
 
             filtered = []
             for row in rows or []:
                 row_id = str(row.get("id") or "")
                 row_event_at_str = row.get("event_at") or ""
-
-                if cursor_dt is None:
-                    # Can't compare, include all
-                    filtered.append(row)
-                    continue
 
                 try:
                     row_dt = datetime.fromisoformat(row_event_at_str)
@@ -272,22 +271,25 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         return {"messages": messages, "count": len(messages)}
 
     def _cut_snippet(text: str, needle_folded: str, context_chars: int = 30) -> dict[str, str]:
-        """Cut text into before/match/after around the first match position.
+        """Cut text into before/match/after around the first case-insensitive match.
 
         Returns original-case match (not lowercased), so frontend highlighting
-        stays byte-identical to what the user typed. Pitfall avoided: Python
-        counts Unicode code points, JS counts UTF-16 code units, Swift counts
-        grapheme clusters — an emoji offset computed here would land wrong if
-        sent as a number. Send the three strings instead; frontend renders them
+        stays byte-identical to what the user sees. Uses regex for case-insensitive
+        matching to avoid casefold() length issues (e.g., 'ß' → 'ss' changes offsets).
+
+        Pitfall avoided: Python counts Unicode code points, JS counts UTF-16 code units,
+        Swift counts grapheme clusters — an emoji offset computed here would land wrong
+        if sent as a number. Send the three strings instead; frontend renders them
         as three runs with no arithmetic.
         """
-        text_folded = text.casefold()
-        try:
-            match_start = text_folded.index(needle_folded)
-        except ValueError:
+        import re
+        # Use re.IGNORECASE to match without casefold's length-changing transform
+        m = re.search(re.escape(needle_folded), text, re.IGNORECASE)
+        if not m:
             # Should not happen (caller already filtered), but guard anyway.
             return {"snippet_before": "", "snippet_match": text[:60], "snippet_after": ""}
-        match_end = match_start + len(needle_folded)
+        match_start = m.start()
+        match_end = m.end()
         before_start = max(0, match_start - context_chars)
         after_end = min(len(text), match_end + context_chars)
         return {
@@ -319,81 +321,87 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         ISO timestamps) for pagination; fetches one extra row to determine has_more
         without a separate count query.
         """
+        from datetime import datetime, timezone as tz
+        import re
+
         needle = (q or "").strip()
         if not needle:
             return {"results": [], "count": 0, "has_more": False, "query": "", "next_cursor": None}
         client = _supabase()
 
-        # Escape special characters in PostgREST ilike pattern: *, comma, parens, quotes
-        # Wrap in quotes to prevent comma/parens being treated as separators
-        escaped = needle.replace('"', '""')  # Double quotes for escaping inside quoted string
-        escaped = escaped.replace('*', '\\*')  # Escape wildcard
+        # Escape ILIKE wildcards (%, _) and backslash, then wrap in quotes.
+        # PostgREST quoted patterns use \" for literal quotes (not "").
+        # Wrapping in quotes prevents comma/parens from being treated as separators.
+        escaped = needle.replace('\\', '\\\\')  # Escape backslash first
+        escaped = escaped.replace('%', '\\%')   # Escape ILIKE wildcards
+        escaped = escaped.replace('_', '\\_')
+        escaped = escaped.replace('"', '\\"')   # Escape quotes for PostgREST quoted pattern
 
         params = {
             "select": "id,session_tag,role,content,content_hash,event_at,archived_at",
             "deleted_at": "is.null",
-            "content": f'ilike."*{escaped}*"',  # Quoted pattern with escaped needle
+            "content": f'ilike."*{escaped}*"',  # Quoted pattern with wildcards around needle
             "order": _ORDER_DESC,
         }
         if role in ("user", "assistant"):
             params["role"] = f"eq.{role}"
 
         # Cursor for pagination: "event_at|id" format (opaque to client, pipe to avoid colon collision).
-        # event_at is full ISO timestamp with timezone; client must URL-encode the cursor.
+        # Parse and validate cursor before DB query.
+        cursor_dt = None
+        cursor_id = None
         if cursor:
             parts = cursor.split("|", 1)
-            if len(parts) == 2:
-                cursor_event_at, cursor_id = parts
-                # Use the full timestamp for DB filter
-                params["event_at"] = f"lte.{cursor_event_at}"
+            if len(parts) != 2:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail="Invalid cursor format")
+            cursor_event_at, cursor_id = parts
+            # Fix URL decoding: query params turn + into space; restore it for timezone parsing
+            cursor_event_at = cursor_event_at.replace(" ", "+")
+            # Parse cursor timestamp to validate it
+            try:
+                cursor_dt = datetime.fromisoformat(cursor_event_at)
+                if cursor_dt.tzinfo is None:
+                    cursor_dt = cursor_dt.replace(tzinfo=tz.utc)
+            except ValueError:
+                from fastapi import HTTPException
+                raise HTTPException(status_code=400, detail="Invalid cursor timestamp")
+            # Use DB filter to narrow fetch (lte includes cursor row, will be filtered in Python)
+            params["event_at"] = f"lte.{cursor_event_at}"
 
-        rows = await _query_all(client, params, page_size=1000, max_rows=10000)
+        # Fetch limit * 3 to account for: (1) handoff folding, (2) Python re.IGNORECASE filter,
+        # (3) cursor filtering. This avoids pagination gaps while keeping fetch bounded.
+        cap = max(1, min(int(limit), 200))
+        fetch_limit = min(cap * 3, 600)
+        params["limit"] = str(fetch_limit)
+
+        rows = await client.query(ARCHIVE_TABLE, params=params)
         folded = _fold_handoff_copies(rows or [])
-        lowered = needle.casefold()
 
-        # Python casefold() is authoritative; filter after DB fetch.
-        hits = [row for row in folded if lowered in str(row.get("content") or "").casefold()]
+        # Python re.IGNORECASE is authoritative; filter after DB fetch.
+        # This ensures the Python filter uses the same matching logic as snippet generation.
+        hits = [row for row in folded if re.search(re.escape(needle), str(row.get("content") or ""), re.IGNORECASE)]
 
         # Apply cursor filtering in Python (complex tuple comparison).
         # IMPORTANT: filter BEFORE slicing, otherwise pagination breaks.
-        if cursor:
-            from datetime import datetime, timezone as tz
-            parts = cursor.split("|", 1)
-            if len(parts) == 2:
-                cursor_event_at, cursor_id = parts
-                # Fix URL decoding issue: + becomes space in query params
-                cursor_event_at = cursor_event_at.replace(" ", "+")
-                # Parse cursor timestamp as-is (with original timezone)
+        if cursor_dt is not None and cursor_id is not None:
+            filtered = []
+            for row in hits:
+                row_id = str(row.get("id") or "")
+                row_event_at_str = row.get("event_at") or ""
+
                 try:
-                    cursor_dt = datetime.fromisoformat(cursor_event_at)
-                    if cursor_dt.tzinfo is None:
-                        cursor_dt = cursor_dt.replace(tzinfo=tz.utc)
+                    row_dt = datetime.fromisoformat(row_event_at_str)
+                    if row_dt.tzinfo is None:
+                        row_dt = row_dt.replace(tzinfo=tz.utc)
                 except ValueError:
-                    cursor_dt = None
+                    continue
 
-                filtered = []
-                for row in hits:
-                    row_id = str(row.get("id") or "")
-                    row_event_at_str = row.get("event_at") or ""
+                # DESC order: want rows < cursor (earlier event_at, or same event_at but smaller id)
+                if row_dt < cursor_dt or (row_dt == cursor_dt and row_id < cursor_id):
+                    filtered.append(row)
+            hits = filtered
 
-                    if cursor_dt is None:
-                        # Can't compare, skip filtering
-                        filtered.append(row)
-                        continue
-
-                    try:
-                        row_dt = datetime.fromisoformat(row_event_at_str)
-                        if row_dt.tzinfo is None:
-                            row_dt = row_dt.replace(tzinfo=tz.utc)
-                    except ValueError:
-                        continue
-
-                    # DESC order: want rows < cursor (earlier event_at, or same event_at but smaller id)
-                    if row_dt < cursor_dt or (row_dt == cursor_dt and row_id < cursor_id):
-                        filtered.append(row)
-                hits = filtered
-
-        cap = max(1, min(int(limit or 60), 200))
         # Fetch limit+1 to detect has_more without separate count query.
         page_hits = hits[: cap + 1]
         has_more = len(page_hits) > cap
@@ -401,7 +409,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
 
         results = []
         for row in result_rows:
-            snippet = _cut_snippet(str(row.get("content") or ""), lowered, context_chars=30)
+            snippet = _cut_snippet(str(row.get("content") or ""), needle, context_chars=30)
             results.append({
                 "id": row.get("id"),
                 "session_tag": row.get("session_tag"),

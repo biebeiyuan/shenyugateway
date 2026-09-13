@@ -40,24 +40,56 @@ const searchResults = ref<ArchiveMessage[]>([])
 const searching = ref(false)
 const searchError = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
+const searchHasMore = ref(false)
+const searchCursor = ref<string | null>(null)
+const loadingMore = ref(false)
 let searchGen = 0 // generation 计数器：过期响应直接丢弃
 
 async function runSearch() {
   const needle = query.value.trim()
-  if (!needle) { searchResults.value = []; searchError.value = ''; return }
+  if (!needle) {
+    searchResults.value = []
+    searchError.value = ''
+    searchHasMore.value = false
+    searchCursor.value = null
+    return
+  }
   const gen = ++searchGen
   searching.value = true
   searchError.value = ''
   try {
-    const { results } = await searchArchive(props.ctx, needle)
+    const { results, hasMore, nextCursor } = await searchArchive(props.ctx, needle)
     if (gen !== searchGen) return // 过期响应：丢弃，连 flag 都不碰
     searchResults.value = results
+    searchHasMore.value = hasMore
+    searchCursor.value = nextCursor
   } catch {
     if (gen !== searchGen) return
     searchResults.value = []
+    searchHasMore.value = false
+    searchCursor.value = null
     searchError.value = '这次没搜成，待会儿再试试。'
   } finally {
     if (gen === searchGen) searching.value = false
+  }
+}
+
+async function loadMoreSearch() {
+  if (!searchHasMore.value || loadingMore.value || !searchCursor.value) return
+  const needle = query.value.trim()
+  if (!needle) return
+  const gen = searchGen
+  loadingMore.value = true
+  try {
+    const { results, hasMore, nextCursor } = await searchArchive(props.ctx, needle, undefined, searchCursor.value)
+    if (gen !== searchGen) return
+    searchResults.value = [...searchResults.value, ...results]
+    searchHasMore.value = hasMore
+    searchCursor.value = nextCursor
+  } catch {
+    // 静默失败，保留现有结果
+  } finally {
+    if (gen === searchGen) loadingMore.value = false
   }
 }
 
@@ -451,13 +483,25 @@ function copyText(text: string) {
             <p class="sub">换个说法，或者去按天翻翻看。</p>
           </div>
           <template v-else>
-            <div class="result-count">{{ searchResults.length }} 条结果</div>
+            <div class="result-count">
+              {{ searchResults.length }} 条结果
+              <span v-if="searchHasMore" class="has-more">（还有更多）</span>
+            </div>
             <button v-for="row in searchResults" :key="row.id" class="result-card" type="button" @click="jumpToContext(row)">
               <div class="result-meta">
                 <span class="who" :class="whoClass(row.role)"><span class="dot" />{{ whoName(row.role) }}</span>
                 <span class="result-date">{{ dayLabel(cstDay(row.event_at)) }} · {{ timeLabel(row.event_at) }}</span>
               </div>
               <div class="result-snippet" v-html="renderSnippet(row)" />
+            </button>
+            <button
+              v-if="searchHasMore"
+              type="button"
+              class="load-more-btn"
+              :disabled="loadingMore"
+              @click="loadMoreSearch"
+            >
+              {{ loadingMore ? '加载中…' : '加载更多' }}
             </button>
           </template>
         </div>
