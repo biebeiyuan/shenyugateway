@@ -96,11 +96,6 @@ class RuntimeConfig:
         self.wake_welcome_message: str = os.getenv("WAKE_WELCOME_MESSAGE", "").strip()
         self.echo_prompt: str = os.getenv("ECHO_PROMPT", DEFAULT_ECHO_PROMPT).strip()
         self.echo_retention_turns: int = _env_int("ECHO_RETENTION_TURNS", 1, 0, 20)
-        self.enable_inline_memory_capture: bool = _env_bool("ENABLE_INLINE_MEMORY_CAPTURE", True)
-        self.inject_inline_memory_prompt: bool = _env_bool(
-            "INJECT_INLINE_MEMORY_PROMPT",
-            self.enable_inline_memory_capture,
-        )
         self.model_mapping: dict[str, str] = self._load_model_mapping()
 
         self.calendar_inject_day: bool = _env_bool("CALENDAR_INJECT_DAY", True)
@@ -110,8 +105,6 @@ class RuntimeConfig:
         self.inject_island_bumps: bool = _env_bool("INJECT_ISLAND_BUMPS", True)
         self.island_bump_limit: int = _env_int("ISLAND_BUMP_LIMIT", 8, 1, 20)
         self.inject_stars: bool = _env_bool("INJECT_STARS", True)
-        self.inject_star_prompt: bool = _env_bool("INJECT_STAR_PROMPT", True)
-        self.enable_inline_star_capture: bool = _env_bool("ENABLE_INLINE_STAR_CAPTURE", True)
         self.enable_star_embeddings: bool = _env_bool("ENABLE_STAR_EMBEDDINGS", _env_bool("ENABLE_RECALL_EMBEDDINGS", False))
         self.star_inject_limit: int = _env_int("STAR_INJECT_LIMIT", 3, 1, 5)
         self.star_review_new_limit: int = _env_int("STAR_REVIEW_NEW_LIMIT", 4, 1, 10)
@@ -147,7 +140,6 @@ class RuntimeConfig:
         self.enable_cold_start: bool = _env_bool("ENABLE_COLD_START", True)
         self.enable_upstream_tools: bool = _env_bool("ENABLE_UPSTREAM_TOOLS", True)
         self.enable_gateway_tools: bool = _env_bool("ENABLE_GATEWAY_TOOLS", True)
-        self.enable_stream_duplicate_guard: bool = _env_bool("ENABLE_STREAM_DUPLICATE_GUARD", True)
         self.enable_mem0_management_tools: bool = _env_bool("ENABLE_MEM0_MANAGEMENT_TOOLS", True)
         self.expose_supabase_tools: bool = _env_bool("EXPOSE_SUPABASE_TOOLS", True)
         self.gateway_tool_mode: str = self._normalize_tool_mode(os.getenv("GATEWAY_TOOL_MODE", "broker"))
@@ -255,8 +247,6 @@ class RuntimeConfig:
             "wake_welcome_message": self.wake_welcome_message,
             "echo_prompt": self.echo_prompt,
             "echo_retention_turns": self.echo_retention_turns,
-            "inject_inline_memory_prompt": self.inject_inline_memory_prompt,
-            "enable_inline_memory_capture": self.enable_inline_memory_capture,
             "model_mapping": self.model_mapping,
             "calendar_inject_day": self.calendar_inject_day,
             "calendar_inject_week": self.calendar_inject_week,
@@ -265,8 +255,6 @@ class RuntimeConfig:
             "inject_island_bumps": self.inject_island_bumps,
             "island_bump_limit": self.island_bump_limit,
             "inject_stars": self.inject_stars,
-            "inject_star_prompt": self.inject_star_prompt,
-            "enable_inline_star_capture": self.enable_inline_star_capture,
             "enable_star_embeddings": self.enable_star_embeddings,
             "star_inject_limit": self.star_inject_limit,
             "star_review_new_limit": self.star_review_new_limit,
@@ -294,7 +282,6 @@ class RuntimeConfig:
             "enable_cold_start": self.enable_cold_start,
             "enable_upstream_tools": self.enable_upstream_tools,
             "enable_gateway_tools": self.enable_gateway_tools,
-            "enable_stream_duplicate_guard": self.enable_stream_duplicate_guard,
             "enable_mem0_management_tools": self.enable_mem0_management_tools,
             "expose_supabase_tools": self.expose_supabase_tools,
             "gateway_tool_mode": self.gateway_tool_mode,

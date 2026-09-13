@@ -68,8 +68,6 @@ def _load_gateway_helpers():
         calendar_inject_month=False,
         calendar_context_month_limit=0,
         enable_gateway_tools=False,
-        enable_inline_memory_capture=False,
-        inject_inline_memory_prompt=False,
         inject_mem_notes=False,
         # Mem 通道的总量上限；提醒和普通召回共用这几个位置。
         mem_note_limit=3,

@@ -24,8 +24,6 @@ const protocolOptions = [
 <template>
   <div class="settings-space">
     <div class="toggle-grid">
-      <label><NSwitch v-model:value="config.inject_star_prompt" /> <span>Star 提示</span></label>
-      <label><NSwitch v-model:value="config.enable_inline_star_capture" /> <span>自动捕获</span></label>
       <label><NSwitch v-model:value="config.inject_stars" /> <span>聊天注入</span></label>
       <label><NSwitch v-model:value="config.enable_gateway_tools" /> <span>网关工具</span></label>
       <label><NSwitch v-model:value="config.enable_star_embeddings" /> <span>embedding</span></label>

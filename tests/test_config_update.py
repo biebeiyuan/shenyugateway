@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import re
+import subprocess
+from pathlib import Path
+
 from fastapi.testclient import TestClient
 
 import gateway
@@ -7,6 +11,8 @@ from shenyu_gateway.config import RuntimeConfig
 from shenyu_gateway.runtime import persist_env
 from shenyu_gateway.store import GatewayStore
 
+
+ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULTED_ENV_KEYS = [
     "ENABLE_OPENAI_CACHE_CONTROL",
@@ -20,8 +26,6 @@ DEFAULTED_ENV_KEYS = [
     "UPSTREAM_PROVIDER_FORMAT",
     "UPSTREAM_PROVIDER_ORDER",
     "UPSTREAM_EXTRA_BODY",
-    "ENABLE_INLINE_MEMORY_CAPTURE",
-    "INJECT_INLINE_MEMORY_PROMPT",
     "INJECT_MEM_NOTES",
     "ENABLE_MEM0_MANAGEMENT_TOOLS",
     "MAX_INTERNAL_TOOL_ROUNDS",
@@ -63,8 +67,6 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.anthropic_auto_thinking_effort == ""
     assert cfg.anthropic_default_max_tokens == 128000
     assert cfg.upstream_extra_body == {}
-    assert cfg.inject_inline_memory_prompt is True
-    assert cfg.enable_inline_memory_capture is True
     assert cfg.inject_mem_notes is True
     assert cfg.enable_mem0_management_tools is True
     assert cfg.max_internal_tool_rounds == 15
@@ -831,3 +833,102 @@ def test_restore_overrides_ignores_empty_gateway_key(tmp_path, monkeypatch):
     # (like clearing the welcome message) still apply.
     assert os.environ["GATEWAY_API_KEY"] == "real-key"
     assert os.environ["WAKE_WELCOME_MESSAGE"] == ""
+
+
+# A config field reads as alive from any one of its six checklist homes: the
+# loader parses an env var, the schema accepts it, the route maps it, Admin
+# renders a switch.  None of that requires a single line of code to ever branch
+# on the value.  On 2026-06-23 `dd30268` deleted inline `[mem]`/`[star]` capture
+# and the prompt blocks it gated, but left four fields behind in the plumbing —
+# two of them still wired to switches in `StarsSettingsPanel.vue`, so the
+# resident could flip a control that changed nothing and be told "保存后生效".
+# The removal was green because no test asks the one question that matters:
+# does anything read this?
+#
+# Passing the value straight through to a report dict is not reading it — and
+# that is what hid two of those four for three months: `/health` echoed them
+# under their own names, so a plain grep found a hit outside the plumbing.  An
+# echo proves only that the field exists, which is the part already in doubt, so
+# those lines are stripped before the scan and a field surviving in nothing but
+# a mirror still counts as dead.
+_PLUMBING_FILES = {
+    "shenyu_gateway/config.py",
+    "shenyu_gateway/schemas.py",
+    "shenyu_gateway/config_routes.py",
+}
+
+# `"name": something.name` on a line of its own, i.e. a field copied into a
+# response dict under its own key.  A rename (`"name": cfg.other`) or a keyword
+# argument is left in place: those carry the value somewhere that may act on it.
+_MIRRORED_FIELD = re.compile(r'^\s*"(\w+)"\s*:\s*[\w.]*\.\1\s*,?\s*$')
+
+
+def _config_consumer_text() -> dict[str, str]:
+    tracked = subprocess.run(
+        ["git", "ls-files", "*.py"],
+        cwd=ROOT,
+        check=False,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    sources = [
+        path
+        for path in tracked
+        if path not in _PLUMBING_FILES
+        and not path.startswith("tests/")
+        and "claude/worktrees/" not in path
+    ]
+    return {
+        path: "\n".join(
+            line
+            for line in (ROOT / path).read_text(encoding="utf-8").splitlines()
+            if not _MIRRORED_FIELD.match(line)
+        )
+        for path in sources
+    }
+
+
+def _fields_without_consumers(fields: list[str], sources: dict[str, str]) -> list[str]:
+    return [
+        field
+        for field in fields
+        if not any(re.search(rf"\b{field}\b", text) for text in sources.values())
+    ]
+
+
+def test_every_runtime_config_field_is_read_by_something():
+    fields = sorted(vars(RuntimeConfig()))
+    orphans = _fields_without_consumers(fields, _config_consumer_text())
+
+    assert not orphans, (
+        "these runtime config fields are wired through the plumbing but nothing "
+        f"outside it ever reads them: {orphans}. A field no code branches on is "
+        "an empty slot — if Admin renders a switch for it, the resident is being "
+        "shown a control that does nothing. Delete it from all six checklist "
+        "locations in AGENTS.md, or add the code that acts on it."
+    )
+
+
+def test_the_empty_slot_check_can_actually_see_an_empty_slot():
+    # Without this, the check above passes just as well when the scan is broken
+    # and finds a consumer for everything.  A field name that appears nowhere in
+    # the repo is the one case that must come back dead.
+    sources = _config_consumer_text()
+
+    assert _fields_without_consumers(["gateway_field_nothing_reads"], sources) == [
+        "gateway_field_nothing_reads"
+    ]
+    # And a real field with a real consumer must not be flagged, or the check
+    # would be failing for reasons that have nothing to do with empty slots.
+    assert _fields_without_consumers(["enable_mcp_tools"], sources) == []
+
+
+def test_a_field_only_echoed_into_a_report_still_counts_as_empty():
+    # The trap that let four fields sit in master for three months: `/health`
+    # mirrors the value, so a plain grep finds a hit outside the plumbing.
+    mirrored = '    "some_toggle": cfg.some_toggle,\n'
+    renamed = '    "some_toggle": cfg.other_name,\n'
+
+    assert _MIRRORED_FIELD.match(mirrored)
+    assert not _MIRRORED_FIELD.match(renamed)
+    assert not _MIRRORED_FIELD.match("    if cfg.some_toggle:\n")

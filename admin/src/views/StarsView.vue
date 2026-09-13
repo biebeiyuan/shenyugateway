@@ -27,8 +27,6 @@ const route = useRoute()
 const router = useRouter()
 
 const STAR_DEFAULTS: Partial<GatewayConfig> = {
-  inject_star_prompt: true,
-  enable_inline_star_capture: true,
   inject_stars: true,
   enable_gateway_tools: true,
   enable_star_embeddings: false,
@@ -111,8 +109,6 @@ async function saveSettings() {
   savingConfig.value = true
   try {
     const settingsPatch: Partial<GatewayConfig> = {
-      inject_star_prompt: config.value.inject_star_prompt,
-      enable_inline_star_capture: config.value.enable_inline_star_capture,
       inject_stars: config.value.inject_stars,
       enable_gateway_tools: config.value.enable_gateway_tools,
       enable_star_embeddings: config.value.enable_star_embeddings,
@@ -154,8 +150,6 @@ async function saveSettings() {
 }
 
 function setStarQuietTools() {
-  config.value.inject_star_prompt = false
-  config.value.enable_inline_star_capture = false
   config.value.inject_stars = false
   config.value.enable_gateway_tools = true
   message.info('已切到静音星星模式，保存后生效')

@@ -785,8 +785,6 @@ async def health():
         "calendar_inject_week": cfg.calendar_inject_week,
         "calendar_inject_month": cfg.calendar_inject_month,
         "inject_mem_notes": cfg.inject_mem_notes,
-        "inject_inline_memory_prompt": cfg.inject_inline_memory_prompt,
-        "enable_inline_memory_capture": cfg.enable_inline_memory_capture,
         "enable_cold_start": cfg.enable_cold_start,
         "gateway_db_path": cfg.gateway_db_path,
     }

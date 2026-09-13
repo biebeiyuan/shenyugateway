@@ -49,8 +49,6 @@ class ConfigUpdate(BaseModel):
     clear_wake_welcome_message: Optional[bool] = None
     echo_prompt: Optional[str] = None
     echo_retention_turns: Optional[int] = Field(default=None, ge=0, le=20)
-    inject_inline_memory_prompt: Optional[bool] = None
-    enable_inline_memory_capture: Optional[bool] = None
     model_mapping: Optional[dict[str, str]] = None
     supabase_url: Optional[str] = None
     supabase_key: Optional[str] = None
@@ -61,8 +59,6 @@ class ConfigUpdate(BaseModel):
     inject_island_bumps: Optional[bool] = None
     island_bump_limit: Optional[int] = None
     inject_stars: Optional[bool] = None
-    inject_star_prompt: Optional[bool] = None
-    enable_inline_star_capture: Optional[bool] = None
     enable_star_embeddings: Optional[bool] = None
     star_inject_limit: Optional[int] = None
     star_review_new_limit: Optional[int] = None
@@ -103,7 +99,6 @@ class ConfigUpdate(BaseModel):
     enable_cold_start: Optional[bool] = None
     enable_upstream_tools: Optional[bool] = None
     enable_gateway_tools: Optional[bool] = None
-    enable_stream_duplicate_guard: Optional[bool] = None
     enable_mem0_management_tools: Optional[bool] = None
     expose_supabase_tools: Optional[bool] = None
     gateway_tool_mode: Optional[str] = None

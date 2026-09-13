@@ -242,6 +242,7 @@ Do not commit one-off test files. Prefer `python -c`, temp directories, or exist
 | 沈予 review 星星时返回 `count=0`、`items=[]`，却同时显示还有多颗 `remaining_unreviewed` | `shenyu_gateway/stars/_review.py`：取本批星星时误用当前聊天 `session_tag` 限定来源，但剩余数统计的是全库，导致两者范围不一致 | review 数量互相矛盾时先逐项比较种子查询和剩余计数的过滤条件；当前聊天标签只能记录 review 来路，不能切割住户级星星队列 |
 | 后台家里地图永远显示 room/home 两处待复核，本地 `resident_home.py check` 全绿，review 与住户签字都无法清除 | `Dockerfile`、`resident_home_manifest.json`：room 是 manifest 源文件 `pwa/src/meta/roomEntry.ts` 未 COPY 进生产镜像；home 是 `Dockerfile` 本身在 manifest 指纹范围内，而 Coolify 构建时会把全部配置环境变量（含密钥）注入成 ARG 行改写它，容器内永远没有与仓库一致的版本可校验 | 线上待复核但本地全绿时，先比对 `/api/project-map` 组件返回的 files 列表与本地 manifest globs 命中集；构建平台会改写的文件（如 Coolify 注入 ARG 的 Dockerfile）不能进指纹范围，也不要把它 COPY 进镜像留下密钥落点 |
 | PWA 断流后回复停在半句，退避重试一次就不再问，网关后来 drain 完的完整版永远没被取回 | `pwa/src/session/reconcile.ts`：`converged` 拿修复后的气泡自己和自己比——护栏拒绝短候选时气泡里留的是本地正文，包含判定恒为真，于是 `truncated` 被清掉、`tailNeedsReconcile` 转 false，退避链断了 | 判断"服务端这版是否涵盖本地"必须拿服务端原始候选做比较对象，不能拿写入后的气泡；护栏拒绝写入的分支要顺带确认重试标记还留着，用"本地长、服务端短前缀"这一组数据反向验证会红 |
+| Admin 上拨动一个开关、保存也提示"保存后生效"，但网关行为完全没变，重进页面开关状态还是拨过去的样子 | `shenyu_gateway/config.py` 等六个位置：开关挡着的实现早已被删（`dd30268` 移除 `[mem]`/`[star]` 内联捕获），配置项本身留在管道里——env 解析、schema 接收、路由映射、Admin 渲染一路都在，只是没有任何代码分支读它的值，存进 SQLite override 也只是设一个没人读的环境变量 | 开关无效先别查保存链路，直接 grep 字段名，把 `config.py`/`schemas.py`/`config_routes.py` 和 `"字段": cfg.字段` 这类原名回显（如 `/health`）都排掉再看还剩什么；一个都不剩就是空槽位，`tests/test_config_update.py::test_every_runtime_config_field_is_read_by_something` 现在会替你先红 |
 
 ## Module Map
 

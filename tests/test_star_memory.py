@@ -75,7 +75,6 @@ class FakeSupabase:
 
 def _cfg():
     return SimpleNamespace(
-        enable_inline_star_capture=True,
         enable_star_embeddings=False,
         inject_stars=True,
         star_candidate_limit=50,

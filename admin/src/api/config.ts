@@ -41,8 +41,6 @@ export interface GatewayConfig {
   jina_api_key?: string
   jina_api_key_configured?: boolean
   // mem notes
-  inject_inline_memory_prompt?: boolean
-  enable_inline_memory_capture?: boolean
   inject_mem_notes?: boolean
   inject_island_bumps?: boolean
   island_bump_limit?: number
@@ -58,8 +56,6 @@ export interface GatewayConfig {
   mem_note_default_cooldown_hours?: number
   // star memory
   inject_stars?: boolean
-  inject_star_prompt?: boolean
-  enable_inline_star_capture?: boolean
   enable_star_embeddings?: boolean
   star_inject_limit?: number
   star_review_new_limit?: number
@@ -104,7 +100,6 @@ export interface GatewayConfig {
   calendar_context_month_limit?: number
 
   enable_gateway_tools?: boolean
-  enable_stream_duplicate_guard?: boolean
   enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
   enable_mcp_tools?: boolean
@@ -148,7 +143,6 @@ export interface HealthStatus {
   gateway_db_path?: string
   enable_upstream_tools?: boolean
   enable_gateway_tools?: boolean
-  enable_stream_duplicate_guard?: boolean
   enable_mem0_management_tools?: boolean
   expose_supabase_tools?: boolean
   gateway_tool_mode?: string
