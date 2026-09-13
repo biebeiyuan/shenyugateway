@@ -32,7 +32,7 @@ export async function fetchArchiveDays(ctx: RequestContext, month?: string): Pro
 }
 
 // around_days 让选日期变成「定位」而不是「框死」：跨过午夜的对话是一整段。
-// before 往过去翻、after 往当下翻，游标是复合的 "event_at|id"（不透明），
+// before 往过去翻、after 往当下翻，游标是复合的 "event_at|archived_at|id"（不透明），
 // 两头都返回升序，直接 prepend / append。
 export async function fetchArchiveMessages(
   ctx: RequestContext,
@@ -53,11 +53,14 @@ export async function fetchArchiveMessages(
 }
 
 function makeCursor(msg: ArchiveMessage): string {
-  // Guard against null event_at (would produce "null|id" cursor)
+  // Guard against null timestamps (would produce an unusable cursor).
   if (!msg.event_at) {
     throw new Error('Cannot create cursor from message with null event_at')
   }
-  return `${msg.event_at}|${msg.id}`
+  if (!msg.archived_at) {
+    throw new Error('Cannot create cursor from message with null archived_at')
+  }
+  return `${msg.event_at}|${msg.archived_at}|${msg.id}`
 }
 
 export type SearchResult = {

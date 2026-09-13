@@ -910,19 +910,23 @@ def test_archive_search_snippet_and_cursor():
         # 使用游标获取下一页
         cursor = data["next_cursor"]
         print(f"\n=== DEBUG: Using cursor: {cursor}")
-        resp = client.get(f"/api/archive/search?q=测试&limit=1&cursor={cursor}")
+        resp = client.get("/api/archive/search", params={"q": "测试", "limit": 1, "cursor": cursor})
         assert resp.status_code == 200
         data2 = resp.json()
         print(f"=== DEBUG: Second page response: {data2}")
         assert len(data2["results"]) == 1
         assert data2["has_more"] is False
         assert data["results"][0]["id"] != data2["results"][0]["id"]  # 不同的消息
+
+        # 游标解析失败必须明确拒绝，不能退化为重复返回整页。
+        bad = client.get("/api/archive/search", params={"q": "测试", "cursor": "not-a-timestamp|archived|id"})
+        assert bad.status_code == 400
         
     asyncio.run(run())
 
 
 def test_archive_messages_composite_cursor():
-    """Test that archive messages pagination uses composite (event_at, id) cursor."""
+    """Test that archive messages pagination uses composite (event_at, archived_at, id) cursor."""
     async def run():
         from fastapi.testclient import TestClient
         
@@ -973,10 +977,10 @@ def test_archive_messages_composite_cursor():
         all_msgs = resp.json()["messages"]
         assert len(all_msgs) == 3
 
-        # 用复合游标 "event_at|id" 往过去翻，应该正确处理同一时刻的多条消息
+        # 用三键复合游标往过去翻，应该正确处理同一时刻的多条消息
         # before 使用最新一条（msg-3）的复合游标
-        cursor = f"{all_msgs[2]['event_at']}|{all_msgs[2]['id']}"
-        resp = client.get(f"/api/archive/messages?before={cursor}&limit=10")
+        cursor = f"{all_msgs[2]['event_at']}|{all_msgs[2]['archived_at']}|{all_msgs[2]['id']}"
+        resp = client.get("/api/archive/messages", params={"before": cursor, "limit": 10})
         assert resp.status_code == 200
         older = resp.json()["messages"]
         # 应该拿到 msg-1 和 msg-2，因为它们的 event_at < cursor 或者 event_at 相同但 id < cursor_id
@@ -985,8 +989,8 @@ def test_archive_messages_composite_cursor():
         assert older[1]["id"] == "msg-2"
 
         # 用复合游标往当下翻
-        cursor = f"{all_msgs[0]['event_at']}|{all_msgs[0]['id']}"
-        resp = client.get(f"/api/archive/messages?after={cursor}&limit=10")
+        cursor = f"{all_msgs[0]['event_at']}|{all_msgs[0]['archived_at']}|{all_msgs[0]['id']}"
+        resp = client.get("/api/archive/messages", params={"after": cursor, "limit": 10})
         assert resp.status_code == 200
         newer = resp.json()["messages"]
         # 应该拿到 msg-2 和 msg-3

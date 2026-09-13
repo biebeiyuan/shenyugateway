@@ -58,7 +58,7 @@ export function toggleSaved(message: ArchiveMessage): { items: SavedItem[]; save
     {
       id: message.id,
       role: message.role === 'user' ? 'user' : 'assistant',
-      content: message.content,
+      content: message.content || '',
       event_at: message.event_at,
       saved_at: new Date().toISOString(),
     },

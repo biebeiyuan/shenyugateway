@@ -70,7 +70,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             raise HTTPException(status_code=503, detail="Supabase is not configured.")
         return client
 
-    async def _query_all(client: Any, params: dict[str, Any], *, page_size: int = 1000, max_rows: int = 50000) -> list[dict]:
+    async def _query_all(client: Any, params: dict[str, Any], *, page_size: int = 1000, max_rows: int = 10000) -> list[dict]:
         rows: list[dict] = []
         page_size = max(1, min(int(page_size or 1000), 1000))
         max_rows = max(page_size, int(max_rows or page_size))
@@ -113,8 +113,8 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
 
     # Chronological replay order: event_at is the client-stamped moment,
     # archived_at replays the window order inside one inherited-time batch,
-    # role.asc keeps a reply-before-next-message shape for legacy rows whose
-    # batch shared one server-side archived_at, id is the stable last resort.
+    # and id is the stable last resort. Role is deliberately not a cursor key:
+    # it was only useful for legacy rows sharing one archived_at.
     # Composite cursor pagination using (event_at, archived_at, id) tuple.
     # Order must match cursor fields exactly to avoid skipped/duplicate rows.
     _ORDER_ASC = "event_at.asc,archived_at.asc,id.asc"
@@ -196,20 +196,22 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             parts = after.split("|", 2)
             if len(parts) == 3:
                 cursor_event_at, cursor_archived_at, cursor_id = parts
-                # URL query params decode + as space; restore for timezone parsing
-                cursor_event_at = cursor_event_at.replace(" ", "+")
-                cursor_archived_at = cursor_archived_at.replace(" ", "+")
+                if not cursor_event_at or not cursor_archived_at or not cursor_id:
+                    raise HTTPException(status_code=400, detail="Invalid cursor format")
                 params["event_at"] = f"gte.{cursor_event_at}"
                 cursor_filter_in_python = ("after", cursor_event_at, cursor_archived_at, cursor_id)
             elif len(parts) == 2:
                 # Legacy two-field cursor (backwards compat during transition).
                 cursor_event_at, cursor_id = parts
-                cursor_event_at = cursor_event_at.replace(" ", "+")
                 params["event_at"] = f"gte.{cursor_event_at}"
                 cursor_filter_in_python = ("after", cursor_event_at, None, cursor_id)
             else:
                 # Legacy single-field cursor (oldest format).
-                cursor_event_at = after.replace(" ", "+")
+                cursor_event_at = after
+                try:
+                    datetime.fromisoformat(cursor_event_at)
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Invalid cursor event_at timestamp")
                 params["event_at"] = f"gt.{cursor_event_at}"
             params["order"] = _ORDER_ASC
         elif before:
@@ -218,20 +220,22 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             parts = before.split("|", 2)
             if len(parts) == 3:
                 cursor_event_at, cursor_archived_at, cursor_id = parts
-                # URL query params decode + as space; restore for timezone parsing
-                cursor_event_at = cursor_event_at.replace(" ", "+")
-                cursor_archived_at = cursor_archived_at.replace(" ", "+")
+                if not cursor_event_at or not cursor_archived_at or not cursor_id:
+                    raise HTTPException(status_code=400, detail="Invalid cursor format")
                 params["event_at"] = f"lte.{cursor_event_at}"
                 cursor_filter_in_python = ("before", cursor_event_at, cursor_archived_at, cursor_id)
             elif len(parts) == 2:
                 # Legacy two-field cursor.
                 cursor_event_at, cursor_id = parts
-                cursor_event_at = cursor_event_at.replace(" ", "+")
                 params["event_at"] = f"lte.{cursor_event_at}"
                 cursor_filter_in_python = ("before", cursor_event_at, None, cursor_id)
             else:
                 # Legacy single-field cursor (oldest format).
-                cursor_event_at = before.replace(" ", "+")
+                cursor_event_at = before
+                try:
+                    datetime.fromisoformat(cursor_event_at)
+                except ValueError:
+                    raise HTTPException(status_code=400, detail="Invalid cursor event_at timestamp")
                 params["event_at"] = f"lt.{cursor_event_at}"
             params["order"] = _ORDER_DESC
             reverse_after_fetch = True
@@ -243,8 +247,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
 
         # Apply composite cursor filter in Python (tuple comparison).
         if cursor_filter_in_python:
-            from datetime import datetime, timezone as tz
-            from fastapi import HTTPException
+            from datetime import timezone as tz
             direction, cursor_event_at, cursor_archived_at, cursor_id = cursor_filter_in_python
 
             # Parse cursor timestamps; fail fast if invalid.
@@ -363,9 +366,9 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         can highlight without offset arithmetic (which fails across Python/JS/Swift
         due to different string indexing — code points vs UTF-16 vs graphemes).
 
-        Cursor is opaque "event_at|id" (pipe separator to avoid : collision with
-        ISO timestamps) for pagination; fetches one extra row to determine has_more
-        without a separate count query.
+        Cursor is opaque "event_at|archived_at|id" (pipe separator to avoid :
+        collision with ISO timestamps) for pagination; fetches one extra row to
+        determine has_more without a separate count query.
         """
         from datetime import datetime, timezone as tz
         import re
@@ -381,6 +384,7 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         escaped = needle.replace('\\', '\\\\')  # Escape backslash first
         escaped = escaped.replace('%', '\\%')   # Escape ILIKE wildcards
         escaped = escaped.replace('_', '\\_')
+        escaped = escaped.replace('*', '\\*')
         escaped = escaped.replace('"', '\\"')   # Escape quotes for PostgREST quoted pattern
 
         params = {
@@ -401,6 +405,8 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             parts = cursor.split("|", 2)
             if len(parts) == 3:
                 cursor_event_at, cursor_archived_at, cursor_id = parts
+                if not cursor_event_at or not cursor_archived_at or not cursor_id:
+                    raise HTTPException(status_code=400, detail="Invalid cursor format")
             elif len(parts) == 2:
                 # Legacy two-field cursor for backwards compat
                 cursor_event_at, cursor_id = parts
@@ -408,12 +414,6 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
             else:
                 from fastapi import HTTPException
                 raise HTTPException(status_code=400, detail="Invalid cursor format")
-
-            # URL query params decode + as space (application/x-www-form-urlencoded).
-            # Restore + for timezone offset parsing (e.g., +08:00).
-            cursor_event_at = cursor_event_at.replace(" ", "+")
-            if cursor_archived_at:
-                cursor_archived_at = cursor_archived_at.replace(" ", "+")
 
             # Parse cursor timestamps to validate them
             try:

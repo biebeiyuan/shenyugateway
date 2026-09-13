@@ -102,6 +102,9 @@ watch(query, () => {
 function clearSearch() {
   query.value = ''
   searchResults.value = []
+  searchHasMore.value = false
+  searchCursor.value = null
+  loadingMore.value = false
   searchInput.value?.focus()
 }
 
@@ -244,7 +247,7 @@ async function loadOlder() {
   const anchorId = archiveRows.value[0]?.id
   const first = archiveRows.value[0]
   if (!first || !anchorId) return
-  const cursor = makeCursor(first) // 复合游标 "event_at|id"
+  const cursor = makeCursor(first) // 复合游标 "event_at|archived_at|id"
   const gen = archiveGen
   loadingOlder.value = true
   try {
@@ -413,8 +416,8 @@ function renderSnippet(row: ArchiveMessage): string {
     const after = escape(row.snippet_after || '')
     return (before ? '…' + before : '') + '<mark>' + match + '</mark>' + (after ? after + '…' : '')
   }
-  // 降级：没有 snippet 时显示前 80 字符
-  return escape((row.content || '').slice(0, 80))
+  // 降级：没有 snippet 时显示前 80 个 Unicode 码点，避免劈开 emoji 代理对。
+  return escape(Array.from(row.content || '').slice(0, 80).join(''))
 }
 
 // TODO: day_start_hour 配置支持
@@ -484,8 +487,7 @@ function copyText(text: string) {
           </div>
           <template v-else>
             <div class="result-count">
-              {{ searchResults.length }} 条结果
-              <span v-if="searchHasMore" class="has-more">（还有更多）</span>
+              {{ searchResults.length }}{{ searchHasMore ? '+' : '' }} 条结果
             </div>
             <button v-for="row in searchResults" :key="row.id" class="result-card" type="button" @click="jumpToContext(row)">
               <div class="result-meta">
@@ -583,4 +585,3 @@ function copyText(text: string) {
     </section>
   </div>
 </template>
-

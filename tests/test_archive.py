@@ -28,7 +28,7 @@ class FakeConfig:
     chat_archive_seen_retention = 10000
 
 
-async def test_multi_round_tool_call():
+async def _run_multi_round_tool_call():
     """模拟多轮工具调用场景"""
     with tempfile.TemporaryDirectory() as tmpdir:
         db_path = Path(tmpdir) / "test.db"
@@ -94,5 +94,40 @@ async def test_multi_round_tool_call():
         print("\n✅ 测试通过：两条消息都在档案中")
 
 
+def test_multi_round_tool_call():
+    """Pytest-discoverable entry point for the multi-round archive regression."""
+    asyncio.run(_run_multi_round_tool_call())
+
+
+def test_archive_snippet_handles_casefold_expansion_without_offset_corruption():
+    async def run():
+        from shenyu_gateway.archive_routes import ArchiveRouteDeps, build_archive_router
+
+        class Supabase:
+            async def query(self, table, params=None):
+                return [{
+                    "id": "sharp-s",
+                    "session_tag": "test",
+                    "role": "user",
+                    "content": "前缀 ß 后缀",
+                    "content_hash": "sharp-s",
+                    "event_at": "2026-09-13T00:00:00+08:00",
+                    "archived_at": "2026-09-13T00:00:01+08:00",
+                    "deleted_at": None,
+                }]
+
+        endpoint = next(
+            route.endpoint for route in build_archive_router(
+                ArchiveRouteDeps(get_supabase_client=lambda: Supabase())
+            ).routes if route.path == "/api/archive/search"
+        )
+        result = await endpoint(q="ß")
+        assert result["results"][0]["snippet_before"] == "前缀 "
+        assert result["results"][0]["snippet_match"] == "ß"
+        assert result["results"][0]["snippet_after"] == " 后缀"
+
+    asyncio.run(run())
+
+
 if __name__ == "__main__":
-    asyncio.run(test_multi_round_tool_call())
+    asyncio.run(_run_multi_round_tool_call())
