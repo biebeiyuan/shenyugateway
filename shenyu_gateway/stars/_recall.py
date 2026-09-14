@@ -475,13 +475,17 @@ class RecallMixin:
             date_sc = features.get("date_anchor_score", 0.0)
             date_mod = 1.0 + weights.date_boost_max * date_sc
 
-            final = rrf_score * actr_mod * novelty_mod * constant_mod * fatigue_mod * date_mod
+            activation_raw = _safe_float(item["row"].get("activation_score"), 0.0)
+            activation_mod = 1.0 + weights.activation_weight * activation_raw
+
+            final = rrf_score * actr_mod * novelty_mod * constant_mod * fatigue_mod * date_mod * activation_mod
 
             features["rrf_score"] = rrf_score
             features["rrf_contributions"] = contribs
             features["actr_modifier"] = actr_mod
             features["novelty_modifier"] = novelty_mod
             features["constant_modifier"] = constant_mod
+            features["activation_modifier"] = activation_mod
             features["fatigue_modifier"] = fatigue_mod
             features["date_modifier"] = date_mod
 

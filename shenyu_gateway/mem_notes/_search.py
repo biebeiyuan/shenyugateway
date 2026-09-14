@@ -405,7 +405,7 @@ class SearchMixin:
 
         anchor_score, anchor_hits = self._anchor_overlap(query, row)
 
-        score = min(
+        base_score = min(
             1.0,
             trigger_score * 0.50
             + content_score * 0.30
@@ -414,6 +414,11 @@ class SearchMixin:
             + recency_score * 0.03
             + never_seen_bonus,
         )
+
+        activation_raw = float(row.get("activation_score") or 0.0)
+        activation_mod = 1.0 + 0.15 * activation_raw
+        score = base_score * activation_mod
+
         reasons = []
         if trigger_score > 0:
             reasons.append("trigger" + (":" + ",".join(trigger_hits[:5]) if trigger_hits else ""))

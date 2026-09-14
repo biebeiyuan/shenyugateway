@@ -15,3 +15,4 @@ class StarWeights:
     actr_floor: float = 0.5
     constant_boost: float = 1.3
     date_boost_max: float = 0.3
+    activation_weight: float = 0.15

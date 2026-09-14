@@ -45,6 +45,7 @@ class CrudMixin:
             actr_floor=_safe_float(getattr(self.cfg, "star_rrf_actr_floor", 0.5), 0.5),
             constant_boost=_safe_float(getattr(self.cfg, "star_rrf_constant_boost", 1.3), 1.3),
             date_boost_max=_safe_float(getattr(self.cfg, "star_rrf_date_boost_max", 0.3), 0.3),
+            activation_weight=_safe_float(getattr(self.cfg, "star_rrf_activation_weight", 0.15), 0.15),
         )
 
     def _candidate_limit(self) -> int:
