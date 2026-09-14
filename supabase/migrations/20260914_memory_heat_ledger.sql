@@ -107,7 +107,10 @@ comment on table shenyu_heat_events is
    所以没有夜间衰减任务，漏跑不存在。';
 
 comment on column shenyu_heat_events.event_id is
-  '幂等键，形如 <session_id>:<turn_index>:<kind>:<memory_id>。
+  '幂等键，形如 <session_id>:<YYYY-MM-DD>:<turn_index>:<kind>:<memory_id>。
+   加入日期是为了防止 human_turn_index 重置后和几个月前的事件碰撞——
+   碰撞窗口从「整个 session 生命周期」缩到「同一天内」，
+   而同一天内 turn_index 不会倒退。
    turn_index 必须来自 island_state.human_turn_index，不是 session.message_count——
    session 行里没有 turn_count 这个字段，取不到会静默落 0，
    于是一个 session 里只会加热一次。';

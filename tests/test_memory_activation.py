@@ -42,25 +42,18 @@ class FakeSupabase:
     async def query(self, table: str, params: dict):
         self.queries.append({"table": table, "params": dict(params)})
         id_column = "star_id" if table == STAR_ACTIVATION_VIEW else "mem_note_id"
-        # 新实现：不按 id 过滤，直接返回全部（视图有 having count > 0）
-        id_filter = params.get(id_column)
-        if id_filter:
-            wanted = {
-                item.strip()
-                for item in str(id_filter).removeprefix("in.").strip("()").split(",")
-                if item.strip()
-            }
-            rows = [
-                {id_column: key, "activation": value}
-                for key, value in (self.activations.get(table) or {}).items()
-                if key in wanted
-            ]
-        else:
-            # 没有 id 过滤时，返回所有（模拟新的 limit 2000 逻辑）
-            rows = [
-                {id_column: key, "activation": value}
-                for key, value in (self.activations.get(table) or {}).items()
-            ]
+        # 新实现：不按 id 过滤，直接返回全部（视图有 having count > 0）。
+        # 如果生产代码错误地加回了 id 过滤，这里会断言失败——测试要严格于被测代码，
+        # 而不是宽容两条路都绿。
+        assert id_column not in params, (
+            f"fetch_*_activations 不该按 id 过滤（500 个 UUID 会造 18k URL → 414）。"
+            f"发现 {id_column} 参数，说明旧路回来了。"
+        )
+        # 返回所有行（模拟 limit 2000 的新逻辑）
+        rows = [
+            {id_column: key, "activation": value}
+            for key, value in (self.activations.get(table) or {}).items()
+        ]
         return project_select(rows, params)
 
     async def upsert_minimal(self, table: str, data, on_conflict=None):
@@ -131,8 +124,11 @@ def test_fetch_star_activations_reads_the_view_and_returns_a_map():
     params = supabase.queries[0]["params"]
     assert supabase.queries[0]["table"] == STAR_ACTIVATION_VIEW
     assert params["select"] == "star_id,activation"
-    # 新实现：不按 id 过滤，直接拉整个视图，在 Python 里过滤
+    # 新实现：不按 id 过滤，直接拉整个视图（避免 500 个 UUID → 18k URL → 414）。
+    # 断言「没有 id 过滤参数」，而不是断言 limit 字面量——前者测意图，后者只测字面量。
+    assert "star_id" not in params, "不该按 id 过滤，否则星星多了会 414"
     assert params["limit"] == "2000"
+    assert params["order"] == "activation.desc"
 
 
 def test_fetch_mem_note_activations_reads_the_other_view():

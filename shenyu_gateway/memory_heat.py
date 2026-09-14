@@ -24,7 +24,7 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from .runtime import logger
+from .runtime import logger, local_today
 
 
 HEAT_EVENTS_TABLE = "shenyu_heat_events"
@@ -85,11 +85,13 @@ async def _fetch_activations(
     # 别按 id 过滤：500 个 UUID 会造 18,500 字符的 URL，Kong 默认 16k header
     # buffer 拒掉（414）。视图有 `having count(e.id) > 0`，只返回 90 天内真的
     # 有事件的记忆，实际大概几百行，远少于 2000 上限。读下来后在 Python 里过滤。
+    # 按热度降序，万一哪天真超 2000 行，丢掉的是最冷的那些，而不是随机的。
     try:
         rows = await supabase.query(
             view,
             {
                 "select": f"{id_column},activation",
+                "order": "activation.desc",
                 "limit": "2000",
             },
         )
@@ -97,6 +99,11 @@ async def _fetch_activations(
         # 读不到活性不该拖垮一次召回：地形消失，语义排序照常。
         logger.warning("[MemoryHeat] 读%s活性失败，这一轮按无热度排: %s", label, exc)
         return {}
+    if rows and len(rows) >= 2000:
+        logger.warning(
+            "[MemoryHeat] %s 视图返回 %d 行（达到 limit），可能截断了最冷的部分",
+            view, len(rows)
+        )
     wanted_set = set(wanted)
     result: dict[str, float] = {}
     for row in rows or []:
@@ -138,7 +145,6 @@ async def record_island_entry(
         turn = 0
 
     # 取当天日期（Asia/Shanghai），event_id 加上日期防止 turn_index 重置后碰撞。
-    from .runtime import local_today
     today = local_today().isoformat()  # YYYY-MM-DD
 
     rows: list[dict[str, Any]] = []
