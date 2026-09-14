@@ -16,6 +16,7 @@ from .island_bumps import (
     waking_day_start_iso,
 )
 from .mem_notes import MemNoteService
+from .memory_heat import record_island_entry
 from .memory_island import (
     MEM_DUE_REMINDER_MODE,
     memory_island_log_content,
@@ -425,6 +426,23 @@ class ContextBuilder:
                 session_id=session.get("id"),
                 trace_log=trace_log,
             )
+        # 热度只记「这一轮新进岛的」。挂在这里而不是 mark_context_consumed 里，
+        # 是因为那边是同步的、拿到的 store 也没有 supabase client，写不进去；
+        # 而这里的 `entering` 已经按 item id 排除了留在岛上的那些——
+        # 按驻留写会把停留时长当成被想起的次数记。
+        if entering["stars"] or entering["mem_notes"]:
+            await record_island_entry(
+                self.supabase_client,
+                session_id=str(session.get("id") or ""),
+                turn_index=island_state.get("human_turn_index"),
+                star_ids=[
+                    str(item.get("id") or "") for item in entering["stars"] if item.get("id")
+                ],
+                mem_note_ids=[
+                    str(item.get("id") or "") for item in entering["mem_notes"] if item.get("id")
+                ],
+            )
+
         if entering["mem_notes"]:
             await mem_note_service.mark_context_items_triggered(entering["mem_notes"])
             # 挂上去了就打「已提醒」，那张便签原样留着，状态不动。

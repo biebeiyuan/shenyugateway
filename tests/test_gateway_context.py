@@ -527,6 +527,140 @@ def test_context_builder_rechecks_previous_star_ids_and_advances_real_user_turn(
     assert edited_package["memory_island_state"]["human_turn_index"] == 7
 
 
+def test_only_the_memories_entering_the_island_get_a_heat_event(monkeypatch, tmp_path):
+    """热度记「这一轮新进岛的」，不记「这一轮在岛上的」。
+
+    钩子挂在这里而不是 `mark_context_consumed` 里，是因为那边是同步的、拿到的
+    store 也没有 supabase client——上一版就是这么写进了另一个数据库。这条测试
+    盯的是钩子真的挂在这里：把 `record_island_entry` 的调用删掉，它必须变红。
+
+    岛有 retain：一颗星留十轮。按驻留写会记十次，那量的是停留时长，不是被
+    想起的次数，而这套东西整个是拿"被想起的次数"当地形用的。
+    """
+    recorded: list[dict[str, Any]] = []
+
+    class StubStarService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def search_context(self, *_args, **_kwargs):
+            return {
+                "ok": True,
+                "items": [
+                    {"id": "star-old", "content": "old star"},
+                    {"id": "star-new", "content": "new star", "force_island_rewrite": True},
+                ],
+            }
+
+        async def activate_context_items(self, *_args, **_kwargs):
+            return None
+
+    class StubMemService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def search_notes_contextual(self, *_args, **_kwargs):
+            return {"ok": True, "items": [{"id": "mem-new", "content": "new memo"}]}
+
+        async def due_reminder_notes(self, *_args, **_kwargs):
+            return {"ok": True, "items": []}
+
+        async def auto_surface_active_ids(self, note_ids):
+            return set(note_ids)
+
+        async def mark_context_items_triggered(self, *_args, **_kwargs):
+            return None
+
+        async def mark_reminders_hung(self, *_args, **_kwargs):
+            return None
+
+    async def _record(supabase, **kwargs):
+        recorded.append(dict(kwargs))
+        return len(kwargs.get("star_ids") or []) + len(kwargs.get("mem_note_ids") or [])
+
+    monkeypatch.setattr(context_builder_module, "StarService", StubStarService)
+    monkeypatch.setattr(context_builder_module, "MemNoteService", StubMemService)
+    monkeypatch.setattr(context_builder_module, "record_island_entry", _record)
+    monkeypatch.setattr(cfg, "inject_stars", True, raising=False)
+    monkeypatch.setattr(cfg, "inject_mem_notes", True)
+    monkeypatch.setattr(cfg, "star_inject_limit", 3, raising=False)
+    monkeypatch.setattr(cfg, "mem_note_limit", 3, raising=False)
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("heat-entering", "operit")
+    previous = {
+        "version": "island-previous",
+        "stars": [{"id": "star-old", "content": "old star"}],
+        "mem_notes": [],
+        "human_turn_index": 4,
+    }
+
+    package = asyncio.run(
+        _context_builder(store, supabase=object()).build_context_package(
+            session,
+            current_user_text="新的问题",
+            is_first_turn=False,
+            client_name="operit",
+            context_event={"event_class": "new_user"},
+            previous_island_state=previous,
+        )
+    )
+
+    assert len(recorded) == 1
+    # star-old 留在岛上，不该再记一次；star-new 和 mem-new 是这一轮新进来的。
+    assert set(recorded[0]["star_ids"]) == {"star-new"}
+    assert recorded[0]["mem_note_ids"] == ["mem-new"]
+    assert "star-old" in {item["id"] for item in package["memory_island_state"]["stars"]}
+    # 轮次来自岛自己算出来的 human_turn_index，不是 session 上某个不存在的字段：
+    # event_id 靠它区分两轮，恒定值会让整个会话只有第一轮记得上。
+    assert recorded[0]["turn_index"] == package["memory_island_state"]["human_turn_index"] == 5
+    assert recorded[0]["session_id"] == str(session["id"])
+
+
+def test_an_unchanged_island_records_no_heat_at_all(monkeypatch, tmp_path):
+    recorded: list[dict[str, Any]] = []
+    stars = [{"id": "star-a", "content": "first"}]
+
+    class StubStarService:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        async def search_context(self, *_args, **_kwargs):
+            return {"ok": True, "items": stars, "_active_required_ids": ["star-a"]}
+
+        async def activate_context_items(self, *_args, **_kwargs):
+            return None
+
+    async def _record(supabase, **kwargs):
+        recorded.append(dict(kwargs))
+        return 0
+
+    monkeypatch.setattr(context_builder_module, "StarService", StubStarService)
+    monkeypatch.setattr(context_builder_module, "record_island_entry", _record)
+    monkeypatch.setattr(cfg, "inject_stars", True, raising=False)
+    monkeypatch.setattr(cfg, "inject_mem_notes", False)
+    monkeypatch.setattr(cfg, "star_inject_limit", 3, raising=False)
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("heat-retained", "operit")
+
+    asyncio.run(
+        _context_builder(store, supabase=object()).build_context_package(
+            session,
+            current_user_text="再问一次",
+            is_first_turn=False,
+            client_name="operit",
+            context_event={"event_class": "new_user"},
+            previous_island_state={
+                "version": "island-previous",
+                "stars": stars,
+                "mem_notes": [],
+                "human_turn_index": 2,
+            },
+        )
+    )
+
+    assert recorded == [], "岛没变就一次写都不该发生"
+
+
 def test_gateway_tool_policy_names_broker_call_shape_and_tool_list():
     layers = context_layers.render_layered_additions(
         {

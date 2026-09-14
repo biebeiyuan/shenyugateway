@@ -690,6 +690,27 @@ def test_config_update_saves_and_clamps_star_soft_direct_cooldown(monkeypatch):
     assert persisted[-1]["STAR_SOFT_DIRECT_COOLDOWN_TURNS"] == 100
 
 
+def test_config_update_saves_and_clamps_star_rrf_activation_weight(monkeypatch):
+    client, persisted = _config_client(monkeypatch)
+    monkeypatch.setattr(gateway.cfg, "star_rrf_activation_weight", 0.15)
+
+    try:
+        response = client.post(
+            "/api/config",
+            json={"star_rrf_activation_weight": 5.0},
+        )
+    finally:
+        client.close()
+
+    assert response.status_code == 200
+    payload = response.json()
+    # 上界是 1.0，不是隔壁 actr_floor / date_boost_max 那条 2.0。
+    assert payload["config"]["star_rrf_activation_weight"] == 1.0
+    assert "star_rrf_activation_weight" in payload["changed"]
+    assert gateway.cfg.star_rrf_activation_weight == 1.0
+    assert persisted[-1]["STAR_RRF_ACTIVATION_WEIGHT"] == 1.0
+
+
 def test_config_update_saves_and_clamps_island_bump_settings(monkeypatch):
     client, persisted = _config_client(monkeypatch)
     monkeypatch.setattr(gateway.cfg, "inject_island_bumps", True)
@@ -932,3 +953,59 @@ def test_a_field_only_echoed_into_a_report_still_counts_as_empty():
     assert _MIRRORED_FIELD.match(mirrored)
     assert not _MIRRORED_FIELD.match(renamed)
     assert not _MIRRORED_FIELD.match("    if cfg.some_toggle:\n")
+
+
+# The empty slot has a mirror image the check above cannot see: code that reads
+# `getattr(self.cfg, "star_rrf_activation_weight", 0.15)` for a field
+# `RuntimeConfig` never defines.  Nothing goes red — `getattr`'s default carries
+# the read, and in tests the `SimpleNamespace` fakes omit the field anyway, so
+# the fallback is the value every assertion sees.  The number then looks tunable
+# from Admin and is not: no env var, no route, no override.  That is exactly how
+# `star_rrf_activation_weight` was shipped on 2026-09-13 — read in
+# `stars/_crud.py`, defined nowhere.
+_CFG_READ = re.compile(
+    r'(?:getattr|_cfg_float|_cfg_int|_safe_float|_safe_int)\(\s*(?:self\.cfg|self\._cfg|cfg)\s*,\s*"(\w+)"'
+    r"|(?:self\.cfg|self\._cfg)\.([a-z_]\w*)\b"
+)
+
+# Attributes reached through a config object that are not config fields.
+_NOT_A_CONFIG_FIELD = {"to_dict"}
+
+
+def _cfg_reads() -> list[tuple[str, int, str]]:
+    reads: list[tuple[str, int, str]] = []
+    for path, text in _config_consumer_text().items():
+        for lineno, line in enumerate(text.splitlines(), 1):
+            for named, attr in _CFG_READ.findall(line):
+                field = named or attr
+                if field and field not in _NOT_A_CONFIG_FIELD:
+                    reads.append((path, lineno, field))
+    return reads
+
+
+def test_every_config_field_the_code_reads_is_defined_on_runtime_config():
+    fields = set(vars(RuntimeConfig()))
+    undefined = sorted(
+        {f"{path}:{lineno} {field}" for path, lineno, field in _cfg_reads() if field not in fields}
+    )
+
+    assert not undefined, (
+        "these reads name a config field RuntimeConfig does not define: "
+        f"{undefined}. In production the getattr default always wins and the "
+        "value cannot be tuned; in tests the SimpleNamespace fakes omit it too, "
+        "so nothing ever exercises the real path. Register the field in all six "
+        "checklist locations in AGENTS.md, or inline the constant where it is used."
+    )
+
+
+def test_the_undefined_field_check_can_actually_see_an_undefined_field():
+    # Same reason as the forward direction: a broken regex would find no reads at
+    # all and pass in total silence.
+    reads = _cfg_reads()
+    fields = {field for _, _, field in reads}
+
+    assert len(reads) > 100, f"only found {len(reads)} config reads"
+    # A field read through the attribute form and one read through getattr, so
+    # both halves of the pattern are known to fire.
+    assert "star_rrf_activation_weight" in fields
+    assert "mem_note_limit" in fields

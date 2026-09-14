@@ -81,6 +81,7 @@ def _full_config(cfg: Any) -> dict[str, Any]:
         "star_rrf_actr_floor": cfg.star_rrf_actr_floor,
         "star_rrf_constant_boost": cfg.star_rrf_constant_boost,
         "star_rrf_date_boost_max": cfg.star_rrf_date_boost_max,
+        "star_rrf_activation_weight": cfg.star_rrf_activation_weight,
         "star_scene_llm_model": cfg.star_scene_llm_model,
         "star_scene_llm_url": cfg.star_scene_llm_url,
         "star_scene_llm_api_key": "",
@@ -213,6 +214,7 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
             "star_rrf_actr_floor": "STAR_RRF_ACTR_FLOOR",
             "star_rrf_constant_boost": "STAR_RRF_CONSTANT_BOOST",
             "star_rrf_date_boost_max": "STAR_RRF_DATE_BOOST_MAX",
+            "star_rrf_activation_weight": "STAR_RRF_ACTIVATION_WEIGHT",
             "star_scene_llm_model": "STAR_SCENE_LLM_MODEL",
             "star_scene_llm_url": "STAR_SCENE_LLM_URL",
             "star_scene_llm_api_key": "STAR_SCENE_LLM_API_KEY",
@@ -659,6 +661,14 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
                 setattr(cfg, field, deps.clamp(float(value), 0.0, 2.0))
                 changed.append(field)
                 env_updates[env_names[field]] = getattr(cfg, field)
+        # 权重的上界是 1.0 不是 2.0：修正项是 1 + w·ln(1+活性)，w 到 1 就已经
+        # 一路顶着 ACTIVATION_MOD_MAX 了，再大只是让顶来得更早。
+        if body.star_rrf_activation_weight is not None:
+            cfg.star_rrf_activation_weight = deps.clamp(
+                float(body.star_rrf_activation_weight), 0.0, 1.0
+            )
+            changed.append("star_rrf_activation_weight")
+            env_updates[env_names["star_rrf_activation_weight"]] = cfg.star_rrf_activation_weight
         if body.star_rrf_constant_boost is not None:
             cfg.star_rrf_constant_boost = deps.clamp(float(body.star_rrf_constant_boost), 1.0, 3.0)
             changed.append("star_rrf_constant_boost")

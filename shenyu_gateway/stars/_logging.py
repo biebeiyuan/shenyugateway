@@ -99,6 +99,9 @@ class LoggingMixin:
                         "constant_modifier": features.get("constant_modifier") or 0.0,
                         "fatigue_modifier": features.get("fatigue_modifier") or 0.0,
                         "date_modifier": features.get("date_modifier") or 0.0,
+                        # 没有这两行，三个月后没人能回答「热度到底改变过选择吗」。
+                        "activation_modifier": features.get("activation_modifier") or 0.0,
+                        "activation_raw": features.get("activation_raw") or 0.0,
                     },
                 }
             )

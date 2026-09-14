@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import math
 from typing import Any, Optional
 
+from ..memory_heat import activation_modifier, fetch_star_activations
 from ..request_logs import _mark_request_log_phase
 from ..runtime import now as _now
 from ._helpers import (
@@ -337,10 +339,17 @@ class RecallMixin:
     ) -> list[dict[str, Any]]:
         star_ids = [_node_id(row.get("id")) for row in rows if row.get("id")]
         _mark_request_log_phase(trace_log, "stars.activity_features_start", detail={"star_ids": len(star_ids)})
-        actr_scores, ignored_penalties, negative_set, recent_fatigue = await self._activity_features(
-            star_ids,
-            include_recent_fatigue=surface == "chat_inject" and not ignore_recent_fatigue,
-            trace_log=trace_log,
+        # 活性和 activity features 都是按这批 id 批量取的，并发跑省一次串行往返。
+        (
+            (actr_scores, ignored_penalties, negative_set, recent_fatigue),
+            activations,
+        ) = await asyncio.gather(
+            self._activity_features(
+                star_ids,
+                include_recent_fatigue=surface == "chat_inject" and not ignore_recent_fatigue,
+                trace_log=trace_log,
+            ),
+            fetch_star_activations(self.supabase, star_ids),
         )
         _mark_request_log_phase(
             trace_log,
@@ -475,8 +484,11 @@ class RecallMixin:
             date_sc = features.get("date_anchor_score", 0.0)
             date_mod = 1.0 + weights.date_boost_max * date_sc
 
-            activation_raw = _safe_float(item["row"].get("activation_score"), 0.0)
-            activation_mod = 1.0 + weights.activation_weight * activation_raw
+            # 活性来自 shenyu_star_activation 视图（读时算），不是行上的列。
+            # 取对数再封顶：原始活性无上界，直接线性乘会盖掉语义命中，
+            # 也会把 novelty_mod 那场拔河变成没标定的碾压。
+            activation_raw = activations.get(star_id, 0.0)
+            activation_mod = activation_modifier(activation_raw, weights.activation_weight)
 
             final = rrf_score * actr_mod * novelty_mod * constant_mod * fatigue_mod * date_mod * activation_mod
 
@@ -486,6 +498,7 @@ class RecallMixin:
             features["novelty_modifier"] = novelty_mod
             features["constant_modifier"] = constant_mod
             features["activation_modifier"] = activation_mod
+            features["activation_raw"] = activation_raw
             features["fatigue_modifier"] = fatigue_mod
             features["date_modifier"] = date_mod
 

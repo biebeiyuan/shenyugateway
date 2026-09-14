@@ -130,6 +130,9 @@ class RuntimeConfig:
         self.star_rrf_actr_floor: float = _env_float("STAR_RRF_ACTR_FLOOR", 0.5, 0.0, 1.0)
         self.star_rrf_constant_boost: float = _env_float("STAR_RRF_CONSTANT_BOOST", 1.3, 1.0, 3.0)
         self.star_rrf_date_boost_max: float = _env_float("STAR_RRF_DATE_BOOST_MAX", 0.3, 0.0, 2.0)
+        # 热度修正的权重。修正项本身是 1 + w·ln(1+活性)，封顶在 1.3，
+        # 所以这个数调大不会让热度无限碾压语义命中，只会更快撞到那个顶。
+        self.star_rrf_activation_weight: float = _env_float("STAR_RRF_ACTIVATION_WEIGHT", 0.15, 0.0, 1.0)
         self.star_scene_rules_path: str = os.getenv("STAR_SCENE_RULES_PATH", "").strip()
         self.star_scene_embedding_threshold: float = _env_float("STAR_SCENE_EMBEDDING_THRESHOLD", 0.45, 0.0, 1.0)
         self.star_scene_llm_model: str = os.getenv("STAR_SCENE_LLM_MODEL", "").strip()
@@ -278,6 +281,7 @@ class RuntimeConfig:
             "star_rrf_actr_floor": self.star_rrf_actr_floor,
             "star_rrf_constant_boost": self.star_rrf_constant_boost,
             "star_rrf_date_boost_max": self.star_rrf_date_boost_max,
+            "star_rrf_activation_weight": self.star_rrf_activation_weight,
             "inject_conflict_shelf": self.inject_conflict_shelf,
             "enable_cold_start": self.enable_cold_start,
             "enable_upstream_tools": self.enable_upstream_tools,

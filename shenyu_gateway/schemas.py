@@ -82,6 +82,7 @@ class ConfigUpdate(BaseModel):
     star_rrf_actr_floor: Optional[float] = None
     star_rrf_constant_boost: Optional[float] = None
     star_rrf_date_boost_max: Optional[float] = None
+    star_rrf_activation_weight: Optional[float] = None
     star_scene_llm_model: Optional[str] = None
     star_scene_llm_url: Optional[str] = None
     star_scene_llm_api_key: Optional[str] = None

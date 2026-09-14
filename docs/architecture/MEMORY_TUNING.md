@@ -24,7 +24,7 @@
 | **RRF 融合后** | 单通道上限 `1/(k+0+1)`，k=60 时 ≈0.0164；六通道加权和的实际落点在千分位 | Stars 最终注入线 |
 | **0..1 加权和** | 各分量按权重相加后 clamp 到 1.0 | Stars related 预筛、Recall `_score_row`、Mem 便签打分 |
 | **0..1 余弦相似度** | `1 - (a <=> b)`，pgvector 算出来的原始距离转相似度 | 所有向量门槛 |
-| **乘法修正** | 1.0 是"不修正"，>1 放大、<1 压制 | Stars 的五个 modifier |
+| **乘法修正** | 1.0 是"不修正"，>1 放大、<1 压制 | Stars 的六个 modifier；便签只有热度这一个（且乘在 clamp 之内） |
 | **计数 / 小时 / 天** | 物理单位 | cooldown、fatigue 窗口、日期偏移 |
 
 **最容易踩的一脚**：`star_min_score`（0.008）和 `star_related_min_score`（0.22）
@@ -47,10 +47,43 @@
 | `star_recent_fatigue_hours` 6 | `config.py::RuntimeConfig` | 小时 | 上面那条扣减的时间窗 | 未标定 |
 | `star_scene_embedding_threshold` 0.45 | `stars/_scene.py::_classify_scene_by_embedding` | 0..1 余弦 | 场景标签的向量归类线。0.45 同时是函数默认参数、`_load_scene_config` 的两处兜底和 config 默认，四处一致 | **按 bge-m3 的余弦标度调出** |
 | base_score 权重 0.55 / 0.25 / 0.20 | `stars/_recall.py::_score_rows` | 0..1 加权和 | content / keyword / chord 三分量。`content_score = max(内容词重叠, 向量分)` | 未标定 |
+| `star_rrf_activation_weight` 0.15 | `config.py::RuntimeConfig` | 乘法修正的权重 | 热度修正 `1 + w·ln(1+活性)` 里的 w。取 0.15 是让日常活性（一天进一次岛的稳态 ≈0.55）落在 +6% 上，连着一周（≈2）落在 +16% 上 | 按下面那条实测的名次预算反推，未在真实语料上量过 |
 
-五个 modifier 的乘法链在 `stars/_recall.py::_score_rows`：
-`final = rrf_score * actr_mod * novelty_mod * constant_mod * fatigue_mod * date_mod`。
+六个 modifier 的乘法链在 `stars/_recall.py::_score_rows`：
+`final = rrf_score * actr_mod * novelty_mod * constant_mod * fatigue_mod * date_mod * activation_mod`。
 `ignored_penalty` 被算出来也写进了日志，但**不在这条链里**——它目前只是可观测量，不参与排序。
+
+### 热度（activation）
+
+活性不是一个存下来的分数，是读时从事件账本算的：`shenyu_heat_events` 一条记忆一轮一行，
+`shenyu_star_activation` / `shenyu_mem_note_activation` 两个视图按 `sum(0.82^age_days)`
+在 90 天窗口内求和。0.82/天的半衰期是 3.5 天，90 天外的权重是 3e-9，所以窗口不是近似而是
+数值上的等价。**没有夜间衰减任务**，因此"漏跑一晚"这件事不存在。
+
+| 值 | 住在哪 | 标度 | 为什么是这个值 | 标定出处 |
+|----|--------|------|----------------|----------|
+| 保留率 0.82/天 | `20260914_memory_heat_ledger.sql`（两个视图的 `power(0.82, …)`） | 衰减率 | 半衰期 3.5 天。比 ACT-R 常用的 `t^-0.5` 忘得快，因为这里量的是"最近还在想着吗"，不是长期记忆强度 | 未标定 |
+| 90 天窗口 | 同上（`interval '90 days'`） | 天 | 0.82^90 ≈ 3e-9，落在双精度噪声里；窗口只是让视图不用扫全表 | 按上面那条保留率算出来的 |
+| `ACTIVATION_MOD_MAX` 1.3 | `memory_heat.py::ACTIVATION_MOD_MAX` | 乘法修正上限 | 和 `star_rrf_constant_boost` 同一个量级，刻意的：热度最多和"恒星"一样重，不该更重 | 取自恒星加成，未独立标定 |
+| `MEM_NOTE_ACTIVATION_WEIGHT` 0.15 | `mem_notes/_search.py::MEM_NOTE_ACTIVATION_WEIGHT` | 乘法修正的权重 | 和星星那边同一个默认值，但**走各自的住所**：便签的分数要跟 `mem_note_min_score` 这几条固定线比大小，星星那边只排序，将来大概要分开标定 | 抄自星星侧的默认值 |
+
+**为什么要取对数再封顶。** 视图给的活性没有上界：每天进岛 n 次的稳态是
+`0.82·n/(1-0.82) = 0.547n`，n=20 就到 11。线性乘 `1+0.15·11` 是 2.6 倍，两件事同时坏——
+便签的分数会顶出 0..1 值域，让 `mem_note_min_score` 那几条线静默漂移；而且没有上界的
+使用权重恰好压掉沈予要的那个东西（"偶尔冒出一个我没料到的"），因为常想起的更容易再被
+想起，进过的更容易留下、留下的又加热。那是车辙不是地形。所以照 ACT-R 本来的样子取对数
+（`B = ln Σ t^-d`），再 clamp 到 1.3。
+
+**1.3 倍值多少个名次。** k=60 的 RRF 里相邻名次只差 1.6%，所以"封顶就翻不动语义命中"
+是句假话。2026-09-14 在 `tests/test_memory_activation.py` 的假 Supabase 上实测：满热度
+（modifier 顶到 1.3）能把一颗星从第 19 名提到第 1 名，第 20 名提到第 3 名，第 26 名只能
+到第 7 名。默认权重 0.15 下：活性 0.55 值 4 个名次，活性 2 值 10 个，顶格 11 值 18 个。
+这是本仓少数量过的数之一，量的是**假语料上的名次预算**，不是真实召回质量。
+
+两条线的热度都只由「新进动态岛」写（`context_builder.py`），沈予手动 `search_stars` /
+`recall` 想起来的**不记热度**——这跟他自己说的"被想起来"是反的，是当前的取舍不是设计：
+`shenyu_heat_events.event_type` 的 check 里留好了 `manual_search` / `tool_use`，
+真要记的话手动召回应该**权重更高**而不是更低。
 
 ## Mem 便签
 
@@ -63,6 +96,7 @@
 | `CONTEXT_ANCHORED_SEMANTIC_MIN_SCORE` 0.30 | `mem_notes_relevance.py::CONTEXT_ANCHORED_SEMANTIC_MIN_SCORE` | 0..1 加权和 | 有锚点相关词时可以放松 | 未标定 |
 | `CONTEXT_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE` 0.42 | `mem_notes_relevance.py::CONTEXT_ANCHORED_SEMANTIC_MIN_VECTOR_SCORE` | 0..1 余弦 | 同上的向量线 | **按 bge-m3 的余弦标度调出** |
 | 打分权重 0.50 / 0.30 / 0.10 / 0.02 / 0.03 | `mem_notes/_search.py::_score` | 0..1 加权和 | trigger / content / anchor / type / recency；`never_seen_bonus` 另加 0.05 | 未标定 |
+| 热度修正 | `mem_notes/_search.py::_score` | 乘法修正，**乘在 `min(1.0, …)` 之内** | 见 Stars 的〈热度〉小节。位置是硬约束：乘在 clamp 外面，分数就能顶到 1.3，上面这三条固定线一起静默漂移 | 见〈热度〉 |
 | `mem_note_limit` 3 | `config.py::RuntimeConfig` | 计数 | **两条水源共用的总量**（日期提醒 + 上下文召回），提醒优先占位。动态岛是缓存断点锚，通道没有上限等于可缓存前缀没有上限 | 按缓存成本定，非检索质量 |
 | `mem_note_soft_cooldown_hours` 12 | `mem_notes/_search.py::_context_cooldown_hours` | 小时 | 自动召回的软冷却 | 未标定 |
 | `mem_note_default_cooldown_hours` 12 | `mem_notes/_search.py::_default_cooldown_hours` | 小时 | **新建**便签的 `cooldown_hours` 初值 | 未标定 |

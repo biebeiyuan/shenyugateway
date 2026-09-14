@@ -5,6 +5,7 @@ import random
 from datetime import timedelta
 from typing import Any, Optional
 
+from shenyu_gateway.memory_heat import activation_modifier, fetch_mem_note_activations
 from shenyu_gateway.recall import RecallIndexService, recall_terms
 from shenyu_gateway.runtime import logger
 from shenyu_gateway.utils import shorten as _shorten
@@ -38,6 +39,11 @@ from ..runtime import (
     parse_ts as _parse_ts,
 )
 from ._helpers import _MEM_NOTE_SELECT_FIELDS, _MEM_NOTE_SELECT_FIELDS_LIGHT, _normalize_note_id
+
+# 便签热度修正的权重。和 star_rrf_activation_weight 同一个默认值，
+# 但走各自的配置项——两条线的分数一个跟固定阈值比、一个只排序，
+# 将来大概会需要分开标定。
+MEM_NOTE_ACTIVATION_WEIGHT = 0.15
 
 # 一次最多挂几条到点的提醒。剩下的不打戳，下一轮再来。
 DUE_REMINDER_MAX = 3
@@ -94,6 +100,9 @@ class SearchMixin:
             if min_score is not None
             else float(getattr(self.cfg, "mem_note_min_score", 0.45) or 0.45)
         )
+        activations = await fetch_mem_note_activations(
+            self.supabase, [str(row.get("id") or "") for row in rows if row.get("id")]
+        )
         scored: list[tuple[float, dict, list[str]]] = []
         for row in rows:
             if not self._auto_surface_eligibility(row)[0]:
@@ -106,7 +115,9 @@ class SearchMixin:
                 dedupe_turns=dedupe_turns,
             ):
                 continue
-            score, reasons = self._score(query, row, specific_content_only=specific_content_only)
+            score, reasons = self._score(
+                query, row, specific_content_only=specific_content_only, activations=activations
+            )
             if score >= min_score:
                 scored.append((score, row, reasons))
 
@@ -391,7 +402,14 @@ class SearchMixin:
     # Scoring
     # ------------------------------------------------------------------
 
-    def _score(self, query: str, row: dict, *, specific_content_only: bool = False) -> tuple[float, list[str]]:
+    def _score(
+        self,
+        query: str,
+        row: dict,
+        *,
+        specific_content_only: bool = False,
+        activations: Optional[dict[str, float]] = None,
+    ) -> tuple[float, list[str]]:
         keywords = row.get("trigger_keywords") or []
         trigger_text = row.get("trigger_text") or ""
         content = row.get("content") or ""
@@ -405,19 +423,27 @@ class SearchMixin:
 
         anchor_score, anchor_hits = self._anchor_overlap(query, row)
 
-        base_score = min(
-            1.0,
-            trigger_score * 0.50
-            + content_score * 0.30
-            + anchor_score * 0.10
-            + type_score * 0.02
-            + recency_score * 0.03
-            + never_seen_bonus,
+        # 热度修正必须留在 clamp 之内。便签的分数要和 mem_note_min_score(0.45)、
+        # mem_note_context_keyword_min_score、mem_note_semantic_min_score 这几条
+        # 固定的线比大小；乘在 min(1.0, ...) 外面会把分数顶出 0–1 值域，
+        # 那几条线就一起静默漂移了。星星那边是纯排序、不跟固定阈值比，所以没这个约束。
+        activation_mod = activation_modifier(
+            (activations or {}).get(str(row.get("id") or "")),
+            MEM_NOTE_ACTIVATION_WEIGHT,
         )
 
-        activation_raw = float(row.get("activation_score") or 0.0)
-        activation_mod = 1.0 + 0.15 * activation_raw
-        score = base_score * activation_mod
+        score = min(
+            1.0,
+            (
+                trigger_score * 0.50
+                + content_score * 0.30
+                + anchor_score * 0.10
+                + type_score * 0.02
+                + recency_score * 0.03
+                + never_seen_bonus
+            )
+            * activation_mod,
+        )
 
         reasons = []
         if trigger_score > 0:

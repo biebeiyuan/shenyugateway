@@ -373,22 +373,6 @@ class BaseStoreMixin:
 
                 CREATE INDEX IF NOT EXISTS idx_orchard_weather_day
                     ON orchard_weather(on_day);
-
-                -- 记忆加热事件表：幂等防止重复加热
-                CREATE TABLE IF NOT EXISTS shenyu_heat_events (
-                    id TEXT PRIMARY KEY,
-                    event_id TEXT NOT NULL UNIQUE,
-                    session_id TEXT NOT NULL,
-                    turn_index INTEGER NOT NULL,
-                    memory_kind TEXT NOT NULL,
-                    memory_id TEXT NOT NULL,
-                    created_at TEXT NOT NULL
-                );
-
-                CREATE INDEX IF NOT EXISTS idx_heat_events_lookup
-                    ON shenyu_heat_events(session_id, turn_index, memory_kind, memory_id);
-                CREATE INDEX IF NOT EXISTS idx_heat_events_memory
-                    ON shenyu_heat_events(memory_kind, memory_id);
                 """
             )
             self._ensure_column(conn, HEARTBEAT_ENTRIES_TABLE, "synced_at", "TEXT")

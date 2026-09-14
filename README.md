@@ -102,7 +102,7 @@ The codebase is partly layered already. Entries owe a path and a responsibility:
 
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, heartbeat persistence helper.
 - `shenyu_gateway/private_capture.py`: private assistant content finalization (`<heartbeat>` extraction), context-consumed marking, fallback text generation, free-time detection, and strict timestamped Room-entry detection.
-- `shenyu_gateway/memory_heat.py`: memory activation tracking — gives memories that entered the dynamic island a heat increment (`HEAT_INCREMENT = 0.12`), called from `mark_context_consumed` via `_apply_heat_for_island_injection`. Idempotent per `(session_id, turn_index, memory_id)` through the heat_events table.
+- `shenyu_gateway/memory_heat.py`: memory activation as an event ledger, not a stored score. `record_island_entry` writes one immutable row per memory per turn to Supabase `shenyu_heat_events` (idempotent on `event_id = session:turn:kind:memory_id`), called from `context_builder.py` for the memories *entering* the island — not the ones retained on it, which would measure residency instead of remembering. `fetch_star_activations` / `fetch_mem_note_activations` read activation from the `shenyu_star_activation` / `shenyu_mem_note_activation` views, which sum `0.82^age_days` over a 90-day window at read time, so there is no nightly decay job to miss. `activation_modifier` compresses that unbounded value to `1 + w·ln(1+a)` capped at 1.3, the same scale as `star_rrf_constant_boost`. Fail-soft in both directions: no terrain is a worse ranking, not a failed turn.
 
 ### Durable archive
 

@@ -17,7 +17,6 @@ from ._room import RoomMixin
 from ._orchard import OrchardMixin
 from ._admin import AdminMixin
 from ._request_log_history import RequestLogHistoryMixin
-from ._memory_heat import HEAT_EVENTS_TABLE, MemoryHeatMixin
 
 
 class GatewayStore(
@@ -33,7 +32,6 @@ class GatewayStore(
     AlbumMixin,
     AdminMixin,
     RequestLogHistoryMixin,
-    MemoryHeatMixin,
     BaseStoreMixin,
 ):
     pass
@@ -43,7 +41,6 @@ __all__ = [
     "GatewayStore",
     "NEXT_REQUEST_COLD_START_TAG",
     "HEARTBEAT_ENTRIES_TABLE",
-    "HEAT_EVENTS_TABLE",
     "DEFAULT_ALBUM_NAME",
     "MAX_PHOTO_BYTES",
     "photo_fingerprint",

@@ -8,7 +8,6 @@ from .runtime import logger
 from .response_capture import split_private_assistant_tags
 from .echo import ECHO_CLOSE_MARKER, ECHO_OPEN_MARKER, split_leading_echo
 from .utils import normalize_text as _normalize_text
-from .memory_heat import _apply_heat_for_island_injection
 
 
 EMPTY_VISIBLE_ASSISTANT_REPLY = "沈予已记录。"
@@ -39,9 +38,6 @@ def mark_context_consumed(meta: dict, *, store: Any):
         if pending_ids:
             marked = store.mark_pending_gateway_tool_turns_consumed(pending_ids)
             logger.info("[GatewayTool] 标记 %d 个 mixed pending transcript 已消费", marked)
-
-        # Memory activation: 给进了动态岛的记忆加热
-        _apply_heat_for_island_injection(meta, store)
     except Exception:
         logger.exception("Failed to mark injected context as consumed")
 
