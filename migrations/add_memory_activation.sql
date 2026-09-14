@@ -25,3 +25,25 @@ CREATE TABLE IF NOT EXISTS shenyu_heat_events (
 
 CREATE INDEX IF NOT EXISTS idx_heat_events_lookup ON shenyu_heat_events(session_id, turn_index, memory_kind, memory_id);
 CREATE INDEX IF NOT EXISTS idx_heat_events_memory ON shenyu_heat_events(memory_kind, memory_id);
+
+-- 衰减函数：每晚把 activation_score 乘以保留率，跳过恒星
+CREATE OR REPLACE FUNCTION decay_activation_scores(
+  table_name TEXT,
+  retention REAL
+) RETURNS INTEGER AS $$
+DECLARE
+  affected_count INTEGER;
+  sql_stmt TEXT;
+BEGIN
+  -- 构造动态 SQL：只衰减非恒星记忆
+  sql_stmt := format(
+    'UPDATE %I SET activation_score = activation_score * $1 WHERE activation_score > 0 AND (is_constant IS NULL OR is_constant = FALSE)',
+    table_name
+  );
+
+  EXECUTE sql_stmt USING retention;
+  GET DIAGNOSTICS affected_count = ROW_COUNT;
+
+  RETURN affected_count;
+END;
+$$ LANGUAGE plpgsql SECURITY DEFINER;
