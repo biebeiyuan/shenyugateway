@@ -102,6 +102,7 @@ The codebase is partly layered already. Entries owe a path and a responsibility:
 
 - `shenyu_gateway/response_capture.py`: private assistant tag filtering for `<heartbeat>`, heartbeat persistence helper.
 - `shenyu_gateway/private_capture.py`: private assistant content finalization (`<heartbeat>` extraction), context-consumed marking, fallback text generation, free-time detection, and strict timestamped Room-entry detection.
+- `shenyu_gateway/memory_heat.py`: memory activation tracking — gives memories that entered the dynamic island a heat increment (`HEAT_INCREMENT = 0.12`), called from `mark_context_consumed` via `_apply_heat_for_island_injection`. Idempotent per `(session_id, turn_index, memory_id)` through the heat_events table.
 
 ### Durable archive
 
