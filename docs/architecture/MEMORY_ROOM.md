@@ -253,7 +253,6 @@ final = rrf × actr_mod × novelty_mod × constant × fatigue × date × activat
 | 是什么 | 每次注入的完整回执：`run_id`、`surface`、触发文本、当时分数、是否真的注入 | 只记「这条记忆这一轮进了岛」 |
 | 谁读 | `_actr_scores`（ACT-R 亮度）、`room_context.py::hot_star_score`、星星库 trace | `shenyu_star_activation` / `shenyu_mem_note_activation` 两个视图 |
 | 衰减 | `age_days^-0.5`：14 天剩 0.27，100 天仍剩 0.10 | `0.82^age_days`：14 天剩 0.06，100 天 ≈ 0 |
-| 岛上留着（retain）算不算 | 算（`search_context` 那条路会重记） | 不算，只记 `entering` |
 | 覆盖便签 | 不覆盖 | 覆盖 |
 
 一颗「三个月前热聊过五次、之后再没提」的星：旧的给 `actr_mod` 0.705（还在加分），

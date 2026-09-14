@@ -82,23 +82,26 @@ async def _fetch_activations(
     wanted = sorted({str(item).strip() for item in ids or [] if str(item or "").strip()})
     if not supabase or not wanted:
         return {}
+    # 别按 id 过滤：500 个 UUID 会造 18,500 字符的 URL，Kong 默认 16k header
+    # buffer 拒掉（414）。视图有 `having count(e.id) > 0`，只返回 90 天内真的
+    # 有事件的记忆，实际大概几百行，远少于 2000 上限。读下来后在 Python 里过滤。
     try:
         rows = await supabase.query(
             view,
             {
                 "select": f"{id_column},activation",
-                id_column: "in.(" + ",".join(wanted) + ")",
-                "limit": str(len(wanted)),
+                "limit": "2000",
             },
         )
     except Exception as exc:
         # 读不到活性不该拖垮一次召回：地形消失，语义排序照常。
         logger.warning("[MemoryHeat] 读%s活性失败，这一轮按无热度排: %s", label, exc)
         return {}
+    wanted_set = set(wanted)
     result: dict[str, float] = {}
     for row in rows or []:
         key = str((row or {}).get(id_column) or "").strip()
-        if not key:
+        if not key or key not in wanted_set:
             continue
         try:
             result[key] = float(row.get("activation") or 0.0)
@@ -123,7 +126,9 @@ async def record_island_entry(
     所以留在岛上的不会被重复打戳——这个区分那边已经替我们做好了。
 
     幂等靠 `event_id` 的唯一约束 + `on_conflict` 合并：重试、流式断连重连、
-    tool loop 里多次 mark，都只会留下一行。
+    tool loop 里多次 mark，都只会留下一行。`event_id` 加了日期，防止冷启动、
+    刷新等情况下 `human_turn_index` 重置后和几个月前的事件碰撞——碰撞窗口从
+    「整个 session 生命周期」缩到「同一天内」，而同一天内 turn_index 不会倒退。
     """
     if not supabase or not session_id:
         return 0
@@ -131,6 +136,10 @@ async def record_island_entry(
         turn = int(turn_index)
     except (TypeError, ValueError):
         turn = 0
+
+    # 取当天日期（Asia/Shanghai），event_id 加上日期防止 turn_index 重置后碰撞。
+    from .runtime import local_today
+    today = local_today().isoformat()  # YYYY-MM-DD
 
     rows: list[dict[str, Any]] = []
     for kind, column, ids in (
@@ -143,7 +152,7 @@ async def record_island_entry(
                 continue
             rows.append(
                 {
-                    "event_id": f"{session_id}:{turn}:{kind}:{memory_id}",
+                    "event_id": f"{session_id}:{today}:{turn}:{kind}:{memory_id}",
                     "event_type": "island_enter",
                     column: memory_id,
                     "session_id": str(session_id),
