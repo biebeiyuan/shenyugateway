@@ -42,16 +42,25 @@ class FakeSupabase:
     async def query(self, table: str, params: dict):
         self.queries.append({"table": table, "params": dict(params)})
         id_column = "star_id" if table == STAR_ACTIVATION_VIEW else "mem_note_id"
-        wanted = {
-            item.strip()
-            for item in str(params.get(id_column) or "").removeprefix("in.").strip("()").split(",")
-            if item.strip()
-        }
-        rows = [
-            {id_column: key, "activation": value}
-            for key, value in (self.activations.get(table) or {}).items()
-            if key in wanted
-        ]
+        # 新实现：不按 id 过滤，直接返回全部（视图有 having count > 0）
+        id_filter = params.get(id_column)
+        if id_filter:
+            wanted = {
+                item.strip()
+                for item in str(id_filter).removeprefix("in.").strip("()").split(",")
+                if item.strip()
+            }
+            rows = [
+                {id_column: key, "activation": value}
+                for key, value in (self.activations.get(table) or {}).items()
+                if key in wanted
+            ]
+        else:
+            # 没有 id 过滤时，返回所有（模拟新的 limit 2000 逻辑）
+            rows = [
+                {id_column: key, "activation": value}
+                for key, value in (self.activations.get(table) or {}).items()
+            ]
         return project_select(rows, params)
 
     async def upsert_minimal(self, table: str, data, on_conflict=None):
@@ -122,7 +131,8 @@ def test_fetch_star_activations_reads_the_view_and_returns_a_map():
     params = supabase.queries[0]["params"]
     assert supabase.queries[0]["table"] == STAR_ACTIVATION_VIEW
     assert params["select"] == "star_id,activation"
-    assert params["star_id"].startswith("in.(")
+    # 新实现：不按 id 过滤，直接拉整个视图，在 Python 里过滤
+    assert params["limit"] == "2000"
 
 
 def test_fetch_mem_note_activations_reads_the_other_view():
@@ -172,13 +182,22 @@ def test_island_entry_writes_one_row_per_memory_with_a_stable_event_id():
     call = supabase.upserts[0]
     assert call["table"] == HEAT_EVENTS_TABLE
     # 幂等靠唯一键 + 合并：重试、流式断连重连、tool loop 里多次 mark，
-    # 同一 (session, turn, memory) 只会留一行。
+    # 同一 (session, turn, memory) 只会留一行。event_id 加了日期防止
+    # human_turn_index 重置后碰撞。
     assert call["on_conflict"] == "event_id"
-    assert [row["event_id"] for row in call["rows"]] == [
-        "sess-1:7:star:star-a",
-        "sess-1:7:star:star-b",
-        "sess-1:7:mem:mem-a",
-    ]
+    # event_id 现在是 session:date:turn:kind:id 格式
+    event_ids = [row["event_id"] for row in call["rows"]]
+    assert len(event_ids) == 3
+    # 检查格式：sess-1:YYYY-MM-DD:7:star:star-a
+    for event_id in event_ids:
+        parts = event_id.split(":")
+        assert len(parts) == 5
+        assert parts[0] == "sess-1"
+        assert parts[2] == "7"  # turn_index
+    # 检查具体的 kind:id 部分
+    assert event_ids[0].endswith(":star:star-a")
+    assert event_ids[1].endswith(":star:star-b")
+    assert event_ids[2].endswith(":mem:mem-a")
     # 一行一条记忆，不是一行一个数组：视图靠 count(*) 数次数，
     # 数组会把三次想起压成一行。
     assert all(row["turn_index"] == 7 for row in call["rows"])
@@ -214,7 +233,15 @@ def test_different_turns_are_different_events():
         )
 
     ids = [call["rows"][0]["event_id"] for call in supabase.upserts]
-    assert ids == ["sess-1:3:star:star-a", "sess-1:4:star:star-a"]
+    # event_id 现在包含日期，格式是 session:date:turn:kind:id
+    # 同一天内调用两次，日期部分相同，turn 部分不同
+    assert len(ids) == 2
+    assert ids[0].split(":")[2] == "3"  # turn_index
+    assert ids[1].split(":")[2] == "4"
+    assert ids[0].endswith(":star:star-a")
+    assert ids[1].endswith(":star:star-a")
+    # 日期部分应该相同（同一次测试运行）
+    assert ids[0].split(":")[1] == ids[1].split(":")[1]
 
 
 def test_a_missing_turn_index_still_writes_rather_than_crashing():
@@ -297,22 +324,35 @@ def _star_scores(activations: dict[str, float], rows: list[dict], *, weight: flo
 
     async def query(table, params=None):
         if table == STAR_ACTIVATION_VIEW:
-            wanted = {
-                item.strip()
-                for item in str((params or {}).get("star_id") or "")
-                .removeprefix("in.")
-                .strip("()")
-                .split(",")
-                if item.strip()
-            }
-            return project_select(
-                [
-                    {"star_id": key, "activation": value}
-                    for key, value in star_activations.items()
-                    if key in wanted
-                ],
-                params or {},
-            )
+            # 新实现：不按 id 过滤，直接返回全部（在 Python 里过滤）
+            id_filter = (params or {}).get("star_id")
+            if id_filter:
+                # 旧测试路径：如果有 id 过滤
+                wanted = {
+                    item.strip()
+                    for item in str(id_filter)
+                    .removeprefix("in.")
+                    .strip("()")
+                    .split(",")
+                    if item.strip()
+                }
+                return project_select(
+                    [
+                        {"star_id": key, "activation": value}
+                        for key, value in star_activations.items()
+                        if key in wanted
+                    ],
+                    params or {},
+                )
+            else:
+                # 新路径：没有 id 过滤，返回所有
+                return project_select(
+                    [
+                        {"star_id": key, "activation": value}
+                        for key, value in star_activations.items()
+                    ],
+                    params or {},
+                )
         return await StarFake.query(supabase, table, params)
 
     supabase.query = query
