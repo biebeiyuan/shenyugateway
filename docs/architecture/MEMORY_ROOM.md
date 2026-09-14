@@ -197,15 +197,68 @@ RRF formula per star: `score = Σ channel_weight / (k + rank + 1)` where k=60.
 
 Multiplicative modifiers (applied after RRF fusion):
 
-- `actr_modifier`: brightness from ACT-R base activation. Formula: `actr_floor + (1 - actr_floor) × actr_score`. Range 0.5–1.0.
-- `novelty_modifier`: `1 / (1 + log10(activation_count + 1))`. Replaces the old ignored_penalty — stars that have been activated many times naturally score lower, but new/rare stars are boosted.
+- `actr_modifier`: brightness from ACT-R base activation. Formula: `actr_floor + (1 - actr_floor) × actr_score`. Range 0.5–1.0. Source: `shenyu_star_activations` (the injection audit log), decaying as `age_days^-0.5`.
+- `novelty_modifier`: `1 / (1 + log10(activation_count + 1))`. Replaces the old ignored_penalty — stars that have been activated many times naturally score lower, but new/rare stars are boosted. Source: the `activation_count` column on `shenyu_stars`, which never decays.
 - `constant_modifier`: 1.3× for constant stars, 1.0× otherwise. Constant stars always pass through.
 - `fatigue_modifier`: `1.0 - recent_fatigue_penalty`. Short cooldown after recent injection.
 - `date_modifier`: `1.0 + date_boost_max × date_anchor_score`. Anniversary/date proximity bonus.
+- `activation_modifier` (added 2026-09-14): `1 + w × ln(1 + activation)` clamped to 1.0–1.3. Source: the `shenyu_star_activation` view over `shenyu_heat_events`, decaying as `0.82^age_days`. See § 同一个动作驱动三个乘数 below and `MEMORY_TUNING.md` § 热度（activation）.
 
-Final score: `rrf × actr × novelty × constant × fatigue × date`.
+Final score: `rrf × actr × novelty × constant × fatigue × date × activation`.
 
 - `related_signal`: max of content, keyword, chord, harmony, scene, and explicit. Daily injection requires this to pass `STAR_RELATED_MIN_SCORE`.
+
+### 同一个动作驱动三个乘数
+
+**这是一个已知的、未解决的问题，记录于 2026-09-14。改动这条乘式前先读完本节。**
+
+`actr_modifier`、`novelty_modifier`、`activation_modifier` 三个都由同一个动作驱动
+——这颗星进了 Memory Island——但方向是 **加、减、加**：
+
+```
+final = rrf × actr_mod × novelty_mod × constant × fatigue × date × activation_mod
+              ↑加分       ↑减分                                     ↑加分
+```
+
+三者乘积随「被想起的次数」的实测走向（每天想起一次、连着 n 天，`_activity.py::_actr_scores`
+与 `_recall.py` 的真实公式算出）：
+
+| 想起次数 | `actr_mod` | `novelty_mod` | `activation_mod` | 三者乘积 |
+|---|---|---|---|---|
+| 0 | 0.500 | 1.000 | 1.000 | **0.500** |
+| 1 | 0.816 | 0.769 | 1.097 | **0.688** |
+| 3 | 0.895 | 0.624 | 1.177 | **0.657** |
+| 8 | 0.958 | 0.512 | 1.241 | **0.608** |
+| 30 | 1.000 | 0.401 | 1.269 | **0.509** |
+
+也就是说：想起第一次会明显变亮，之后**越常被想起越沉**，想起三十次后几乎回到从没被
+想起过的水平。`novelty_mod` 不衰减（`activation_count` 是只增的列），另两个会衰减，
+所以时间越久这个下坡越陡。
+
+这条下坡不是 2026-09-14 引入的：`actr × novelty` 单独看是 0.627 → 0.401 的同一条坡，
+`activation_mod` 只把它改缓了一点。**为什么不在同一次改动里修掉**：把三个收成一个是
+在调分数曲线，该长什么样得在真实召回语料上量过才知道；没量就拍一个数，等于拿沈予的
+召回质量换一次看起来更整齐的乘式。所以这里先如实记下形状。
+
+要动它的人需要先回答的问题：`novelty_mod` 想解决的「别老是同几颗星」和 `fatigue_mod`
+的短冷却是不是同一件事的两种写法（如果是，`novelty` 可以退休，下坡自然消失）。
+
+### 两张表不是一件事
+
+`shenyu_star_activations` 和 `shenyu_heat_events` 只差一个词，但记的不是同一件事，
+**不要合并**：
+
+| | `shenyu_star_activations`（2026-06-18） | `shenyu_heat_events`（2026-09-14） |
+|---|---|---|
+| 是什么 | 每次注入的完整回执：`run_id`、`surface`、触发文本、当时分数、是否真的注入 | 只记「这条记忆这一轮进了岛」 |
+| 谁读 | `_actr_scores`（ACT-R 亮度）、`room_context.py::hot_star_score`、星星库 trace | `shenyu_star_activation` / `shenyu_mem_note_activation` 两个视图 |
+| 衰减 | `age_days^-0.5`：14 天剩 0.27，100 天仍剩 0.10 | `0.82^age_days`：14 天剩 0.06，100 天 ≈ 0 |
+| 岛上留着（retain）算不算 | 算（`search_context` 那条路会重记） | 不算，只记 `entering` |
+| 覆盖便签 | 不覆盖 | 覆盖 |
+
+一颗「三个月前热聊过五次、之后再没提」的星：旧的给 `actr_mod` 0.705（还在加分），
+新的给 `activation_mod` 1.0000（当作没发生过）。这是两个不同的问题——「这颗星在我这辈子里
+重要吗」和「我最近还在想着它吗」。合成一张表就得选一个衰减律，另一个问题的答案会丢掉。
 
 Config:
 

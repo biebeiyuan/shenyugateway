@@ -80,7 +80,7 @@ Shenyu Gateway 不是人格层，不是角色扮演包装器。它是一个**上
 
 ### 2.3 排序算法：RRF 融合 + 乘法修正
 
-Stars 的排序分两步：**六通道 RRF 融合**得到基础分，**五个乘法修正因子**调整最终分。
+Stars 的排序分两步：**六通道 RRF 融合**得到基础分，**六个乘法修正因子**调整最终分。
 
 **第一步：六通道 Reciprocal Rank Fusion**
 
@@ -97,7 +97,7 @@ Stars 的排序分两步：**六通道 RRF 融合**得到基础分，**五个乘
 
 RRF 公式：`score = Σ channel_weight / (k + rank + 1)`，k=60。
 
-**第二步：五个乘法修正因子**
+**第二步：六个乘法修正因子**
 
 | 修正因子 | 公式 | 作用 |
 |---------|------|------|
@@ -106,8 +106,14 @@ RRF 公式：`score = Σ channel_weight / (k + rank + 1)`，k=60。
 | constant_modifier | 1.3× (constant star) / 1.0× | "恒星"：手动标记的永不暗淡的星 |
 | fatigue_modifier | `1.0 - fatigue_penalty` | 刚注入过的星短期抑制（防同一颗星反复出现） |
 | date_modifier | `1.0 + date_boost_max × date_anchor_score` | 纪念日/日期锚点加成 |
+| activation_modifier（2026-09-14 加入） | `1 + w × ln(1 + 活性)`，clamp 到 1.0–1.3 | 热度——最近进过动态岛的更容易再浮上来。活性读时从 `shenyu_heat_events` 算，衰减 0.82/天 |
 
-最终分 = `rrf × actr × novelty × constant × fatigue × date`
+最终分 = `rrf × actr × novelty × constant × fatigue × date × activation`
+
+**这六个里有三个在拉同一个信号。** `actr`、`novelty`、`activation` 都由「这颗星进了岛」
+驱动，方向却是加、减、加，合起来的效果是想起第一次变亮、之后越常想起越沉。这是
+2026-09-14 记录下来的已知问题，不是设计意图；实测数字和动它之前要先回答的问题在
+`docs/architecture/MEMORY_ROOM.md` § 同一个动作驱动三个乘数。
 
 ### 2.4 注入筛选：两道门槛
 
@@ -149,6 +155,12 @@ actr_score = clamp((base_activation + 2.5) / 4.5, 0, 1)
 - 刚激活过的星 → 高亮度
 - 多次被激活的星 → 积累亮度（但受 novelty 平衡）
 - 长时间没被激活 → 自然暗淡
+
+这里的 activation 记录是 `shenyu_star_activations`（每次注入的完整回执），和 2026-09-14
+新增的热度账本 `shenyu_heat_events` **不是一张表**，只差一个词：前者衰减 `age^-0.5`
+（100 天后仍剩 0.10），后者衰减 `0.82^天`（100 天后 ≈ 0），回答的是"这颗星在我这辈子里
+重要吗"和"我最近还在想着它吗"两个不同的问题。对照表见
+`docs/architecture/MEMORY_ROOM.md` § 两张表不是一件事。
 
 ### 2.6 Star Links（星图连线）
 

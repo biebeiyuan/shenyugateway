@@ -17,6 +17,35 @@ DELIVERY_LOG_PATH = ROOT / "project_delivery_log.jsonl"
 DELIVERY_KINDS = {"feature", "fix", "experience", "operations", "architecture"}
 DELIVERY_STATUSES = {"verified_local", "pushed", "deployed", "device_verified"}
 
+README_PATH = ROOT / "README.md"
+PRODUCT_HEADING = "### 按产品对象反查"
+PRODUCT_COLUMN = "产品对象"
+
+
+def known_products(readme_path: Path | None = None) -> set[str]:
+    """The product names README's reverse index defines, or an empty set if unreadable.
+
+    `kind` and `status` are closed sets checked in this file; `product` was not,
+    so a typo landed a real entry under a product that does not exist and nothing
+    said so. This log is read by product, so such an entry is simply invisible
+    there. Empty means "cannot tell" rather than "none are valid" — a missing or
+    restructured README must not block recording a delivery.
+
+    The default resolves at call time, not in the signature, so pointing
+    `README_PATH` elsewhere actually changes where this looks.
+    """
+    try:
+        readme = (readme_path or README_PATH).read_text(encoding="utf-8")
+    except OSError:
+        return set()
+    from .project_map import _table_after_heading
+
+    return {
+        str(row.get(PRODUCT_COLUMN) or "").strip()
+        for row in _table_after_heading(readme, PRODUCT_HEADING)
+        if str(row.get(PRODUCT_COLUMN) or "").strip()
+    }
+
 
 class ProjectDeliveryError(ValueError):
     """Raised when a project delivery record cannot be trusted."""
@@ -183,6 +212,16 @@ def load_delivery_log(path: Path = DELIVERY_LOG_PATH) -> list[dict[str, Any]]:
 
 def append_delivery(record: dict[str, Any], path: Path = DELIVERY_LOG_PATH) -> dict[str, Any]:
     delivery = normalize_delivery(record)
+    # Checked here rather than in `normalize_delivery`, which also runs on read:
+    # renaming a README product would otherwise make every past entry under the old
+    # name unreadable, taking the whole log down for a docs edit. Recording is the
+    # moment the typo can still be fixed for free.
+    products = known_products()
+    if products and delivery["product"] not in products:
+        raise ProjectDeliveryError(
+            f"product {delivery['product']!r} is not in README.md {PRODUCT_HEADING} "
+            f"(known: {', '.join(sorted(products))})"
+        )
     existing = {item["id"] for item in load_delivery_log(path)}
     if delivery["id"] in existing:
         raise ProjectDeliveryError(f"duplicate id {delivery['id']!r}")

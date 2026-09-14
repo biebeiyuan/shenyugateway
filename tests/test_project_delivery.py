@@ -67,6 +67,60 @@ def test_append_delivery_rejects_duplicate_ids(tmp_path):
         append_delivery(_delivery(), path)
 
 
+def test_append_delivery_rejects_a_product_readme_does_not_define(tmp_path):
+    """打错一个字母的产品名会让这条记录从产品索引里消失，而且不报错。
+
+    `kind` 和 `status` 都是闭集，`product` 之前不是——它绑的是 README 那张反查表，
+    而日志正是按产品翻的。用 `lsland`（小写 L 冒充大写 I）当回归，因为这正是
+    真正会漏过 review 的那种打错。
+    """
+    path = tmp_path / "deliveries.jsonl"
+
+    with pytest.raises(ProjectDeliveryError, match="not in README"):
+        append_delivery(_delivery(product="Memory lsland"), path)
+
+    assert not path.exists(), "被拒的记录不该留下半行"
+
+
+def test_the_product_check_reads_the_real_readme_table():
+    """护栏靠真读到 README 才有意义：表读空了它就整个静默放行。"""
+    from shenyu_gateway.project_delivery import known_products
+
+    products = known_products()
+
+    assert "Memory Island" in products
+    assert "PWA 聊天端" in products
+    assert "Memory lsland" not in products
+
+
+def test_every_recorded_product_is_still_a_readme_product():
+    """README 里改产品名时，这条会指出哪些旧记录被改成了孤儿。"""
+    from shenyu_gateway.project_delivery import known_products
+
+    products = known_products()
+    orphans = sorted(
+        {
+            item["product"]
+            for item in load_delivery_log(ROOT / "project_delivery_log.jsonl")
+            if item["product"] not in products
+        }
+    )
+
+    assert orphans == [], f"这些产品名不在 README 反查表里了：{orphans}"
+
+
+def test_a_readme_that_cannot_be_read_does_not_block_recording(tmp_path, monkeypatch):
+    """读不到 README 是"不知道"，不是"全都非法"——不能因为文档动了就录不进交付。"""
+    import shenyu_gateway.project_delivery as module
+
+    monkeypatch.setattr(module, "README_PATH", tmp_path / "nope.md")
+    path = tmp_path / "deliveries.jsonl"
+
+    recorded = append_delivery(_delivery(product="谁知道这是什么"), path)
+
+    assert recorded["product"] == "谁知道这是什么"
+
+
 @pytest.mark.parametrize(
     ("overrides", "message"),
     [

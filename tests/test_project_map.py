@@ -337,9 +337,22 @@ def _normalize_heading(text: str) -> str:
     return re.sub(_PUNCTUATION, "", text.replace("`", ""))
 
 
+# A Chinese numeral only counts as a section number when a boundary follows it.
+# Without that lookahead the 三 of 「三个乘数」 read as section 三, so any two
+# headings starting with the same numeral matched each other and the pointer
+# resolved by accident — measured 2026-09-14: 3 of the 13 number-matched pointers
+# were passing that way, all of them pointing at prose headings, not numbered
+# sections. Arabic numerals need no boundary: no heading starts 「3个」.
+_LEADING_NUMBER = re.compile(
+    r"^\s*(?:([0-9]+(?:\.[0-9]+)*)|([一二三四五六七八九十]+)(?=[\s、.,，。的章节）)]|$))"
+)
+
+
 def _leading_number(text: str) -> str | None:
-    match = re.match(r"^\s*([0-9]+(?:\.[0-9]+)*|[一二三四五六七八九十]+)", text.replace("`", ""))
-    return match.group(1) if match else None
+    match = _LEADING_NUMBER.match(text.replace("`", ""))
+    if not match:
+        return None
+    return match.group(1) or match.group(2)
 
 
 def _matches_by_number(target: str, raw: str, headings: dict[str, list[str]]) -> bool:
@@ -428,6 +441,25 @@ def test_a_pointer_to_a_missing_heading_fails():
     # Bold body text dressed up as a heading, and a heading that has been renamed.
     assert not resolves("金的边界. `admin/src/theme/theme.ts`")
     assert not resolves("Tool Calls |")
+
+
+def test_a_chinese_numeral_inside_a_word_is_not_a_section_number():
+    """「三个乘数」的三是量词不是编号，否则同字开头的两个小节会互相匹配。
+
+    2026-09-14 量到的：13 条靠数字匹配通过的指针里有 3 条是这样蒙过去的——
+    把被指的小节整个改名，指针照样绿。数字匹配本身要留（`DESIGN.md §12`
+    确实按编号指路），要挡的是它把量词当编号。
+    """
+    headings = {"target.md": ["三个乘数在打架", "一、视觉基线（昼场）", "8.5 某节"]}
+    resolves = lambda raw: _pointer_resolves("target.md", raw, headings)
+    # 同一个「三」开头，但词不一样：改名过的指针必须红。
+    assert not resolves("三个乘数拉同一个信号。")
+    # 真按编号指路的那种照旧要绿。
+    assert resolves("一 视觉基线 / more prose")
+    assert resolves("8.5。")
+    assert _leading_number("三个乘数") is None
+    assert _leading_number("三、乘数") == "三"
+    assert _leading_number("12 的包内部子系统映射") == "12"
 
 
 def test_a_backticked_pointer_is_an_example_not_a_pointer():

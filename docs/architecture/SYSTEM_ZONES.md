@@ -201,6 +201,7 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 - `shenyu_gateway/echo.py`
 - `shenyu_gateway/memory_island.py`
 - `shenyu_gateway/island_bumps.py`
+- `shenyu_gateway/memory_heat.py`
 - `shenyu_gateway/store/_window_state.py`
 - `shenyu_gateway/store/_cold_start.py`
 - `shenyu_gateway/store/_snapshots.py`
@@ -210,6 +211,13 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 之间的桥：它在 layered messages 组装前决定 slow/calendar 和 heartbeat 使用新快照还是
 沿用旧快照。内容变化在缓冲窗口内会暂存，到 TTL 到点或 epoch 重建时才刷新；因此它不会
 改变 Memory Island 的 retain/rewrite 语义，也不会把被缓冲的 heartbeat 标成已注入。
+
+`memory_heat.py`（2026-09-14 加入本区）挂在 `context_builder.py` 里 `entering` 算完之后：
+只给**这一轮新进岛**的星星和便签写一行热度事件，留在岛上的不写。挂这里而不是挂在
+`private_capture.py::mark_context_consumed`（2026-09-13 的第一版挂在那儿）有两个原因——
+那边是同步的、拿到的 `store` 没有 supabase client，写不进去；而且那是"清理已注入上下文"
+的位置，不是"记忆被想起"的位置。按驻留写会把停留时长当成被想起的次数。跨区影响：
+它写 Supabase 的 `shenyu_heat_events`，Stars 与 Mem 两区在排序时读由它派生的两个视图。
 
 **顺序不变量**
 

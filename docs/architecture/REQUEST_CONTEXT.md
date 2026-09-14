@@ -258,7 +258,9 @@ Supabase remains the durable fact and content source:
 - `shenyu_star_recall_runs`
 - `shenyu_star_recall_candidates`
 - `shenyu_star_feedback`
-- `shenyu_star_activations`
+- `shenyu_star_activations` (per-injection audit log: run, surface, trigger text, score. Read by `_actr_scores` and `room_context.py::hot_star_score`. **Not** the same thing as `shenyu_heat_events` below, which it differs from by one word — see `MEMORY_ROOM.md` § 两张表不是一件事)
+- `shenyu_heat_events` (added 2026-09-14: memory-heat event ledger, one row per memory per turn, idempotent on `event_id`)
+- `shenyu_star_activation` / `shenyu_mem_note_activation` (views, not tables: they sum `0.82^age_days` over `shenyu_heat_events` at read time, so no stored score and no nightly decay job)
 - `shenyu_entities`
 - `shenyu_entity_aliases`
 - `shenyu_entity_mentions`
