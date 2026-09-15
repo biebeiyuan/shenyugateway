@@ -15,6 +15,7 @@ from .request_logs import (
     _payload_without_image_blocks,
     _record_completion_finish_reason,
     _upstream_payload_summary,
+    warn_tool_result_contract_gaps,
 )
 from .response_capture import AssistantTagFilter, split_private_assistant_tags
 from .echo import EchoStreamFilter, split_leading_echo, strip_leading_echo
@@ -868,6 +869,9 @@ def _record_round_request(
     working_messages: list[dict],
     cache_meta: dict,
 ) -> None:
+    # 同 _record_upstream_payload：契约缺口先响，再看这一轮有没有日志条目可写。
+    # 工具循环恰恰是最容易出缺口的地方，不能因为没开日志就整轮静音。
+    warn_tool_result_contract_gaps(payload)
     if round_log is None:
         return
     round_log["messages_preview"] = [_message_log_preview(message) for message in working_messages]

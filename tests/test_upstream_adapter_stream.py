@@ -963,39 +963,42 @@ def test_openai_shaped_orphan_result_shows_up_as_unexpected():
     assert summary["tool_result_contract_mismatch"][0]["unexpected_ids"] == ["call_ghost"]
 
 
-def test_contract_mismatch_also_warns_before_the_payload_goes_out(caplog):
+def _broken_anthropic_payload() -> dict:
+    return {
+        "model": "claude",
+        "messages": [
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "tool_use", "id": "toolu_a", "name": "room_look", "input": {}},
+                    {"type": "tool_use", "id": "toolu_b", "name": "room_note", "input": {}},
+                ],
+            },
+            {
+                "role": "user",
+                "content": [{"type": "tool_result", "tool_use_id": "toolu_a", "content": "窗台"}],
+            },
+        ],
+    }
+
+
+def test_contract_gaps_warn_before_the_payload_goes_out(caplog):
     # 只写进 summary 要等人去翻日志才看得见，而会去翻的时候通常已经吃了 400。
-    from shenyu_gateway.request_logs import _upstream_payload_summary
+    from shenyu_gateway.request_logs import warn_tool_result_contract_gaps
 
     with caplog.at_level("WARNING", logger="shenyu-gateway"):
-        _upstream_payload_summary(
-            {
-                "model": "claude",
-                "messages": [
-                    {
-                        "role": "assistant",
-                        "content": [
-                            {"type": "tool_use", "id": "toolu_a", "name": "room_look", "input": {}},
-                            {"type": "tool_use", "id": "toolu_b", "name": "room_note", "input": {}},
-                        ],
-                    },
-                    {
-                        "role": "user",
-                        "content": [{"type": "tool_result", "tool_use_id": "toolu_a", "content": "窗台"}],
-                    },
-                ],
-            }
-        )
+        gaps = warn_tool_result_contract_gaps(_broken_anthropic_payload())
 
+    assert [gap["missing_ids"] for gap in gaps] == [["toolu_b"]]
     warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
     assert any("ToolContract" in message and "toolu_b" in message for message in warnings)
 
 
 def test_a_healthy_payload_logs_nothing(caplog):
-    from shenyu_gateway.request_logs import _upstream_payload_summary
+    from shenyu_gateway.request_logs import warn_tool_result_contract_gaps
 
     with caplog.at_level("WARNING", logger="shenyu-gateway"):
-        _upstream_payload_summary(
+        warn_tool_result_contract_gaps(
             {
                 "model": "claude",
                 "messages": [{"role": "user", "content": [{"type": "text", "text": "早上好"}]}],
@@ -1003,3 +1006,27 @@ def test_a_healthy_payload_logs_nothing(caplog):
         )
 
     assert [record for record in caplog.records if "ToolContract" in record.getMessage()] == []
+
+
+def test_summarizing_a_payload_has_no_logging_side_effect(caplog):
+    # 汇总是纯计算：谁都能拿它看一眼形状（包括将来某处回看存下来的旧 payload），
+    # 带上写日志的副作用就会对着旧数据响。校验留在汇总里，响一声归调用方。
+    from shenyu_gateway.request_logs import _upstream_payload_summary
+
+    with caplog.at_level("WARNING", logger="shenyu-gateway"):
+        summary = _upstream_payload_summary(_broken_anthropic_payload())
+
+    assert summary["tool_result_contract_mismatch"][0]["missing_ids"] == ["toolu_b"]
+    assert [record for record in caplog.records if "ToolContract" in record.getMessage()] == []
+
+
+def test_contract_gaps_warn_even_when_this_request_has_no_log_entry(caplog):
+    # _record_upstream_payload 开头是 if log_entry is None: return——响一声排在
+    # 判空之前，缺口是要发出去的请求的问题，不该因为这次没记账就一起静音。
+    from shenyu_gateway.request_logs import _record_upstream_payload
+
+    with caplog.at_level("WARNING", logger="shenyu-gateway"):
+        _record_upstream_payload(None, _broken_anthropic_payload())
+
+    warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+    assert any("ToolContract" in message and "toolu_b" in message for message in warnings)

@@ -563,21 +563,37 @@ def _upstream_payload_summary(
     mismatch = _tool_result_contract_mismatches(messages)
     if mismatch:
         summary["tool_result_contract_mismatch"] = mismatch
-        # 躺在 summary 里要等人去翻日志才看得见，而会去翻的时候通常已经吃了 400。
-        # mismatch 非空基本就等于这条 payload 注定被上游拒，发出前先响一声。
-        from .runtime import logger
-
-        for gap in mismatch:
-            logger.warning(
-                "[ToolContract] messages[%s] 有 %s 个 tool_use 但紧跟着只有 %s 个 tool_result"
-                "（缺 %s / 多 %s）——这条 payload 大概会被上游判 TOOL_USE_RESULT_MISMATCH",
-                gap["assistant_index"],
-                gap["tool_use_count"],
-                gap["tool_result_count"],
-                gap["missing_ids"] or "无",
-                gap["unexpected_ids"] or "无",
-            )
     return summary
+
+
+def warn_tool_result_contract_gaps(payload: Optional[dict]) -> list[dict[str, Any]]:
+    """发出前对着 payload 响一声，返回缺口供调用方自行记账。
+
+    刻意不放在 _upstream_payload_summary 里：那是个纯汇总函数，谁都能拿它看一眼
+    形状（包括将来某处拿存下来的旧 payload 回看），带上写日志的副作用就会对着旧
+    数据响。所以校验留在汇总里（纯计算），响一声这件事由真的要发请求的那条路显式调。
+
+    缺口非空基本等于这条 payload 注定被上游拒。躺在 summary 字段里要等人去翻日志
+    才看得见，而会去翻的时候通常已经吃了 400。
+    """
+    if not payload:
+        return []
+    gaps = _tool_result_contract_mismatches(payload.get("messages"))
+    if not gaps:
+        return []
+    from .runtime import logger
+
+    for gap in gaps:
+        logger.warning(
+            "[ToolContract] messages[%s] 有 %s 个工具调用但只找到 %s 个结果"
+            "（缺 %s / 多 %s）——这条 payload 大概会被上游判 TOOL_USE_RESULT_MISMATCH",
+            gap["assistant_index"],
+            gap["tool_use_count"],
+            gap["tool_result_count"],
+            gap["missing_ids"] or "无",
+            gap["unexpected_ids"] or "无",
+        )
+    return gaps
 
 
 def _tool_result_contract_mismatches(messages: Any) -> list[dict[str, Any]]:
@@ -656,6 +672,9 @@ def _record_upstream_payload(
     payload: dict,
     headers: Optional[dict] = None,
 ) -> None:
+    # 响一声排在 log_entry 判空之前：契约缺口是要发出去的请求的问题，不是记账的
+    # 问题，不该因为这次没有日志条目就一起静音。
+    warn_tool_result_contract_gaps(payload)
     if log_entry is None:
         return
     log_entry["upstream_payload_summary"] = _upstream_payload_summary(payload, headers)
