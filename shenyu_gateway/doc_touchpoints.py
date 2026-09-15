@@ -32,10 +32,12 @@ import math
 import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
-from typing import Any, Iterable
+from datetime import datetime
+from typing import Any, Callable, Iterable
 
 
 ROOT = Path(__file__).resolve().parent.parent
+BACKTEST_LOG_PATH = ROOT / "doc_touchpoints_backtest.jsonl"
 
 # Defaults picked by the sweep above: min_rate 0.4 raised recall 7 points but
 # cost 8 points of precision and half again as many pointers; 0.6 collapsed
@@ -137,21 +139,27 @@ def learn(
     commits: Iterable[tuple[str, list[str]]],
     *,
     skip: str | None = None,
+    source_predicate: Callable[[str], bool] = is_source,
+    target_predicate: Callable[[str], bool] = is_live_doc,
 ) -> tuple[dict[str, Counter], Counter]:
-    """Count, per source file, how often each live doc changed alongside it."""
+    """Count, per source file, how often each target changed alongside it.
+
+    `source_predicate` selects what we learn from (default: runtime source).
+    `target_predicate` selects what we predict (default: live docs).
+    """
     together: dict[str, Counter] = defaultdict(Counter)
     runs: Counter = Counter()
     for sha, files in commits:
         if skip is not None and sha == skip:
             continue
-        sources = [f for f in files if is_source(f)]
+        sources = [f for f in files if source_predicate(f)]
         if not sources or len(sources) > MAX_SOURCE_FILES_PER_COMMIT:
             continue
-        docs = [f for f in files if is_live_doc(f)]
+        targets = [f for f in files if target_predicate(f)]
         for source in set(sources):
             runs[source] += 1
-            for doc in set(docs):
-                together[source][doc] += 1
+            for target in set(targets):
+                together[source][target] += 1
     return together, runs
 
 
@@ -358,10 +366,154 @@ def render(report: dict[str, Any]) -> list[str]:
     return lines
 
 
+def backtest(
+    *,
+    window: int = DEFAULT_WINDOW,
+    min_runs: int = DEFAULT_MIN_RUNS,
+    min_rate: float = DEFAULT_MIN_RATE,
+    root: Path = ROOT,
+    target_predicate: Callable[[str], bool] = is_live_doc,
+    source_predicate: Callable[[str], bool] = is_source,
+) -> dict[str, Any]:
+    """Leave-one-out validation: measure precision on recent commits.
+
+    For each commit in the window that changed both sources and targets, train
+    on all other commits and measure whether the model predicts the targets that
+    actually changed. Returns aggregated metrics plus the list of misses.
+
+    `target_predicate` selects what we're trying to predict (default: live docs).
+    `source_predicate` selects what we predict from (default: runtime source).
+
+    This cannot detect feedback loops: if agents start following the tool's
+    suggestions, history gradually becomes the tool's own shape, and leave-one-out
+    precision rises for the wrong reason. Distinguishing "model improved" from
+    "agents conformed" would require recording what was pointed at during each
+    record() call, then measuring how often those pointers were followed.
+    """
+    commits = read_history(window=window, root=root)
+    head_sha = _git("rev-parse", "HEAD", root=root).strip()
+    shallow = is_shallow(root=root)
+
+    # Refuse to run in shallow clones — precision would be meaningless
+    if shallow:
+        return {
+            "head": head_sha,
+            "timestamp": datetime.now().isoformat(),
+            "window": window,
+            "min_runs": min_runs,
+            "min_rate": min_rate,
+            "shallow": True,
+            "commits_read": len(commits),
+            "commits_evaluated": 0,
+            "precision": 0.0,
+            "avg_predicted": 0.0,
+            "avg_actual": 0.0,
+            "misses": [],
+            "error": "Cannot backtest in shallow clone — no history to learn from",
+        }
+
+    # Only evaluate commits that changed both sources and targets
+    eligible = []
+    for sha, files in commits:
+        sources = [f for f in files if source_predicate(f)]
+        targets = [f for f in files if target_predicate(f)]
+        if sources and targets:
+            eligible.append((sha, sources, targets))
+
+    if not eligible:
+        return {
+            "head": head_sha,
+            "timestamp": datetime.now().isoformat(),
+            "window": window,
+            "min_runs": min_runs,
+            "min_rate": min_rate,
+            "shallow": False,
+            "commits_read": len(commits),
+            "commits_evaluated": 0,
+            "precision": 0.0,
+            "avg_predicted": 0.0,
+            "avg_actual": 0.0,
+            "misses": [],
+        }
+
+    total_hits = 0
+    total_predicted = 0
+    total_actual = 0
+    misses: list[dict[str, Any]] = []
+
+    for sha, sources, actual_targets in eligible:
+        # Train on everything except this commit
+        together, runs = learn(
+            commits,
+            skip=sha,
+            source_predicate=source_predicate,
+            target_predicate=target_predicate,
+        )
+        predicted = pointers_for(
+            sources,
+            together=together,
+            runs=runs,
+            min_runs=min_runs,
+            min_rate=min_rate,
+        )
+        predicted_set = {p["doc"] for p in predicted}
+        actual_set = set(actual_targets)
+
+        hits = len(predicted_set & actual_set)
+        total_hits += hits
+        total_predicted += len(predicted_set)
+        total_actual += len(actual_set)
+
+        missed = sorted(actual_set - predicted_set)
+        if missed:
+            misses.append({
+                "sha": sha,
+                "sources": sources,
+                "missed_targets": missed,
+                "predicted": sorted(predicted_set),
+            })
+
+    precision = total_hits / total_predicted if total_predicted > 0 else 0.0
+
+    return {
+        "head": head_sha,
+        "timestamp": datetime.now().isoformat(),
+        "window": window,
+        "min_runs": min_runs,
+        "min_rate": min_rate,
+        "shallow": False,
+        "commits_read": len(commits),
+        "commits_evaluated": len(eligible),
+        "precision": round(precision, 4),
+        "avg_predicted": round(total_predicted / len(eligible), 2),
+        "avg_actual": round(total_actual / len(eligible), 2),
+        "total_hits": total_hits,
+        "total_predicted": total_predicted,
+        "total_actual": total_actual,
+        "misses": misses,
+    }
+
+
+def append_backtest_result(
+    result: dict[str, Any],
+    path: Path = BACKTEST_LOG_PATH,
+) -> None:
+    """Persist one backtest run to the JSONL log.
+
+    Each line is self-contained: HEAD sha, timestamp, full config, metrics, and
+    the list of misses. Without the config, comparing runs months apart is
+    meaningless — you can't tell if a difference comes from history or parameters.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n")
+
+
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         description="Show which documents historically changed with the code you touched.",
     )
+    # Allow positional arguments at top level for backward compatibility
     parser.add_argument(
         "paths",
         nargs="*",
@@ -376,11 +528,61 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--min-runs", type=int, default=DEFAULT_MIN_RUNS)
     parser.add_argument("--min-rate", type=float, default=DEFAULT_MIN_RATE)
     parser.add_argument("--json", dest="as_json", action="store_true")
+
+    # Backtest mode
+    parser.add_argument(
+        "--backtest",
+        action="store_true",
+        help="Run leave-one-out validation instead of surveying changes.",
+    )
+    parser.add_argument(
+        "--save",
+        action="store_true",
+        help="(With --backtest) Append results to doc_touchpoints_backtest.jsonl",
+    )
+
     return parser
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _build_parser().parse_args(argv)
+
+    if args.backtest:
+        try:
+            result = backtest(
+                window=args.window,
+                min_runs=args.min_runs,
+                min_rate=args.min_rate,
+            )
+        except DocTouchpointError as exc:
+            print(f"backtest: 读不到历史：{exc}")
+            return 0
+
+        if args.save:
+            append_backtest_result(result)
+            if result.get("error"):
+                print(f"[saved with error] {result['error']}")
+            else:
+                print(f"[saved] {result['commits_evaluated']} commits, precision {result['precision']:.1%}")
+
+        if args.as_json:
+            print(json.dumps(result, ensure_ascii=False, indent=2))
+        else:
+            # Summary only, no misses list in non-JSON mode
+            print(f"shallow: {result.get('shallow', False)}")
+            print(f"commits_read: {result.get('commits_read', 0)}")
+            print(f"commits_evaluated: {result['commits_evaluated']}")
+            if result.get("error"):
+                print(f"error: {result['error']}")
+            else:
+                print(f"precision: {result['precision']:.1%}")
+                print(f"avg_predicted: {result['avg_predicted']}")
+                print(f"avg_actual: {result['avg_actual']}")
+                if result['commits_evaluated'] > 0:
+                    print(f"misses: {len(result['misses'])} commits with unpredicted docs")
+        return 0
+
+    # Default: survey
     try:
         report = survey(
             args.paths or None,
