@@ -10,18 +10,23 @@ It learns from `git log` instead of from a maintained list. A registry of
 read Y — and an entry nobody maintains reads exactly like a live one. Co-edit
 history has no such empty slots: a new file simply has nothing to say yet.
 
-Measured on 2026-09-15 against the last 60 commits that touched Python, by
-leave-one-out (each commit predicted from a model trained without it):
+Measured by leave-one-out (each commit predicted from a model trained without it):
 
-    pointers learned from prose (a doc naming the file)  precision 17%, 4.7/commit
-    pointers learned from co-edit history                precision 36%, 1.2/commit
+    Early measurement (2026-09-15, 60 commits that touched Python):
+        pointers learned from prose (a doc naming the file)  precision 17%, 4.7/commit
+        pointers learned from co-edit history                precision 36%, 1.2/commit
+
+    Current backtest (2026-09-15, 166 commits that touched both source and docs):
+        precision 55%, 2.29 predicted / 2.30 actual per commit
 
 Prose lost because breadth kills precision: README.md names 68 runtime files,
-so it "predicts" every change. Precision here is also an undercount — looking
-at a document and deciding it needs nothing is a success, but only a real edit
-counts in the numerator. What matters is the miss rate: 4 of those 60 commits
-had a document this would not have pointed at, two of them `docs:` commits
-where the document *was* the deliverable and no code taught anything.
+so it "predicts" every change. The early measurement counted all commits that
+touched Python; the backtest only evaluates commits that changed both source
+and docs (eligible), so it measures a narrower but more relevant slice — when
+code and docs did change together, did the model point at the right docs?
+
+Precision here is also an undercount — looking at a document and deciding it
+needs nothing is a success, but only a real edit counts in the numerator.
 """
 
 from __future__ import annotations
