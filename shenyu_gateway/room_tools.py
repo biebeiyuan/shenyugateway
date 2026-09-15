@@ -216,45 +216,6 @@ SELF_TRACING_ROOM_TOOL_NAMES = {
 }
 
 
-# ── Compatibility Broker Tool (not exposed by room mode) ───────────────
-
-def room_broker_tool() -> dict:
-    """A single broker tool for room mode, like shenyu_gateway_tool but for room_* tools."""
-    hints = {
-        "room_sit_by_window": "窗边椅子（无参数）",
-        "room_newspaper_basket": "旧报纸篓（date?=YYYY-MM-DD, query?, limit?）",
-        "room_scribble": "窗台涂鸦本（action: write|read, content?）",
-        "room_notebook": "笔记本（status?: captured|active|all, limit?）",
-        "room_wooden_box": "木盒子/心跳（limit?）",
-        "room_drawer_notes": "圆儿的纸条（limit?）",
-        "room_locked_drawer": "上锁的抽屉（action: write|read, content?）",
-        "room_star_map": "星图墙（action: look|create|search|review|feedback|connect, content?=落一颗, query?, feedback?: connected|positive|negative|skipped, candidate?=review 给的编号, items?=批量, star_ids?=连星座）",
-        "shenyu_books": "共享书架（action: list|read|write|annotate；list 无参数；read origin 要 book_id/title；write 仅限 identity）",
-        "room_wall_pins": "墙上便签（action: list|add|done, content?, pin_id?）",
-        "room_octopus_pillow": "章鱼抱枕（无参数）",
-    }
-    hint_lines = "\n".join(f"  {name} — {desc}" for name, desc in hints.items())
-    return {
-        "type": "function",
-        "function": {
-            "name": "shenyu_gateway_tool",
-            "description": (
-                "房间里能碰的东西。想碰就碰。\n\n"
-                f"{hint_lines}\n\n"
-                "用 tool 指定名字。"
-            ),
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "tool": {"type": "string", "enum": sorted(ROOM_TOOL_NAMES)},
-                    "params": {"type": "object", "additionalProperties": True},
-                },
-                "required": ["tool"],
-            },
-        },
-    }
-
-
 # ── Room Tool Execution ────────────────────────────────────────────────
 
 async def execute_room_tool(

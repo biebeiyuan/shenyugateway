@@ -370,7 +370,7 @@ Core and bridge files, separated by concern:
 | `shenyu_gateway/context_builder.py` | Assembles the complete Room package: charge signals, door state, scene layers, conditional bookshelf overview, and visible tool schemas. |
 | `shenyu_gateway/room_text.py` | All room copy: charter, scenes, doors, trace phrases. Change text here only. |
 | `shenyu_gateway/room_context.py` | Charge calculation, layer rendering, door filtering logic. |
-| `shenyu_gateway/room_tools.py` | Room tool handlers, direct tool definitions, the shared `shenyu_books` list/read/write/annotate entry, compatibility broker, door count collection, and the canonical-windowsill bridge for `room_scribble`. |
+| `shenyu_gateway/room_tools.py` | Room tool handlers, direct tool definitions, the shared `shenyu_books` list/read/write/annotate entry, door count collection, and the canonical-windowsill bridge for `room_scribble`. No broker: room mode always exposes visible doors as individual schemas. |
 | `shenyu_gateway/room_scenes.py` | Weather, atmosphere, and window-scene generation. |
 | `shenyu_gateway/room_newspaper.py` | Fixed RSS catalog, feed parsing, issue rolling, optional quality checks, and draft generation. |
 | `shenyu_gateway/store/_room.py` | Room traces, notes, pins, newspaper issue persistence, and the local idempotency links used to import pre-bridge scribbles. |
