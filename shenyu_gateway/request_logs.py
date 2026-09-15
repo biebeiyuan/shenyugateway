@@ -560,7 +560,64 @@ def _upstream_payload_summary(
     claude_code_identity = _claude_code_identity_summary(payload, headers)
     if claude_code_identity is not None:
         summary["claude_code_identity"] = claude_code_identity
+    mismatch = _tool_result_contract_mismatches(messages)
+    if mismatch:
+        summary["tool_result_contract_mismatch"] = mismatch
     return summary
+
+
+def _tool_result_contract_mismatches(messages: Any) -> list[dict[str, Any]]:
+    """数一遍每条带 tool_use 的 assistant，下一条有没有装齐同样多的 tool_result。
+
+    只在 Anthropic 形状的 payload 上有意义（OpenAI 形状是一个结果一条 role: tool，
+    那边不受这条契约管）。上游违约时只会回一句 TOOL_USE_RESULT_MISMATCH 加一个
+    id，看不出少了几个、少了谁；这里在发出去之前就把缺口记进请求日志，下次同类
+    事故是网关自己的一行证据，不是上游的黑盒 400。
+
+    合并逻辑只保证「连续的 tool 消息进同一条 user」，救不了本来就残缺的历史——
+    客户端只回了 4 个里的 3 个、或者某个裁剪环节整条摘掉了一个结果，形状照样是
+    坏的，所以校验必须独立于合并。
+    """
+    if not isinstance(messages, list):
+        return []
+    mismatches: list[dict[str, Any]] = []
+    for index, message in enumerate(messages):
+        if not isinstance(message, dict) or message.get("role") != "assistant":
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            continue
+        use_ids = [
+            str(block.get("id") or "")
+            for block in content
+            if isinstance(block, dict) and block.get("type") == "tool_use"
+        ]
+        if not use_ids:
+            continue
+        following = messages[index + 1] if index + 1 < len(messages) else None
+        result_ids: list[str] = []
+        if isinstance(following, dict) and following.get("role") == "user":
+            following_content = following.get("content")
+            if isinstance(following_content, list):
+                result_ids = [
+                    str(block.get("tool_use_id") or "")
+                    for block in following_content
+                    if isinstance(block, dict) and block.get("type") == "tool_result"
+                ]
+        if set(use_ids) == set(result_ids) and len(use_ids) == len(result_ids):
+            continue
+        mismatches.append(
+            {
+                "assistant_index": index,
+                "tool_use_count": len(use_ids),
+                "tool_result_count": len(result_ids),
+                "missing_ids": [use_id for use_id in use_ids if use_id not in set(result_ids)],
+                "unexpected_ids": [
+                    result_id for result_id in result_ids if result_id not in set(use_ids)
+                ],
+            }
+        )
+    return mismatches
 
 
 def _record_upstream_payload(

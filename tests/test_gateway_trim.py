@@ -1448,3 +1448,68 @@ def test_a_changed_island_tail_waits_for_an_epoch_boundary():
     )
     assert reset_state["epoch_id"] != state["epoch_id"]
     assert reset_state["island_anchor_offset"] == 80
+
+
+# 2026-09-15 线上第二个 TOOL_USE_RESULT_MISMATCH 的成因：记忆岛按消息条数定锚点，
+# 不认工具轮的边界，锚点落在 tool 消息上就等于在 tool_use 和 tool_result 之间插了
+# 一条普通 user 消息（岛在 Anthropic 出口渲染成 role: user）。并行工具真的开始被
+# 调用之后，撞上的概率比以前高。
+def _parallel_tool_round() -> list[dict]:
+    return [
+        {"role": "user", "content": "早上好"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_a", "type": "function", "function": {"name": "room_look", "arguments": "{}"}},
+                {"id": "call_b", "type": "function", "function": {"name": "room_note", "arguments": "{}"}},
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_a", "content": "窗台"},
+        {"role": "tool", "tool_call_id": "call_b", "content": "便签"},
+        {"role": "user", "content": "嗯"},
+    ]
+
+
+def _anthropic_contract_gaps(anthropic_messages: list[dict]) -> list[tuple[int, int]]:
+    gaps = []
+    for index, message in enumerate(anthropic_messages):
+        content = message.get("content") or []
+        uses = [b for b in content if isinstance(b, dict) and b.get("type") == "tool_use"]
+        if not uses:
+            continue
+        following = anthropic_messages[index + 1] if index + 1 < len(anthropic_messages) else None
+        following_content = (following or {}).get("content") or []
+        results = [
+            b for b in following_content if isinstance(b, dict) and b.get("type") == "tool_result"
+        ]
+        if len(results) != len(uses):
+            gaps.append((len(uses), len(results)))
+    return gaps
+
+
+@pytest.mark.parametrize("anchor_offset", [0, 1, 2, 3, 4, 5])
+def test_memory_island_never_splits_a_tool_round(anchor_offset):
+    from shenyu_gateway.upstream_adapter import _openai_to_anthropic
+
+    assembled, meta = assemble_layered_messages(
+        _parallel_tool_round(), {"mem": "岛"}, memory_island_anchor_offset=anchor_offset
+    )
+    _system, anthropic_messages = _openai_to_anthropic(assembled)
+
+    assert _anthropic_contract_gaps(anthropic_messages) == []
+    # 岛要么落在这轮工具之前，要么落在整轮结束之后，绝不落在中间。
+    # 4 是「最后一条结果之后」，本来就合法，不该被白白往前挪——岛是缓存锚点，
+    # 挪得比必要的远会白丢缓存命中。
+    assert meta["memory_island_insert_index"] in {0, 1, 4, 5}
+
+
+def test_memory_island_anchor_slide_keeps_the_island_before_the_assistant():
+    # 锚点原本指向第一条 tool 结果（index 2），必须一路退到带 tool_calls 的
+    # assistant 之前（index 1），而不是只退一格停在 assistant 和它的结果之间。
+    _assembled, meta = assemble_layered_messages(
+        _parallel_tool_round(), {"mem": "岛"}, memory_island_anchor_offset=2
+    )
+
+    assert meta["memory_island_insert_index"] == 1
+    assert meta["memory_island_anchor_offset"] == 2

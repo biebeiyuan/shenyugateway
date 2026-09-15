@@ -785,3 +785,131 @@ def test_real_tool_arguments_survive_that_normalization():
         [{"role": "assistant", "tool_calls": [_fn_call("toolu_Y", "room_star_map", args)]}]
     )
     assert sanitized[0]["tool_calls"][0]["function"]["arguments"] == args
+
+
+# 2026-09-15 审查提的加固：合并只保证「连续的 tool 消息进同一条 user」，救不了本来
+# 就残缺的历史（客户端只回了 N 个里的 M 个，或某个裁剪环节整条摘掉一个结果）。
+# 上游违约时只回一个 id，看不出少了几个、少了谁，所以在发出去之前自己数一遍。
+def test_payload_summary_flags_a_missing_tool_result():
+    from shenyu_gateway.request_logs import _upstream_payload_summary
+
+    summary = _upstream_payload_summary(
+        {
+            "model": "claude",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "toolu_a", "name": "room_look", "input": {}},
+                        {"type": "tool_use", "id": "toolu_b", "name": "room_note", "input": {}},
+                    ],
+                },
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_a", "content": "窗台"}]},
+            ],
+        }
+    )
+
+    assert summary["tool_result_contract_mismatch"] == [
+        {
+            "assistant_index": 0,
+            "tool_use_count": 2,
+            "tool_result_count": 1,
+            "missing_ids": ["toolu_b"],
+            "unexpected_ids": [],
+        }
+    ]
+
+
+def test_payload_summary_stays_quiet_when_the_contract_holds():
+    from shenyu_gateway.request_logs import _upstream_payload_summary
+
+    summary = _upstream_payload_summary(
+        {
+            "model": "claude",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "tool_use", "id": "toolu_a", "name": "room_look", "input": {}},
+                        {"type": "tool_use", "id": "toolu_b", "name": "room_note", "input": {}},
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "tool_result", "tool_use_id": "toolu_a", "content": "窗台"},
+                        {"type": "tool_result", "tool_use_id": "toolu_b", "content": "便签"},
+                    ],
+                },
+            ],
+        }
+    )
+
+    assert "tool_result_contract_mismatch" not in summary
+
+
+def test_payload_summary_flags_a_user_turn_wedged_into_a_tool_round():
+    # 记忆岛那条成因的日志侧证据：结果没丢，但中间夹了一条正文 user 消息。
+    from shenyu_gateway.request_logs import _upstream_payload_summary
+
+    summary = _upstream_payload_summary(
+        {
+            "model": "claude",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "tool_use", "id": "toolu_a", "name": "room_look", "input": {}}],
+                },
+                {"role": "user", "content": [{"type": "text", "text": "岛"}]},
+                {"role": "user", "content": [{"type": "tool_result", "tool_use_id": "toolu_a", "content": "窗台"}]},
+            ],
+        }
+    )
+
+    assert summary["tool_result_contract_mismatch"][0]["tool_result_count"] == 0
+    assert summary["tool_result_contract_mismatch"][0]["missing_ids"] == ["toolu_a"]
+
+
+def test_openai_shaped_payload_is_not_judged_by_the_anthropic_contract():
+    # OpenAI 形状本来就是一个结果一条 role: tool，不受这条契约管，别误报。
+    from shenyu_gateway.request_logs import _upstream_payload_summary
+
+    summary = _upstream_payload_summary(
+        {
+            "model": "gpt",
+            "messages": [
+                {"role": "assistant", "content": "", "tool_calls": [_fn_call("call_a", "room_look")]},
+                {"role": "tool", "tool_call_id": "call_a", "content": "窗台"},
+            ],
+        }
+    )
+
+    assert "tool_result_contract_mismatch" not in summary
+
+
+def test_empty_arguments_are_also_normalized_on_the_way_to_the_client():
+    # 回上游那条路已经归一成 "{}"，发给客户端这条以前原样透传空字符串——
+    # 空串是 str，躲过了 isinstance 那道判断。两个方向要对称。
+    events = list(
+        _completion_to_stream_events(
+            {
+                "model": "claude",
+                "choices": [
+                    {
+                        "message": {
+                            "content": "",
+                            "tool_calls": [_fn_call("call_a", "room_sit_by_window", arguments="")],
+                        }
+                    }
+                ],
+            }
+        )
+    )
+    payloads = [json.loads(event[len("data: ") :]) for event in events if event.startswith("data: {")]
+    streamed = [
+        call
+        for payload in payloads
+        for call in (payload["choices"][0]["delta"].get("tool_calls") or [])
+    ]
+
+    assert [call["function"]["arguments"] for call in streamed] == ["{}"]

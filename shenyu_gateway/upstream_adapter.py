@@ -1102,6 +1102,11 @@ def _completion_to_stream_events(
         arguments = function.get("arguments", "")
         if not isinstance(arguments, str):
             arguments = json.dumps(arguments or {}, ensure_ascii=False)
+        if not arguments.strip():
+            # 无参工具在 Anthropic 流里不发 input_json_delta，累积出来就是空字符串。
+            # 回上游那条路已经归一成 "{}"，发给客户端这条也要一样——Operit 那侧拿
+            # json.loads 解 "" 会炸，两个方向的形状得对称。
+            arguments = "{}"
         stream_call = {
             "index": index,
             "id": tool_call.get("id") or f"call_{uuid.uuid4().hex[:10]}",

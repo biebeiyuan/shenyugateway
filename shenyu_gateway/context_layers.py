@@ -902,6 +902,38 @@ def trim_mcp_tool_results(
     }
 
 
+def _slide_off_tool_transcript(messages: list[dict], insert_at: int) -> int:
+    """把插入点从「tool_use 和它的结果之间」挪到这轮工具之前。
+
+    记忆岛在 Anthropic 出口会渲染成一条 role: user 消息。Anthropic 要求
+    tool_use 的下一条消息就装齐全部 tool_result，中间夹一条普通 user 消息同样
+    是 TOOL_USE_RESULT_MISMATCH——跟并行结果被拆成多条是同一个错误码的另一个
+    成因。锚点偏移是按消息条数算的，不认工具轮的边界，所以这里往前退到带
+    tool_calls 的那条 assistant 之前。
+    """
+    if insert_at <= 0 or insert_at >= len(messages):
+        return max(0, min(insert_at, len(messages)))
+    landing = messages[insert_at]
+    if not isinstance(landing, dict) or landing.get("role") != "tool":
+        # 落在别处都是安全的：插在整轮之前、或整轮结束之后，都不劈开这一轮。
+        # 只有正好落在某个结果上才说明岛被夹进了 tool_use 和 tool_result 中间。
+        return insert_at
+    index = insert_at
+    while index > 0:
+        previous = messages[index - 1]
+        if not isinstance(previous, dict):
+            break
+        role = previous.get("role")
+        if role == "tool":
+            index -= 1
+            continue
+        if role == "assistant" and previous.get("tool_calls"):
+            # 结果还在后面等着，这条 assistant 和它的结果不能被岛劈开。
+            index -= 1
+        break
+    return index
+
+
 def assemble_layered_messages(
     client_messages: list[dict],
     layers: dict[str, str],
@@ -936,6 +968,7 @@ def assemble_layered_messages(
         else:
             anchor_offset = max(0, min(int(memory_island_anchor_offset), len(history_indices)))
         insert_at = history_indices[anchor_offset] if anchor_offset < len(history_indices) else len(messages)
+        insert_at = _slide_off_tool_transcript(messages, insert_at)
         island_message: dict[str, Any] = {
             "role": "system",
             "content": island_text,
