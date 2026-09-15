@@ -101,18 +101,35 @@ def test_leave_one_out_is_possible_so_the_model_can_be_measured_honestly():
 
 
 def test_a_pointer_already_edited_is_marked_so_it_is_not_re_read():
+    # History is injected, not read from this repository. The first version of
+    # this test used the real log and passed locally while failing in CI, where
+    # actions/checkout clones a single commit and nothing can be learned.
     report = dt.survey(
         ["shenyu_gateway/room_tools.py", "docs/architecture/MEMORY_ROOM.md"],
-        window=400,
+        commits=HISTORY,
     )
     docs = {p["doc"]: p["already_touched"] for p in report["pointers"]}
     assert docs.get("docs/architecture/MEMORY_ROOM.md") is True
 
 
+def test_a_shallow_clone_says_it_cannot_know_instead_of_going_quiet():
+    # CI checks out one commit by default. Silence there is indistinguishable
+    # from "these files never travel with a document", so it has to be named.
+    report = dict(dt.survey(["shenyu_gateway/room_tools.py"], commits=[]))
+    report["shallow"] = True
+    text = "\n".join(dt.render(report))
+    assert "浅克隆" in text
+    assert "看不到" in text
+
+
 def test_the_report_names_the_files_it_cannot_advise_on():
-    report = dt.survey(["shenyu_gateway/doc_touchpoints.py"])
-    # This module itself is brand new, so the tool must admit it has nothing to
-    # say rather than going quiet — an invisible blind spot is the worse one.
+    # A file below the run floor must be named, not silently skipped — an
+    # invisible blind spot is the worse one. History is injected so this keeps
+    # testing the mechanism as the real file accumulates commits.
+    report = dt.survey(
+        ["shenyu_gateway/doc_touchpoints.py"],
+        commits=[_commit("z1", "shenyu_gateway/doc_touchpoints.py", "README.md")],
+    )
     assert "shenyu_gateway/doc_touchpoints.py" in report["unlearned_sources"]
     text = "\n".join(dt.render(report))
     assert "学不到东西" in text

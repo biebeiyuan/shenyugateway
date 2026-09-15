@@ -175,6 +175,13 @@ def changed_paths(*, staged_only: bool = False, root: Path = ROOT) -> list[str]:
     return sorted(names)
 
 
+def is_shallow(*, root: Path = ROOT) -> bool:
+    """A shallow clone has no co-edit history to learn from — CI checks out one
+    commit by default, so silence there means "cannot know", not "nothing to do".
+    """
+    return _git("rev-parse", "--is-shallow-repository", root=root).strip() == "true"
+
+
 def survey(
     paths: Iterable[str] | None = None,
     *,
@@ -183,15 +190,26 @@ def survey(
     min_runs: int = DEFAULT_MIN_RUNS,
     min_rate: float = DEFAULT_MIN_RATE,
     root: Path = ROOT,
+    commits: Iterable[tuple[str, list[str]]] | None = None,
 ) -> dict[str, Any]:
-    """The whole report: what changed, what to look at, what it cannot know."""
+    """The whole report: what changed, what to look at, what it cannot know.
+
+    `commits` is injectable so tests can state their own history. A test that
+    leans on this repository's real log passes or fails by where it runs: the
+    first version of this file had one, and it went red in CI only, where
+    `actions/checkout` clones a single commit.
+    """
     if paths is None:
         paths = changed_paths(staged_only=staged_only, root=root)
     paths = sorted(set(paths))
     sources = [p for p in paths if is_source(p)]
     docs_touched = [p for p in paths if is_live_doc(p)]
 
-    commits = read_history(window=window, root=root)
+    shallow = False
+    if commits is None:
+        commits = read_history(window=window, root=root)
+        shallow = is_shallow(root=root)
+    commits = list(commits)
     together, runs = learn(commits)
     pointers = pointers_for(
         sources,
@@ -206,6 +224,7 @@ def survey(
     unlearned = [p for p in sources if runs.get(p, 0) < min_runs]
     return {
         "commits_read": len(commits),
+        "shallow": shallow,
         "changed_sources": sources,
         "docs_already_touched": docs_touched,
         "pointers": [
@@ -225,7 +244,11 @@ def render(report: dict[str, Any]) -> list[str]:
         return lines
 
     lines.append(f"改了 {len(sources)} 个源码文件，按 {report['commits_read']} 个提交的同改历史看：")
-    if not report["pointers"]:
+    if report.get("shallow"):
+        # Say it, don't just fall quiet: a shallow clone (CI's default checkout)
+        # looks exactly like a repository where nothing ever changed together.
+        lines.append("  这是浅克隆，只有一个提交，学不到任何同改历史——不是没线索，是看不到。")
+    if not report["pointers"] and not report.get("shallow"):
         lines.append("  历史上没有稳定跟着一起改的文档。不是「不用改」，只是这次没有线索。")
     for pointer in report["pointers"]:
         mark = "✓" if pointer["already_touched"] else "·"
