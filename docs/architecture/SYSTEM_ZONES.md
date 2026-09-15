@@ -289,6 +289,7 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 **跨区边界**
 
 - `room_tools.py` 是 Room 的工具入口，归区域四；`room_scribble` 通过它进入区域六的 canonical `windowsill`（`origin=room`）和 Recall 索引，Room 内容、场景和外部 RSS 数据仍归本区域。
+- 「入口」指的是**可见面**：房间模式直接暴露可见门的 schema，日常聊天的 broker enum 里没有 `room_*`。执行面比这宽——`tool_registry.py::execute_gateway_tool` 的 broker allowlist 是 `exposed | HIDDEN_COMPAT_TOOL_NAMES | ROOM_TOOL_NAMES`，所以任何 `room_*` 只要被叫到名字就会执行，enum 只管看不看得见，不是闸。要在日常给某扇门开口子，走独立的 `shenyu_*` 名字（例：报纸篓的 `shenyu_newspaper_basket`，理由见 `docs/architecture/MEMORY_ROOM.md` § Old newspapers in daily chat），不要把 `room_*` 追加进 enum：那样它既不在 schema 表里、`available_tools` 里也查不到，而身份该由入口决定。
 - 归档和来历书数据在召回、工具读取或上下文呈现时归本区域语义；`chat_archive.py`、`conflict_books.py`、`resident_books.py` 的写入、不可变约束和长期保留同时连接区域七。这是同一功能的两种责任，不要求把文件强行归入唯一一个区。
 
 **主要风险**
