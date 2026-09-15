@@ -870,8 +870,8 @@ def test_payload_summary_flags_a_user_turn_wedged_into_a_tool_round():
     assert summary["tool_result_contract_mismatch"][0]["missing_ids"] == ["toolu_a"]
 
 
-def test_openai_shaped_payload_is_not_judged_by_the_anthropic_contract():
-    # OpenAI 形状本来就是一个结果一条 role: tool，不受这条契约管，别误报。
+def test_openai_shaped_payload_with_every_result_present_stays_quiet():
+    # OpenAI 形状是一个结果一条 role: tool，不受「紧跟着同一条」这条管，别误报。
     from shenyu_gateway.request_logs import _upstream_payload_summary
 
     summary = _upstream_payload_summary(
@@ -913,3 +913,93 @@ def test_empty_arguments_are_also_normalized_on_the_way_to_the_client():
     ]
 
     assert [call["function"]["arguments"] for call in streamed] == ["{}"]
+
+
+def test_openai_shaped_payload_flags_a_missing_tool_result():
+    # 审查提的：这个校验以前只认 Anthropic 形状，在 OpenAI 那条路上是恒空的
+    # no-op。孤儿 tool_call_id 在不少上游同样是 400，所以两种形状都要数。
+    from shenyu_gateway.request_logs import _upstream_payload_summary
+
+    summary = _upstream_payload_summary(
+        {
+            "model": "gpt",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": "",
+                    "tool_calls": [_fn_call("call_a", "room_look"), _fn_call("call_b", "room_note")],
+                },
+                {"role": "tool", "tool_call_id": "call_a", "content": "窗台"},
+                {"role": "user", "content": "嗯"},
+            ],
+        }
+    )
+
+    assert summary["tool_result_contract_mismatch"] == [
+        {
+            "assistant_index": 0,
+            "tool_use_count": 2,
+            "tool_result_count": 1,
+            "missing_ids": ["call_b"],
+            "unexpected_ids": [],
+        }
+    ]
+
+
+def test_openai_shaped_orphan_result_shows_up_as_unexpected():
+    from shenyu_gateway.request_logs import _upstream_payload_summary
+
+    summary = _upstream_payload_summary(
+        {
+            "model": "gpt",
+            "messages": [
+                {"role": "assistant", "content": "", "tool_calls": [_fn_call("call_a", "room_look")]},
+                {"role": "tool", "tool_call_id": "call_a", "content": "窗台"},
+                {"role": "tool", "tool_call_id": "call_ghost", "content": "没人叫过我"},
+            ],
+        }
+    )
+
+    assert summary["tool_result_contract_mismatch"][0]["unexpected_ids"] == ["call_ghost"]
+
+
+def test_contract_mismatch_also_warns_before_the_payload_goes_out(caplog):
+    # 只写进 summary 要等人去翻日志才看得见，而会去翻的时候通常已经吃了 400。
+    from shenyu_gateway.request_logs import _upstream_payload_summary
+
+    with caplog.at_level("WARNING", logger="shenyu-gateway"):
+        _upstream_payload_summary(
+            {
+                "model": "claude",
+                "messages": [
+                    {
+                        "role": "assistant",
+                        "content": [
+                            {"type": "tool_use", "id": "toolu_a", "name": "room_look", "input": {}},
+                            {"type": "tool_use", "id": "toolu_b", "name": "room_note", "input": {}},
+                        ],
+                    },
+                    {
+                        "role": "user",
+                        "content": [{"type": "tool_result", "tool_use_id": "toolu_a", "content": "窗台"}],
+                    },
+                ],
+            }
+        )
+
+    warnings = [record.getMessage() for record in caplog.records if record.levelname == "WARNING"]
+    assert any("ToolContract" in message and "toolu_b" in message for message in warnings)
+
+
+def test_a_healthy_payload_logs_nothing(caplog):
+    from shenyu_gateway.request_logs import _upstream_payload_summary
+
+    with caplog.at_level("WARNING", logger="shenyu-gateway"):
+        _upstream_payload_summary(
+            {
+                "model": "claude",
+                "messages": [{"role": "user", "content": [{"type": "text", "text": "早上好"}]}],
+            }
+        )
+
+    assert [record for record in caplog.records if "ToolContract" in record.getMessage()] == []

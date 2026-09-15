@@ -911,8 +911,18 @@ def _slide_off_tool_transcript(messages: list[dict], insert_at: int) -> int:
     成因。锚点偏移是按消息条数算的，不认工具轮的边界，所以这里往前退到带
     tool_calls 的那条 assistant 之前。
     """
-    if insert_at <= 0 or insert_at >= len(messages):
+    if insert_at <= 0 or insert_at > len(messages):
         return max(0, min(insert_at, len(messages)))
+    if insert_at == len(messages):
+        # 追加到末尾（锚点偏移大于历史长度时会走到这里）。末尾是普通 user 或
+        # role: tool 都安全；只有末尾恰好是「有 tool_calls、结果还没跟上」的
+        # assistant 时不能追加——那种历史本身已经违约（tool_use 后面什么都没
+        # 有），但岛插进去会把「结尾缺结果」变成「中间被夹开」，成因看起来就
+        # 换了一个，反而更难查。
+        last = messages[-1] if messages else None
+        if isinstance(last, dict) and last.get("role") == "assistant" and last.get("tool_calls"):
+            return insert_at - 1
+        return insert_at
     landing = messages[insert_at]
     if not isinstance(landing, dict) or landing.get("role") != "tool":
         # 落在别处都是安全的：插在整轮之前、或整轮结束之后，都不劈开这一轮。

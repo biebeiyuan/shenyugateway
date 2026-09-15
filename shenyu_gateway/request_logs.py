@@ -563,16 +563,31 @@ def _upstream_payload_summary(
     mismatch = _tool_result_contract_mismatches(messages)
     if mismatch:
         summary["tool_result_contract_mismatch"] = mismatch
+        # 躺在 summary 里要等人去翻日志才看得见，而会去翻的时候通常已经吃了 400。
+        # mismatch 非空基本就等于这条 payload 注定被上游拒，发出前先响一声。
+        from .runtime import logger
+
+        for gap in mismatch:
+            logger.warning(
+                "[ToolContract] messages[%s] 有 %s 个 tool_use 但紧跟着只有 %s 个 tool_result"
+                "（缺 %s / 多 %s）——这条 payload 大概会被上游判 TOOL_USE_RESULT_MISMATCH",
+                gap["assistant_index"],
+                gap["tool_use_count"],
+                gap["tool_result_count"],
+                gap["missing_ids"] or "无",
+                gap["unexpected_ids"] or "无",
+            )
     return summary
 
 
 def _tool_result_contract_mismatches(messages: Any) -> list[dict[str, Any]]:
-    """数一遍每条带 tool_use 的 assistant，下一条有没有装齐同样多的 tool_result。
+    """数一遍每个工具调用有没有对应的结果，两种协议形状都数。
 
-    只在 Anthropic 形状的 payload 上有意义（OpenAI 形状是一个结果一条 role: tool，
-    那边不受这条契约管）。上游违约时只会回一句 TOOL_USE_RESULT_MISMATCH 加一个
-    id，看不出少了几个、少了谁；这里在发出去之前就把缺口记进请求日志，下次同类
-    事故是网关自己的一行证据，不是上游的黑盒 400。
+    Anthropic 形状要求一条 assistant 里的 N 个 tool_use 由紧跟着的同一条 user
+    消息装齐全部 N 个 tool_result；OpenAI 形状不受「紧跟着同一条」这条管（一个
+    结果一条 role: tool），但调用和结果的 id 仍要配得上——孤儿 tool_call_id 在
+    不少上游同样是 400。上游违约时只会回一个 id，看不出少了几个、少了谁；这里
+    在发出去之前就把缺口记下来，下次同类事故是网关自己的证据，不是黑盒 400。
 
     合并逻辑只保证「连续的 tool 消息进同一条 user」，救不了本来就残缺的历史——
     客户端只回了 4 个里的 3 个、或者某个裁剪环节整条摘掉了一个结果，形状照样是
@@ -585,25 +600,41 @@ def _tool_result_contract_mismatches(messages: Any) -> list[dict[str, Any]]:
         if not isinstance(message, dict) or message.get("role") != "assistant":
             continue
         content = message.get("content")
-        if not isinstance(content, list):
-            continue
-        use_ids = [
-            str(block.get("id") or "")
-            for block in content
-            if isinstance(block, dict) and block.get("type") == "tool_use"
-        ]
-        if not use_ids:
-            continue
-        following = messages[index + 1] if index + 1 < len(messages) else None
+        use_ids: list[str] = []
         result_ids: list[str] = []
-        if isinstance(following, dict) and following.get("role") == "user":
-            following_content = following.get("content")
-            if isinstance(following_content, list):
-                result_ids = [
-                    str(block.get("tool_use_id") or "")
-                    for block in following_content
-                    if isinstance(block, dict) and block.get("type") == "tool_result"
-                ]
+        if isinstance(content, list):
+            use_ids = [
+                str(block.get("id") or "")
+                for block in content
+                if isinstance(block, dict) and block.get("type") == "tool_use"
+            ]
+        if use_ids:
+            following = messages[index + 1] if index + 1 < len(messages) else None
+            if isinstance(following, dict) and following.get("role") == "user":
+                following_content = following.get("content")
+                if isinstance(following_content, list):
+                    result_ids = [
+                        str(block.get("tool_use_id") or "")
+                        for block in following_content
+                        if isinstance(block, dict) and block.get("type") == "tool_result"
+                    ]
+        else:
+            # OpenAI 形状：结果散在后面若干条 role: tool 里，不要求紧跟同一条，
+            # 所以往后扫到这一轮结束（下一条 assistant 或 user 正文）为止。
+            tool_calls = message.get("tool_calls")
+            if not isinstance(tool_calls, list):
+                continue
+            use_ids = [
+                str(call.get("id") or "")
+                for call in tool_calls
+                if isinstance(call, dict)
+            ]
+            if not use_ids:
+                continue
+            for following in messages[index + 1 :]:
+                if not isinstance(following, dict) or following.get("role") != "tool":
+                    break
+                result_ids.append(str(following.get("tool_call_id") or ""))
         if set(use_ids) == set(result_ids) and len(use_ids) == len(result_ids):
             continue
         mismatches.append(

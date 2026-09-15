@@ -1513,3 +1513,52 @@ def test_memory_island_anchor_slide_keeps_the_island_before_the_assistant():
 
     assert meta["memory_island_insert_index"] == 1
     assert meta["memory_island_anchor_offset"] == 2
+
+
+def test_memory_island_appended_at_the_tail_skips_an_unsettled_assistant():
+    # 锚点偏移大于历史长度时岛被追加到末尾，绕过了落点检查。末尾恰好是「有
+    # tool_calls、结果还没跟上」的 assistant 时不能追加：那种历史本身已经违约，
+    # 但岛插进去会把「结尾缺结果」变成「中间被夹开」，成因看起来就换了一个。
+    dangling = [
+        {"role": "user", "content": "早上好"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_a", "type": "function", "function": {"name": "room_look", "arguments": "{}"}}
+            ],
+        },
+    ]
+
+    _assembled, meta = assemble_layered_messages(
+        dangling, {"mem": "岛"}, memory_island_anchor_offset=99
+    )
+
+    assert meta["memory_island_insert_index"] == 1
+
+
+@pytest.mark.parametrize(
+    "tail_role",
+    ["user", "tool"],
+)
+def test_memory_island_appended_at_the_tail_stays_put_when_safe(tail_role):
+    # 末尾是普通 user 或已结算的 tool 结果时，一格都不该挪——岛是缓存锚点。
+    settled = [
+        {"role": "user", "content": "早"},
+        {
+            "role": "assistant",
+            "content": "",
+            "tool_calls": [
+                {"id": "call_a", "type": "function", "function": {"name": "room_look", "arguments": "{}"}}
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_a", "content": "窗台"},
+    ]
+    if tail_role == "user":
+        settled.append({"role": "user", "content": "嗯"})
+
+    _assembled, meta = assemble_layered_messages(
+        settled, {"mem": "岛"}, memory_island_anchor_offset=99
+    )
+
+    assert meta["memory_island_insert_index"] == len(settled)
