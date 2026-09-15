@@ -176,6 +176,10 @@ PWA 的独立前端入口和文件索引在 `README.md` § Maintenance Map；它
 - client tool 必须返回客户端执行，网关不能抢执行。
 - 一次 assistant tool-call message 和对应 tool results 是不可分割的协议单元。
 
+**容易读错的地方**
+
+- **broker 的 `tool` enum 不是闸门，只是可见面。** `tool_registry.py::execute_gateway_tool` 的 allowlist 是 `exposed | HIDDEN_COMPAT_TOOL_NAMES | ROOM_TOOL_NAMES`，所以任何 `room_*` 只要被叫到名字就会执行——`room_` 前缀是命名习惯，不是代码管着的规则。要在日常给某扇门开口子，走独立的 `shenyu_*` 名字（例：报纸篓的 `shenyu_newspaper_basket`，理由见 `docs/architecture/MEMORY_ROOM.md` § Old newspapers in daily chat），不要把 `room_*` 追加进 enum：那样它既不在 schema 表里、`available_tools` 里也查不到，而身份该由入口决定。
+
 **主要风险**
 
 - `gateway_tools/` 已按工具类别拆成 mixin 包，对外契约不变（只暴露 `GatewayToolService` / `configure_gateway_tools` / `get_runtime`，运行时单例在 `gateway_tools/_runtime.py`，不可重新实例化）。`tool_registry.py` 和 `tool_schemas.py` 体量仍较大，拆分前需要先梳理暴露策略与 broker 协议的公共契约。
@@ -254,6 +258,10 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 
 `prepare_messages.py` 在窗口选择完成后把 reset 原因交给 `ContextBuilder`：真实历史分支使用 `history_branch`，越过消息高水位并裁剪使用 `message_high_water`。两者都要求 Memory Island 用本轮完整提案重建；retry、roll、tail edit 和 tool continuation 不推进岛内的真实用户轮次计数。
 
+**容易读错的地方**
+
+- **`context_layers.py` 里写死的 `- 32` 是不可达的死兜底，不是「岛的默认位置」。** 它只在不传 `memory_island_anchor_offset` 的分支上，而唯一不传的调用方是房间模式；房间模式 `layers["mem"]` 恒为空串（`room_context.py::render_room_layers`），整段 `if island_text` 跳过。日常聊天的岛位置来自 Admin 的 `island_tail_messages`，改它不用碰这个 32。
+
 **主要风险**
 
 - branch、retry、edit-tail 和 tool continuation 的误分类会影响整个窗口 epoch。
@@ -289,8 +297,12 @@ pending transcript 在补回时不会立即标记 consumed；只有请求成功�
 **跨区边界**
 
 - `room_tools.py` 是 Room 的工具入口，归区域四；`room_scribble` 通过它进入区域六的 canonical `windowsill`（`origin=room`）和 Recall 索引，Room 内容、场景和外部 RSS 数据仍归本区域。
-- 「入口」指的是**可见面**：房间模式直接暴露可见门的 schema，日常聊天的 broker enum 里没有 `room_*`。执行面比这宽——`tool_registry.py::execute_gateway_tool` 的 broker allowlist 是 `exposed | HIDDEN_COMPAT_TOOL_NAMES | ROOM_TOOL_NAMES`，所以任何 `room_*` 只要被叫到名字就会执行，enum 只管看不看得见，不是闸。要在日常给某扇门开口子，走独立的 `shenyu_*` 名字（例：报纸篓的 `shenyu_newspaper_basket`，理由见 `docs/architecture/MEMORY_ROOM.md` § Old newspapers in daily chat），不要把 `room_*` 追加进 enum：那样它既不在 schema 表里、`available_tools` 里也查不到，而身份该由入口决定。
+- 「入口」指的是**可见面**：房间模式直接暴露可见门的 schema，日常聊天的 broker enum 里没有 `room_*`。执行面比这宽，见区域四「容易读错的地方」。
 - 归档和来历书数据在召回、工具读取或上下文呈现时归本区域语义；`chat_archive.py`、`conflict_books.py`、`resident_books.py` 的写入、不可变约束和长期保留同时连接区域七。这是同一功能的两种责任，不要求把文件强行归入唯一一个区。
+
+**容易读错的地方**
+
+- **`room_trace` 同时回答两个问题，往里写一行不只是记账。** 它既是「开过哪扇门」的流水，又是 `store/_room.py::last_room_visit_at` 眼里「他来过没有」的唯一时钟——那条查询取最新一行，不看 `action` 也不看 `session_id`，而房间模式和日常聊天共用同一个 session，所以没有任何过滤能把两者分开。这个时钟喂给 `room_context.py::compute_charge` 的 `sig_absence` 和不应期衰减，charge 低于 0.3 时 `visible_room_doors` 只留 always 的门。于是给日常加一个「读」操作、顺手写条 trace，会从背后关掉沈予下次进房间时的星图墙、笔记本和木盒子。
 
 **主要风险**
 

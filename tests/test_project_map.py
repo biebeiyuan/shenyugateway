@@ -486,3 +486,67 @@ def test_map_tier_docs_anchor_by_function_name_not_line_number():
         if hits:
             offenders[doc] = hits[:5]
     assert not offenders, f"map-tier docs contain line-number anchors: {offenders}"
+
+
+_MISREAD_SLOT = "**容易读错的地方**"
+
+
+def _misread_entries() -> dict[str, list[str]]:
+    """Each 容易读错的地方 bullet, keyed by the zone heading it sits under."""
+    zone = ""
+    in_slot = False
+    entries: dict[str, list[str]] = {}
+    for line in (ROOT / "docs/architecture/SYSTEM_ZONES.md").read_text(
+        encoding="utf-8"
+    ).splitlines():
+        heading = re.match(r"^## (区域[一二三四五六七八九十]+)", line)
+        if heading:
+            zone, in_slot = heading.group(1), False
+        if line.strip() == _MISREAD_SLOT:
+            in_slot = True
+            entries.setdefault(zone, [])
+            continue
+        if in_slot and (line.startswith("**") or line.startswith("#")):
+            in_slot = False
+        if in_slot and line.startswith("- "):
+            entries[zone].append(line)
+    return entries
+
+
+def test_every_misread_entry_names_the_code_that_makes_it_true():
+    # This slot holds the one thing the map cannot otherwise say: "A looks like
+    # it governs B, and it does not". Such a claim is only checkable if it names
+    # the code it reads from — an entry written as pure prose would be a belief
+    # nobody can re-verify, and it would rot invisibly because the code it
+    # describes can change without touching this file. Requiring a
+    # `file::symbol` anchor also hands each entry to
+    # test_live_docs_symbol_anchors_still_resolve, which goes red on a rename.
+    entries = _misread_entries()
+    assert entries, "SYSTEM_ZONES 容易读错的地方 sections were not parsed"
+    unanchored = {
+        zone: [entry[:60] for entry in bullets if not _symbol_anchor_in(entry)]
+        for zone, bullets in entries.items()
+    }
+    unanchored = {zone: bad for zone, bad in unanchored.items() if bad}
+    assert not unanchored, (
+        "容易读错的地方 entries must anchor to code via `file.py::symbol`: "
+        f"{unanchored}"
+    )
+    empty = sorted(zone for zone, bullets in entries.items() if not bullets)
+    assert not empty, f"容易读错的地方 sections with no entries: {empty}"
+
+
+def _symbol_anchor_in(text: str) -> bool:
+    return bool(re.search(r"`[\w./-]+\.(?:py|ts|vue)::[\w.]+`", text))
+
+
+def test_the_misread_slot_check_reads_entries_not_headings():
+    # The parser must see the bullets themselves. If it only found the heading,
+    # the test above would pass on an empty slot and guard nothing.
+    entries = _misread_entries()
+    assert sum(len(bullets) for bullets in entries.values()) >= 3
+    assert all(bullets for bullets in entries.values())
+    assert _symbol_anchor_in("- 见 `room_context.py::compute_charge` 的信号")
+    assert not _symbol_anchor_in("- 这条只讲道理，不指代码")
+    # A line number is not an anchor: the map-tier test above already rejects it.
+    assert not _symbol_anchor_in("- 见 `room_context.py:31`")
