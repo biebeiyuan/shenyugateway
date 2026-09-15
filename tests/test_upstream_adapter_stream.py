@@ -689,3 +689,99 @@ def test_openai_path_also_drops_gateway_internal_image_markers():
     assert _sanitize_openai_content_blocks([{"type": "text", "text": "x"}, marker]) == [
         {"type": "text", "text": "x"}
     ]
+
+
+def _fn_call(call_id: str, name: str, arguments: str = "{}") -> dict:
+    return {"id": call_id, "type": "function", "function": {"name": name, "arguments": arguments}}
+
+
+# 2026-09-15 线上 400 TOOL_USE_RESULT_MISMATCH：沈予在窗边一次并行叫了四个房间
+# 工具，网关把四个 tool_result 拆成四条 user 消息发出去。Anthropic 要求一条
+# assistant 里的 N 个 tool_use 由紧跟着的同一条 user 消息装齐全部 N 个结果，
+# 拆开发等于第一条就少了三个。单工具的时候 1+1 刚好合法，所以这个缺陷带着绿
+# 测试活了很久——之前的用例只覆盖了一个工具。
+def test_parallel_tool_results_land_in_one_user_message():
+    _, anthropic_messages = _openai_to_anthropic(
+        [
+            {"role": "user", "content": "【窗边】"},
+            {
+                "role": "assistant",
+                "tool_calls": [
+                    _fn_call("toolu_A", "room_sit_by_window"),
+                    _fn_call("toolu_B", "room_star_map"),
+                    _fn_call("toolu_C", "room_notebook"),
+                ],
+            },
+            {"role": "tool", "tool_call_id": "toolu_A", "content": "窗台"},
+            {"role": "tool", "tool_call_id": "toolu_B", "content": "星图"},
+            {"role": "tool", "tool_call_id": "toolu_C", "content": "便签"},
+        ]
+    )
+
+    assistant = anthropic_messages[1]
+    use_ids = [b["id"] for b in assistant["content"] if b["type"] == "tool_use"]
+    assert use_ids == ["toolu_A", "toolu_B", "toolu_C"]
+
+    # 紧跟着的那一条必须装齐三个，且后面不再挂多余的结果消息。
+    results = anthropic_messages[2]
+    assert results["role"] == "user"
+    assert [b["type"] for b in results["content"]] == ["tool_result"] * 3
+    assert [b["tool_use_id"] for b in results["content"]] == use_ids
+    assert len(anthropic_messages) == 3
+
+
+def test_tool_results_do_not_merge_across_a_new_tool_turn():
+    """两轮各自的结果不能并进同一条：每轮结果只跟自己那条 assistant。"""
+    _, anthropic_messages = _openai_to_anthropic(
+        [
+            {"role": "assistant", "tool_calls": [_fn_call("toolu_A", "room_star_map")]},
+            {"role": "tool", "tool_call_id": "toolu_A", "content": "星图"},
+            {"role": "assistant", "tool_calls": [_fn_call("toolu_B", "room_notebook")]},
+            {"role": "tool", "tool_call_id": "toolu_B", "content": "便签"},
+        ]
+    )
+
+    roles = [m["role"] for m in anthropic_messages]
+    assert roles == ["assistant", "user", "assistant", "user"]
+    assert [b["tool_use_id"] for b in anthropic_messages[1]["content"]] == ["toolu_A"]
+    assert [b["tool_use_id"] for b in anthropic_messages[3]["content"]] == ["toolu_B"]
+
+
+def test_tool_result_does_not_merge_into_a_normal_user_turn():
+    """结果不能追加进圆圆的正文消息里——那条不是纯 tool_result 消息。"""
+    _, anthropic_messages = _openai_to_anthropic(
+        [
+            {"role": "user", "content": "在吗"},
+            {"role": "tool", "tool_call_id": "toolu_A", "content": "星图"},
+        ]
+    )
+
+    assert [m["role"] for m in anthropic_messages] == ["user", "user"]
+    assert anthropic_messages[0]["content"] == [{"type": "text", "text": "在吗"}]
+    assert anthropic_messages[1]["content"][0]["type"] == "tool_result"
+
+
+# 2026-09-15 线上 400 REQUEST_BODY_INVALID（Improperly formed request）：无参工具
+# 在 Anthropic 流里不发 input_json_delta，累积出来的 arguments 是空字符串。
+# anthropic 那条路被 _coerce_json_object 兜成 {}，OpenAI-compatible 那条路原样
+# 透传，上游解析不了。两条路都要给出合法 JSON。
+def test_empty_tool_arguments_are_normalized_on_both_protocols():
+    from shenyu_gateway.upstream_adapter import _sanitize_openai_compatible_messages
+
+    message = {"role": "assistant", "tool_calls": [_fn_call("toolu_X", "room_sit_by_window", "")]}
+
+    sanitized = _sanitize_openai_compatible_messages([message])
+    assert sanitized[0]["tool_calls"][0]["function"]["arguments"] == "{}"
+
+    _, anthropic_messages = _openai_to_anthropic([message])
+    assert anthropic_messages[0]["content"][0]["input"] == {}
+
+
+def test_real_tool_arguments_survive_that_normalization():
+    from shenyu_gateway.upstream_adapter import _sanitize_openai_compatible_messages
+
+    args = '{"action": "look"}'
+    sanitized = _sanitize_openai_compatible_messages(
+        [{"role": "assistant", "tool_calls": [_fn_call("toolu_Y", "room_star_map", args)]}]
+    )
+    assert sanitized[0]["tool_calls"][0]["function"]["arguments"] == args

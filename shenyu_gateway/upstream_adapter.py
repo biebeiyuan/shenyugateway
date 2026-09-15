@@ -125,6 +125,42 @@ def _sanitize_openai_content_blocks(content: list[Any]) -> list[Any]:
     return blocks
 
 
+def _sanitize_openai_compatible_tool_calls(tool_calls: list[Any]) -> list[dict]:
+    """把回传给 OpenAI-compatible 上游的 tool_calls 收拾成合法形状。
+
+    无参工具在 Anthropic 流里不会发 input_json_delta，累积出来的 arguments 就是
+    空字符串。anthropic 那条路会被 _coerce_json_object 兜成 {}，这条路原样透传，
+    上游解析不了空字符串，直接 400 REQUEST_BODY_INVALID。归一成 "{}"。
+    """
+    sanitized: list[dict] = []
+    for tool_call in tool_calls:
+        if not isinstance(tool_call, dict):
+            continue
+        clean = dict(tool_call)
+        function = clean.get("function")
+        if not isinstance(function, dict):
+            # 连 function 都没有的调用是另一种畸形，不在这里替它编一个匿名的出来。
+            sanitized.append(clean)
+            continue
+        function = dict(function)
+        arguments = function.get("arguments")
+        if not isinstance(arguments, str):
+            arguments = _json_dumps_compact(arguments) if arguments else "{}"
+        if not arguments.strip():
+            arguments = "{}"
+        function["arguments"] = arguments
+        clean["function"] = function
+        sanitized.append(clean)
+    return sanitized
+
+
+def _json_dumps_compact(value: Any) -> str:
+    try:
+        return json.dumps(value, ensure_ascii=False)
+    except (TypeError, ValueError):
+        return "{}"
+
+
 def _sanitize_openai_compatible_messages(messages: list[dict]) -> list[dict]:
     sanitized: list[dict] = []
     for msg in messages:
@@ -154,6 +190,8 @@ def _sanitize_openai_compatible_messages(messages: list[dict]) -> list[dict]:
 
         if role == "tool" and "content" not in clean:
             clean["content"] = "{}"
+        if role == "assistant" and isinstance(clean.get("tool_calls"), list):
+            clean["tool_calls"] = _sanitize_openai_compatible_tool_calls(clean["tool_calls"])
         if "content" not in clean and not (role == "assistant" and clean.get("tool_calls")):
             continue
         sanitized.append(clean)
@@ -497,6 +535,23 @@ def _anthropic_usage_to_openai(usage: Optional[dict]) -> dict:
     return result
 
 
+def _is_tool_result_only_message(message: Any) -> bool:
+    """这条 user 消息是否只装着 tool_result——只有这种才能继续追加下一个结果。
+
+    掺了正文或图片就不能合并：tool_result 必须紧跟 tool_use，中间夹别的块会让
+    上游重新判定这一条不是纯结果消息。
+    """
+    if not isinstance(message, dict) or message.get("role") != "user":
+        return False
+    content = message.get("content")
+    if not isinstance(content, list) or not content:
+        return False
+    return all(
+        isinstance(block, dict) and block.get("type") == "tool_result"
+        for block in content
+    )
+
+
 def _content_blocks(content: Any) -> list[dict]:
     if content is None:
         return []
@@ -775,18 +830,18 @@ def _openai_to_anthropic(
             continue
 
         if role == "tool":
-            anthropic_messages.append(
-                {
-                    "role": "user",
-                    "content": [
-                        {
-                            "type": "tool_result",
-                            "tool_use_id": msg.get("tool_call_id") or "unknown_tool_call",
-                            "content": _normalize_text(content),
-                        }
-                    ],
-                }
-            )
+            result_block = {
+                "type": "tool_result",
+                "tool_use_id": msg.get("tool_call_id") or "unknown_tool_call",
+                "content": _normalize_text(content),
+            }
+            # 并行工具调用：一条 assistant 里有 N 个 tool_use，Anthropic 要求紧跟着的
+            # 那一条 user 消息装齐全部 N 个 tool_result。一个一条地发会被判成
+            # TOOL_USE_RESULT_MISMATCH，所以连续的 tool 消息合并进同一条 user。
+            if _is_tool_result_only_message(anthropic_messages[-1] if anthropic_messages else None):
+                anthropic_messages[-1]["content"].append(result_block)
+            else:
+                anthropic_messages.append({"role": "user", "content": [result_block]})
 
     guarded_source_idx = _guarded_user_message_index(messages, tail_guard_user_turns)
     guarded_anthropic_idx = source_user_to_anthropic.get(guarded_source_idx, -1)
