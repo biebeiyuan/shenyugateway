@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Any, Optional
 
+from shenyu_gateway.newspaper_basket import read_newspaper_basket
+
 
 class NewspaperToolsMixin:
     async def newspaper_basket(
@@ -19,8 +21,6 @@ class NewspaperToolsMixin:
         action, so recording a daily read here would damp the room charge and
         hide doors on his next actual visit.
         """
-        from shenyu_gateway.room_tools import read_newspaper_basket
-
         # Argument coercion stays inside read_newspaper_basket so the daily and
         # Room entries cannot drift on the same params.
         return read_newspaper_basket(

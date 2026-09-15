@@ -15,9 +15,10 @@ from shenyu_gateway.room_newspaper import (
     roll_issue_candidates,
 )
 from shenyu_gateway.gateway_tools import GatewayToolService, configure_gateway_tools
-from shenyu_gateway.room_tools import execute_room_tool
+from shenyu_gateway.room_tools import execute_room_tool, room_tool_definitions
 from shenyu_gateway.store import GatewayStore
 from shenyu_gateway.tool_registry import execute_gateway_tool
+from shenyu_gateway.tool_schemas import _gateway_notebook_and_recall_tools
 
 
 def _item(index: int, source_id: str, bucket: str) -> NewspaperItem:
@@ -348,6 +349,64 @@ def test_daily_basket_read_leaves_the_room_visit_clock_untouched(tmp_path):
     # But the room still believes his last visit was the star wall.
     assert store.last_room_visit_at() == visit_before
     assert [t["action"] for t in store.recent_room_traces(limit=10)] == ["star_map"]
+
+
+def test_daily_basket_gets_a_store_from_the_runtime_not_from_its_caller(tmp_path):
+    # The test above hands the service a store explicitly, so it only proves the
+    # mixin. execute_gateway_tool builds its own service as
+    # GatewayToolService(runtime_config=cfg) — store stays _UNSET and falls back
+    # to _runtime.session_store. Nothing about that construction site is obvious
+    # from reading it: the room's _handle_star_map deliberately passes store=None.
+    # If this path arrived without a store, read_newspaper_basket's first line
+    # would answer 「报纸篓现在打不开。」 every time while every test stayed green.
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    store.get_or_create_session("default", "operit")
+    store.publish_room_newspaper_issue(store.create_room_newspaper_issue(_stored_items())["id"])
+
+    configure_gateway_tools(runtime_config=SimpleNamespace(), supabase=None, store=store)
+    try:
+        direct = asyncio.run(
+            execute_gateway_tool(
+                "shenyu_newspaper_basket", {}, session_tag="default", cfg=SimpleNamespace()
+            )
+        )
+        # Through the broker too: that is the shape the model actually sends.
+        brokered = asyncio.run(
+            execute_gateway_tool(
+                "shenyu_gateway_tool",
+                {"tool": "shenyu_newspaper_basket", "params": {}},
+                session_tag="default",
+                cfg=SimpleNamespace(),
+            )
+        )
+    finally:
+        configure_gateway_tools(runtime_config=None, supabase=None, store=None)
+
+    assert direct["ok"] and direct["mode"] == "list"
+    assert brokered["ok"] and brokered["mode"] == "list"
+    # And the daily entry still leaves the room's visit clock alone end to end.
+    assert store.last_room_visit_at() is None
+
+
+def test_both_basket_doors_hand_out_the_same_instructions():
+    # One read, two entries. The copy drifted once: the room door was missing
+    # 「今天那份压在窗边椅子上」 and the query/date precedence line, which are
+    # exactly the two things a reader gets wrong. Both now render from
+    # newspaper_basket.py, and this fails if either grows its own wording.
+    room = next(
+        tool for tool in room_tool_definitions()
+        if tool["function"]["name"] == "room_newspaper_basket"
+    )
+    daily = next(
+        tool for tool in _gateway_notebook_and_recall_tools()
+        if tool["function"]["name"] == "shenyu_newspaper_basket"
+    )
+
+    assert room["function"]["description"] == daily["function"]["description"]
+    assert room["function"]["parameters"] == daily["function"]["parameters"]
+    # The two clauses the room door used to be missing.
+    assert "压在窗边椅子上" in room["function"]["description"]
+    assert "以 query 为主" in room["function"]["description"]
 
 
 def test_fetch_candidates_reports_each_source_without_scraping_pages(tmp_path):

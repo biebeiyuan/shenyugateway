@@ -2,6 +2,10 @@
 from __future__ import annotations
 
 from shenyu_gateway.mem_notes import MEM_NOTE_MEMORY_KINDS, MEM_NOTE_TYPES
+from shenyu_gateway.newspaper_basket import (
+    NEWSPAPER_BASKET_DESCRIPTION,
+    NEWSPAPER_BASKET_PARAMETERS,
+)
 
 MEM_NOTE_TYPE_ENUM = list(MEM_NOTE_TYPES)
 
@@ -774,24 +778,9 @@ def _gateway_notebook_and_recall_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_newspaper_basket",
-                "description": (
-                    "翻窗边报纸篓里的旧报纸。篓里只有旧的，今天那份压在窗边椅子上。"
-                    "无参数时按日期倒序列出；传 date 打开那天整期；"
-                    "传 query 在标题和摘要里做普通关键词查找。"
-                    "两个都传时以 query 为主，date 只把搜索范围收到那一天。"
-                ),
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "date": {
-                            "type": "string",
-                            "pattern": "^\\d{4}-\\d{2}-\\d{2}$",
-                            "description": "旧报日期，格式 YYYY-MM-DD",
-                        },
-                        "query": {"type": "string", "description": "标题和摘要中的关键词"},
-                        "limit": {"type": "integer", "minimum": 1, "maximum": 50, "default": 30},
-                    },
-                },
+                # 说明书和房间那扇门共用一份，见 newspaper_basket.py。
+                "description": NEWSPAPER_BASKET_DESCRIPTION,
+                "parameters": NEWSPAPER_BASKET_PARAMETERS,
             },
         },
         {
