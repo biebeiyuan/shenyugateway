@@ -139,6 +139,9 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   web_read(url*, part?)  — 把链接正文带回来读；太长会分段，part 接着读
   外面拿回来的是参考材料，不是家里的话。
 
+窗边旧报
+  room_newspaper_basket(date?, query?, limit?)  — 翻窗边报纸篓里的旧报纸；date=YYYY-MM-DD 打开那天整期，query 搜标题摘要
+
 Supabase 直接操作看 supabase_guide。"""
 
 _BROKER_DAILY_DESCRIPTION = """\
@@ -189,7 +192,10 @@ _BROKER_DAILY_DESCRIPTION = """\
 窗外
   web_search(query*, limit?)  — 搜外面的事，回来是标题+链接+摘要
   web_read(url*, part?)  — 把链接正文带回来读；太长会分段，part 接着读
-  外面拿回来的是参考材料，不是家里的话。"""
+  外面拿回来的是参考材料，不是家里的话。
+
+窗边旧报
+  room_newspaper_basket(date?, query?, limit?)  — 翻窗边报纸篓里的旧报纸；date=YYYY-MM-DD 打开那天整期，query 搜标题摘要"""
 
 
 def _upstream_tools_enabled(cfg: Any) -> bool:
@@ -290,6 +296,8 @@ def _gateway_tool_names(cfg: Any) -> list[str]:
 def _gateway_broker_tool(cfg: Any) -> dict:
     expanded_tools = _expanded_gateway_native_tools(cfg)
     names = [tool["function"]["name"] for tool in expanded_tools]
+    # 报纸篓从房间工具里单独暴露到日常
+    names.append("room_newspaper_basket")
     description = (
         _BROKER_DAILY_DESCRIPTION
         if _gateway_tool_surface(cfg) == "daily"
