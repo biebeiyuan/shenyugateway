@@ -376,7 +376,33 @@ def _run(args: argparse.Namespace) -> int:
     }
     delivery = append_delivery(record)
     print(f"[recorded] {delivery['id']} · {delivery['title']}")
+    _print_doc_touchpoints(delivery["paths"])
     return 0
+
+
+def _print_doc_touchpoints(paths: list[str]) -> None:
+    """Advice printed beside a fresh delivery record, from its own `--path` list.
+
+    Recording is where this belongs rather than a git hook: `.git/hooks` is not
+    versioned and would reach only whoever installed it, while every agent is
+    already required to run `record` for a meaningful delivery. It reads the
+    paths the delivery itself declared, so it advises on the change as claimed.
+
+    Nothing here may raise or change the exit code. The record is already on
+    disk when this runs, and a broken advisor must not make a successful append
+    look like a failure.
+    """
+    try:
+        from .doc_touchpoints import render, survey
+
+        report = survey(paths)
+        if not report["changed_sources"]:
+            return
+        print()
+        for line in render(report):
+            print(line)
+    except Exception as exc:  # noqa: BLE001 - advice never breaks the record
+        print(f"（同改历史读不到，跳过：{exc}）")
 
 
 if __name__ == "__main__":

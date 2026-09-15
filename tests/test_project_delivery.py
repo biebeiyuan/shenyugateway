@@ -244,6 +244,76 @@ def test_cli_reports_a_malformed_abandoned_argument_without_a_traceback(capsys):
     assert "exactly three" in capsys.readouterr().out
 
 
+def _record_argv(*paths: str) -> list[str]:
+    argv = [
+        "record",
+        "--id", "wired",
+        "--title", "接线",
+        "--product", "PWA 聊天端",
+        "--kind", "fix",
+        "--summary", "一句话。",
+        "--touchpoint", "某处",
+        "--why", "因为。",
+        "--verification", "基线通过",
+    ]
+    for path in paths:
+        argv += ["--path", path]
+    return argv
+
+
+def test_recording_a_delivery_prints_the_docs_that_follow_those_paths(monkeypatch, capsys):
+    # The wiring point: `record` is mandatory for a meaningful delivery and
+    # already carries the changed paths, so the advice reaches every agent
+    # through git. A git hook would reach only whoever installed it.
+    monkeypatch.setattr(
+        "shenyu_gateway.project_delivery.append_delivery", lambda record, *a, **k: record
+    )
+    monkeypatch.setattr(
+        "shenyu_gateway.doc_touchpoints.read_history",
+        lambda **_kwargs: [
+            ("a1", ["shenyu_gateway/room_tools.py", "docs/architecture/MEMORY_ROOM.md"]),
+            ("a2", ["shenyu_gateway/room_tools.py", "docs/architecture/MEMORY_ROOM.md"]),
+            ("a3", ["shenyu_gateway/room_tools.py", "docs/architecture/MEMORY_ROOM.md"]),
+        ],
+    )
+    monkeypatch.setattr("shenyu_gateway.doc_touchpoints.is_shallow", lambda **_kwargs: False)
+
+    assert main(_record_argv("shenyu_gateway/room_tools.py")) == 0
+    out = capsys.readouterr().out
+    assert "[recorded] wired" in out
+    assert "docs/architecture/MEMORY_ROOM.md" in out
+
+
+def test_a_delivery_with_no_source_paths_gets_no_advice_block(monkeypatch, capsys):
+    # A docs-only delivery has nothing to learn from; an empty advice block below
+    # every such record would be noise that teaches skipping the whole thing.
+    monkeypatch.setattr(
+        "shenyu_gateway.project_delivery.append_delivery", lambda record, *a, **k: record
+    )
+    assert main(_record_argv("README.md")) == 0
+    out = capsys.readouterr().out
+    assert "[recorded] wired" in out
+    assert "同改历史" not in out
+
+
+def test_broken_advice_never_fails_a_record_that_is_already_on_disk(monkeypatch, capsys):
+    # The append happens first. If the advisor raises, the record still exists,
+    # so a non-zero exit here would report a successful delivery as a failure.
+    monkeypatch.setattr(
+        "shenyu_gateway.project_delivery.append_delivery", lambda record, *a, **k: record
+    )
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("no git here")
+
+    monkeypatch.setattr("shenyu_gateway.doc_touchpoints.survey", boom)
+
+    assert main(_record_argv("shenyu_gateway/room_tools.py")) == 0
+    out = capsys.readouterr().out
+    assert "[recorded] wired" in out
+    assert "no git here" in out
+
+
 def test_promote_delivery_updates_only_target_and_commit(tmp_path, monkeypatch):
     path = tmp_path / "deliveries.jsonl"
     append_delivery(_delivery(id="target"), path)

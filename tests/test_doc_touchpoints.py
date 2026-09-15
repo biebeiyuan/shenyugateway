@@ -202,3 +202,83 @@ def test_pointers_keep_the_strongest_evidence_when_two_files_agree():
 
 def test_counters_are_plain_so_a_missing_file_is_zero_not_an_error():
     assert dt.pointers_for(["nope.py"], together={}, runs=Counter()) == []
+
+
+def test_a_file_with_history_but_no_steady_doc_is_named_too():
+    # The second silence. room_tools.py earns a pointer; drifter.py has four
+    # commits — well past the run floor, so it is not "too new" — and no doc
+    # steady enough to clear the bar. The pointer list never says which files it
+    # came from, so without this the report reads as though it covered both.
+    history = HISTORY + [
+        _commit("d1", "shenyu_gateway/drifter.py", "README.md"),
+        _commit("d2", "shenyu_gateway/drifter.py", "DESIGN.md"),
+        _commit("d3", "shenyu_gateway/drifter.py", "AGENTS.md"),
+        _commit("d4", "shenyu_gateway/drifter.py"),
+    ]
+    report = dt.survey(
+        ["shenyu_gateway/room_tools.py", "shenyu_gateway/drifter.py"],
+        commits=history,
+    )
+    assert report["silent_sources"] == ["shenyu_gateway/drifter.py"]
+    # Not the other silence: it has plenty of history, which is the whole point.
+    assert report["unlearned_sources"] == []
+    text = "\n".join(dt.render(report))
+    assert "shenyu_gateway/drifter.py" in text
+    assert "不是为它们指的" in text
+
+
+def test_the_two_silences_do_not_claim_the_same_file():
+    # A file below the run floor is already named as "too new". Listing it again
+    # as "has history but nothing steady" would contradict that in one report.
+    report = dt.survey(
+        ["shenyu_gateway/lonely.py", "shenyu_gateway/room_tools.py"],
+        commits=HISTORY,
+    )
+    assert report["unlearned_sources"] == ["shenyu_gateway/lonely.py"]
+    assert report["silent_sources"] == []
+
+
+def test_the_partial_silence_line_stays_out_when_nothing_was_recommended():
+    # With no pointers at all, 「没有稳定跟着一起改的文档」 already says it. Saying
+    # it twice would make the emptier report read as the noisier one.
+    report = dt.survey(["shenyu_gateway/drifter.py"], commits=[
+        _commit("d1", "shenyu_gateway/drifter.py", "README.md"),
+        _commit("d2", "shenyu_gateway/drifter.py", "DESIGN.md"),
+        _commit("d3", "shenyu_gateway/drifter.py", "AGENTS.md"),
+    ])
+    assert report["silent_sources"] == ["shenyu_gateway/drifter.py"]
+    text = "\n".join(dt.render(report))
+    assert "不是为它们指的" not in text
+    assert "不是「不用改」" in text
+
+
+def test_a_long_silent_list_is_capped_and_says_how_many_it_hid():
+    # Same shape as the too-new list: a cap that does not report the total reads
+    # as the whole list.
+    report = {
+        "commits_read": 400,
+        "changed_sources": ["a.py"],
+        "docs_already_touched": [],
+        "pointers": [
+            {"doc": "README.md", "rate": 1.0, "together": 3, "runs": 3,
+             "because": "a.py", "already_touched": False}
+        ],
+        "silent_sources": [f"shenyu_gateway/m{i}.py" for i in range(6)],
+        "unlearned_sources": [],
+    }
+    text = "\n".join(dt.render(report))
+    assert "等 6 个" in text
+    assert "shenyu_gateway/m5.py" not in text
+
+
+def test_render_survives_a_report_without_the_silent_key():
+    # `--json` output is read by other tools and older payloads exist; a missing
+    # key must not turn advice into a traceback.
+    report = {
+        "commits_read": 400,
+        "changed_sources": ["a.py"],
+        "docs_already_touched": [],
+        "pointers": [],
+        "unlearned_sources": [],
+    }
+    assert "不是「不用改」" in "\n".join(dt.render(report))

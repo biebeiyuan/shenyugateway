@@ -222,6 +222,25 @@ def survey(
     # tool going quiet on a brand-new module is its main blind spot, and a
     # blind spot the reader cannot see is worse than one it can.
     unlearned = [p for p in sources if runs.get(p, 0) < min_runs]
+    # The other silence, which used to have no sentence of its own: enough
+    # history to learn from, but no document steady enough to clear the bar.
+    # A pointer list does not say which files it came from, so a report
+    # covering two of four changed files read exactly like one covering all
+    # four. Asked one file at a time on purpose — reimplementing the threshold
+    # test here is how the two copies would drift apart.
+    too_new = set(unlearned)
+    silent = [
+        p
+        for p in sources
+        if p not in too_new
+        and not pointers_for(
+            [p],
+            together=together,
+            runs=runs,
+            min_runs=min_runs,
+            min_rate=min_rate,
+        )
+    ]
     return {
         "commits_read": len(commits),
         "shallow": shallow,
@@ -231,8 +250,20 @@ def survey(
             {**pointer, "already_touched": pointer["doc"] in set(docs_touched)}
             for pointer in pointers
         ],
+        "silent_sources": silent,
         "unlearned_sources": unlearned,
     }
+
+
+def _name_list(paths: list[str], limit: int = 4) -> str:
+    """Full paths, capped, with the total when it was capped.
+
+    Full paths rather than basenames: `scripts/` and `shenyu_gateway/` hold
+    same-named pairs by convention, and two identical names in one list read as
+    one file listed twice.
+    """
+    shown = "、".join(paths[:limit])
+    return f"{shown} 等 {len(paths)} 个" if len(paths) > limit else shown
 
 
 def render(report: dict[str, Any]) -> list[str]:
@@ -259,13 +290,17 @@ def render(report: dict[str, Any]) -> list[str]:
         )
     if any(not pointer["already_touched"] for pointer in report["pointers"]):
         lines.append("  ✓ 是这次已经改过的；· 是还没碰过的，值得看一眼再决定。")
+    if report.get("silent_sources") and report["pointers"]:
+        # Only when something was recommended: a report with pointers reads as
+        # if it covered every changed file, because the list above never says
+        # which files it came from. With no pointers at all the 没有稳定 line
+        # above already says it, and saying it twice makes the shorter case
+        # look like the noisier one.
+        names = _name_list(report["silent_sources"])
+        lines.append(f"  这些文件有历史但没有稳定跟着改的文档，上面那几条不是为它们指的：{names}")
     if report["unlearned_sources"]:
-        # Full paths here, not basenames: scripts/ and shenyu_gateway/ hold
-        # same-named pairs by convention, and two identical names in this list
-        # read as one file listed twice.
-        names = "、".join(report["unlearned_sources"][:4])
-        extra = f" 等 {len(report['unlearned_sources'])} 个" if len(report["unlearned_sources"]) > 4 else ""
-        lines.append(f"  这些文件历史太短，学不到东西，得自己判断：{names}{extra}")
+        names = _name_list(report["unlearned_sources"])
+        lines.append(f"  这些文件历史太短，学不到东西，得自己判断：{names}")
     lines.append("  这只是提醒，文档要不要跟着改是判断题，它不判红也不拦提交。")
     return lines
 

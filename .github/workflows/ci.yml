@@ -4,6 +4,11 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
+      # Deliberately no `fetch-depth: 0`. Nothing in CI reads co-edit history,
+      # and the default shallow checkout is what caught a test that leaned on
+      # this repository's real `git log` (406b6b9) — it passed locally and went
+      # red only here. Deepening the clone would remove that guard to buy
+      # nothing. Add it in the same change as whatever first needs real history.
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
