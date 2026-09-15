@@ -282,3 +282,61 @@ def test_render_survives_a_report_without_the_silent_key():
         "unlearned_sources": [],
     }
     assert "不是「不用改」" in "\n".join(dt.render(report))
+
+
+def test_wilson_lower_bound_examples():
+    # The documented examples from the docstring, verified externally
+    assert abs(dt.wilson_lower_bound(3, 3) - 0.438) < 0.001
+    assert abs(dt.wilson_lower_bound(4, 4) - 0.510) < 0.001
+    assert abs(dt.wilson_lower_bound(11, 11) - 0.741) < 0.001
+
+
+def test_wilson_sorting_ranks_high_confidence_first():
+    # 4/4 and 11/11 are both 100%, but 11/11 has stronger evidence and should
+    # rank first. Without Wilson sorting, they'd tie and fall back to doc name.
+    history = [
+        _commit(f"a{i}", "shenyu_gateway/module_a.py", "README.md")
+        for i in range(4)
+    ] + [
+        _commit(f"b{i}", "shenyu_gateway/module_b.py", "DESIGN.md")
+        for i in range(11)
+    ]
+    together, runs = dt.learn(history)
+    pointers = dt.pointers_for(
+        ["shenyu_gateway/module_a.py", "shenyu_gateway/module_b.py"],
+        together=together,
+        runs=runs,
+    )
+    # DESIGN.md (11/11, lower bound ≈0.74) should come before README.md (4/4, ≈0.51)
+    assert [p["doc"] for p in pointers] == ["DESIGN.md", "README.md"]
+
+
+def test_threshold_still_judges_raw_rate_not_lower_bound():
+    # Sorting changed to Wilson, but the threshold must still filter on raw rate.
+    # A pointer with high raw rate but low confidence should still appear if it
+    # clears min_rate — sorting is not thresholding.
+    history = [
+        _commit("x1", "shenyu_gateway/unstable.py", "NOTES.md"),
+        _commit("x2", "shenyu_gateway/unstable.py", "NOTES.md"),
+        _commit("x3", "shenyu_gateway/unstable.py"),  # 2/3 = 66.7% rate, but n=3 is weak
+    ]
+    together, runs = dt.learn(history)
+    # With min_rate=0.5, this should produce a pointer (rate 0.667 > 0.5)
+    pointers = dt.pointers_for(
+        ["shenyu_gateway/unstable.py"],
+        together=together,
+        runs=runs,
+        min_rate=0.5,
+    )
+    assert len(pointers) == 1
+    assert pointers[0]["doc"] == "NOTES.md"
+    assert pointers[0]["rate"] > 0.5
+
+    # With min_rate=0.7, it should be filtered out (rate 0.667 < 0.7)
+    pointers_strict = dt.pointers_for(
+        ["shenyu_gateway/unstable.py"],
+        together=together,
+        runs=runs,
+        min_rate=0.7,
+    )
+    assert len(pointers_strict) == 0

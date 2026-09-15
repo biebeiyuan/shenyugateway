@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 from collections import Counter, defaultdict
 from pathlib import Path
@@ -67,6 +68,35 @@ def _git(*args: str, root: Path) -> str:
     if result.returncode != 0:
         raise DocTouchpointError(f"git {args[0]} failed: {result.stderr.strip()}")
     return result.stdout
+
+
+def wilson_lower_bound(successes: int, trials: int) -> float:
+    """Wilson score confidence interval lower bound (95%).
+
+    For a binomial proportion (successes/trials), this gives a conservative
+    estimate that accounts for sample size. With few trials, even a perfect
+    score gets a low bound; with many trials, the bound approaches the rate.
+
+    Examples at 95% confidence:
+        3/3   ≈ 0.438
+        4/4   ≈ 0.510
+        11/11 ≈ 0.741
+        100/100 ≈ 0.963
+
+    Used for sorting pointers by strength of evidence, not for thresholding.
+    The threshold continues to judge raw rate, so changing the sort key cannot
+    silently change which pointers are shown.
+    """
+    if trials == 0:
+        return 0.0
+
+    z = 1.96  # z-score for 95% confidence
+    p = successes / trials
+    z2 = z * z
+
+    numerator = p + z2 / (2 * trials) - z * math.sqrt((p * (1 - p) + z2 / (4 * trials)) / trials)
+    denominator = 1 + z2 / trials
+    return numerator / denominator
 
 
 def is_source(path: str) -> bool:
@@ -138,6 +168,15 @@ def pointers_for(
     Each pointer carries the count it was learned from, because "6 of 6 times"
     and "3 of 6 times" deserve different amounts of trust and the reader can
     only weigh that if the tool shows its evidence.
+
+    Pointers are sorted by Wilson score lower bound (95% confidence), which
+    accounts for sample size: 4/4 (lower bound ≈0.51) ranks below 11/11
+    (≈0.74), even though both are 100%. The threshold continues to judge raw
+    rate, so only sorting changed — a pointer that clears min_rate will always
+    be shown, regardless of its lower bound.
+
+    Tie-breaking: when two pointers have the same lower bound (rare but possible),
+    sort by (-rate, -runs, doc) for determinism.
     """
     best: dict[str, dict[str, Any]] = {}
     for path in sorted(set(paths)):
@@ -157,7 +196,21 @@ def pointers_for(
                     "runs": total,
                     "because": path,
                 }
-    return sorted(best.values(), key=lambda item: (-item["rate"], item["doc"]))
+
+    # Sort by Wilson lower bound, then by rate/runs/doc for determinism
+    pointers = list(best.values())
+    for pointer in pointers:
+        pointer["_wilson_lower"] = wilson_lower_bound(pointer["together"], pointer["runs"])
+
+    pointers.sort(
+        key=lambda p: (-p["_wilson_lower"], -p["rate"], -p["runs"], p["doc"])
+    )
+
+    # Remove internal sort key before returning
+    for pointer in pointers:
+        del pointer["_wilson_lower"]
+
+    return pointers
 
 
 def changed_paths(*, staged_only: bool = False, root: Path = ROOT) -> list[str]:
