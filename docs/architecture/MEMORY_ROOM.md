@@ -445,7 +445,7 @@ Charge affects door visibility:
 | Tool | Zone | What it does |
 |------|------|-------------|
 | `room_sit_by_window` | window | Sit by the window. Records trace and returns the latest published window newspaper when one exists. |
-| `room_newspaper_basket` | window | Browse archived newspapers by reader-local publication date, open one date, or grep titles and feed summaries. |
+| `room_newspaper_basket` | window | Browse archived newspapers by reader-local publication date, open one date, or grep titles and feed summaries. The read itself lives in `read_newspaper_basket`, which writes no trace; this door wraps it and records one row. Daily chat reaches the same read through `shenyu_newspaper_basket` — see § Old newspapers in daily chat. |
 | `room_scribble` | desk | Write something on the windowsill notebook. |
 | `room_notebook` | desk | Browse the messy notebook (connects to shenyu_notebook). |
 | `room_wooden_box` | drawers | Open the wooden box of heartbeats. |
@@ -475,6 +475,14 @@ Workflow:
 5. The draft is visible in admin. It reaches Shenyu only after Yuan clicks `放到窗台`.
 6. Before first delivery, the window door leaks only `窗台上压着一份新报纸。` Calling `room_sit_by_window` returns the complete published issue and marks its first delivery time. The issue remains available on later sits until a newer issue is published.
 7. Publishing a newer issue moves the previous one into the old-newspaper basket. `room_newspaper_basket` with no arguments returns a compact reverse-date list such as `7月14日 · 7条 · 已读`; `date=YYYY-MM-DD` opens the complete archived issue for that Asia/Shanghai calendar date, while `query` performs a literal case-insensitive substring search over stored titles and RSS summaries only. Listing and searching do not mark an issue read; opening the full date does. Drafts, discarded issues, and the current windowsill issue never appear in the basket. The literal search is a deliberate choice, not a missing feature: it must never be swapped for the embedding-based Recall path, because someone looking for a phrase he remembers reading needs the exact match he typed, not a semantic neighbour.
+
+#### Old newspapers in daily chat
+
+The basket is the one window fixture reachable from ordinary chat, as `shenyu_newspaper_basket` — an ordinary `shenyu_*` gateway tool with its own schema, its own `NewspaperToolsMixin` service method, and an entry in `DAILY_GATEWAY_TOOL_NAMES`. It is not the `room_*` name with a wider audience: `room_` still means Room-only, and the daily entry is a separate shell over the same `read_newspaper_basket`.
+
+The shell exists because of one shared table. `room_trace` answers "was he in the room", and `last_room_visit_at()` returns its newest row regardless of `action` or session — Room and daily chat share one session, so no filter can separate them there. That timestamp feeds `sig_absence` and the refractory damp in `compute_charge`, and a charge under 0.3 ships only the always-visible doors' tool schemas. A daily read that recorded a trace would therefore make the star wall, notebook, and wooden box disappear from his next actual visit, under an opening line claiming he had just been there. So `read_newspaper_basket` is a pure read that writes nothing, the Room door wraps it and records one row, and the daily shell does not. Marking an opened issue read is not part of that split: he did read it, from either entry.
+
+Two rules follow from this and are covered by tests. `SELF_TRACING_ROOM_TOOL_NAMES` in `room_tools.py` lists the doors that record their own detailed trace, and the auto-trace in `execute_gateway_tool` skips exactly that set — the basket used to write two rows per read, one of them detail-less. And the broker prose lists the daily tool by bare name (`newspaper_basket`), like every neighbour, so `test_broker_descriptions_mention_every_exposed_tool_short_name` covers it and a wrong-looking name in the prose cannot teach a call that the allowlist then rejects.
 
 Each stored item contains the source title, up to the first three sentences supplied by the feed, URL, source name, and normalized publication date. A short feed summary stays short, but an entry with no real summary is excluded before rolling and the model never fills it in. Hacker News external links and many Lobsters external links therefore do not qualify under the RSS-only rule; HN/Lobsters self-posts can still qualify when their feed carries the post body. NASA APOD's RSS often exposes only a title-like image description, which counts as its complete text metadata. APOD is text-only in this version.
 

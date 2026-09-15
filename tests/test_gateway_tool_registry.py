@@ -553,6 +553,17 @@ class FakeToolService:
         )
         return {"ok": True, "limit": limit}
 
+    async def newspaper_basket(self, date=None, query=None, limit=30):
+        self.calls.append(
+            {
+                "tool": "shenyu_newspaper_basket",
+                "date": date,
+                "query": query,
+                "limit": limit,
+            }
+        )
+        return {"ok": True, "mode": "list", "count": 0}
+
     async def notebook_write(self, type_=None, content="", tags=None, metadata=None, session_tag=None):
         self.calls.append(
             {
@@ -769,6 +780,11 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "status": "all",
             "limit": 4,
             "tag": "handoff",
+        },
+        "shenyu_newspaper_basket": {
+            "date": "2026-07-15",
+            "q": "冰雹",
+            "limit": 12,
         },
         "shenyu_notebook_write": {
             "type": "note",
@@ -1046,6 +1062,12 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "status": "all",
             "limit": 4,
             "tag": "handoff",
+        },
+        "shenyu_newspaper_basket": {
+            "tool": "shenyu_newspaper_basket",
+            "date": "2026-07-15",
+            "query": "冰雹",
+            "limit": 12,
         },
         "shenyu_notebook_write": {
             "tool": "shenyu_notebook_write",

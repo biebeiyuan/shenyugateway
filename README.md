@@ -126,6 +126,7 @@ The codebase is partly layered already. Entries owe a path and a responsibility:
 - `shenyu_gateway/room_tools.py`: room mode tool definitions, compatibility broker, execute dispatch, door count collection, and the Room-to-canonical-windowsill bridge (`origin=room` plus idempotent legacy scribble import).
 - `shenyu_gateway/room_scenes.py`: window scenes (weather, atmosphere, landscape). Change scene copy here only.
 - `shenyu_gateway/room_newspaper.py`: fixed RSS sources, feed parsing, issue rolling, optional quality checks, and draft generation.
+- `shenyu_gateway/gateway_tools/_newspaper.py`: `shenyu_newspaper_basket` — the old-newspaper basket read from ordinary chat. Wraps `room_tools.read_newspaper_basket` and deliberately records no `room_trace`, because `last_room_visit_at()` takes that table's newest row regardless of action and would damp the room charge into hiding doors on his next real visit. `MEMORY_ROOM.md` § Old newspapers in daily chat owns the reasoning.
 - `shenyu_gateway/private_capture.py`: recognizes the exact `【窗边 · DD/MM HH:mm】` entry that selects the Room context path; the retired Operit proxy workflow is not a Room entry.
 
 ### Album

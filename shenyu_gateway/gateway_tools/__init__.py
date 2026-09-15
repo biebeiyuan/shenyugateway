@@ -5,6 +5,7 @@ from ._base import GatewayToolServiceBase
 from ._books import BooksToolsMixin
 from ._calendar import CalendarToolsMixin
 from ._mem_notes import MemNoteToolsMixin
+from ._newspaper import NewspaperToolsMixin
 from ._notebook import NotebookToolsMixin
 from ._orchard import OrchardToolsMixin
 from ._recall import RecallToolsMixin
@@ -41,6 +42,7 @@ class GatewayToolService(
     SessionToolsMixin,
     WindowsillToolsMixin,
     NotebookToolsMixin,
+    NewspaperToolsMixin,
     AlbumToolsMixin,
     OrchardToolsMixin,
     WebToolsMixin,
@@ -53,6 +55,7 @@ __all__ = [
     "ALBUM_NOTES_TABLE",
     "GatewayToolRuntime",
     "GatewayToolService",
+    "NewspaperToolsMixin",
     "OrchardToolsMixin",
     "latest_turn_images",
     "WINDOWSILL_ORIGIN_NORMAL",

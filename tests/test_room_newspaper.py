@@ -14,8 +14,10 @@ from shenyu_gateway.room_newspaper import (
     parse_feed,
     roll_issue_candidates,
 )
+from shenyu_gateway.gateway_tools import GatewayToolService, configure_gateway_tools
 from shenyu_gateway.room_tools import execute_room_tool
 from shenyu_gateway.store import GatewayStore
+from shenyu_gateway.tool_registry import execute_gateway_tool
 
 
 def _item(index: int, source_id: str, bucket: str) -> NewspaperItem:
@@ -282,6 +284,70 @@ def test_newspaper_basket_rejects_invalid_reader_date(tmp_path):
     )
 
     assert result == {"ok": False, "error": "date 要用 YYYY-MM-DD 格式。"}
+
+
+def test_room_basket_records_exactly_one_trace_row_with_detail(tmp_path):
+    # execute_gateway_tool auto-traces every room_* door; the basket writes its
+    # own row with detail, so it must be in the skip set or one read looks like
+    # two visits and drowns the detail row in recent_room_traces.
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    store.get_or_create_session("room", "operit")
+    store.publish_room_newspaper_issue(store.create_room_newspaper_issue(_stored_items())["id"])
+
+    # Through execute_gateway_tool, not execute_room_tool: the duplicate row was
+    # written by the auto-trace in the outer layer, so that is what must be covered.
+    configure_gateway_tools(runtime_config=SimpleNamespace(), supabase=None, store=store)
+    try:
+        asyncio.run(
+            execute_gateway_tool(
+                "room_newspaper_basket",
+                {},
+                session_tag="room",
+                cfg=SimpleNamespace(),
+            )
+        )
+    finally:
+        configure_gateway_tools(runtime_config=None, supabase=None, store=None)
+
+    traces = store.recent_room_traces(limit=10)
+    assert [t["action"] for t in traces] == ["newspaper_basket"]
+    assert json.loads(traces[0]["detail_json"])["mode"] == "list"
+
+
+def test_daily_basket_read_leaves_the_room_visit_clock_untouched(tmp_path):
+    # last_room_visit_at() takes the newest room_trace row regardless of action,
+    # and collect_charge_signals feeds it into both sig_absence and the
+    # refractory damp. A daily-chat read that wrote a trace would drop the charge
+    # below 0.3 on his next real visit, and low charge only ships the "always"
+    # doors' schemas — the star wall and notebook would vanish from the room.
+    store = GatewayStore(str(tmp_path / "gateway.db"))
+    session = store.get_or_create_session("room", "operit")
+    first = store.create_room_newspaper_issue(_stored_items())
+    store.publish_room_newspaper_issue(first["id"])
+    store.publish_room_newspaper_issue(store.create_room_newspaper_issue(_stored_items(10))["id"])
+    with store._connect() as conn:
+        conn.execute(
+            "UPDATE room_newspaper_issues SET published_at = ?, delivered_at = NULL WHERE id = ?",
+            ("2026-07-14T18:00:00+00:00", first["id"]),
+        )
+
+    store.add_room_trace(session["id"], "star_map")
+    visit_before = store.last_room_visit_at()
+
+    service = GatewayToolService(runtime_config=SimpleNamespace(), supabase=None, store=store)
+    listed = asyncio.run(service.newspaper_basket())
+    # 18:00 UTC is already the next day in Asia/Shanghai, which is the reader's clock.
+    opened = asyncio.run(service.newspaper_basket(date="2026-07-15"))
+    found = asyncio.run(service.newspaper_basket(query="Title 0"))
+
+    assert listed["mode"] == "list" and listed["total"] == 1
+    assert opened["mode"] == "read" and opened["count"] == 1
+    assert found["mode"] == "search" and found["count"] == 1
+    # Reading it still marks that issue read — he did read it.
+    assert store.get_room_newspaper_issue(first["id"])["delivered_at"]
+    # But the room still believes his last visit was the star wall.
+    assert store.last_room_visit_at() == visit_before
+    assert [t["action"] for t in store.recent_room_traces(limit=10)] == ["star_map"]
 
 
 def test_fetch_candidates_reports_each_source_without_scraping_pages(tmp_path):

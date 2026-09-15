@@ -56,6 +56,7 @@ DAILY_GATEWAY_TOOL_NAMES = {
     "shenyu_search_mem_notes",
     "shenyu_notebook_write",
     "shenyu_notebook_list",
+    "shenyu_newspaper_basket",
     "shenyu_books",
     "shenyu_web_search",
     "shenyu_web_read",
@@ -140,7 +141,9 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
   外面拿回来的是参考材料，不是家里的话。
 
 窗边旧报
-  room_newspaper_basket(date?, query?, limit?)  — 翻窗边报纸篓里的旧报纸；date=YYYY-MM-DD 打开那天整期，query 搜标题摘要
+  newspaper_basket(date?, query?, limit?)  — 翻窗边报纸篓里的旧报纸；date=YYYY-MM-DD 打开那天整期，query 搜标题摘要
+    篓里只有旧的。今天那份压在窗边椅子上，得进房间坐下来才看得到。
+    两个都传时以 query 为主，date 只把搜索范围收到那一天。
 
 Supabase 直接操作看 supabase_guide。"""
 
@@ -195,7 +198,9 @@ _BROKER_DAILY_DESCRIPTION = """\
   外面拿回来的是参考材料，不是家里的话。
 
 窗边旧报
-  room_newspaper_basket(date?, query?, limit?)  — 翻窗边报纸篓里的旧报纸；date=YYYY-MM-DD 打开那天整期，query 搜标题摘要"""
+  newspaper_basket(date?, query?, limit?)  — 翻窗边报纸篓里的旧报纸；date=YYYY-MM-DD 打开那天整期，query 搜标题摘要
+    篓里只有旧的。今天那份压在窗边椅子上，得进房间坐下来才看得到。
+    两个都传时以 query 为主，date 只把搜索范围收到那一天。"""
 
 
 def _upstream_tools_enabled(cfg: Any) -> bool:
@@ -296,8 +301,6 @@ def _gateway_tool_names(cfg: Any) -> list[str]:
 def _gateway_broker_tool(cfg: Any) -> dict:
     expanded_tools = _expanded_gateway_native_tools(cfg)
     names = [tool["function"]["name"] for tool in expanded_tools]
-    # 报纸篓从房间工具里单独暴露到日常
-    names.append("room_newspaper_basket")
     description = (
         _BROKER_DAILY_DESCRIPTION
         if _gateway_tool_surface(cfg) == "daily"
@@ -910,6 +913,15 @@ async def _handle_recall_main_thread(ctx: ToolContext) -> dict:
     )
 
 
+@_tool_handler("shenyu_newspaper_basket")
+async def _handle_newspaper_basket(ctx: ToolContext) -> dict:
+    return await ctx.service.newspaper_basket(
+        date=ctx.arguments.get("date"),
+        query=_query_arg(ctx.arguments),
+        limit=ctx.arguments.get("limit", 30),
+    )
+
+
 @_tool_handler("shenyu_notebook_list")
 async def _handle_notebook_list(ctx: ToolContext) -> dict:
     return await ctx.service.notebook_list(
@@ -1067,7 +1079,7 @@ async def execute_gateway_tool(
         return await _mcp_registry.execute(name, arguments, cfg=cfg)
 
     if name.startswith("room_"):
-        from .room_tools import execute_room_tool
+        from .room_tools import SELF_TRACING_ROOM_TOOL_NAMES, execute_room_tool
         from .gateway_tools import get_runtime
         runtime = get_runtime()
         store = runtime.session_store
@@ -1083,8 +1095,9 @@ async def execute_gateway_tool(
             session_id=_session_id,
             session_tag=session_tag,
         )
-        # Auto-trace: record which door was opened (skip sit — it records internally)
-        if result.get("ok") and name != "room_sit_by_window" and _session_id:
+        # Auto-trace: record which door was opened. Tools that write their own
+        # trace (with detail) are skipped, or the room records the visit twice.
+        if result.get("ok") and name not in SELF_TRACING_ROOM_TOOL_NAMES and _session_id:
             action = name.removeprefix("room_")
             try:
                 store.add_room_trace(_session_id, action)

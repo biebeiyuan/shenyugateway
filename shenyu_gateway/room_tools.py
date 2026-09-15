@@ -208,6 +208,13 @@ def room_tool_definitions(tool_names: Optional[Iterable[str]] = None) -> list[di
 
 ROOM_TOOL_NAMES = {t["function"]["name"] for t in room_tool_definitions()}
 
+# These write their own room_trace row, with detail. The generic auto-trace in
+# execute_gateway_tool must skip them or each visit gets recorded twice.
+SELF_TRACING_ROOM_TOOL_NAMES = {
+    "room_sit_by_window",
+    "room_newspaper_basket",
+}
+
 
 # ── Compatibility Broker Tool (not exposed by room mode) ───────────────
 
@@ -290,7 +297,11 @@ async def execute_room_tool(
         return await _handle_conflict_shelf(arguments, cfg=cfg, supabase_client=supabase_client)
 
     elif name == "room_newspaper_basket":
-        return _handle_newspaper_basket(store, arguments, session_id=session_id)
+        basket = read_newspaper_basket(store, arguments)
+        detail = newspaper_basket_trace_detail(basket)
+        if detail is not None:
+            store.add_room_trace(session_id, "newspaper_basket", detail=detail)
+        return basket
 
     elif name == "room_sit_by_window":
         issue = store.latest_published_room_newspaper() if store else None
@@ -350,7 +361,28 @@ def _newspaper_date_label(reader_date: str) -> str:
     return f"{month}月{day}日"
 
 
-def _handle_newspaper_basket(store: Any, arguments: dict, *, session_id: str) -> dict:
+def newspaper_basket_trace_detail(result: dict) -> Optional[dict]:
+    """Derive the room_trace detail for a basket read. None = nothing to record.
+
+    Pure function so the daily-chat shell can reuse the same read without
+    touching room_trace: that table answers "was he in the room", and
+    last_room_visit_at() reads its newest row regardless of action, so a
+    daily-chat write would damp the room charge and hide doors on his next visit.
+    """
+    if not result.get("ok"):
+        return None
+    mode = result.get("mode")
+    if mode == "search":
+        return {"mode": "search", "date": result.get("date"), "match_count": result.get("count", 0)}
+    if mode == "read":
+        return {"mode": "read", "date": result.get("date"), "issue_count": result.get("count", 0)}
+    if mode == "list":
+        return {"mode": "list", "visible_count": result.get("count", 0), "total": result.get("total", 0)}
+    return None
+
+
+def read_newspaper_basket(store: Any, arguments: dict) -> dict:
+    """Read the old-newspaper basket. Writes no trace — see the room wrapper."""
     if not store:
         return {"ok": False, "error": "报纸篓现在打不开。"}
 
@@ -370,11 +402,6 @@ def _handle_newspaper_basket(store: Any, arguments: dict, *, session_id: str) ->
             )
         except ValueError:
             return {"ok": False, "error": "date 要用 YYYY-MM-DD 格式。"}
-        store.add_room_trace(
-            session_id,
-            "newspaper_basket",
-            detail={"mode": "search", "date": reader_date or None, "match_count": len(matches)},
-        )
         return {
             "ok": True,
             "mode": "search",
@@ -403,11 +430,6 @@ def _handle_newspaper_basket(store: Any, arguments: dict, *, session_id: str) ->
         except ValueError:
             return {"ok": False, "error": "date 要用 YYYY-MM-DD 格式。"}
         delivered = [store.mark_room_newspaper_delivered(issue["id"]) or issue for issue in issues]
-        store.add_room_trace(
-            session_id,
-            "newspaper_basket",
-            detail={"mode": "read", "date": reader_date, "issue_count": len(delivered)},
-        )
         return {
             "ok": True,
             "mode": "read",
@@ -419,11 +441,6 @@ def _handle_newspaper_basket(store: Any, arguments: dict, *, session_id: str) ->
 
     issues = store.list_archived_room_newspaper_issues(limit=limit)
     total = store.room_newspaper_archive_count()
-    store.add_room_trace(
-        session_id,
-        "newspaper_basket",
-        detail={"mode": "list", "visible_count": len(issues), "total": total},
-    )
     return {
         "ok": True,
         "mode": "list",
