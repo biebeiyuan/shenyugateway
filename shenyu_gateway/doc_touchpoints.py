@@ -40,6 +40,32 @@ are not the same; do not diff the two numbers.
 Prose lost because breadth kills precision: README.md names 68 runtime files,
 so it "predicts" every change.
 
+Source → source lost to the same thing, measured and not shipped. `learn()` takes
+both predicates, so passing `target_predicate=is_source` answers "which other
+code should I look at" — the answer is no. At 0125fbb, window=400: Question B
+precision 0.49 at min_rate 0.5, comparable to docs, but recall 0.085 against
+docs' 0.54, because co-edited source is a sparse 10102-edge web rather than a few
+stable targets. Raising min_rate to 0.7 buys precision 0.70 and drops recall to
+0.040. And the accurate part is the part that ignores what you touched: five hub
+targets (schemas.py, pwa/src/App.vue, …) absorb 21% of all pointer edges, and
+excluding them *lowers* precision to 0.44. Buying coverage means buying breadth,
+which is where prose lost.
+
+Two caveats on that measurement, both pointing the same way. Those are Question B
+numbers, and B's eligible set needs two sources in one commit, so it drops the 31%
+of source-touching commits that changed exactly one file — which is precisely
+where the noise ceiling lives. Question A at min_rate 0.5 gives precision 0.47 and
+7.18 pointers per commit, median 3, max 56; at 0.7, precision 0.68 and 2.32 mean,
+max 24. So the honest read is worse than B suggests, not better.
+
+Anyone re-opening this: exclude self-pairs first — with both predicates equal,
+every file co-occurs with itself at rate 1.0, all 231 of them, and they outrank
+everything. The hub graph (which files many sources point at) may still be worth
+something as a *map annotation*, where breadth is not a defect because a reader
+went looking; that would be its own deliverable with its own measurement, not a
+per-commit pointer. See the `--abandoned` entries on
+doc-touchpoints-step2-source-to-source-abandoned-20260916 for the full tables.
+
 Precision in both is also an undercount — looking at a document and deciding it
 needs nothing is a success, but only a real edit counts in the numerator.
 
