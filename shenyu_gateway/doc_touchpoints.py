@@ -77,17 +77,28 @@ from .runtime import LOCAL_DAY_TZ
 ROOT = Path(__file__).resolve().parent.parent
 BACKTEST_LOG_PATH = ROOT / "doc_touchpoints_backtest.jsonl"
 
-# Swept 2026-09-16 at HEAD 7e3095e, window=400, 166 eligible commits. Recall is
-# total_hits / total_actual; both are fields `backtest()` returns, so this table
-# is reproducible with `--backtest --min-runs N --min-rate R` at that sha.
+# Swept 2026-09-16 at HEAD 7e3095e, window=400, 166 eligible commits. Reproduce a
+# row with `--backtest --window 400 --min-runs N --min-rate R --json` checked out
+# at that sha — `--json` is required, because the human-readable output prints
+# precision and the two averages but not the three totals, so recall cannot be
+# checked from it. On a later HEAD the window slides and the numbers move (see the
+# module docstring); at 7e3095e all six rows reproduce exactly.
 #
-#     min_runs  min_rate   precision   recall   pointers/commit
-#            3       0.5       0.539    0.541              2.30   ← default
-#            3       0.4       0.486    0.596              2.81
-#            3       0.6       0.615    0.423              1.58
-#            1       0.5       0.455    0.619              3.13
-#            2       0.5       0.473    0.580              2.81
-#            4       0.5       0.535    0.499              2.14
+# The raw counts are here, not just the ratios, so the derived columns can be
+# recomputed instead of believed: precision is hits/predicted, recall is
+# hits/actual — different denominators, and a note asserting which is which is one
+# more sentence to trust. `actual` is 381 in every row because eligibility does not
+# depend on these two knobs: a commit is eligible when it touched both source and
+# docs, so the recall denominator is a property of the history, and every recall
+# difference below comes from `hits` alone.
+#
+#     min_runs  min_rate    hits  predicted  actual   precision   recall   pointers/commit
+#            3       0.5     206        382     381       0.539    0.541              2.30   ← default
+#            3       0.4     227        467     381       0.486    0.596              2.81
+#            3       0.6     161        262     381       0.615    0.423              1.58
+#            1       0.5     236        519     381       0.455    0.619              3.13
+#            2       0.5     221        467     381       0.473    0.580              2.81
+#            4       0.5     190        355     381       0.535    0.499              2.14
 #
 # 0.5 is the knee: 0.4 buys 5.5 points of recall for 5.3 of precision and a
 # fifth more pointers per commit, 0.6 buys 7.5 points of precision but drops

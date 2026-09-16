@@ -472,6 +472,35 @@ def test_module_is_runnable_with_dash_m_not_only_via_the_wrapper():
     assert result.stdout.strip(), "-m entry produced no output at all"
 
 
+def test_reproducing_a_sweep_row_needs_json_as_the_table_says():
+    # The sweep table above DEFAULT_MIN_RUNS tells a reader to reproduce a row
+    # with --json, and says why: the human-readable branch prints precision and
+    # the two averages, not the three totals, so recall cannot be checked from
+    # it. That is a claim about the CLI sitting in a comment. A reproduction
+    # instruction nobody can follow is the same family of problem as a number
+    # with no sha — the difference is that this one can be run.
+    #
+    # A small window keeps it near-instant; which numbers come out does not
+    # matter here, only which fields are reachable.
+    root = Path(__file__).resolve().parent.parent
+    argv = ["python", "-m", "shenyu_gateway.doc_touchpoints", "--backtest", "--window", "30"]
+
+    plain = subprocess.run(argv, cwd=root, capture_output=True, text=True)
+    assert plain.returncode == 0, plain.stderr
+    for field in ["total_hits", "total_actual", "total_predicted"]:
+        assert field not in plain.stdout, (
+            f"{field} now prints without --json, so the sweep table's instruction "
+            "is stricter than it needs to be — relax the comment"
+        )
+    assert "precision" in plain.stdout
+
+    as_json = subprocess.run(argv + ["--json"], cwd=root, capture_output=True, text=True)
+    assert as_json.returncode == 0, as_json.stderr
+    payload = json.loads(as_json.stdout)
+    # The three fields the table's derived columns are computed from.
+    assert {"total_hits", "total_predicted", "total_actual"} <= set(payload)
+
+
 def test_the_backtest_timestamp_carries_its_offset():
     # This line goes into a log whose only purpose is month-apart comparison, and
     # `head` plus the config explain themselves while a naive timestamp does not.
@@ -506,6 +535,38 @@ def test_recall_is_derivable_from_the_returned_fields():
     # Precision is lower than recall here: r4 predicted DESIGN.md and no edit
     # followed, which is the zero-numerator shape the module docstring explains.
     assert result["precision"] < 1.0
+    # And the two ratios really do have different denominators — a table that
+    # printed hits/predicted under a "recall" heading would read plausibly.
+    assert result["total_predicted"] != result["total_actual"]
+    assert result["precision"] == round(
+        result["total_hits"] / result["total_predicted"], 4
+    )
+
+
+def test_the_recall_denominator_does_not_move_with_the_thresholds():
+    # The sweep table above DEFAULT_MIN_RUNS prints one `actual` column, 381 in
+    # every row, and reads the recall differences as coming from `hits` alone.
+    # That only holds because eligibility is decided by the source/target
+    # predicates before min_runs or min_rate are consulted: a commit is eligible
+    # when it touched both, whatever the thresholds. If a future change let a
+    # threshold filter the eligible set, every row of that table would silently
+    # acquire its own denominator and the column comparison would stop meaning
+    # anything — while each individual row still reproduced.
+    history = [
+        _commit("s1", "shenyu_gateway/module.py", "README.md", "DESIGN.md"),
+        _commit("s2", "shenyu_gateway/module.py", "README.md", "DESIGN.md"),
+        _commit("s3", "shenyu_gateway/module.py", "README.md"),
+        _commit("s4", "shenyu_gateway/other.py", "GUIDE.md"),
+    ]
+    runs = [
+        dt.backtest(commits=history, min_runs=min_runs, min_rate=min_rate)
+        for min_runs, min_rate in [(1, 0.4), (1, 0.9), (3, 0.5), (9, 0.5)]
+    ]
+    # Thresholds change what gets predicted, so hits move...
+    assert len({r["total_predicted"] for r in runs}) > 1
+    # ...but the eligible set, and therefore the recall denominator, does not.
+    assert {r["total_actual"] for r in runs} == {6}
+    assert {r["commits_evaluated"] for r in runs} == {4}
 
 
 def test_the_measuring_path_cannot_add_a_key_the_empty_paths_lack():
