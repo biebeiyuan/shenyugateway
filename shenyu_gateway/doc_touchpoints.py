@@ -26,11 +26,11 @@ Question B — "given that code and docs *did* change together, did we point at
 the right docs?" `backtest()` answers this one, because `eligible` is
 `sources and targets`. That slice drops every commit where the model predicted
 something and no doc followed, i.e. exactly the zero-numerator samples, so its
-precision is systematically higher than A by construction. 55% is not an
+precision is systematically higher than A by construction. 54% is not an
 improvement over 36%; it is a different, optimistic denominator.
 
-    2026-09-15, window=400 (262 touched source, 166 eligible):
-        precision 55%, 2.29 predicted / 2.30 actual per commit
+    2026-09-15 at HEAD 05f91d1, window=400 (262 touched source, 165 eligible):
+        precision 54%, 2.35 predicted / 2.31 actual per commit
 
 The number to quote when asking "is this tool any good in daily use" is A's 36%.
 B is for tracking regressions in the ranking itself, where the denominator is
@@ -390,6 +390,48 @@ def render(report: dict[str, Any]) -> list[str]:
     return lines
 
 
+def _empty_result(
+    *,
+    head_sha: str,
+    window: int,
+    min_runs: int,
+    min_rate: float,
+    commits_read: int,
+    shallow: bool = False,
+    error: str | None = None,
+) -> dict[str, Any]:
+    """The shape `backtest()` returns when it measured nothing.
+
+    Both early returns go through here so the key set never depends on which
+    branch produced it. They used to hand-write the dict separately, and had
+    already drifted: the empty-eligible branch was missing total_hits /
+    total_predicted / total_actual, so a `--json` consumer saw those keys appear
+    and disappear depending on the history it was pointed at. `error` is the one
+    key that is legitimately branch-specific — a shallow clone cannot know, an
+    empty eligible set knows there was nothing — so it is only added when set.
+    """
+    result: dict[str, Any] = {
+        "head": head_sha,
+        "timestamp": datetime.now().isoformat(),
+        "window": window,
+        "min_runs": min_runs,
+        "min_rate": min_rate,
+        "shallow": shallow,
+        "commits_read": commits_read,
+        "commits_evaluated": 0,
+        "precision": 0.0,
+        "avg_predicted": 0.0,
+        "avg_actual": 0.0,
+        "total_hits": 0,
+        "total_predicted": 0,
+        "total_actual": 0,
+        "misses": [],
+    }
+    if error is not None:
+        result["error"] = error
+    return result
+
+
 def backtest(
     *,
     window: int = DEFAULT_WINDOW,
@@ -425,6 +467,20 @@ def backtest(
     precision rises for the wrong reason. Distinguishing "model improved" from
     "agents conformed" would require recording what was pointed at during each
     record() call, then measuring how often those pointers were followed.
+
+    Cost: it re-learns the whole window once per eligible commit, so time grows
+    with window × eligible. Measured 2026-09-15 at HEAD 05f91d1, so a sweep is
+    not mistaken for a hang:
+
+        window= 60 →  18 eligible → 0.06s
+        window=200 →  59 eligible → 0.32s
+        window=400 → 165 eligible → 1.98s
+        window=800 → 241 eligible → 4.52s  (history exhausts at 599 commits)
+
+    A parameter sweep multiplies that by the number of points. Seconds, not
+    minutes, at present size — worth re-measuring before assuming so. The window
+    slides with HEAD, so eligible counts drift by a commit or two between runs;
+    that is why every number in this module cites the sha it was taken at.
     """
     injected = commits is not None
     if injected:
@@ -438,21 +494,15 @@ def backtest(
 
     # Refuse to run in shallow clones — precision would be meaningless
     if shallow:
-        return {
-            "head": head_sha,
-            "timestamp": datetime.now().isoformat(),
-            "window": window,
-            "min_runs": min_runs,
-            "min_rate": min_rate,
-            "shallow": True,
-            "commits_read": len(commits),
-            "commits_evaluated": 0,
-            "precision": 0.0,
-            "avg_predicted": 0.0,
-            "avg_actual": 0.0,
-            "misses": [],
-            "error": "Cannot backtest in shallow clone — no history to learn from",
-        }
+        return _empty_result(
+            head_sha=head_sha,
+            window=window,
+            min_runs=min_runs,
+            min_rate=min_rate,
+            commits_read=len(commits),
+            shallow=True,
+            error="Cannot backtest in shallow clone — no history to learn from",
+        )
 
     # Only evaluate commits that changed both sources and targets
     eligible = []
@@ -463,20 +513,13 @@ def backtest(
             eligible.append((sha, sources, targets))
 
     if not eligible:
-        return {
-            "head": head_sha,
-            "timestamp": datetime.now().isoformat(),
-            "window": window,
-            "min_runs": min_runs,
-            "min_rate": min_rate,
-            "shallow": False,
-            "commits_read": len(commits),
-            "commits_evaluated": 0,
-            "precision": 0.0,
-            "avg_predicted": 0.0,
-            "avg_actual": 0.0,
-            "misses": [],
-        }
+        return _empty_result(
+            head_sha=head_sha,
+            window=window,
+            min_runs=min_runs,
+            min_rate=min_rate,
+            commits_read=len(commits),
+        )
 
     total_hits = 0
     total_predicted = 0

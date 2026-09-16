@@ -1,3 +1,4 @@
+import ast
 import re
 import subprocess
 from pathlib import Path
@@ -538,6 +539,79 @@ def test_every_misread_entry_names_the_code_that_makes_it_true():
 
 def _symbol_anchor_in(text: str) -> bool:
     return bool(re.search(r"`[\w./-]+\.(?:py|ts|vue)::[\w.]+`", text))
+
+
+def _module_constants_tests_redirect() -> dict[str, set[str]]:
+    """Module-level CONSTANTS that some test replaces with monkeypatch.setattr.
+
+    Keyed by module basename. The tests name their target through a local alias
+    (`dt`, `module`), so the alias is resolved back to a module path via the
+    import lines of the same file.
+    """
+    redirected: dict[str, set[str]] = {}
+    for test in sorted((ROOT / "tests").rglob("test_*.py")):
+        text = test.read_text(encoding="utf-8")
+        aliases: dict[str, str] = {}
+        for module, alias in re.findall(
+            r"^\s*(?:import|from\s+[\w.]+\s+import)\s+([\w.]+)\s+as\s+(\w+)",
+            text,
+            flags=re.MULTILINE,
+        ):
+            aliases[alias] = module.rsplit(".", 1)[-1]
+        for module in re.findall(r"^\s*import\s+([\w.]+)\s*$", text, flags=re.MULTILINE):
+            aliases[module.rsplit(".", 1)[-1]] = module.rsplit(".", 1)[-1]
+        for alias, const in re.findall(r'setattr\(\s*(\w+)\s*,\s*"([A-Z][A-Z_0-9]*)"', text):
+            module = aliases.get(alias)
+            if module:
+                redirected.setdefault(module, set()).add(const)
+    return redirected
+
+
+def test_a_constant_a_test_redirects_is_not_frozen_into_a_signature():
+    # `def f(path: Path = SOME_PATH)` binds the value at import. A test that then
+    # does monkeypatch.setattr(module, "SOME_PATH", tmp) changes the module
+    # attribute and nothing else — the function keeps writing to the real
+    # location, while the test passes because it asserts on its own fake return
+    # value. Both places this repository had that shape had the bug:
+    # doc_touchpoints.append_backtest_result wrote two fabricated records into
+    # the real backtest log, and project_delivery.known_products read the real
+    # README while a test believed it had pointed it elsewhere. Resolve the
+    # default inside the body (`path: Path | None = None`) instead.
+    #
+    # Only constants some test actually redirects are checked. ROOT-style
+    # defaults that nothing monkeypatches are fine — tests pass those by
+    # argument, which works.
+    redirected = _module_constants_tests_redirect()
+    assert redirected, "no monkeypatched module constants found — the parser broke"
+
+    offenders: dict[str, list[str]] = {}
+    for path in sorted((ROOT / "shenyu_gateway").rglob("*.py")):
+        watched = redirected.get(path.stem)
+        if not watched:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            args = node.args
+            for default in list(args.defaults) + [d for d in args.kw_defaults if d]:
+                if isinstance(default, ast.Name) and default.id in watched:
+                    offenders.setdefault(path.relative_to(ROOT).as_posix(), []).append(
+                        f"line {node.lineno}: {node.name}(... = {default.id})"
+                    )
+    assert not offenders, (
+        "these defaults freeze a constant that a test redirects at runtime, so the "
+        f"redirect silently does nothing — resolve it in the body instead: {offenders}"
+    )
+
+
+def test_the_redirect_guard_actually_found_the_two_known_cases():
+    # A parser that resolves no aliases would make the guard above vacuous while
+    # still passing. These two are the constants the bug was found in, so the
+    # guard is only alive as long as it can still see them.
+    redirected = _module_constants_tests_redirect()
+    assert "BACKTEST_LOG_PATH" in redirected.get("doc_touchpoints", set())
+    assert "README_PATH" in redirected.get("project_delivery", set())
 
 
 def test_the_misread_slot_check_reads_entries_not_headings():

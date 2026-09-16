@@ -471,9 +471,43 @@ def test_module_is_runnable_with_dash_m_not_only_via_the_wrapper():
     assert result.stdout.strip(), "-m entry produced no output at all"
 
 
+def test_all_backtest_return_paths_agree_on_their_keys(monkeypatch):
+    # Three ways out of backtest(): measured something, nothing was eligible,
+    # shallow clone. They used to hand-write the dict each time and had already
+    # drifted — the empty-eligible branch lacked total_hits / total_predicted /
+    # total_actual — so a --json consumer saw keys come and go depending on the
+    # history it was pointed at. Only `error` may differ, and only by being
+    # absent when there is nothing to explain.
+    measured = dt.backtest(
+        commits=[_commit(f"k{i}", "shenyu_gateway/module.py", "README.md") for i in range(4)],
+    )
+    assert measured["commits_evaluated"] == 4  # it really took the measuring path
+
+    # Sources but no docs: nothing is eligible.
+    empty = dt.backtest(commits=[_commit("k9", "shenyu_gateway/module.py")])
+    assert empty["commits_evaluated"] == 0
+
+    mp = pytest.MonkeyPatch()
+    try:
+        mp.setattr(dt, "is_shallow", lambda **_: True)
+        shallow = dt.backtest(window=5)
+    finally:
+        mp.undo()
+
+    assert set(empty) == set(measured)
+    assert set(shallow) == set(measured) | {"error"}
+    assert "error" not in empty
+
+
 def test_backtest_save_actually_writes_a_line(tmp_path, monkeypatch):
     # Step 1's whole promise is "results land on disk so months later you can
     # compare". Nothing tested that the --save path reaches the file.
+    #
+    # It is also the regression test for append_backtest_result's path default:
+    # while that default was bound in the signature, the monkeypatch below did
+    # nothing and the fake records landed in the real log. If someone moves the
+    # default back into the signature, *this* is the test that goes red — the
+    # name won't say why, so it says it here.
     log = tmp_path / "backtest.jsonl"
     monkeypatch.setattr(dt, "BACKTEST_LOG_PATH", log)
     monkeypatch.setattr(
