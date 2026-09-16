@@ -571,6 +571,82 @@ def _imported_module_names(tree: ast.Module) -> dict[str, str]:
     return names
 
 
+def _setattr_calls(tree: ast.Module) -> list[ast.Call]:
+    """Every `*.setattr(...)` call with at least two arguments."""
+    return [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "setattr"
+        and len(node.args) >= 2
+    ]
+
+
+def _uppercase_setattr_calls(tree: ast.Module) -> list[ast.Call]:
+    """Every `*.setattr(target, "UPPER_NAME", ...)` call in the file.
+
+    Split out because two readers need the same call set: the one that resolves
+    bare-name targets into the watch list, and the one that counts the dotted
+    targets this parser cannot resolve. Note this only sees redirects that name
+    the constant in args[1] — the string form `setattr("pkg.mod.CONST", value)`
+    hides the name inside args[0] and is matched separately.
+    """
+    return [
+        call
+        for call in _setattr_calls(tree)
+        if isinstance(call.args[1], ast.Constant)
+        and isinstance(call.args[1].value, str)
+        and call.args[1].value.isupper()
+    ]
+
+
+def _string_form_redirects(tree: ast.Module) -> list[tuple[str, str]]:
+    """(module basename, CONSTANT) for each `setattr("pkg.mod.CONST", value)`.
+
+    This form needs its own matcher because it does not share a shape with the
+    others: the constant name lives inside args[0], while args[1] is the
+    replacement value. A version of this guard that walked only calls whose
+    args[1] is an uppercase string name read as though it covered this form and
+    covered none of it — and it is the dominant idiom in this repository, so
+    "none of it" was most of the redirects.
+    """
+    found: list[tuple[str, str]] = []
+    for call in _setattr_calls(tree):
+        target = call.args[0]
+        if not (isinstance(target, ast.Constant) and isinstance(target.value, str)):
+            continue
+        module_path, _, const = target.value.rpartition(".")
+        if module_path and const.isupper():
+            found.append((module_path.rsplit(".", 1)[-1], const))
+    return found
+
+
+def _unresolvable_setattr_targets() -> list[str]:
+    """Redirects of an UPPERCASE constant whose target this parser cannot resolve.
+
+    One form is left: `setattr(pkg.mod, "CONST", value)`, a dotted expression
+    rather than a bound name or a string. Resolving it would mean deciding what
+    `a.b.c` refers to without importing anything, which the other two forms do
+    not require — a bound name is in the import table and a string carries its
+    own module path. Nothing in tests/ writes it, so the cost of resolving it has
+    never been worth paying; this exists so that stops being an assumption.
+
+    Returns locations, so a failure says which test to look at.
+    """
+    unresolvable: list[str] = []
+    for test in sorted((ROOT / "tests").rglob("test_*.py")):
+        tree = ast.parse(test.read_text(encoding="utf-8"))
+        for call in _uppercase_setattr_calls(tree):
+            target = call.args[0]
+            if isinstance(target, ast.Attribute):
+                unresolvable.append(
+                    f"{test.relative_to(ROOT).as_posix()}:{call.lineno}: "
+                    f"setattr({ast.unparse(target)}, {call.args[1].value!r})"
+                )
+    return unresolvable
+
+
 def _module_constants_tests_redirect() -> dict[str, set[str]]:
     """Module-level CONSTANTS that some test replaces with monkeypatch.setattr.
 
@@ -580,41 +656,38 @@ def _module_constants_tests_redirect() -> dict[str, set[str]]:
     rather than a regex over import lines, which would only recognise the forms
     that happen to be in the tree today.
 
-    Known limit: `setattr` targets are read as a bare name, so
-    `monkeypatch.setattr(some.module.path, "CONST", ...)` (a dotted target) and a
-    target passed as the string form `"pkg.mod.CONST"` are not seen. Nothing in
-    tests/ uses either today.
+    Two target forms are resolved: a bound name (`setattr(dt, "CONST", ...)`) and
+    the string form (`setattr("pkg.mod.CONST", ...)`). Only a dotted expression
+    target (`setattr(pkg.mod, "CONST", ...)`) is not, and nothing in tests/ writes
+    it — see _unresolvable_setattr_targets, which asserts that rather than
+    assuming it.
 
-    That limit has two failure modes and the self-check test only covers one. If
-    this stops seeing BACKTEST_LOG_PATH or README_PATH, the self-check goes red —
-    a regression, caught. But a *new* constant redirected by a dotted setattr was
-    never in the watch list to begin with: nothing narrowed, the self-check stays
-    green, and the guard simply never applied to it. An omission has no baseline
-    to differ from, which is why it needs a reader who knows the limit rather than
-    a test — this paragraph is that reader's only warning. Redirect a constant
-    through a bare module name and the guard covers it.
+    The blind spot has two failure modes, and they need different things. If this
+    stops seeing BACKTEST_LOG_PATH or README_PATH, the self-check goes red — a
+    regression, with a baseline to differ from. A *new* constant redirected by an
+    unresolvable target is the other kind: nothing narrowed, the watch list simply
+    never contained it, and the guard never applied. That looked like it had no
+    baseline and could only be left to a reader, so an earlier version of this
+    docstring said exactly that. It was wrong twice over. Zero occurrences is a
+    baseline, and when that baseline was finally measured instead of asserted in
+    prose, it was not zero: runtime.ENV_PATH had been redirected by the string
+    form since long before this guard existed, entirely outside the watch list —
+    the omission the paragraph said could only be caught by a reader, sitting in
+    the tree unread. Hence both forms resolved here and a test on the third.
     """
     redirected: dict[str, set[str]] = {}
     for test in sorted((ROOT / "tests").rglob("test_*.py")):
         tree = ast.parse(test.read_text(encoding="utf-8"))
         names = _imported_module_names(tree)
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.Call):
-                continue
-            func = node.func
-            if not (isinstance(func, ast.Attribute) and func.attr == "setattr"):
-                continue
-            if len(node.args) < 2:
-                continue
-            target, attr = node.args[0], node.args[1]
-            if not (isinstance(target, ast.Name) and isinstance(attr, ast.Constant)):
-                continue
-            const = attr.value
-            if not (isinstance(const, str) and const.isupper()):
-                continue
+        for call in _uppercase_setattr_calls(tree):
+            target = call.args[0]
+            if not isinstance(target, ast.Name):
+                continue  # dotted target — see _unresolvable_setattr_targets
             module = names.get(target.id)
             if module:
-                redirected.setdefault(module, set()).add(const)
+                redirected.setdefault(module, set()).add(call.args[1].value)
+        for module, const in _string_form_redirects(tree):
+            redirected.setdefault(module, set()).add(const)
     return redirected
 
 
@@ -691,6 +764,39 @@ def test_the_redirect_guard_actually_found_the_two_known_cases():
     redirected = _module_constants_tests_redirect()
     assert "BACKTEST_LOG_PATH" in redirected.get("doc_touchpoints", set())
     assert "README_PATH" in redirected.get("project_delivery", set())
+    # Third form, third import shape: `setattr("shenyu_gateway.runtime.ENV_PATH",
+    # ...)` in test_config_update.py. This one is here because it was missed —
+    # the parser only read constants named in args[1], so every string-form
+    # redirect in the repository was invisible, and ENV_PATH sat outside the
+    # watch list while a docstring said the watch list had no gaps in use.
+    assert "ENV_PATH" in redirected.get("runtime", set())
+
+
+def test_no_test_redirects_a_constant_this_parser_cannot_resolve():
+    # _module_constants_tests_redirect used to name its blind spot in prose and
+    # say nothing in tests/ fell into it. Prose drifts, so the claim is measured
+    # here — and the first measurement disproved it: the string form was already
+    # in use, on runtime.ENV_PATH, outside the watch list. That form is resolved
+    # now; this covers what is left.
+    #
+    # This is the guard for the *omission* case, which looked unguardable: a
+    # constant redirected through an unresolvable target was never in the watch
+    # list, so nothing narrows and the self-check above stays green. The way in is
+    # that "never in the watch list" has a countable baseline — zero such
+    # redirects today. Whoever writes the first one gets told here, with the
+    # location, rather than getting a guard that silently does not cover them.
+    #
+    # The fix when this goes red is a choice, not a rule: either redirect through
+    # a bound name (`import x.y as m`) in the test that tripped it, or teach
+    # _module_constants_tests_redirect to resolve dotted targets, which is what
+    # happened to the string form once it turned out to be the common idiom.
+    unresolvable = _unresolvable_setattr_targets()
+    assert not unresolvable, (
+        "these tests redirect an UPPERCASE module constant through a target the "
+        "redirect guard cannot resolve, so the constant is not watched and a "
+        "signature default freezing it would pass unnoticed — redirect through a "
+        f"bound module name instead, or widen the parser: {unresolvable}"
+    )
 
 
 def test_the_import_resolver_binds_the_name_python_actually_binds():
