@@ -472,7 +472,7 @@ def test_module_is_runnable_with_dash_m_not_only_via_the_wrapper():
     assert result.stdout.strip(), "-m entry produced no output at all"
 
 
-def test_reproducing_a_sweep_row_needs_json_as_the_table_says():
+def test_reproducing_a_sweep_row_needs_json_as_the_table_says(capsys, monkeypatch):
     # The sweep table above DEFAULT_MIN_RUNS tells a reader to reproduce a row
     # with --json, and says why: the human-readable branch prints precision and
     # the two averages, not the three totals, so recall cannot be checked from
@@ -480,23 +480,34 @@ def test_reproducing_a_sweep_row_needs_json_as_the_table_says():
     # instruction nobody can follow is the same family of problem as a number
     # with no sha — the difference is that this one can be run.
     #
-    # A small window keeps it near-instant; which numbers come out does not
-    # matter here, only which fields are reachable.
-    root = Path(__file__).resolve().parent.parent
-    argv = ["python", "-m", "shenyu_gateway.doc_touchpoints", "--backtest", "--window", "30"]
+    # The history is faked. The first version of this shelled out with
+    # `--backtest --window 30` against the real repository, which passed here and
+    # went red in CI: the checkout is deliberately shallow, so backtest() takes
+    # the refusal branch and prints an error instead of precision. The CI config
+    # says in a comment that it keeps the shallow clone precisely to catch tests
+    # leaning on real `git log` — this is the second one it has caught. What the
+    # test is actually about is which fields each output branch exposes, and that
+    # question does not need real history at all.
+    history = [
+        _commit("j1", "shenyu_gateway/module.py", "README.md"),
+        _commit("j2", "shenyu_gateway/module.py", "README.md"),
+        _commit("j3", "shenyu_gateway/module.py", "README.md"),
+    ]
+    monkeypatch.setattr(dt, "read_history", lambda **_kwargs: history)
+    monkeypatch.setattr(dt, "is_shallow", lambda **_kwargs: False)
+    monkeypatch.setattr(dt, "_git", lambda *_a, **_k: "fakehead\n")
 
-    plain = subprocess.run(argv, cwd=root, capture_output=True, text=True)
-    assert plain.returncode == 0, plain.stderr
+    assert dt.main(["--backtest"]) == 0
+    plain = capsys.readouterr().out
     for field in ["total_hits", "total_actual", "total_predicted"]:
-        assert field not in plain.stdout, (
+        assert field not in plain, (
             f"{field} now prints without --json, so the sweep table's instruction "
             "is stricter than it needs to be — relax the comment"
         )
-    assert "precision" in plain.stdout
+    assert "precision" in plain, plain
 
-    as_json = subprocess.run(argv + ["--json"], cwd=root, capture_output=True, text=True)
-    assert as_json.returncode == 0, as_json.stderr
-    payload = json.loads(as_json.stdout)
+    assert dt.main(["--backtest", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
     # The three fields the table's derived columns are computed from.
     assert {"total_hits", "total_predicted", "total_actual"} <= set(payload)
 
