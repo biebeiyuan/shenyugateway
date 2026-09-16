@@ -1,6 +1,9 @@
+import json
 import subprocess
 from collections import Counter
 from pathlib import Path
+
+import pytest
 
 from shenyu_gateway import doc_touchpoints as dt
 
@@ -292,14 +295,26 @@ def test_wilson_lower_bound_examples():
 
 
 def test_wilson_sorting_ranks_high_confidence_first():
-    # 4/4 and 11/11 are both 100%, but 11/11 has stronger evidence and should
-    # rank first. Without Wilson sorting, they'd tie and fall back to doc name.
+    # Wilson has to be the *deciding* key, so the case is built where every
+    # other key disagrees with it:
+    #
+    #   AGENTS.md   3/3   rate 1.00, runs 3, lower bound ≈0.438
+    #   DESIGN.md  14/16  rate 0.875, runs 16, lower bound ≈0.647
+    #
+    # -rate puts AGENTS.md first. Sorting on -runs would also be wrong for the
+    # opposite reason (it ignores rate entirely). Only the lower bound puts
+    # DESIGN.md first, so dropping the Wilson term from the sort key turns this
+    # red — which the earlier 4/4-vs-11/11 version did not, because there
+    # -runs happened to produce the same order.
     history = [
-        _commit(f"a{i}", "shenyu_gateway/module_a.py", "README.md")
-        for i in range(4)
+        _commit(f"a{i}", "shenyu_gateway/module_a.py", "AGENTS.md")
+        for i in range(3)
     ] + [
         _commit(f"b{i}", "shenyu_gateway/module_b.py", "DESIGN.md")
-        for i in range(11)
+        for i in range(14)
+    ] + [
+        _commit(f"c{i}", "shenyu_gateway/module_b.py")
+        for i in range(2)
     ]
     together, runs = dt.learn(history)
     pointers = dt.pointers_for(
@@ -307,8 +322,11 @@ def test_wilson_sorting_ranks_high_confidence_first():
         together=together,
         runs=runs,
     )
-    # DESIGN.md (11/11, lower bound ≈0.74) should come before README.md (4/4, ≈0.51)
-    assert [p["doc"] for p in pointers] == ["DESIGN.md", "README.md"]
+    assert [p["doc"] for p in pointers] == ["DESIGN.md", "AGENTS.md"]
+    # The stronger evidence wins even though its raw rate is lower.
+    assert pointers[0]["rate"] < pointers[1]["rate"]
+    # And the sort key must not survive on the returned dicts.
+    assert all("_wilson_lower" not in p for p in pointers)
 
 
 def test_threshold_still_judges_raw_rate_not_lower_bound():
@@ -342,35 +360,148 @@ def test_threshold_still_judges_raw_rate_not_lower_bound():
     assert len(pointers_strict) == 0
 
 
-def test_backtest_returns_structure_with_all_required_fields():
-    # backtest must return shallow, commits_read, and pass predicates to learn()
+def test_backtest_scores_injected_history_instead_of_the_real_log():
+    # History is injected for the same reason survey() takes it: reading this
+    # repository's log makes the assertion depend on where the test runs. The
+    # previous version of this test called backtest(root=ROOT) and asserted only
+    # that keys existed — which passed in CI through the shallow branch and
+    # locally through the real one, i.e. it pinned nothing.
+    #
+    # module.py: 4 runs, README.md on 3 of them (75% ≥ min_rate).
+    # Leaving out m1, the model still sees 2/3 README, so m1's README is a hit.
     history = [
         _commit("m1", "shenyu_gateway/module.py", "README.md"),
         _commit("m2", "shenyu_gateway/module.py", "README.md"),
         _commit("m3", "shenyu_gateway/module.py", "README.md"),
-        _commit("m4", "shenyu_gateway/module.py", "README.md"),
+        _commit("m4", "shenyu_gateway/module.py"),
     ]
-    # Mock a non-shallow repo by injecting commits
-    result = dt.backtest(window=10, root=dt.ROOT)
+    result = dt.backtest(commits=history)
 
-    # Required fields must be present
-    assert "shallow" in result
-    assert "commits_read" in result
-    assert "commits_evaluated" in result
-    assert "precision" in result
-    assert "head" in result
-    assert "timestamp" in result
+    assert result["shallow"] is False
+    assert result["commits_read"] == 4
+    # Only the three commits that changed both source and a doc are eligible.
+    assert result["commits_evaluated"] == 3
+    assert result["precision"] == 1.0
+    assert result["total_hits"] == 3
+    assert result["misses"] == []
+    assert result["head"] == "injected"
+
+
+def test_backtest_predicts_the_direction_it_was_asked_for():
+    # The predicates are not decoration: backtest must hand them to learn(), or
+    # it picks eligible commits by one direction and scores them with another.
+    # Dropping either argument from the learn() call turns this red, which the
+    # earlier "fields exist" test could not detect.
+    #
+    # module_a always travels with module_b (source→source), and never with a
+    # doc. Scored in the source direction it is a perfect hit; scored in the
+    # default doc direction there is nothing to predict at all.
+    history = [
+        _commit(f"s{i}", "shenyu_gateway/module_a.py", "shenyu_gateway/module_b.py")
+        for i in range(4)
+    ]
+
+    source_direction = dt.backtest(
+        commits=history,
+        source_predicate=dt.is_source,
+        target_predicate=dt.is_source,
+    )
+    assert source_direction["commits_evaluated"] == 4
+    assert source_direction["precision"] == 1.0
+    assert source_direction["misses"] == []
+
+    # Same history, default (doc) direction: no commit is even eligible.
+    doc_direction = dt.backtest(commits=history)
+    assert doc_direction["commits_evaluated"] == 0
+
+
+def test_backtest_finds_the_docs_it_could_not_predict():
+    # A miss must be reported with the commit that owned it, otherwise the
+    # backtest log records a precision number with nothing to look at.
+    history = [
+        _commit("m1", "shenyu_gateway/module.py", "README.md"),
+        _commit("m2", "shenyu_gateway/module.py", "README.md"),
+        _commit("m3", "shenyu_gateway/module.py", "README.md"),
+        # DESIGN.md rode along exactly once — never predictable, always a miss.
+        _commit("m4", "shenyu_gateway/module.py", "DESIGN.md"),
+    ]
+    result = dt.backtest(commits=history)
+
+    missed = {m["sha"]: m["missed_targets"] for m in result["misses"]}
+    assert missed["m4"] == ["DESIGN.md"]
 
 
 def test_backtest_refuses_shallow_clone():
-    # In a shallow clone, backtest should return error and mark shallow=True
-    # We can't easily create a shallow clone in tests, but we can verify the
-    # structure when no eligible commits exist
-    history = [
-        _commit("s1", "shenyu_gateway/module.py"),  # no doc, not eligible
-    ]
-    # When there are no eligible commits, it should still report shallow status
-    # This tests the structure, not actual shallow detection
+    # CI checks out one commit. Without this branch a shallow clone returns
+    # precision 0.0 with commits_evaluated 0, which is indistinguishable in the
+    # jsonl from "the model predicted nothing right" — and 406b6b9 was exactly
+    # that shape of bug. is_shallow is a module-level function, so it patches.
+    calls = []
+
+    def fake_learn(*args, **kwargs):
+        calls.append(kwargs)
+        raise AssertionError("shallow clone must return before learning")
+
+    monkeypatch = pytest.MonkeyPatch()
+    try:
+        monkeypatch.setattr(dt, "is_shallow", lambda **_: True)
+        monkeypatch.setattr(dt, "learn", fake_learn)
+        result = dt.backtest(window=5)
+    finally:
+        monkeypatch.undo()
+
+    assert result["shallow"] is True
+    assert result["error"]  # says why, rather than reporting precision 0.0
+    assert result["commits_evaluated"] == 0
+    assert calls == []  # it really did return early
+
+
+def test_module_is_runnable_with_dash_m_not_only_via_the_wrapper():
+    # `python -m shenyu_gateway.doc_touchpoints` used to import the module and
+    # exit 0 without calling main(): --backtest --save printed nothing and wrote
+    # nothing, while the wrapper worked. A flag that is accepted and does
+    # nothing is the failure mode this whole module exists to refuse.
+    result = subprocess.run(
+        ["python", "-m", "shenyu_gateway.doc_touchpoints", "shenyu_gateway/room_tools.py"],
+        cwd=Path(__file__).resolve().parent.parent,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout.strip(), "-m entry produced no output at all"
+
+
+def test_backtest_save_actually_writes_a_line(tmp_path, monkeypatch):
+    # Step 1's whole promise is "results land on disk so months later you can
+    # compare". Nothing tested that the --save path reaches the file.
+    log = tmp_path / "backtest.jsonl"
+    monkeypatch.setattr(dt, "BACKTEST_LOG_PATH", log)
+    monkeypatch.setattr(
+        dt,
+        "backtest",
+        lambda **_: {
+            "shallow": False,
+            "commits_read": 4,
+            "commits_evaluated": 2,
+            "precision": 0.5,
+            "avg_predicted": 1.0,
+            "avg_actual": 1.0,
+            "misses": [],
+        },
+    )
+    assert dt.main(["--backtest", "--save"]) == 0
+    assert json.loads(log.read_text(encoding="utf-8").strip())["commits_evaluated"] == 2
+
+
+def test_a_shallow_backtest_result_is_still_written_but_says_so(tmp_path):
+    # The result gets persisted either way — the point is that a reader months
+    # later can tell "could not measure" from "measured zero".
+    result = {"shallow": True, "error": "Cannot backtest in shallow clone", "precision": 0.0}
+    path = tmp_path / "backtest.jsonl"
+    dt.append_backtest_result(result, path=path)
+    written = json.loads(path.read_text(encoding="utf-8").strip())
+    assert written["shallow"] is True
+    assert written["error"]
 
 
 def test_learn_uses_predicates():

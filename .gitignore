@@ -14,6 +14,9 @@ pwa/dist/
 pwa/gateway.db
 
 *.log
+# 回测结果是本地测量日志，不是源码：跨月对比要在旧 commit 上重跑，
+# 而不是相信别人抄进正文的数字。见 doc_touchpoints.py 模块开头。
+doc_touchpoints_backtest.jsonl
 tmp_gateway_log_*.json
 tmp_gateway_logs*/
 tmp_gateway_latest/

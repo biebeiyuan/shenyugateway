@@ -10,23 +10,44 @@ It learns from `git log` instead of from a maintained list. A registry of
 read Y — and an entry nobody maintains reads exactly like a live one. Co-edit
 history has no such empty slots: a new file simply has nothing to say yet.
 
-Measured by leave-one-out (each commit predicted from a model trained without it):
+Measured by leave-one-out (each commit predicted from a model trained without it).
+The two measurements below answer *different questions* and are not comparable
+as before/after — read the question before the number.
 
-    Early measurement (2026-09-15, 60 commits that touched Python):
+Question A — "on any commit that touched code, how often is a pointer right?"
+This is what the tool actually experiences: every real invocation happens
+without knowing whether docs were going to change.
+
+    2026-09-15, window=60 (33 of those commits touched source):
         pointers learned from prose (a doc naming the file)  precision 17%, 4.7/commit
         pointers learned from co-edit history                precision 36%, 1.2/commit
 
-    Current backtest (2026-09-15, 166 commits that touched both source and docs):
+Question B — "given that code and docs *did* change together, did we point at
+the right docs?" `backtest()` answers this one, because `eligible` is
+`sources and targets`. That slice drops every commit where the model predicted
+something and no doc followed, i.e. exactly the zero-numerator samples, so its
+precision is systematically higher than A by construction. 55% is not an
+improvement over 36%; it is a different, optimistic denominator.
+
+    2026-09-15, window=400 (262 touched source, 166 eligible):
         precision 55%, 2.29 predicted / 2.30 actual per commit
 
-Prose lost because breadth kills precision: README.md names 68 runtime files,
-so it "predicts" every change. The early measurement counted all commits that
-touched Python; the backtest only evaluates commits that changed both source
-and docs (eligible), so it measures a narrower but more relevant slice — when
-code and docs did change together, did the model point at the right docs?
+The number to quote when asking "is this tool any good in daily use" is A's 36%.
+B is for tracking regressions in the ranking itself, where the denominator is
+held fixed. The two windows also differ (60 vs 400), so even the sample pools
+are not the same; do not diff the two numbers.
 
-Precision here is also an undercount — looking at a document and deciding it
+Prose lost because breadth kills precision: README.md names 68 runtime files,
+so it "predicts" every change.
+
+Precision in both is also an undercount — looking at a document and deciding it
 needs nothing is a success, but only a real edit counts in the numerator.
+
+Baseline records live in `doc_touchpoints_backtest.jsonl` (git-ignored, local
+only): `--backtest --save` appends one self-contained line per run. It is not
+committed because it is a measurement log, not source — comparing months apart
+means comparing your own runs, so re-run it on the old commit rather than
+trusting a number copied into prose.
 """
 
 from __future__ import annotations
@@ -210,20 +231,18 @@ def pointers_for(
                     "because": path,
                 }
 
-    # Sort by Wilson lower bound, then by rate/runs/doc for determinism
-    pointers = list(best.values())
-    for pointer in pointers:
-        pointer["_wilson_lower"] = wilson_lower_bound(pointer["together"], pointer["runs"])
-
-    pointers.sort(
-        key=lambda p: (-p["_wilson_lower"], -p["rate"], -p["runs"], p["doc"])
+    # Wilson lower bound is computed inside the sort key, never stored: a key
+    # that lives on the returned dict even briefly invites someone to read it
+    # after the sort, and then the behaviour depends on when it was deleted.
+    return sorted(
+        best.values(),
+        key=lambda p: (
+            -wilson_lower_bound(p["together"], p["runs"]),
+            -p["rate"],
+            -p["runs"],
+            p["doc"],
+        ),
     )
-
-    # Remove internal sort key before returning
-    for pointer in pointers:
-        del pointer["_wilson_lower"]
-
-    return pointers
 
 
 def changed_paths(*, staged_only: bool = False, root: Path = ROOT) -> list[str]:
@@ -377,6 +396,7 @@ def backtest(
     min_runs: int = DEFAULT_MIN_RUNS,
     min_rate: float = DEFAULT_MIN_RATE,
     root: Path = ROOT,
+    commits: Iterable[tuple[str, list[str]]] | None = None,
     target_predicate: Callable[[str], bool] = is_live_doc,
     source_predicate: Callable[[str], bool] = is_source,
 ) -> dict[str, Any]:
@@ -389,15 +409,32 @@ def backtest(
     `target_predicate` selects what we're trying to predict (default: live docs).
     `source_predicate` selects what we predict from (default: runtime source).
 
+    `commits` is injectable for the same reason `survey()` accepts it: a test
+    that reads this repository's real log passes or fails by where it runs. When
+    injected, the shallow check is skipped — the caller stated the history, so
+    there is nothing to be shallow about.
+
+    Precision here answers "given that docs did change, did we point at the
+    right ones?" — `eligible` requires both sources and targets, which drops
+    every zero-numerator commit and makes this number optimistic by
+    construction. See the module docstring: it is not comparable to the
+    all-commits measurement.
+
     This cannot detect feedback loops: if agents start following the tool's
     suggestions, history gradually becomes the tool's own shape, and leave-one-out
     precision rises for the wrong reason. Distinguishing "model improved" from
     "agents conformed" would require recording what was pointed at during each
     record() call, then measuring how often those pointers were followed.
     """
-    commits = read_history(window=window, root=root)
-    head_sha = _git("rev-parse", "HEAD", root=root).strip()
-    shallow = is_shallow(root=root)
+    injected = commits is not None
+    if injected:
+        commits = list(commits)
+        head_sha = "injected"
+        shallow = False
+    else:
+        commits = read_history(window=window, root=root)
+        head_sha = _git("rev-parse", "HEAD", root=root).strip()
+        shallow = is_shallow(root=root)
 
     # Refuse to run in shallow clones — precision would be meaningless
     if shallow:
@@ -501,14 +538,20 @@ def backtest(
 
 def append_backtest_result(
     result: dict[str, Any],
-    path: Path = BACKTEST_LOG_PATH,
+    path: Path | None = None,
 ) -> None:
     """Persist one backtest run to the JSONL log.
 
     Each line is self-contained: HEAD sha, timestamp, full config, metrics, and
     the list of misses. Without the config, comparing runs months apart is
     meaningless — you can't tell if a difference comes from history or parameters.
+
+    The default is resolved at call time, not bound as a default argument: a
+    module-level default freezes BACKTEST_LOG_PATH at import, so a test that
+    redirects it writes into the real log instead. That happened.
     """
+    if path is None:
+        path = BACKTEST_LOG_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as handle:
         handle.write(json.dumps(result, ensure_ascii=False, separators=(",", ":")) + "\n")
@@ -607,3 +650,11 @@ def main(argv: list[str] | None = None) -> int:
     for line in render(report):
         print(line)
     return 0
+
+
+if __name__ == "__main__":  # pragma: no cover - exercised via subprocess
+    # Without this, `python -m shenyu_gateway.doc_touchpoints --backtest --save`
+    # imports the module, never calls main(), prints nothing and exits 0 — the
+    # exact silence this tool is built to refuse. scripts/doc_touchpoints.py
+    # worked, so the flag looked accepted while doing nothing.
+    raise SystemExit(main())
