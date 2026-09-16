@@ -48,6 +48,16 @@ only): `--backtest --save` appends one self-contained line per run. It is not
 committed because it is a measurement log, not source — comparing months apart
 means comparing your own runs, so re-run it on the old commit rather than
 trusting a number copied into prose.
+
+"On the old commit" means literally checking it out. `window` counts back from
+HEAD, so it names a sample pool, not a fixed range: the same `--window 400` run
+in three months reads 400 different commits, and any difference then mixes model
+change, history change, and pool change with no way to separate them. Checking
+out the old sha slides the window back with it, which is what makes the
+comparison a repetition of the same measurement rather than a new one. Running
+both from today's HEAD does not compare anything. Every number in this module
+therefore cites the sha it was taken at — including the two above, which is why
+window=400 reads 165 eligible here and 166 in a run one commit earlier.
 """
 
 from __future__ import annotations
@@ -390,7 +400,7 @@ def render(report: dict[str, Any]) -> list[str]:
     return lines
 
 
-def _empty_result(
+def _backtest_result(
     *,
     head_sha: str,
     window: int,
@@ -399,16 +409,26 @@ def _empty_result(
     commits_read: int,
     shallow: bool = False,
     error: str | None = None,
+    metrics: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """The shape `backtest()` returns when it measured nothing.
+    """The one shape every `backtest()` return has, zeroed unless `metrics` says otherwise.
 
-    Both early returns go through here so the key set never depends on which
-    branch produced it. They used to hand-write the dict separately, and had
-    already drifted: the empty-eligible branch was missing total_hits /
-    total_predicted / total_actual, so a `--json` consumer saw those keys appear
-    and disappear depending on the history it was pointed at. `error` is the one
-    key that is legitimately branch-specific — a shallow clone cannot know, an
-    empty eligible set knows there was nothing — so it is only added when set.
+    All three exits go through here — measured, nothing eligible, shallow clone —
+    so the key set cannot depend on which branch produced it. They used to
+    hand-write the dict separately and had already drifted: the empty-eligible
+    branch was missing total_hits / total_predicted / total_actual, so a `--json`
+    consumer saw those keys appear and disappear depending on the history it was
+    pointed at.
+
+    `metrics` may only overwrite keys that already exist here, which is asserted
+    rather than documented: an update that introduces a key would recreate the
+    same drift through a smaller door, and the parity test in
+    tests/test_doc_touchpoints.py could then only report it after the fact. This
+    way the measuring path cannot grow a field the empty paths lack.
+
+    `error` is the one key that is legitimately branch-specific — a shallow clone
+    cannot know, an empty eligible set knows there was nothing — so it is only
+    added when set.
     """
     result: dict[str, Any] = {
         "head": head_sha,
@@ -427,6 +447,14 @@ def _empty_result(
         "total_actual": 0,
         "misses": [],
     }
+    if metrics:
+        unknown = sorted(set(metrics) - set(result))
+        if unknown:
+            raise DocTouchpointError(
+                f"backtest metrics introduced keys the empty result lacks: {unknown} "
+                "— add them to _backtest_result instead, or every exit stops agreeing"
+            )
+        result.update(metrics)
     if error is not None:
         result["error"] = error
     return result
@@ -494,7 +522,7 @@ def backtest(
 
     # Refuse to run in shallow clones — precision would be meaningless
     if shallow:
-        return _empty_result(
+        return _backtest_result(
             head_sha=head_sha,
             window=window,
             min_runs=min_runs,
@@ -513,7 +541,7 @@ def backtest(
             eligible.append((sha, sources, targets))
 
     if not eligible:
-        return _empty_result(
+        return _backtest_result(
             head_sha=head_sha,
             window=window,
             min_runs=min_runs,
@@ -560,23 +588,23 @@ def backtest(
 
     precision = total_hits / total_predicted if total_predicted > 0 else 0.0
 
-    return {
-        "head": head_sha,
-        "timestamp": datetime.now().isoformat(),
-        "window": window,
-        "min_runs": min_runs,
-        "min_rate": min_rate,
-        "shallow": False,
-        "commits_read": len(commits),
-        "commits_evaluated": len(eligible),
-        "precision": round(precision, 4),
-        "avg_predicted": round(total_predicted / len(eligible), 2),
-        "avg_actual": round(total_actual / len(eligible), 2),
-        "total_hits": total_hits,
-        "total_predicted": total_predicted,
-        "total_actual": total_actual,
-        "misses": misses,
-    }
+    return _backtest_result(
+        head_sha=head_sha,
+        window=window,
+        min_runs=min_runs,
+        min_rate=min_rate,
+        commits_read=len(commits),
+        metrics={
+            "commits_evaluated": len(eligible),
+            "precision": round(precision, 4),
+            "avg_predicted": round(total_predicted / len(eligible), 2),
+            "avg_actual": round(total_actual / len(eligible), 2),
+            "total_hits": total_hits,
+            "total_predicted": total_predicted,
+            "total_actual": total_actual,
+            "misses": misses,
+        },
+    )
 
 
 def append_backtest_result(

@@ -544,27 +544,71 @@ def _symbol_anchor_in(text: str) -> bool:
 def _module_constants_tests_redirect() -> dict[str, set[str]]:
     """Module-level CONSTANTS that some test replaces with monkeypatch.setattr.
 
-    Keyed by module basename. The tests name their target through a local alias
-    (`dt`, `module`), so the alias is resolved back to a module path via the
-    import lines of the same file.
+    Keyed by module basename. Tests name their target through a local name that
+    may have arrived by any import form — `import x.y as dt`, `from x import y`,
+    a function-body `import x.y as module` — so the names are collected with ast
+    rather than a regex over import lines, which would only recognise the forms
+    that happen to be in the tree today.
+
+    Known limit: `setattr` targets are read as a bare name, so
+    `monkeypatch.setattr(some.module.path, "CONST", ...)` (a dotted target) and a
+    target passed as the string form `"pkg.mod.CONST"` are not seen. Nothing in
+    tests/ uses either; if one appears, this returns less than it should and the
+    guard below quietly narrows — which is what the self-check test exists for.
     """
     redirected: dict[str, set[str]] = {}
     for test in sorted((ROOT / "tests").rglob("test_*.py")):
-        text = test.read_text(encoding="utf-8")
-        aliases: dict[str, str] = {}
-        for module, alias in re.findall(
-            r"^\s*(?:import|from\s+[\w.]+\s+import)\s+([\w.]+)\s+as\s+(\w+)",
-            text,
-            flags=re.MULTILINE,
-        ):
-            aliases[alias] = module.rsplit(".", 1)[-1]
-        for module in re.findall(r"^\s*import\s+([\w.]+)\s*$", text, flags=re.MULTILINE):
-            aliases[module.rsplit(".", 1)[-1]] = module.rsplit(".", 1)[-1]
-        for alias, const in re.findall(r'setattr\(\s*(\w+)\s*,\s*"([A-Z][A-Z_0-9]*)"', text):
-            module = aliases.get(alias)
+        tree = ast.parse(test.read_text(encoding="utf-8"))
+        # Local name -> module basename, for every import anywhere in the file
+        # (several of these live inside test bodies).
+        names: dict[str, str] = {}
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                for alias in node.names:
+                    base = alias.name.rsplit(".", 1)[-1]
+                    # `import a.b` binds `a`, but a later `a.b.CONST` setattr is a
+                    # dotted target this parser does not read anyway; `import a.b
+                    # as n` binds `n` to a.b, which it does.
+                    names[alias.asname or alias.name.split(".", 1)[0]] = base
+            elif isinstance(node, ast.ImportFrom):
+                for alias in node.names:
+                    # `from pkg import mod` / `from pkg import mod as m`: the
+                    # bound name refers to `mod` itself.
+                    names[alias.asname or alias.name] = alias.name.rsplit(".", 1)[-1]
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            if not (isinstance(func, ast.Attribute) and func.attr == "setattr"):
+                continue
+            if len(node.args) < 2:
+                continue
+            target, attr = node.args[0], node.args[1]
+            if not (isinstance(target, ast.Name) and isinstance(attr, ast.Constant)):
+                continue
+            const = attr.value
+            if not (isinstance(const, str) and const.isupper()):
+                continue
+            module = names.get(target.id)
             if module:
                 redirected.setdefault(module, set()).add(const)
     return redirected
+
+
+def _constants_named_in(default: ast.expr) -> set[str]:
+    """Every CONSTANT-looking name a default expression reads.
+
+    A default is evaluated once at import whatever its shape, so
+    `= SOME_PATH`, `= SOME_PATH.parent`, `= SOME_PATH.resolve()` and
+    `= ROOT / "x.jsonl"` all freeze the value equally. Walking the expression
+    instead of matching `ast.Name` is what keeps a cosmetic `.resolve()` from
+    disabling the guard below.
+    """
+    return {
+        node.id
+        for node in ast.walk(default)
+        if isinstance(node, ast.Name) and node.id.isupper()
+    }
 
 
 def test_a_constant_a_test_redirects_is_not_frozen_into_a_signature():
@@ -580,7 +624,15 @@ def test_a_constant_a_test_redirects_is_not_frozen_into_a_signature():
     #
     # Only constants some test actually redirects are checked. ROOT-style
     # defaults that nothing monkeypatches are fine — tests pass those by
-    # argument, which works.
+    # argument, which works. Measured when this was written: the bare shape has
+    # 71 instances repo-wide and 2 were dangerous, so guarding the shape would
+    # have produced a 69-entry exemption list, and an exemption list is the thing
+    # that rots. The intersection needs none.
+    #
+    # What it does not see is listed in _module_constants_tests_redirect: a
+    # dotted or string setattr target. That narrows the watch list, not the
+    # matching — any expression reading a watched constant is caught, so
+    # `.resolve()` or `ROOT / "x"` cannot slip past.
     redirected = _module_constants_tests_redirect()
     assert redirected, "no monkeypatched module constants found — the parser broke"
 
@@ -595,9 +647,10 @@ def test_a_constant_a_test_redirects_is_not_frozen_into_a_signature():
                 continue
             args = node.args
             for default in list(args.defaults) + [d for d in args.kw_defaults if d]:
-                if isinstance(default, ast.Name) and default.id in watched:
+                frozen = sorted(_constants_named_in(default) & watched)
+                if frozen:
                     offenders.setdefault(path.relative_to(ROOT).as_posix(), []).append(
-                        f"line {node.lineno}: {node.name}(... = {default.id})"
+                        f"line {node.lineno}: {node.name}(... = {', '.join(frozen)})"
                     )
     assert not offenders, (
         "these defaults freeze a constant that a test redirects at runtime, so the "
@@ -606,12 +659,33 @@ def test_a_constant_a_test_redirects_is_not_frozen_into_a_signature():
 
 
 def test_the_redirect_guard_actually_found_the_two_known_cases():
-    # A parser that resolves no aliases would make the guard above vacuous while
-    # still passing. These two are the constants the bug was found in, so the
-    # guard is only alive as long as it can still see them.
+    # A parser that resolves no import names would make the guard above vacuous
+    # while still passing: `redirected` non-empty only proves it saw *something*,
+    # not that it still sees these. These two constants are where the bug was
+    # actually found, so the guard is alive only as long as both remain visible —
+    # and they arrive by different import forms (`import x as dt` at module level,
+    # `import x as module` inside a test body), which is the coverage that matters.
     redirected = _module_constants_tests_redirect()
     assert "BACKTEST_LOG_PATH" in redirected.get("doc_touchpoints", set())
     assert "README_PATH" in redirected.get("project_delivery", set())
+
+
+def test_the_redirect_guard_reads_more_than_a_bare_name():
+    # A default is evaluated once at import whatever its shape, so a "harmless
+    # cleanup" that writes `= SOME_PATH.resolve()` or `= ROOT / "x.jsonl"` has
+    # exactly the same bug and used to walk straight past an ast.Name check.
+    def default_of(source: str) -> ast.expr:
+        fn = ast.parse(source).body[0]
+        return fn.args.defaults[0]
+
+    watched = {"SOME_PATH", "ROOT"}
+    assert _constants_named_in(default_of("def f(p=SOME_PATH): pass")) & watched
+    assert _constants_named_in(default_of("def f(p=SOME_PATH.parent): pass")) & watched
+    assert _constants_named_in(default_of("def f(p=SOME_PATH.resolve()): pass")) & watched
+    assert _constants_named_in(default_of('def f(p=ROOT / "x.jsonl"): pass')) & watched
+    # A literal or a lowercase name reads no constant at all.
+    assert not _constants_named_in(default_of("def f(p=None): pass"))
+    assert not _constants_named_in(default_of("def f(p=some_path): pass"))
 
 
 def test_the_misread_slot_check_reads_entries_not_headings():

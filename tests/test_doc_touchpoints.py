@@ -471,6 +471,36 @@ def test_module_is_runnable_with_dash_m_not_only_via_the_wrapper():
     assert result.stdout.strip(), "-m entry produced no output at all"
 
 
+def test_the_measuring_path_cannot_add_a_key_the_empty_paths_lack():
+    # The parity test below reports drift; this one refuses it. All three exits
+    # build on _backtest_result, and `metrics` may only overwrite keys that are
+    # already in the zeroed shape — otherwise the measuring path could grow a
+    # field through a smaller door and the parity test would only notice
+    # afterwards. This is the reason _backtest_result raises instead of just
+    # documenting the rule.
+    with pytest.raises(dt.DocTouchpointError) as caught:
+        dt._backtest_result(
+            head_sha="x",
+            window=1,
+            min_runs=1,
+            min_rate=0.5,
+            commits_read=1,
+            metrics={"precision": 1.0, "f1_score": 0.9},
+        )
+    assert "f1_score" in str(caught.value)
+
+    # A metrics dict that only overwrites known keys is the normal case.
+    ok = dt._backtest_result(
+        head_sha="x",
+        window=1,
+        min_runs=1,
+        min_rate=0.5,
+        commits_read=1,
+        metrics={"precision": 1.0},
+    )
+    assert ok["precision"] == 1.0
+
+
 def test_all_backtest_return_paths_agree_on_their_keys(monkeypatch):
     # Three ways out of backtest(): measured something, nothing was eligible,
     # shallow clone. They used to hand-write the dict each time and had already
@@ -478,6 +508,11 @@ def test_all_backtest_return_paths_agree_on_their_keys(monkeypatch):
     # total_actual — so a --json consumer saw keys come and go depending on the
     # history it was pointed at. Only `error` may differ, and only by being
     # absent when there is nothing to explain.
+    #
+    # All three now build on _backtest_result, so this asserts a property the
+    # code makes hard to break rather than one it merely happens to satisfy.
+    # It stays because "hard to break" is not "cannot break": someone can always
+    # write a fourth exit that returns its own dict.
     measured = dt.backtest(
         commits=[_commit(f"k{i}", "shenyu_gateway/module.py", "README.md") for i in range(4)],
     )
