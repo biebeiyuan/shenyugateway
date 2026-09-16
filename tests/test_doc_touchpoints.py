@@ -1,6 +1,7 @@
 import json
 import subprocess
 from collections import Counter
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -469,6 +470,42 @@ def test_module_is_runnable_with_dash_m_not_only_via_the_wrapper():
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.strip(), "-m entry produced no output at all"
+
+
+def test_the_backtest_timestamp_carries_its_offset():
+    # This line goes into a log whose only purpose is month-apart comparison, and
+    # `head` plus the config explain themselves while a naive timestamp does not.
+    # A naive and an aware timestamp read identically in the jsonl until someone
+    # compares runs across a machine or a tz change, which is exactly when the
+    # log is being used. LOCAL_DAY_TZ is the single home for the offset.
+    result = dt.backtest(commits=[_commit("t1", "shenyu_gateway/x.py", "README.md")])
+    stamped = datetime.fromisoformat(result["timestamp"])
+    assert stamped.tzinfo is not None, "backtest timestamps must not be naive"
+    assert stamped.utcoffset() == dt.LOCAL_DAY_TZ.utcoffset(None)
+
+
+def test_recall_is_derivable_from_the_returned_fields():
+    # The min_rate / min_runs sweep table above DEFAULT_MIN_RUNS quotes recall,
+    # and claims the table can be re-run with --min-runs / --min-rate at the sha
+    # it cites. That only holds while recall stays derivable as
+    # total_hits / total_actual — backtest() does not report recall directly, so
+    # dropping either field would silently make the table unreproducible while
+    # the numbers kept reading as live.
+    history = [
+        _commit("r1", "shenyu_gateway/module.py", "README.md", "DESIGN.md"),
+        _commit("r2", "shenyu_gateway/module.py", "README.md", "DESIGN.md"),
+        _commit("r3", "shenyu_gateway/module.py", "README.md", "DESIGN.md"),
+        # One commit where only README followed: DESIGN is predicted, not edited.
+        _commit("r4", "shenyu_gateway/module.py", "README.md"),
+    ]
+    result = dt.backtest(commits=history)
+
+    assert result["total_actual"] == 7  # 3 commits × 2 docs + 1 commit × 1 doc
+    assert result["total_hits"] == 7  # every doc that changed was predicted
+    assert result["total_hits"] / result["total_actual"] == 1.0
+    # Precision is lower than recall here: r4 predicted DESIGN.md and no edit
+    # followed, which is the zero-numerator shape the module docstring explains.
+    assert result["precision"] < 1.0
 
 
 def test_the_measuring_path_cannot_add_a_key_the_empty_paths_lack():

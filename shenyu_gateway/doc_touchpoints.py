@@ -71,14 +71,35 @@ from pathlib import Path
 from datetime import datetime
 from typing import Any, Callable, Iterable
 
+from .runtime import LOCAL_DAY_TZ
+
 
 ROOT = Path(__file__).resolve().parent.parent
 BACKTEST_LOG_PATH = ROOT / "doc_touchpoints_backtest.jsonl"
 
-# Defaults picked by the sweep above: min_rate 0.4 raised recall 7 points but
-# cost 8 points of precision and half again as many pointers; 0.6 collapsed
-# recall to 18%. min_runs below 3 changed nothing measurable, so keep the
-# stricter floor — one coincidence should not become a pointer.
+# Swept 2026-09-16 at HEAD 7e3095e, window=400, 166 eligible commits. Recall is
+# total_hits / total_actual; both are fields `backtest()` returns, so this table
+# is reproducible with `--backtest --min-runs N --min-rate R` at that sha.
+#
+#     min_runs  min_rate   precision   recall   pointers/commit
+#            3       0.5       0.539    0.541              2.30   ← default
+#            3       0.4       0.486    0.596              2.81
+#            3       0.6       0.615    0.423              1.58
+#            1       0.5       0.455    0.619              3.13
+#            2       0.5       0.473    0.580              2.81
+#            4       0.5       0.535    0.499              2.14
+#
+# 0.5 is the knee: 0.4 buys 5.5 points of recall for 5.3 of precision and a
+# fifth more pointers per commit, 0.6 buys 7.5 points of precision but drops
+# 11.8 of recall. min_runs 3 is where precision stops rising — 4 is no better
+# and loses recall, while 1 and 2 are clearly worse on both, so the stricter
+# floor costs nothing: one coincidence should not become a pointer.
+#
+# The prior comment here claimed 0.4 cost 8 points of precision, 0.6 collapsed
+# recall to 18%, and min_runs below 3 changed nothing measurable, crediting "the
+# sweep above" — there was no sweep above, in this commit or the one that wrote
+# it, and all three claims are contradicted by the table. Numbers whose origin
+# cannot be re-run are the shape this module exists to refuse; these cite a sha.
 DEFAULT_MIN_RUNS = 3
 DEFAULT_MIN_RATE = 0.5
 DEFAULT_WINDOW = 400
@@ -432,7 +453,12 @@ def _backtest_result(
     """
     result: dict[str, Any] = {
         "head": head_sha,
-        "timestamp": datetime.now().isoformat(),
+        # Timezone-aware on purpose: this line is written to a log whose entire
+        # purpose is month-apart comparison, and a naive timestamp is the one
+        # field of the three (head, timestamp, config) that cannot explain
+        # itself later. LOCAL_DAY_TZ from runtime.py is the only home for the
+        # offset — see AGENTS.md § New subsystem growth path.
+        "timestamp": datetime.now(LOCAL_DAY_TZ).isoformat(),
         "window": window,
         "min_runs": min_runs,
         "min_rate": min_rate,

@@ -541,6 +541,36 @@ def _symbol_anchor_in(text: str) -> bool:
     return bool(re.search(r"`[\w./-]+\.(?:py|ts|vue)::[\w.]+`", text))
 
 
+def _imported_module_names(tree: ast.Module) -> dict[str, str]:
+    """Local name -> module basename, for every import anywhere in the file.
+
+    Several of the imports this has to see live inside test bodies, hence the
+    walk rather than a scan of `tree.body`.
+
+    Only the names Python actually binds are recorded. `import a.b` binds `a`,
+    not `a.b`, so `setattr(a, "CONST")` is a statement about package `a`;
+    crediting it to `b` would invent a watched constant for a module nobody
+    redirected. That form therefore contributes nothing, and the dotted target
+    `setattr(a.b, "CONST")` is not read at all.
+    """
+    names: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.asname:
+                    # `import a.b as n` binds `n` to module a.b.
+                    names[alias.asname] = alias.name.rsplit(".", 1)[-1]
+                elif "." not in alias.name:
+                    # `import a` binds `a` to module a.
+                    names[alias.name] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            for alias in node.names:
+                # `from pkg import mod` / `from pkg import mod as m`: the bound
+                # name refers to `mod` itself.
+                names[alias.asname or alias.name] = alias.name.rsplit(".", 1)[-1]
+    return names
+
+
 def _module_constants_tests_redirect() -> dict[str, set[str]]:
     """Module-level CONSTANTS that some test replaces with monkeypatch.setattr.
 
@@ -553,28 +583,21 @@ def _module_constants_tests_redirect() -> dict[str, set[str]]:
     Known limit: `setattr` targets are read as a bare name, so
     `monkeypatch.setattr(some.module.path, "CONST", ...)` (a dotted target) and a
     target passed as the string form `"pkg.mod.CONST"` are not seen. Nothing in
-    tests/ uses either; if one appears, this returns less than it should and the
-    guard below quietly narrows — which is what the self-check test exists for.
+    tests/ uses either today.
+
+    That limit has two failure modes and the self-check test only covers one. If
+    this stops seeing BACKTEST_LOG_PATH or README_PATH, the self-check goes red —
+    a regression, caught. But a *new* constant redirected by a dotted setattr was
+    never in the watch list to begin with: nothing narrowed, the self-check stays
+    green, and the guard simply never applied to it. An omission has no baseline
+    to differ from, which is why it needs a reader who knows the limit rather than
+    a test — this paragraph is that reader's only warning. Redirect a constant
+    through a bare module name and the guard covers it.
     """
     redirected: dict[str, set[str]] = {}
     for test in sorted((ROOT / "tests").rglob("test_*.py")):
         tree = ast.parse(test.read_text(encoding="utf-8"))
-        # Local name -> module basename, for every import anywhere in the file
-        # (several of these live inside test bodies).
-        names: dict[str, str] = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                for alias in node.names:
-                    base = alias.name.rsplit(".", 1)[-1]
-                    # `import a.b` binds `a`, but a later `a.b.CONST` setattr is a
-                    # dotted target this parser does not read anyway; `import a.b
-                    # as n` binds `n` to a.b, which it does.
-                    names[alias.asname or alias.name.split(".", 1)[0]] = base
-            elif isinstance(node, ast.ImportFrom):
-                for alias in node.names:
-                    # `from pkg import mod` / `from pkg import mod as m`: the
-                    # bound name refers to `mod` itself.
-                    names[alias.asname or alias.name] = alias.name.rsplit(".", 1)[-1]
+        names = _imported_module_names(tree)
         for node in ast.walk(tree):
             if not isinstance(node, ast.Call):
                 continue
@@ -668,6 +691,33 @@ def test_the_redirect_guard_actually_found_the_two_known_cases():
     redirected = _module_constants_tests_redirect()
     assert "BACKTEST_LOG_PATH" in redirected.get("doc_touchpoints", set())
     assert "README_PATH" in redirected.get("project_delivery", set())
+
+
+def test_the_import_resolver_binds_the_name_python_actually_binds():
+    # `import a.b` binds `a`, not `a.b`, so setattr(a, "CONST") is about package
+    # `a`; crediting it to `b` would invent a watched constant for a module
+    # nobody redirected. No test in the tree writes this form, so the cases are
+    # constructed here rather than left to whoever writes it first — and they
+    # call the real resolver, since a hand-copied one would drift from it.
+    def names_in(source: str) -> dict[str, str]:
+        return _imported_module_names(ast.parse(source))
+
+    assert names_in("import shenyu_gateway.doc_touchpoints") == {}
+    assert names_in("import shenyu_gateway.doc_touchpoints as dt") == {
+        "dt": "doc_touchpoints"
+    }
+    assert names_in("from shenyu_gateway import doc_touchpoints") == {
+        "doc_touchpoints": "doc_touchpoints"
+    }
+    assert names_in("from shenyu_gateway import doc_touchpoints as m") == {
+        "m": "doc_touchpoints"
+    }
+    assert names_in("import json") == {"json": "json"}
+    # An import inside a function body counts: two of the redirects in this
+    # repository are written that way.
+    assert names_in(
+        "def t():\n    import shenyu_gateway.project_delivery as module\n"
+    ) == {"module": "project_delivery"}
 
 
 def test_the_redirect_guard_reads_more_than_a_bare_name():
