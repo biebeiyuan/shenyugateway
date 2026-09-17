@@ -1,22 +1,108 @@
-name: Archive workspace snapshot
+name: Verify local archive implementation
 on:
   push:
     branches: [work/local-chat-archive]
     paths: [.github/workflows/archive-workspace.yml]
 permissions:
-  contents: read
+  contents: write
+concurrency:
+  group: local-archive-implementation
+  cancel-in-progress: false
 jobs:
-  snapshot:
+  verify-and-record:
+    if: github.repository == 'biebeiyuan/shenyugateway' && github.ref == 'refs/heads/work/local-chat-archive'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          persist-credentials: false
-      - name: Package tracked source only
-        run: git archive --format=tar.gz --output="$RUNNER_TEMP/shenyu-source.tar.gz" HEAD
-      - uses: actions/upload-artifact@v4
-        with:
-          name: archive-workspace-source
-          path: ${{ runner.temp }}/shenyu-source.tar.gz
-          retention-days: 1
-          if-no-files-found: error
+          python-version: '3.12'
+      - name: Verify and apply the already-tested source patch
+        shell: bash
+        run: |
+          set -euo pipefail
+          cat .archive-part-1.xz .archive-part-2.xz > "$RUNNER_TEMP/local-archive.patch.xz"
+          echo "0dfd35c8f7c9131a439fa3d8969ad5a9b44de45879074dac215003139d04fb7e  $RUNNER_TEMP/local-archive.patch.xz" | sha256sum --check
+          python - "$RUNNER_TEMP/local-archive.patch.xz" "$RUNNER_TEMP/local-archive.patch" <<'PY'
+          import lzma, pathlib, sys
+          pathlib.Path(sys.argv[2]).write_bytes(lzma.decompress(pathlib.Path(sys.argv[1]).read_bytes()))
+          PY
+          git apply --unidiff-zero --check "$RUNNER_TEMP/local-archive.patch"
+          git apply --unidiff-zero "$RUNNER_TEMP/local-archive.patch"
+          python - <<'PY'
+          import hashlib, pathlib
+          expected = {
+            '.env.example': 'f4f444ae9e01db26feb14d9f68348fb75bb5162c3707f7362d9bf71efd355135',
+            'DOCS_MAP.md': 'b0edc517f6031519734ae2473cfd7aca7e598f7aec21be219ff82fe62edc08cd',
+            'README.md': 'f9157e052072d2b14f3b4c9309d3b5b232075684342b38748817bb604084bebf',
+            'docs/architecture/REQUEST_CONTEXT.md': '355ea9c1eb144db6316e1251a6917e7d413626a1100e7d7a693abdb582f00568',
+            'docs/architecture/SYSTEM_ZONES.md': '038e0f207415367bcfe41b1de84436603717c2d5204b0ad14b1c60af4ef80b6a',
+            'docs/history/2026-09-17-local-chat-archive.md': 'e007db115474dfb3bc6f05f398cef3567393dfe6e991c52fbc852e8390117c36',
+            'gateway.py': 'c3ea3f77e9d3f6542cd42feeec29b6f7bb4c69539bea8ab1677e6e6ef3675e06',
+            'scripts/local_chat_archive.py': 'ca8d1430f86ee84dc2560620150ea8082700d9c453849e57df389e0460c961a7',
+            'shenyu_gateway/archive_routes.py': '99986723e8f464776827e29bcce59f6ee340b802e13cfc126b5c3df75574d178',
+            'shenyu_gateway/chat_archive.py': 'c4c7af461095e7e12c06eb5d6c57c4ad6bdc394c1062fbd41ad7bee8cce66af8',
+            'shenyu_gateway/config.py': '980aa45323013173bbd096011db71982024be95075f8cdd690163764c7babe10',
+            'shenyu_gateway/local_chat_archive.py': 'ee95fe205cfe3b1eae3ed046b6bb0a8e64bc4decd48e8a413daddf9b8ea25f44',
+            'tests/test_local_archive_cli.py': 'd1c52000e8a5e30448a6c59ff2dfd289b1d27ab6e1bac87175e1bc2a6faecf90',
+            'tests/test_local_archive_integration.py': 'b7b9de2be205be6a8416156600d7ecb94b4b10e441b10cf1bfbf3dcef445876d',
+            'tests/test_local_chat_archive.py': '9f00e7e3e974273ebdba3f4e8740d5dcfff1bce53ad6797f3789d5a22dce02d0',
+          }
+          for name, digest in expected.items():
+              assert hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest() == digest, name
+          print('All 15 implementation files match the locally tested bytes.')
+          PY
+          git diff --exit-code -- pwa shenyu_gateway/prepare_messages.py shenyu_gateway/context_window.py shenyu_gateway/context_layers.py shenyu_gateway/chat_pipeline.py shenyu_gateway/upstream_client.py shenyu_gateway/upstream_adapter.py shenyu_gateway/stars shenyu_gateway/mem_notes
+          git add -- .env.example DOCS_MAP.md README.md docs/architecture/REQUEST_CONTEXT.md docs/architecture/SYSTEM_ZONES.md docs/history/2026-09-17-local-chat-archive.md gateway.py scripts/local_chat_archive.py shenyu_gateway/archive_routes.py shenyu_gateway/chat_archive.py shenyu_gateway/config.py shenyu_gateway/local_chat_archive.py tests/test_local_archive_cli.py tests/test_local_archive_integration.py tests/test_local_chat_archive.py
+      - run: pip install -e '.[dev]'
+      - name: Record reviewed book boundary and run all backend tests
+        shell: bash
+        run: |
+          set -euo pipefail
+          python scripts/resident_home.py review origin_books --no-impact --actor ChatGPT --summary 'Archive storage routing only. Frozen original text and append-only book annotations still use Supabase.'
+          python -m py_compile gateway.py shenyu_gateway/config.py shenyu_gateway/chat_archive.py shenyu_gateway/archive_routes.py shenyu_gateway/local_chat_archive.py scripts/local_chat_archive.py
+          python -m pytest tests/ -x -q
+          python scripts/resident_home.py check
+          git diff --check
+          git diff --cached --check
+      - name: Record this isolated delivery
+        shell: bash
+        run: |
+          python scripts/project_delivery.py record \
+            --id local-chat-archive-storage-20260917 \
+            --title '本地聊天档案第一批：存储、浏览、搜索与迁移工具' \
+            --product 'PWA 聊天端' --kind architecture \
+            --summary '新增独立本地档案后端；默认仍用云端，尚未迁移线上数据。' \
+            --touchpoint 'PWA 回看、档案、原文字面搜索' \
+            --why '原文与运行清理分开，不改沈予收到的上下文。' \
+            --status verified_local \
+            --verification 'Python 1168 tests passed; maps, resident boundaries, compilation and diff checks passed. Frontend build/smoke pending PR CI; no VPS/device/deployment verification.' \
+            --path shenyu_gateway/local_chat_archive.py \
+            --path shenyu_gateway/archive_routes.py \
+            --path shenyu_gateway/chat_archive.py \
+            --path shenyu_gateway/config.py \
+            --path gateway.py \
+            --path scripts/local_chat_archive.py \
+            --path tests/test_local_chat_archive.py \
+            --path tests/test_local_archive_integration.py \
+            --path tests/test_local_archive_cli.py \
+            --doc docs/architecture/REQUEST_CONTEXT.md \
+            --doc docs/history/2026-09-17-local-chat-archive.md \
+            --commit "$GITHUB_SHA" --recorded-by ChatGPT
+          git add -- resident_home_manifest.json project_delivery_log.jsonl
+      - name: Remove transfer-only files and commit to the feature branch only
+        shell: bash
+        run: |
+          set -euo pipefail
+          git rm -- .archive-part-1.xz .archive-part-2.xz .github/workflows/archive-workspace.yml
+          python -m pytest tests/ -x -q
+          git diff --cached --check
+          test "$GITHUB_REF" = refs/heads/work/local-chat-archive
+          remote_head=$(git ls-remote origin refs/heads/work/local-chat-archive | cut -f1)
+          test "$remote_head" = "$GITHUB_SHA"
+          git config user.name ChatGPT
+          git config user.email noreply@openai.com
+          git commit -m 'feat: add opt-in local chat archive and migration tools without context changes'
+          git push origin HEAD:refs/heads/work/local-chat-archive
+          echo "Verified feature commit: $(git rev-parse HEAD)"
