@@ -101,6 +101,7 @@
 
 | 文档 | 状态 |
 |------|------|
+| `docs/history/2026-09-17-local-chat-archive.md` | 本地原文档案第一批的批准边界、验证记录及后续未完成项；不是已部署声明 |
 | `docs/README.md` | GitHub 浏览 `docs/` 目录时使用的一行入口指针；不维护独立文档清单或事实 |
 | `SYSTEM_INVENTORY.md` | 旧 Windows 工作区清单，已被 README 的 Maintenance Map 和本文件取代；保留作历史参考，不作为当前入口 |
 | `docs/history/REFACTOR_PLAN_2026-07.md` | 2026-07 完成的结构重构计划（gateway.py、mem_notes、tool_schemas、gateway_tools、recall 拆分）；遗留 Phase 4/5 由 `OPTIMIZATION_PLAN.md` 状态表跟踪 |

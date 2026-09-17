@@ -198,6 +198,12 @@ class RuntimeConfig:
         self.heartbeat_inject_every: int = _env_int("HEARTBEAT_INJECT_EVERY", 5, 1, 50)
         self.enable_heartbeat_archive: bool = _env_bool("ENABLE_HEARTBEAT_ARCHIVE", True)
         self.enable_chat_archive: bool = _env_bool("ENABLE_CHAT_ARCHIVE", True)
+        # Deployment-only: changing the source requires a verified migration,
+        # not an Admin preference toggle. Keep legacy production behavior by default.
+        self.chat_archive_backend: str = os.getenv("CHAT_ARCHIVE_BACKEND", "supabase").strip().lower()
+        if self.chat_archive_backend not in {"supabase", "sqlite"}:
+            raise ValueError("CHAT_ARCHIVE_BACKEND must be supabase or sqlite")
+        self.chat_archive_db_path: str = os.getenv("CHAT_ARCHIVE_DB_PATH", "").strip()
         self.chat_archive_seen_retention: int = _env_int("CHAT_ARCHIVE_SEEN_RETENTION", 10000, 1000, 200000)
         self.heartbeat_archive_settle_hours: int = _env_int("HEARTBEAT_ARCHIVE_SETTLE_HOURS", 6, 0, 720)
         self.heartbeat_archive_interval_seconds: int = _env_int("HEARTBEAT_ARCHIVE_INTERVAL_SECONDS", 600, 60, 86400)
@@ -336,6 +342,8 @@ class RuntimeConfig:
             "heartbeat_inject_every": self.heartbeat_inject_every,
             "enable_heartbeat_archive": self.enable_heartbeat_archive,
             "enable_chat_archive": self.enable_chat_archive,
+            "chat_archive_backend": self.chat_archive_backend,
+            "chat_archive_db_path": self.chat_archive_db_path,
             "chat_archive_seen_retention": self.chat_archive_seen_retention,
             "heartbeat_archive_settle_hours": self.heartbeat_archive_settle_hours,
             "heartbeat_archive_interval_seconds": self.heartbeat_archive_interval_seconds,

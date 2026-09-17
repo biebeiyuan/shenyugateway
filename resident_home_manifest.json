@@ -360,19 +360,19 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "6703bb5267ac8972f9d74c98947df8f50fd904a65cb4af96dfbab1a491b6d548",
+        "fingerprint": "fffff3094da4a0821f16d0159722082fb15b4d93fe2e7156a14268a46757a93a",
         "file_hashes": {
-          "shenyu_gateway/archive_routes.py": "551e8d929fb818e26ac9636b17ee47e73e9826b7e2c9c230d7bd45c12c201352",
+          "shenyu_gateway/archive_routes.py": "99986723e8f464776827e29bcce59f6ee340b802e13cfc126b5c3df75574d178",
           "shenyu_gateway/conflict_books.py": "e9b4d7b8f961e7143d21ade98cd66594e7e9522bcd47797efa4dec06958e01b3",
           "shenyu_gateway/context_layers.py": "7f50744b1d929134f6fb0a783253f65e09c42ee49351d1ad3586839d9184ee86",
           "shenyu_gateway/gateway_tools/_books.py": "9c02f8065cc671b9519e83f7b6ba936b37c4a7a6e5ca24b2ff9be6d11c82520f",
           "shenyu_gateway/tool_schemas.py": "7df4e5c26d2b0370dcd7e3f013a7465596ea2ae331ff81528946be89007eb06a"
         },
-        "commit": "406b6b999e0df7d22f3299d52d0a473dd08347d1",
-        "revision": "406b6b999e0df7d22f3299d52d0a473dd08347d1-dirty",
+        "commit": "3104bef2962e723514fd40adca6e345c9fcb5d86",
+        "revision": "3104bef2962e723514fd40adca6e345c9fcb5d86-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-15T19:51:51+08:00",
-        "reviewed_by": "Claude Opus 5"
+        "reviewed_at": "2026-09-17T19:36:07+08:00",
+        "reviewed_by": "ChatGPT"
       }
     },
     "home": {
