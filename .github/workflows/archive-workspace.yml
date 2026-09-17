@@ -12,11 +12,18 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Package tracked source only
-        run: git archive --format=tar.gz --output="$RUNNER_TEMP/shenyu-source.tar.gz" HEAD
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+        working-directory: pwa
+      - run: npm ci
+        working-directory: admin
+      - name: Package locked dependencies for isolated tests
+        run: tar -czf "$RUNNER_TEMP/frontend-dependencies.tar.gz" pwa/node_modules admin/node_modules
       - uses: actions/upload-artifact@v4
         with:
-          name: archive-identity-source
-          path: ${{ runner.temp }}/shenyu-source.tar.gz
+          name: archive-frontend-dependencies
+          path: ${{ runner.temp }}/frontend-dependencies.tar.gz
           retention-days: 1
           if-no-files-found: error
