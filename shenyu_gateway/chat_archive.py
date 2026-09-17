@@ -117,7 +117,19 @@ class ChatArchiveService:
         self.store = store
         self.supabase = supabase
         self.cfg = cfg
-        self._use_local_archive = getattr(cfg, "chat_archive_backend", "supabase") == "sqlite"
+        self._archive_destination = self._destination()
+        self._use_local_archive = self._archive_destination[0] == "sqlite"
+
+    def _destination(self) -> tuple:
+        return (getattr(self.cfg, "chat_archive_backend", "supabase"),
+                getattr(self.cfg, "chat_archive_db_path", ""),
+                getattr(self.cfg, "gateway_db_path", ""))
+
+    def _check_destination(self) -> None:
+        # Unsupported config mutation must not silently switch either direction
+        # midway through a pass. Admin does not accept archive deployment fields.
+        if self._destination() != self._archive_destination:
+            raise ValueError("Chat archive destination changed during an archive pass")
 
     def enabled(self) -> bool:
         return bool(
@@ -129,9 +141,10 @@ class ChatArchiveService:
     def _append_local_rows(self, rows: list[dict]) -> None:
         # Open inside the safe archive task, not in chat preparation. A disk
         # failure after startup must not abort a conversation or mark hashes seen.
+        self._check_destination()
         archive = local_archive_for_config(self.cfg)
         if archive is None:
-            raise ValueError("Local archive backend changed during an archive pass")
+            raise ValueError("Chat archive destination changed during an archive pass")
         archive.append_legacy_rows(rows)
 
     async def archive_window(
@@ -143,6 +156,7 @@ class ChatArchiveService:
         event_at: Optional[str] = None,
     ) -> dict[str, Any]:
         """Archive unseen user/assistant messages from one client window."""
+        self._check_destination()
         if not self.enabled():
             return {"archived": 0}
 

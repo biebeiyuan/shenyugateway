@@ -23,6 +23,10 @@ RUN npm run build
 
 FROM python:3.12-slim
 
+# Validate the linked SQLite library, not a separately installed sqlite3 CLI.
+# The distro inside this floating image can change; fail at build, print evidence.
+RUN python -c "import sqlite3; assert sqlite3.sqlite_version_info >= (3, 30, 0), sqlite3.sqlite_version; print('SQLite', sqlite3.sqlite_version)"
+
 WORKDIR /app
 
 # Coolify/CI can pass SOURCE_COMMIT at build time; the resident home then
@@ -50,6 +54,7 @@ COPY pwa/src/meta/roomEntry.ts ./pwa/src/meta/roomEntry.ts
 COPY README.md DOCS_MAP.md ./
 COPY docs/architecture/SYSTEM_ZONES.md ./docs/architecture/SYSTEM_ZONES.md
 COPY scripts/backfill_chat_archive.py ./scripts/backfill_chat_archive.py
+COPY scripts/local_chat_archive.py ./scripts/local_chat_archive.py
 COPY scripts/resident_home.py ./scripts/resident_home.py
 COPY --from=admin-builder /admin/dist ./admin/dist
 COPY --from=pwa-builder /pwa/dist ./pwa/dist

@@ -25,6 +25,18 @@ _ORIGINAL = _COLUMNS[:-1]
 _PUBLIC = ('id', 'session_tag', 'role', 'content', 'event_at', 'archived_at')
 _APPLICATION_ID = 0x53484341  # SHCA; refuse an unrelated or runtime database.
 _VERSION = 1
+# Capability floor: FILTER aggregates require 3.30; Python itself requires 3.12.
+_MIN_SQLITE = (3, 30, 0)
+# Unlike ROW_NUMBER(), this selection can be flattened so the caller's day/time
+# index and LIMIT apply before examining unrelated history. The earlier-row test
+# must remain global: moving a page cursor inside it could resurrect old copies.
+_VISIBLE_ROWS = """SELECT current.* FROM archive_messages AS current
+    WHERE current.deleted_at IS NULL AND NOT EXISTS (
+        SELECT 1 FROM archive_messages AS earlier
+        WHERE earlier.fold_key = current.fold_key AND earlier.deleted_at IS NULL
+          AND (earlier.event_us, earlier.archive_us, earlier.id)
+              < (current.event_us, current.archive_us, current.id)
+    )"""
 _EPOCH = datetime(1970, 1, 1, tzinfo=timezone.utc)
 
 
@@ -56,10 +68,32 @@ def _limit(value: int, default: int) -> int:
     return max(1, min(int(value or default), 1000))
 
 
+def _uncased_literal_fragment(needle: str) -> str:
+    """A necessary literal substring safe for SQLite's C-level instr prefilter.
+
+    SQLite LIKE is ASCII-case-insensitive, not Python's Unicode IGNORECASE:
+    blind LIKE prefiltering would lose É/é, k/K, i/ı and s/ſ matches. An uncased
+    run (e.g. Chinese, digits or punctuation) has no such ambiguity. Pure cased
+    words use the regex alone. instr also preserves %, _, quotes and NUL bytes.
+    """
+    longest = current = ''
+    for char in needle:
+        if char.lower() == char.upper() == char.casefold():
+            current += char
+            if len(current) > len(longest):
+                longest = current
+        else:
+            current = ''
+    return longest
+
+
 class LocalChatArchive:
     """One private SQLite file. Creation must be an explicit migration action."""
 
     def __init__(self, path: str | Path, *, create: bool = False):
+        if sqlite3.sqlite_version_info < _MIN_SQLITE:
+            raise RuntimeError('local chat archive requires SQLite >= 3.30.0; '
+                               f'found {sqlite3.sqlite_version_info}')
         self.path = Path(path).expanduser().resolve()
         created = False
         if not self.path.exists():
@@ -96,14 +130,8 @@ class LocalChatArchive:
                     CREATE INDEX archive_day ON archive_messages(event_day, event_us, archive_us, id);
                     CREATE INDEX archive_session ON archive_messages(session_tag, event_us, archive_us, id);
                     CREATE INDEX archive_fold ON archive_messages(fold_key, event_us, archive_us, id);
-                    CREATE VIEW archive_visible AS
-                        SELECT * FROM (
-                            SELECT *, ROW_NUMBER() OVER (
-                                PARTITION BY fold_key ORDER BY event_us, archive_us, id
-                            ) AS copy_rank
-                            FROM archive_messages WHERE deleted_at IS NULL
-                        ) WHERE copy_rank = 1;
                 ''')
+                conn.execute(f'CREATE VIEW archive_visible AS {_VISIBLE_ROWS}')
                 conn.execute(f'PRAGMA application_id = {_APPLICATION_ID}')
                 conn.execute(f'PRAGMA user_version = {_VERSION}')
         except Exception:
@@ -116,7 +144,9 @@ class LocalChatArchive:
     @contextmanager
     def _connect(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
         uri = self.path.as_uri() + ('?mode=rw' if write else '?mode=ro')
-        conn = sqlite3.connect(uri, uri=True, timeout=5.0)
+        # Writes below issue BEGIN IMMEDIATE explicitly; with conn commits or
+        # rolls back that transaction. Do not also ask CPython to BEGIN implicitly.
+        conn = sqlite3.connect(uri, uri=True, timeout=5.0, isolation_level=None)
         conn.row_factory = sqlite3.Row
         try:
             conn.execute('PRAGMA busy_timeout = 5000')
@@ -193,7 +223,11 @@ class LocalChatArchive:
                 f'SELECT {",".join(_COLUMNS)} FROM archive_messages ORDER BY id')]
 
     def verify_rows(self, rows: Iterable[dict]) -> dict[str, int]:
-        """Exact source verification, including tombstones; never repairs in place."""
+        """Exact cutover/snapshot proof, not a health check after further writes.
+
+        Compare only against an export of the SAME frozen snapshot. Additional
+        messages or local tombstones correctly fail; never repair in place.
+        """
         source: dict[str, dict] = {}
         for row in rows:
             self._validated(row, legacy=True)
@@ -211,7 +245,8 @@ class LocalChatArchive:
         with self._connect() as conn:
             total, active = conn.execute('SELECT COUNT(*), COUNT(*) FILTER '
                                           '(WHERE deleted_at IS NULL) FROM archive_messages').fetchone()
-            visible = conn.execute('SELECT COUNT(*) FROM archive_visible').fetchone()[0]
+            visible = conn.execute('SELECT COUNT(DISTINCT fold_key) FROM archive_messages '
+                                   'WHERE deleted_at IS NULL').fetchone()[0]
         return {'total': total, 'active': active, 'visible': visible}
 
     @staticmethod
@@ -241,7 +276,7 @@ class LocalChatArchive:
             params = (first.isoformat(), last.isoformat())
         with self._connect() as conn:
             return [dict(row) for row in conn.execute(
-                f'SELECT event_day AS date, COUNT(*) AS count FROM archive_visible '
+                f'SELECT event_day AS date, COUNT(*) AS count FROM ({_VISIBLE_ROWS}) '
                 f'{clause} GROUP BY event_day ORDER BY event_day', params)]
 
     def list_messages(self, *, date: str | None = None, before: str | None = None,
@@ -262,7 +297,7 @@ class LocalChatArchive:
         order = 'ASC' if ascending else 'DESC'
         with self._connect() as conn:
             rows = [dict(row) for row in conn.execute(
-                f'SELECT {",".join(_PUBLIC)} FROM archive_visible {where} '
+                f'SELECT {",".join(_PUBLIC)} FROM ({_VISIBLE_ROWS}) {where} '
                 f'ORDER BY event_us {order}, archive_us {order}, id {order} LIMIT ?',
                 (*params, _limit(limit, 200)))]
         return rows if ascending else rows[::-1]
@@ -276,18 +311,26 @@ class LocalChatArchive:
         # Exact old Python authority: literal regex + IGNORECASE. Unlike LIKE/FTS
         # this preserves %, _, quotes, one/two-character Chinese and emoji queries.
         pattern = re.compile(re.escape(needle), re.IGNORECASE)
-        clauses = ['archive_literal(content) = 1']
+        clauses = []
         params: list[Any] = []
+        fragment = _uncased_literal_fragment(needle)
+        if fragment:
+            clauses.append('instr(content, ?) > 0')
+            params.append(fragment)
+        # Keep regex as the authority; the prefilter may admit false positives,
+        # never remove a true match. Put the cheap filter before the callback.
+        clauses.append('archive_literal(content) = 1')
         if role in ('user', 'assistant'):
             clauses.append('role = ?'); params.append(role)
         if cursor:
             clause, values = self._cursor_filter(cursor, '<')
             clauses.append(clause); params.extend(values)
-        cap = _limit(limit, 60)
+        # Match the cloud search endpoint, including limit=0 -> 1.
+        cap = max(1, min(int(limit), 200))
         with self._connect() as conn:
             conn.create_function('archive_literal', 1, lambda text: int(bool(pattern.search(text or ''))), deterministic=True)
             rows = [dict(row) for row in conn.execute(
-                f'SELECT {",".join(_PUBLIC)} FROM archive_visible WHERE {" AND ".join(clauses)} '
+                f'SELECT {",".join(_PUBLIC)} FROM ({_VISIBLE_ROWS}) WHERE {" AND ".join(clauses)} '
                 'ORDER BY event_us DESC, archive_us DESC, id DESC LIMIT ?', (*params, cap + 1))]
         has_more = len(rows) > cap
         hits = rows[:cap]
@@ -327,6 +370,10 @@ class LocalChatArchive:
                 output = sqlite3.connect(temporary)
                 try:
                     source.backup(output, pages=256)
+                    # This is the finished private snapshot, never the live DB.
+                    # Remove the snapshot's WAL requirement so a single-file
+                    # backup also opens on read-only media without -wal/-shm.
+                    output.execute('PRAGMA journal_mode = DELETE')
                     if output.execute('PRAGMA integrity_check').fetchone()[0] != 'ok':
                         raise ValueError('backup integrity check failed')
                 finally:

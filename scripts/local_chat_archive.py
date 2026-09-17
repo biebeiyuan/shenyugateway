@@ -103,7 +103,8 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser('init', help='Explicitly initialize an EMPTY archive (new installations only)')
     sub.add_parser('stats', help='Read counts only')
     for command in ('import-jsonl', 'verify'):
-        item = sub.add_parser(command)
+        item = sub.add_parser(command, help=('Exact frozen-snapshot/cutover proof; not a post-cutover health check'
+                                            if command == 'verify' else 'Preview or apply a source import'))
         item.add_argument('--source', required=True, type=Path)
         if command == 'import-jsonl':
             item.add_argument('--apply', action='store_true', help='Write after preview; default is read-only')

@@ -36,3 +36,35 @@ Message identities must be carried out-of-band and excluded from upstream payloa
 - PWA source, history/wire logic, preparation, context/window, provider, Stars and Mem source files are unchanged from the reviewed base. This is evidence for storage-only scope, not a claim of identical model-generated replies.
 - Origin-book shared router was reviewed for no resident impact; original-text freezing and annotation behavior still use Supabase.
 - No VPS login, data import, cloud deletion, production backend switch, encryption/scheduling or device-side check was performed. Frontend build/smoke verification is left to the repository CI on the draft PR.
+
+## Review follow-up (storage only; identity work remains pending)
+
+The owner supplied eight review points. Reproduced the full-window scan and limit drift; removed the reintroduced transfer-only workflow from the final tree. The earlier PR description had not been updated after the workflow was reintroduced for the next task. No dependency-packaging workflow belongs in the merge result.
+
+- `archive_visible` originally ranked all live rows before date/LIMIT filtering. The public reader now uses an indexed correlated earlier-copy selection with the same representative rows. Existing v1 database files remain readable without mutation of originals or their stored view. A cursor must not resurrect a folded sibling; regressions cover that invariant and real SQLite VM-step budgets.
+- A C-level literal fragment prefilter reduces Python regex callbacks for Chinese/punctuation queries. The suggested blind `LIKE` prefilter was not adopted because it loses valid Unicode case-insensitive matches. `instr` on an uncased fragment is conservative; pure cased queries still use regex without prefilter. Search remains potentially linear, not fully indexed full-text search.
+- Cold WAL reopen succeeds in a fresh local process after a clean writer exit and absent sidecars, with a writable directory. Completed backups additionally use `DELETE` journal mode; an unprivileged process opened one on a non-writable directory with no sidecars. This is local evidence, NOT a VPS cold-start result.
+- Archive configuration fields were already absent from the POST request schema; a real HTTP regression now proves no mutation or persisted override. Found and blocked an indirect switch through `gateway_db_path` when the archive path follows the runtime file. In-flight destination changes now fail symmetrically instead of silently writing the previously selected cloud backend.
+- Search limits now match cloud (200 maximum; zero becomes one). Local exact calendar counts intentionally have no cloud 10,000-row fetch ceiling. Migration proof compares original rows, not UI counts.
+- `verify` is explicitly frozen-snapshot/cutover proof and must fail after additions/deletions compared to an old export. It is not a health probe. Runtime inspection/backup recovery use separate checks.
+- Python was already >=3.12. Added a linked SQLite >=3.30.0 build/runtime guard and explicit manual transactions. Import rejects unsafe cursor IDs atomically; UUIDs are unaffected.
+- Additional deployment defect: Docker omitted the new archive CLI. The image now copies it, with a regression preventing another omission.
+
+### Reproducible synthetic measurement
+
+Run `python -m tests.archive_read_benchmark --rows 20861 100000`. The harness creates a disposable database only, no credentials or real chat text; about 0.8 KB text per row over one year, 10% legacy duplicate copies, median of three warm queries with instruction counting. It captures the replacement SQL from the real public methods and asserts results equal the old window query. Local environment: Python 3.13.5, SQLite 3.46.1. These numbers are not VPS latencies or promised speedups.
+
+| Synthetic rows | Query | Old median ms | New median ms | Python callbacks old → new |
+|---|---|---:|---:|---:|
+| 20,861 | Month days | 38.308 | 1.522 | 0 → 0 |
+| 20,861 | Latest 60 | 83.951 | 0.171 | 0 → 0 |
+| 20,861 | Literal 沈予 | 72.681 | 18.082 | 18,775 → 42 |
+| 100,000 | Month days | 192.239 | 8.251 | 0 → 0 |
+| 100,000 | Latest 60 | 401.144 | 0.172 | 0 → 0 |
+| 100,000 | Literal 沈予 | 300.340 | 30.689 | 90,000 → 68 |
+
+Old EXPLAIN: `SCAN archive_messages USING INDEX archive_fold` plus window co-routines and a temporary B-tree for outer GROUP BY/ORDER BY. New month EXPLAIN: `SEARCH current USING INDEX archive_day (event_day>? AND event_day<?)` plus correlated `SEARCH earlier USING INDEX archive_fold`. New latest/search EXPLAIN: `SCAN current USING INDEX archive_time` plus that fold lookup, no temporary ORDER BY tree. The word SCAN in this ordered index plan does not mean the entire index is consumed: the LIMIT stops the latest-page read early; measured VM-step tests guard this.
+
+### Review verification and remaining boundary
+
+Local full Python suite: **1194 passed** (26 new review cases over 1168). New behavior was first reproduced failing; characterization tests also confirmed the already-correct POST field exclusion, WAL writable-directory cold start, snapshot verification, and atomic invalid-ID rejection. Model preparation, client wire history, PWA/source, providers, Stars/Mem and recovery code are unchanged by this review. The pending message-ID/reply-completion/recovery work is still pending; never mark it finished based on these storage tests. Actual VPS version/permissions, real source migration, deployment, and device verification were not performed.
