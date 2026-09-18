@@ -4,6 +4,8 @@
 
 ## Context Layers
 
+The Admin 回响 card has an independent `ENABLE_ECHO` switch (default `true`). Saving it as `false` omits the saved `ECHO_PROMPT` from subsequent context builds without clearing that text or changing `ECHO_RETENTION_TURNS`. Re-enabling reuses the saved prompt; an empty prompt still injects nothing. The switch uses the existing Admin config persistence and SQLite override restore path. It does not change Heartbeat, existing echo history, upstream retention, or response-tag filtering; it stops requesting echoes, not arbitrary model-authored echo output.
+
 Context is assembled in the order Shenyu should wake into it:
 
 | Layer | Placement | Contents | Cache policy |

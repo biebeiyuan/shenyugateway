@@ -28,6 +28,7 @@ export interface GatewayConfig {
   cold_start_idle_minutes: number
   model_mapping: Record<string, string>
   wake_welcome_message?: string
+  enable_echo?: boolean
   echo_prompt?: string
   echo_retention_turns?: number
   // weather (status suffix / /api/gateway/weather)
