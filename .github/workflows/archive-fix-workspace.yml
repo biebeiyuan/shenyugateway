@@ -12,10 +12,15 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
-      - name: Export tracked source only
-        run: git archive --format=tar HEAD > /tmp/shenyu-source.tar
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci
+        working-directory: pwa
+      - name: Package locked test dependencies
+        run: tar -czf /tmp/pwa-test-deps.tar.gz -C pwa node_modules
       - uses: actions/upload-artifact@v4
         with:
-          name: archive-fix-source
-          path: /tmp/shenyu-source.tar
+          name: archive-fix-pwa-deps
+          path: /tmp/pwa-test-deps.tar.gz
           retention-days: 1
