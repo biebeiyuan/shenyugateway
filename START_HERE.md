@@ -17,6 +17,9 @@
 |---|---|---|
 | 快速认识项目和文件放在哪里 | `README.md` | `docs/architecture/SYSTEM_ZONES.md` |
 | 查一次请求到底怎样走 | `docs/architecture/REQUEST_CONTEXT.md` | `DEBUGGING_GUIDE.md` § Chat Request Flow |
+| 搜不到某句话、按天翻档案或迁移聊天库 | `docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth) | 查写入和读取的短路径；不要拿上下文快照当完整档案 |
+| PWA 后台回来少了回复、Roll 找回不对 | `README.md` § PWA chat frontend | `docs/architecture/REQUEST_CONTEXT.md` § External Frontend Contracts；恢复路径不等于档案搜索 |
+| 确认一项改动能否上线、数据是否已经切换 | `docs/DELIVERY.md` § 交付状态梯 | `docs/DELIVERY.md` § 验证基线与施工簿记法；查当前提交的证据，不把旧 CI 当新提交的结果 |
 | 查工具、mixed tool 或 pending transcript | 本页 § 工具人话解释 | `docs/architecture/REQUEST_CONTEXT.md` § Streaming And Tool Calls |
 | 查 Memory Island、裁剪、cold start | `docs/architecture/REQUEST_CONTEXT.md` | `docs/architecture/AUDIT_MATRIX.md` § 区域五：上下文窗口与 Memory Island |
 | 查 Mem、Stars、Room、来历书/共享书架（旧内部名：矛盾书） | `docs/architecture/SYSTEM_ZONES.md` § 住户数据注意事项 | 按对象读 `docs/architecture/MEMORY_ROOM.md` 或 `docs/architecture/REQUEST_CONTEXT.md`；改核心语义再读 `DESIGN.md` |

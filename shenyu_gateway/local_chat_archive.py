@@ -64,8 +64,8 @@ def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def _limit(value: int, default: int) -> int:
-    return max(1, min(int(value or default), 1000))
+def _limit(value: int, default: int, *, maximum: int = 1000) -> int:
+    return max(1, min(int(value or default), maximum))
 
 
 def _uncased_literal_fragment(needle: str) -> str:
@@ -326,7 +326,7 @@ class LocalChatArchive:
             clause, values = self._cursor_filter(cursor, '<')
             clauses.append(clause); params.extend(values)
         # Match the cloud search endpoint, including limit=0 -> 1.
-        cap = max(1, min(int(limit), 200))
+        cap = _limit(limit, 1, maximum=200)
         with self._connect() as conn:
             conn.create_function('archive_literal', 1, lambda text: int(bool(pattern.search(text or ''))), deterministic=True)
             rows = [dict(row) for row in conn.execute(
@@ -338,7 +338,10 @@ class LocalChatArchive:
         for row in hits:
             text = row.pop('content')
             match = pattern.search(text)
-            assert match is not None  # Same predicate as SQLite above.
+            if match is None:
+                # An invariant violation must fail equally under python -O;
+                # silently skipping a hit would corrupt counts/cursor semantics.
+                raise RuntimeError('archive search predicate mismatch')
             results.append({**row,
                 'snippet_before': text[max(0, match.start()-30):match.start()],
                 'snippet_match': text[match.start():match.end()],

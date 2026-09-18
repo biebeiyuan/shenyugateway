@@ -80,3 +80,25 @@ jobs:
             admin/test-results/
           if-no-files-found: ignore
           retention-days: 7
+
+  image-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+    env:
+      IMAGE_TAG: shenyu-ci:${{ github.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Build the production Dockerfile without publishing
+        run: docker build --pull --build-arg SOURCE_COMMIT="$(git rev-parse HEAD)" --tag "$IMAGE_TAG" .
+      - name: Check packaged archive CLI offline
+        run: docker run --rm --network none "$IMAGE_TAG" python scripts/local_chat_archive.py --help
+      - name: Check linked SQLite and unchanged default backend offline
+        run: >-
+          docker run --rm --network none "$IMAGE_TAG" python -c
+          "import sqlite3, sys; from shenyu_gateway.config import RuntimeConfig;
+          cfg = RuntimeConfig(); print('SQLite', sqlite3.sqlite_version, 'archive backend', cfg.chat_archive_backend);
+          sys.exit(0 if sqlite3.sqlite_version_info >= (3, 30, 0) and cfg.chat_archive_backend == 'supabase' else 1)"
