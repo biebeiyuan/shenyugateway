@@ -209,7 +209,8 @@ async def test_cloud_capture_uses_ignore_duplicates_not_merge(tmp_path):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize('room', [False, True])
-async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_path, monkeypatch, room):
+@pytest.mark.parametrize('flag', [True, False, None, 0, 1, 0.5, 'true', 'false', [], {'enabled': True}])
+async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_path, monkeypatch, room, flag):
     import asyncio
     from unittest.mock import AsyncMock
     from starlette.requests import Request
@@ -233,8 +234,8 @@ async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_pat
     cfg.client_tool_surface = 'none'
     cfg.anthropic_cache_ttl = '1h'
     cfg.openai_cache_ttl = '5m'
-    history = [{**message('u1', 'question', 'user'), 'archive_replay': True},
-               {**message('a1', 'half'), 'archive_pending': True},
+    history = [{**message('u1', 'question', 'user'), 'archive_replay': flag},
+               {**message('a1', 'half'), 'archive_pending': flag},
                message('u2', '【窗边 · 18/09 18:00】' if room else 'next question', 'user')]
     deps = preparation.PrepareMessagesDeps(cfg=cfg, store=store, supabase_client=None,
         context_builder_factory=lambda *args: builder, client_name_from_request=lambda request: 'shenyu-pwa',
@@ -246,14 +247,19 @@ async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_pat
     prepared, meta = await preparation.prepare_messages(Request({'type': 'http', 'headers': []}), body, deps)
     await asyncio.gather(*tuple(preparation._BACKGROUND_TASKS))
     assert all('archive_event' not in row and 'archive_pending' not in row and 'archive_replay' not in row for row in prepared)
-    assert meta['snapshot_messages'][0]['archive_replay'] is True
+    assert ('archive_replay' in meta['snapshot_messages'][0]) is (flag is True)
     assert meta['snapshot_messages'][0]['archive_event'] == history[0]['archive_event']
-    assert meta['snapshot_messages'][1]['archive_pending'] is True
+    assert ('archive_pending' in meta['snapshot_messages'][1]) is (flag is True)
+    if flag is True:
+        assert meta['snapshot_messages'][0]['archive_replay'] is True
+        assert meta['snapshot_messages'][1]['archive_pending'] is True
     assert meta['reply_archive_event'] == reply_event
-    assert [row['role'] for row in archive.list_messages()] == ['user', 'user']
+    expected_roles = ['user', 'user'] if flag is True else ['user', 'assistant', 'user']
+    assert [row['role'] for row in archive.list_messages()] == expected_roles
     snapshot = write_completion_context_snapshot(store, meta, 'complete', echo='private')
     assert snapshot['messages'][-1]['archive_event'] == reply_event
-    assert body.messages[1].archive_pending is True
+    assert body.messages[1].archive_pending == flag
+    assert body.messages[0].archive_replay == flag
 
 
 @pytest.mark.asyncio

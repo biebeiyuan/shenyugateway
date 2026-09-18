@@ -114,3 +114,62 @@ it('reports a provenance-only change so the caller persists an otherwise complet
   expect(wireMessages(messages)[1]).toHaveProperty('archive_replay', true)
   expect(applyReplyRecovery(messages, payload)).toBe(false)
 })
+
+describe('variant deduplication uses the same identity as recovery', () => {
+  const archivedVariant = (id: string, content = '相同的回答') =>
+    snapshotMessage(row('assistant', content, { archiveEvent: event(id) }))
+
+  it('keeps equal words from distinct archive-only versions', () => {
+    const target = row('assistant', '相同的回答', { archiveEvent: event('v2'), truncated: true })
+    target.variants = [archivedVariant('v1'), archivedVariant('v2')]
+    target.selectedVariantIndex = 1
+    const messages = [row('user', '同一个问题'), target]
+    expect(applyReplyRecovery(messages, { replies: [
+      { archive_event: event('v2'), content: '相同的回答' },
+    ] })).toBe(true)
+    expect(target.variants.map(variant => variant.archiveEvent?.id)).toEqual(['v1', 'v2'])
+    expect(target.selectedVariantIndex).toBe(1)
+    applyVariant(target, target.variants[0], 0)
+    expect(wireMessages([target])[0]).toHaveProperty('archive_event.id', 'v1')
+  })
+
+  it('deduplicates the same event when its display representation changes', () => {
+    const target = row('assistant', '相同的回答', { archiveEvent: event('v1'), truncated: true })
+    target.variants = [archivedVariant('v1'),
+      { ...archivedVariant('v1', '\n\n相同的回答'), echo: '曾经显示的回响' }]
+    const messages = [row('user', '同一个问题'), target]
+    expect(applyReplyRecovery(messages, { replies: [
+      { archive_event: event('v1'), content: '相同的回答' },
+    ] })).toBe(true)
+    expect(target.variants).toHaveLength(1)
+    expect(target.variants[0].archiveEvent).toEqual(event('v1'))
+  })
+
+  it('recognizes the same version from either replyVersionId or archiveEvent', () => {
+    const target = row('assistant', '相同的回答', { archiveEvent: event('v1'), truncated: true })
+    target.variants = [archivedVariant('v1'),
+      snapshotMessage(row('assistant', '相同的回答', { replyVersionId: 'v1' }))]
+    const messages = [row('user', '同一个问题'), target]
+    expect(applyReplyRecovery(messages, { replies: [
+      { reply_version_id: 'v1', archive_event: event('v1'), content: '相同的回答' },
+    ] })).toBe(true)
+    expect(target.variants).toHaveLength(1)
+    expect(target.archiveEvent).toEqual(event('v1'))
+  })
+
+  it('does not move the selected version when earlier duplicates are removed', () => {
+    const first = snapshotMessage(row('assistant', '第一版', { replyVersionId: 'v1' }))
+    const selected = snapshotMessage(row('assistant', '第二版', { replyVersionId: 'v2' }))
+    const last = snapshotMessage(row('assistant', '第三版', { replyVersionId: 'v3' }))
+    const target = row('assistant', '第二版', { replyVersionId: 'v2', truncated: true })
+    target.variants = [first, { ...first }, selected, last]
+    target.selectedVariantIndex = 2
+    expect(applyReplyRecovery([row('user', '同一个问题'), target], { replies: [
+      { reply_version_id: 'v2', content: '第二版' },
+    ] })).toBe(true)
+    expect(target.variants.map(variant => variant.replyVersionId)).toEqual(['v1', 'v2', 'v3'])
+    expect(target.selectedVariantIndex).toBe(1)
+    applyVariant(target, target.variants[2], 2)
+    expect(target.content).toBe('第三版')
+  })
+})

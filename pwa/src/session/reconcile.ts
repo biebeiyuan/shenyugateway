@@ -230,7 +230,8 @@ function mergeRecoveredVariant(local: MessageVariant, incoming: MessageVariant):
 }
 
 function variantKey(variant: MessageVariant): string {
-  if (variant.replyVersionId) return `id:${variant.replyVersionId}`
+  const identity = replyIdentity(variant)
+  if (identity) return `id:${identity}`
   return `text:${variant.content}\u0000${variant.echo}`
 }
 
@@ -277,6 +278,7 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   }
   const variants = target.variants
   let changed = false
+  const selectedKey = variantKey(variants[selectedVariantIndex(target)])
   // 去重老快照留下的重复项，但去重本身不算"变化"——它只是整理，不是找回。
   const uniqueVariants: MessageVariant[] = []
   const seenKeys = new Set<string>()
@@ -288,7 +290,8 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   }
   if (uniqueVariants.length !== variants.length) {
     variants.splice(0, variants.length, ...uniqueVariants)
-    target.selectedVariantIndex = selectedVariantIndex(target)
+    // Removing an earlier duplicate shifts indexes, not the selected identity.
+    target.selectedVariantIndex = variants.findIndex(variant => variantKey(variant) === selectedKey)
   }
 
   // 候选只认一条：本地有回复/归档身份就必须精确匹配，否则取最新那条。

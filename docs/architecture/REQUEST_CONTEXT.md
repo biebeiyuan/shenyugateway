@@ -253,6 +253,8 @@ Ordinary `openSession` is snapshot-first; clean cold-start recovery is an explic
 
 `pwa/src/session/reconcile.ts` has two entrances: `applyReplyRecovery` reads `/reply-recovery`; `applyReconciledTail` reads `recent_messages`. Known local IDs must match; the fallback can check local `archiveEvent.id` against `source_id` without replacing its timestamp. Only unversioned legacy recovery may use a text anchor. Accepted completion/identity/replay-only changes must persist even when body text is unchanged.
 
+Variant deduplication uses the same reply identity (`replyVersionId`, otherwise `archiveEvent.id`), not text when an identity exists. Removing earlier duplicate entries remaps the selected version by identity, not by its old array index.
+
 Missing envelope: retain display/context, do not invent identity. Formal archive acceptance and the `archive_replay` gate live in § Chat archive (L0 source of truth), not in recovery. Proof: `tests/test_archive_identity.py` (real completion/recovery API, no resend, cache loss), `pwa/tests/history.spec.ts`, `pwa/tests/recoveryIdentity.spec.ts`, `pwa/tests/persistence.spec.ts`.
 
 ## Supabase Long-Term State

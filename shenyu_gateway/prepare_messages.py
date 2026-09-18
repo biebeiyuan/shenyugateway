@@ -450,9 +450,13 @@ async def prepare_messages(
 
     raw_messages = [message.model_dump(exclude_none=True) for message in body.messages]
     for message in raw_messages:
+        # Only the JSON boolean true opts in; truthy strings/numbers are not flags.
         for field in ("archive_pending", "archive_replay"):
-            if message.pop(field, None) is True:
+            enabled = message.get(field) is True
+            if enabled:
                 message[field] = True
+            else:
+                message.pop(field, None)
         event = parse_archive_event(message.pop("archive_event", None))
         if event and message.get("role") in {"user", "assistant"}:
             message["archive_event"] = event
