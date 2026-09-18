@@ -89,3 +89,28 @@ it('keeps completion and identity on the saved variant even when recovered text 
   expect(target.archiveEvent).toEqual(event('v2'))
   expect(wireMessages(messages)[1]).not.toHaveProperty('archive_pending')
 })
+
+it.each(['primary', 'fallback'])('does not downgrade an identity-less %s recovery into fresh legacy capture', path => {
+  const messages = [row('user', '同一个问题'), row('assistant', '你好', { replyVersionId: 'v2', truncated: true })]
+  const result = path === 'primary'
+    ? applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v2', content: '你好，完整回复。' }] })
+    : applyReconciledTail(messages, { recent_messages: [
+        { role: 'user', content: '同一个问题' },
+        { role: 'assistant', source_id: 'v2', content: '你好，完整回复。' },
+      ] })
+  expect(result).toBe(true)
+  expect(messages[1].content).toBe('你好，完整回复。')
+  expect(wireMessages(messages)[1]).toHaveProperty('archive_replay', true)
+  expect(wireMessages(messages)[1]).not.toHaveProperty('archive_pending')
+  expect(wireMessages(messages)[1]).not.toHaveProperty('archive_event')
+  applyVariant(messages[1], snapshotMessage(messages[1]), 0)
+  expect(wireMessages(messages)[1]).toHaveProperty('archive_replay', true)
+})
+
+it('reports a provenance-only change so the caller persists an otherwise complete recovery', () => {
+  const messages = [row('user', '同一个问题'), row('assistant', '完整原文', { replyVersionId: 'v2' })]
+  const payload = { replies: [{ reply_version_id: 'v2', content: '完整原文' }] }
+  expect(applyReplyRecovery(messages, payload)).toBe(true)
+  expect(wireMessages(messages)[1]).toHaveProperty('archive_replay', true)
+  expect(applyReplyRecovery(messages, payload)).toBe(false)
+})

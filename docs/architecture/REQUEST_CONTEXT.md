@@ -109,7 +109,7 @@ Request count is still driven by model tool rounds, not by streaming itself:
 
 Streaming changes the connection shape, not the number of model rounds. The managed stream sends OpenAI-compatible empty delta keepalives while waiting on the upstream or tool execution, and all SSE responses set `Cache-Control: no-cache, no-transform` plus `X-Accel-Buffering: no` to reduce proxy buffering.
 
-Both streaming paths are wrapped by `resilient_sse_response` (`shenyu_gateway/streaming.py`): a producer task reads the inner event generator into a queue while the consumer side serves the client, emitting a keepalive event every 15 seconds of upstream silence (sized for the ~100s Cloudflare Tunnel idle cutoff). A client disconnect does not cancel the upstream read — the producer detaches, keeps draining until the reply finishes naturally (bounded by a 30-minute watchdog), and the normal `terminal_status="ok"` completion still saves the assistant output, snapshot, and request log; the request log additionally records `client_disconnected: true`. Only the watchdog-cancel path ends with `terminal_status="client_disconnected"`, and `_on_stream_complete` then still writes any collected partial assistant text to session history (without a completion snapshot or context-consumed marking, because the content is incomplete). The tool loop likewise no longer treats a disconnect as a stop condition; it finishes its rounds and records the flag. Both tool-loop paths accumulate each intermediate round's visible text into `_streamed_reply_parts` so the one persisted assistant row is the whole thing the client saw; `_finalize_non_gateway_tool_reply` is its only consumer, so the `max_internal_tool_rounds` exhaustion path salvages what was already spoken before raising rather than letting those rounds fall out of history. The PWA side pairs this with a 180-second stall watchdog on `reader.read()`, `[DONE]`-based truncation detection, throttled transcript persistence during streaming, and automatic recovery (`pwa/src/session/reconcile.ts`) on stream failure, foreground return, and session open. Recovery reads the reply to the latest user row through `/api/gateway/sessions/{tag}/reply-recovery`, merging that request's durable assistant rows into one candidate; it does not use request-log previews as transcript content. Multi-round replies are concatenated with no separator, on both sides and in both tool-loop paths: round boundaries are internal, so a streaming client receives each round's content events run together, `_finalize_non_gateway_tool_reply` persists `"".join(...)`, and the client's own concatenation must match byte for byte. Inserting a separator on either side is not cosmetic — the containment guard normalizes whitespace before testing, so the extra gap lands between the local fragment and the server's next round and makes a genuinely complete reply read as an unrelated candidate. New requests carry a per-reply `reply_version_id` stored on the assistant row, so the client can confirm the candidate belongs to the bubble it is repairing; only legacy rows with neither reply nor archive identity fall back to the last-user anchor, in both primary and session-detail recovery. A known version missing from the response waits rather than accepting a different Roll with similar text. The bridge deliberately stops there rather than walking back through earlier rows with the same user text: without a per-request user id that history is ambiguous, and merging it would attach an older roll's reply to the current bubble. The ordinary session snapshot still supplies the handoff transcript and tool hydration.
+Both streaming paths are wrapped by `resilient_sse_response` (`shenyu_gateway/streaming.py`): a producer task reads the inner event generator into a queue while the consumer side serves the client, emitting a keepalive event every 15 seconds of upstream silence (sized for the ~100s Cloudflare Tunnel idle cutoff). A client disconnect does not cancel the upstream read — the producer detaches, keeps draining until the reply finishes naturally (bounded by a 30-minute watchdog), and the normal `terminal_status="ok"` completion still saves the assistant output, snapshot, and request log; the request log additionally records `client_disconnected: true`. Only the watchdog-cancel path ends with `terminal_status="client_disconnected"`, and `_on_stream_complete` then still writes any collected partial assistant text to session history (without a completion snapshot or context-consumed marking, because the content is incomplete). The tool loop likewise no longer treats a disconnect as a stop condition; it finishes its rounds and records the flag. Both tool-loop paths accumulate each intermediate round's visible text into `_streamed_reply_parts` so the one persisted assistant row is the whole thing the client saw; `_finalize_non_gateway_tool_reply` is its only consumer, so the `max_internal_tool_rounds` exhaustion path salvages what was already spoken before raising rather than letting those rounds fall out of history. The PWA uses a 180-second stall watchdog, `[DONE]` truncation detection and throttled local persistence. Multi-round visible fragments concatenate without separators on both client and server. Restoration sources, identity checks and capture eligibility are defined in § Transcript identity and recovery, not by transport completion alone.
 
 All four response paths (plain/tool-loop × streaming/non-streaming) record the same content-free `upstream_response_evidence`. The `upstream` layer observes the provider response before adaptation; the `normalized` layer observes the OpenAI-compatible completion/chunk handed toward the client. Fixed block/delta counters plus `thinking_content_seen`, usage, and finish booleans are safe to persist in request-log history. Raw response bodies, Thinking text, signatures, redacted data, and arbitrary upstream field names remain excluded. This evidence diagnoses which boundary lost a standard Thinking value; it does not alter the response or make relay-private fields part of the gateway contract.
 
@@ -163,11 +163,11 @@ The deprecated compatibility names `shenyu_ask_memory`, `shenyu_search_primary_t
 
 ## SQLite Runtime State
 
-SQLite stores only gateway runtime state:
+The runtime SQLite file (separate from the chat archive) stores:
 
 - `gateway_sessions`
 - `gateway_messages`: local message stream for inspection only. It is not the cold-start source of truth.
-- `request_context_snapshots`: recent client context windows. Cold-start is now the only consumer.
+- `request_context_snapshots`: request and reply-completion snapshots; cold-start, session handoff and reply-identity recovery consume them (see § Transcript identity and recovery).
 - `raw_request_windows`: recent untrimmed client request windows for backup/export/debugging.
 - `cold_start_snapshots`: bounded bridge packages created from recent context snapshots.
 - `pending_gateway_tool_turns`: short-lived hidden mixed tool transcripts. It stores the original mixed assistant tool-call message, gateway tool result messages, client tool-call ids, and consumed/expiry timestamps.
@@ -175,7 +175,7 @@ SQLite stores only gateway runtime state:
 - `request_log_history`: bounded, versioned safe request summaries used by the Admin log page and helper across process/container replacement. Full request/response payload fields are excluded before storage.
 - `heartbeat_entries`: global private heartbeat notes captured from `<heartbeat>...</heartbeat>` or written manually in admin. `session_id` is retained as the source session, but runtime injection reads the shared global pool.
 
-`request_context_snapshots` is the replacement for the old rolling/frozen context path. Each request stores the trimmed client window before gateway layers are inserted. The cold-start bridge reads these snapshots (calendar generation, formerly a second consumer, was removed on 2026-07-26). `raw_request_windows` stores the original client payload window before any gateway-side trimming and is kept separate so cold-start stays bounded.
+`request_context_snapshots` is the replacement for the old rolling/frozen context path. Each request stores the trimmed client window before gateway layers are inserted. The cold-start bridge, PWA session handoff and reply recovery read these snapshots; reply completion also writes one with the generated reply and its identity. Calendar generation no longer consumes them. `raw_request_windows` stores the original client payload window before any gateway-side trimming and is kept separate so cold-start stays bounded.
 
 ### SQLite Retention And Cleanup
 
@@ -193,9 +193,9 @@ Admin configuration updates currently store secret values in both `.env` and SQL
 
 | Data product | Content retained | Default bound | Purpose | Session delete |
 |---|---|---|---|---|
-| `gateway_messages` | prepared user/assistant text, tool args and result summaries | newest 1500 rows per session | local inspection, lineage and export | deleted |
+| `gateway_messages` | prepared text/tool diagnostics; completed replies carry `source_id`, not a full archive envelope | newest 1500 rows per session | inspection, lineage, recovery body/tool hydration | deleted |
 | `raw_request_windows` | compacted original client history; image bytes replaced by fingerprints | newest 3 windows per session | history event classification, backup/debug | deleted |
-| `request_context_snapshots` | trimmed client-visible history before pending transcript reinjection | newest 3 snapshots per session | cold start source | deleted |
+| `request_context_snapshots` | request history plus completion snapshots, preserving archive identity/state | newest 3 snapshots per session | cold start, PWA handoff, recovery identity | deleted |
 | `cold_start_snapshots` | copied source snapshot messages | newest 20 completed snapshots; active preserved | bounded cross-thread bridge | deleted |
 | `pending_gateway_tool_turns` | original mixed assistant call and gateway tool result messages | active until consumed or 24h expiry | reconstruct gateway/client mixed turns | deleted |
 | `tool_error_log` / `room_trace` | tool args/errors or Room diagnostic text | explicit table-specific limits/cleanup | diagnostics | deleted |
@@ -205,12 +205,12 @@ Admin configuration updates currently store secret values in both `.env` and SQL
 | Supabase `shenyu_chat_archive` (default archive backend) | deduplicated visible user/assistant text | durable; no automatic session-delete coupling | original-text archive | not deleted |
 | Separate SQLite `shenyu_chat_archive.db` (opt-in archive backend) | original-text archive rows, preserved IDs/timestamps/tombstones | no automatic row/time cap; capacity and backups are operator-managed | original-text browsing/search, never prompt input | not deleted |
 
-These copies are not interchangeable: raw windows classify client history, snapshots feed cold start, pending rows preserve tool protocol, and the archive is the durable recall source. Reducing copies requires replacing those responsibilities first, not deleting tables based only on duplicate text.
+These copies are not interchangeable: raw windows classify history, snapshots preserve handoff/identity, pending rows preserve tool protocol, and the separate archive preserves originals for browsing and chat Recall. Reducing copies requires replacing those responsibilities first, not deleting tables based only on duplicate text.
 
 Default online retention:
 
 - `GATEWAY_MESSAGE_RETENTION=1500`: keep the newest local message rows per session. These rows are for admin inspection and export, not for cold-start injection.
-- `GATEWAY_CONTEXT_SNAPSHOT_RETENTION=3`: keep the newest context snapshots per session. Do not set this to `0`; cold-start needs recent snapshots.
+- `GATEWAY_CONTEXT_SNAPSHOT_RETENTION=3`: keep the newest context snapshots per session. Do not set this to `0`; cold-start, handoff and reply identity recovery need recent snapshots.
 - `GATEWAY_COLD_START_RETENTION=20`: keep recent cold-start snapshots per session. Cleanup only removes old inactive snapshots; an active bridge remains available until the normal window trim retires it.
 - `GATEWAY_REQUEST_LOG_RETENTION=200`: keep the newest safe request-log summaries globally. The Admin/API list merges them with the live 30-entry deque and prefers the live copy when both exist. A startup pass marks rows left in `preparing`, `pending`, or streaming states as `interrupted`.
 - Consumed or expired `pending_gateway_tool_turns` are removed during cleanup. Unconsumed pending rows are kept until expiry so a client can return its tool result in the next request.
@@ -231,12 +231,29 @@ Admin page note:
 
 Safe cleanup boundaries:
 
-- It is safe to prune/dedupe `gateway_messages`; cold-start does not read this table.
-- It is safe to prune/dedupe `raw_request_windows`; they are backup/debug records and are not used for cold-start injection.
+- Pruning `gateway_messages` does not delete the archive or cold-start sources, but removes inspection/fallback-recovery evidence; keep the needed recent reply rows.
+- `raw_request_windows` serve history classification and debugging, not cold-start injection; retain recent windows under the configured policy.
 - It is safe to prune consumed or expired `pending_gateway_tool_turns`; do not delete fresh unconsumed pending rows while a client tool turn may still be in flight.
-- Be conservative with `request_context_snapshots`; cold-start reads this table.
+- Be conservative with `request_context_snapshots`; cold-start, handoff and identity recovery read this table.
 - Do not delete active `cold_start_snapshots`; the retention cleanup already avoids active snapshots.
 - Heartbeats are independent from message cleanup and are only changed by explicit heartbeat actions.
+
+### Transcript identity and recovery
+
+Trace fields by writer → stored evidence → reader; `recent_messages` is not a snapshot.
+
+| Boundary | Writer / evidence | Reader |
+|---|---|---|
+| Request | `shenyu_gateway/prepare_messages.py::prepare_messages` retains archive metadata in the trimmed snapshot | `pwa/src/session/history.ts::sessionHistoryRows`: `context_snapshots` → legacy `request_context_snapshots` name → inspection fallback |
+| Reply completion | `shenyu_gateway/context_snapshots.py::write_completion_context_snapshot` consumes `meta.reply_archive_event` **before any client resend** | Same handoff selector; `shenyu_gateway/gateway_admin_routes.py::collect_reply_recovery_rows` attaches the matching envelope |
+| Inspection | `shenyu_gateway/sessions.py::SessionManager.log_assistant_output`: reply ID in `source_id`, no full archive envelope | Recovery body, `recent_messages` fallback and tool hydration |
+| PWA restore | `pwa/src/session/history.ts::restoredArchiveState`: preserve envelope, mark replay | Variants/persistence → `pwa/src/api/client.ts::wireMessages` |
+
+Ordinary `openSession` is snapshot-first; clean cold-start recovery is an explicit alternative, not a second source to merge.
+
+`pwa/src/session/reconcile.ts` has two entrances: `applyReplyRecovery` reads `/reply-recovery`; `applyReconciledTail` reads `recent_messages`. Known local IDs must match; the fallback can check local `archiveEvent.id` against `source_id` without replacing its timestamp. Only unversioned legacy recovery may use a text anchor. Accepted completion/identity/replay-only changes must persist even when body text is unchanged.
+
+Missing envelope: retain display/context, do not invent identity. Formal archive acceptance and the `archive_replay` gate live in § Chat archive (L0 source of truth), not in recovery. Proof: `tests/test_archive_identity.py` (real completion/recovery API, no resend, cache loss), `pwa/tests/history.spec.ts`, `pwa/tests/recoveryIdentity.spec.ts`, `pwa/tests/persistence.spec.ts`.
 
 ## Supabase Long-Term State
 
@@ -570,7 +587,7 @@ Preserve these response contracts:
 
 ## Durable Archive Layer
 
-SQLite holds only rebuildable runtime state. Anything whose loss would hurt lives in Supabase. Three archive subsystems enforce this:
+The runtime SQLite file, selected independent chat archive, and Supabase memory/content stores have different retention and backup responsibilities. The following subsystems must not be treated as interchangeable copies:
 
 ### Heartbeat archive (disaster recovery)
 
@@ -599,11 +616,13 @@ Chat Recall still takes up to four literal query terms, fetches at most 200 newe
 
 **Identity is not display text**
 
-New PWA sends carry optional message-level `archive_event: {id, event_at}`. Create it once per user send/edit or reply attempt; a real new revision gets a new ID even if its words are identical. `event_at` is the UTC creation instant of that send/reply attempt, not the time of replay, history restore, or archive insertion. Local persistence, Roll variants, request/completion snapshots and recovery preserve that envelope. Reply-attempt metadata uses `reply_archive_event` with the same ID as `reply_version_id`; completion snapshots retain it. Recovery only returns an envelope actually found in a matching snapshot, never manufactures one from a legacy `source_id`. Both the primary reply-recovery response and the session-detail fallback must match a known reply/archive ID; conflicting envelopes are rejected. Only truly unversioned legacy history may use the latest-user text anchor. A confirmed complete reply updates the selected variant's completion/identity metadata even when its text is unchanged, without overwriting locally retained thinking or response metadata. Restoring old history must not upgrade it to new event IDs or today's timestamps.
+New sends carry `archive_event: {id, event_at}` once per user send/edit or reply attempt. A real new version has a new ID even for identical words. The fixed UTC creation instant has priority over any textual status suffix; PWA edit/resend refreshes its suffix too. Legacy messages alone fall back to text stamps/inherited clocks. Creation, completion-snapshot persistence, handoff and both recovery consumers are traced in § Transcript identity and recovery.
 
 The archive row ID is deterministic UUIDv5 of `shenyugateway/archive-event/v1/{role}/{source_id}`. Existing schemas are reused: for identified capture, the historical column named `content_hash` carries **`event:v1:<row-id>`**, an event key rather than a body hash. This prevents the existing same-day folding reader from collapsing distinct identical phrases. The ID uniqueness constraint is the durable authority, independent of the runtime seen-cache lifetime and session tags. Local capture ignores a repeated identified ID; cloud capture uses `ON CONFLICT id DO NOTHING` via PostgREST `resolution=ignore-duplicates`. Neither overwrites the first original/time nor clears a tombstone. Strict import/verification APIs still reject changed originals. Deletions stay deleted on replay.
 
 Capture timing is still client-window acceptance, not immediate final-response capture: a selected reply enters when a later request sends it back. Versions never returned by the client are not archived; a previously archived version is not retroactively removed by a later Roll. `archive_pending: true` defers known streaming/truncated/error replies without consuming their IDs, so later recovery can capture the complete reply. PWA keeps completion state with each Roll variant. Archive-only fields do not go to the provider or change history branch fingerprints.
+
+Restored history carries `archive_replay: true` separately from completion state. Without a valid original envelope, the archiver skips it without creating IDs/timestamps or marking legacy hashes seen, even after cache eviction or original deletion. With a valid envelope, replay can still capture a previously unarchived selected reply once. Fresh sends, edits and new Roll attempts are new events, not replays. The marker survives snapshots, local persistence and version selection, and is removed before provider calls using `shenyu_gateway/schemas.py::ARCHIVE_MESSAGE_FIELDS`. Count-only logs (`deferred_replays`, `missing_archive_identity`) explain this skip without exposing text. This prevents automatic backfill of identity-less restored history; it does not reconstruct lost identity or repair old clients that never send provenance.
 
 **Projection and legacy compatibility**
 
@@ -613,7 +632,7 @@ ID-less legacy capture still uses the global bounded `chat_archive_seen` cache. 
 
 `archived_at` increases by 1μs per row within a batch to preserve tie order. The reader orders by `(event_at, archived_at, id)` and never forces alternating roles. `thread` is provenance only. Legacy handoff copies fold per (CST day, content_hash); identified events have distinct keys, so real repeated words/revisions stay distinct. Historical corruption requires a separately reviewed original↔duplicate manifest and a backup of the actual active archive. Do not delete all adjacent replies or change timestamps by guessing; this identity fix performs no historical deletion/rewrite.
 
-- Legacy-only backfill: `python scripts/backfill_chat_archive.py --dry-run` previews pre-identity history into Supabase. It shares the pure text projection/known hash aliases, and refuses SQLite mode or identity-bearing source snapshots before seeding/writing. It also refuses a normally inspected destination containing `event:v1:` rows. Do not use it to reconstruct modern identified events from runtime inspection rows; use the separate archive backup/restore path.
+- Legacy-only backfill: `python scripts/backfill_chat_archive.py --dry-run` previews pre-identity history into Supabase. It shares the pure text projection/known hash aliases, and refuses SQLite mode, identity-bearing or replay-marked source snapshots before seeding/writing. It also refuses a normally inspected destination containing `event:v1:` rows. Do not use it to reconstruct modern identified events from runtime inspection rows; use the separate archive backup/restore path.
 - Admin reader: `/admin` → 档案 tab; API under `/api/archive/*`.
 - Config: `ENABLE_CHAT_ARCHIVE`; deployment-only `CHAT_ARCHIVE_BACKEND` and `CHAT_ARCHIVE_DB_PATH`.
 - The selected archive is soft-delete only. SQLite original rows have no relationship to runtime-session deletion/prune and no automatic 1500-row cap. Identified capture preserves repeated words; ID-less legacy imports/capture still fold same-day content-hash copies in a read view without deleting original rows. Identity and legacy limitations are defined above.

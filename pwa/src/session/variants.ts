@@ -6,6 +6,7 @@ import { readArchiveEvent } from './history'
 export function cloneVariant(variant: Partial<MessageVariant>): MessageVariant {
   return {
     truncated: typeof variant.truncated === 'boolean' ? variant.truncated : undefined,
+    archiveReplay: variant.archiveReplay === true || undefined,
     archiveEvent: readArchiveEvent(variant.archiveEvent),
     replyVersionId: variant.replyVersionId ? String(variant.replyVersionId) : undefined,
     content: String(variant.content || ''),
@@ -42,7 +43,8 @@ export function snapshotMessage(message: UiMessage): MessageVariant {
 
 export function selectedVariantIndex(message: UiMessage): number {
   const count = message.variants?.length || 1
-  return Math.max(0, Math.min(Number(message.selectedVariantIndex || 0), count - 1))
+  const value = Number(message.selectedVariantIndex ?? 0)
+  return Number.isInteger(value) ? Math.max(0, Math.min(value, count - 1)) : 0
 }
 
 export function variantCount(message: UiMessage): number {
@@ -69,6 +71,7 @@ export function applyVariant(message: UiMessage, variant: MessageVariant, index:
   message.responseMeta = normalized.responseMeta ? { ...normalized.responseMeta } : undefined
   message.replyVersionId = normalized.replyVersionId
   message.archiveEvent = normalized.archiveEvent
+  message.archiveReplay = normalized.archiveReplay
   message.truncated = normalized.truncated || undefined
 }
 

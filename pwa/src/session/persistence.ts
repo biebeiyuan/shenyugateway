@@ -116,6 +116,7 @@ export function loadStoredMessages(): UiMessage[] {
           truncated: item.truncated === true ? true : undefined,
           responseMeta: cloneStoredResponseMeta(item.responseMeta),
           archiveEvent: readArchiveEvent(item.archiveEvent),
+          archiveReplay: item.archiveReplay === true || undefined,
           replyVersionId: item.replyVersionId ? String(item.replyVersionId) : undefined,
         }
         if (message.role === 'assistant' && Array.isArray(item.variants) && item.variants.length) {
@@ -139,6 +140,7 @@ export function loadStoredMessages(): UiMessage[] {
 }
 
 type StoredRow = {
+  archiveReplay?: boolean
   archiveEvent?: ArchiveEvent
   id: string
   role: Role
@@ -184,7 +186,7 @@ function truncateEventOutputs(events: ToolEvent[]): ToolEvent[] {
 const KNOWN_ROW_KEYS = new Set([
   'id', 'role', 'content', 'echo', 'echoSegments', 'attachments', 'thinking',
   'thinkingSegments', 'events', 'error', 'truncated', 'variants',
-  'selectedVariantIndex', 'responseMeta', 'replyVersionId', 'archiveEvent',
+  'selectedVariantIndex', 'responseMeta', 'replyVersionId', 'archiveEvent', 'archiveReplay',
 ])
 
 function unknownFieldsById(): Map<string, Record<string, unknown>> {
@@ -237,6 +239,7 @@ export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit
     responseMeta: message.responseMeta,
     replyVersionId: message.replyVersionId,
     archiveEvent: readArchiveEvent(message.archiveEvent),
+    archiveReplay: message.archiveReplay === true || undefined,
   }))
   // Keep a little more than the gateway high-water window so a resident PWA
   // can stop relying on a temporary cold-start handoff.

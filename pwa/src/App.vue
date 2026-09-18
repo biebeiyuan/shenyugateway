@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { newArchiveEvent, readArchiveEvent } from './session/history'
+import { newArchiveEvent, readArchiveEvent, restoredArchiveState } from './session/history'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   ArrowLeft,
@@ -440,7 +440,7 @@ async function openSession(session: GatewaySession): Promise<boolean> {
         const restored: UiMessage = {
           id: String(row.id || createId('message')),
           role: row.role as Role,
-          archiveEvent: readArchiveEvent(row.archive_event),
+          ...restoredArchiveState(row),
           truncated: row.archive_pending === true || undefined,
           content: parts.content,
           echo: row.role === 'assistant' ? parts.echo : '',
@@ -505,7 +505,7 @@ async function recoverSessionFromColdStart(session: GatewaySession = { session_t
         return {
           id: createId('message'),
           role: row.role as Role,
-          archiveEvent: readArchiveEvent(row.archive_event),
+          ...restoredArchiveState(row),
           truncated: row.archive_pending === true || undefined,
           content: parts.content,
           echo: row.role === 'assistant' ? parts.echo : '',
@@ -1024,6 +1024,7 @@ async function submit() {
     const index = messages.value.findIndex((message) => message.id === editId.value)
     if (index >= 0 && messages.value[index].role === 'user') {
       messages.value[index].archiveEvent = newArchiveEvent(createId('archive'))
+      messages.value[index].archiveReplay = undefined
       messages.value[index].content = text
       messages.value[index].attachments = [...pendingAttachments.value]
       messages.value = messages.value.slice(0, index + 1)

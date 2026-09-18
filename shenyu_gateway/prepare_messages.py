@@ -39,6 +39,7 @@ from .request_logs import _mark_request_log_phase
 from .runtime import iso_now as _iso_now, json_dumps as _json_dumps, logger, now as _now, parse_ts as _parse_ts
 from .system_prefix_buffer import buffer_seconds_from_ttl, resolve_system_prefix
 from .sessions import SessionManager
+from .schemas import ARCHIVE_MESSAGE_FIELDS
 from .store import NEXT_REQUEST_COLD_START_TAG
 from .tool_loop import _latest_user_text, _tool_call_name
 from .tool_registry import is_gateway_native_tool
@@ -449,9 +450,9 @@ async def prepare_messages(
 
     raw_messages = [message.model_dump(exclude_none=True) for message in body.messages]
     for message in raw_messages:
-        pending = message.pop("archive_pending", None)
-        if pending is True:
-            message["archive_pending"] = True
+        for field in ("archive_pending", "archive_replay"):
+            if message.pop(field, None) is True:
+                message[field] = True
         event = parse_archive_event(message.pop("archive_event", None))
         if event and message.get("role") in {"user", "assistant"}:
             message["archive_event"] = event
@@ -642,7 +643,7 @@ async def prepare_messages(
         reply_archive_event = None
     # Archive metadata lives in the original/snapshot copy, never model context.
     messages = [{key: value for key, value in message.items()
-                 if key not in {"archive_event", "archive_pending"}} for message in messages]
+                 if key not in ARCHIVE_MESSAGE_FIELDS} for message in messages]
 
     # ── Room Mode Branch ───────────────────────────────────────────
     is_room = bool(

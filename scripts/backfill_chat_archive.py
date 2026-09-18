@@ -169,8 +169,8 @@ def _candidate_rows(
     created_at: str | None,
     existing: set[str],
 ) -> list[dict]:
-    if any(msg.get("archive_event") for msg in messages or []):
-        raise ValueError("Legacy backfill cannot assign identities to archive-event snapshots")
+    if any(msg.get("archive_event") or msg.get("archive_replay") is True for msg in messages or []):
+        raise ValueError("Legacy backfill cannot assign identities to archive-event or restored snapshots")
     rows: list[dict] = []
     event_at = created_at or iso_now()
     latest_client_event_at = event_at
@@ -245,9 +245,10 @@ async def main() -> None:
     # rows lack envelopes, so a row-by-row guard would already be too late.
     with store._connect() as conn:
         for table in ("raw_request_windows", "request_context_snapshots"):
-            if conn.execute(f"SELECT 1 FROM {table} WHERE instr(messages_json, ?) > 0 LIMIT 1",
-                            ('"archive_event"',)).fetchone():
-                raise ValueError("Legacy backfill refuses identity-bearing history; use archive backup/restore")
+            if conn.execute(f"SELECT 1 FROM {table} WHERE instr(messages_json, ?) > 0 "
+                            "OR instr(messages_json, ?) > 0 LIMIT 1",
+                            ('"archive_event"', '"archive_replay"')).fetchone():
+                raise ValueError("Legacy backfill refuses identity-bearing/restored history; use archive backup/restore")
     supabase = SupabaseClient(cfg.supabase_url, cfg.supabase_key)
     service = ChatArchiveService(store, supabase, cfg)
     batch_size = max(1, min(int(args.batch_size or 250), 1000))

@@ -219,6 +219,7 @@ class ChatArchiveService:
 
         thread = derive_thread(session_tag)
         candidates: list[dict] = []
+        deferred_replays = 0
         latest_client_event_at = event_at
         for msg in messages or []:
             role = msg.get("role")
@@ -237,6 +238,12 @@ class ChatArchiveService:
             if client_event_at:
                 latest_client_event_at = client_event_at
             event = parse_archive_event(msg.get("archive_event"))
+            if msg.get("archive_replay") is True and not event:
+                # Inspection/legacy restores lack durable identity evidence.
+                # Their text stays in context, but cache expiry must not turn
+                # it into a new archive event with an invented ID/time.
+                deferred_replays += 1
+                continue
             if event and role == "user":
                 latest_client_event_at = event["event_at"]
             original_content = msg.get("content")
@@ -257,7 +264,7 @@ class ChatArchiveService:
                 }
             )
         if not candidates:
-            return {"archived": 0}
+            return {"archived": 0, "deferred_replays": deferred_replays}
 
         unseen = self.store.filter_unseen_archive_hashes(
             [digest for item in candidates if not item["id"] for digest in item["legacy_hashes"]]
@@ -316,13 +323,16 @@ class ChatArchiveService:
             list(seen_aliases),
             keep_recent=getattr(self.cfg, "chat_archive_seen_retention", 10000),
         )
-        return {"archived": inserted, "thread": thread}
+        return {"archived": inserted, "thread": thread, "deferred_replays": deferred_replays}
 
 
 async def archive_window_safely(service: ChatArchiveService, **kwargs) -> None:
     """Fire-and-forget wrapper: archive failures must never affect chat flow."""
     try:
         result = await service.archive_window(**kwargs)
+        if result.get("deferred_replays"):
+            logger.info("[ChatArchive] deferred_replays=%s reason=missing_archive_identity",
+                        result["deferred_replays"])
         if result.get("archived"):
             logger.info("[ChatArchive] archived=%s thread=%s", result["archived"], result.get("thread"))
     except asyncio.CancelledError:

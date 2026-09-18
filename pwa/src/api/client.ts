@@ -79,6 +79,7 @@ export function wireMessages(source: UiMessage[]) {
     role: message.role,
     content: wireContent(message),
     ...(readArchiveEvent(message.archiveEvent) ? { archive_event: readArchiveEvent(message.archiveEvent) } : {}),
+    ...(message.archiveReplay ? { archive_replay: true } : {}),
     ...((message.streaming || message.truncated || message.error) ? { archive_pending: true } : {}),
   }))
 }

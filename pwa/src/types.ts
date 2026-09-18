@@ -32,6 +32,7 @@ export type EchoSegment = {
 
 export type MessageVariant = {
   truncated?: boolean
+  archiveReplay?: boolean
   archiveEvent?: ArchiveEvent
   replyVersionId?: string
   content: string
@@ -56,6 +57,8 @@ export type ResponseMeta = {
 }
 
 export type UiMessage = {
+  // Reconstructed history may be shown without an envelope, but not re-filed.
+  archiveReplay?: boolean
   archiveEvent?: ArchiveEvent
   id: string
   role: Role

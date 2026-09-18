@@ -1,15 +1,12 @@
 import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
-import { readArchiveEvent, sessionMessageContent, sessionMessageParts } from './history'
+import { readArchiveEvent, restoredArchiveState, sessionMessageContent, sessionMessageParts } from './history'
 import { hydrateToolEvents } from './toolHydration'
 import { applyVariant, selectedVariantIndex, snapshotMessage, syncCurrentVariant } from './variants'
 
-// 尾部对账：后台断流后，从 session detail 的 recent_messages（gateway_messages
-// 原始行）里把服务端 drain 落库的完整回复找回来。只修尾巴，绝不整体替换——
-// openSession 的整体替换对本地 attachments/thinking 有损，仅用于切会话。
-//
-// 有版本编号时只认同一版；无编号的旧历史才按最新 user 正文找锚点。
-// 版本或锚点对不上就返回 false，让调用方退避重试，不能拿旧 roll 顶替。
+// Tail recovery has two inputs: /reply-recovery and the legacy recent_messages
+// fallback. Both keep local data and require a known reply identity to match.
+// Producer/storage/consumer contract: REQUEST_CONTEXT.md § Transcript identity and recovery.
 
 type RecentRow = Record<string, unknown>
 
@@ -146,6 +143,7 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
     }
 
     target.archiveEvent = target.archiveEvent || readArchiveEvent(selectedReply.archive_event)
+    target.archiveReplay = true
     target.content = nextContent
     target.echo = nextEcho
     // 只在本地没有 echoSegments 时才用服务端的（服务端只能给 offset 0 的单段）
@@ -161,7 +159,7 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
   } else {
     messages.push({
       id: String(selectedReply.id || createId('message')),
-      archiveEvent: readArchiveEvent(selectedReply.archive_event),
+      ...restoredArchiveState(selectedReply),
       role: 'assistant',
       content: parts.content,
       echo: parts.echo,
@@ -184,7 +182,7 @@ function recoveryVariant(reply: RecoveryReply): MessageVariant | undefined {
   const parts = sessionMessageParts(reply.content)
   if (!parts.content && !parts.echo) return undefined
   const variant: MessageVariant = {
-    archiveEvent: readArchiveEvent(reply.archive_event),
+    ...restoredArchiveState(reply),
     replyVersionId: reply.reply_version_id ? String(reply.reply_version_id) : undefined,
     content: parts.content,
     echo: parts.echo,
@@ -315,7 +313,14 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     changed = true
   }
   target.streaming = false
-  if (!target.archiveEvent && candidate.archiveEvent) target.archiveEvent = candidate.archiveEvent
+  if (!target.archiveReplay) {
+    target.archiveReplay = true
+    changed = true
+  }
+  if (!target.archiveEvent && candidate.archiveEvent) {
+    target.archiveEvent = candidate.archiveEvent
+    changed = true
+  }
 
   const index = selectedVariantIndex(target)
   const contentChanged = normalizeText(candidate.content) !== normalizeText(target.content || '')
@@ -333,10 +338,14 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     // Equal text still confirms completion. Keep that receipt on the selected
     // variant too, or switching away/back revives its pending/error state and
     // loses a newly recovered archive identity. Do not overwrite local metadata.
-    if (!target.replyVersionId && candidate.replyVersionId) target.replyVersionId = candidate.replyVersionId
+    if (!target.replyVersionId && candidate.replyVersionId) {
+      target.replyVersionId = candidate.replyVersionId
+      changed = true
+    }
     Object.assign(variants[index], {
       replyVersionId: target.replyVersionId,
       archiveEvent: target.archiveEvent,
+      archiveReplay: true,
       truncated: false,
       error: undefined,
     })

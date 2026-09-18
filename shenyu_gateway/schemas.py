@@ -5,11 +5,17 @@ from typing import Any, Optional
 from pydantic import BaseModel, Field
 
 
+# Gateway-only message fields. Preparation and direct provider calls remove
+# this same set; snapshots retain it without making it model context.
+ARCHIVE_MESSAGE_FIELDS = frozenset({'archive_event', 'archive_pending', 'archive_replay'})
+
+
 class ChatMessage(BaseModel):
     # Archive-only envelope: retain in snapshots, remove before provider calls.
     # Validate inside the archive boundary so bad metadata cannot break chat.
     archive_event: Optional[Any] = None
     archive_pending: Optional[Any] = None
+    archive_replay: Optional[Any] = None
     role: str
     content: Optional[Any] = None
     name: Optional[str] = None

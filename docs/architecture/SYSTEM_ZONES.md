@@ -357,7 +357,7 @@ Stars 的 run/candidate 写入暂时保留在关键路径。它们不仅用于�
 **职责**
 
 - 保存运行时会话、消息、窗口、快照、pending tools、heartbeat、cache 和 Room 状态。
-- 将聊天和 heartbeat 归档到外部长期存储。
+- 聊天写入配置选定的独立档案；heartbeat 保留独立的外部备份。
 - 执行 session 删除和 retention prune。
 
 **核心文件**
@@ -377,7 +377,7 @@ Stars 的 run/candidate 写入暂时保留在关键路径。它们不仅用于�
 - Supabase archive：长期外部状态。
 - retained JSON：人工保存的诊断副本，不属于运行时数据库。
 
-session 删除仅覆盖带同一 `session_id` 的本地 SQLite 数据。Admin API 返回 `scope=local_sqlite_session` 和 `external_archives_deleted=false`；Supabase chat archive 需要独立、显式的删除能力。
+session 删除仅覆盖带同一 `session_id` 的运行库数据，不删除独立聊天档案。恢复证据、消费者和缺失策略见 `docs/architecture/REQUEST_CONTEXT.md` § Transcript identity and recovery；档案读写及显式删除见其 § Chat archive (L0 source of truth)。
 
 **主要风险**
 

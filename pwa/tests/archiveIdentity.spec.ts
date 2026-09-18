@@ -84,3 +84,21 @@ it('does not merge an identified event with equal legacy text during recovery', 
   expect(hasExactDuplicateRows(wireMessages([first, legacy]))).toBe(false)
   expect(dedupeUiMessagesForRecovery([first, legacy])).toEqual([first, legacy])
 })
+
+// Replay provenance is separate from completion state: a complete old body can
+// be shown/used as context without claiming it is a new legacy archive event.
+it('carries restored-history provenance through persistence, rolls and the wire', () => {
+  const source = Object.assign(row(), { archiveReplay: true, archiveEvent: undefined })
+  source.variants = [snapshotMessage(source)]
+  persistStoredMessages([source], 75)
+  const loaded = loadStoredMessages()[0]
+  applyVariant(loaded, loaded.variants![0], 0)
+  expect(loaded).toHaveProperty('archiveReplay', true)
+  expect(wireMessages([loaded])[0]).toHaveProperty('archive_replay', true)
+  expect(wireMessages([loaded])[0]).not.toHaveProperty('archive_pending')
+  expect(wireMessages([loaded])[0]).not.toHaveProperty('archive_event')
+  const fresh = snapshotMessage(row())
+  applyVariant(loaded, fresh, 1)
+  expect(wireMessages([loaded])[0]).not.toHaveProperty('archive_replay')
+  expect(wireMessages([loaded])[0]).toHaveProperty('archive_event', event)
+})

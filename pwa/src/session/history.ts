@@ -38,6 +38,12 @@ export function sessionMessageParts(value: unknown): { content: string; echo: st
   return { content: split.content, echo: split.echo }
 }
 
+// Restored text is display history, not a new send. Without the original
+// envelope it may remain context, but must not become a new legacy archive row.
+export function restoredArchiveState(row: Record<string, unknown>): Pick<UiMessage, 'archiveEvent' | 'archiveReplay'> {
+  return { archiveEvent: readArchiveEvent(row.archive_event), archiveReplay: true }
+}
+
 export function sessionHistoryRows(payload: Record<string, unknown>): Record<string, unknown>[] {
   const snapshotCollections = [payload.context_snapshots, payload.request_context_snapshots]
   for (const candidate of snapshotCollections) {

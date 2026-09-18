@@ -206,7 +206,8 @@ describe('applyReplyRecovery — current reply only', () => {
         { id: 'a3', reply_version_id: 'v3', content: '当前版本' },
       ],
     })
-    expect(changed).toBe(false)
+    expect(changed).toBe(true) // Persist new replay provenance, not different content.
+    expect(messages[1].archiveReplay).toBe(true)
     expect(messages[1].variants).toHaveLength(1)
     expect(messages[1].replyVersionId).toBe('v3')
     expect(messages[1].content).toBe('当前版本')
@@ -214,7 +215,7 @@ describe('applyReplyRecovery — current reply only', () => {
 
   it('does not duplicate an already recovered roll on polling', () => {
     const messages = [uiMessage('user', '问题'), uiMessage('assistant', '一版')]
-    expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '一版' }] })).toBe(false)
+    expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '一版' }] })).toBe(true)
     expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'v1', content: '一版' }] })).toBe(false)
     expect(messages[1].variants).toHaveLength(1)
   })
@@ -229,7 +230,7 @@ describe('applyReplyRecovery — current reply only', () => {
         ],
       }),
     ]
-    expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'stable', content: '同一版' }] })).toBe(false)
+    expect(applyReplyRecovery(messages, { replies: [{ reply_version_id: 'stable', content: '同一版' }] })).toBe(true)
     expect(messages[1].variants).toHaveLength(1)
     expect(messages[1].variants?.[0].replyVersionId).toBe('stable')
   })
@@ -247,7 +248,8 @@ describe('applyReplyRecovery — current reply only', () => {
       replies: [{ reply_version_id: 'v1', content: '完整回复' }],
     })
     // Should only add variants, not overwrite the complete message
-    expect(changed).toBe(false)
+    expect(changed).toBe(true) // Persist new replay provenance, not different content.
+    expect(messages[1].archiveReplay).toBe(true)
     expect(messages[1].content).toBe('完整回复')
     expect(messages[1].thinking).toBe('Let me think...')
     expect(messages[1].thinkingSegments).toHaveLength(1)
@@ -280,7 +282,8 @@ describe('applyReplyRecovery — current reply only', () => {
         { reply_version_id: 'v2', content: '版本二' },
       ],
     })
-    expect(changed).toBe(false)
+    expect(changed).toBe(true) // Persist new replay provenance, not different content.
+    expect(messages[1].archiveReplay).toBe(true)
     expect(messages[1].variants).toHaveLength(1)
     // First variant should preserve thinking
     expect(messages[1].variants?.[0].thinking).toBe('Original thinking')
@@ -314,7 +317,7 @@ describe('applyReplyRecovery — current reply only', () => {
     const messages = [
       uiMessage('user', '问题'),
       uiMessage('assistant', '完整回复', {
-        replyVersionId: 'v1',
+        replyVersionId: 'v1', archiveReplay: true,
         thinking: 'Deep analysis',
         thinkingSegments: [{ id: 'th1', content: 'Deep analysis', textOffset: 0, streamOrder: 0 }],
         events: [
@@ -387,7 +390,8 @@ describe('applyReplyRecovery — current reply only', () => {
       replies: [{ reply_version_id: 'v1', content: '回复' }],
     })
     // 不应该覆盖，因为内容相同且本地有完整数据
-    expect(changed).toBe(false)
+    expect(changed).toBe(true) // Persist new replay provenance, not different content.
+    expect(messages[1].archiveReplay).toBe(true)
     expect(messages[1].thinking).toBe('Let me analyze this carefully')
     expect(messages[1].thinkingSegments).toHaveLength(1)
     expect(messages[1].events).toHaveLength(2)

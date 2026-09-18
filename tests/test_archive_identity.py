@@ -233,7 +233,7 @@ async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_pat
     cfg.client_tool_surface = 'none'
     cfg.anthropic_cache_ttl = '1h'
     cfg.openai_cache_ttl = '5m'
-    history = [message('u1', 'question', 'user'),
+    history = [{**message('u1', 'question', 'user'), 'archive_replay': True},
                {**message('a1', 'half'), 'archive_pending': True},
                message('u2', '【窗边 · 18/09 18:00】' if room else 'next question', 'user')]
     deps = preparation.PrepareMessagesDeps(cfg=cfg, store=store, supabase_client=None,
@@ -245,7 +245,8 @@ async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_pat
         metadata={'reply_version_id': 'a2', 'reply_archive_event': reply_event})
     prepared, meta = await preparation.prepare_messages(Request({'type': 'http', 'headers': []}), body, deps)
     await asyncio.gather(*tuple(preparation._BACKGROUND_TASKS))
-    assert all('archive_event' not in row and 'archive_pending' not in row for row in prepared)
+    assert all('archive_event' not in row and 'archive_pending' not in row and 'archive_replay' not in row for row in prepared)
+    assert meta['snapshot_messages'][0]['archive_replay'] is True
     assert meta['snapshot_messages'][0]['archive_event'] == history[0]['archive_event']
     assert meta['snapshot_messages'][1]['archive_pending'] is True
     assert meta['reply_archive_event'] == reply_event
@@ -266,11 +267,12 @@ async def test_direct_provider_builder_never_leaks_archive_metadata(protocol):
     cfg.upstream_protocol = protocol
     cfg.enable_gateway_tools = False
     cfg.enable_mcp_tools = False
-    body = ChatRequest(model='test', messages=[{**message('u1', 'body', 'user'), 'archive_pending': True}],
+    body = ChatRequest(model='test', messages=[{**message('u1', 'body', 'user'), 'archive_pending': True, 'archive_replay': True}],
         metadata={'reply_archive_event': message('reply', '')['archive_event']})
     payload, *_ = await build_upstream_request(None, body, cfg=cfg)
     rendered = json.dumps(payload)
-    assert 'archive_event' not in rendered and 'archive_pending' not in rendered
+    assert 'archive_event' not in rendered and 'archive_pending' not in rendered and 'archive_replay' not in rendered
+    assert body.messages[0].archive_replay is True
     assert body.messages[0].archive_event['id'] == 'u1'
 
 
@@ -282,3 +284,118 @@ def test_legacy_backfill_shares_projection_and_rejects_identified_windows():
     assert rows[0]['content'] == 'body'
     with pytest.raises(ValueError, match='[Ll]egacy'):
         _candidate_rows(messages=[message('modern', 'body')], **kwargs)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('role', ['user', 'assistant'])
+@pytest.mark.parametrize('deleted', [False, True])
+async def test_restored_history_without_identity_cannot_rearchive_after_cache_loss(tmp_path, role, deleted):
+    archive, store, service = setup_archive(tmp_path)
+    original = message('stable-' + role, 'An original with unchanged text', role)
+    await service.archive_window(session_tag='old', client_name='pwa', messages=[original])
+    if deleted:
+        archive.soft_delete(archive.export_rows()[0]['id'])
+    before = archive.export_rows()
+    with store._connect() as conn:
+        conn.execute('DELETE FROM chat_archive_seen')
+    # A raw inspection-stream restore lost its source envelope, but keeps its
+    # replay provenance. It may still be model context; it is not a new send.
+    wire = {'role': role, 'content': original['content'], 'archive_replay': True}
+    parsed = ChatRequest(model='test', messages=[wire]).messages[0].model_dump(exclude_none=True)
+    assert (await service.archive_window(session_tag='reopened', client_name='pwa', messages=[parsed]))['archived'] == 0
+    assert archive.export_rows() == before
+
+
+@pytest.mark.asyncio
+async def test_restored_complete_identity_can_still_capture_unarchived_selected_reply(tmp_path):
+    archive, _, service = setup_archive(tmp_path)
+    reply = {**message('completed', 'Complete recovered reply'), 'archive_replay': True}
+    assert (await service.archive_window(session_tag='pwa', client_name='pwa', messages=[reply]))['archived'] == 1
+    assert (await service.archive_window(session_tag='pwa', client_name='pwa', messages=[reply]))['archived'] == 0
+    assert archive.list_messages()[0]['content'] == reply['content']
+
+
+@pytest.mark.asyncio
+async def test_unknown_replay_neither_consumes_legacy_cache_nor_blocks_new_sends(tmp_path):
+    archive, _, service = setup_archive(tmp_path)
+    text = 'same visible words'
+    replay = {'role': 'user', 'content': text, 'archive_replay': True}
+    assert (await service.archive_window(session_tag='pwa', client_name='pwa', messages=[replay]))['archived'] == 0
+    assert (await service.archive_window(session_tag='old-client', client_name='old',
+        messages=[{'role': 'user', 'content': text}]))['archived'] == 1
+    assert (await service.archive_window(session_tag='pwa', client_name='pwa',
+        messages=[message('real-new-send', text, 'user')]))['archived'] == 1
+    assert len(archive.list_messages()) == 2
+
+
+def test_legacy_backfill_refuses_unidentified_restoration_sources():
+    from scripts.backfill_chat_archive import _candidate_rows
+    with pytest.raises(ValueError, match='[Ll]egacy'):
+        _candidate_rows(tag='old', client_name='pwa', created_at='2026-08-01T08:00:00Z', existing=set(),
+            messages=[{'role': 'assistant', 'content': 'restored body', 'archive_replay': True}])
+
+
+@pytest.mark.asyncio
+async def test_replay_guard_applies_to_cloud_capture_too(tmp_path):
+    _, store, local = setup_archive(tmp_path)
+    class NoCloudWrite:
+        async def insert_many(self, *args, **kwargs):
+            pytest.fail('unidentified replay must not write legacy cloud rows')
+        async def insert_archive_events(self, *args, **kwargs):
+            pytest.fail('unidentified replay has no immutable event to write')
+    cfg = SimpleNamespace(**vars(local.cfg))
+    cfg.chat_archive_backend = 'supabase'
+    service = ChatArchiveService(store, NoCloudWrite(), cfg)
+    result = await service.archive_window(session_tag='old', client_name='pwa',
+        messages=[{'role': 'assistant', 'content': 'old body', 'archive_replay': True}])
+    assert result['archived'] == 0
+
+
+def test_completion_snapshot_reaches_real_recovery_api_without_client_resend(tmp_path):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from shenyu_gateway.context_snapshots import write_completion_context_snapshot
+    from shenyu_gateway.gateway_admin_routes import GatewayAdminRouteDeps, build_gateway_admin_router
+    from shenyu_gateway.sessions import SessionManager
+    archive, store, service = setup_archive(tmp_path)
+    cfg = service.cfg
+    cfg.gateway_message_retention = 1500
+    sessions = SessionManager(store, cfg)
+    session = sessions.open_session('contract-test', 'shenyu-pwa')
+    user = message('user-contract', 'synthetic question', 'user')
+    event = message('reply-contract', '')['archive_event']
+    sessions.log_input_messages(session['id'], [user])
+    sessions.log_assistant_output(session['id'], {'role': 'assistant', 'content': 'synthetic complete reply'},
+        reply_version_id=event['id'])
+    write_completion_context_snapshot(store,
+        {'session': session, 'snapshot_messages': [user], 'reply_archive_event': event},
+        'synthetic complete reply')
+    app = FastAPI()
+    app.include_router(build_gateway_admin_router(GatewayAdminRouteDeps(
+        cfg=cfg, get_supabase_client=lambda: None, get_session_store=lambda: store,
+        require_session_store=lambda: store, context_builder=lambda *a, **k: None,
+        resolve_upstream=lambda: {}, prune_runtime_state=lambda **k: {},
+        cold_start_idle_minutes=lambda s: 0, now=lambda: None, request_logs=[])))
+    with TestClient(app) as client:
+        detail = client.get('/api/gateway/sessions/contract-test')
+        recovery = client.get('/api/gateway/sessions/contract-test/reply-recovery')
+    assert detail.status_code == recovery.status_code == 200
+    assert detail.json()['context_snapshots'][0]['messages'][-1]['archive_event'] == event
+    assert all('archive_event' not in row for row in detail.json()['recent_messages'])
+    assert recovery.json()['replies'][0]['archive_event'] == event
+    # A completed recovery snapshot is not itself formal archive acceptance.
+    assert archive.stats()['total'] == 0
+
+
+@pytest.mark.asyncio
+async def test_unidentified_replay_reports_count_without_logging_original(tmp_path, caplog):
+    from shenyu_gateway.chat_archive import archive_window_safely
+    archive, _, service = setup_archive(tmp_path)
+    content = 'Private restored text must never appear in operational logs'
+    window = [{'role': 'assistant', 'content': content, 'archive_replay': True}]
+    with caplog.at_level('INFO'):
+        await archive_window_safely(service, session_tag='reopened', client_name='pwa', messages=window)
+    assert 'deferred_replays=1' in caplog.text
+    assert 'missing_archive_identity' in caplog.text
+    assert content not in caplog.text
+    assert archive.stats()['total'] == 0
