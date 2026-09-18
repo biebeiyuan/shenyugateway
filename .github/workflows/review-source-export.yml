@@ -11,7 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 92c26918c0547265779722cf364b063719cc819c
+          ref: 418cea362a1a5b067b2208dbc66db644e1b5607e
           persist-credentials: false
       - name: Export reviewed source and commit object
         run: |
