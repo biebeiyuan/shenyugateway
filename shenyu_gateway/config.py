@@ -94,6 +94,7 @@ class RuntimeConfig:
         self.upstream_extra_body: dict[str, Any] = self._load_upstream_extra_body()
         self.upstream_passthrough_headers: list[str] = self._load_passthrough_headers()
         self.wake_welcome_message: str = os.getenv("WAKE_WELCOME_MESSAGE", "").strip()
+        self.enable_echo: bool = _env_bool("ENABLE_ECHO", True)
         self.echo_prompt: str = os.getenv("ECHO_PROMPT", DEFAULT_ECHO_PROMPT).strip()
         self.echo_retention_turns: int = _env_int("ECHO_RETENTION_TURNS", 1, 0, 20)
         self.model_mapping: dict[str, str] = self._load_model_mapping()
@@ -254,6 +255,7 @@ class RuntimeConfig:
             "upstream_extra_body": self.upstream_extra_body,
             "upstream_passthrough_headers": self.upstream_passthrough_headers,
             "wake_welcome_message": self.wake_welcome_message,
+            "enable_echo": self.enable_echo,
             "echo_prompt": self.echo_prompt,
             "echo_retention_turns": self.echo_retention_turns,
             "model_mapping": self.model_mapping,

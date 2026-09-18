@@ -28,9 +28,9 @@
         "star_ranker_version"
       ],
       "reviewed": {
-        "fingerprint": "9210932215e9114497bf612f758ba0c6e27f1659f963c6767e70f732a48cf2cc",
+        "fingerprint": "7c3689fbe5e895c4cfa1eab659d1a8c05a44f64d6ebf2048b65704cc23b75c44",
         "file_hashes": {
-          "shenyu_gateway/context_builder.py": "171ca580abde33fc00a99217723b87258818d687eb198f0719c7197ee9635d85",
+          "shenyu_gateway/context_builder.py": "89795fc7de69684e35b54a537cad7c5e2050c695c58a1a5ce0a569add2c607e8",
           "shenyu_gateway/gateway_tools/_stars.py": "5aaa44f7be5793c1d08e836f55dcd76133a3c1bfc6f697198ce384ff8b5d688b",
           "shenyu_gateway/memory_island.py": "75c2ff3e7a4e76fcf1da067de255004b68161351e7a070064b0123331a26d47c",
           "shenyu_gateway/stars/__init__.py": "2eaf12cd27b755017ea19f7419256292202196b853e554d2627d46f72304698c",
@@ -47,11 +47,11 @@
           "shenyu_gateway/stars/_scene.py": "87243e44b755e412b3db8598d901904814f704ac30ff238a83a2ca6449b98183",
           "shenyu_gateway/stars/_weights.py": "0abdf26f5bf25d8168be645fe9422e41719c875f1869569452ffca5002ecf81d"
         },
-        "commit": "a180947b76d48e9fa44004c3eb9700a9e4f07880",
-        "revision": "a180947b76d48e9fa44004c3eb9700a9e4f07880-dirty",
+        "commit": "7261f1858309ecb7488cd7d90e29180823fef66b",
+        "revision": "7261f1858309ecb7488cd7d90e29180823fef66b-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-14T18:53:29+08:00",
-        "reviewed_by": "Claude"
+        "reviewed_at": "2026-09-18T21:38:00+08:00",
+        "reviewed_by": "github-actions[bot]"
       }
     },
     "mem": {
@@ -71,9 +71,9 @@
         "inject_mem_notes"
       ],
       "reviewed": {
-        "fingerprint": "0b42917b25306d4ad04b66db8e27ed21a850e5bc8a94d1d3c8d6122a0b1c0bd4",
+        "fingerprint": "23d644d98a3346df041a7e3e3db9344073d4b16c329517fd94726fb114bba138",
         "file_hashes": {
-          "shenyu_gateway/context_builder.py": "171ca580abde33fc00a99217723b87258818d687eb198f0719c7197ee9635d85",
+          "shenyu_gateway/context_builder.py": "89795fc7de69684e35b54a537cad7c5e2050c695c58a1a5ce0a569add2c607e8",
           "shenyu_gateway/mem_notes/__init__.py": "545bee8d5a19f09b81fae420f163fd459ca9393e51832972e631e75f27ff4448",
           "shenyu_gateway/mem_notes/_crud.py": "169cb0a2d90498eec1f4e3f1b07475fcf70fee02801189f6ab1901ce50d921c0",
           "shenyu_gateway/mem_notes/_helpers.py": "ddc03375d3d9b6b0c72ac12285a00a79f01dd51ca0479caad5886d6690b824ea",
@@ -82,11 +82,11 @@
           "shenyu_gateway/mem_notes/_validation.py": "fc9a3ca770ce9812d8f9047b1f9fc1654178da0d5bce627e5cfb808ae9e0a090",
           "shenyu_gateway/memory_island.py": "75c2ff3e7a4e76fcf1da067de255004b68161351e7a070064b0123331a26d47c"
         },
-        "commit": "a180947b76d48e9fa44004c3eb9700a9e4f07880",
-        "revision": "a180947b76d48e9fa44004c3eb9700a9e4f07880-dirty",
+        "commit": "7261f1858309ecb7488cd7d90e29180823fef66b",
+        "revision": "7261f1858309ecb7488cd7d90e29180823fef66b-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-14T18:53:40+08:00",
-        "reviewed_by": "Claude"
+        "reviewed_at": "2026-09-18T21:38:00+08:00",
+        "reviewed_by": "github-actions[bot]"
       }
     },
     "island_bumps": {
@@ -109,17 +109,17 @@
         "island_bump_limit"
       ],
       "reviewed": {
-        "fingerprint": "f4bcc18c0d61bb1172c3bdd46aa5bb3cdd7a21b9feb394734612167ff57e165c",
+        "fingerprint": "210ab67eb111bc717b20cc5dc087d5e896ad916db5b0d252b99243717b6faf4d",
         "file_hashes": {
-          "shenyu_gateway/context_builder.py": "171ca580abde33fc00a99217723b87258818d687eb198f0719c7197ee9635d85",
+          "shenyu_gateway/context_builder.py": "89795fc7de69684e35b54a537cad7c5e2050c695c58a1a5ce0a569add2c607e8",
           "shenyu_gateway/context_layers.py": "7f50744b1d929134f6fb0a783253f65e09c42ee49351d1ad3586839d9184ee86",
           "shenyu_gateway/island_bumps.py": "f89a1dabcebfac4540b3904fb690f3e1806f056dd9fe9253468130ca8bf35393"
         },
-        "commit": "34c2be7376db1229fe967ba7ad43e7307245b8fc",
-        "revision": "34c2be7376db1229fe967ba7ad43e7307245b8fc-dirty",
+        "commit": "7261f1858309ecb7488cd7d90e29180823fef66b",
+        "revision": "7261f1858309ecb7488cd7d90e29180823fef66b-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-15T10:02:22+08:00",
-        "reviewed_by": "Claude Code"
+        "reviewed_at": "2026-09-18T21:38:00+08:00",
+        "reviewed_by": "github-actions[bot]"
       }
     },
     "heartbeat": {
@@ -142,18 +142,18 @@
         "heartbeat_archive_reconcile_deletions"
       ],
       "reviewed": {
-        "fingerprint": "298d1916e9bca78f0386abda255eecfd3a99fca7cd9fd293985b8650cbfd9ef0",
+        "fingerprint": "68eb5d0d2785e69742db29fab06f6a4a01eea0ac144e9e1bebe85f907cdf7c2f",
         "file_hashes": {
-          "shenyu_gateway/context_builder.py": "171ca580abde33fc00a99217723b87258818d687eb198f0719c7197ee9635d85",
+          "shenyu_gateway/context_builder.py": "89795fc7de69684e35b54a537cad7c5e2050c695c58a1a5ce0a569add2c607e8",
           "shenyu_gateway/heartbeat_archive.py": "ee4fedd48f68bcb782a72b249e011415ded3e3d17210f3f00b278b95f7553354",
           "shenyu_gateway/response_capture.py": "ac490ae5747b0008d72ebb2b4af607f4ca6a8ebc881771acd89541d70e539155",
           "shenyu_gateway/store/_heartbeats.py": "5f3a124f1e6a487e49f510344938dd017652b41bf39d0639880719790509be4a"
         },
-        "commit": "c0b6227b882043b6d1430d3779be1f401e2ccb67",
-        "revision": "c0b6227b882043b6d1430d3779be1f401e2ccb67-dirty",
+        "commit": "7261f1858309ecb7488cd7d90e29180823fef66b",
+        "revision": "7261f1858309ecb7488cd7d90e29180823fef66b-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-14T17:51:35+08:00",
-        "reviewed_by": "Codex"
+        "reviewed_at": "2026-09-18T21:38:00+08:00",
+        "reviewed_by": "github-actions[bot]"
       }
     },
     "calendar": {
@@ -181,18 +181,18 @@
         "calendar_context_month_limit"
       ],
       "reviewed": {
-        "fingerprint": "1eb7a238f74dbb57f0b2fc3072965e09892abfaae6a34d26ab16e83fed8de230",
+        "fingerprint": "141ca5e1ac82b56c5109d0d8f5194cbda1992f5eb9027ebe210a1ba06fd4bd94",
         "file_hashes": {
           "shenyu_gateway/calendar.py": "b2af171267f3cccfeacf0e4910a093ebf46ff4cd6be422542ac5d213ca16bcbc",
           "shenyu_gateway/calendar_service.py": "365650e7db27e5a43b5b35ef1fb0d44e54186b01e8ddeaea9d6a7dc71ab0028c",
-          "shenyu_gateway/context_builder.py": "171ca580abde33fc00a99217723b87258818d687eb198f0719c7197ee9635d85",
+          "shenyu_gateway/context_builder.py": "89795fc7de69684e35b54a537cad7c5e2050c695c58a1a5ce0a569add2c607e8",
           "shenyu_gateway/gateway_tools/_calendar.py": "a48ee9a4c74571dbb7b4504945e6c1acfd3c44534e520a7dd9233aa79201e7d8"
         },
-        "commit": "c0b6227b882043b6d1430d3779be1f401e2ccb67",
-        "revision": "c0b6227b882043b6d1430d3779be1f401e2ccb67-dirty",
+        "commit": "7261f1858309ecb7488cd7d90e29180823fef66b",
+        "revision": "7261f1858309ecb7488cd7d90e29180823fef66b-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-14T17:51:35+08:00",
-        "reviewed_by": "Codex"
+        "reviewed_at": "2026-09-18T21:38:00+08:00",
+        "reviewed_by": "github-actions[bot]"
       }
     },
     "windowsill": {
@@ -322,10 +322,10 @@
         "room_trace_limit"
       ],
       "reviewed": {
-        "fingerprint": "2d310c46a430f567f90f4327fb2419f2e6fa7b42791e87ee7ec52f950053b1eb",
+        "fingerprint": "2204437dda6d17983162551e5c77da2d27b7a1b6b17aa9d5406a9182f1ac511e",
         "file_hashes": {
           "pwa/src/meta/roomEntry.ts": "ec8735d046e502d79575c819f0dbf28adce92492efa4e9abb8f87455720e7baf",
-          "shenyu_gateway/context_builder.py": "171ca580abde33fc00a99217723b87258818d687eb198f0719c7197ee9635d85",
+          "shenyu_gateway/context_builder.py": "89795fc7de69684e35b54a537cad7c5e2050c695c58a1a5ce0a569add2c607e8",
           "shenyu_gateway/gateway_tools/_newspaper.py": "d617af8644a20dbe5bc8c5432f7e614d0f3069e4b4224c0f66b2c0b940862181",
           "shenyu_gateway/newspaper_basket.py": "6aad0d0bb6f25ccc2fcb65f2f854a644b1014e7e07cc4c15ac4bbc25e9d42de6",
           "shenyu_gateway/private_capture.py": "a08119693df3d16a81e9f3c3fcbce74544faa97cc9ee5db10aa0c25b386511b3",
@@ -334,11 +334,11 @@
           "shenyu_gateway/room_text.py": "f1d01146e934b56759ab071e114c5d7f55f3c28e3bcc34927b432aafc1d5e487",
           "shenyu_gateway/room_tools.py": "eff8971df35c14224507224c10672ea40c1ec125ea01f80bac6ae7e782b096e3"
         },
-        "commit": "406b6b999e0df7d22f3299d52d0a473dd08347d1",
-        "revision": "406b6b999e0df7d22f3299d52d0a473dd08347d1-dirty",
+        "commit": "7261f1858309ecb7488cd7d90e29180823fef66b",
+        "revision": "7261f1858309ecb7488cd7d90e29180823fef66b-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-15T19:51:36+08:00",
-        "reviewed_by": "Claude Opus 5"
+        "reviewed_at": "2026-09-18T21:38:00+08:00",
+        "reviewed_by": "github-actions[bot]"
       }
     },
     "origin_books": {
@@ -394,20 +394,20 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "172ef31522e31991e0793c359a6545f513e1eb89e6b4adc22b7b9c5e651fb99d",
+        "fingerprint": "21fe66f8278b37a998ff10934112eef8a26ef80035f71f64480b84ebb835cf4b",
         "file_hashes": {
           "scripts/resident_home.py": "10cdd7627ce6c5c6f8fefbf7d45fb21df6dcd02af289a6e5af91212d7cf0c21e",
-          "shenyu_gateway/context_builder.py": "171ca580abde33fc00a99217723b87258818d687eb198f0719c7197ee9635d85",
+          "shenyu_gateway/context_builder.py": "89795fc7de69684e35b54a537cad7c5e2050c695c58a1a5ce0a569add2c607e8",
           "shenyu_gateway/context_layers.py": "7f50744b1d929134f6fb0a783253f65e09c42ee49351d1ad3586839d9184ee86",
           "shenyu_gateway/project_map.py": "008627dc64d4d3a8f0331a9afa389bb05e7a83d5cbc66d3e7414e71d4bcf30d1",
           "shenyu_gateway/resident_books.py": "d5c952e25906818c1a5c9d52ea8ec1891285ffa5e2e1c14c4c5fcae879d36a08",
           "shenyu_gateway/resident_home.py": "44c4b9de5b3d0fd52ce005bf0fd5f402ac36a89c8a990de247a71d9c3d69c296"
         },
-        "commit": "34c2be7376db1229fe967ba7ad43e7307245b8fc",
-        "revision": "34c2be7376db1229fe967ba7ad43e7307245b8fc-dirty",
+        "commit": "7261f1858309ecb7488cd7d90e29180823fef66b",
+        "revision": "7261f1858309ecb7488cd7d90e29180823fef66b-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-15T10:02:23+08:00",
-        "reviewed_by": "Claude Code"
+        "reviewed_at": "2026-09-18T21:38:00+08:00",
+        "reviewed_by": "github-actions[bot]"
       }
     }
   }

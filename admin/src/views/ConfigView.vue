@@ -62,6 +62,7 @@ const config = ref<GatewayConfig>({
   upstream_extra_body: {},
   upstream_passthrough_headers: ['x-api-key'],
   wake_welcome_message: '',
+  enable_echo: true,
   echo_prompt: '',
   echo_retention_turns: 1,
   weather_city: '',
@@ -284,7 +285,7 @@ function showSaveWarnings(warnings?: string[]) {
 async function loadConfig() {
   try {
     const data = await fetchConfig()
-    config.value = data
+    config.value = { ...data, enable_echo: data.enable_echo ?? true }
     upstreamExtraBodyText.value = formatExtraBody(data.upstream_extra_body)
   } catch {
     message.error('Failed to load config')
@@ -328,6 +329,7 @@ async function doSave() {
       gateway_tool_surface: config.value.gateway_tool_surface,
       client_tool_surface: config.value.client_tool_surface,
       max_internal_tool_rounds: config.value.max_internal_tool_rounds,
+      enable_echo: config.value.enable_echo ?? true,
       echo_prompt: config.value.echo_prompt || '',
       echo_retention_turns: config.value.echo_retention_turns ?? 1,
       gateway_log_full_payloads: config.value.gateway_log_full_payloads,
@@ -352,7 +354,7 @@ async function doSave() {
     const wakeWelcomeMessage = config.value.wake_welcome_message?.trim()
     if (wakeWelcomeMessage) body.wake_welcome_message = wakeWelcomeMessage
     const result = await saveConfig(body)
-    config.value = result.config
+    config.value = { ...result.config, enable_echo: result.config.enable_echo ?? true }
     upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
     message.success(`Saved ${result.changed.length} field${result.changed.length === 1 ? '' : 's'}`)
     showSaveWarnings(result.warnings)
@@ -368,7 +370,7 @@ async function clearWakeWelcomeMessage() {
   clearingWelcome.value = true
   try {
     const result = await saveConfig({ clear_wake_welcome_message: true })
-    config.value = result.config
+    config.value = { ...result.config, enable_echo: result.config.enable_echo ?? true }
     upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
     message.success('已清空醒来欢迎词')
   } catch {
@@ -436,7 +438,7 @@ async function applyPreset(name: string | null) {
       upstream_extra_body: presetExtraBody,
       upstream_passthrough_headers: presetHeaders,
     })
-    config.value = result.config
+    config.value = { ...result.config, enable_echo: result.config.enable_echo ?? true }
     upstreamExtraBodyText.value = formatExtraBody(result.config.upstream_extra_body)
     showSaveWarnings(result.warnings)
     if (!preset.key) {
@@ -744,18 +746,38 @@ async function copyColdHeader(sessionTag: string) {
         </NForm>
       </NCard>
 
-      <NCard title="回响" size="small">
+      <NCard title="回响" size="small" data-testid="config-echo-card">
         <NForm label-placement="top">
+          <NFormItem label="启用回响">
+            <div class="switch-row">
+              <NSwitch
+                v-model:value="config.enable_echo"
+                data-testid="config-enable-echo"
+                aria-label="启用回响"
+                :disabled="saving"
+              />
+              <span class="switch-hint">关闭后不再注入回响提示词；原提示词和历史回响保留。保存后对后续请求生效。</span>
+            </div>
+          </NFormItem>
           <NFormItem label="回响提示词（放在 Heartbeat 之前）">
             <NInput
               v-model:value="config.echo_prompt"
+              data-testid="config-echo-prompt"
+              :disabled="config.enable_echo === false"
               type="textarea"
               :autosize="{ minRows: 8, maxRows: 18 }"
               placeholder="留空则不要求沈予写回响"
             />
           </NFormItem>
           <NFormItem label="回响随正文保留的后续轮数">
-            <NInputNumber v-model:value="config.echo_retention_turns" :min="0" :max="20" style="width: 100%" />
+            <NInputNumber
+              v-model:value="config.echo_retention_turns"
+              data-testid="config-echo-retention-turns"
+              :disabled="config.enable_echo === false"
+              :min="0"
+              :max="20"
+              style="width: 100%"
+            />
             <div class="provider-order-hint">按后续用户轮数计算；0 表示下一次请求就不再带回。PWA 的历史显示不受这个数字影响。</div>
           </NFormItem>
         </NForm>
@@ -1087,6 +1109,10 @@ async function copyColdHeader(sessionTag: string) {
   color: #e53e3e;
 }
 
+.preset-save-row .cal-input {
+  min-width: 0;
+}
+
 .preset-save-row {
   display: flex;
   gap: 6px;
@@ -1278,7 +1304,7 @@ async function copyColdHeader(sessionTag: string) {
   .cfg-grid,
   .cfg-inline,
   .cold-preview-grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

@@ -118,7 +118,11 @@ class ContextBuilder:
             enable_gateway_tools=bool(getattr(self.cfg, "enable_upstream_tools", True))
             and bool(getattr(self.cfg, "enable_gateway_tools", True)),
             heartbeat_prompt=_HEARTBEAT_PROMPT,
-            echo_prompt=str(getattr(self.cfg, "echo_prompt", "") or ""),
+            echo_prompt=(
+                str(getattr(self.cfg, "echo_prompt", "") or "")
+                if getattr(self.cfg, "enable_echo", True)
+                else ""
+            ),
             client_tool_surface=(
                 client_tool_surface
                 if client_tool_surface is not None

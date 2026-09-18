@@ -15,6 +15,7 @@ from shenyu_gateway.store import GatewayStore
 ROOT = Path(__file__).resolve().parent.parent
 
 DEFAULTED_ENV_KEYS = [
+    "ENABLE_ECHO",
     "ENABLE_OPENAI_CACHE_CONTROL",
     "ENABLE_ANTHROPIC_CACHE_CONTROL",
     "OPENAI_CACHE_TTL",
@@ -74,6 +75,7 @@ def test_runtime_defaults_enable_mem_cache_tools_and_trim(monkeypatch):
     assert cfg.max_client_messages == 75
     assert cfg.gateway_request_log_retention == 200
     assert cfg.gateway_log_full_payloads is False
+    assert cfg.enable_echo is True
     assert cfg.echo_retention_turns == 1
     assert cfg.room_newspaper_qa_enabled is False
     assert cfg.room_newspaper_llm_model == ""
