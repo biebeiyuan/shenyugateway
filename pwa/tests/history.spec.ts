@@ -1,9 +1,11 @@
+import { wireMessages } from '../src/api/client'
 import { describe, expect, it } from 'vitest'
 import {
   coldStartHistoryRows,
   dedupeUiMessagesForRecovery,
   hasExactDuplicateRows,
   sessionHistoryRows,
+  restoredArchiveState,
   sessionMessageContent,
   sessionTagFromLocation,
 } from '../src/session/history'
@@ -161,4 +163,22 @@ describe('duplicate history detection and recovery', () => {
     ])
     expect(deduped.map((message) => message.content)).toEqual(['a', 'b', 'new message'])
   })
+})
+
+// The selector still selects raw rows; this is the same metadata mapper used by
+// openSession and cold-start restore, rather than a test-only identity guess.
+it.each(['snapshot', 'inspection', 'cold-start'])('keeps %s restore provenance separate from a fresh send', source => {
+  const envelope = { id: 'original-version', event_at: '2026-09-11T02:00:00Z' }
+  const raw = { role: 'assistant', content: 'unchanged old body', ...(source === 'snapshot' ? { archive_event: envelope } : {}) }
+  const payload = { context_snapshots: source === 'snapshot' ? [{ messages: [raw] }] : [],
+    recent_messages: [raw], cold_start_snapshots: [{ sources: [{ session_tag: 'old', messages: [raw] }] }] }
+  const before = JSON.stringify(payload)
+  const selected = source === 'cold-start' ? coldStartHistoryRows(payload, 'old') : sessionHistoryRows(payload)
+  const restored = { ...uiMessage('assistant', String(selected[0].content)), ...restoredArchiveState(selected[0]) }
+  const wire = wireMessages([restored])[0]
+  expect(wire).toHaveProperty('archive_replay', true)
+  expect(wire).not.toHaveProperty('archive_pending')
+  if (source === 'snapshot') expect(wire).toHaveProperty('archive_event', envelope)
+  else expect(wire).not.toHaveProperty('archive_event')
+  expect(JSON.stringify(payload)).toBe(before)
 })

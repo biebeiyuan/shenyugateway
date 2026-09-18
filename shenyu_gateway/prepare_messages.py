@@ -8,7 +8,7 @@ from typing import Any, Callable, Optional
 
 from fastapi import Request
 
-from .chat_archive import ChatArchiveService, archive_window_safely
+from .chat_archive import ChatArchiveService, archive_window_safely, parse_archive_event
 from .client_extra import expired_image_note_text
 from .context_layers import (
     assemble_layered_messages,
@@ -39,6 +39,7 @@ from .request_logs import _mark_request_log_phase
 from .runtime import iso_now as _iso_now, json_dumps as _json_dumps, logger, now as _now, parse_ts as _parse_ts
 from .system_prefix_buffer import buffer_seconds_from_ttl, resolve_system_prefix
 from .sessions import SessionManager
+from .schemas import ARCHIVE_MESSAGE_FIELDS
 from .store import NEXT_REQUEST_COLD_START_TAG
 from .tool_loop import _latest_user_text, _tool_call_name
 from .tool_registry import is_gateway_native_tool
@@ -448,6 +449,17 @@ async def prepare_messages(
     is_first_turn = non_system_count <= 1 or sessions.is_first_turn(session)
 
     raw_messages = [message.model_dump(exclude_none=True) for message in body.messages]
+    for message in raw_messages:
+        # Only the JSON boolean true opts in; truthy strings/numbers are not flags.
+        for field in ("archive_pending", "archive_replay"):
+            enabled = message.get(field) is True
+            if enabled:
+                message[field] = True
+            else:
+                message.pop(field, None)
+        event = parse_archive_event(message.pop("archive_event", None))
+        if event and message.get("role") in {"user", "assistant"}:
+            message["archive_event"] = event
     raw_messages_for_archive, _ = _trim_client_image_blocks(raw_messages, keep_recent_messages=0)
     raw_messages_for_lineage = compact_history_event_messages(raw_messages)
     raw_messages_for_event = normalize_history_event_messages(raw_messages_for_lineage)
@@ -630,6 +642,13 @@ async def prepare_messages(
         detail={"pending_gateway_tool_turns": len(pending_gateway_meta.get("pending_gateway_tool_turn_ids", []))},
     )
 
+    reply_archive_event = parse_archive_event((body.metadata or {}).get("reply_archive_event"))
+    if reply_archive_event and reply_archive_event["id"] != (body.metadata or {}).get("reply_version_id"):
+        reply_archive_event = None
+    # Archive metadata lives in the original/snapshot copy, never model context.
+    messages = [{key: value for key, value in message.items()
+                 if key not in ARCHIVE_MESSAGE_FIELDS} for message in messages]
+
     # ── Room Mode Branch ───────────────────────────────────────────
     is_room = bool(
         getattr(cfg, "enable_room_mode", True)
@@ -657,6 +676,7 @@ async def prepare_messages(
         )
         _mark_request_log_phase(log_entry, "prepare.done", now_iso=_iso_now(), detail={"prepared_messages": len(messages), "mode": "room"})
         return messages, {
+            "reply_archive_event": reply_archive_event,
             "session": session,
             "package": package,
             "is_first_turn": is_first_turn,
@@ -770,6 +790,7 @@ async def prepare_messages(
     )
 
     return messages, {
+        "reply_archive_event": reply_archive_event,
         "session": session,
         "package": package,
         "is_first_turn": is_first_turn,

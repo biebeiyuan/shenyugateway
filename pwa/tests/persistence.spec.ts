@@ -340,3 +340,19 @@ describe('an older build must not erase what a newer build stored', () => {
     expect(loadStoredMessages()[0].content).toBe('x')
   })
 })
+
+// A corrupt selection must not make loadStoredMessages discard the entire transcript.
+it.each([0.5, -0.5, 'not-a-number', null, 999, -9])('loads saved history with invalid selection %j', selected => {
+  const source = uiMessage('assistant', 'first', { archiveEvent: { id: 'v1', event_at: '2026-09-18T08:00:00Z' } })
+  const other = { ...source, content: 'second', archiveEvent: { id: 'v2', event_at: '2026-09-18T08:01:00Z' } }
+  localStorage.setItem(STORAGE_MESSAGES, JSON.stringify([
+    uiMessage('user', 'question'),
+    { ...source, variants: [source, other], selectedVariantIndex: selected },
+  ]))
+  const saved = localStorage.getItem(STORAGE_MESSAGES)
+  const loaded = loadStoredMessages()
+  expect(loaded).toHaveLength(2)
+  expect(loaded[1].selectedVariantIndex).toBe(selected === 999 ? 1 : 0)
+  expect(loaded[1].archiveEvent?.id).toBe(selected === 999 ? 'v2' : 'v1')
+  expect(localStorage.getItem(STORAGE_MESSAGES)).toBe(saved)
+})

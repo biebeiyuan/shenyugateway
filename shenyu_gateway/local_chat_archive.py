@@ -181,7 +181,7 @@ class LocalChatArchive:
                               if legacy and digest else f'id:{ident}')
         return result
 
-    def _write(self, rows: Iterable[dict], *, legacy: bool) -> int:
+    def _write(self, rows: Iterable[dict], *, legacy: bool, capture: bool = False) -> int:
         records = [self._validated(row, legacy=legacy) for row in rows]
         inserted = 0
         with self._connect(write=True) as conn:
@@ -189,6 +189,12 @@ class LocalChatArchive:
             for row in records:
                 existing = conn.execute('SELECT * FROM archive_messages WHERE id=?', (row['id'],)).fetchone()
                 if existing:
+                    if (row.get("content_hash") == "event:v1:" + row["id"]
+                            and existing["content_hash"] == row["content_hash"]
+                            and existing["role"] == row["role"] and capture):
+                        # Capture event identity is immutable even when a client's
+                        # projection changes. Never overwrite or revive this row.
+                        continue
                     if any(existing[key] != row[key] for key in _ORIGINAL):
                         # Do not print resident content as failure evidence.
                         raise ValueError(f'archive original conflict for id {row["id"]}')
@@ -213,9 +219,10 @@ class LocalChatArchive:
         return self._write(rows, legacy=False)
 
     def append_legacy_rows(self, rows: Iterable[dict]) -> int:
-        """Existing window archiver compatibility, until per-message IDs are wired."""
-        return self.import_rows({**row, 'id': row.get('id') or str(uuid.uuid4()),
-                                 'deleted_at': row.get('deleted_at')} for row in rows)
+        """Window capture: immutable identified events plus legacy hash-based rows."""
+        return self._write(({**row, 'id': row.get('id') or str(uuid.uuid4()),
+                             'deleted_at': row.get('deleted_at')} for row in rows),
+                           legacy=True, capture=True)
 
     def export_rows(self) -> list[dict]:
         with self._connect() as conn:
@@ -348,6 +355,41 @@ class LocalChatArchive:
                 'snippet_after': text[match.end():match.end()+30]})
         return {'results': results, 'count': len(results), 'has_more': has_more,
                 'query': needle, 'next_cursor': self.cursor(hits[-1]) if has_more else None}
+
+    def recall_candidates(self, terms: list[str], *, limit: int = 200) -> list[dict]:
+        """Full originals for chat Recall; same visibility/literal rules as search.
+
+        Keep Recall's bounded newest-candidate pool and OR term retrieval. Scoring
+        belongs to the tool service, not storage. Filter before LIMIT, and fold
+        globally before either, so hidden handoff copies cannot consume the pool.
+        """
+        needles = list(dict.fromkeys(term for term in terms if term))
+        clauses: list[str] = []
+        params: list[Any] = []
+        pattern = None
+        if needles:
+            pattern = re.compile('|'.join(re.escape(term) for term in needles), re.IGNORECASE)
+            fragments = [_uncased_literal_fragment(term) for term in needles]
+            if all(fragments):
+                clauses.append('(' + ' OR '.join('instr(content, ?) > 0' for _ in fragments) + ')')
+                params.extend(fragments)
+            clauses.append('archive_literal(content) = 1')
+        where = 'WHERE ' + ' AND '.join(clauses) if clauses else ''
+        with self._connect() as conn:
+            if pattern is not None:
+                conn.create_function('archive_literal', 1,
+                                     lambda text: int(bool(pattern.search(text or ''))), deterministic=True)
+            return [dict(row) for row in conn.execute(
+                f'SELECT {",".join(_PUBLIC)} FROM ({_VISIBLE_ROWS}) {where} '
+                'ORDER BY event_us DESC, archive_us DESC, id DESC LIMIT ?',
+                (*params, _limit(limit, 200, maximum=200)))]
+
+    def read_message(self, message_id: str) -> dict | None:
+        """Read a currently visible original by ID, never a tombstone/folded copy."""
+        with self._connect() as conn:
+            row = conn.execute(f'SELECT {",".join(_PUBLIC)} FROM ({_VISIBLE_ROWS}) '
+                               'WHERE id = ?', (message_id,)).fetchone()
+        return dict(row) if row else None
 
     def soft_delete(self, message_id: str) -> int:
         with self._connect(write=True) as conn:

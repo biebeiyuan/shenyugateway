@@ -1,24 +1,35 @@
 import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
-import { sessionMessageContent, sessionMessageParts } from './history'
+import { readArchiveEvent, restoredArchiveState, sessionMessageContent, sessionMessageParts } from './history'
 import { hydrateToolEvents } from './toolHydration'
 import { applyVariant, selectedVariantIndex, snapshotMessage, syncCurrentVariant } from './variants'
 
-// 尾部对账：后台断流后，从 session detail 的 recent_messages（gateway_messages
-// 原始行）里把服务端 drain 落库的完整回复找回来。只修尾巴，绝不整体替换——
-// openSession 的整体替换对本地 attachments/thinking 有损，仅用于切会话。
-//
-// 锚点约定：先在服务端行里从尾部找到与本地末轮 user 消息内容一致的行，再取其后
-// 的 assistant 行。锚不上（服务端最新 user 行不是我们这条）就返回 false，让调用
-// 方按退避重试——这正是"服务端还没 drain 完"的样子。
+// Tail recovery has two inputs: /reply-recovery and the legacy recent_messages
+// fallback. Both keep local data and require a known reply identity to match.
+// Producer/storage/consumer contract: REQUEST_CONTEXT.md § Transcript identity and recovery.
 
 type RecentRow = Record<string, unknown>
 
 type RecoveryReply = {
   id?: unknown
   reply_version_id?: unknown
+  archive_event?: unknown
   content?: unknown
   tool_rows?: unknown
+}
+
+type ReplyIdentity = Pick<MessageVariant, 'replyVersionId' | 'archiveEvent'>
+
+function replyIdentity(value?: ReplyIdentity): string | undefined {
+  return value?.replyVersionId || value?.archiveEvent?.id
+}
+
+function identityMatches(local: ReplyIdentity | undefined, incoming: ReplyIdentity): boolean {
+  for (const value of [local, incoming]) {
+    if (value?.replyVersionId && value.archiveEvent && value.replyVersionId !== value.archiveEvent.id) return false
+  }
+  const expected = replyIdentity(local)
+  return !expected || expected === replyIdentity(incoming)
 }
 
 function normalizeText(value: string): string {
@@ -96,9 +107,13 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
 
   const last = messages[messages.length - 1]
   const target = last.role === 'assistant' ? last : undefined
-  const versionedReply = target?.replyVersionId
-    ? rows.find((row) => row.role === 'assistant' && String(row.source_id || '') === target.replyVersionId)
+  const expectedVersion = replyIdentity(target)
+  const versionedReply = expectedVersion
+    ? rows.find((row) => row.role === 'assistant' && String(row.source_id || '') === expectedVersion)
     : undefined
+  // A known version must never fall back to matching user text. Rolls share
+  // that text, and an empty/common-prefix tail cannot distinguish their replies.
+  if (expectedVersion && !versionedReply) return false
   let selectedReply = versionedReply
   if (!selectedReply) {
     const anchorUser = target ? messages[messages.length - 2] : last
@@ -108,6 +123,10 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
     selectedReply = replyRowAfter(rows, anchorIndex)
   }
   if (!selectedReply) return false
+  if (!identityMatches(target, {
+    replyVersionId: String(selectedReply.source_id || '') || undefined,
+    archiveEvent: readArchiveEvent(selectedReply.archive_event),
+  })) return false
   const parts = sessionMessageParts(selectedReply.content)
   if (!parts.content && !parts.echo) return false
 
@@ -123,6 +142,8 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
       return false
     }
 
+    target.archiveEvent = target.archiveEvent || readArchiveEvent(selectedReply.archive_event)
+    target.archiveReplay = true
     target.content = nextContent
     target.echo = nextEcho
     // 只在本地没有 echoSegments 时才用服务端的（服务端只能给 offset 0 的单段）
@@ -138,6 +159,7 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
   } else {
     messages.push({
       id: String(selectedReply.id || createId('message')),
+      ...restoredArchiveState(selectedReply),
       role: 'assistant',
       content: parts.content,
       echo: parts.echo,
@@ -160,6 +182,7 @@ function recoveryVariant(reply: RecoveryReply): MessageVariant | undefined {
   const parts = sessionMessageParts(reply.content)
   if (!parts.content && !parts.echo) return undefined
   const variant: MessageVariant = {
+    ...restoredArchiveState(reply),
     replyVersionId: reply.reply_version_id ? String(reply.reply_version_id) : undefined,
     content: parts.content,
     echo: parts.echo,
@@ -207,7 +230,8 @@ function mergeRecoveredVariant(local: MessageVariant, incoming: MessageVariant):
 }
 
 function variantKey(variant: MessageVariant): string {
-  if (variant.replyVersionId) return `id:${variant.replyVersionId}`
+  const identity = replyIdentity(variant)
+  if (identity) return `id:${identity}`
   return `text:${variant.content}\u0000${variant.echo}`
 }
 
@@ -254,6 +278,7 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   }
   const variants = target.variants
   let changed = false
+  const selectedKey = variantKey(variants[selectedVariantIndex(target)])
   // 去重老快照留下的重复项，但去重本身不算"变化"——它只是整理，不是找回。
   const uniqueVariants: MessageVariant[] = []
   const seenKeys = new Set<string>()
@@ -265,15 +290,17 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   }
   if (uniqueVariants.length !== variants.length) {
     variants.splice(0, variants.length, ...uniqueVariants)
-    target.selectedVariantIndex = selectedVariantIndex(target)
+    // Removing an earlier duplicate shifts indexes, not the selected identity.
+    target.selectedVariantIndex = variants.findIndex(variant => variantKey(variant) === selectedKey)
   }
 
-  // 候选只认一条：本地有 replyVersionId 就必须精确匹配，否则取最新那条。
+  // 候选只认一条：本地有回复/归档身份就必须精确匹配，否则取最新那条。
   // 匹配不上 = 服务端手里不是这条回复，不碰，让退避链继续。
-  const candidate = target.replyVersionId
-    ? candidates.find((item) => item.replyVersionId === target.replyVersionId)
+  const expectedVersion = replyIdentity(target)
+  const candidate = expectedVersion
+    ? candidates.find((item) => replyIdentity(item) === expectedVersion)
     : candidates[candidates.length - 1]
-  if (!candidate) return changed
+  if (!candidate || !identityMatches(target, candidate)) return changed
   // 只增不减：唯一的写入闸门，没有例外分支。服务端不涵盖本地就原样返回，
   // truncated/error 留着，让调用方按退避继续问——这正是"drain 还没写完"的样子。
   if (!acceptRecovery(
@@ -289,6 +316,14 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     changed = true
   }
   target.streaming = false
+  if (!target.archiveReplay) {
+    target.archiveReplay = true
+    changed = true
+  }
+  if (!target.archiveEvent && candidate.archiveEvent) {
+    target.archiveEvent = candidate.archiveEvent
+    changed = true
+  }
 
   const index = selectedVariantIndex(target)
   const contentChanged = normalizeText(candidate.content) !== normalizeText(target.content || '')
@@ -297,14 +332,26 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     // 服务端永远没有 thinking，events 只有塌到 offset 0 的补水版，echoSegments 只有单段，
     // responseMeta 压根不在恢复载荷里。本地有的一律以本地为准，服务端只补本地空着的。
     // error 例外：上面刚判定找回成功清掉了它，快照里那份不能再传染回来。
-    const merged = { ...mergeRecoveredVariant(variants[index], candidate), error: undefined }
+    const merged = { ...mergeRecoveredVariant(variants[index], candidate),
+      archiveEvent: target.archiveEvent || candidate.archiveEvent, truncated: false, error: undefined }
     applyVariant(target, merged, index)
     syncCurrentVariant(target)
     changed = true
-  } else if (!target.replyVersionId && candidate.replyVersionId) {
-    // 补版本号是簿记，不算找回，不因此置 changed。
-    target.replyVersionId = candidate.replyVersionId
-    syncCurrentVariant(target)
+  } else {
+    // Equal text still confirms completion. Keep that receipt on the selected
+    // variant too, or switching away/back revives its pending/error state and
+    // loses a newly recovered archive identity. Do not overwrite local metadata.
+    if (!target.replyVersionId && candidate.replyVersionId) {
+      target.replyVersionId = candidate.replyVersionId
+      changed = true
+    }
+    Object.assign(variants[index], {
+      replyVersionId: target.replyVersionId,
+      archiveEvent: target.archiveEvent,
+      archiveReplay: true,
+      truncated: false,
+      error: undefined,
+    })
   }
   return changed
 }

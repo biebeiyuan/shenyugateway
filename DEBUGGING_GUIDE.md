@@ -375,6 +375,45 @@ Visible output should never include closed private blocks:
 
 When this area breaks, check `test_gateway_tags.py` and `test_response_capture.py` first.
 
+### Archive replay after private-block stripping
+
+Confirmed on 2026-09-18 against the preserved Supabase archive: 28 active replies
+had older active counterparts whose only difference was two leading newlines.
+The earliest confirmed duplicate batch was written at 2026-09-15 13:42 Beijing
+time (13 rows); the second at 2026-09-18 00:07 (15 rows). This dates the verified
+whitespace-duplicate class, not every historical ordering anomaly or the current
+VPS SQLite contents. No resident text is needed in the diagnostic record.
+
+The old capture trimmed before echo stripping, hashed the leftover separator,
+then assigned unanchored replayed history the current capture time. Unchanged
+user rows were skipped while those reply variants re-entered as new rows.
+Do not fix this by sorting roles or deleting adjacent replies. Preserve originals;
+review explicit duplicate IDs against the actual active archive before cleanup.
+The prevention contract and legacy limits are owned by
+`docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth).
+Regression coverage: `tests/test_archive_identity.py` and
+`pwa/tests/archiveIdentity.spec.ts`. Deployment is a separate verification step.
+
+### Chat Recall source and recovery identity
+
+If the archive page sees a message that chat-original Recall cannot find (or a
+locally deleted message reappears through Recall), compare their selected backend
+before changing the query or rebuilding vectors. The pre-fix chat Recall/read
+handlers queried Supabase directly even in SQLite mode. Isolated regressions
+with a stale cloud fixture reproduce both missing local-only originals and
+returning stale cloud originals. Current source/visibility ownership is in
+`docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth);
+`tests/test_recall_archive_backend.py` checks the reader API, both tool entries,
+folding/deletions, unavailable storage, and non-chat compatibility.
+
+For a new Roll filled with an old reply after disconnect, inspect **both** PWA
+recovery paths: rejecting the primary candidate was insufficient while the
+session-detail fallback still accepted the latest matching user text. Empty and
+common-prefix fragments cannot prove version identity. `pwa/tests/recoveryIdentity.spec.ts`
+rejects wrong/conflicting IDs and verifies exact-version recovery and completion
+metadata survive variant switching. These are isolated code reproductions, not
+claims of a newly observed production incident.
+
 ## External Frontend Contracts
 
 These are hard contracts with `home-frontend`; do not remove or reshape them during cleanup:

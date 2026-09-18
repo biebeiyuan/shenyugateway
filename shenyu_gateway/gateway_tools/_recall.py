@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import re
+import sqlite3
 from typing import Any, Optional
 
 from shenyu_gateway.recall import (
@@ -11,6 +12,7 @@ from shenyu_gateway.recall import (
     classify_recall_mode,
     recall_terms,
 )
+from shenyu_gateway.local_chat_archive import local_archive_for_config
 from shenyu_gateway.runtime import logger
 from shenyu_gateway.utils import shorten as _shorten
 
@@ -285,8 +287,6 @@ class RecallToolsMixin:
         return {"ok": True, "count": len(items), "items": items}
 
     async def _recall_chat_archive(self, query: str, limit: int = 3) -> dict[str, Any]:
-        if not self.supabase:
-            return {"ok": False, "count": 0, "items": [], "error": "Supabase is not configured."}
         clean = re.sub(
             r"原话|逐字|聊天记录|当时怎么说|当时说了什么|我们当时|你当时|我当时",
             " ",
@@ -297,15 +297,30 @@ class RecallToolsMixin:
         for term in sorted(terms, key=len, reverse=True):
             if term not in unique_terms:
                 unique_terms.append(term)
-        params: dict[str, str] = {
-            "select": "id,session_tag,thread,role,content,event_at,archived_at",
-            "deleted_at": "is.null",
-            "order": "event_at.desc",
-            "limit": "200",
-        }
-        if unique_terms:
-            params["or"] = "(" + ",".join(f"content.ilike.*{term}*" for term in unique_terms[:4]) + ")"
-        rows = await self.supabase.query("shenyu_chat_archive", params)
+        if getattr(self.cfg, "chat_archive_backend", "supabase") == "sqlite":
+            def local_candidates():
+                archive = local_archive_for_config(self.cfg)
+                if archive is None:
+                    raise ValueError("Chat archive backend changed during read")
+                return archive.recall_candidates(unique_terms[:4])
+            try:
+                rows = await asyncio.to_thread(local_candidates)
+            except (OSError, ValueError, sqlite3.Error):
+                # The cloud copy is rollback data, never a fallback read source.
+                logger.warning("[ChatArchiveRecall] local archive unavailable", exc_info=True)
+                return {"ok": False, "count": 0, "items": [], "error": "Local chat archive is unavailable."}
+        else:
+            if not self.supabase:
+                return {"ok": False, "count": 0, "items": [], "error": "Supabase is not configured."}
+            params: dict[str, str] = {
+                "select": "id,session_tag,thread,role,content,event_at,archived_at",
+                "deleted_at": "is.null",
+                "order": "event_at.desc",
+                "limit": "200",
+            }
+            if unique_terms:
+                params["or"] = "(" + ",".join(f"content.ilike.*{term}*" for term in unique_terms[:4]) + ")"
+            rows = await self.supabase.query("shenyu_chat_archive", params)
         scored: list[tuple[float, dict[str, Any]]] = []
         for row in rows:
             content = str(row.get("content") or "")
@@ -329,20 +344,32 @@ class RecallToolsMixin:
         return {"ok": True, "count": len(items), "items": items}
 
     async def _read_chat_archive_item(self, item_id: str) -> dict[str, Any]:
-        if not self.supabase:
-            return {"ok": False, "error": "Supabase is not configured."}
-        rows = await self.supabase.query(
-            "shenyu_chat_archive",
-            {
-                "id": f"eq.{item_id}",
-                "deleted_at": "is.null",
-                "select": "id,role,content,event_at,archived_at",
-                "limit": "1",
-            },
-        )
-        if not rows:
+        if getattr(self.cfg, "chat_archive_backend", "supabase") == "sqlite":
+            def local_item():
+                archive = local_archive_for_config(self.cfg)
+                if archive is None:
+                    raise ValueError("Chat archive backend changed during read")
+                return archive.read_message(item_id)
+            try:
+                row = await asyncio.to_thread(local_item)
+            except (OSError, ValueError, sqlite3.Error):
+                logger.warning("[ChatArchiveRecall] local archive unavailable", exc_info=True)
+                return {"ok": False, "error": "Local chat archive is unavailable."}
+        else:
+            if not self.supabase:
+                return {"ok": False, "error": "Supabase is not configured."}
+            rows = await self.supabase.query(
+                "shenyu_chat_archive",
+                {
+                    "id": f"eq.{item_id}",
+                    "deleted_at": "is.null",
+                    "select": "id,role,content,event_at,archived_at",
+                    "limit": "1",
+                },
+            )
+            row = rows[0] if rows else None
+        if not row:
             return {"ok": False, "error": "Chat archive item not found."}
-        row = rows[0]
         return {
             "ok": True,
             "item": {

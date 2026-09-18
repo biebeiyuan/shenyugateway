@@ -8,6 +8,7 @@ from fastapi.responses import JSONResponse
 
 from .gateway_tools import GatewayToolService, WINDOWSILL_ORIGIN_ROOM
 from .client_extra import strip_pwa_status_suffix
+from .chat_archive import parse_archive_event
 from .mem_notes import MemNoteService
 from .memory_graph import MemoryGraphService
 from .orchard_service import ACTOR_YUANYUAN, OrchardService
@@ -64,7 +65,9 @@ def _recovery_user_key(value: Any) -> str:
     return " ".join(cleaned.split()).strip()
 
 
-def collect_reply_recovery_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
+def collect_reply_recovery_rows(
+    rows: list[dict[str, Any]], snapshots: Optional[list[dict]] = None,
+) -> dict[str, Any]:
     """Collect the completed reply for the latest user request only.
 
     Recovery repairs a reply the PWA lost after the gateway completed it.  It
@@ -111,6 +114,18 @@ def collect_reply_recovery_rows(rows: list[dict[str, Any]]) -> dict[str, Any]:
                     "user_message_id": rows[latest_user_index].get("id"),
                 }
             )
+    # Only carry identities recorded by the new request/snapshot contract.
+    # Legacy source_id existed before it: manufacturing an envelope from it
+    # would re-archive old history under new IDs on the first recovery.
+    for reply in replies:
+        for snapshot in snapshots or []:
+            event = next((parsed for row in snapshot.get("messages", [])
+                          if row.get("role") == "assistant"
+                          and (parsed := parse_archive_event(row.get("archive_event")))
+                          and parsed["id"] == reply.get("reply_version_id")), None)
+            if event:
+                reply["archive_event"] = event
+                break
     return {"user_content": latest_user, "replies": replies}
 
 
@@ -985,7 +1000,8 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         if not session:
             raise HTTPException(status_code=404, detail="Session not found.")
         rows = store.get_recent_messages(session["id"], limit=5000)
-        recovery = collect_reply_recovery_rows(rows)
+        recovery = collect_reply_recovery_rows(
+            rows, store.get_recent_context_snapshots(session["id"], limit=5))
         cap = max(1, min(int(limit or 20), 100))
         recovery["replies"] = recovery["replies"][-cap:]
         recovery["session_tag"] = session_tag

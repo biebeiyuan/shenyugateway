@@ -17,8 +17,8 @@
 |---|---|---|
 | 快速认识项目和文件放在哪里 | `README.md` | `docs/architecture/SYSTEM_ZONES.md` |
 | 查一次请求到底怎样走 | `docs/architecture/REQUEST_CONTEXT.md` | `DEBUGGING_GUIDE.md` § Chat Request Flow |
-| 搜不到某句话、按天翻档案或迁移聊天库 | `docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth) | 查写入和读取的短路径；不要拿上下文快照当完整档案 |
-| PWA 后台回来少了回复、Roll 找回不对 | `README.md` § PWA chat frontend | `docs/architecture/REQUEST_CONTEXT.md` § External Frontend Contracts；恢复路径不等于档案搜索 |
+| 搜不到原话、档案重复或迁移聊天库 | `docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth) | 查写入和读取的短路径；不要拿上下文快照当完整档案 |
+| PWA 切会话、断流或 Roll 恢复丢身份 | `docs/architecture/REQUEST_CONTEXT.md` § Transcript identity and recovery | 表内的写入函数 → 实际消费者 → 对应回归测试；恢复不等于正式入档 |
 | 确认一项改动能否上线、数据是否已经切换 | `docs/DELIVERY.md` § 交付状态梯 | `docs/DELIVERY.md` § 验证基线与施工簿记法；查当前提交的证据，不把旧 CI 当新提交的结果 |
 | 查工具、mixed tool 或 pending transcript | 本页 § 工具人话解释 | `docs/architecture/REQUEST_CONTEXT.md` § Streaming And Tool Calls |
 | 查 Memory Island、裁剪、cold start | `docs/architecture/REQUEST_CONTEXT.md` | `docs/architecture/AUDIT_MATRIX.md` § 区域五：上下文窗口与 Memory Island |
@@ -28,7 +28,7 @@
 | 线上报错、流卡住、工具没执行 | `DEBUGGING_GUIDE.md` | `LOGS_GUIDE.md` |
 | 看已经确认的问题和暂不该动的地方 | `docs/architecture/AUDIT_MATRIX.md` | 对应测试和代码 |
 | 判断某份 Markdown 是否仍然有效 | `DOCS_MAP.md` | 对应现行专题文档 |
-| 修改代码 | `AGENTS.md` | 本表对应的专题文档 |
+| 修改未列出的功能、评估耦合影响 | `README.md` § Maintenance Map 定位负责模块 | `docs/architecture/SYSTEM_ZONES.md` § 跨区关键桥梁 定位相邻职责，再核对调用方、状态写入方和契约测试 |
 | 开关回响、修改回响提示词或保留轮数 | `docs/architecture/REQUEST_CONTEXT.md` § Context Layers（回响开关的生效与保留边界） | 控制台入口在 `admin/src/views/ConfigView.vue`；提示词注入看 `shenyu_gateway/context_builder.py`，回响拆分与历史裁剪看 `shenyu_gateway/echo.py` |
 | 改 PWA 前端（聊天界面、流式、会话交接） | `README.md` § PWA chat frontend | `docs/frontend/STYLE_AND_CRAFT.md` § 五的 PWA 行；涉及请求、流式或会话契约时再读 `docs/architecture/REQUEST_CONTEXT.md` § External Frontend Contracts |
 | 改 admin 前端（配色、组件、动效、演示预览） | `docs/frontend/STYLE_AND_CRAFT.md` | `admin/src/theme/tokens.css`、`admin/src/demo/` |

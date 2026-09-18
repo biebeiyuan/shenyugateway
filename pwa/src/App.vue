@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { newArchiveEvent, readArchiveEvent, restoredArchiveState } from './session/history'
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import {
   ArrowLeft,
@@ -439,6 +440,8 @@ async function openSession(session: GatewaySession): Promise<boolean> {
         const restored: UiMessage = {
           id: String(row.id || createId('message')),
           role: row.role as Role,
+          ...restoredArchiveState(row),
+          truncated: row.archive_pending === true || undefined,
           content: parts.content,
           echo: row.role === 'assistant' ? parts.echo : '',
           echoSegments: row.role === 'assistant' && parts.echo
@@ -449,7 +452,8 @@ async function openSession(session: GatewaySession): Promise<boolean> {
           thinkingSegments: [],
           events: [],
           streaming: false,
-          replyVersionId: row.role === 'assistant' && row.source_id ? String(row.source_id) : undefined,
+          replyVersionId: row.role === 'assistant'
+            ? (row.source_id ? String(row.source_id) : readArchiveEvent(row.archive_event)?.id) : undefined,
         }
         // Roll 版本只存在本机；服务器 session detail 只有当前正文。
         // 同一会话重新打开时，按相邻 user turn + 当前正文把本地版本接回，
@@ -501,6 +505,8 @@ async function recoverSessionFromColdStart(session: GatewaySession = { session_t
         return {
           id: createId('message'),
           role: row.role as Role,
+          ...restoredArchiveState(row),
+          truncated: row.archive_pending === true || undefined,
           content: parts.content,
           echo: row.role === 'assistant' ? parts.echo : '',
           echoSegments: row.role === 'assistant' && parts.echo
@@ -874,6 +880,7 @@ async function enterRoom() {
   composerMenuOpen.value = false
   const user: UiMessage = {
     id: createId('room-entry'),
+    archiveEvent: newArchiveEvent(createId('archive')),
     role: 'user',
     content: buildRoomEntry(),
     echo: '',
@@ -931,12 +938,13 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     const useStreaming = streamResponses.value
     const replyVersionId = createId('reply')
     assistant.replyVersionId = replyVersionId
+    assistant.archiveEvent = newArchiveEvent(replyVersionId)
     const body: Record<string, unknown> = {
       model: selectedModel.value,
       messages: wireMessages(source.filter((message) => message.id !== assistant.id)),
       stream: useStreaming,
       reasoning_effort: effectiveEffort.value,
-      metadata: { reply_version_id: replyVersionId },
+      metadata: { reply_version_id: replyVersionId, reply_archive_event: assistant.archiveEvent },
     }
     const requestHeaders = upstreamHeadersPayload(upstreamHeaders.value)
     if (Object.keys(requestHeaders).length) body.upstream_headers = requestHeaders
@@ -945,7 +953,8 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     if (claudeCodeHeaderSelected.value) {
       const claudeCodeSessionId = claudeCodeSessionIdFromHeaders(upstreamHeaders.value)
       if (claudeCodeSessionId) {
-        body.metadata = { ...claudeCodeMetadata(claudeCodeSessionId), reply_version_id: replyVersionId }
+        body.metadata = { ...claudeCodeMetadata(claudeCodeSessionId), reply_version_id: replyVersionId,
+          reply_archive_event: assistant.archiveEvent }
       }
     }
     if (useStreaming) {
@@ -1014,6 +1023,8 @@ async function submit() {
   if (editId.value) {
     const index = messages.value.findIndex((message) => message.id === editId.value)
     if (index >= 0 && messages.value[index].role === 'user') {
+      messages.value[index].archiveEvent = newArchiveEvent(createId('archive'))
+      messages.value[index].archiveReplay = undefined
       messages.value[index].content = text
       messages.value[index].attachments = [...pendingAttachments.value]
       messages.value = messages.value.slice(0, index + 1)
@@ -1028,6 +1039,7 @@ async function submit() {
 
   const user: UiMessage = {
     id: createId('user'),
+    archiveEvent: newArchiveEvent(createId('archive')),
     role: 'user',
     content: text,
     echo: '',

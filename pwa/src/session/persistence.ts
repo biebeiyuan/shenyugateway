@@ -1,7 +1,8 @@
 import type { ToolEvent } from '../toolLanguage'
 import { clampErrorText } from '../api/errors'
-import type { Attachment, EchoSegment, MessageVariant, ResponseMeta, Role, ThinkingSegment, UiMessage } from '../types'
+import type { ArchiveEvent, Attachment, EchoSegment, MessageVariant, ResponseMeta, Role, ThinkingSegment, UiMessage } from '../types'
 import { createId } from '../utils'
+import { readArchiveEvent } from './history'
 import { applyVariant, cloneVariant, selectedVariantIndex, syncCurrentVariant } from './variants'
 
 export const STORAGE_MESSAGES = 'shenyu_pwa_messages'
@@ -114,6 +115,8 @@ export function loadStoredMessages(): UiMessage[] {
           error: item.error ? clampErrorText(String(item.error)) : undefined,
           truncated: item.truncated === true ? true : undefined,
           responseMeta: cloneStoredResponseMeta(item.responseMeta),
+          archiveEvent: readArchiveEvent(item.archiveEvent),
+          archiveReplay: item.archiveReplay === true || undefined,
           replyVersionId: item.replyVersionId ? String(item.replyVersionId) : undefined,
         }
         if (message.role === 'assistant' && Array.isArray(item.variants) && item.variants.length) {
@@ -125,7 +128,9 @@ export function loadStoredMessages(): UiMessage[] {
             variants,
             selectedVariantIndex: Number.isFinite(storedIndex) ? storedIndex : 0,
           })
-          applyVariant(message, variants[message.selectedVariantIndex], message.selectedVariantIndex)
+          const selected = variants[message.selectedVariantIndex]
+          applyVariant(message, selected, message.selectedVariantIndex)
+          if (selected.truncated === undefined && item.truncated === true) message.truncated = true
         }
         return message
       })
@@ -135,6 +140,8 @@ export function loadStoredMessages(): UiMessage[] {
 }
 
 type StoredRow = {
+  archiveReplay?: boolean
+  archiveEvent?: ArchiveEvent
   id: string
   role: Role
   content: string
@@ -179,7 +186,7 @@ function truncateEventOutputs(events: ToolEvent[]): ToolEvent[] {
 const KNOWN_ROW_KEYS = new Set([
   'id', 'role', 'content', 'echo', 'echoSegments', 'attachments', 'thinking',
   'thinkingSegments', 'events', 'error', 'truncated', 'variants',
-  'selectedVariantIndex', 'responseMeta', 'replyVersionId',
+  'selectedVariantIndex', 'responseMeta', 'replyVersionId', 'archiveEvent', 'archiveReplay',
 ])
 
 function unknownFieldsById(): Map<string, Record<string, unknown>> {
@@ -231,6 +238,8 @@ export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit
     selectedVariantIndex: message.selectedVariantIndex,
     responseMeta: message.responseMeta,
     replyVersionId: message.replyVersionId,
+    archiveEvent: readArchiveEvent(message.archiveEvent),
+    archiveReplay: message.archiveReplay === true || undefined,
   }))
   // Keep a little more than the gateway high-water window so a resident PWA
   // can stop relying on a temporary cold-start handoff.
