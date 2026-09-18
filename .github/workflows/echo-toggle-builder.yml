@@ -6,13 +6,12 @@ on:
 permissions:
   contents: read
 jobs:
-  build-feature:
+  integrate-docs:
     if: github.repository == 'biebeiyuan/shenyugateway' && github.ref == 'refs/heads/chatgpt/echo-toggle-builder-20260918'
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 10
     permissions:
       contents: write
-      actions: read
     env:
       PYTHON_DOTENV_DISABLED: '1'
       SUPABASE_URL: ''
@@ -23,193 +22,78 @@ jobs:
       ENABLE_RECALL_SYNC_WORKER: 'false'
       ENABLE_RECALL_EMBEDDING_WORKER: 'false'
     steps:
-      # Temporary diagnostics stay off the feature branch and master.
       - uses: actions/checkout@v4
         with:
-          ref: c357f7d80b37608b7202ace5bb6a29af1f070961
+          ref: 77bc2d042d1843a181c213c21f2138dcd7944fa0
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - name: Restore only the exact previously verified source patch
+      - name: Integrate pinned documentation updates on an isolated ref
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          test "$(git rev-parse HEAD)" = c357f7d80b37608b7202ace5bb6a29af1f070961
           test -z "$(git status --porcelain)"
-          test -z "$(git ls-remote --heads origin refs/heads/chatgpt/echo-toggle-20260918)"
-          mkdir -p /tmp/echo-verification
-          gh api repos/biebeiyuan/shenyugateway/actions/artifacts/10549789571/zip > /tmp/prior.zip
-          unzip -p /tmp/prior.zip tmp/echo-verification/worktree.patch > /tmp/feature.patch
-          echo 'c020ff7d7d8df12546035b80abbeff8f0219d072236d306a09b319b80927d520  /tmp/feature.patch' | sha256sum --check
-          git apply --check /tmp/feature.patch
-          git switch -c chatgpt/echo-toggle-20260918
-          git apply /tmp/feature.patch
+          test "$(git rev-parse HEAD)" = 77bc2d042d1843a181c213c21f2138dcd7944fa0
+          git cat-file -e 5745174f2d57f19bf4358dac63c6bbe3a2dfa67a
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          pip install -e '.[dev]'
-          npm ci --prefix admin
-          npm ci --prefix pwa
-          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
-          cd admin
-          for attempt in 1 2 3; do
-            if npm run test:e2e:install; then exit 0; fi
-            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 5)); fi
-          done
-          exit 1
-      - name: Measure mobile grid and flex input corrections
-        working-directory: admin
-        shell: bash
-        run: |
-          cat > e2e/echo-layout-probe.spec.ts <<'TS'
-          import { expect, test } from '@playwright/test'
-          import { writeFileSync } from 'node:fs'
-          test('mobile grid probe', async ({ context, page }) => {
-            const base = 'http://127.0.0.1:18110'
-            await page.setViewportSize({ width: 390, height: 844 })
-            await context.addCookies([{ name: 'shenyu_token', value: 'shenyu-e2e-smoke', url: base, sameSite: 'Lax' }])
-            await page.addInitScript(() => localStorage.setItem('shenyu_token', 'shenyu-e2e-smoke'))
-            const response = await page.request.get(base + '/api/config/full')
-            const saved = { ...await response.json(), enable_echo: true, echo_prompt: '只用于测试的回响提示词。\n保留第二行。', echo_retention_turns: 4 }
-            await page.route('**/api/config/full', route => route.fulfill({ json: saved }))
-            await page.goto(base + '/admin/#/config')
-            const card = page.getByTestId('config-echo-card')
-            await expect(card.getByTestId('config-echo-prompt').locator('textarea')).toHaveValue(saved.echo_prompt)
-            await card.screenshot({ path: '/tmp/echo-verification/mobile-before.png' })
-            const measure = () => page.evaluate(() => {
-              const rect = (el: Element) => {
-                const r = el.getBoundingClientRect(), s = getComputedStyle(el)
-                return { tag: el.tagName, cls: el.className, text: (el as HTMLElement).innerText?.slice(0, 90), left: r.left + scrollX, right: r.right + scrollX, width: r.width, minWidth: s.minWidth, grid: s.gridTemplateColumns, display: s.display, parent: el.parentElement?.className }
-              }
-              return { viewport: innerWidth, scrollX, scroll: document.documentElement.scrollWidth, grid: rect(document.querySelector('.cfg-grid')!), overflow: [...document.querySelectorAll('body *')].filter(el => el.getBoundingClientRect().right + scrollX > innerWidth + 1 && el.getBoundingClientRect().width > 0).map(rect).slice(0, 80) }
-            })
-            const before = await measure()
-            await page.addStyleTag({ content: '@media(max-width:900px){.cfg-grid,.cfg-inline,.cold-preview-grid{grid-template-columns:minmax(0,1fr)!important}}' })
-            const gridOnly = await measure()
-            await page.addStyleTag({ content: '.preset-save-row .cal-input{min-width:0!important}' })
-            await page.evaluate(() => window.scrollTo(0, window.scrollY))
-            await card.screenshot({ path: '/tmp/echo-verification/mobile-after.png' })
-            const after = await measure()
-            console.log('MOBILE_GRID_ONLY', JSON.stringify(gridOnly))
-            console.log('MOBILE_AFTER', JSON.stringify(after))
-            writeFileSync('/tmp/echo-verification/mobile-measurement.json', JSON.stringify({ before, gridOnly, after }, null, 2))
-            expect(after.scroll).toBeLessThanOrEqual(after.viewport)
-            expect(before.scroll).toBeGreaterThan(before.viewport)
-          })
-          TS
-          npm run test:e2e -- --grep 'mobile grid probe' | tee /tmp/echo-verification/mobile-probe.log
-          rm e2e/echo-layout-probe.spec.ts
+          git switch -c chatgpt/echo-toggle-integration-20260918
           python - <<'PY'
+          import subprocess
+          changed = set(subprocess.check_output(['git','diff','--name-only','c357f7d80b37608b7202ace5bb6a29af1f070961','5745174f2d57f19bf4358dac63c6bbe3a2dfa67a'], text=True).splitlines())
+          assert changed <= {'docs/architecture/REQUEST_CONTEXT.md','docs/history/2026-09-17-local-chat-archive.md','project_delivery_log.jsonl'}, changed
+          PY
+          set +e
+          git merge --no-commit --no-ff 5745174f2d57f19bf4358dac63c6bbe3a2dfa67a
+          result=$?
+          set -e
+          test "$result" -le 1
+          python - <<'PY'
+          import json, subprocess
           from pathlib import Path
-          import json
-          report = json.loads(Path('/tmp/echo-verification/mobile-measurement.json').read_text())
-          assert report['before']['scroll'] > report['before']['viewport']
-          assert report['after']['scroll'] <= report['after']['viewport']
-          path = Path('src/views/ConfigView.vue')
-          text = path.read_text(encoding='utf-8')
-          old = '    grid-template-columns: 1fr;'
-          assert text.count(old) == 1
-          text = text.replace(old, '    grid-template-columns: minmax(0, 1fr);')
-          old = '.preset-save-row {\n'
-          assert text.count(old) == 1
-          text = text.replace(old, '.preset-save-row .cal-input {\n  min-width: 0;\n}\n\n' + old)
-          path.write_text(text, encoding='utf-8', newline='\n')
+          conflicts=set(subprocess.check_output(['git','diff','--name-only','--diff-filter=U'], text=True).splitlines())
+          assert conflicts <= {'project_delivery_log.jsonl'}, conflicts
+          if conflicts:
+              path='project_delivery_log.jsonl'
+              def read(ref):
+                  return subprocess.check_output(['git','show',f'{ref}:{path}'], text=True).splitlines()
+              base=read('c357f7d80b37608b7202ace5bb6a29af1f070961')
+              ours=read('77bc2d042d1843a181c213c21f2138dcd7944fa0')
+              theirs=read('5745174f2d57f19bf4358dac63c6bbe3a2dfa67a')
+              assert ours[:len(base)] == base and theirs[:len(base)] == base, 'Non-append change requires review'
+              combined=theirs.copy()
+              by_id={json.loads(line)['id']:line for line in combined if line.strip()}
+              for line in ours[len(base):]:
+                  if not line.strip(): continue
+                  key=json.loads(line)['id']
+                  if key in by_id:
+                      assert by_id[key]==line, ('Conflicting delivery',key)
+                  else:
+                      combined.append(line)
+                      by_id[key]=line
+              Path(path).write_text('\n'.join(combined)+'\n',encoding='utf-8',newline='\n')
+              subprocess.run(['git','add','--',path],check=True)
+          assert not subprocess.check_output(['git','diff','--name-only','--diff-filter=U'],text=True).strip()
+          staged=set(subprocess.check_output(['git','diff','--cached','--name-only'],text=True).splitlines())
+          assert staged <= {'docs/architecture/REQUEST_CONTEXT.md','docs/history/2026-09-17-local-chat-archive.md','project_delivery_log.jsonl'}, staged
           PY
-      - name: Verify complete backend regression and review state
-        shell: bash
-        run: |
-          python scripts/resident_home.py check | tee /tmp/echo-verification/resident-review.log
-          python -m py_compile shenyu_gateway/config.py shenyu_gateway/schemas.py shenyu_gateway/config_routes.py shenyu_gateway/context_builder.py tests/test_echo_toggle.py tests/test_config_update.py
-          python -m pytest -q tests/test_echo_toggle.py tests/test_config_update.py | tee /tmp/echo-verification/targeted.log
-          python -m pytest tests/ -x -q | tee /tmp/echo-verification/backend.log
-      - name: Verify all Admin interactions and mobile layout
-        working-directory: admin
-        shell: bash
-        run: |
-          npm run test:e2e | tee /tmp/echo-verification/admin.log
-          npm test | tee /tmp/echo-verification/admin-unit.log
-          find test-results -name 'echo-*.png' -exec cp '{}' /tmp/echo-verification/ \;
-      - name: Verify unchanged PWA behavior
-        working-directory: pwa
-        shell: bash
-        run: |
-          npm test | tee /tmp/echo-verification/pwa.log
-          npm run build | tee /tmp/echo-verification/pwa-build.log
-      - name: Record verified delivery and review exact changed files
-        shell: bash
-        run: |
-          python scripts/resident_home.py check
-          python scripts/project_delivery.py record \
-            --id admin-echo-toggle-20260918 \
-            --title '回响可以单独开关，不必清空提示词' \
-            --product 'Admin 控制台' --kind feature \
-            --summary '在配置页回响卡片增加启用开关；关闭只暂停提示词注入，重新开启沿用原文。' \
-            --touchpoint '配置页 / 回响 / 启用回响' \
-            --why '临时停用不应该依靠删除提示词，也不应该影响已有回响或 Heartbeat。' \
-            --status verified_local \
-            --verification '隔离工作区验证基线通过（GitHub Actions runner）；最终 PR 常规 CI 另验，未部署、未做真机验收。' \
-            --verification '新增后端与前端测试先红后绿；覆盖配置读写、SQLite 重启恢复、保存失败、390px/1280px 和键盘操作。手机网格与输入框溢出经 DOM 尺寸测量后修正。' \
-            --path shenyu_gateway/config.py --path shenyu_gateway/schemas.py \
-            --path shenyu_gateway/config_routes.py --path shenyu_gateway/context_builder.py \
-            --path admin/src/api/config.ts --path admin/src/views/ConfigView.vue \
-            --path tests/test_config_update.py --path tests/test_echo_toggle.py \
-            --path admin/e2e/echo-toggle.spec.ts --path .env.example \
-            --doc docs/architecture/REQUEST_CONTEXT.md --recorded-by ChatGPT
-          python scripts/project_delivery.py check
-          python -m pytest -q tests/test_project_map.py
-          git diff --check
-          python - <<'PY'
-          import re, subprocess
-          diff = subprocess.check_output(['git', 'diff', '--unified=0'], text=True)
-          additions = '\n'.join(line[1:] for line in diff.splitlines() if line.startswith('+') and not line.startswith('+++'))
-          assert not re.search('淇|閺|鈹|銆|锛|紝|娌堜簣', additions), 'Mojibake in added text'
-          allowed = {
-              '.env.example', 'shenyu_gateway/config.py', 'shenyu_gateway/schemas.py',
-              'shenyu_gateway/config_routes.py', 'shenyu_gateway/context_builder.py',
-              'admin/src/api/config.ts', 'admin/src/views/ConfigView.vue',
-              'tests/test_config_update.py', 'tests/test_echo_toggle.py', 'admin/e2e/echo-toggle.spec.ts',
-              'docs/architecture/REQUEST_CONTEXT.md', 'resident_home_manifest.json', 'project_delivery_log.jsonl',
-          }
-          changed = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
-          untracked = set(subprocess.check_output(['git', 'ls-files', '--others', '--exclude-standard'], text=True).splitlines())
-          assert changed | untracked <= allowed, (changed | untracked) - allowed
-          subprocess.run(['git', 'add', '--', *sorted(changed | untracked)], check=True)
-          PY
-      - name: Commit only to the new feature branch
-        shell: bash
-        run: |
-          test "$(git branch --show-current)" = chatgpt/echo-toggle-20260918
           git diff --cached --check
-          git commit -m 'feat: add persistent echo prompt toggle to Admin console'
-          git push origin HEAD:refs/heads/chatgpt/echo-toggle-20260918
-          feature_commit=$(git rev-parse HEAD)
-          python scripts/project_delivery.py promote --id admin-echo-toggle-20260918 --status pushed --commit "$feature_commit"
+          pip install -e '.[dev]'
+          python -m pytest tests/ -x -q
+          python scripts/resident_home.py check
           python scripts/project_delivery.py check
-          git add -- project_delivery_log.jsonl
-          git commit -m 'docs: record echo toggle feature branch delivery'
-          git push origin HEAD:refs/heads/chatgpt/echo-toggle-20260918
-          git rev-parse HEAD | tee /tmp/echo-verification/head.txt
-          git diff c357f7d80b37608b7202ace5bb6a29af1f070961 HEAD > /tmp/echo-verification/change.patch
-          git archive --format=tar.gz -o /tmp/echo-verification/review-files.tar.gz HEAD \
-            .env.example shenyu_gateway/config.py shenyu_gateway/schemas.py \
-            shenyu_gateway/config_routes.py shenyu_gateway/context_builder.py \
-            admin/src/api/config.ts admin/src/views/ConfigView.vue \
-            tests/test_config_update.py tests/test_echo_toggle.py admin/e2e/echo-toggle.spec.ts \
-            docs/architecture/REQUEST_CONTEXT.md resident_home_manifest.json project_delivery_log.jsonl
-      - name: Capture current patch even when verification stops
-        if: always()
-        shell: bash
-        run: |
-          mkdir -p /tmp/echo-verification
-          git diff c357f7d80b37608b7202ace5bb6a29af1f070961 > /tmp/echo-verification/worktree.patch
+          git commit -m 'Merge concurrent archive documentation while retaining echo toggle delivery'
+          git diff --exit-code 77bc2d042d1843a181c213c21f2138dcd7944fa0 HEAD -- admin pwa shenyu_gateway tests .env.example resident_home_manifest.json
+          # This temporary ref is not the PR branch or production. The connector
+          # will advance the reviewed PR ref, triggering its ordinary CI.
+          git push origin HEAD:refs/heads/chatgpt/echo-toggle-integration-20260918
+          mkdir -p /tmp/echo-integration
+          git rev-parse HEAD > /tmp/echo-integration/head.txt
+          git rev-parse HEAD^{tree} > /tmp/echo-integration/tree.txt
+          git diff 77bc2d042d1843a181c213c21f2138dcd7944fa0 HEAD > /tmp/echo-integration/integration.patch
       - uses: actions/upload-artifact@v4
-        if: always()
+        if: success()
         with:
-          name: echo-toggle-verification
-          path: |
-            /tmp/echo-verification/
-            admin/test-results/
+          name: echo-toggle-integration
+          path: /tmp/echo-integration/
           retention-days: 3
