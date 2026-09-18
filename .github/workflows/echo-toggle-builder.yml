@@ -1,0 +1,263 @@
+name: Echo toggle isolated builder
+on:
+  push:
+    branches: [chatgpt/echo-toggle-builder-20260918]
+    paths: [.github/workflows/echo-toggle-builder.yml]
+permissions:
+  contents: read
+jobs:
+  build-feature:
+    if: github.repository == 'biebeiyuan/shenyugateway' && github.ref == 'refs/heads/chatgpt/echo-toggle-builder-20260918'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write
+    env:
+      PYTHON_DOTENV_DISABLED: '1'
+      SUPABASE_URL: ''
+      SUPABASE_SERVICE_KEY: ''
+      ANTHROPIC_API_KEY: ''
+      ENABLE_CHAT_ARCHIVE: 'false'
+      ENABLE_HEARTBEAT_ARCHIVE: 'false'
+      ENABLE_RECALL_SYNC_WORKER: 'false'
+      ENABLE_RECALL_EMBEDDING_WORKER: 'false'
+    steps:
+      # Only the tests-first commit is checked out. This temporary workflow is
+      # never included in the feature branch, and nothing pushes to master.
+      - uses: actions/checkout@v4
+        with:
+          ref: 7261f1858309ecb7488cd7d90e29180823fef66b
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Verify isolated starting point
+        shell: bash
+        run: |
+          test "$(git rev-parse HEAD)" = 7261f1858309ecb7488cd7d90e29180823fef66b
+          test -z "$(git status --porcelain)"
+          test -z "$(git ls-remote --heads origin refs/heads/chatgpt/echo-toggle-20260918)"
+          git fetch --depth=1 origin c357f7d80b37608b7202ace5bb6a29af1f070961
+          git switch -c chatgpt/echo-toggle-20260918
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          mkdir -p /tmp/echo-verification
+          pip install -e '.[dev]'
+          python scripts/resident_home.py check
+      - name: Verify new backend tests fail before implementation
+        shell: bash
+        run: |
+          set +e
+          python -m pytest -q tests/test_echo_toggle.py --junitxml=/tmp/echo-verification/red.xml > /tmp/echo-verification/red.log 2>&1
+          result=$?
+          set -e
+          cat /tmp/echo-verification/red.log
+          test "$result" -eq 1
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          root = ET.parse('/tmp/echo-verification/red.xml').getroot()
+          assert not root.findall('.//error'), 'Unexpected test errors, not missing functionality'
+          failures = {case.get('name') for case in root.findall('.//testcase') if case.find('failure') is not None}
+          assert 'test_echo_toggle_defaults_to_enabled' in failures
+          assert 'test_echo_toggle_disabled_omits_only_echo_instructions' in failures
+          PY
+      - name: Install isolated frontend test dependencies
+        shell: bash
+        run: |
+          npm ci --prefix admin
+          npm ci --prefix pwa
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          cd admin
+          for attempt in 1 2 3; do
+            if npm run test:e2e:install; then exit 0; fi
+            if [ "$attempt" -lt 3 ]; then sleep $((attempt * 5)); fi
+          done
+          exit 1
+      - name: Verify new frontend test fails before implementation
+        working-directory: admin
+        shell: bash
+        run: |
+          set +e
+          npm run test:e2e -- --grep '390, nonempty' > /tmp/echo-verification/ui-red.log 2>&1
+          result=$?
+          set -e
+          tail -100 /tmp/echo-verification/ui-red.log
+          test "$result" -eq 1
+          grep -q config-enable-echo /tmp/echo-verification/ui-red.log
+      - name: Apply minimal approved changes
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          def edit(path, before, after, count=1):
+              target = Path(path)
+              text = target.read_text(encoding='utf-8')
+              assert text.count(before) == count, (path, before, text.count(before), count)
+              target.write_text(text.replace(before, after), encoding='utf-8', newline='\n')
+
+          edit('shenyu_gateway/config.py',
+               '        self.echo_prompt: str = os.getenv("ECHO_PROMPT", DEFAULT_ECHO_PROMPT).strip()',
+               '        self.enable_echo: bool = _env_bool("ENABLE_ECHO", True)\n        self.echo_prompt: str = os.getenv("ECHO_PROMPT", DEFAULT_ECHO_PROMPT).strip()')
+          edit('shenyu_gateway/config.py',
+               '            "echo_prompt": self.echo_prompt,',
+               '            "enable_echo": self.enable_echo,\n            "echo_prompt": self.echo_prompt,')
+          edit('shenyu_gateway/schemas.py',
+               '    echo_prompt: Optional[str] = None',
+               '    enable_echo: Optional[bool] = None\n    echo_prompt: Optional[str] = None')
+          edit('shenyu_gateway/config_routes.py',
+               '        "echo_prompt": cfg.echo_prompt,',
+               '        "enable_echo": cfg.enable_echo,\n        "echo_prompt": cfg.echo_prompt,')
+          edit('shenyu_gateway/config_routes.py',
+               '            "echo_prompt": "ECHO_PROMPT",',
+               '            "enable_echo": "ENABLE_ECHO",\n            "echo_prompt": "ECHO_PROMPT",')
+          edit('shenyu_gateway/config_routes.py',
+               '            "echo_prompt",',
+               '            "enable_echo",\n            "echo_prompt",')
+          edit('shenyu_gateway/context_builder.py',
+               '            echo_prompt=str(getattr(self.cfg, "echo_prompt", "") or ""),',
+               '            echo_prompt=(\n                str(getattr(self.cfg, "echo_prompt", "") or "")\n                if getattr(self.cfg, "enable_echo", True)\n                else ""\n            ),')
+          edit('admin/src/api/config.ts',
+               '  echo_prompt?: string',
+               '  enable_echo?: boolean\n  echo_prompt?: string')
+          edit('admin/src/views/ConfigView.vue',
+               "  echo_prompt: '',", "  enable_echo: true,\n  echo_prompt: '',")
+          edit('admin/src/views/ConfigView.vue',
+               "      echo_prompt: config.value.echo_prompt || '',",
+               "      enable_echo: config.value.enable_echo ?? true,\n      echo_prompt: config.value.echo_prompt || '',")
+          edit('admin/src/views/ConfigView.vue',
+               '    config.value = data',
+               '    config.value = { ...data, enable_echo: data.enable_echo ?? true }')
+          edit('admin/src/views/ConfigView.vue',
+               '    config.value = result.config',
+               '    config.value = { ...result.config, enable_echo: result.config.enable_echo ?? true }', count=3)
+          edit('admin/src/views/ConfigView.vue',
+               '      <NCard title="回响" size="small">\n        <NForm label-placement="top">',
+               '''      <NCard title="回响" size="small" data-testid="config-echo-card">
+                  <NForm label-placement="top">
+                    <NFormItem label="启用回响">
+                      <div class="switch-row">
+                        <NSwitch
+                          v-model:value="config.enable_echo"
+                          data-testid="config-enable-echo"
+                          aria-label="启用回响"
+                          :disabled="saving"
+                        />
+                        <span class="switch-hint">关闭后不再注入回响提示词；原提示词和历史回响保留。保存后对后续请求生效。</span>
+                      </div>
+                    </NFormItem>'''.replace('\n          ', '\n'))
+          edit('admin/src/views/ConfigView.vue',
+               '              v-model:value="config.echo_prompt"',
+               '              v-model:value="config.echo_prompt"\n              data-testid="config-echo-prompt"\n              :disabled="config.enable_echo === false"')
+          edit('admin/src/views/ConfigView.vue',
+               '            <NInputNumber v-model:value="config.echo_retention_turns" :min="0" :max="20" style="width: 100%" />',
+               '''            <NInputNumber
+                          v-model:value="config.echo_retention_turns"
+                          data-testid="config-echo-retention-turns"
+                          :disabled="config.enable_echo === false"
+                          :min="0"
+                          :max="20"
+                          style="width: 100%"
+                        />'''.replace('\n          ', '\n'))
+          edit('.env.example', 'ECHO_PROMPT=\n',
+               '# Disable echo prompt injection without erasing the saved prompt or history.\nENABLE_ECHO=true\nECHO_PROMPT=\n')
+          edit('tests/test_config_update.py', 'DEFAULTED_ENV_KEYS = [\n',
+               'DEFAULTED_ENV_KEYS = [\n    "ENABLE_ECHO",\n')
+          edit('tests/test_config_update.py', '    assert cfg.echo_retention_turns == 1\n',
+               '    assert cfg.enable_echo is True\n    assert cfg.echo_retention_turns == 1\n')
+          edit('docs/architecture/REQUEST_CONTEXT.md',
+               '## Context Layers\n\n',
+               '## Context Layers\n\nThe Admin 回响 card has an independent `ENABLE_ECHO` switch (default `true`). Saving it as `false` omits the saved `ECHO_PROMPT` from subsequent context builds without clearing that text or changing `ECHO_RETENTION_TURNS`. Re-enabling reuses the saved prompt; an empty prompt still injects nothing. The switch uses the existing Admin config persistence and SQLite override restore path. It does not change Heartbeat, existing echo history, upstream retention, or response-tag filtering; it stops requesting echoes, not arbitrary model-authored echo output.\n\n')
+          PY
+          git diff --stat
+          git diff --check
+          python -m py_compile shenyu_gateway/config.py shenyu_gateway/schemas.py shenyu_gateway/config_routes.py shenyu_gateway/context_builder.py tests/test_echo_toggle.py tests/test_config_update.py
+      - name: Verify backend and project map
+        shell: bash
+        run: |
+          python -m pytest -q tests/test_echo_toggle.py tests/test_config_update.py | tee /tmp/echo-verification/targeted.log
+          python -m pytest tests/ -x -q | tee /tmp/echo-verification/backend.log
+      - name: Verify Admin interactions and mobile layout
+        working-directory: admin
+        shell: bash
+        run: |
+          npm run test:e2e | tee /tmp/echo-verification/admin.log
+          npm test | tee /tmp/echo-verification/admin-unit.log
+          find test-results -name 'echo-*.png' -exec cp '{}' /tmp/echo-verification/ \;
+      - name: Verify unchanged PWA behavior
+        working-directory: pwa
+        shell: bash
+        run: |
+          npm test | tee /tmp/echo-verification/pwa.log
+          npm run build | tee /tmp/echo-verification/pwa-build.log
+      - name: Record reviews and verification
+        shell: bash
+        run: |
+          python scripts/resident_home.py ack-shared | tee /tmp/echo-verification/resident-review.log
+          python scripts/resident_home.py check
+          python scripts/project_delivery.py record \
+            --id admin-echo-toggle-20260918 \
+            --title '回响可以单独开关，不必清空提示词' \
+            --product 'Admin 控制台' --kind feature \
+            --summary '在配置页回响卡片增加启用开关；关闭只暂停提示词注入，重新开启沿用原文。' \
+            --touchpoint '配置页 / 回响 / 启用回响' \
+            --why '临时停用不应该依靠删除提示词，也不应该影响已有回响或 Heartbeat。' \
+            --status verified_local \
+            --verification '隔离工作区验证基线通过（GitHub Actions runner）；最终分支常规 CI 在 PR 创建后另验，未部署、未做真机验收。' \
+            --verification '新增后端与前端测试先红后绿；覆盖关闭、重新开启、配置读取、空值与非法值、SQLite 重启恢复、保存失败、390px/1280px 与键盘操作。' \
+            --path shenyu_gateway/config.py --path shenyu_gateway/schemas.py \
+            --path shenyu_gateway/config_routes.py --path shenyu_gateway/context_builder.py \
+            --path admin/src/api/config.ts --path admin/src/views/ConfigView.vue \
+            --path tests/test_config_update.py --path tests/test_echo_toggle.py \
+            --path admin/e2e/echo-toggle.spec.ts --path .env.example \
+            --doc docs/architecture/REQUEST_CONTEXT.md --recorded-by ChatGPT
+          python scripts/project_delivery.py check
+          python -m pytest -q tests/test_project_map.py
+          git diff --check
+          python - <<'PY'
+          import re, subprocess
+          diff = subprocess.check_output(['git', 'diff', '--unified=0'], text=True)
+          additions = '\n'.join(line[1:] for line in diff.splitlines() if line.startswith('+') and not line.startswith('+++'))
+          assert not re.search('淇|閺|鈹|銆|锛|紝|娌堜簣', additions), 'Mojibake in added text'
+          allowed = {
+              '.env.example', 'shenyu_gateway/config.py', 'shenyu_gateway/schemas.py',
+              'shenyu_gateway/config_routes.py', 'shenyu_gateway/context_builder.py',
+              'admin/src/api/config.ts', 'admin/src/views/ConfigView.vue',
+              'tests/test_config_update.py', 'docs/architecture/REQUEST_CONTEXT.md',
+              'resident_home_manifest.json', 'resident_home_changes.jsonl', 'project_delivery_log.jsonl',
+          }
+          changed = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
+          assert changed <= allowed, changed - allowed
+          subprocess.run(['git', 'add', '--', *sorted(changed)], check=True)
+          PY
+      - name: Commit only to the new feature branch
+        shell: bash
+        run: |
+          test "$(git branch --show-current)" = chatgpt/echo-toggle-20260918
+          git diff --cached --check
+          git commit -m 'feat: add persistent echo prompt toggle to Admin console'
+          git push origin HEAD:refs/heads/chatgpt/echo-toggle-20260918
+          feature_commit=$(git rev-parse HEAD)
+          python scripts/project_delivery.py promote --id admin-echo-toggle-20260918 --status pushed --commit "$feature_commit"
+          python scripts/project_delivery.py check
+          git add -- project_delivery_log.jsonl
+          git commit -m 'docs: record echo toggle feature branch delivery'
+          git push origin HEAD:refs/heads/chatgpt/echo-toggle-20260918
+          git rev-parse HEAD | tee /tmp/echo-verification/head.txt
+          git diff c357f7d80b37608b7202ace5bb6a29af1f070961 HEAD > /tmp/echo-verification/change.patch
+          git archive --format=tar.gz -o /tmp/echo-verification/review-files.tar.gz HEAD \
+            .env.example shenyu_gateway/config.py shenyu_gateway/schemas.py \
+            shenyu_gateway/config_routes.py shenyu_gateway/context_builder.py \
+            admin/src/api/config.ts admin/src/views/ConfigView.vue \
+            tests/test_config_update.py tests/test_echo_toggle.py admin/e2e/echo-toggle.spec.ts \
+            docs/architecture/REQUEST_CONTEXT.md resident_home_manifest.json project_delivery_log.jsonl
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: echo-toggle-verification
+          path: |
+            /tmp/echo-verification/
+            admin/test-results/
+          retention-days: 3
