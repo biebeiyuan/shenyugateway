@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
+import { dedupeUiMessagesForRecovery, hasExactDuplicateRows } from '../src/session/history'
 import { wireMessages } from '../src/api/client'
 import { loadStoredMessages, persistStoredMessages } from '../src/session/persistence'
 import { applyVariant, snapshotMessage } from '../src/session/variants'
@@ -60,4 +61,26 @@ it('keeps completion state with the selected roll, not the display slot', () => 
   expect(wireMessages([source])[0]).not.toHaveProperty('archive_pending')
   applyVariant(source, partial, 1)
   expect(wireMessages([source])[0]).toHaveProperty('archive_pending', true)
+})
+
+
+it('keeps equal text from distinct events during explicit history recovery', () => {
+  const first = row()
+  const second = { ...row(), archiveEvent: { ...event, id: 'another-turn' } }
+  expect(hasExactDuplicateRows(wireMessages([first, second]))).toBe(false)
+  expect(dedupeUiMessagesForRecovery([first, second])).toEqual([first, second])
+})
+
+it('recognizes the same event after private parts change during history recovery', () => {
+  const first = row()
+  const replay = { ...row(), content: '\n\n正文', echo: '' }
+  expect(hasExactDuplicateRows(wireMessages([first, replay]))).toBe(true)
+  expect(dedupeUiMessagesForRecovery([first, replay])).toEqual([first])
+})
+
+it('does not merge an identified event with equal legacy text during recovery', () => {
+  const first = row()
+  const legacy = { ...row(), archiveEvent: undefined }
+  expect(hasExactDuplicateRows(wireMessages([first, legacy]))).toBe(false)
+  expect(dedupeUiMessagesForRecovery([first, legacy])).toEqual([first, legacy])
 })

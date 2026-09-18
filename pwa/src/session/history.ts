@@ -76,11 +76,18 @@ export function coldStartHistoryRows(payload: Record<string, unknown>, targetTag
 // NUL separator keeps role/content concatenation collision-free.
 const DEDUPE_KEY_SEPARATOR = String.fromCharCode(0)
 
+// Recovery must use the same event identity as capture. Equal visible text in
+// different turns is not duplicate history; old rows remain explicitly legacy.
+function recoveryKey(role: string, content: string, value: unknown): string {
+  const event = readArchiveEvent(value)
+  return `${role}${DEDUPE_KEY_SEPARATOR}${event ? `event:${event.id}` : `text:${content}`}`
+}
+
 export function hasExactDuplicateRows(rows: Record<string, unknown>[]): boolean {
   const seen = new Set<string>()
   for (const row of rows) {
     if (row.role !== 'user' && row.role !== 'assistant') continue
-    const key = `${String(row.role)}${DEDUPE_KEY_SEPARATOR}${sessionMessageContent(row.content)}`
+    const key = recoveryKey(String(row.role), sessionMessageContent(row.content), row.archive_event)
     if (seen.has(key)) return true
     seen.add(key)
   }
@@ -90,7 +97,7 @@ export function hasExactDuplicateRows(rows: Record<string, unknown>[]): boolean 
 export function dedupeUiMessagesForRecovery(source: UiMessage[]): UiMessage[] {
   const seen = new Set<string>()
   return source.filter((message) => {
-    const key = `${message.role}${DEDUPE_KEY_SEPARATOR}${message.content}`
+    const key = recoveryKey(message.role, message.content, message.archiveEvent)
     if (seen.has(key)) return false
     seen.add(key)
     return true
