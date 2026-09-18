@@ -8,9 +8,8 @@ import { applyVariant, selectedVariantIndex, snapshotMessage, syncCurrentVariant
 // 原始行）里把服务端 drain 落库的完整回复找回来。只修尾巴，绝不整体替换——
 // openSession 的整体替换对本地 attachments/thinking 有损，仅用于切会话。
 //
-// 锚点约定：先在服务端行里从尾部找到与本地末轮 user 消息内容一致的行，再取其后
-// 的 assistant 行。锚不上（服务端最新 user 行不是我们这条）就返回 false，让调用
-// 方按退避重试——这正是"服务端还没 drain 完"的样子。
+// 有版本编号时只认同一版；无编号的旧历史才按最新 user 正文找锚点。
+// 版本或锚点对不上就返回 false，让调用方退避重试，不能拿旧 roll 顶替。
 
 type RecentRow = Record<string, unknown>
 
@@ -20,6 +19,20 @@ type RecoveryReply = {
   archive_event?: unknown
   content?: unknown
   tool_rows?: unknown
+}
+
+type ReplyIdentity = Pick<MessageVariant, 'replyVersionId' | 'archiveEvent'>
+
+function replyIdentity(value?: ReplyIdentity): string | undefined {
+  return value?.replyVersionId || value?.archiveEvent?.id
+}
+
+function identityMatches(local: ReplyIdentity | undefined, incoming: ReplyIdentity): boolean {
+  for (const value of [local, incoming]) {
+    if (value?.replyVersionId && value.archiveEvent && value.replyVersionId !== value.archiveEvent.id) return false
+  }
+  const expected = replyIdentity(local)
+  return !expected || expected === replyIdentity(incoming)
 }
 
 function normalizeText(value: string): string {
@@ -97,9 +110,13 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
 
   const last = messages[messages.length - 1]
   const target = last.role === 'assistant' ? last : undefined
-  const versionedReply = target?.replyVersionId
-    ? rows.find((row) => row.role === 'assistant' && String(row.source_id || '') === target.replyVersionId)
+  const expectedVersion = replyIdentity(target)
+  const versionedReply = expectedVersion
+    ? rows.find((row) => row.role === 'assistant' && String(row.source_id || '') === expectedVersion)
     : undefined
+  // A known version must never fall back to matching user text. Rolls share
+  // that text, and an empty/common-prefix tail cannot distinguish their replies.
+  if (expectedVersion && !versionedReply) return false
   let selectedReply = versionedReply
   if (!selectedReply) {
     const anchorUser = target ? messages[messages.length - 2] : last
@@ -109,6 +126,10 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
     selectedReply = replyRowAfter(rows, anchorIndex)
   }
   if (!selectedReply) return false
+  if (!identityMatches(target, {
+    replyVersionId: String(selectedReply.source_id || '') || undefined,
+    archiveEvent: readArchiveEvent(selectedReply.archive_event),
+  })) return false
   const parts = sessionMessageParts(selectedReply.content)
   if (!parts.content && !parts.echo) return false
 
@@ -272,12 +293,13 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     target.selectedVariantIndex = selectedVariantIndex(target)
   }
 
-  // 候选只认一条：本地有 replyVersionId 就必须精确匹配，否则取最新那条。
+  // 候选只认一条：本地有回复/归档身份就必须精确匹配，否则取最新那条。
   // 匹配不上 = 服务端手里不是这条回复，不碰，让退避链继续。
-  const candidate = target.replyVersionId
-    ? candidates.find((item) => item.replyVersionId === target.replyVersionId)
+  const expectedVersion = replyIdentity(target)
+  const candidate = expectedVersion
+    ? candidates.find((item) => replyIdentity(item) === expectedVersion)
     : candidates[candidates.length - 1]
-  if (!candidate) return changed
+  if (!candidate || !identityMatches(target, candidate)) return changed
   // 只增不减：唯一的写入闸门，没有例外分支。服务端不涵盖本地就原样返回，
   // truncated/error 留着，让调用方按退避继续问——这正是"drain 还没写完"的样子。
   if (!acceptRecovery(
@@ -307,10 +329,17 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     applyVariant(target, merged, index)
     syncCurrentVariant(target)
     changed = true
-  } else if (!target.replyVersionId && candidate.replyVersionId) {
-    // 补版本号是簿记，不算找回，不因此置 changed。
-    target.replyVersionId = candidate.replyVersionId
-    syncCurrentVariant(target)
+  } else {
+    // Equal text still confirms completion. Keep that receipt on the selected
+    // variant too, or switching away/back revives its pending/error state and
+    // loses a newly recovered archive identity. Do not overwrite local metadata.
+    if (!target.replyVersionId && candidate.replyVersionId) target.replyVersionId = candidate.replyVersionId
+    Object.assign(variants[index], {
+      replyVersionId: target.replyVersionId,
+      archiveEvent: target.archiveEvent,
+      truncated: false,
+      error: undefined,
+    })
   }
   return changed
 }

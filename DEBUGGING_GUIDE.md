@@ -394,6 +394,26 @@ The prevention contract and legacy limits are owned by
 Regression coverage: `tests/test_archive_identity.py` and
 `pwa/tests/archiveIdentity.spec.ts`. Deployment is a separate verification step.
 
+### Chat Recall source and recovery identity
+
+If the archive page sees a message that chat-original Recall cannot find (or a
+locally deleted message reappears through Recall), compare their selected backend
+before changing the query or rebuilding vectors. The pre-fix chat Recall/read
+handlers queried Supabase directly even in SQLite mode. Isolated regressions
+with a stale cloud fixture reproduce both missing local-only originals and
+returning stale cloud originals. Current source/visibility ownership is in
+`docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth);
+`tests/test_recall_archive_backend.py` checks the reader API, both tool entries,
+folding/deletions, unavailable storage, and non-chat compatibility.
+
+For a new Roll filled with an old reply after disconnect, inspect **both** PWA
+recovery paths: rejecting the primary candidate was insufficient while the
+session-detail fallback still accepted the latest matching user text. Empty and
+common-prefix fragments cannot prove version identity. `pwa/tests/recoveryIdentity.spec.ts`
+rejects wrong/conflicting IDs and verifies exact-version recovery and completion
+metadata survive variant switching. These are isolated code reproductions, not
+claims of a newly observed production incident.
+
 ## External Frontend Contracts
 
 These are hard contracts with `home-frontend`; do not remove or reshape them during cleanup:

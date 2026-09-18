@@ -340,6 +340,8 @@ query
   -> complete original content returned to Shenyu
 ```
 
+查聊天原话（`verbatim` 或 `chat`/`conversation`/`archive`）不走上面的向量索引：`gateway_tools/_recall.py` → 配置选定的聊天档案；SQLite 模式下与区域七的档案页共用可见记录和删除规则，按编号读原文也走同一来源。普通 Recall 不改。完整契约见 `docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth)。
+
 Calendar、conflict、Mem 和 Stars 主来源并行。Mem/Stars 普通召回异常在 ContextBuilder 边界降级为 `ok=false`，并保留上一版对应 island；任务取消仍继续传播。
 
 Stars 与 Memory Island 的跨区契约是：排名区只产出完整评分提案、`direct_reference_kind` 和旧岛星的 active 核验结果；上下文区负责 `2/3` 滞回、默认 8 个真实用户轮次且可由 `STAR_SOFT_DIRECT_COOLDOWN_TURNS` 调整的软点名冷却，以及最终 retain/rewrite。强制重写仍采用完整提案的评分顺序，不能在 Island 层拼回旧的 `2/3`。
@@ -490,4 +492,4 @@ Hisense（海信）专用线程——独立客户端识别与上游、独立 hea
 - `tmp/` 中约 55 MB 的调查数据库与 retained JSON 保留在本地，并由根级 `/tmp/` ignore 规则隔离。
 - 当前工作区存在用户未提交修改和未跟踪审查文档，后续变更必须保持独立，不能覆盖或回滚。
 
-本地原文档案是区域七的独立存储：只接原文存档与档案读写，不向上下文窗口供给历史。 PWA 的归档身份和时间随消息版本穿过请求/完成快照与恢复边界，由归档入口消费；剥离后的正文不再决定新消息身份，这些字段不会进入模型上下文。迁移和部署开关统一见 `docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth)；记忆、星星、向量与来历书仍由原有 Supabase 路径持有。
+本地原文档案是区域七的独立存储：接原文存档、档案读写，以及沈予主动查聊天原话和按编号读原文；不作为上下文窗口的历史来源。 PWA 的归档身份和时间随消息版本穿过请求/完成快照与恢复边界，由归档入口消费；剥离后的正文不再决定新消息身份，这些字段不会进入模型上下文。迁移和部署开关统一见 `docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth)；记忆、星星、向量与来历书仍由原有 Supabase 路径持有。
