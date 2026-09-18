@@ -23,8 +23,7 @@ jobs:
       ENABLE_RECALL_SYNC_WORKER: 'false'
       ENABLE_RECALL_EMBEDDING_WORKER: 'false'
     steps:
-      # Temporary diagnostic/build plumbing stays off the feature branch.
-      # RED: 35350337537 / 35350883574. Backend green: 35351262949.
+      # Temporary diagnostics stay off the feature branch and master.
       - uses: actions/checkout@v4
         with:
           ref: c357f7d80b37608b7202ace5bb6a29af1f070961
@@ -61,7 +60,7 @@ jobs:
             if [ "$attempt" -lt 3 ]; then sleep $((attempt * 5)); fi
           done
           exit 1
-      - name: Measure the actual mobile DOM and test one CSS correction
+      - name: Measure mobile grid and flex input corrections
         working-directory: admin
         shell: bash
         run: |
@@ -83,17 +82,20 @@ jobs:
             const measure = () => page.evaluate(() => {
               const rect = (el: Element) => {
                 const r = el.getBoundingClientRect(), s = getComputedStyle(el)
-                return { tag: el.tagName, cls: el.className, text: (el as HTMLElement).innerText?.slice(0, 70), left: r.left, right: r.right, width: r.width, minWidth: s.minWidth, grid: s.gridTemplateColumns, display: s.display }
+                return { tag: el.tagName, cls: el.className, text: (el as HTMLElement).innerText?.slice(0, 90), left: r.left + scrollX, right: r.right + scrollX, width: r.width, minWidth: s.minWidth, grid: s.gridTemplateColumns, display: s.display, parent: el.parentElement?.className }
               }
-              return { viewport: innerWidth, scroll: document.documentElement.scrollWidth, grid: rect(document.querySelector('.cfg-grid')!), overflow: [...document.querySelectorAll('body *')].filter(el => el.getBoundingClientRect().right > innerWidth + 1 && el.getBoundingClientRect().width > 0).map(rect).slice(0, 40) }
+              return { viewport: innerWidth, scrollX, scroll: document.documentElement.scrollWidth, grid: rect(document.querySelector('.cfg-grid')!), overflow: [...document.querySelectorAll('body *')].filter(el => el.getBoundingClientRect().right + scrollX > innerWidth + 1 && el.getBoundingClientRect().width > 0).map(rect).slice(0, 80) }
             })
             const before = await measure()
-            console.log('MOBILE_BEFORE', JSON.stringify(before))
             await page.addStyleTag({ content: '@media(max-width:900px){.cfg-grid,.cfg-inline,.cold-preview-grid{grid-template-columns:minmax(0,1fr)!important}}' })
+            const gridOnly = await measure()
+            await page.addStyleTag({ content: '.preset-save-row .cal-input{min-width:0!important}' })
+            await page.evaluate(() => window.scrollTo(0, window.scrollY))
             await card.screenshot({ path: '/tmp/echo-verification/mobile-after.png' })
             const after = await measure()
+            console.log('MOBILE_GRID_ONLY', JSON.stringify(gridOnly))
             console.log('MOBILE_AFTER', JSON.stringify(after))
-            writeFileSync('/tmp/echo-verification/mobile-measurement.json', JSON.stringify({ before, after }, null, 2))
+            writeFileSync('/tmp/echo-verification/mobile-measurement.json', JSON.stringify({ before, gridOnly, after }, null, 2))
             expect(after.scroll).toBeLessThanOrEqual(after.viewport)
             expect(before.scroll).toBeGreaterThan(before.viewport)
           })
@@ -110,7 +112,11 @@ jobs:
           text = path.read_text(encoding='utf-8')
           old = '    grid-template-columns: 1fr;'
           assert text.count(old) == 1
-          path.write_text(text.replace(old, '    grid-template-columns: minmax(0, 1fr);'), encoding='utf-8', newline='\n')
+          text = text.replace(old, '    grid-template-columns: minmax(0, 1fr);')
+          old = '.preset-save-row {\n'
+          assert text.count(old) == 1
+          text = text.replace(old, '.preset-save-row .cal-input {\n  min-width: 0;\n}\n\n' + old)
+          path.write_text(text, encoding='utf-8', newline='\n')
           PY
       - name: Verify complete backend regression and review state
         shell: bash
@@ -145,7 +151,7 @@ jobs:
             --why '临时停用不应该依靠删除提示词，也不应该影响已有回响或 Heartbeat。' \
             --status verified_local \
             --verification '隔离工作区验证基线通过（GitHub Actions runner）；最终 PR 常规 CI 另验，未部署、未做真机验收。' \
-            --verification '新增后端与前端测试先红后绿；覆盖配置读写、SQLite 重启恢复、保存失败、390px/1280px 和键盘操作。手机网格溢出经 DOM 尺寸测量后修正。' \
+            --verification '新增后端与前端测试先红后绿；覆盖配置读写、SQLite 重启恢复、保存失败、390px/1280px 和键盘操作。手机网格与输入框溢出经 DOM 尺寸测量后修正。' \
             --path shenyu_gateway/config.py --path shenyu_gateway/schemas.py \
             --path shenyu_gateway/config_routes.py --path shenyu_gateway/context_builder.py \
             --path admin/src/api/config.ts --path admin/src/views/ConfigView.vue \
