@@ -1,0 +1,148 @@
+diff --git a/DOCS_MAP.md b/DOCS_MAP.md
+index 804b5d6..51b5215 100644
+--- a/DOCS_MAP.md
++++ b/DOCS_MAP.md
+@@ -3 +3 @@
+-这份文件回答两个问题：新线程应该先读什么，以及根目录里的 Markdown 分别是不是当前事实。项目规则尽量留在仓库中，避免只存在于某个模型的全局记忆里。
++地图以现行源码的职责、数据流和约束为事实；任务入口只是索引，不用操作步骤替代现状，也不把计划写成已实现。这份文件说明从哪里读、哪份是正本，规则不只留在某个模型的全局记忆里。
+diff --git a/START_HERE.md b/START_HERE.md
+index 4c29165..784d3b5 100644
+--- a/START_HERE.md
++++ b/START_HERE.md
+@@ -31 +31 @@
+-| 修改代码 | `AGENTS.md` | 本表对应的专题文档 |
++| 修改未列出的功能、评估耦合影响 | `README.md` § Maintenance Map 定位负责模块 | `docs/architecture/SYSTEM_ZONES.md` § 跨区关键桥梁 定位相邻职责，再核对调用方、状态写入方和契约测试 |
+diff --git a/docs/architecture/REQUEST_CONTEXT.md b/docs/architecture/REQUEST_CONTEXT.md
+index 0db7068..396c241 100644
+--- a/docs/architecture/REQUEST_CONTEXT.md
++++ b/docs/architecture/REQUEST_CONTEXT.md
+@@ -255,0 +256,2 @@ Ordinary `openSession` is snapshot-first; clean cold-start recovery is an explic
++Variant deduplication uses the same reply identity (`replyVersionId`, otherwise `archiveEvent.id`), not text when an identity exists. Removing earlier duplicate entries remaps the selected version by identity, not by its old array index.
++
+diff --git a/project_delivery_log.jsonl b/project_delivery_log.jsonl
+index b0bdb72..539cb95 100644
+--- a/project_delivery_log.jsonl
++++ b/project_delivery_log.jsonl
+@@ -96,0 +97 @@
++{"id":"archive-review-final-20260919","completed_at":"2026-09-19T07:16:53+08:00","title":"归档版本去重口径统一，保留当前选择","product":"Admin 控制台","kind":"fix","summary":"沈予回复的版本去重复用同一身份规则，移除重复项不切换所选版本；归档标记明确只接受布尔真值。","touchpoint":"PWA 重答恢复、档案身份、Agent 地图入口","why":"只有归档身份的版本也必须被正确区分；地图应讲清现状并支持未列出任务的跨区定位。","status":"verified_local","verification":["本地验证基线通过；最终提交常规 CI 与授权合并回执另记 PR，未验证生产部署。","四项前端反例先在原逻辑失败再通过；后端新增18项严格布尔输入覆盖。全量后端1332项、PWA331项及构建通过。"],"paths":["pwa/src/session/reconcile.ts","shenyu_gateway/prepare_messages.py","pwa/tests/recoveryIdentity.spec.ts","tests/test_archive_identity.py"],"docs":["DOCS_MAP.md","START_HERE.md","docs/architecture/REQUEST_CONTEXT.md"],"abandoned":[],"commit":"418cea362a1a5b067b2208dbc66db644e1b5607e","lesson":"版本去重与恢复共用身份口径；去重改变的是下标而不是选中的版本。任务入口索引现状，不代替现状或承诺覆盖全部耦合。","debug_ref":"","recorded_by":"ChatGPT"}
+diff --git a/pwa/src/session/reconcile.ts b/pwa/src/session/reconcile.ts
+index 1b897f2..784bea6 100644
+--- a/pwa/src/session/reconcile.ts
++++ b/pwa/src/session/reconcile.ts
+@@ -233 +233,2 @@ function variantKey(variant: MessageVariant): string {
+-  if (variant.replyVersionId) return `id:${variant.replyVersionId}`
++  const identity = replyIdentity(variant)
++  if (identity) return `id:${identity}`
+@@ -279,0 +281 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
++  const selectedKey = variantKey(variants[selectedVariantIndex(target)])
+@@ -291 +293,2 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
+-    target.selectedVariantIndex = selectedVariantIndex(target)
++    // Removing an earlier duplicate shifts indexes, not the selected identity.
++    target.selectedVariantIndex = variants.findIndex(variant => variantKey(variant) === selectedKey)
+diff --git a/pwa/tests/recoveryIdentity.spec.ts b/pwa/tests/recoveryIdentity.spec.ts
+index 1161bf1..ae14bbb 100644
+--- a/pwa/tests/recoveryIdentity.spec.ts
++++ b/pwa/tests/recoveryIdentity.spec.ts
+@@ -116,0 +117,59 @@ it('reports a provenance-only change so the caller persists an otherwise complet
++
++describe('variant deduplication uses the same identity as recovery', () => {
++  const archivedVariant = (id: string, content = '相同的回答') =>
++    snapshotMessage(row('assistant', content, { archiveEvent: event(id) }))
++
++  it('keeps equal words from distinct archive-only versions', () => {
++    const target = row('assistant', '相同的回答', { archiveEvent: event('v2'), truncated: true })
++    target.variants = [archivedVariant('v1'), archivedVariant('v2')]
++    target.selectedVariantIndex = 1
++    const messages = [row('user', '同一个问题'), target]
++    expect(applyReplyRecovery(messages, { replies: [
++      { archive_event: event('v2'), content: '相同的回答' },
++    ] })).toBe(true)
++    expect(target.variants.map(variant => variant.archiveEvent?.id)).toEqual(['v1', 'v2'])
++    expect(target.selectedVariantIndex).toBe(1)
++    applyVariant(target, target.variants[0], 0)
++    expect(wireMessages([target])[0]).toHaveProperty('archive_event.id', 'v1')
++  })
++
++  it('deduplicates the same event when its display representation changes', () => {
++    const target = row('assistant', '相同的回答', { archiveEvent: event('v1'), truncated: true })
++    target.variants = [archivedVariant('v1'),
++      { ...archivedVariant('v1', '\n\n相同的回答'), echo: '曾经显示的回响' }]
++    const messages = [row('user', '同一个问题'), target]
++    expect(applyReplyRecovery(messages, { replies: [
++      { archive_event: event('v1'), content: '相同的回答' },
++    ] })).toBe(true)
++    expect(target.variants).toHaveLength(1)
++    expect(target.variants[0].archiveEvent).toEqual(event('v1'))
++  })
++
++  it('recognizes the same version from either replyVersionId or archiveEvent', () => {
++    const target = row('assistant', '相同的回答', { archiveEvent: event('v1'), truncated: true })
++    target.variants = [archivedVariant('v1'),
++      snapshotMessage(row('assistant', '相同的回答', { replyVersionId: 'v1' }))]
++    const messages = [row('user', '同一个问题'), target]
++    expect(applyReplyRecovery(messages, { replies: [
++      { reply_version_id: 'v1', archive_event: event('v1'), content: '相同的回答' },
++    ] })).toBe(true)
++    expect(target.variants).toHaveLength(1)
++    expect(target.archiveEvent).toEqual(event('v1'))
++  })
++
++  it('does not move the selected version when earlier duplicates are removed', () => {
++    const first = snapshotMessage(row('assistant', '第一版', { replyVersionId: 'v1' }))
++    const selected = snapshotMessage(row('assistant', '第二版', { replyVersionId: 'v2' }))
++    const last = snapshotMessage(row('assistant', '第三版', { replyVersionId: 'v3' }))
++    const target = row('assistant', '第二版', { replyVersionId: 'v2', truncated: true })
++    target.variants = [first, { ...first }, selected, last]
++    target.selectedVariantIndex = 2
++    expect(applyReplyRecovery([row('user', '同一个问题'), target], { replies: [
++      { reply_version_id: 'v2', content: '第二版' },
++    ] })).toBe(true)
++    expect(target.variants.map(variant => variant.replyVersionId)).toEqual(['v1', 'v2', 'v3'])
++    expect(target.selectedVariantIndex).toBe(1)
++    applyVariant(target, target.variants[2], 2)
++    expect(target.content).toBe('第三版')
++  })
++})
+diff --git a/shenyu_gateway/prepare_messages.py b/shenyu_gateway/prepare_messages.py
+index eaba02e..0c0ddb5 100644
+--- a/shenyu_gateway/prepare_messages.py
++++ b/shenyu_gateway/prepare_messages.py
+@@ -452,0 +453 @@ async def prepare_messages(
++        # Only the JSON boolean true opts in; truthy strings/numbers are not flags.
+@@ -454 +455,2 @@ async def prepare_messages(
+-            if message.pop(field, None) is True:
++            enabled = message.get(field) is True
++            if enabled:
+@@ -455,0 +458,2 @@ async def prepare_messages(
++            else:
++                message.pop(field, None)
+diff --git a/tests/test_archive_identity.py b/tests/test_archive_identity.py
+index 7da9a92..1f40c3d 100644
+--- a/tests/test_archive_identity.py
++++ b/tests/test_archive_identity.py
+@@ -212 +212,2 @@ async def test_cloud_capture_uses_ignore_duplicates_not_merge(tmp_path):
+-async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_path, monkeypatch, room):
++@pytest.mark.parametrize('flag', [True, False, None, 0, 1, 0.5, 'true', 'false', [], {'enabled': True}])
++async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_path, monkeypatch, room, flag):
+@@ -236,2 +237,2 @@ async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_pat
+-    history = [{**message('u1', 'question', 'user'), 'archive_replay': True},
+-               {**message('a1', 'half'), 'archive_pending': True},
++    history = [{**message('u1', 'question', 'user'), 'archive_replay': flag},
++               {**message('a1', 'half'), 'archive_pending': flag},
+@@ -249 +250 @@ async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_pat
+-    assert meta['snapshot_messages'][0]['archive_replay'] is True
++    assert ('archive_replay' in meta['snapshot_messages'][0]) is (flag is True)
+@@ -251 +252,4 @@ async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_pat
+-    assert meta['snapshot_messages'][1]['archive_pending'] is True
++    assert ('archive_pending' in meta['snapshot_messages'][1]) is (flag is True)
++    if flag is True:
++        assert meta['snapshot_messages'][0]['archive_replay'] is True
++        assert meta['snapshot_messages'][1]['archive_pending'] is True
+@@ -253 +257,2 @@ async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_pat
+-    assert [row['role'] for row in archive.list_messages()] == ['user', 'user']
++    expected_roles = ['user', 'user'] if flag is True else ['user', 'assistant', 'user']
++    assert [row['role'] for row in archive.list_messages()] == expected_roles
+@@ -256 +261,2 @@ async def test_preparation_keeps_envelopes_only_in_archive_and_snapshots(tmp_pat
+-    assert body.messages[1].archive_pending is True
++    assert body.messages[1].archive_pending == flag
++    assert body.messages[0].archive_replay == flag
