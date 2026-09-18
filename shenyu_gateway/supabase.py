@@ -82,6 +82,16 @@ class SupabaseClient:
         result = response.json()
         return result if isinstance(result, list) else [result]
 
+    async def insert_archive_events(self, table: str, rows: list[dict]) -> list:
+        """Insert immutable events once, never update originals or tombstones."""
+        if not rows:
+            return []
+        headers = {**self.headers, "Prefer": "resolution=ignore-duplicates,return=representation"}
+        response = await self._request("POST", f"{self.base_url}/{table}",
+            params={"on_conflict": "id", "select": "id"}, json=rows, headers=headers)
+        _raise_for_status(response)
+        return response.json()
+
     async def upsert(self, table: str, data: Any, on_conflict: Optional[str] = None) -> list:
         params = {"on_conflict": on_conflict} if on_conflict else {}
         headers = dict(self.headers)

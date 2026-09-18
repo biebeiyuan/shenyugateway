@@ -181,7 +181,7 @@ class LocalChatArchive:
                               if legacy and digest else f'id:{ident}')
         return result
 
-    def _write(self, rows: Iterable[dict], *, legacy: bool) -> int:
+    def _write(self, rows: Iterable[dict], *, legacy: bool, capture: bool = False) -> int:
         records = [self._validated(row, legacy=legacy) for row in rows]
         inserted = 0
         with self._connect(write=True) as conn:
@@ -189,6 +189,12 @@ class LocalChatArchive:
             for row in records:
                 existing = conn.execute('SELECT * FROM archive_messages WHERE id=?', (row['id'],)).fetchone()
                 if existing:
+                    if (row.get("content_hash") == "event:v1:" + row["id"]
+                            and existing["content_hash"] == row["content_hash"]
+                            and existing["role"] == row["role"] and capture):
+                        # Capture event identity is immutable even when a client's
+                        # projection changes. Never overwrite or revive this row.
+                        continue
                     if any(existing[key] != row[key] for key in _ORIGINAL):
                         # Do not print resident content as failure evidence.
                         raise ValueError(f'archive original conflict for id {row["id"]}')
@@ -213,9 +219,10 @@ class LocalChatArchive:
         return self._write(rows, legacy=False)
 
     def append_legacy_rows(self, rows: Iterable[dict]) -> int:
-        """Existing window archiver compatibility, until per-message IDs are wired."""
-        return self.import_rows({**row, 'id': row.get('id') or str(uuid.uuid4()),
-                                 'deleted_at': row.get('deleted_at')} for row in rows)
+        """Window capture: immutable identified events plus legacy hash-based rows."""
+        return self._write(({**row, 'id': row.get('id') or str(uuid.uuid4()),
+                             'deleted_at': row.get('deleted_at')} for row in rows),
+                           legacy=True, capture=True)
 
     def export_rows(self) -> list[dict]:
         with self._connect() as conn:

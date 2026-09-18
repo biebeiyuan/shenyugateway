@@ -1,4 +1,4 @@
-import type { UiMessage } from '../types'
+import type { ArchiveEvent, UiMessage } from '../types'
 import { splitEcho } from '../echo'
 
 // Thread handoff / history source selection.
@@ -95,4 +95,19 @@ export function dedupeUiMessagesForRecovery(source: UiMessage[]): UiMessage[] {
     seen.add(key)
     return true
   })
+}
+
+// Only fresh sends/edits/re-rolls create an event. Restored legacy history must
+// never be assigned a new ID or today's clock merely because it was reopened.
+export function newArchiveEvent(id: string): ArchiveEvent {
+  return { id, event_at: new Date().toISOString() }
+}
+
+export function readArchiveEvent(value: unknown): ArchiveEvent | undefined {
+  if (!value || typeof value !== 'object') return undefined
+  const item = value as Record<string, unknown>
+  if (typeof item.id !== 'string' || !item.id || item.id.length > 160) return undefined
+  if (typeof item.event_at !== 'string' || item.event_at.length > 64
+    || !/(?:Z|[+-]\d{2}:\d{2})$/.test(item.event_at) || !Number.isFinite(Date.parse(item.event_at))) return undefined
+  return { id: item.id, event_at: item.event_at }
 }

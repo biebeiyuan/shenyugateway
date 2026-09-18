@@ -1,5 +1,6 @@
 import type { UiMessage } from '../types'
 import { joinEcho } from '../echo'
+import { readArchiveEvent } from '../session/history'
 import { parsePwaBuildInfo, type PwaBuildInfo } from '../buildInfo'
 import { gatewayErrorMessage } from './errors'
 
@@ -77,6 +78,8 @@ export function wireMessages(source: UiMessage[]) {
   return source.map((message) => ({
     role: message.role,
     content: wireContent(message),
+    ...(readArchiveEvent(message.archiveEvent) ? { archive_event: readArchiveEvent(message.archiveEvent) } : {}),
+    ...((message.streaming || message.truncated || message.error) ? { archive_pending: true } : {}),
   }))
 }
 

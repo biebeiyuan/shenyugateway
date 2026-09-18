@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from .chat_archive import parse_archive_event
 from .private_capture import restore_assistant_echo
 from .runtime import json_dumps
 from .utils import normalize_text
@@ -46,6 +47,9 @@ def write_completion_context_snapshot(
         return None
 
     messages = completion_snapshot_messages(base_messages, restore_assistant_echo(assistant_content, echo))
+    event = parse_archive_event(meta.get("reply_archive_event"))
+    if event and len(messages) > len(base_messages):
+        messages[-1]["archive_event"] = event
     latest_user_text = meta.get("snapshot_latest_user_text") or _latest_user_text(messages)
     return store.write_request_context_snapshot(
         session_id=session_id,

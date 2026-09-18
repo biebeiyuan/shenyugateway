@@ -1,9 +1,12 @@
 import { clampErrorText } from '../api/errors'
 import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
+import { readArchiveEvent } from './history'
 
 export function cloneVariant(variant: Partial<MessageVariant>): MessageVariant {
   return {
+    truncated: typeof variant.truncated === 'boolean' ? variant.truncated : undefined,
+    archiveEvent: readArchiveEvent(variant.archiveEvent),
     replyVersionId: variant.replyVersionId ? String(variant.replyVersionId) : undefined,
     content: String(variant.content || ''),
     echo: String(variant.echo || ''),
@@ -34,7 +37,7 @@ export function cloneVariant(variant: Partial<MessageVariant>): MessageVariant {
 }
 
 export function snapshotMessage(message: UiMessage): MessageVariant {
-  return cloneVariant(message)
+  return cloneVariant({ ...message, truncated: Boolean(message.truncated || message.streaming) })
 }
 
 export function selectedVariantIndex(message: UiMessage): number {
@@ -65,6 +68,8 @@ export function applyVariant(message: UiMessage, variant: MessageVariant, index:
   message.error = normalized.error
   message.responseMeta = normalized.responseMeta ? { ...normalized.responseMeta } : undefined
   message.replyVersionId = normalized.replyVersionId
+  message.archiveEvent = normalized.archiveEvent
+  message.truncated = normalized.truncated || undefined
 }
 
 export function emptyVariant(): MessageVariant {

@@ -1,6 +1,6 @@
 import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
-import { sessionMessageContent, sessionMessageParts } from './history'
+import { readArchiveEvent, sessionMessageContent, sessionMessageParts } from './history'
 import { hydrateToolEvents } from './toolHydration'
 import { applyVariant, selectedVariantIndex, snapshotMessage, syncCurrentVariant } from './variants'
 
@@ -17,6 +17,7 @@ type RecentRow = Record<string, unknown>
 type RecoveryReply = {
   id?: unknown
   reply_version_id?: unknown
+  archive_event?: unknown
   content?: unknown
   tool_rows?: unknown
 }
@@ -123,6 +124,7 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
       return false
     }
 
+    target.archiveEvent = target.archiveEvent || readArchiveEvent(selectedReply.archive_event)
     target.content = nextContent
     target.echo = nextEcho
     // 只在本地没有 echoSegments 时才用服务端的（服务端只能给 offset 0 的单段）
@@ -138,6 +140,7 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
   } else {
     messages.push({
       id: String(selectedReply.id || createId('message')),
+      archiveEvent: readArchiveEvent(selectedReply.archive_event),
       role: 'assistant',
       content: parts.content,
       echo: parts.echo,
@@ -160,6 +163,7 @@ function recoveryVariant(reply: RecoveryReply): MessageVariant | undefined {
   const parts = sessionMessageParts(reply.content)
   if (!parts.content && !parts.echo) return undefined
   const variant: MessageVariant = {
+    archiveEvent: readArchiveEvent(reply.archive_event),
     replyVersionId: reply.reply_version_id ? String(reply.reply_version_id) : undefined,
     content: parts.content,
     echo: parts.echo,
@@ -289,6 +293,7 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     changed = true
   }
   target.streaming = false
+  if (!target.archiveEvent && candidate.archiveEvent) target.archiveEvent = candidate.archiveEvent
 
   const index = selectedVariantIndex(target)
   const contentChanged = normalizeText(candidate.content) !== normalizeText(target.content || '')
@@ -297,7 +302,8 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     // 服务端永远没有 thinking，events 只有塌到 offset 0 的补水版，echoSegments 只有单段，
     // responseMeta 压根不在恢复载荷里。本地有的一律以本地为准，服务端只补本地空着的。
     // error 例外：上面刚判定找回成功清掉了它，快照里那份不能再传染回来。
-    const merged = { ...mergeRecoveredVariant(variants[index], candidate), error: undefined }
+    const merged = { ...mergeRecoveredVariant(variants[index], candidate),
+      archiveEvent: target.archiveEvent || candidate.archiveEvent, truncated: false, error: undefined }
     applyVariant(target, merged, index)
     syncCurrentVariant(target)
     changed = true

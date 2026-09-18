@@ -1,38 +1,32 @@
 from __future__ import annotations
 
-"""L0 verbatim chat archive.
+"""L0 chat capture: immutable event identity, independently projected text.
 
-Archives user/assistant messages from the client request window into the
-Supabase `shenyu_chat_archive` table, message by message.
+PWA archive_event carries a stable per-version ID and original creation time.
+The selected destination ignores repeated IDs without rewriting originals or
+reviving tombstones. Partial/recovering replies defer capture. Replies still
+enter when the client returns the selected version in its next request; this
+is not an immediate-completion archive or a provider context/history source.
 
-Archiving only from the client window means a message is archived once the
-client sends it back as history — so re-rolled assistant replies, which never
-return in the window, are naturally excluded. The surviving reply of a re-roll
-is archived on the next request.
-
-Dedup consults the seen-hash table in SQLite globally (recent hashes only,
-recorded per session_tag for provenance): the same sliding window resent on
-every request archives each message once, and a window handed over into a new
-session — PWA history handoff, cold-start bridge — does not re-archive the
-carried history. A genuinely repeated message months later is archived again
-as a new event once its hash ages out of the retention window.
-
-event_at is the client-local send time. User messages carry it themselves:
-the PWA tail status suffix (第N天 anchors the year) or the legacy Operit time
-markers. Assistant replies inherit the time of the user message right before
-them in the window. The stored `thread` column is provenance only — the
-archive reader shows one merged timeline.
+Legacy clients have no trustworthy per-message identity. They keep the global,
+bounded SQLite seen-hash compatibility path, dual-reading known old echo
+separator hashes. No IDs/times are invented for restored legacy messages.
+Their old timestamp-marker/inherited-clock fallback remains approximate.
+See REQUEST_CONTEXT.md, Chat archive (L0 source of truth), for the wire,
+identity/projection, and migration boundaries.
 """
 
 import asyncio
 import hashlib
 import re
+import uuid
 from datetime import datetime, timezone, timedelta
 from typing import Any, Optional
 
 from .client_extra import parse_pwa_status_suffix_time
 from .context_layers import _strip_client_extra_bundle_text
 from .echo import strip_leading_echo
+from .response_capture import split_private_assistant_tags
 from .local_chat_archive import local_archive_for_config
 from .runtime import LOCAL_DAY_TZ, dt_to_iso, iso_now, logger
 
@@ -63,6 +57,69 @@ def _message_text(content: Any) -> str:
 
 def _content_hash(role: str, text: str) -> str:
     return hashlib.sha256(f"{role}\n{text}".encode("utf-8")).hexdigest()
+
+
+def parse_archive_event(value: Any) -> Optional[dict[str, str]]:
+    """Optional client event identity, never inferred from display text.
+
+    Invalid archive-only metadata must not reject the conversation request.
+    Old clients/messages remain on the explicitly legacy content-hash path.
+    """
+    if not isinstance(value, dict):
+        return None
+    ident, stamp = value.get("id"), value.get("event_at")
+    if not isinstance(ident, str) or not ident or len(ident) > 160:
+        return None
+    if not isinstance(stamp, str) or len(stamp) > 64:
+        return None
+    try:
+        instant = datetime.fromisoformat(stamp.replace("Z", "+00:00"))
+        if instant.tzinfo is None:
+            return None
+        return {"id": ident, "event_at": dt_to_iso(instant.astimezone(timezone.utc))}
+    except (ValueError, OverflowError):
+        return None
+
+
+def archive_visible_text(role: str, content: Any) -> str:
+    """One pure archive projection. Strip private parts, THEN trim boundaries.
+
+    Do not use this projection as the identity of a modern message. Adding a
+    stripper changes only what is captured for new events, not existing IDs.
+    Interior whitespace/Markdown and user-quoted private tags are untouched.
+    """
+    text, _ = _strip_client_extra_bundle_text(_message_text(content))
+    if role == "assistant":
+        # Removing one private block may expose another leading block. Reach a
+        # fixed point so block order never changes the captured public body.
+        while True:
+            visible, _ = split_private_assistant_tags(strip_leading_echo(text))
+            if visible == text:
+                break
+            text = visible
+    return text.strip()
+
+
+def legacy_archive_hashes(role: str, content: Any, visible: str) -> set[str]:
+    """Dual-read known pre-fix representations; never rewrite archived originals.
+
+    Old echo capture trimmed BEFORE stripping the tag, leaving the separator.
+    Include the old pipeline's exact output and the deployed echo separators
+    even when a returning client has already stripped them. This is legacy
+    compatibility, not a universal identity mechanism for arbitrary transforms.
+    """
+    old, _ = _strip_client_extra_bundle_text(_message_text(content))
+    if role == "assistant":
+        old = strip_leading_echo(old)
+    texts = {old, visible}
+    if role == "assistant":
+        texts.update(prefix + visible for prefix in ("\n", "\n\n", "\r\n", "\r\n\r\n"))
+    return {_content_hash(role, text) for text in texts if text}
+
+
+def _archive_event_row_id(role: str, event: dict[str, str]) -> str:
+    return str(uuid.uuid5(uuid.NAMESPACE_URL,
+        "shenyugateway/archive-event/v1/" + role + "/" + event["id"]))
 
 
 def _client_time_from_text(text: str, *, now: Optional[datetime] = None) -> Optional[str]:
@@ -138,14 +195,14 @@ class ChatArchiveService:
             and self.store
         )
 
-    def _append_local_rows(self, rows: list[dict]) -> None:
+    def _append_local_rows(self, rows: list[dict]) -> int:
         # Open inside the safe archive task, not in chat preparation. A disk
         # failure after startup must not abort a conversation or mark hashes seen.
         self._check_destination()
         archive = local_archive_for_config(self.cfg)
         if archive is None:
             raise ValueError("Chat archive destination changed during an archive pass")
-        archive.append_legacy_rows(rows)
+        return archive.append_legacy_rows(rows)
 
     async def archive_window(
         self,
@@ -165,7 +222,8 @@ class ChatArchiveService:
         latest_client_event_at = event_at
         for msg in messages or []:
             role = msg.get("role")
-            if role not in {"user", "assistant"}:
+            if role not in {"user", "assistant"} or msg.get("archive_pending") is True:
+                # Partial/recovering replies must not consume an immutable ID.
                 continue
             # Skip tool-call shells without visible text.
             text = _message_text(msg.get("content"))
@@ -178,11 +236,11 @@ class ChatArchiveService:
             client_event_at = _client_time_from_text(text) if role == "user" else None
             if client_event_at:
                 latest_client_event_at = client_event_at
-            text, _ = _strip_client_extra_bundle_text(text)
-            if role == "assistant":
-                # Echo stays in the PWA transcript/snapshots but must not become
-                # an unlimited long-term recall source after its turn retention expires.
-                text = strip_leading_echo(text)
+            event = parse_archive_event(msg.get("archive_event"))
+            if event and role == "user":
+                latest_client_event_at = event["event_at"]
+            original_content = msg.get("content")
+            text = archive_visible_text(role, original_content)
             if not text:
                 continue
             if _looks_like_numbered_transcript(text):
@@ -191,18 +249,19 @@ class ChatArchiveService:
                 {
                     "role": role,
                     "content": text,
-                    "content_hash": _content_hash(role, text),
-                    "event_at": client_event_at or latest_client_event_at,
+                    "content_hash": ("event:v1:" + _archive_event_row_id(role, event)
+                                     if event else _content_hash(role, text)),
+                    "id": _archive_event_row_id(role, event) if event else None,
+                    "legacy_hashes": legacy_archive_hashes(role, original_content, text),
+                    "event_at": event["event_at"] if event else client_event_at or latest_client_event_at,
                 }
             )
         if not candidates:
             return {"archived": 0}
 
         unseen = self.store.filter_unseen_archive_hashes(
-            [item["content_hash"] for item in candidates]
+            [digest for item in candidates if not item["id"] for digest in item["legacy_hashes"]]
         )
-        if not unseen:
-            return {"archived": 0}
 
         # Keep first occurrence per unseen hash, preserving window order.
         # archived_at gets one microsecond per row on top of the batch time so
@@ -210,15 +269,21 @@ class ChatArchiveService:
         # when several rows share one inherited event_at.
         rows: list[dict] = []
         taken: set[str] = set()
+        seen_aliases: set[str] = set()
         event_at = event_at or iso_now()
         archived_base = datetime.now(timezone.utc)
         for item in candidates:
             digest = item["content_hash"]
-            if digest not in unseen or digest in taken:
+            if digest in taken:
+                continue
+            if not item["id"] and not item["legacy_hashes"].issubset(unseen):
+                # A known old representation confirms this is not a new event.
+                seen_aliases.add(_content_hash(item["role"], item["content"]))
                 continue
             taken.add(digest)
             rows.append(
                 {
+                    **({"id": item["id"]} if item["id"] else {}),
                     "session_tag": session_tag,
                     "thread": thread,
                     "client_name": client_name,
@@ -229,17 +294,29 @@ class ChatArchiveService:
                     "archived_at": dt_to_iso(archived_base + timedelta(microseconds=len(rows))),
                 }
             )
+            seen_aliases.add(_content_hash(item["role"], item["content"]))
 
-        if self._use_local_archive:
-            await asyncio.to_thread(self._append_local_rows, rows)
-        else:
-            await self.supabase.insert_many(CHAT_ARCHIVE_TABLE, rows)
+        inserted = 0
+        if rows and self._use_local_archive:
+            inserted = await asyncio.to_thread(self._append_local_rows, rows)
+        elif rows:
+            legacy = [row for row in rows if "id" not in row]
+            identified = [row for row in rows if "id" in row]
+            # Do durable/idempotent writes first. If the later legacy insert
+            # fails, replay cannot duplicate a modern event already committed.
+            if identified:
+                inserted += len(await self.supabase.insert_archive_events(CHAT_ARCHIVE_TABLE, identified))
+            if legacy:
+                await self.supabase.insert_many(CHAT_ARCHIVE_TABLE, legacy)
+                inserted += len(legacy)
+        # Only publish aliases after the write succeeded (including an ID conflict
+        # proving an original/tombstone already exists). An I/O failure retries.
         self.store.mark_archive_hashes_seen(
             session_tag,
-            [row["content_hash"] for row in rows],
+            list(seen_aliases),
             keep_recent=getattr(self.cfg, "chat_archive_seen_retention", 10000),
         )
-        return {"archived": len(rows), "thread": thread}
+        return {"archived": inserted, "thread": thread}
 
 
 async def archive_window_safely(service: ChatArchiveService, **kwargs) -> None:

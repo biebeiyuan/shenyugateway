@@ -6,6 +6,10 @@ from pydantic import BaseModel, Field
 
 
 class ChatMessage(BaseModel):
+    # Archive-only envelope: retain in snapshots, remove before provider calls.
+    # Validate inside the archive boundary so bad metadata cannot break chat.
+    archive_event: Optional[Any] = None
+    archive_pending: Optional[Any] = None
     role: str
     content: Optional[Any] = None
     name: Optional[str] = None

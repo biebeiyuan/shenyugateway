@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-"""One-off backfill of shenyu_chat_archive from existing SQLite history.
+"""Legacy-only backfill of shenyu_chat_archive from pre-identity SQLite history.
 
 Reads raw_request_windows (primary, untrimmed) and gateway_messages
 (supplementary) and pushes user/assistant texts through the same dedup
@@ -29,13 +29,14 @@ import json
 from shenyu_gateway.chat_archive import (
     CHAT_ARCHIVE_TABLE,
     ChatArchiveService,
+    archive_visible_text,
+    legacy_archive_hashes,
     derive_thread,
     _client_time_from_text,
     _content_hash,
     _looks_like_numbered_transcript,
     _message_text,
 )
-from shenyu_gateway.context_layers import _strip_client_extra_bundle_text
 from shenyu_gateway.config import RuntimeConfig
 from shenyu_gateway.runtime import dt_to_iso, iso_now, parse_ts
 from shenyu_gateway.store import GatewayStore
@@ -168,6 +169,8 @@ def _candidate_rows(
     created_at: str | None,
     existing: set[str],
 ) -> list[dict]:
+    if any(msg.get("archive_event") for msg in messages or []):
+        raise ValueError("Legacy backfill cannot assign identities to archive-event snapshots")
     rows: list[dict] = []
     event_at = created_at or iso_now()
     latest_client_event_at = event_at
@@ -175,7 +178,7 @@ def _candidate_rows(
     taken: set[str] = set()
     for msg in messages or []:
         role = msg.get("role")
-        if role not in {"user", "assistant"}:
+        if role not in {"user", "assistant"} or msg.get("archive_pending") is True:
             continue
         text = _message_text(msg.get("content"))
         if not text:
@@ -189,13 +192,13 @@ def _candidate_rows(
         )
         if client_event_at:
             latest_client_event_at = client_event_at
-        text, _ = _strip_client_extra_bundle_text(text)
+        text = archive_visible_text(role, msg.get("content"))
         if not text:
             continue
         if _looks_like_numbered_transcript(text):
             continue
         digest = _content_hash(role, text)
-        if digest in taken or digest in existing:
+        if digest in taken or legacy_archive_hashes(role, msg.get("content"), text) & existing:
             continue
         taken.add(digest)
         rows.append(
@@ -232,10 +235,19 @@ async def _insert_batch(service: ChatArchiveService, rows: list[dict]) -> int:
 async def main() -> None:
     args = parse_args()
     cfg = RuntimeConfig()
+    if cfg.chat_archive_backend != "supabase":
+        raise ValueError("Legacy backfill targets Supabase, not the active SQLite archive; use archive backup/restore")
     if not (cfg.supabase_url and cfg.supabase_key):
         print("SUPABASE_URL / SUPABASE_SERVICE_KEY not configured.")
         return
     store = GatewayStore(cfg.gateway_db_path)
+    # Preflight before seeding seen hashes or writing any batch. Runtime message
+    # rows lack envelopes, so a row-by-row guard would already be too late.
+    with store._connect() as conn:
+        for table in ("raw_request_windows", "request_context_snapshots"):
+            if conn.execute(f"SELECT 1 FROM {table} WHERE instr(messages_json, ?) > 0 LIMIT 1",
+                            ('"archive_event"',)).fetchone():
+                raise ValueError("Legacy backfill refuses identity-bearing history; use archive backup/restore")
     supabase = SupabaseClient(cfg.supabase_url, cfg.supabase_key)
     service = ChatArchiveService(store, supabase, cfg)
     batch_size = max(1, min(int(args.batch_size or 250), 1000))
@@ -247,6 +259,8 @@ async def main() -> None:
         existing = set()
         if not args.ignore_supabase_existing:
             existing_by_tag = await _load_existing_archive_hashes_by_tag(supabase, args.session_tag)
+            if any(digest.startswith("event:v1:") for digest in _flatten_existing(existing_by_tag)):
+                raise ValueError("Legacy backfill refuses an archive containing identified events")
             seeded = _seed_seen_from_existing(store, cfg, existing_by_tag)
             existing = _flatten_existing(existing_by_tag)
             print(f"Loaded {len(existing)} existing Supabase archive hashes.")

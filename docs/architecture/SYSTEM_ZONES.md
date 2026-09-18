@@ -490,4 +490,4 @@ Hisense（海信）专用线程——独立客户端识别与上游、独立 hea
 - `tmp/` 中约 55 MB 的调查数据库与 retained JSON 保留在本地，并由根级 `/tmp/` ignore 规则隔离。
 - 当前工作区存在用户未提交修改和未跟踪审查文档，后续变更必须保持独立，不能覆盖或回滚。
 
-本地原文档案是区域七的独立存储：只接原文存档与档案读写，不向上下文窗口供给历史。迁移和部署开关统一见 `docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth)；记忆、星星、向量与来历书仍由原有 Supabase 路径持有。
+本地原文档案是区域七的独立存储：只接原文存档与档案读写，不向上下文窗口供给历史。 PWA 的归档身份和时间随消息版本穿过请求/完成快照与恢复边界，由归档入口消费；剥离后的正文不再决定新消息身份，这些字段不会进入模型上下文。迁移和部署开关统一见 `docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth)；记忆、星星、向量与来历书仍由原有 Supabase 路径持有。

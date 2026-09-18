@@ -2,6 +2,8 @@ import type { ToolEvent } from './toolLanguage'
 
 export type Role = 'user' | 'assistant'
 
+export type ArchiveEvent = { id: string; event_at: string }
+
 export type Attachment = {
   id: string
   name: string
@@ -29,6 +31,8 @@ export type EchoSegment = {
 }
 
 export type MessageVariant = {
+  truncated?: boolean
+  archiveEvent?: ArchiveEvent
   replyVersionId?: string
   content: string
   echo: string
@@ -52,6 +56,7 @@ export type ResponseMeta = {
 }
 
 export type UiMessage = {
+  archiveEvent?: ArchiveEvent
   id: string
   role: Role
   content: string

@@ -375,6 +375,25 @@ Visible output should never include closed private blocks:
 
 When this area breaks, check `test_gateway_tags.py` and `test_response_capture.py` first.
 
+### Archive replay after private-block stripping
+
+Confirmed on 2026-09-18 against the preserved Supabase archive: 28 active replies
+had older active counterparts whose only difference was two leading newlines.
+The earliest confirmed duplicate batch was written at 2026-09-15 13:42 Beijing
+time (13 rows); the second at 2026-09-18 00:07 (15 rows). This dates the verified
+whitespace-duplicate class, not every historical ordering anomaly or the current
+VPS SQLite contents. No resident text is needed in the diagnostic record.
+
+The old capture trimmed before echo stripping, hashed the leftover separator,
+then assigned unanchored replayed history the current capture time. Unchanged
+user rows were skipped while those reply variants re-entered as new rows.
+Do not fix this by sorting roles or deleting adjacent replies. Preserve originals;
+review explicit duplicate IDs against the actual active archive before cleanup.
+The prevention contract and legacy limits are owned by
+`docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth).
+Regression coverage: `tests/test_archive_identity.py` and
+`pwa/tests/archiveIdentity.spec.ts`. Deployment is a separate verification step.
+
 ## External Frontend Contracts
 
 These are hard contracts with `home-frontend`; do not remove or reshape them during cleanup:

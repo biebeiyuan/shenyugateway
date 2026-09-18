@@ -568,6 +568,9 @@ async def build_upstream_request(
     upstream = (meta or {}).get("upstream") or resolve_upstream(cfg)
     proto = upstream["protocol"]
     raw_messages = messages_override or [message.model_dump(exclude_none=True) for message in body.messages]
+    # Defence in depth for direct callers which bypass normal preparation.
+    raw_messages = [{key: value for key, value in message.items() if key not in {"archive_event", "archive_pending"}}
+                    for message in raw_messages]
     merged_tools = merge_tools(body.tools, cfg, meta=meta)
     window_meta = (meta or {}).get("client_message_window") or {}
     tail_guard_user_turns = _cache_tail_guard_user_turns(raw_messages, window_meta)

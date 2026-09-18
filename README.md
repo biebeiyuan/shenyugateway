@@ -75,7 +75,7 @@ The codebase is partly layered already. Entries owe a path and a responsibility:
 - `shenyu_gateway/client_extra.py`: shared recognition/stripping of client-injected per-message extras (Operit `message_insert_extra_bundle` attachments and the PWA tail status suffix) plus the expired-photo placeholder contract, imported by trimming, archiving, history normalization, and recall-query cleaning.
 - `shenyu_gateway/memory_island.py`: Stars/Mem island rendering and per-lane retain/rewrite state, including overlap decisions and current/added/updated/removed log summaries.
 - `shenyu_gateway/island_bumps.py`: 小突起 — stateless one-line receipts for the memory writes Shenyu already made this waking day, plus lightweight first-sentence crumbs for successful Recall (stars, mem notes, calendar, 盼圃's `plant`, and recalled sources), rendered as a block trailing the island so repeats stop happening.
-- `shenyu_gateway/prepare_messages.py`: cold-start snapshot preparation, runtime state pruning, pending gateway tool turn injection, and message/tool-call helpers.
+- `shenyu_gateway/prepare_messages.py`: cold-start snapshot preparation, runtime state pruning, pending gateway tool turn injection, and separation of archive envelopes from model-facing messages.
 
 ### Upstream communication
 
@@ -107,7 +107,7 @@ The codebase is partly layered already. Entries owe a path and a responsibility:
 
 ### Durable archive
 
-- `shenyu_gateway/chat_archive.py`: L0 verbatim chat archive service; existing input-window capture with deployment-selected Supabase or local SQLite destination.
+- `shenyu_gateway/chat_archive.py`: L0 chat capture; stable per-version event identity, pure visible-text projection, and legacy hash compatibility with deployment-selected Supabase or SQLite destination.
 - `shenyu_gateway/local_chat_archive.py`: independent SQLite original-text store, legacy read-view folding, literal search, stable-ID import/verification and consistent backup; never a model-context source.
 - `shenyu_gateway/heartbeat_archive.py`: heartbeat disaster recovery archive to Supabase (`shenyu_heartbeat_archive`), settle window, and explicitly gated soft-delete reconciliation with an empty-local-pool refusal.
 - `shenyu_gateway/conflict_books.py`: durable origin-book records and invariants (frozen original_text, append-only annotations); the shelf/tool presentation is also a memory-data concern in system zone six.
