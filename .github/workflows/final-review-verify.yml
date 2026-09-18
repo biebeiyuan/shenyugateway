@@ -1,0 +1,51 @@
+name: Verify final archive review
+on:
+  push:
+    branches: [work/archive-review-export]
+    paths: [.github/workflows/final-review-verify.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/work/archive-review-export'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Select exact source and apply the reviewed delta
+        shell: bash
+        run: |
+          set -euo pipefail
+          cp .final-review.patch /tmp/final-review.patch
+          echo 'fa0f32ea1ab2d2ca340329ec141d7abd765d14a9d3df1a634da52fe00fc8a2b5  /tmp/final-review.patch' | sha256sum --check
+          git fetch --depth=1 origin 418cea362a1a5b067b2208dbc66db644e1b5607e
+          git checkout --detach 418cea362a1a5b067b2208dbc66db644e1b5607e
+          test "$(git rev-parse HEAD^{tree})" = fb377113955efab1ed441ab337f72ddd222aacb0
+          git apply --index --unidiff-zero /tmp/final-review.patch
+          test "$(git write-tree)" = fd6c1d5d85be054433ffe68a0cd54c66945a996c
+          git diff --cached --check
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: pip install -e '.[dev]'
+      - run: python -m pytest tests/ -x -q
+      - run: python scripts/resident_home.py check
+      - run: npm ci && npm test && npm run build
+        working-directory: pwa
+      - name: Publish tested source only to isolated result branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/work/archive-review-export'
+          test "$(git rev-parse HEAD)" = 418cea362a1a5b067b2208dbc66db644e1b5607e
+          test "$(git write-tree)" = fd6c1d5d85be054433ffe68a0cd54c66945a996c
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: unify recovery variant identity and normalize archive flags' -m 'Deduplicate archive-only versions by the same identity as recovery; preserve the selected version when earlier duplicates are removed. Make strict-true archive flags explicit with characterization tests. Clarify that navigation indexes current architecture, including an unlisted-task route. No archive data rewrite.'
+          git push origin HEAD:refs/heads/work/archive-final-review-result
+          echo "Verified source commit: $(git rev-parse HEAD)"
