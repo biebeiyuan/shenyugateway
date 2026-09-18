@@ -98,7 +98,7 @@ jobs:
             expect(before.scroll).toBeGreaterThan(before.viewport)
           })
           TS
-          npm run test:e2e -- --grep '^mobile grid probe$' | tee /tmp/echo-verification/mobile-probe.log
+          npm run test:e2e -- --grep 'mobile grid probe' | tee /tmp/echo-verification/mobile-probe.log
           rm e2e/echo-layout-probe.spec.ts
           python - <<'PY'
           from pathlib import Path
