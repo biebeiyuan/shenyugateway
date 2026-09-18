@@ -99,6 +99,7 @@ jobs:
       - name: Check linked SQLite and unchanged default backend offline
         run: >-
           docker run --rm --network none "$IMAGE_TAG" python -c
-          "import sqlite3, sys; from shenyu_gateway.config import RuntimeConfig;
-          cfg = RuntimeConfig(); print('SQLite', sqlite3.sqlite_version, 'archive backend', cfg.chat_archive_backend);
-          sys.exit(0 if sqlite3.sqlite_version_info >= (3, 30, 0) and cfg.chat_archive_backend == 'supabase' else 1)"
+          "import _sqlite3, sqlite3, sys; from shenyu_gateway.config import RuntimeConfig;
+          cfg = RuntimeConfig(); source = sqlite3.connect(':memory:').execute('select sqlite_source_id()').fetchone()[0];
+          print('SQLite', sqlite3.sqlite_version, 'source', source, 'module', _sqlite3.__file__, 'archive backend', cfg.chat_archive_backend);
+          sys.exit(0 if sqlite3.sqlite_version_info >= (3, 51, 3) and source.startswith('2026-03-13') and cfg.chat_archive_backend == 'supabase' else 1)"

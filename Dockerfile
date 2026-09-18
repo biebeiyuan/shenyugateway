@@ -21,11 +21,34 @@ RUN npm ci
 COPY pwa ./
 RUN npm run build
 
+FROM debian:trixie-slim AS sqlite-builder
+
+ARG SQLITE_VERSION=3510300
+ARG SQLITE_SOURCE_SHA3=32d5424f97e0a7fc5ed2f6335afbb58be4e0298bd7117a34e39d345ff13d859e
+
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates curl build-essential openssl \
+    && curl -fsSL --retry 5 --retry-all-errors \
+         "https://sqlite.org/2026/sqlite-autoconf-${SQLITE_VERSION}.tar.gz" \
+         -o /tmp/sqlite.tar.gz \
+    && mkdir -p /tmp/sqlite-src \
+    && tar -xzf /tmp/sqlite.tar.gz --strip-components=1 -C /tmp/sqlite-src \
+    && test "$(openssl dgst -sha3-256 /tmp/sqlite-src/sqlite3.c | awk "{print \$2}")" = "$SQLITE_SOURCE_SHA3" \
+    && cd /tmp/sqlite-src \
+    && ./configure --prefix=/opt/sqlite --enable-shared --disable-static \
+    && make -j"$(nproc)" \
+    && make install \
+    && rm -rf /var/lib/apt/lists/* /tmp/sqlite.tar.gz /tmp/sqlite-src
+
 FROM python:3.12-slim
 
-# Validate the linked SQLite library, not a separately installed sqlite3 CLI.
-# The distro inside this floating image can change; fail at build, print evidence.
-RUN python -c "import sqlite3; assert sqlite3.sqlite_version_info >= (3, 30, 0), sqlite3.sqlite_version; print('SQLite', sqlite3.sqlite_version)"
+# SQLite 3.51.3 is the first release with the upstream WAL-reset corruption
+# fix. LD_LIBRARY_PATH makes Python's _sqlite3 load this built library, not the
+# base image's distro copy. The final RUN proves the linked runtime identity.
+COPY --from=sqlite-builder /opt/sqlite /opt/sqlite
+ENV LD_LIBRARY_PATH=/opt/sqlite/lib
+RUN python -c "import sqlite3; source=sqlite3.connect(':memory:').execute('select sqlite_source_id()').fetchone()[0]; assert sqlite3.sqlite_version_info >= (3,51,3); assert source.startswith('2026-03-13'); print('SQLite', sqlite3.sqlite_version, source)" \
+    && ldd "$(python -c 'import _sqlite3; print(_sqlite3.__file__)')" | grep '/opt/sqlite/lib/libsqlite3.so'
 
 WORKDIR /app
 
