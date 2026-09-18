@@ -1,0 +1,78 @@
+name: Verify review supplement
+on:
+  push:
+    branches: [work/archive-review-export]
+    paths: [.github/workflows/review-supplement-verify.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/work/archive-review-export'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+      - name: Retain the transport outside the checkout; select exact source
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/work/archive-review-export'
+          cp .review-supplement.b64 /tmp/review-supplement.b64
+          git fetch --depth=1 origin 92c26918c0547265779722cf364b063719cc819c
+          git checkout --detach 92c26918c0547265779722cf364b063719cc819c
+          test "$(git rev-parse HEAD^{tree})" = c011b5257cf55811cf8998da516868de10a5ef07
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply exact reviewed source, not workflow or transport files
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, hashlib, json, lzma, pathlib, subprocess
+          raw = lzma.decompress(base64.b64decode(pathlib.Path('/tmp/review-supplement.b64').read_text().strip(), validate=True))
+          assert hashlib.sha256(raw).hexdigest() == '13e82c1b5ce1b5749aec32c779fef5dd4d2a8533331e88493daec6a69fd0de35'
+          allowed = {'DOCS_MAP.md','README.md','START_HERE.md','docs/architecture/REQUEST_CONTEXT.md','docs/architecture/SYSTEM_ZONES.md','project_delivery_log.jsonl','pwa/src/App.vue','pwa/src/api/client.ts','pwa/src/session/history.ts','pwa/src/session/persistence.ts','pwa/src/session/reconcile.ts','pwa/src/session/variants.ts','pwa/src/types.ts','pwa/tests/archiveIdentity.spec.ts','pwa/tests/history.spec.ts','pwa/tests/persistence.spec.ts','pwa/tests/reconcile.spec.ts','pwa/tests/recoveryIdentity.spec.ts','scripts/backfill_chat_archive.py','shenyu_gateway/chat_archive.py','shenyu_gateway/prepare_messages.py','shenyu_gateway/schemas.py','shenyu_gateway/upstream_client.py','tests/test_archive_identity.py'}
+          entries = json.loads(raw)
+          assert len(entries) == len(allowed) and {e['path'] for e in entries} == allowed
+          outputs = []
+          for e in entries:
+              p = pathlib.Path(e['path'])
+              assert not p.is_symlink() and not p.is_absolute() and '..' not in p.parts
+              old = p.read_bytes()
+              assert hashlib.sha256(old).hexdigest() == e['before'], str(p)
+              lines = old.decode().splitlines(keepends=True)
+              for start, end, replacement in reversed(e['edits']):
+                  assert 0 <= start <= end <= len(lines)
+                  lines[start:end] = [replacement]
+              output = ''.join(lines).encode()
+              assert hashlib.sha256(output).hexdigest() == e['after'], str(p)
+              outputs.append((p, output))
+          for p, output in outputs:
+              p.write_bytes(output)
+              print('Verified:', p)
+          subprocess.run(['git','add','--',*sorted(allowed)],check=True)
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == 'fb377113955efab1ed441ab337f72ddd222aacb0'
+          PY
+      - run: pip install -e '.[dev]'
+      - run: python -m pytest tests/ -x -q
+      - run: python scripts/resident_home.py check && git diff --cached --check
+      - run: npm ci && npm test && npm run build
+        working-directory: pwa
+      - name: Commit verified source only to the result branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/work/archive-review-export'
+          test "$(git rev-parse HEAD)" = 92c26918c0547265779722cf364b063719cc819c
+          test "$(git write-tree)" = fb377113955efab1ed441ab337f72ddd222aacb0
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: preserve restoration provenance and clarify transcript contracts' -m 'Prevent identity-less restored history from becoming new legacy archive rows after cache loss. Preserve provenance across recovery, selected variants and persistence; reject fractional stored indexes. Keep map detail in one existing contract, correct snapshot consumers, and shorten entry descriptions. No production data or deployment change.'
+          git push origin HEAD:refs/heads/work/archive-review-result
+          echo "Verified source commit: $(git rev-parse HEAD)"
