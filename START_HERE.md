@@ -29,6 +29,7 @@
 | 看已经确认的问题和暂不该动的地方 | `docs/architecture/AUDIT_MATRIX.md` | 对应测试和代码 |
 | 判断某份 Markdown 是否仍然有效 | `DOCS_MAP.md` | 对应现行专题文档 |
 | 修改代码 | `AGENTS.md` | 本表对应的专题文档 |
+| 开关回响、修改回响提示词或保留轮数 | `docs/architecture/REQUEST_CONTEXT.md` § Context Layers（回响开关的生效与保留边界） | 控制台入口在 `admin/src/views/ConfigView.vue`；提示词注入看 `shenyu_gateway/context_builder.py`，回响拆分与历史裁剪看 `shenyu_gateway/echo.py` |
 | 改 PWA 前端（聊天界面、流式、会话交接） | `README.md` § PWA chat frontend | `docs/frontend/STYLE_AND_CRAFT.md` § 五的 PWA 行；涉及请求、流式或会话契约时再读 `docs/architecture/REQUEST_CONTEXT.md` § External Frontend Contracts |
 | 改 admin 前端（配色、组件、动效、演示预览） | `docs/frontend/STYLE_AND_CRAFT.md` | `admin/src/theme/tokens.css`、`admin/src/demo/` |
 
@@ -104,4 +105,4 @@ assistant 同时请求：
 
 > 先读 `AGENTS.md` 和 `START_HERE.md`，按入口找到本任务相关的现行文档；先检查 `git status`，不要覆盖已有修改。涉及线上异常先看日志，涉及请求、工具、上下文、缓存或记忆时先确认完整链路和跨区边界，再做最小修改。
 
-文档状态、历史设计稿和现行事实的完整索引见 `DOCS_MAP.md`。
+文档状态、历史设计稿和审查快照的完整索引见 `DOCS_MAP.md`。
