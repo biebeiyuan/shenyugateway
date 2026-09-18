@@ -177,7 +177,7 @@ SQLite stores only gateway runtime state:
 
 ### SQLite Retention And Cleanup
 
-SQLite is intentionally kept as a small online runtime database. Supabase remains the durable memory/content store.
+The gateway runtime SQLite database remains bounded. An optional, separate chat-archive SQLite file is unbounded by runtime retention; it is never a cold-start or model-context source. Supabase remains the durable memory/content store and the default chat-archive destination. See § Chat archive (L0 source of truth) for the deployment-only archive migration.
 
 The default database path is `./data/shenyu_gateway.db`, which resolves to `/app/data/shenyu_gateway.db` when nothing overrides it. The Dockerfile declares no volume, so that default path would belong to the disposable container filesystem.
 
@@ -200,7 +200,8 @@ Admin configuration updates currently store secret values in both `.env` and SQL
 | request-log deque | summaries by default; full messages/payload/response only with `GATEWAY_LOG_FULL_PAYLOADS=true` (env or Admin runtime toggle, applies per new request) | 30 requests, process memory | live debugging | process restart clears it |
 | `request_log_history` | versioned safe summaries/previews (message previews keep the newest 100 entries); full messages/payload/response, images, raw Thinking/signatures excluded | newest 200 by default, SQLite | cross-deploy Admin/API/helper debugging | independent of session delete |
 | helper `--save` JSON | one explicitly exported redacted log detail | operator-managed file | offline debugging | independent local file |
-| Supabase `shenyu_chat_archive` | deduplicated visible user/assistant text | durable; no automatic session-delete coupling | long-term recall/archive | not deleted |
+| Supabase `shenyu_chat_archive` (default archive backend) | deduplicated visible user/assistant text | durable; no automatic session-delete coupling | original-text archive | not deleted |
+| Separate SQLite `shenyu_chat_archive.db` (opt-in archive backend) | original-text archive rows, preserved IDs/timestamps/tombstones | no automatic row/time cap; capacity and backups are operator-managed | original-text browsing/search, never prompt input | not deleted |
 
 These copies are not interchangeable: raw windows classify client history, snapshots feed cold start, pending rows preserve tool protocol, and the archive is the durable recall source. Reducing copies requires replacing those responsibilities first, not deleting tables based only on duplicate text.
 
@@ -582,14 +583,47 @@ SQLite stays the live read path; injection behavior is unchanged. Enable deletio
 
 ### Chat archive (L0 source of truth)
 
-`shenyu_chat_archive` in Supabase stores verbatim user/assistant messages, message by message, archived from the client window in `_prepare_messages()` (fire-and-forget; failures never affect chat). Dedup uses `chat_archive_seen` in SQLite, consulted globally across session tags (rows still record their session_tag for provenance): resent sliding windows archive each message once, a window handed over into a new session (PWA history handoff, cold-start bridge) does not re-archive the carried history, and a genuinely repeated message months later is a new event once its hash ages out of retention. Re-rolled replies never return in the client window, so they are naturally excluded.
+The deployment-only `CHAT_ARCHIVE_BACKEND` selects `supabase` (default, unchanged) or `sqlite` for original-text capture and `/api/archive/*` reads. In SQLite mode no chat-archive query/write goes to Supabase; Stars, Mem, Recall, calendar and origin/shared books still do. `shenyu_gateway/local_chat_archive.py` owns a separate file, defaulting to `shenyu_chat_archive.db` beside `GATEWAY_DB_PATH`; `CHAT_ARCHIVE_DB_PATH` can explicitly override it, but must not point at the runtime DB. Selection requires an already initialized/imported archive and is checked at startup. There is deliberately no live Admin toggle: switching sources requires migration and verification. `chat_archive_backend` and `chat_archive_db_path` are absent from `ConfigUpdate`; HTTP tests assert that POST cannot mutate or persist them. In SQLite mode, changing `gateway_db_path` through POST is also rejected when it would move the default sibling archive or point the runtime store at the archive. An in-flight writer rejects destination mutation in either direction.
+
+**Agent short path (current implementation, not the planned identity rewrite)**
+
+`pwa/src/api/client.ts` sends the existing `messages` history → `shenyu_gateway/prepare_messages.py` starts the archive side task → `shenyu_gateway/chat_archive.py` captures visible text → the selected Supabase table or `shenyu_gateway/local_chat_archive.py` saves originals. `shenyu_gateway/archive_routes.py` serves PWA回看/档案/搜索 from that same selected backend. Model preparation never reads this archive. Reply recovery still uses `shenyu_gateway/gateway_admin_routes.py` → `/api/gateway/sessions/{session_tag}/reply-recovery` → `pwa/src/session/reconcile.ts`; per-user-message identity and immediate terminal-reply capture are **not implemented by this storage/review delivery**. Runtime pruning belongs to `store/_admin.py`, not the separate archive file.
+
+The first storage delivery preserves the existing capture behavior: verbatim user/assistant messages are archived from the client window in `_prepare_messages()` (fire-and-forget; failures never affect chat). It does **not** yet implement per-PWA-message identity or archive the final reply immediately; a reply still enters this capture path when the client sends it back. Do not describe this change as fixing Roll/switch/recovery identity. The archive is never read to assemble the next model request. Dedup uses `chat_archive_seen` in SQLite, consulted globally across session tags (rows still record their session_tag for provenance): resent sliding windows archive each message once, a window handed over into a new session (PWA history handoff, cold-start bridge) does not re-archive the carried history, and a genuinely repeated message months later is a new event once its hash ages out of retention. Re-rolled replies never return in the client window, so they are naturally excluded.
 
 `event_at` is the client-local send time: user messages carry it in the PWA tail status suffix (the 第N天 segment anchors the year at 2026-03-09; parsing lives in `client_extra.py` next to the shared suffix regex) or in legacy Operit time markers; assistant replies inherit the preceding user message's time. `archived_at` increases by 1μs per row inside a batch so `(event_at, archived_at)` replays the window order. The stored `thread` column is provenance only (one value per session epoch, including the retired `hisense` rows — the durable archive is soft-delete only): the archive reader presents one merged timeline and folds handoff duplicates per (CST day, content_hash); deleting a message also deletes its same-day twins.
 
 - Backfill from existing SQLite history: `python scripts/backfill_chat_archive.py` (idempotent; `--dry-run` to preview).
 - Admin reader: `/admin` → 档案 tab; API under `/api/archive/*`.
-- Config: `ENABLE_CHAT_ARCHIVE`.
-- This table is the source of truth: recall indexes and conflict books are derived from it; soft-delete only.
+- Config: `ENABLE_CHAT_ARCHIVE`; deployment-only `CHAT_ARCHIVE_BACKEND` and `CHAT_ARCHIVE_DB_PATH`.
+- The selected archive is soft-delete only. SQLite original rows have no relationship to runtime-session deletion/prune and no automatic 1500-row cap. New ID-based store writes preserve repeated words; legacy imports/capture still fold same-day content-hash copies in a read view without deleting original rows. The global seen-hash capture rule is still legacy behavior pending a separately tested identity change.
+- Both backends keep the existing archive response fields and opaque `event_at|archived_at|id` cursors. Local SQL applies cursor filtering before LIMIT; literal search preserves one/two-character Chinese, Unicode, `%`, `_`, quotes and other literal punctuation. Search has the same 200-result cap as the cloud endpoint (including `limit=0` becoming 1); ordinary message pages keep their separate 1000-row cap. Local day counts are exact and not subject to the cloud reader's 10,000 fetched-row ceiling: a larger local count after cutover need not mean duplication. Compare raw IDs/fields, not truncated calendar counts. It is not a vector search; no claim of production latency improvement has been measured.
+- Local readers use an indexed `NOT EXISTS` selection rather than ranking the whole archive with `ROW_NUMBER`. The earlier-copy lookup stays global even when the page has a cursor. Readers run the shared selection directly, so existing v1 files with the old persisted view need no write-on-read schema change. Synthetic query-plan/timing reproduction: `python -m tests.archive_read_benchmark --rows 20861 100000`. Unrestricted text search can still scan history, especially for missing/pure-cased queries; this is not an FTS index or a constant-time-search guarantee.
+- Search prefilters only a necessary uncased literal fragment with SQLite `instr`, then uses escaped Python regex + `IGNORECASE` as authority. Blind `LIKE` is not equivalent: SQLite folds ASCII only by default while Python recognizes Unicode case variants. Pure cased queries bypass the prefilter; punctuation, short Chinese and embedded NUL are covered by regression tests.
+
+**Migration and backup (explicit operator actions, not startup side effects)**
+
+The deployment image ships `scripts/local_chat_archive.py`. Python **>=3.12** is already required by `pyproject.toml`; the archive requires linked SQLite **>=3.30.0** (FILTER support). Docker build checks and prints the linked library version, and archive construction rejects an older library before creating any files. This is a capability floor, not a pinned distro or a claim about the currently running VPS version. First verify the actual VPS volume; `/data` below is an example matching the previously observed mount, not a newly verified fact. Do not upload raw runtime DB backups casually: they contain secret overrides. The separate archive file contains no configuration secrets, but its original text is still private.
+
+```bash
+# Pause chat-archive writes/deletions and wait for in-flight archive tasks first.
+# This reads Supabase only, including soft-deleted rows, by UUID keyset.
+python scripts/local_chat_archive.py source-export --confirm-source-paused --output /data/archive-source.jsonl
+# Preview: no database/directory is created, no rows are changed.
+python scripts/local_chat_archive.py --db /data/shenyu_chat_archive.db import-jsonl --source /data/archive-source.jsonl
+# Explicit import, then exact ID/field/tombstone verification against that source.
+python scripts/local_chat_archive.py --db /data/shenyu_chat_archive.db import-jsonl --source /data/archive-source.jsonl --apply
+python scripts/local_chat_archive.py --db /data/shenyu_chat_archive.db verify --source /data/archive-source.jsonl
+# A private consistent snapshot, never a copy of the live .db file alone.
+python scripts/local_chat_archive.py --db /data/shenyu_chat_archive.db backup --output /data/backups/chat-archive-verified.db
+```
+
+Imports preserve original IDs, text, hashes, timestamps and soft-delete markers. Conflicting immutable fields abort the transaction; re-import never revives a local deletion. Exports/backups refuse to overwrite an existing path and are published from completed private temporary files. Before cutover, test restore by opening that backup and running `verify` against the same frozen source. **`verify` is exact cutover/snapshot evidence, not a long-term health check:** new local messages or new tombstones must fail comparison to an old export. After cutover use database integrity checks and an isolated restore; compare to an export of the same backup snapshot, not the old migration source. `stats` reports counts only and does not certify integrity. Plain backups are **not encrypted** and these commands do **not schedule computer backups**; computer-side pull, encryption, retention and verification must be configured separately. A computer that is off has not received the newest backup. Completed backups are converted to rollback-journal mode (`DELETE`) before publication so the standalone file needs no WAL sidecars on read-only media; the live archive stays in WAL mode. On SQLite >=3.22 a live `mode=ro` connection can recreate `-wal`/`-shm` if the containing directory is writable. Cold-start tests use a new process with no pre-existing sidecars, but the actual VPS volume permissions still require deployment verification. Do not use `immutable=1` on a live-changing archive to bypass that requirement.
+
+IDs must not contain `|` or NUL because the archive cursor uses `|` separators. Supabase UUID IDs satisfy this; an invalid ID causes a read-only import preview to fail before any rows are written. Manual archive writes explicitly use `isolation_level=None` with `BEGIN IMMEDIATE` and commit/rollback; ordinary source SELECT/PRAGMA statements do not implicitly open a write transaction.
+
+Do not change production's backend merely because these commands exist. Complete source verification, backup/restore, the remaining message-identity/terminal-capture work and an owner-approved cutover first. Keep the cloud source read-only after cutover until retention is explicitly agreed. Rollback must reconcile the sqlite-only tail before switching reads/writes back to Supabase; flipping the flag alone would hide locally created records. This migration does not rewrite origin-book `original_text`, annotations, or message references.
+
 
 ### Origin books（来历书）
 

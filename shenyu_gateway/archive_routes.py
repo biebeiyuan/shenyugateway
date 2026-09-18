@@ -11,6 +11,7 @@ archive, edit title/epilogue/notes/status, never the original text.
 """
 
 from dataclasses import dataclass
+import asyncio
 from datetime import datetime, timedelta
 from typing import Any, Callable, Optional
 
@@ -59,10 +60,23 @@ class ResidentBookAnnotation(BaseModel):
 @dataclass(frozen=True)
 class ArchiveRouteDeps:
     get_supabase_client: Callable[[], Any]
+    get_local_archive: Callable[[], Any] = lambda: None
 
 
 def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
     router = APIRouter()
+
+    def _local_archive() -> Any:
+        try:
+            return deps.get_local_archive()
+        except (FileNotFoundError, ValueError) as exc:
+            raise HTTPException(status_code=503, detail="Local chat archive is not ready.") from exc
+
+    async def _local_read(method: Callable[..., Any], **kwargs: Any) -> Any:
+        try:
+            return await asyncio.to_thread(method, **kwargs)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     def _supabase() -> Any:
         client = deps.get_supabase_client()
@@ -123,6 +137,9 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
     @router.get("/api/archive/days")
     async def archive_days(month: Optional[str] = None):
         """Days in a month that have archived messages, all sessions merged. month: YYYY-MM."""
+        local = _local_archive()
+        if local is not None:
+            return {"days": await _local_read(local.days, month=month)}
         client = _supabase()
         params = {
             "select": "event_at,content_hash",
@@ -168,6 +185,11 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         Cursor format is opaque "event_at|archived_at|id" (pipe separator avoids : collision);
         both endpoints return ascending order so caller prepends/appends directly.
         """
+        local = _local_archive()
+        if local is not None:
+            messages = await _local_read(local.list_messages, date=date, before=before,
+                                         after=after, limit=limit, around_days=around_days)
+            return {"messages": messages, "count": len(messages)}
         client = _supabase()
         params = {
             "select": "id,session_tag,role,content,content_hash,event_at,archived_at",
@@ -376,6 +398,9 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         needle = (q or "").strip()
         if not needle:
             return {"results": [], "count": 0, "has_more": False, "query": "", "next_cursor": None}
+        local = _local_archive()
+        if local is not None:
+            return await _local_read(local.search, query=needle, role=role, limit=limit, cursor=cursor)
         client = _supabase()
 
         # Escape ILIKE wildcards (%, _) and backslash, then wrap in quotes.
@@ -523,6 +548,9 @@ def build_archive_router(deps: ArchiveRouteDeps) -> APIRouter:
         """
         from .runtime import iso_now
 
+        local = _local_archive()
+        if local is not None:
+            return {"ok": True, "deleted": await asyncio.to_thread(local.soft_delete, message_id)}
         client = _supabase()
         now = iso_now()
         rows = await client.update(

@@ -24,6 +24,7 @@ from fastapi.staticfiles import StaticFiles
 
 from shenyu_gateway.admin_shell_routes import AdminShellRouteDeps, build_admin_shell_router
 from shenyu_gateway.archive_routes import ArchiveRouteDeps, build_archive_router
+from shenyu_gateway.local_chat_archive import local_archive_for_config
 from shenyu_gateway.calendar_service import CalendarService
 from shenyu_gateway.calendar_routes import CalendarRouteDeps, build_calendar_router
 from shenyu_gateway.chat_pipeline import ChatPipeline
@@ -292,6 +293,9 @@ async def _recall_embedding_worker():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global recall_embedding_worker_task, heartbeat_archive_worker_task
+    # Fail before serving requests if a deployment selected an unprepared archive.
+    # This does not initialize, migrate, or alter model-facing runtime state.
+    local_archive_for_config(cfg)
     _init_supabase()
     _init_store()
     if session_store:
@@ -706,6 +710,7 @@ app.include_router(
     build_archive_router(
         ArchiveRouteDeps(
             get_supabase_client=lambda: supabase_client,
+            get_local_archive=lambda: local_archive_for_config(cfg),
         )
     )
 )

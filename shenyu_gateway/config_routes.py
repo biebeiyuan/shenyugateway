@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from fastapi import APIRouter, HTTPException, Request
@@ -157,6 +158,21 @@ def build_config_router(deps: ConfigRouteDeps) -> APIRouter:
 
     @router.post("/api/config")
     async def update_config(request: Request, body: ConfigUpdate):
+        # Archive fields are not in ConfigUpdate. Also block the indirect route:
+        # moving the runtime DB would move a default (sibling) archive path.
+        # Do this before any config mutation or persistence, not after init_store.
+        if (getattr(cfg, "chat_archive_backend", "supabase") == "sqlite"
+                and body.gateway_db_path is not None):
+            current = Path(cfg.gateway_db_path).expanduser().resolve()
+            requested = Path(body.gateway_db_path).expanduser().resolve()
+            explicit_archive = getattr(cfg, "chat_archive_db_path", "")
+            archive_path = (Path(explicit_archive).expanduser().resolve() if explicit_archive
+                            else current.with_name("shenyu_chat_archive.db"))
+            if requested == archive_path or (not explicit_archive and requested != current):
+                raise HTTPException(status_code=400, detail=(
+                    "Local archive location is deployment-only; changing GATEWAY_DB_PATH "
+                    "must not move or overwrite it. Configure a separate archive path at deployment."
+                ))
         changed = []
         warnings: list[str] = []
         env_updates: dict[str, Any] = {}

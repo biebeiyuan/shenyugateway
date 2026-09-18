@@ -107,7 +107,8 @@ The codebase is partly layered already. Entries owe a path and a responsibility:
 
 ### Durable archive
 
-- `shenyu_gateway/chat_archive.py`: L0 verbatim chat archive service (fire-and-forget archival to Supabase `shenyu_chat_archive`).
+- `shenyu_gateway/chat_archive.py`: L0 verbatim chat archive service; existing input-window capture with deployment-selected Supabase or local SQLite destination.
+- `shenyu_gateway/local_chat_archive.py`: independent SQLite original-text store, legacy read-view folding, literal search, stable-ID import/verification and consistent backup; never a model-context source.
 - `shenyu_gateway/heartbeat_archive.py`: heartbeat disaster recovery archive to Supabase (`shenyu_heartbeat_archive`), settle window, and explicitly gated soft-delete reconciliation with an empty-local-pool refusal.
 - `shenyu_gateway/conflict_books.py`: durable origin-book records and invariants (frozen original_text, append-only annotations); the shelf/tool presentation is also a memory-data concern in system zone six.
 
@@ -182,7 +183,7 @@ The split is about size. Ten fruits with three notes each came to ~2300 tokens o
 
 - `shenyu_gateway/gateway_admin_routes.py`: admin API routes (stars, mem notes, room, overview, prune, etc.).
 - `shenyu_gateway/calendar_routes.py`: read-only calendar API routes (month grid, page detail).
-- `shenyu_gateway/archive_routes.py`: archive reader (days/messages/literal `search`), origin-book, shared resident-book, and owner-only project-map API routes. `/api/archive/search` is case-insensitive substring over the verbatim archive — deliberately not semantic, same rule as the window-newspaper basket.
+- `shenyu_gateway/archive_routes.py`: archive reader (days/messages/literal `search`) with optional local storage, plus unchanged Supabase origin-book/shared-book and owner-only project-map API routes. `/api/archive/search` is case-insensitive substring over the selected verbatim archive — deliberately not semantic, same rule as the window-newspaper basket.
 - `shenyu_gateway/config_routes.py`: configuration API routes (`GET /api/gateway/config` reads the running config; `POST /api/gateway/config` updates it). Updates apply immediately to the running process via `setattr(cfg, field, value)` and are persisted to `.env` via `runtime.py::persist_env()`, so Admin console changes take effect without restart. The upstream protocol (`upstream_protocol`) and cache TTL settings (`anthropic_cache_ttl`, `openai_cache_ttl`) control which buffer window `system_prefix_buffer` uses — Anthropic protocol reads `anthropic_cache_ttl` (default 1h), OpenAI-compatible reads `openai_cache_ttl` (default 5m) — so changing the protocol in Admin immediately changes how long heartbeat/calendar updates are held before injection.
 - `shenyu_gateway/mcp_routes.py`: MCP server management API routes (`/api/mcp/servers` list/save with header masking, `/api/mcp/test` one-off probe, `/api/mcp/refresh`).
 - `shenyu_gateway/admin_shell_routes.py`: admin shell/UI routes (static file serving, login page).
@@ -332,7 +333,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 When cleaning or refactoring, preserve behavior first and move code by boundary:
 
 1. Route handlers should stay thin and call service classes.
-2. SQLite reads/writes belong in `GatewayStore`; do not query SQLite directly from route handlers.
+2. Runtime SQLite reads/writes belong in `GatewayStore`; the independent original-text archive belongs in `LocalChatArchive`. Do not query SQLite directly from route handlers.
 3. Supabase HTTP mechanics belong in `SupabaseClient`; table-specific behavior can live in service classes.
 4. Context data fetching belongs around `ContextBuilder`; layer rendering and message-window assembly belong in `shenyu_gateway/context_layers.py`.
 5. Private response tag filtering and capture helpers belong in `shenyu_gateway/response_capture.py` and `shenyu_gateway/private_capture.py`. When adding a new private block type, update both parser paths and the empty-reply fallback wording.

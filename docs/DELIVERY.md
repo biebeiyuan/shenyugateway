@@ -13,11 +13,13 @@
 | `verified_local` | 本地测试/构建通过，未推送 | 测试与构建输出 |
 | `pushed` | 已推送目标分支 | `git push` 回执的 `旧hash..新hash` 区间即充分证据，无需 `ls-remote`/fetch 复核；汇报附 commit hash |
 | `deployed` | 生产已部署该改动 | 版本接口、生产日志或可识别的构建哈希 |
+| `device_verified` | 已在真实设备复现原场景并确认修复 | 手机实机在生产 `/chat/` 页的观察 |
 
 **`master` 就是生产。** Coolify 盯着这个分支自动部署，所以推 master 等于上线到沈予和圆圆正在住的那个网关——不是"代码进仓库"。推之前先走完下面的验证基线，并且除非圆圆已经说了要推，先问一句。特性分支不会被部署，推它没有这层重量。
 
 推完 master 也**还不是 `deployed`**：Coolify 还要构建和重启，这中间线上跑的仍是旧版。填 `deployed` 要等版本接口、生产日志或可识别的构建哈希确认运行中的服务确实换了——push 回执证明不了这件事。
-| `device_verified` | 已在真实设备复现原场景并确认修复 | 手机实机在生产 `/chat/` 页的观察 |
+
+交接还要单独标明：**代码在哪个分支/提交、该提交有哪些验证、是否已部署、真实数据是否已切换**。这不是增加状态档位；例如代码已经部署、档案后端仍为 Supabase，就必须分别写明。仅存在于附件里的补丁不算已推送；旧提交或临时套用补丁后的测试不等于当前提交的常规 CI。`action_required`、排队和运行中都不是通过。存储迁移的具体切换前检查仍归 `docs/architecture/REQUEST_CONTEXT.md` § Chat archive (L0 source of truth)，不在这里复制另一份清单。
 
 ## 探针边界
 
@@ -34,6 +36,7 @@ push 回执就是终点证据，不要再去探生产。
 以下基线适用于每一次有意义的交付，在这里定义一次，不在施工簿逐条复述：
 
 - 受影响的 Python / 前端定向测试通过；跨模块改动跑全量。
+- 核对当前 PR head 及所测 base 的常规 CI，后端、PWA 和 Admin 不得用其中一项代替全部。Dockerfile、镜像内脚本或构建依赖变更还必须真正构建生产 Dockerfile：`.github/workflows/ci.yml` 的 `image-build` 负责只构建、不发布的镜像及离线检查。Python 单测或前端 build 不会执行 Dockerfile 的 RUN/COPY；镜像构建成功也不等于 Coolify 已部署或 VPS 挂载已验证。
 - 地图覆盖路径变化时 `python -m pytest -q tests/test_project_map.py` 通过。
 - `python scripts/resident_home.py check` 全部组件 ok（触发 review 时按 `AGENTS.md` 流程确认）。组件数会随功能增减，以命令输出为准,不要照抄某个数字。同一条命令会报出本次改动碰过、行尾却不是纯 LF 的文件并判红，先规范行尾再复核；新建还没 `git add` 的文件也算碰过，没碰过的旧文件只列出来提示，不算不通过。
 - `git diff --check` 通过。

@@ -33,6 +33,7 @@ from typing import Any, Optional
 from .client_extra import parse_pwa_status_suffix_time
 from .context_layers import _strip_client_extra_bundle_text
 from .echo import strip_leading_echo
+from .local_chat_archive import local_archive_for_config
 from .runtime import LOCAL_DAY_TZ, dt_to_iso, iso_now, logger
 
 CHAT_ARCHIVE_TABLE = "shenyu_chat_archive"
@@ -116,13 +117,35 @@ class ChatArchiveService:
         self.store = store
         self.supabase = supabase
         self.cfg = cfg
+        self._archive_destination = self._destination()
+        self._use_local_archive = self._archive_destination[0] == "sqlite"
+
+    def _destination(self) -> tuple:
+        return (getattr(self.cfg, "chat_archive_backend", "supabase"),
+                getattr(self.cfg, "chat_archive_db_path", ""),
+                getattr(self.cfg, "gateway_db_path", ""))
+
+    def _check_destination(self) -> None:
+        # Unsupported config mutation must not silently switch either direction
+        # midway through a pass. Admin does not accept archive deployment fields.
+        if self._destination() != self._archive_destination:
+            raise ValueError("Chat archive destination changed during an archive pass")
 
     def enabled(self) -> bool:
         return bool(
             getattr(self.cfg, "enable_chat_archive", True)
-            and self.supabase
+            and (self.supabase or self._use_local_archive)
             and self.store
         )
+
+    def _append_local_rows(self, rows: list[dict]) -> None:
+        # Open inside the safe archive task, not in chat preparation. A disk
+        # failure after startup must not abort a conversation or mark hashes seen.
+        self._check_destination()
+        archive = local_archive_for_config(self.cfg)
+        if archive is None:
+            raise ValueError("Chat archive destination changed during an archive pass")
+        archive.append_legacy_rows(rows)
 
     async def archive_window(
         self,
@@ -133,6 +156,7 @@ class ChatArchiveService:
         event_at: Optional[str] = None,
     ) -> dict[str, Any]:
         """Archive unseen user/assistant messages from one client window."""
+        self._check_destination()
         if not self.enabled():
             return {"archived": 0}
 
@@ -206,7 +230,10 @@ class ChatArchiveService:
                 }
             )
 
-        await self.supabase.insert_many(CHAT_ARCHIVE_TABLE, rows)
+        if self._use_local_archive:
+            await asyncio.to_thread(self._append_local_rows, rows)
+        else:
+            await self.supabase.insert_many(CHAT_ARCHIVE_TABLE, rows)
         self.store.mark_archive_hashes_seen(
             session_tag,
             [row["content_hash"] for row in rows],
