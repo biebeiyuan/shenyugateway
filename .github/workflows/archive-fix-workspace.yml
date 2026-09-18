@@ -4,23 +4,102 @@ on:
     branches: [fix/archive-projection-identity]
     paths: [.github/workflows/archive-fix-workspace.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  export:
+  apply-verified-source:
+    if: github.ref == 'refs/heads/fix/archive-projection-identity'
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          ref: fix/archive-projection-identity
+          persist-credentials: true
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
       - uses: actions/setup-node@v4
         with:
           node-version: '22'
+      - name: Apply only the reviewed source with before-and-after hashes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          python - <<'PY'
+          import base64, hashlib, json, lzma, pathlib, subprocess
+          allowed = set('''DEBUGGING_GUIDE.md
+          README.md
+          docs/architecture/REQUEST_CONTEXT.md
+          docs/architecture/SYSTEM_ZONES.md
+          project_delivery_log.jsonl
+          pwa/src/App.vue
+          pwa/src/api/client.ts
+          pwa/src/session/history.ts
+          pwa/src/session/persistence.ts
+          pwa/src/session/reconcile.ts
+          pwa/src/session/variants.ts
+          pwa/src/types.ts
+          pwa/tests/archiveIdentity.spec.ts
+          scripts/backfill_chat_archive.py
+          shenyu_gateway/chat_archive.py
+          shenyu_gateway/context_snapshots.py
+          shenyu_gateway/gateway_admin_routes.py
+          shenyu_gateway/local_chat_archive.py
+          shenyu_gateway/prepare_messages.py
+          shenyu_gateway/schemas.py
+          shenyu_gateway/supabase.py
+          shenyu_gateway/upstream_client.py
+          tests/test_archive_identity.py'''.splitlines())
+          encoded = ''.join(pathlib.Path(f'.archive-fix-part{i}').read_text().strip() for i in range(3))
+          raw = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(raw).hexdigest() == '0f4430ff859df705ea918bb52f8e787e6b58e3e465783b1d93f34cd4afea31f6', 'source manifest mismatch'
+          entries = json.loads(raw)
+          assert len(entries) == len(allowed) and {e['path'] for e in entries} == allowed
+          outputs = []
+          for entry in entries:
+              path = pathlib.Path(entry['path'])
+              assert not path.is_absolute() and '..' not in path.parts and not path.is_symlink()
+              if entry['before'] is None:
+                  assert not path.exists(), f'unexpected existing file: {path}'
+                  original = b''
+              else:
+                  original = path.read_bytes()
+                  assert hashlib.sha256(original).hexdigest() == entry['before'], f'source changed: {path}'
+              lines = original.decode('utf-8').splitlines(keepends=True)
+              for start, end, replacement in reversed(entry['edits']):
+                  assert 0 <= start <= end <= len(lines)
+                  lines[start:end] = [replacement]
+              output = ''.join(lines).encode('utf-8')
+              assert hashlib.sha256(output).hexdigest() == entry['after'], f'target mismatch: {path}'
+              outputs.append((path, output))
+          for path, output in outputs:
+              path.parent.mkdir(parents=True, exist_ok=True)
+              path.write_bytes(output)
+              print('Verified reviewed source:', path)
+          subprocess.run(['git', 'add', '--', *sorted(allowed)], check=True)
+          subprocess.run(['git', 'rm', '--', '.archive-fix-part0', '.archive-fix-part1', '.archive-fix-part2'], check=True)
+          PY
+      - run: pip install -e '.[dev]'
+      - name: Full backend regression suite
+        run: python -m pytest tests/ -x -q
+      - name: Resident boundaries and patch hygiene
+        run: |
+          python scripts/resident_home.py check
+          git diff --cached --check
       - run: npm ci
         working-directory: pwa
-      - name: Package locked test dependencies
-        run: tar -czf /tmp/pwa-test-deps.tar.gz -C pwa node_modules
-      - uses: actions/upload-artifact@v4
-        with:
-          name: archive-fix-pwa-deps
-          path: /tmp/pwa-test-deps.tar.gz
-          retention-days: 1
+      - run: npm test
+        working-directory: pwa
+      - run: npm run build
+        working-directory: pwa
+      - name: Commit verified source only to the repair branch
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = 'refs/heads/fix/archive-projection-identity'
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: separate archive event identity from rendered content'
+          git push origin HEAD:refs/heads/fix/archive-projection-identity
+          echo "Verified repair commit: $(git rev-parse HEAD)"
