@@ -22,8 +22,7 @@ jobs:
       ENABLE_RECALL_SYNC_WORKER: 'false'
       ENABLE_RECALL_EMBEDDING_WORKER: 'false'
     steps:
-      # Only the tests-first commit is checked out. This temporary workflow is
-      # never included in the feature branch, and nothing pushes to master.
+      # The temporary workflow never enters the feature branch or master.
       - uses: actions/checkout@v4
         with:
           ref: 7261f1858309ecb7488cd7d90e29180823fef66b
@@ -46,6 +45,14 @@ jobs:
           mkdir -p /tmp/echo-verification
           pip install -e '.[dev]'
           python scripts/resident_home.py check
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('tests/test_echo_toggle.py')
+          text = p.read_text(encoding='utf-8')
+          old = 'assert persisted[-1] == {"ENABLE_ECHO": enabled}'
+          assert text.count(old) == 1
+          p.write_text(text.replace(old, 'assert persisted[-1] == {"ENABLE_ECHO": str(enabled).lower()}'), encoding='utf-8', newline='\n')
+          PY
       - name: Verify new backend tests fail before implementation
         shell: bash
         run: |
@@ -53,7 +60,7 @@ jobs:
           python -m pytest -q tests/test_echo_toggle.py --junitxml=/tmp/echo-verification/red.xml > /tmp/echo-verification/red.log 2>&1
           result=$?
           set -e
-          cat /tmp/echo-verification/red.log
+          tail -45 /tmp/echo-verification/red.log
           test "$result" -eq 1
           python - <<'PY'
           import xml.etree.ElementTree as ET
@@ -83,7 +90,7 @@ jobs:
           npm run test:e2e -- --grep '390, nonempty' > /tmp/echo-verification/ui-red.log 2>&1
           result=$?
           set -e
-          tail -100 /tmp/echo-verification/ui-red.log
+          tail -45 /tmp/echo-verification/ui-red.log
           test "$result" -eq 1
           grep -q config-enable-echo /tmp/echo-verification/ui-red.log
       - name: Apply minimal approved changes
@@ -135,32 +142,36 @@ jobs:
                '    config.value = { ...result.config, enable_echo: result.config.enable_echo ?? true }', count=3)
           edit('admin/src/views/ConfigView.vue',
                '      <NCard title="回响" size="small">\n        <NForm label-placement="top">',
-               '''      <NCard title="回响" size="small" data-testid="config-echo-card">
-                  <NForm label-placement="top">
-                    <NFormItem label="启用回响">
-                      <div class="switch-row">
-                        <NSwitch
-                          v-model:value="config.enable_echo"
-                          data-testid="config-enable-echo"
-                          aria-label="启用回响"
-                          :disabled="saving"
-                        />
-                        <span class="switch-hint">关闭后不再注入回响提示词；原提示词和历史回响保留。保存后对后续请求生效。</span>
-                      </div>
-                    </NFormItem>'''.replace('\n          ', '\n'))
+               '\n'.join([
+                   '      <NCard title="回响" size="small" data-testid="config-echo-card">',
+                   '        <NForm label-placement="top">',
+                   '          <NFormItem label="启用回响">',
+                   '            <div class="switch-row">',
+                   '              <NSwitch',
+                   '                v-model:value="config.enable_echo"',
+                   '                data-testid="config-enable-echo"',
+                   '                aria-label="启用回响"',
+                   '                :disabled="saving"',
+                   '              />',
+                   '              <span class="switch-hint">关闭后不再注入回响提示词；原提示词和历史回响保留。保存后对后续请求生效。</span>',
+                   '            </div>',
+                   '          </NFormItem>',
+               ]))
           edit('admin/src/views/ConfigView.vue',
                '              v-model:value="config.echo_prompt"',
                '              v-model:value="config.echo_prompt"\n              data-testid="config-echo-prompt"\n              :disabled="config.enable_echo === false"')
           edit('admin/src/views/ConfigView.vue',
                '            <NInputNumber v-model:value="config.echo_retention_turns" :min="0" :max="20" style="width: 100%" />',
-               '''            <NInputNumber
-                          v-model:value="config.echo_retention_turns"
-                          data-testid="config-echo-retention-turns"
-                          :disabled="config.enable_echo === false"
-                          :min="0"
-                          :max="20"
-                          style="width: 100%"
-                        />'''.replace('\n          ', '\n'))
+               '\n'.join([
+                   '            <NInputNumber',
+                   '              v-model:value="config.echo_retention_turns"',
+                   '              data-testid="config-echo-retention-turns"',
+                   '              :disabled="config.enable_echo === false"',
+                   '              :min="0"',
+                   '              :max="20"',
+                   '              style="width: 100%"',
+                   '            />',
+               ]))
           edit('.env.example', 'ECHO_PROMPT=\n',
                '# Disable echo prompt injection without erasing the saved prompt or history.\nENABLE_ECHO=true\nECHO_PROMPT=\n')
           edit('tests/test_config_update.py', 'DEFAULTED_ENV_KEYS = [\n',
@@ -225,7 +236,7 @@ jobs:
               '.env.example', 'shenyu_gateway/config.py', 'shenyu_gateway/schemas.py',
               'shenyu_gateway/config_routes.py', 'shenyu_gateway/context_builder.py',
               'admin/src/api/config.ts', 'admin/src/views/ConfigView.vue',
-              'tests/test_config_update.py', 'docs/architecture/REQUEST_CONTEXT.md',
+              'tests/test_config_update.py', 'tests/test_echo_toggle.py', 'docs/architecture/REQUEST_CONTEXT.md',
               'resident_home_manifest.json', 'resident_home_changes.jsonl', 'project_delivery_log.jsonl',
           }
           changed = set(subprocess.check_output(['git', 'diff', '--name-only'], text=True).splitlines())
