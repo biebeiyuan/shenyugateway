@@ -1,0 +1,26 @@
+name: Review source export
+on:
+  push:
+    branches: [work/archive-review-export]
+    paths: [.github/workflows/review-source-export.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: 92c26918c0547265779722cf364b063719cc819c
+          persist-credentials: false
+      - name: Export reviewed source and commit object
+        run: |
+          git archive --format=tar HEAD > /tmp/shenyu-review.tar
+          git cat-file commit HEAD > /tmp/review-commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: shenyu-review-source
+          path: |
+            /tmp/shenyu-review.tar
+            /tmp/review-commit.txt
+          retention-days: 1
