@@ -1,0 +1,21 @@
+name: Archive fix workspace
+on:
+  push:
+    branches: [fix/archive-projection-identity]
+    paths: [.github/workflows/archive-fix-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  export:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Export tracked source only
+        run: git archive --format=tar HEAD > /tmp/shenyu-source.tar
+      - uses: actions/upload-artifact@v4
+        with:
+          name: archive-fix-source
+          path: /tmp/shenyu-source.tar
+          retention-days: 1
