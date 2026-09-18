@@ -23,6 +23,7 @@ jobs:
       ENABLE_RECALL_EMBEDDING_WORKER: 'false'
     steps:
       # The temporary workflow never enters the feature branch or master.
+      # Tests-first RED evidence: runs 35350337537 and 35350883574.
       - uses: actions/checkout@v4
         with:
           ref: 7261f1858309ecb7488cd7d90e29180823fef66b
@@ -45,31 +46,6 @@ jobs:
           mkdir -p /tmp/echo-verification
           pip install -e '.[dev]'
           python scripts/resident_home.py check
-          python - <<'PY'
-          from pathlib import Path
-          p = Path('tests/test_echo_toggle.py')
-          text = p.read_text(encoding='utf-8')
-          old = 'assert persisted[-1] == {"ENABLE_ECHO": enabled}'
-          assert text.count(old) == 1
-          p.write_text(text.replace(old, 'assert persisted[-1] == {"ENABLE_ECHO": str(enabled).lower()}'), encoding='utf-8', newline='\n')
-          PY
-      - name: Verify new backend tests fail before implementation
-        shell: bash
-        run: |
-          set +e
-          python -m pytest -q tests/test_echo_toggle.py --junitxml=/tmp/echo-verification/red.xml > /tmp/echo-verification/red.log 2>&1
-          result=$?
-          set -e
-          tail -45 /tmp/echo-verification/red.log
-          test "$result" -eq 1
-          python - <<'PY'
-          import xml.etree.ElementTree as ET
-          root = ET.parse('/tmp/echo-verification/red.xml').getroot()
-          assert not root.findall('.//error'), 'Unexpected test errors, not missing functionality'
-          failures = {case.get('name') for case in root.findall('.//testcase') if case.find('failure') is not None}
-          assert 'test_echo_toggle_defaults_to_enabled' in failures
-          assert 'test_echo_toggle_disabled_omits_only_echo_instructions' in failures
-          PY
       - name: Install isolated frontend test dependencies
         shell: bash
         run: |
@@ -82,17 +58,6 @@ jobs:
             if [ "$attempt" -lt 3 ]; then sleep $((attempt * 5)); fi
           done
           exit 1
-      - name: Verify new frontend test fails before implementation
-        working-directory: admin
-        shell: bash
-        run: |
-          set +e
-          npm run test:e2e -- --grep '390, nonempty' > /tmp/echo-verification/ui-red.log 2>&1
-          result=$?
-          set -e
-          tail -45 /tmp/echo-verification/ui-red.log
-          test "$result" -eq 1
-          grep -q config-enable-echo /tmp/echo-verification/ui-red.log
       - name: Apply minimal approved changes
         shell: bash
         run: |
@@ -105,6 +70,9 @@ jobs:
               assert text.count(before) == count, (path, before, text.count(before), count)
               target.write_text(text.replace(before, after), encoding='utf-8', newline='\n')
 
+          edit('tests/test_echo_toggle.py',
+               'assert persisted[-1] == {"ENABLE_ECHO": enabled}',
+               'assert persisted[-1] == {"ENABLE_ECHO": str(enabled).lower()}')
           edit('shenyu_gateway/config.py',
                '        self.echo_prompt: str = os.getenv("ECHO_PROMPT", DEFAULT_ECHO_PROMPT).strip()',
                '        self.enable_echo: bool = _env_bool("ENABLE_ECHO", True)\n        self.echo_prompt: str = os.getenv("ECHO_PROMPT", DEFAULT_ECHO_PROMPT).strip()')
@@ -185,6 +153,13 @@ jobs:
           git diff --stat
           git diff --check
           python -m py_compile shenyu_gateway/config.py shenyu_gateway/schemas.py shenyu_gateway/config_routes.py shenyu_gateway/context_builder.py tests/test_echo_toggle.py tests/test_config_update.py
+      - name: Review shared component fingerprints before repository tests
+        shell: bash
+        run: |
+          # Only ContextBuilder's echo-prompt selection changed. Stars, Mem,
+          # island bumps, Heartbeat, Room and home behavior are unchanged.
+          python scripts/resident_home.py ack-shared | tee /tmp/echo-verification/resident-review.log
+          python scripts/resident_home.py check
       - name: Verify backend and project map
         shell: bash
         run: |
@@ -203,10 +178,9 @@ jobs:
         run: |
           npm test | tee /tmp/echo-verification/pwa.log
           npm run build | tee /tmp/echo-verification/pwa-build.log
-      - name: Record reviews and verification
+      - name: Record verified delivery
         shell: bash
         run: |
-          python scripts/resident_home.py ack-shared | tee /tmp/echo-verification/resident-review.log
           python scripts/resident_home.py check
           python scripts/project_delivery.py record \
             --id admin-echo-toggle-20260918 \
@@ -264,6 +238,11 @@ jobs:
             admin/src/api/config.ts admin/src/views/ConfigView.vue \
             tests/test_config_update.py tests/test_echo_toggle.py admin/e2e/echo-toggle.spec.ts \
             docs/architecture/REQUEST_CONTEXT.md resident_home_manifest.json project_delivery_log.jsonl
+      - name: Capture current patch even when verification stops
+        if: always()
+        shell: bash
+        run: |
+          git diff c357f7d80b37608b7202ace5bb6a29af1f070961 > /tmp/echo-verification/worktree.patch
       - uses: actions/upload-artifact@v4
         if: always()
         with:
