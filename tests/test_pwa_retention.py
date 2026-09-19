@@ -98,3 +98,16 @@ async def test_visibility_requires_a_real_boolean(tmp_path):
         response = await client.patch('/api/gateway/sessions/keep-a/visibility', json={'hidden': 'false'})
         assert response.status_code == 422
         assert len(store.list_sessions()) == 2
+
+
+def test_tool_receipt_keeps_real_reply_and_call_identity(tmp_path):
+    from shenyu_gateway.sessions import SessionManager
+    store = GatewayStore(str(tmp_path / 'runtime.db'))
+    session = store.get_or_create_session('receipt', 'shenyu-pwa')
+    manager = SessionManager(store, SimpleNamespace())
+    manager.log_tool_result(session['id'], 'shenyu_recall', {'q': 'x'}, {'ok': False},
+                            reply_version_id='reply-a', tool_call_id='call-a')
+    receipt = store.get_recent_messages(session['id'])[0]
+    assert receipt['reply_version_id'] == 'reply-a'
+    assert receipt['tool_call_id'] == 'call-a'
+    assert __import__('json').loads(receipt['content']) == {'ok': False}

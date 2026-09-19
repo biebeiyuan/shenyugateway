@@ -113,8 +113,8 @@ export async function fetchModels(ctx: RequestContext, auth?: UpstreamAuth): Pro
   return await response.json()
 }
 
-export async function fetchSessions(ctx: RequestContext, limit: number): Promise<Record<string, unknown>> {
-  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions?limit=${limit}`), { headers: requestHeaders(ctx) })
+export async function fetchSessions(ctx: RequestContext, limit: number, visibility: "visible" | "hidden" | "all" = "visible"): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions?limit=${limit}&visibility=${visibility}`), { headers: requestHeaders(ctx) })
   if (!response.ok) throw new Error('session list unavailable')
   return await response.json()
 }
@@ -146,6 +146,13 @@ export async function renameSession(ctx: RequestContext, sessionTag: string, dis
   })
   if (!response.ok) throw new Error('改名没有成功')
   return await response.json()
+}
+
+export async function setSessionVisibility(ctx: RequestContext, sessionTag: string, hidden: boolean): Promise<void> {
+  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(sessionTag)}/visibility`), {
+    method: 'PATCH', headers: requestHeaders(ctx), body: JSON.stringify({ hidden }),
+  })
+  if (!response.ok) throw new Error(gatewayErrorMessage(response.status, await response.text()))
 }
 
 export async function deleteSession(ctx: RequestContext, sessionTag: string): Promise<Record<string, unknown>> {

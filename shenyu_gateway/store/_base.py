@@ -403,6 +403,11 @@ class BaseStoreMixin:
             # Owner-facing alias for a conversation. The session_tag stays the
             # immutable wire identity; renaming only changes what lists show.
             self._ensure_column(conn, "gateway_sessions", "display_name", "TEXT")
+            self._ensure_column(conn, "gateway_sessions", "hidden_at", "TEXT")
+            self._ensure_column(conn, "gateway_messages", "reply_version_id", "TEXT")
+            self._ensure_column(conn, "gateway_messages", "tool_call_id", "TEXT")
+            conn.execute("CREATE INDEX IF NOT EXISTS idx_gateway_messages_reply "
+                         "ON gateway_messages(session_id, reply_version_id)")
             self._ensure_column(
                 conn,
                 "tool_error_log",

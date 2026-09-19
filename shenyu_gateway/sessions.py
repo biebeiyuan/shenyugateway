@@ -39,7 +39,8 @@ class SessionManager:
         self.store.append_message(session_id=session_id, role="user", content=content)
         self.store.touch_session(session_id, message_increment=1)
 
-    def log_tool_result(self, session_id: str, tool_name: str, args: dict, result: dict):
+    def log_tool_result(self, session_id: str, tool_name: str, args: dict, result: dict, *,
+                        reply_version_id: str = "", tool_call_id: str = ""):
         content = json_dumps(result)
         self.store.append_message(
             session_id=session_id,
@@ -48,6 +49,8 @@ class SessionManager:
             tool_name=tool_name,
             tool_args=args,
             tool_result_summary=shorten(content, 200),
+            reply_version_id=reply_version_id or None,
+            tool_call_id=tool_call_id or None,
         )
         self.store.touch_session(session_id, message_increment=1)
 

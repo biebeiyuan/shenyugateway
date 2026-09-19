@@ -240,6 +240,10 @@ Safe cleanup boundaries:
 
 ### Transcript identity and recovery
 
+Conversation-list organization uses `PATCH /api/gateway/sessions/{session_tag}/visibility` with a strict boolean `hidden`. It changes only `gateway_sessions.hidden_at`, never activity, cold-start eligibility, heartbeats, tools, snapshots, album media or archives. Session-list callers may request `visibility=visible|hidden|all`; existing internal readers default to all. PWA exposes both lists and restore. The legacy browser DELETE endpoint returns 409 without deleting anything, including calls from cached clients; the lower-level store deletion remains an explicit maintenance primitive, not a browser action.
+
+New runtime tool receipts retain `reply_version_id` and the real `tool_call_id`. Hydration matches known reply identities and merges missing call phases without moving locally observed offsets or replacing completed results. Equal reply text does not suppress missing-tool recovery. Only unique identity-less legacy text can use fallback association; ambiguous groups remain unassigned. A failed legacy localStorage write preserves the prior committed value and reports failure; it never strips tool outputs/events to claim success.
+
 Trace fields by writer → stored evidence → reader; `recent_messages` is not a snapshot.
 
 | Boundary | Writer / evidence | Reader |

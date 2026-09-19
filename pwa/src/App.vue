@@ -46,7 +46,7 @@ import type {
 } from './types'
 import { createId } from './utils'
 import {
-  deleteSession,
+  setSessionVisibility,
   fetchDeployedPwaBuildInfo,
   fetchReplyRecovery,
   fetchSessionDetail,
@@ -139,6 +139,9 @@ const FIRST_PAINT_MESSAGES = 20
 // null = 全部渲染。启动时先设成 FIRST_PAINT_MESSAGES，补齐后置回 null。
 const renderTail = ref<number | null>(FIRST_PAINT_MESSAGES)
 const recentSessions = ref<GatewaySession[]>([])
+const showHiddenSessions = ref(false)
+let sessionListGeneration = 0
+watch(showHiddenSessions, () => { void loadSessions() })
 const authToken = ref(localStorage.getItem(STORAGE_TOKEN) || localStorage.getItem('shenyu_token') || '')
 const gatewayUrl = ref(localStorage.getItem(STORAGE_GATEWAY) || '')
 const sessionTag = ref(requestedSessionTag || storedSessionTag || createId('pwa'))
@@ -295,7 +298,9 @@ const quickPrompts = [
 
 
 function persistMessages() {
-  persistStoredMessages(messages.value, sessionMessageLimit())
+  if (!persistStoredMessages(messages.value, sessionMessageLimit())) {
+    errorNotice.value = '本机保存没有成功，上一份记录仍在。请先保留当前页面。'
+  }
 }
 
 // 流式中途每 ~3 秒落盘一次：进程在后台被杀时半截回复不丢（pagehide 再兜底）。
@@ -323,11 +328,13 @@ function sessionMessageLimit(): number {
 
 
 async function loadSessions() {
+  const generation = ++sessionListGeneration
   try {
-    const payload = await fetchSessions(clientContext(), 24)
+    const payload = await fetchSessions(clientContext(), 100, showHiddenSessions.value ? 'hidden' : 'visible')
+    if (generation !== sessionListGeneration) return
     recentSessions.value = Array.isArray(payload.sessions) ? payload.sessions : []
   } catch {
-    recentSessions.value = []
+    // A network error is not an empty list and must not erase the last view.
   }
 }
 
@@ -414,17 +421,16 @@ async function renameSessionAction(session: GatewaySession) {
   }
 }
 
-async function deleteSessionAction(session: GatewaySession) {
-  if (session.session_tag === sessionTag.value) return
-  const label = sessionTitle(session)
-  if (!window.confirm(`删除「${label}」？\n只清掉网关里这条对话的快照和心跳，Supabase 档案（我们说过的话）不受影响。`)) return
+async function setSessionHiddenAction(session: GatewaySession) {
+  if (busy.value || !session.session_tag) return
+  const hidden = !session.hidden_at
   try {
-    await deleteSession(clientContext(), session.session_tag)
-    recentSessions.value = recentSessions.value.filter((item) => item.session_tag !== session.session_tag)
+    await setSessionVisibility(clientContext(), session.session_tag, hidden)
     sessionActionTarget.value = null
-    status.value = `已删除 ${label}`
+    status.value = hidden ? '已收起对话，所有记录仍然保留' : '已放回最近对话'
+    await loadSessions()
   } catch (error) {
-    sessionActionError.value = error instanceof Error ? error.message : '删除没有成功。'
+    sessionActionError.value = error instanceof Error ? error.message : '列表状态没有更新，记录没有删除。'
   }
 }
 
@@ -1310,7 +1316,8 @@ onUnmounted(() => {
         </button>
       </nav>
 
-      <div class="sidebar-section-title">Recents</div>
+      <div class="sidebar-section-title">{{ showHiddenSessions ? "已收起" : "最近对话" }}</div>
+      <button class="sidebar-link" type="button" @click="showHiddenSessions = !showHiddenSessions">{{ showHiddenSessions ? "返回最近对话" : "查看已收起" }}</button>
       <div class="sidebar-empty" v-if="!recentSessions.length && isEmpty">
         还没有最近对话。
       </div>
@@ -1544,13 +1551,11 @@ onUnmounted(() => {
           <button class="quiet-button" @click="renameSessionAction(sessionActionTarget)">改名</button>
           <button
             class="quiet-button session-action-danger"
-            :disabled="sessionActionTarget.session_tag === sessionTag"
-            @click="deleteSessionAction(sessionActionTarget)"
-          >删除</button>
+            :disabled="busy"
+            @click="setSessionHiddenAction(sessionActionTarget)">{{ sessionActionTarget.hidden_at ? "放回最近对话" : "收起对话" }}</button>
         </div>
         <p v-if="sessionActionError" class="settings-note session-action-error">{{ sessionActionError }}</p>
-        <p v-else-if="sessionActionTarget.session_tag === sessionTag" class="settings-note">正在聊的这条不能删，换到别的对话再回来删它。</p>
-        <p v-else class="settings-note">删除只清网关里的快照和心跳，档案里我们说过的话都还在。</p>
+        <p v-else class="settings-note">只整理最近对话列表。心跳、聊天记录、工具过程、快照和照片都不会因此删除，可随时放回。</p>
       </section>
     </div>
 

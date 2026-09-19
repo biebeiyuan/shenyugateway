@@ -114,6 +114,7 @@ export type ModelOption = {
 }
 
 export type GatewaySession = {
+  hidden_at?: string | null
   session_tag: string
   client_name?: string
   display_name?: string | null

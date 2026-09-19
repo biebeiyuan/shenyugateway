@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
 from fastapi import APIRouter, HTTPException, Request, Response
 from fastapi.responses import JSONResponse
@@ -54,6 +54,7 @@ from .schemas import (
     StarScenesRequest,
     SessionDeleteRequest,
     SessionRenameRequest,
+    SessionVisibilityRequest,
 )
 from .sessions import SessionManager
 from .stars import StarService
@@ -955,9 +956,9 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         return await QWeatherService(cfg).current()
 
     @router.get("/api/gateway/sessions")
-    async def list_gateway_sessions(limit: int = 100, q: str = ""):
+    async def list_gateway_sessions(limit: int = 100, q: str = "", visibility: Literal["all", "visible", "hidden"] = "all"):
         store = deps.require_session_store()
-        sessions = store.list_sessions(limit=limit, query=q)
+        sessions = store.list_sessions(limit=limit, query=q, visibility=visibility)
         return {"sessions": sessions, "limit": max(1, min(int(limit or 100), 500)), "query": q}
 
     @router.get("/api/gateway/sessions/{session_tag}")
@@ -1115,22 +1116,20 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
-    @router.delete("/api/gateway/sessions/{session_tag}")
-    async def delete_gateway_session(session_tag: str, body: SessionDeleteRequest):
+    @router.patch("/api/gateway/sessions/{session_tag}/visibility")
+    async def set_gateway_session_visibility(session_tag: str, body: SessionVisibilityRequest):
         store = deps.require_session_store()
-        if body.confirm != session_tag:
-            raise HTTPException(status_code=400, detail="Confirmation must match session_tag.")
         session = store.get_session_by_tag(session_tag)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found.")
-        deleted = store.delete_session(session["id"])
-        return {
-            "ok": True,
-            "session_tag": session_tag,
-            "scope": "local_sqlite_session",
-            "external_archives_deleted": False,
-            "deleted": deleted,
-        }
+        updated = store.set_session_visibility(session["id"], body.hidden)
+        return {"ok": True, "session": updated}
+
+    @router.delete("/api/gateway/sessions/{session_tag}")
+    async def delete_gateway_session(session_tag: str, body: SessionDeleteRequest):
+        # Cached PWA/Admin bundles can still send the old request. A browser
+        # conversation-list action must never delete the shared heartbeat pool.
+        raise HTTPException(status_code=409, detail="旧版删除入口已停用，请更新页面后使用收起对话。所有记录都未删除。")
 
     @router.get("/api/gateway/logs")
     async def gateway_logs(limit: int = 30):

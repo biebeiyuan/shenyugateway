@@ -377,7 +377,7 @@ Stars 的 run/candidate 写入暂时保留在关键路径。它们不仅用于�
 - Supabase archive：长期外部状态。
 - retained JSON：人工保存的诊断副本，不属于运行时数据库。
 
-session 删除仅覆盖带同一 `session_id` 的运行库数据，不删除独立聊天档案。恢复证据、消费者和缺失策略见 `docs/architecture/REQUEST_CONTEXT.md` § Transcript identity and recovery；档案读写及显式删除见其 § Chat archive (L0 source of truth)。
+浏览器会话列表只收起/恢复，不删除运行记录；旧 DELETE 入口拒绝执行。底层显式维护的 session 删除仍覆盖同一 `session_id` 的运行库数据，不删除独立聊天档案。恢复证据、消费者和缺失策略见 `docs/architecture/REQUEST_CONTEXT.md` § Transcript identity and recovery；档案读写及显式删除见其 § Chat archive (L0 source of truth)。
 
 **主要风险**
 

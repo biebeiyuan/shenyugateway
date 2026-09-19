@@ -82,3 +82,9 @@ describe('retention regressions', () => {
     expect(localStorage.getItem(STORAGE_MESSAGES)).toBe(previous)
   })
 })
+
+it('requires a user anchor when neither side has a local reply identity', () => {
+  const messages = [message('user', 'question', 'u'), { ...message('assistant', 'partial', 'r'), replyVersionId: undefined, archiveEvent: undefined }]
+  expect(applyReplyRecovery(messages, { replies: [{ content: 'partial and complete' }] })).toBe(false)
+  expect(messages[1].content).toBe('partial')
+})

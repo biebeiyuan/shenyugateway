@@ -164,34 +164,26 @@ describe('quota degradation', () => {
     return () => rejected
   }
 
-  it('truncates long event outputs when the first write overflows', () => {
+  it('reports quota failure without deleting tools or shortening their outputs', () => {
     const rejectedCount = withQuotaLimit(30000)
     const message = uiMessage('assistant', 'a', {
-      events: [
-        { phase: 'tool_start', tool_call_id: 'c1', name: 'shenyu_recall', input: {} },
-        { phase: 'tool_end', tool_call_id: 'c1', name: 'shenyu_recall', ok: true, output: 'x'.repeat(60000) },
-      ],
+      events: [{ phase: 'tool_end', tool_call_id: 'c1', name: 'shenyu_recall', ok: true, output: 'x'.repeat(60000) }],
     })
-    expect(() => persistStoredMessages([message], FALLBACK_SESSION_MESSAGE_LIMIT)).not.toThrow()
+    expect(persistStoredMessages([message], FALLBACK_SESSION_MESSAGE_LIMIT)).toBe(false)
     expect(rejectedCount()).toBe(1)
-    const [restored] = loadStoredMessages()
-    expect(restored.events).toHaveLength(2)
-    expect(restored.events[1].output).toHaveLength(2000)
+    expect(message.events[0].output).toHaveLength(60000)
+    expect(loadStoredMessages()).toEqual([])
   })
 
-  it('drops events entirely when truncation still overflows', () => {
-    const rejectedCount = withQuotaLimit(300)
-    const message = uiMessage('assistant', 'kept content', {
-      events: [
-        { phase: 'tool_start', tool_call_id: 'c1', name: 'shenyu_recall', input: {} },
-        { phase: 'tool_end', tool_call_id: 'c1', name: 'shenyu_recall', ok: true, output: 'x'.repeat(60000) },
-      ],
+  it('keeps the previous committed record when a larger write fails', () => {
+    withQuotaLimit(30000)
+    persistStoredMessages([uiMessage('user', 'already saved')], FALLBACK_SESSION_MESSAGE_LIMIT)
+    const before = localStorage.getItem(STORAGE_MESSAGES)
+    const message = uiMessage('assistant', 'new', {
+      events: [{ phase: 'tool_end', tool_call_id: 'c1', name: 'shenyu_recall', ok: true, output: 'x'.repeat(60000) }],
     })
-    expect(() => persistStoredMessages([message], FALLBACK_SESSION_MESSAGE_LIMIT)).not.toThrow()
-    expect(rejectedCount()).toBe(2)
-    const [restored] = loadStoredMessages()
-    expect(restored.content).toBe('kept content')
-    expect(restored.events).toEqual([])
+    expect(persistStoredMessages([message], FALLBACK_SESSION_MESSAGE_LIMIT)).toBe(false)
+    expect(localStorage.getItem(STORAGE_MESSAGES)).toBe(before)
   })
 
   it('gives up quietly when storage keeps overflowing', () => {

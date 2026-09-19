@@ -34,7 +34,7 @@ describe('hydrateToolEvents', () => {
     expect(rows[0].tool_call_id).toBe('hydrated-2')
   })
 
-  it('matches from the tail so retry-duplicated assistant rows do not steal tools', () => {
+  it('does not guess tool ownership for ambiguous identity-less legacy replies', () => {
     const messages = [uiMessage('assistant', '同一句话'), uiMessage('assistant', '同一句话')]
     const recent = [
       { role: 'assistant', content: '同一句话' },
@@ -42,8 +42,8 @@ describe('hydrateToolEvents', () => {
       { role: 'assistant', content: '同一句话' },
     ]
     hydrateToolEvents(messages, recent)
-    // 最后一条 UiMessage 先消费最后一个 assistant 行（带工具组）。
-    expect(messages[1].events).toHaveLength(2)
+    // Equal legacy text cannot prove which request owns a tool group.
+    expect(messages[1].events).toHaveLength(0)
     expect(messages[0].events).toHaveLength(0)
   })
 

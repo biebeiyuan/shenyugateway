@@ -47,11 +47,20 @@ class SessionsMixin:
                 (iso_now(), message_increment, session_id),
             )
 
-    def list_sessions(self, limit: int = 100, query: str = "") -> list[dict]:
+    def list_sessions(self, limit: int = 100, query: str = "", visibility: str = "all") -> list[dict]:
         limit = max(1, min(int(limit or 100), 500))
         pattern = f"%{query.strip()}%"
-        where = "WHERE s.session_tag LIKE ? OR COALESCE(s.client_name, '') LIKE ?"
-        params: tuple[Any, ...] = (pattern, pattern, limit) if query.strip() else (limit,)
+        if visibility not in {"all", "visible", "hidden"}:
+            raise ValueError("invalid session visibility")
+        clauses = []
+        params: list[Any] = []
+        if query.strip():
+            clauses.append("(s.session_tag LIKE ? OR COALESCE(s.client_name, '') LIKE ?)")
+            params.extend((pattern, pattern))
+        if visibility != "all":
+            clauses.append("s.hidden_at IS " + ("NOT NULL" if visibility == "hidden" else "NULL"))
+        where = "WHERE " + " AND ".join(clauses) if clauses else ""
+        params.append(limit)
         with self._connect() as conn:
             rows = conn.execute(
                 f"""
@@ -105,7 +114,7 @@ class SessionsMixin:
                     ORDER BY created_at DESC
                     LIMIT 1
                 )
-                {where if query.strip() else ""}
+                {where}
                 ORDER BY s.last_active_at DESC
                 LIMIT ?
                 """,
@@ -125,6 +134,17 @@ class SessionsMixin:
                 "SELECT * FROM gateway_sessions WHERE id = ?",
                 (session_id,),
             ).fetchone()
+            return dict(row) if row else None
+
+    def set_session_visibility(self, session_id: str, hidden: bool) -> Optional[dict]:
+        """Organize the PWA list; never change activity, context or resident records."""
+        with self._connect() as conn:
+            conn.execute(
+                "UPDATE gateway_sessions SET hidden_at = "
+                "CASE WHEN ? THEN COALESCE(hidden_at, ?) ELSE NULL END WHERE id = ?",
+                (hidden, iso_now(), session_id),
+            )
+            row = conn.execute("SELECT * FROM gateway_sessions WHERE id = ?", (session_id,)).fetchone()
             return dict(row) if row else None
 
     def get_session_by_tag(self, session_tag: str) -> Optional[dict]:

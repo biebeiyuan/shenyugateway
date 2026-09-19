@@ -18,7 +18,7 @@ import {
   createGatewayHeartbeat,
   dedupeGatewayMessages,
   deleteGatewayHeartbeat,
-  deleteGatewaySession,
+  setGatewaySessionVisibility,
   exportGatewaySession,
   fetchGatewaySession,
   fetchGatewaySessions,
@@ -92,18 +92,14 @@ async function loadSessionDetail(sessionTag: string) {
   }
 }
 
-async function deleteSession(sessionTag: string) {
+async function setSessionVisibility(sessionTag: string, hidden: boolean) {
   deletingTag.value = sessionTag
   try {
-    await deleteGatewaySession(sessionTag)
-    message.success(`已删除线程：${sessionTag}`)
-    if (selectedTag.value === sessionTag) {
-      selectedTag.value = ''
-      detail.value = null
-    }
+    await setGatewaySessionVisibility(sessionTag, hidden)
+    message.success(hidden ? '已从 PWA 最近对话收起，记录全部保留' : '已放回 PWA 最近对话')
     await loadSessions()
   } catch (error) {
-    message.error(errorText(error, '删除失败'))
+    message.error(errorText(error, '列表状态更新失败，记录没有删除'))
   } finally {
     deletingTag.value = ''
   }
@@ -444,14 +440,11 @@ function showMoreHeartbeats() {
             <NButton :loading="exporting" @click="exportSession(selectedSession.session_tag)">
               导出此线程 JSON
             </NButton>
-            <NPopconfirm positive-text="删除" negative-text="取消" @positive-click="deleteSession(selectedSession.session_tag)">
-              <template #trigger>
-                <NButton type="error" :loading="deletingTag === selectedSession.session_tag">
-                  删除此线程
-                </NButton>
-              </template>
-              删除 {{ selectedSession.session_tag }} 及其所有相关本地 SQLite 数据。
-            </NPopconfirm>
+            <NButton :loading="deletingTag === selectedSession.session_tag"
+              @click="setSessionVisibility(selectedSession.session_tag, !selectedSession.hidden_at)">
+              {{ selectedSession.hidden_at ? '放回 PWA 最近对话' : '从 PWA 最近对话收起' }}
+            </NButton>
+            <small>仅整理列表，不删除心跳、工具记录、快照或档案。</small>
           </div>
         </template>
         <NEmpty v-else description="请选择一个线程" />

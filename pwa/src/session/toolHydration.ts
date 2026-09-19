@@ -1,38 +1,28 @@
 import type { ToolEvent } from '../toolLanguage'
 import type { UiMessage } from '../types'
-import { sessionMessageContent } from './history'
+import { readArchiveEvent, sessionMessageParts } from './history'
 
-// 从 session detail 的 recent_messages（gateway_messages 原始行）里给快照还原的
-// assistant 消息补回工具事件：快照只有 user/assistant 正文，tool 行全在原始流里。
-// 原始流中连续的 tool 行归属紧随其后的那条 assistant 行；user 行打断这种连续性。
-// 匹配从尾部开始、每行只消费一次——重答(retry)会产生重复 assistant 行，尾部优先
-// 让最新一轮先占住自己的工具组。匹配不上就跳过，绝不报错。
-
+// A reply identity owns its tool receipts. Text is a legacy-only, unambiguous
+// fallback, never an alternative when a known identity fails to match.
 type RecentRow = Record<string, unknown>
+type Group = { identity?: string; content: string; tools: RecentRow[]; consumed: boolean }
+const textKey = (value: string) => value.replace(/\s+/g, ' ').trim()
 
-type AssistantRowGroup = {
-  contentKey: string
-  tools: RecentRow[]
-  consumed: boolean
+function rowIdentity(row: RecentRow): string | undefined {
+  return String(row.source_id || row.reply_version_id || readArchiveEvent(row.archive_event)?.id || '') || undefined
 }
 
-function normalizeText(value: string): string {
-  return value.replace(/\s+/g, ' ').trim()
-}
-
-function groupRecentRows(rows: RecentRow[]): AssistantRowGroup[] {
-  const groups: AssistantRowGroup[] = []
-  let pendingTools: RecentRow[] = []
+function groupsFromRows(rows: RecentRow[]): Group[] {
+  const groups: Group[] = []
+  let tools: RecentRow[] = []
   for (const row of rows) {
-    const role = String(row.role || '')
-    if (role === 'tool') {
-      pendingTools.push(row)
-    } else if (role === 'assistant') {
-      groups.push({ contentKey: normalizeText(sessionMessageContent(row.content)), tools: pendingTools, consumed: false })
-      pendingTools = []
-    } else {
-      pendingTools = []
-    }
+    if (row.role === 'tool') tools.push(row)
+    else if (row.role === 'assistant') {
+      const identity = rowIdentity(row)
+      groups.push({ identity, content: textKey(sessionMessageParts(row.content).content),
+        tools: tools.filter(tool => !tool.reply_version_id || String(tool.reply_version_id) === identity), consumed: false })
+      tools = []
+    } else tools = []
   }
   return groups
 }
@@ -47,61 +37,94 @@ function inferOk(parsed: unknown): boolean {
   return true
 }
 
-function toolEventsFromRows(tools: RecentRow[], keyBase: string): ToolEvent[] {
-  const events: ToolEvent[] = []
-  tools.forEach((row, index) => {
-    const callId = `hydrated-${String(row.id ?? `${keyBase}-${index}`)}`
+export function toolEventsFromRows(tools: RecentRow[], keyBase: string): ToolEvent[] {
+  return tools.flatMap((row, index) => {
+    const callId = String(row.tool_call_id || '') || `hydrated-${String(row.id ?? `${keyBase}-${index}`)}`
     const name = String(row.tool_name || 'gateway_tool')
     let input: unknown
     if (typeof row.tool_args_json === 'string' && row.tool_args_json.trim()) {
-      try {
-        input = JSON.parse(row.tool_args_json)
-      } catch {
-        input = row.tool_args_json
-      }
+      try { input = JSON.parse(row.tool_args_json) } catch { input = row.tool_args_json }
     }
-    const rawContent = typeof row.content === 'string' ? row.content : ''
-    let output = rawContent
-    // 历史 tool 行代表一次已完成的执行；ok 从结果 JSON 尽力推断，兜底为 true，
-    // 否则 undefined 会让 UI 把它当成"正在执行"，结果永远展示不出来。
-    let ok = true
-    if (rawContent) {
-      try {
-        ok = inferOk(JSON.parse(rawContent))
-      } catch {
-        ok = true
-      }
-    } else if (row.tool_result_summary != null && String(row.tool_result_summary)) {
-      output = String(row.tool_result_summary)
-    }
-    events.push({ phase: 'tool_start', tool_call_id: callId, name, input, text_offset: 0, stream_order: index * 2 })
-    events.push({ phase: 'tool_end', tool_call_id: callId, name, ok, output: output || undefined, text_offset: 0, stream_order: index * 2 + 1 })
+    const output = (typeof row.content === 'string' && row.content) || String(row.tool_result_summary || '')
+    let parsed: unknown
+    try { parsed = JSON.parse(output) } catch { parsed = undefined }
+    const details = parsed && typeof parsed === 'object' && !Array.isArray(parsed)
+      ? parsed as Record<string, unknown> : {}
+    const common = { tool_call_id: callId, name, text_offset: 0, stream_order: index * 2 }
+    return [
+      { ...common, phase: 'tool_start', input },
+      { ...common, phase: 'tool_end', stream_order: index * 2 + 1,
+        ok: typeof row.tool_ok === 'boolean' ? row.tool_ok : inferOk(parsed),
+        output: output || undefined,
+        ...(details.error_kind ? { error_kind: String(details.error_kind) } : {}) },
+    ] as ToolEvent[]
   })
-  return events
+}
+
+// Preserve observed local order/offsets and completed results; fill only missing
+// fields/phases. Synthetic legacy IDs cannot complete a real in-flight call.
+export function mergeToolEvents(local: ToolEvent[], incoming: ToolEvent[]): ToolEvent[] {
+  const result = local.map(event => ({ ...event }))
+  for (const event of incoming) {
+    const id = event.tool_call_id
+    if (!id) continue
+    const sameCall = result.filter(item => item.tool_call_id === id)
+    if (id.startsWith('hydrated-') && local.length && !sameCall.length) continue
+    const existing = sameCall.find(item => item.phase === event.phase)
+    if (existing) {
+      for (const [key, value] of Object.entries(event)) {
+        if (value !== undefined && (existing as unknown as Record<string, unknown>)[key] === undefined) {
+          (existing as unknown as Record<string, unknown>)[key] = value
+        }
+      }
+      continue
+    }
+    // A terminal receipt does not need an invented missing start in the UI.
+    if (event.phase === 'tool_start' && sameCall.some(item => item.phase === 'tool_end')) continue
+    const start = sameCall.find(item => item.phase === 'tool_start')
+    result.push({ ...event,
+      name: start?.name || event.name,
+      target_tool: start?.target_tool || event.target_tool,
+      text_offset: start?.text_offset ?? event.text_offset,
+      stream_order: start?.stream_order ?? event.stream_order })
+  }
+  return result
+}
+
+export function hasUnfinishedTools(events: ToolEvent[]): boolean {
+  return events.some(event => event.phase === 'tool_start' && event.tool_call_id
+    && !events.some(end => end.phase === 'tool_end' && end.tool_call_id === event.tool_call_id))
 }
 
 export function hydrateToolEvents(messages: UiMessage[], recentRows: unknown): number {
   if (!Array.isArray(recentRows)) return 0
-  const groups = groupRecentRows(recentRows.filter((row): row is RecentRow => Boolean(row && typeof row === 'object')))
-  if (!groups.length) return 0
+  const rows = recentRows.filter((row): row is RecentRow => Boolean(row && typeof row === 'object'))
+  const groups = groupsFromRows(rows)
   let hydrated = 0
   for (let index = messages.length - 1; index >= 0; index--) {
     const message = messages[index]
-    if (message.role !== 'assistant' || message.events.length) continue
-    const key = normalizeText(message.content)
-    if (!key) continue
-    let matched: AssistantRowGroup | undefined
-    for (let g = groups.length - 1; g >= 0; g--) {
-      if (!groups[g].consumed && groups[g].contentKey === key) {
-        matched = groups[g]
-        break
-      }
+    if (message.role !== 'assistant') continue
+    if (message.replyVersionId && message.archiveEvent && message.replyVersionId !== message.archiveEvent.id) continue
+    const identity = message.replyVersionId || message.archiveEvent?.id
+    const key = textKey(message.content)
+    let matched: Group | undefined
+    if (identity) matched = groups.find(group => !group.consumed && group.identity === identity)
+    else {
+      const candidates = groups.filter(group => !group.consumed && group.content === key)
+      const localCount = messages.filter(item => item.role === 'assistant' && textKey(item.content) === key).length
+      if (key && candidates.length === 1 && localCount === 1) matched = candidates[0]
     }
-    if (!matched) continue
-    matched.consumed = true
-    if (!matched.tools.length) continue
-    message.events = toolEventsFromRows(matched.tools, message.id)
-    hydrated++
+    // Reserve a matched group even when local events are complete, so another
+    // same-text bubble can never borrow it.
+    if (matched) matched.consumed = true
+    const tools = matched?.tools || (identity
+      ? rows.filter(row => row.role === 'tool' && String(row.reply_version_id || '') === identity) : [])
+    if (!tools.length) continue
+    const merged = mergeToolEvents(message.events, toolEventsFromRows(tools, message.id))
+    if (JSON.stringify(merged) !== JSON.stringify(message.events)) {
+      message.events = merged
+      hydrated++
+    }
   }
   return hydrated
 }

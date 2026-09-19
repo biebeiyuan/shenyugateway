@@ -167,6 +167,10 @@ class SessionDeleteRequest(BaseModel):
     confirm: str
 
 
+class SessionVisibilityRequest(BaseModel):
+    hidden: bool = Field(strict=True)
+
+
 class SessionRenameRequest(BaseModel):
     display_name: Optional[str] = None
 
