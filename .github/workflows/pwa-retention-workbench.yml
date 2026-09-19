@@ -27,4 +27,4 @@ jobs:
       - run: pip install -e '.[dev]'
       - run: npm ci
         working-directory: pwa
-      - run: python .github/pwa-retention/work.py
+      - run: python .github/pwa-retention/driver.py
