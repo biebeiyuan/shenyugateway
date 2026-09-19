@@ -142,7 +142,7 @@ it('does not send when the initial durable checkpoint fails', async () => {
   state.draft = 'must stay on device if checkpoint failed'
   await state.submit(); await flush()
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/v1/chat/completions'))).toBe(false)
-  expect(state.storageError).toBeTruthy()
+  expect(state.errorNotice).toContain('本机未能保存这次发送')
   expect(state.messages[0].content).toContain('must stay on device')
 })
 
