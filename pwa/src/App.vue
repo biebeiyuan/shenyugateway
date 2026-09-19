@@ -314,7 +314,7 @@ function persistMessages(): Promise<boolean> {
 }
 
 // During streaming, submit checkpoints while the page is alive; pagehide is only supplemental.
-const STREAM_PERSIST_INTERVAL_MS = 1_000
+const STREAM_PERSIST_INTERVAL_MS = 3_000
 let lastStreamPersistAt = 0
 
 function onStreamChunkEnd() {
