@@ -300,6 +300,11 @@ it('records the 1000-message request cost without truncating local history or re
   localStorage.setItem('shenyu_pwa_session', 'A')
   localStorage.setItem('shenyu_pwa_messages', JSON.stringify(history))
   const { state } = mount(); await flush()
+  for (let i = 0; i < 200 && (!state.storageReady || state.messages.length !== 1000); i++) {
+    await new Promise(resolve => setTimeout(resolve, 5)); await nextTick()
+  }
+  expect(state.storageReady).toBe(true)
+  expect(state.messages).toHaveLength(1000)
   state.maxClientMessages = 5
   const normalFetch = globalThis.fetch
   let bodyText = ''
