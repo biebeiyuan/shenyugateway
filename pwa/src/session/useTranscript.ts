@@ -86,6 +86,48 @@ export function useTranscript(deps: Deps) {
     }).finally(() => { pendingWrites.value-- })
   }
 
+  function checkpointTail(startIndex: number): Promise<boolean> {
+    clearTimeout(saveTimer)
+    if (!ready.value || disposed || restoring || recovering.value) return Promise.resolve(false)
+    const context = { ...deps.context() }
+    const key = transcriptKey(context.gatewayUrl, context.sessionTag)
+    const epoch = epochs.get(key) || 0
+    const start = Math.max(0, Math.min(Math.floor(startIndex), deps.messages.value.length))
+    let state: TranscriptState
+    try {
+      state = snapshotTranscript({
+        messages: deps.messages.value.slice(start),
+        draft: deps.draft.value,
+        pendingAttachments: deps.pendingAttachments.value,
+        editId: deps.editId.value,
+        viewport: position(),
+      })
+    } catch {
+      error.value = '本机记录无法序列化，上一份记录未改变。'
+      return Promise.resolve(false)
+    }
+    pendingWrites.value++
+    const task = (queues.get(key) || Promise.resolve()).catch(() => undefined).then(async () => {
+      if (epoch !== (epochs.get(key) || 0)) return false
+      if (conflicts.has(key)) throw new StorageConflictError()
+      const { messages, ...metadata } = state
+      const revision = await store.saveTail(key, start, messages, metadata, revisions.get(key) || 0)
+      revisions.set(key, revision)
+      if (key === activeKey()) {
+        savedAt.value = new Date().toISOString()
+        error.value = ''
+      }
+      return true
+    })
+    queues.set(key, task)
+    return task.then(value => value, reason => {
+      if (epoch !== (epochs.get(key) || 0)) return false
+      if (reason instanceof StorageConflictError) conflicts.add(key)
+      if (key === activeKey()) error.value = reason instanceof Error ? reason.message : '本机保存失败，上一份完整记录仍在。'
+      return false
+    }).finally(() => { pendingWrites.value-- })
+  }
+
   function scheduleSave() {
     if (!ready.value || disposed || restoring || recovering.value) return
     clearTimeout(saveTimer)
@@ -261,7 +303,7 @@ export function useTranscript(deps: Deps) {
     void final.finally(() => store.close())
   }
 
-  return { store, ready, error, savedAt, saving, save, scheduleSave, load, apply, position, restorePosition, exportCurrent, dispose,
+  return { store, ready, error, savedAt, saving, save, checkpointTail, scheduleSave, load, apply, position, restorePosition, exportCurrent, dispose,
     conflicted, recovering, recoveryNotice, recoveryCopies, selectedRecovery, recoverConflict, restoreRecoveryDraft,
     refreshRecoveryCopies, inspectRecoveryCopy, exportRecoveryCopy, removeRecoveryCopy }
 }
