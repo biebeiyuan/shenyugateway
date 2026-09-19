@@ -174,6 +174,7 @@ const streamRef = ref<HTMLElement | null>(null)
 const transcript = useTranscript({ context: () => clientContext(), messages, draft, pendingAttachments, editId, stream: streamRef })
 const { ready: storageReady, error: storageError, saving: storageSaving, savedAt: lastLocalSave,
   conflicted: storageConflict, recovering: storageRecovering, recoveryNotice, recoveryCopies, selectedRecovery } = transcript
+const receiptStorageError = ref('')
 const controlsBlocked = computed(() => busy.value || sessionLoading.value || !storageReady.value || storageRecovering.value)
 watch([draft, pendingAttachments, editId], () => {
   if (!busy.value) transcript.scheduleSave()
@@ -348,18 +349,43 @@ function readInflightReply(ctx: RequestContext): InflightReplyReceipt | null {
       ? { replyVersionId: parsed.replyVersionId }
       : null
   } catch {
+    receiptStorageError.value = '本机恢复凭据暂时无法读取；当前聊天没有被替换。'
     return null
   }
 }
 
-function markInflightReply(ctx: RequestContext, replyVersionId: string) {
-  localStorage.setItem(inflightReplyKey(ctx), JSON.stringify({ replyVersionId }))
+function markInflightReply(ctx: RequestContext, replyVersionId: string): boolean {
+  try {
+    localStorage.setItem(inflightReplyKey(ctx), JSON.stringify({ replyVersionId }))
+    return true
+  } catch {
+    receiptStorageError.value = '本机恢复凭据未能保存；当前回复会继续显示，重开后可能需要手动重试。'
+    return false
+  }
 }
 
 function clearInflightReply(ctx: RequestContext, replyVersionId?: string) {
   const current = readInflightReply(ctx)
   if (!current || (replyVersionId && current.replyVersionId !== replyVersionId)) return
-  localStorage.removeItem(inflightReplyKey(ctx))
+  try {
+    localStorage.removeItem(inflightReplyKey(ctx))
+  } catch {
+    receiptStorageError.value = '本机恢复凭据未能清理；不会把它当成新的网络中断。'
+  }
+}
+
+function replyIdentity(message?: Pick<UiMessage, 'replyVersionId' | 'archiveEvent'>): string | undefined {
+  if (!message) return undefined
+  if (message.replyVersionId && message.archiveEvent && message.replyVersionId !== message.archiveEvent.id) return undefined
+  return message.replyVersionId || message.archiveEvent?.id
+}
+
+function recoverableReplyId(ctx: RequestContext): string | undefined {
+  const receipt = readInflightReply(ctx)
+  const last = messages.value[messages.value.length - 1]
+  if (!receipt || !last || last.role !== 'assistant' || !tailNeedsReconcile(messages.value)) return undefined
+  const selected = replyIdentity(last)
+  return selected && selected === receipt.replyVersionId ? selected : undefined
 }
 
 function resumeInflightReply(ctx: RequestContext): boolean {
@@ -367,20 +393,22 @@ function resumeInflightReply(ctx: RequestContext): boolean {
   if (!receipt) return false
   const assistant = [...messages.value].reverse().find(message => {
     if (message.role !== 'assistant') return false
-    if (message.replyVersionId === receipt.replyVersionId || message.archiveEvent?.id === receipt.replyVersionId) return true
-    return message.variants?.some(variant =>
-      variant.replyVersionId === receipt.replyVersionId || variant.archiveEvent?.id === receipt.replyVersionId)
+    if (replyIdentity(message) === receipt.replyVersionId) return true
+    return message.variants?.some(variant => replyIdentity(variant) === receipt.replyVersionId)
   })
   if (!assistant) {
     clearInflightReply(ctx, receipt.replyVersionId)
     return false
   }
-  if (assistant.replyVersionId !== receipt.replyVersionId && assistant.variants?.length) {
-    const index = assistant.variants.findIndex(variant =>
-      variant.replyVersionId === receipt.replyVersionId || variant.archiveEvent?.id === receipt.replyVersionId)
-    if (index >= 0) applyVariant(assistant, assistant.variants[index], index)
-  }
-  if (assistant.replyVersionId !== receipt.replyVersionId && assistant.archiveEvent?.id !== receipt.replyVersionId) {
+  // A receipt for a hidden roll must never switch the user's selected variant.
+  if (replyIdentity(assistant) !== receipt.replyVersionId) return false
+
+  const hasObservedOutput = Boolean(
+    assistant.content || assistant.echo || assistant.thinking || assistant.events.length || assistant.attachments.length,
+  )
+  // A clean persisted answer plus a stale receipt is not evidence of an
+  // interrupted stream (for example removeItem failed after a successful save).
+  if (!assistant.streaming && !assistant.truncated && (assistant.error || hasObservedOutput)) {
     clearInflightReply(ctx, receipt.replyVersionId)
     return false
   }
@@ -672,32 +700,34 @@ async function reconcileTailFromServer(attempt = 0, mode: 'tail' | 'variants' = 
   invalidateReconcile()
   const generation = reconcileGeneration
   if (busy.value) return
-  // 健康尾巴只检查一次；正文或工具回执仍缺失时，两种入口都进入退避。
-  if (mode === 'tail' && !tailNeedsReconcile(messages.value)) return
+  const ctx = { ...clientContext() }
+  const expected = mode === 'tail' ? recoverableReplyId(ctx) : undefined
+  if (mode === 'tail' && !expected) return
   if (mode === 'tail') status.value = RECONCILE_STATUS
   try {
-    const ctx = { ...clientContext() }
-    const last = messages.value[messages.value.length - 1]
-    const expected = last?.role === 'assistant' ? last.replyVersionId || last.archiveEvent?.id : undefined
     const controller = new AbortController(); reconcileController = controller
-    const [detailResult, replyResult] = await Promise.allSettled([
-      fetchSessionDetail(ctx, ctx.sessionTag, sessionMessageLimit(), controller.signal),
-      fetchReplyRecovery(ctx, expected, controller.signal),
-    ])
+    const detailPromise = fetchSessionDetail(ctx, ctx.sessionTag, sessionMessageLimit(), controller.signal)
+    const replyPromise = mode === 'tail'
+      ? fetchReplyRecovery(ctx, expected, controller.signal)
+      : Promise.resolve<Record<string, unknown>>({})
+    const [detailResult, replyResult] = await Promise.allSettled([detailPromise, replyPromise])
     if (generation !== reconcileGeneration || busy.value || ctx.gatewayUrl !== gatewayUrl.value || ctx.sessionTag !== sessionTag.value) return
+    // A variant/session/user action may have made the in-flight recovery stale.
+    if (mode === 'tail' && recoverableReplyId(ctx) !== expected) return
     const position = transcript.position()
-    const recovery = replyResult.status === 'fulfilled' ? replyResult.value : {}
     const payload = detailResult.status === 'fulfilled' ? detailResult.value : {}
-    const recovered = applyReplyRecovery(messages.value, recovery)
-    const reconciled = applyReconciledTail(messages.value, payload)
+    const recovery = replyResult.status === 'fulfilled' ? replyResult.value : {}
+    const recovered = mode === 'tail' ? applyReplyRecovery(messages.value, recovery) : false
+    const reconciled = mode === 'tail' ? applyReconciledTail(messages.value, payload) : false
+    // Healthy reopen/foreground sync may fill exact tool metadata, but it never
+    // enters reply recovery or appends a reply merely because the server has one.
     const hydrated = hydrateToolEvents(messages.value, payload.recent_messages) > 0
     if (recovered || reconciled || hydrated) {
       await persistMessages()
-      if (!tailNeedsReconcile(messages.value)) clearInflightReply(ctx, expected)
+      if (mode === 'tail' && !tailNeedsReconcile(messages.value)) clearInflightReply(ctx, expected)
       errorNotice.value = ''
       clearReconcileNotice()
-      // 只有修好坏尾巴才弹提示；健康对话补 variant 不该弹。
-      if (reconciled) {
+      if (mode === 'tail' && reconciled) {
         status.value = '已找回后台期间的回复'
         reconcileNoticeTimer = window.setTimeout(() => {
           reconcileNoticeTimer = null
@@ -708,12 +738,12 @@ async function reconcileTailFromServer(attempt = 0, mode: 'tail' | 'variants' = 
       if (generation === reconcileGeneration) transcript.restorePosition(position)
     }
   } catch {
-    // 网络没恢复，和 drain 未完成一样对待
+    // Network/recovery failures leave local content and selection untouched.
   }
-  if (generation !== reconcileGeneration) return
+  if (generation !== reconcileGeneration || mode !== 'tail') return
 
-  // 唯一的重试依据：尾巴是不是还坏着。没东西可找回不是失败。
-  if (!tailNeedsReconcile(messages.value)) {
+  // Retry only while the same exact interrupted reply remains eligible.
+  if (recoverableReplyId(ctx) !== expected) {
     if (status.value === RECONCILE_STATUS) status.value = ''
     return
   }
@@ -1632,8 +1662,8 @@ onUnmounted(() => {
         </template>
       </section>
 
-      <div v-if="storageError" class="notice-line error" role="alert">
-        <span>{{ storageError }}</span>
+      <div v-if="storageError || receiptStorageError" class="notice-line error" role="alert">
+        <span>{{ receiptStorageError || storageError }}</span>
         <button v-if="storageConflict" type="button" data-testid="recover-local-record" :disabled="controlsBlocked" @click="recoverLocalTranscript">{{ storageRecovering ? '正在保留与同步' : '保留本页并重新同步' }}</button>
         <button type="button" @click="transcript.exportCurrent">导出本页记录</button>
       </div>
@@ -2009,7 +2039,7 @@ onUnmounted(() => {
         <p class="settings-note">图片会在发送前压缩，聊天端不会把图片放进 Service Worker 缓存。</p>
         <section class="recovery-copies" aria-label="本机保存与恢复">
           <h3>本机保存与恢复</h3>
-          <p class="settings-note">{{ storageRecovering ? '正在保留原件并重新同步，请保持本页打开。' : storageError || (storageSaving ? '正在保存本页。' : lastLocalSave ? '本页已保存。' : '本机记录已打开。') }}</p>
+          <p class="settings-note">{{ storageRecovering ? '正在保留原件并重新同步，请保持本页打开。' : receiptStorageError || storageError || (storageSaving ? '正在保存本页。' : lastLocalSave ? '本页已保存。' : '本机记录已打开。') }}</p>
           <p v-if="storageConflict" class="settings-note">重新同步会先保留两边副本，再接回最新记录。分歧草稿不混在一起，之后可单独找回；不会发送消息。</p>
           <button v-if="storageConflict" class="quiet-button" :disabled="controlsBlocked" @click="recoverLocalTranscript">保留本页并重新同步</button>
           <h4>保留副本</h4>

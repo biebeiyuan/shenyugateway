@@ -485,7 +485,7 @@ it('keeps a healthy stream healthy when inflight receipt storage throws', async 
   expect(state.messages.at(-1)?.content).toBe('healthy despite receipt failure')
   expect(state.messages.at(-1)?.truncated).toBeUndefined()
   expect(state.messages.at(-1)?.error).toBeUndefined()
-  expect(state.storageError).toContain('恢复凭据')
+  expect(state.receiptStorageError).toContain('恢复凭据')
 })
 
 it('keeps active text streaming free of full transcript checkpoints', async () => {

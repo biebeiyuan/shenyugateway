@@ -2,7 +2,7 @@ import { mergeAttachments, readMedia, wireMedia } from './media'
 import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
 import { readArchiveEvent, restoredArchiveState, sessionMessageContent, sessionMessageParts } from './history'
-import { hydrateToolEvents, mergeToolEvents, toolEventsFromRows, hasUnfinishedTools } from './toolHydration'
+import { hydrateToolEvents, mergeToolEvents, toolEventsFromRows } from './toolHydration'
 import { stripStatusSuffix } from '../meta/statusSuffix'
 import { applyVariant, selectedVariantIndex, snapshotMessage, syncCurrentVariant } from './variants'
 
@@ -59,12 +59,12 @@ function acceptRecovery(
   return true
 }
 
-// 只有已经开始过、后来变得不完整的 assistant 才有后台可找。
-// 单独的 user 或普通 fetch error 不能证明请求到过网关。
+// Only an explicitly interrupted assistant is reply-recovery eligible.
+// Unfinished tool metadata is hydrated by healthy session sync and cannot prove
+// that the current request has a detached reply to recover.
 export function tailNeedsReconcile(messages: UiMessage[]): boolean {
   const last = messages[messages.length - 1]
-  if (!last || last.role !== 'assistant') return false
-  return Boolean(last.truncated || hasUnfinishedTools(last.events))
+  return Boolean(last?.role === 'assistant' && last.truncated)
 }
 
 function recentRows(payload: Record<string, unknown>): RecentRow[] {
