@@ -100,7 +100,7 @@ const EXACT_COPY: Record<string, string> = {
   room_wooden_box: '打开了装心跳的木盒',
   room_drawer_notes: '看了圆圆留的条子',
   room_locked_drawer: '开了那只上锁的抽屉',
-  room_star_map: '看了看星图',
+  room_star_map: '在星图前站了一会儿',
   room_wall_pins: '看了看墙上钉着的',
   room_octopus_pillow: '抱了抱章鱼枕头',
   room_conflict_shelf: '看了看那排来历书',
