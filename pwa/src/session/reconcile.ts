@@ -104,11 +104,14 @@ function replyRowAfter(rows: RecentRow[], anchorIndex: number): RecentRow | unde
 }
 
 export function applyReconciledTail(messages: UiMessage[], payload: Record<string, unknown>): boolean {
-  if (!tailNeedsReconcile(messages)) return false
+  const last = messages[messages.length - 1]
+  if (!last) return false
+  // Explicit callers may still repair a known trailing user from server data.
+  // The stricter tailNeedsReconcile() only controls automatic background polling.
+  if (last.role === 'assistant' && !tailNeedsReconcile(messages)) return false
   const rows = recentRows(payload)
   if (!rows.length) return false
 
-  const last = messages[messages.length - 1]
   const target = last.role === 'assistant' ? last : undefined
   const expectedVersion = replyIdentity(target)
   const versionedReply = expectedVersion
