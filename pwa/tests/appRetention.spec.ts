@@ -241,7 +241,7 @@ it('does not persist programmatic stream scrolling while a reply is active, but 
 
 it('starts the ordinary stream checkpoint interval after the durable pre-send save instead of saving again on the first chunk', async () => {
   const { state } = mount(); await flush()
-  const save = vi.spyOn(state.transcript, 'save')
+  const save = vi.spyOn(TranscriptStore.prototype, 'save')
   const normalFetch = globalThis.fetch
   vi.spyOn(Date, 'now').mockReturnValue(8_000_000_000_000_000)
   vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
@@ -254,5 +254,7 @@ it('starts the ordinary stream checkpoint interval after the durable pre-send sa
   }))
   state.draft = 'first chunk should paint before another heavy checkpoint'
   await state.submit()
-  expect(save).toHaveBeenCalledTimes(2)
+  const midStreamSaves = save.mock.calls.filter(([, snapshot]) =>
+    snapshot.messages.at(-1)?.role === 'assistant' && snapshot.messages.at(-1)?.truncated === true)
+  expect(midStreamSaves).toHaveLength(1)
 })
