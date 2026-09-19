@@ -70,7 +70,9 @@ def _add_openai_message_cache_control(
     return _add_cache_control(msg, cache_paths, path, max_breakpoints, cache_ttl)
 
 
-def _guarded_user_message_index(messages: list[dict], guard_user_turns: int) -> int:
+def _guarded_user_message_index(
+    messages: list[dict], guard_user_turns: int, *, excluded_indices: Optional[set[int]] = None,
+) -> int:
     guard = max(int(guard_user_turns or 0), 0)
     if guard <= 0:
         return -1
@@ -78,6 +80,7 @@ def _guarded_user_message_index(messages: list[dict], guard_user_turns: int) -> 
         index
         for index, message in enumerate(messages)
         if message.get("role") == "user"
+        and index not in (excluded_indices or ())
         and message.get(INTERNAL_LAYER_KEY) != MEMORY_ISLAND_LAYER
     ]
     if not user_indices:
@@ -162,12 +165,16 @@ def _json_dumps_compact(value: Any) -> str:
         return "{}"
 
 
-def _sanitize_openai_compatible_messages(messages: list[dict]) -> list[dict]:
+def _sanitize_openai_compatible_messages(
+    messages: list[dict], *, tool_image_indices: Optional[set[int]] = None,
+) -> list[dict]:
     sanitized: list[dict] = []
     pending_images: list[dict] = []
 
     def flush_tool_images() -> None:
         if pending_images:
+            if tool_image_indices is not None:
+                tool_image_indices.add(len(sanitized))
             sanitized.append({"role": "user", "content": list(pending_images)})
             pending_images.clear()
 
@@ -329,7 +336,11 @@ def _apply_openai_compatible_cache_control(
 ) -> tuple[list[dict], list[dict], list[str]]:
     layers = cache_layers or {}
     cache_paths: list[str] = []
-    cached_messages = _sanitize_openai_compatible_messages(messages)
+    # Synthetic observation messages are a protocol adapter, not new user
+    # turns. Keep their positions out of the tail guard without adding any
+    # private marker to the provider payload or changing ordinary chat policy.
+    tool_image_indices: set[int] = set()
+    cached_messages = _sanitize_openai_compatible_messages(messages, tool_image_indices=tool_image_indices)
     cached_tools = _sanitize_openai_compatible_tools(tools)
 
     for layer_name in _SYSTEM_CACHE_LAYER_PREFERENCE:
@@ -359,7 +370,7 @@ def _apply_openai_compatible_cache_control(
         -1,
     )
     if island_idx >= 0:
-        if island_idx > 0:
+        if island_idx > 0 and island_idx - 1 not in tool_image_indices:
             _add_openai_message_cache_control(
                 cached_messages[island_idx - 1],
                 cache_paths,
@@ -375,11 +386,14 @@ def _apply_openai_compatible_cache_control(
             cache_ttl,
         )
 
-    guarded_user_idx = _guarded_user_message_index(cached_messages, tail_guard_user_turns)
+    guarded_user_idx = _guarded_user_message_index(
+        cached_messages, tail_guard_user_turns, excluded_indices=tool_image_indices,
+    )
     if guarded_user_idx <= island_idx:
         guarded_user_idx = -1
     last_user_idx = max(
-        (idx for idx, msg in enumerate(cached_messages) if msg.get("role") == "user"),
+        (idx for idx, msg in enumerate(cached_messages)
+         if msg.get("role") == "user" and idx not in tool_image_indices),
         default=-1,
     )
 
@@ -387,7 +401,7 @@ def _apply_openai_compatible_cache_control(
         start_idx = guarded_user_idx if guarded_user_idx >= 0 else last_user_idx
         for idx in range(start_idx, -1, -1):
             msg = cached_messages[idx]
-            if msg.get("role") not in {"user", "assistant"}:
+            if msg.get("role") not in {"user", "assistant"} or idx in tool_image_indices:
                 continue
             path = (
                 f"messages[{idx}].stable_tail"

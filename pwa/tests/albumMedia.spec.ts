@@ -6,6 +6,7 @@ import { applyReplyRecovery, applyReconciledTail } from '../src/session/reconcil
 import { applyVariant, emptyVariant, ensureVariants, syncCurrentVariant } from '../src/session/variants'
 import { loadStoredMessages, persistStoredMessages } from '../src/session/persistence'
 import type { UiMessage } from '../src/types'
+import slotContract from '../../tests/fixtures/album_media_slots.json'
 
 const event = { id: 'reply-1', event_at: '2026-09-19T00:00:00Z' }
 const photo = { id: 'call-1', name: '想留的', mime: 'image/jpeg', photo_id: 'phot_one', title: '想留的', content: '原话\n安静' }
@@ -119,4 +120,19 @@ it('keeps explicit image block positions when an attachment has no remaining pix
   const media = (wireMessages([m])[0] as any).media
   expect(media[0].image_index).toBeNull()
   expect(media[1].image_index).toBe(0)
+})
+
+describe('shared image-slot contract with the gateway', () => {
+  for (const { order, wire } of slotContract.cases) {
+    it(`keeps the wire slots for ${order.join(' / ')}`, () => {
+      const m = message('user')
+      m.content = '配图文字'
+      m.archiveEvent = wire.archive_event
+      m.attachments = order.map((key) => ({
+        ...slotContract.attachments[key as keyof typeof slotContract.attachments],
+      }))
+      // Python consumes these same wire fixtures and checks photo/note identity.
+      expect(wireMessages([m])[0]).toEqual(wire)
+    })
+  }
 })

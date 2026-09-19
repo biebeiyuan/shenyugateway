@@ -213,7 +213,11 @@ def test_missing_local_photo_slot_cannot_steal_the_next_uploaded_photo(tmp_path)
 @pytest.mark.asyncio
 async def test_album_actions_reject_non_image_formats_before_reporting_success(tmp_path):
     store = _store(tmp_path)
-    photo = store.save_album_photo(raw=b'<html>not a photo</html>', mime='text/html')
+    # Legacy rows can predate write validation. They remain intact but cannot
+    # bypass the read guard; do not use the now-stricter writer to create one.
+    photo = store.save_album_photo(raw=b'<html>not a photo</html>')
+    with store._connect() as conn:
+        conn.execute('UPDATE album_photos SET mime = ? WHERE id = ?', ('text/html', photo['id']))
     service = AlbumService(store)
     for method in (service.album_open, service.album_send):
         result = await method(photo_id=photo['id'])

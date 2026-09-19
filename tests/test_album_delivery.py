@@ -192,6 +192,8 @@ async def test_mixed_client_turn_retains_only_trusted_view_pointer(tmp_path):
 
 def test_photo_endpoint_never_serves_active_document_formats(tmp_path):
     store = _store(tmp_path)
-    photo = store.save_album_photo(raw=b'<html>not a photo</html>', mime='text/html')
+    photo = store.save_album_photo(raw=b'<html>not a photo</html>')
+    with store._connect() as conn:
+        conn.execute('UPDATE album_photos SET mime = ? WHERE id = ?', ('text/html', photo['id']))
     response = client_for(store).get(f"/api/gateway/album/photo/{photo['id']}")
     assert response.status_code == 415

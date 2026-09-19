@@ -279,9 +279,15 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
     async def resolve_album_media(body: AlbumResolveRequest):
         """Resolve references without uploading or returning any image bytes."""
         store = deps.require_session_store()
-        media = store.message_media_batch(body.session_tag, [(e.role, e.event_id) for e in body.events])
-        digests = list(dict.fromkeys(value for value in body.fingerprints if FINGERPRINT.fullmatch(value)))
-        photos = store.album_notes_by_fingerprints(digests)
+        try:
+            media = store.message_media_batch(body.session_tag, [(e.role, e.event_id) for e in body.events])
+            digests = list(dict.fromkeys(value for value in body.fingerprints if FINGERPRINT.fullmatch(value)))
+            photos = store.album_notes_by_fingerprints(digests)
+        except Exception as exc:
+            logger.warning("[Album] 图片引用查询暂时失败", exc_info=True)
+            # A successful empty response would falsely tell PWA the photo was
+            # cleared. Keep lookup failure distinct from an authoritative miss.
+            raise HTTPException(status_code=503, detail="相册暂时读不到，请稍后重试。") from exc
         return {"media": media, "photos": {digest: photo_reference(photo) for digest, photo in photos.items()}}
 
     # 盼圃：圆圆这一侧的四个动作。走这条路进来的一律记作圆圆，走

@@ -4,6 +4,7 @@ from __future__ import annotations
 import re
 import base64
 import json
+from copy import deepcopy
 from typing import Any
 
 MAX_MEDIA_ITEMS = 9
@@ -73,7 +74,11 @@ def finish_album_action(ctx: Any, result: dict, tool_call_id: str) -> dict:
         result.shared_media = ctx.store.record_album_share(
             ctx.session_tag, event["id"], tool_call_id, result.send_photo_id,
         )
-        ctx.meta.setdefault("album_shared_media", []).append(result.shared_media)
+        shared = ctx.meta.setdefault("album_shared_media", [])
+        if not any(item["id"] == result.shared_media["id"] for item in shared):
+            shared.append(result.shared_media)
+    except ValueError as exc:
+        return {"ok": False, "error": str(exc), "error_kind": "validation"}
     except Exception:
         from .runtime import logger
         logger.exception("[Album] 分享引用没有保存")
@@ -181,14 +186,27 @@ def enrich_history_media(messages: list[dict], session_tag: str, store: Any) -> 
             return str(row.get("source_id") or "")
         return ""
     keys = [(str(m.get("role")), identity(m)) for m in messages]
-    found = store.message_media_batch(session_tag, keys)
+    try:
+        found = store.message_media_batch(session_tag, keys)
+    except Exception:
+        from .runtime import logger
+        logger.warning("[Album] 历史图片引用暂时读不到，保留原消息", exc_info=True)
+        return messages
     return [{**m, "media": found[key]} if key in found else m
             for m, (role, event_id) in zip(messages, keys)
             for key in [f"{role}:{event_id}"]]
 
 
-def hydrate_album_views(messages: list[dict], store: Any) -> list[dict]:
-    """Resolve trusted tool view intents transiently, never into saved history."""
+def hydrate_album_views(
+    messages: list[dict], store: Any, *, view_cache: dict[tuple[str, str], dict] | None = None,
+) -> list[dict]:
+    """Freeze each observation for this request, without changing its transcript.
+
+    The tool loop owns the memo locally, never in serializable request metadata.
+    Both success and failure belong to a call ID; a new open can retry without
+    rewriting the old observation. A standalone/pending handoff resolves once.
+    """
+    resolved = view_cache if view_cache is not None else {}
     result = []
     for message in messages:
         photo_id = message.get(ALBUM_VIEW_KEY)
@@ -196,14 +214,21 @@ def hydrate_album_views(messages: list[dict], store: Any) -> list[dict]:
             result.append(message)
             continue
         clean = {k: v for k, v in message.items() if k not in {ALBUM_VIEW_KEY, TOOL_IMAGES_KEY}}
-        try:
-            photo = store.album_photo_bytes(photo_id)
-            if not photo or not photo["bytes"] or photo["mime"] not in PHOTO_MIME_TYPES:
-                raise ValueError("photo unavailable")
-            clean[TOOL_IMAGES_KEY] = [{"type": "image_url", "image_url": {
-                "url": f"data:{photo['mime']};base64,{base64.b64encode(photo['bytes']).decode()}",
-            }}]
-        except Exception:
-            clean["content"] = json.dumps({"ok": False, "error": "本次没能读取照片，尚未看到画面。"}, ensure_ascii=False)
+        key = (str(message.get("tool_call_id") or ""), photo_id)
+        if key not in resolved:
+            try:
+                photo = store.album_photo_bytes(photo_id)
+                if not photo or not photo["bytes"] or photo["mime"] not in PHOTO_MIME_TYPES:
+                    raise ValueError("photo unavailable")
+                resolved[key] = {TOOL_IMAGES_KEY: [{"type": "image_url", "image_url": {
+                    "url": f"data:{photo['mime']};base64,{base64.b64encode(photo['bytes']).decode()}",
+                }}]}
+            except Exception:
+                resolved[key] = {"content": json.dumps(
+                    {"ok": False, "error": "本次没能读取照片，尚未看到画面。"}, ensure_ascii=False,
+                )}
+        # Adapters may annotate content blocks; never let one payload mutate
+        # the memo used for an earlier prefix in the next tool round.
+        clean.update(deepcopy(resolved[key]))
         result.append(clean)
     return result

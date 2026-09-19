@@ -1,0 +1,454 @@
+{
+  "raw": {
+    "live": "live-image-for-slot-contract",
+    "expired": "expired-image-for-slot-contract"
+  },
+  "attachments": {
+    "live": {
+      "id": "live",
+      "name": "live.jpg",
+      "mime": "image/jpeg",
+      "fingerprint": "495e79ad2ff8f9170659c568d5af7f0443f7776894520b46491fcdb069e8412b",
+      "dataUrl": "data:image/jpeg;base64,bGl2ZS1pbWFnZS1mb3Itc2xvdC1jb250cmFjdA=="
+    },
+    "expired": {
+      "id": "expired",
+      "name": "expired.jpg",
+      "mime": "image/jpeg",
+      "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302"
+    },
+    "cleared": {
+      "id": "cleared",
+      "name": "cleared.jpg",
+      "mime": "image/jpeg"
+    }
+  },
+  "cases": [
+    {
+      "order": [
+        "live",
+        "expired"
+      ],
+      "wire": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "配图文字"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/jpeg;base64,bGl2ZS1pbWFnZS1mb3Itc2xvdC1jb250cmFjdA=="
+            }
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "shenyu_expired_image",
+              "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302"
+            }
+          }
+        ],
+        "media": [
+          {
+            "id": "live",
+            "name": "live.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "495e79ad2ff8f9170659c568d5af7f0443f7776894520b46491fcdb069e8412b",
+            "image_index": 0
+          },
+          {
+            "id": "expired",
+            "name": "expired.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302",
+            "image_index": 1
+          }
+        ],
+        "archive_event": {
+          "id": "u-live-expired",
+          "event_at": "2026-09-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "order": [
+        "expired",
+        "live"
+      ],
+      "wire": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "配图文字"
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "shenyu_expired_image",
+              "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302"
+            }
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/jpeg;base64,bGl2ZS1pbWFnZS1mb3Itc2xvdC1jb250cmFjdA=="
+            }
+          }
+        ],
+        "media": [
+          {
+            "id": "expired",
+            "name": "expired.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302",
+            "image_index": 0
+          },
+          {
+            "id": "live",
+            "name": "live.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "495e79ad2ff8f9170659c568d5af7f0443f7776894520b46491fcdb069e8412b",
+            "image_index": 1
+          }
+        ],
+        "archive_event": {
+          "id": "u-expired-live",
+          "event_at": "2026-09-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "order": [
+        "live",
+        "expired",
+        "cleared"
+      ],
+      "wire": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "配图文字"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/jpeg;base64,bGl2ZS1pbWFnZS1mb3Itc2xvdC1jb250cmFjdA=="
+            }
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "shenyu_expired_image",
+              "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302"
+            }
+          }
+        ],
+        "media": [
+          {
+            "id": "live",
+            "name": "live.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "495e79ad2ff8f9170659c568d5af7f0443f7776894520b46491fcdb069e8412b",
+            "image_index": 0
+          },
+          {
+            "id": "expired",
+            "name": "expired.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302",
+            "image_index": 1
+          },
+          {
+            "id": "cleared",
+            "name": "cleared.jpg",
+            "mime": "image/jpeg",
+            "image_index": null
+          }
+        ],
+        "archive_event": {
+          "id": "u-live-expired-cleared",
+          "event_at": "2026-09-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "order": [
+        "live",
+        "cleared",
+        "expired"
+      ],
+      "wire": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "配图文字"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/jpeg;base64,bGl2ZS1pbWFnZS1mb3Itc2xvdC1jb250cmFjdA=="
+            }
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "shenyu_expired_image",
+              "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302"
+            }
+          }
+        ],
+        "media": [
+          {
+            "id": "live",
+            "name": "live.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "495e79ad2ff8f9170659c568d5af7f0443f7776894520b46491fcdb069e8412b",
+            "image_index": 0
+          },
+          {
+            "id": "cleared",
+            "name": "cleared.jpg",
+            "mime": "image/jpeg",
+            "image_index": null
+          },
+          {
+            "id": "expired",
+            "name": "expired.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302",
+            "image_index": 1
+          }
+        ],
+        "archive_event": {
+          "id": "u-live-cleared-expired",
+          "event_at": "2026-09-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "order": [
+        "expired",
+        "live",
+        "cleared"
+      ],
+      "wire": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "配图文字"
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "shenyu_expired_image",
+              "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302"
+            }
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/jpeg;base64,bGl2ZS1pbWFnZS1mb3Itc2xvdC1jb250cmFjdA=="
+            }
+          }
+        ],
+        "media": [
+          {
+            "id": "expired",
+            "name": "expired.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302",
+            "image_index": 0
+          },
+          {
+            "id": "live",
+            "name": "live.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "495e79ad2ff8f9170659c568d5af7f0443f7776894520b46491fcdb069e8412b",
+            "image_index": 1
+          },
+          {
+            "id": "cleared",
+            "name": "cleared.jpg",
+            "mime": "image/jpeg",
+            "image_index": null
+          }
+        ],
+        "archive_event": {
+          "id": "u-expired-live-cleared",
+          "event_at": "2026-09-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "order": [
+        "expired",
+        "cleared",
+        "live"
+      ],
+      "wire": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "配图文字"
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "shenyu_expired_image",
+              "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302"
+            }
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/jpeg;base64,bGl2ZS1pbWFnZS1mb3Itc2xvdC1jb250cmFjdA=="
+            }
+          }
+        ],
+        "media": [
+          {
+            "id": "expired",
+            "name": "expired.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302",
+            "image_index": 0
+          },
+          {
+            "id": "cleared",
+            "name": "cleared.jpg",
+            "mime": "image/jpeg",
+            "image_index": null
+          },
+          {
+            "id": "live",
+            "name": "live.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "495e79ad2ff8f9170659c568d5af7f0443f7776894520b46491fcdb069e8412b",
+            "image_index": 1
+          }
+        ],
+        "archive_event": {
+          "id": "u-expired-cleared-live",
+          "event_at": "2026-09-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "order": [
+        "cleared",
+        "live",
+        "expired"
+      ],
+      "wire": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "配图文字"
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/jpeg;base64,bGl2ZS1pbWFnZS1mb3Itc2xvdC1jb250cmFjdA=="
+            }
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "shenyu_expired_image",
+              "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302"
+            }
+          }
+        ],
+        "media": [
+          {
+            "id": "cleared",
+            "name": "cleared.jpg",
+            "mime": "image/jpeg",
+            "image_index": null
+          },
+          {
+            "id": "live",
+            "name": "live.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "495e79ad2ff8f9170659c568d5af7f0443f7776894520b46491fcdb069e8412b",
+            "image_index": 0
+          },
+          {
+            "id": "expired",
+            "name": "expired.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302",
+            "image_index": 1
+          }
+        ],
+        "archive_event": {
+          "id": "u-cleared-live-expired",
+          "event_at": "2026-09-19T00:00:00Z"
+        }
+      }
+    },
+    {
+      "order": [
+        "cleared",
+        "expired",
+        "live"
+      ],
+      "wire": {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "配图文字"
+          },
+          {
+            "type": "image",
+            "source": {
+              "type": "shenyu_expired_image",
+              "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302"
+            }
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/jpeg;base64,bGl2ZS1pbWFnZS1mb3Itc2xvdC1jb250cmFjdA=="
+            }
+          }
+        ],
+        "media": [
+          {
+            "id": "cleared",
+            "name": "cleared.jpg",
+            "mime": "image/jpeg",
+            "image_index": null
+          },
+          {
+            "id": "expired",
+            "name": "expired.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "2c28408da82baa26d19f6a07282b2ee9ce81f4bd835f13e71ab15c7a745b2302",
+            "image_index": 0
+          },
+          {
+            "id": "live",
+            "name": "live.jpg",
+            "mime": "image/jpeg",
+            "fingerprint": "495e79ad2ff8f9170659c568d5af7f0443f7776894520b46491fcdb069e8412b",
+            "image_index": 1
+          }
+        ],
+        "archive_event": {
+          "id": "u-cleared-expired-live",
+          "event_at": "2026-09-19T00:00:00Z"
+        }
+      }
+    }
+  ]
+}

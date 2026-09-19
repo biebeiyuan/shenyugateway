@@ -7,7 +7,7 @@ import uuid
 from typing import Any, Optional
 
 from ..runtime import iso_now
-from ..album_media import MAX_MEDIA_ITEMS, clean_media, photo_reference
+from ..album_media import MAX_MEDIA_ITEMS, PHOTO_MIME_TYPES, clean_media, photo_reference
 
 # 沈予的相册。跟聊天里随手发的图是两回事：聊天图只留最近 30 张、过期就清；
 # 相册是他自己挑出来放进去的，不限张数、不会过期。
@@ -41,10 +41,16 @@ class AlbumMixin:
                 return existing
             book_id = f"albm_{uuid.uuid4().hex[:12]}"
             conn.execute(
-                "INSERT INTO album_books (id, name, created_at) VALUES (?, ?, ?)",
+                """INSERT INTO album_books (id, name, created_at) VALUES (?, ?, ?)
+                   ON CONFLICT(name) DO NOTHING""",
                 (book_id, book_name, iso_now()),
             )
-            return {"id": book_id, "name": book_name, "created_at": iso_now()}
+            # Another saver may have created this name after our first read.
+            # Read its canonical row; never REPLACE a book with existing photos.
+            book = self._album_book_row(conn, book_name)
+            if book is None:
+                raise RuntimeError("相册创建后未能读回。")
+            return book
 
     def save_album_photo(
         self,
@@ -61,6 +67,9 @@ class AlbumMixin:
             raise ValueError("photo bytes are required.")
         if len(raw) > MAX_PHOTO_BYTES:
             raise ValueError(f"photo is larger than {MAX_PHOTO_BYTES} bytes.")
+        mime = str(mime or "image/jpeg").partition(";")[0].strip().lower()
+        if mime not in PHOTO_MIME_TYPES:
+            raise ValueError("这张照片的格式暂时不能保存，请使用 JPEG、PNG、WebP 或 GIF。")
         book = self.ensure_album_book(book_name)
         photo_id = f"phot_{uuid.uuid4().hex[:12]}"
         digest = str(fingerprint or "").strip() or photo_fingerprint(raw)
@@ -204,7 +213,9 @@ class AlbumMixin:
         with self._connect() as conn:
             for position, item in enumerate(clean_media(media)):
                 conn.execute(
-                    "INSERT OR IGNORE INTO album_message_media VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    """INSERT OR IGNORE INTO album_message_media
+                       (session_tag, event_id, role, item_id, position, metadata_json, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
                     (session_tag, event_id, role, item["id"], position,
                      json.dumps(item, ensure_ascii=False), iso_now()),
                 )
@@ -233,7 +244,9 @@ class AlbumMixin:
             if len(rows) >= MAX_MEDIA_ITEMS:
                 raise ValueError("这次回复已经放了九张照片，先把这些给圆圆看。")
             conn.execute(
-                "INSERT INTO album_message_media VALUES (?, ?, 'assistant', ?, ?, ?, ?)",
+                """INSERT INTO album_message_media
+                   (session_tag, event_id, role, item_id, position, metadata_json, created_at)
+                   VALUES (?, ?, 'assistant', ?, ?, ?, ?)""",
                 (session_tag, event_id, share_id, len(rows), json.dumps(media, ensure_ascii=False), iso_now()),
             )
         return media
