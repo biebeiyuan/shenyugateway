@@ -542,6 +542,49 @@ def test_history_event_keeps_real_earlier_text_edit_as_branch_after_shape_normal
     assert event["transient_history_changes_ignored"] is False
 
 
+
+def test_pwa_gateway_window_contract_uses_shared_boundary_fixture():
+    import json
+    from pathlib import Path
+
+    fixture = json.loads(
+        (Path(__file__).parent / "fixtures" / "pwa_window_contract.json").read_text(encoding="utf-8")
+    )
+    limit = fixture["client_message_limit"]
+    high_water = fixture["context_high_water"]
+    counts = fixture["outbound_counts"]
+    assert limit == 168
+    assert high_water == 200
+    assert counts == [167, 169, 199, 201]
+
+    state = None
+    first_epoch = None
+    for index, count in enumerate(counts):
+        messages = _alternating_history(count)
+        retained, next_state, meta = select_chunked_window(
+            messages,
+            limit=limit,
+            previous_state=state,
+            event_class="initial" if state is None else "new_user",
+        )
+        assert meta["context_high_water"] == high_water
+        if count < high_water:
+            assert [message["content"] for message in retained] == [
+                message["content"] for message in messages
+            ]
+            if first_epoch is None:
+                first_epoch = next_state["epoch_id"]
+            else:
+                assert next_state["epoch_id"] == first_epoch
+            assert meta["context_epoch_reset"] is False
+        else:
+            assert count == 201
+            assert len(retained) <= limit
+            assert retained[0]["content"] != "m0"
+            assert next_state["epoch_id"] != first_epoch
+            assert meta["context_epoch_reset_reason"] == "message_high_water"
+        state = next_state
+
 def test_chunked_window_keeps_start_until_high_water_then_resets():
     messages = [{"role": "user", "content": f"m{index}"} for index in range(170)]
     first, state, meta = select_chunked_window(
