@@ -1,7 +1,8 @@
 import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
-const appSource = readFileSync(new URL('../src/App.vue', import.meta.url), 'utf8')
+const appSource = readFileSync(resolve(process.cwd(), 'src/App.vue'), 'utf8')
 
 describe('stream checkpoint wiring', () => {
   it('keeps ordinary stream checkpoints at the old three-second cadence without weakening safety checkpoints', () => {
