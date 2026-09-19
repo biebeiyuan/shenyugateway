@@ -4,43 +4,25 @@ on:
     branches: [work/album-offline-workbench]
     paths: [.github/workflows/album-offline-workbench.yml]
 permissions:
-  contents: write
+  contents: read
 jobs:
-  publish-review-fixes:
+  export-final-source:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
-          path: transfer
+          ref: 4c13056ab18c6c08efb19c74647cacef34d21189
           persist-credentials: false
-      - name: Verify exact locally tested patch
+          fetch-depth: 0
+      - name: Export source without credentials or runtime data
         run: |
-          python - <<'PY'
-          import base64, hashlib, lzma
-          from pathlib import Path
-          encoded = ''.join(Path(f'transfer/.github/album-patch/review{i}.b64').read_text().strip() for i in (1, 2))
-          patch = lzma.decompress(base64.b64decode(encoded, validate=True))
-          assert hashlib.sha256(patch).hexdigest() == '9c08bc58ad2c595e756f245c3df5662df419caefbaf187ebb5f517425b0eded7'
-          Path('/tmp/album-review.patch').write_bytes(patch)
-          PY
-      - uses: actions/checkout@v4
+          git bundle create /tmp/album-final-source.bundle HEAD
+          git rev-parse HEAD HEAD^{tree} > /tmp/album-final-source.txt
+      - uses: actions/upload-artifact@v4
         with:
-          ref: feat/album-references-sharing
-          path: source
-      - name: Publish only to the existing feature branch
-        working-directory: source
-        run: |
-          test "$(git rev-parse HEAD)" = '37690c6730b6a0fd8b672d6d0e01db4e3343c699'
-          git apply --check --unidiff-zero /tmp/album-review.patch
-          git apply --index --unidiff-zero /tmp/album-review.patch
-          test "$(git write-tree)" = 'ddc6bcaf166ca4ee7ed95b296868e090c496b0c9'
-          git diff --cached --check
-          # The final small file is written through the owner-authorized connector
-          # so normal PR CI runs on the complete tested tree (bot pushes do not).
-          git restore --source=HEAD --staged --worktree shenyu_gateway/context_snapshots.py
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'fix: album review boundaries, stable observations and recovery errors'
-          git push origin HEAD:refs/heads/feat/album-references-sharing
-          printf 'Feature commit: %s\nFinal context snapshot fix pending connector write.\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
+          name: album-final-source
+          path: |
+            /tmp/album-final-source.bundle
+            /tmp/album-final-source.txt
+          retention-days: 1
