@@ -136,3 +136,23 @@ describe('shared image-slot contract with the gateway', () => {
     })
   }
 })
+
+it('renders broker failures as blocked without creating a photo attachment', async () => {
+  const { toolWarmCopy, toolState } = await import('../src/toolLanguage')
+  const { processSummary, formatToolOutput } = await import('../src/stream/timeline')
+  const m = message()
+  const failed = { ...shareEvent, name: 'shenyu_gateway_tool', target_tool: 'shenyu_album_send',
+    ok: false, photo: undefined, reply_version_id: undefined, error_kind: 'validation',
+    output: JSON.stringify({ok: false, error: '这次回复已经放了九张照片，先把这些给圆圆看。', ps: '保留原有提示'}) }
+  appendToolEvent(m, {...failed, phase: 'tool_start', ok: undefined, output: undefined})
+  appendToolEvent(m, failed)
+  expect(m.attachments).toHaveLength(0)
+  expect(toolWarmCopy(failed)).toBe('这张照片没能发出来')
+  expect(toolState(failed)).toBe('遇到一点阻塞')
+  expect(formatToolOutput(failed)).toContain('九张照片')
+  expect(processSummary({ textOffset: 0, echo: [], thinking: [], tools: [failed] })).toContain('没能发出来')
+  const success = {...shareEvent, name: 'shenyu_gateway_tool', target_tool: 'shenyu_album_send'}
+  appendToolEvent(m, success)
+  expect(m.attachments).toHaveLength(1)
+  expect(m.attachments[0].photoId).toBe(photo.photo_id)
+})

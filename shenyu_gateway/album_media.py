@@ -133,7 +133,10 @@ def retain_request_media(messages: list[dict], session_tag: str, store: Any) -> 
                 item.pop("fingerprint", None)
         # Old snapshots can carry metadata but no pixels. Keep the association,
         # not a newly invented image; IDs are immutable within an archive event.
-        metadata = metadata or incoming
+        # Apply the same boundary before both in-memory use and persistence.
+        # Malformed slots may add synthetic rows; a failed store/readback must
+        # not leave a different, oversized media shape in the transcript.
+        metadata = clean_media(metadata or incoming)
         if metadata:
             message["media"] = metadata
             try:

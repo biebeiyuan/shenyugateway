@@ -121,3 +121,40 @@ test('PWA distinguishes a temporary photo load error and retries',async({page})=
   await expect(page.locator('.message-row.assistant .message-images img')).toHaveCount(1)
   expect(state.errors).toEqual([])
 })
+
+// Browser consumer of the canonical broker events; gateway tests exercise
+// the producer and assert that model output, error kind and ps stay identical.
+test('PWA broker share failure shows the reason and never attaches a photo', async ({page}) => {
+  await page.setViewportSize({width:390,height:844})
+  const state = await setup(page)
+  const reason = '这次回复已经放了九张照片，先把这些给圆圆看。'
+  const ps = '圆儿ps:予予仔细看有没有暴露给你正确的方法呀，没有的话一会告诉我！又抓到家里的bug了！'
+  await page.route('**/v1/chat/completions', route => {
+    const body = route.request().postDataJSON()
+    expect(route.request().headers()['x-shenyu-tool-details']).toBe('true')
+    const common = {name:'shenyu_gateway_tool',target_tool:'shenyu_album_send',tool_call_id:'failed-share'}
+    const start = {...common,phase:'tool_start',input:{tool:'album_send',params:{photo_id:'phot_one'}}}
+    const end = {...start,phase:'tool_end',ok:false,error_kind:'validation',
+      output:JSON.stringify({ok:false,error:reason,error_kind:'validation',ps})}
+    expect(body.metadata.reply_version_id).toBeTruthy()
+    return route.fulfill({contentType:'text/event-stream',body:
+      [start,end].map(event => `event: shenyu_tool\ndata: ${JSON.stringify({type:'shenyu.tool_event',event})}\n\n`).join('') +
+      `data: ${JSON.stringify({choices:[{delta:{content:'这些先给你看。'}}]})}\n\ndata: [DONE]\n\n`})
+  })
+  await page.goto(`${BASE}/chat/`)
+  await expect(page.locator('.message-images img')).toHaveCount(2)
+  await page.locator('textarea').first().fill('发一张相册给我')
+  await page.getByRole('button',{name:'发送',exact:true}).click()
+  const reply = page.locator('.message-row.assistant').last()
+  await expect(reply).toContainText('这些先给你看。')
+  await expect(reply.locator('.message-images img')).toHaveCount(0)
+  await expect(reply.locator('.process-strip')).toContainText('这张照片没能发出来')
+  await reply.locator('.process-strip').click()
+  const step = page.locator('.process-timeline-item').filter({hasText:'album send'})
+  await expect(step).toHaveCount(1)
+  await expect(step).toContainText('遇到一点阻塞')
+  await step.click()
+  await expect(page.locator('.process-code').last()).toContainText(reason)
+  await expect(page.locator('.process-code').last()).toContainText(ps)
+  expect(state.errors).toEqual([])
+})

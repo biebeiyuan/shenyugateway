@@ -2519,3 +2519,15 @@ def test_daily_surface_names_all_exist_in_tool_schemas():
     }
     unknown = DAILY_GATEWAY_TOOL_NAMES - schema_names
     assert not unknown, f"DAILY_GATEWAY_TOOL_NAMES has entries with no schema: {sorted(unknown)}"
+
+
+@pytest.mark.parametrize('surface', ['full', 'daily'])
+def test_album_actions_are_discoverable_in_the_broker_surface(surface):
+    tools = gateway_native_tools(_cfg(gateway_tool_surface=surface))
+    broker = next(tool['function'] for tool in tools if tool['function']['name'] == 'shenyu_gateway_tool')
+    names = set(broker['parameters']['properties']['tool']['enum'])
+    assert {'shenyu_album_save', 'shenyu_album_list', 'shenyu_album_open', 'shenyu_album_send'} <= names
+    for short in ['album_list', 'album_open', 'album_send']:
+        assert _mentioned_as_own_word(short, broker['description'])
+    assert 'cursor' in broker['description']
+    assert '不必先 open' in broker['description']

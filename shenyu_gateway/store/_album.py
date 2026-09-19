@@ -85,7 +85,7 @@ class AlbumMixin:
                 (
                     photo_id,
                     book["id"],
-                    str(mime or "image/jpeg"),
+                    mime,
                     raw,
                     len(raw),
                     digest,
@@ -99,7 +99,7 @@ class AlbumMixin:
             "id": photo_id,
             "book_id": book["id"],
             "book_name": book["name"],
-            "mime": str(mime or "image/jpeg"),
+            "mime": mime,
             "byte_size": len(raw),
             "fingerprint": digest,
             "note": str(note or "").strip(),

@@ -244,21 +244,21 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "d7e4487859062062da4368cdac43805c6b046f2c589bfac169ba972185e29b6c",
+        "fingerprint": "e14f2e26531d8e00b2c4982aec0281ef3797f792871641ed453279da205dee76",
         "file_hashes": {
           "pwa/src/session/media.ts": "0304cabcabf093fe489c00e0d4ec886738aaf6babc09e854d67dc582c81e9af8",
           "pwa/src/session/photoLoader.ts": "0755054c68241683c53fadcd4390a06ff7c5dc7b5a5eab7be71c205a62b55f2a",
-          "shenyu_gateway/album_media.py": "cbb6129a314f2bda1926106181c249b7076476700918e4f3778fb4e96c8a3eca",
+          "shenyu_gateway/album_media.py": "31026f6c319bc062bf0261f6c9f947ee47607dade36750e29aa2d58333b26648",
           "shenyu_gateway/context_layers.py": "7f50744b1d929134f6fb0a783253f65e09c42ee49351d1ad3586839d9184ee86",
           "shenyu_gateway/gateway_tools/_album.py": "b866c08a8b8c70b3519e23b6d3a694b2368f41556b3e8e8fa25307d4f70977c5",
-          "shenyu_gateway/store/_album.py": "218171074dcf196f06c5bc142ba730ce4f0fb37bf3b9a875e99805284d3540f8",
+          "shenyu_gateway/store/_album.py": "2bdd0fbd1e03ea9ee984ff53a0cfe611e9ac5e460beef76d1666b5d83ac075ee",
           "shenyu_gateway/tool_schemas.py": "77b47555d95f4c1b63163cdb81e491b2a0a5b32723b592cabb0dec0a4d030209"
         },
-        "commit": "37690c6730b6a0fd8b672d6d0e01db4e3343c699",
-        "revision": "37690c6730b6a0fd8b672d6d0e01db4e3343c699-dirty",
+        "commit": "4c13056ab18c6c08efb19c74647cacef34d21189",
+        "revision": "4c13056ab18c6c08efb19c74647cacef34d21189-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-19T10:44:34+08:00",
-        "reviewed_by": "ChatGPT"
+        "reviewed_at": "2026-09-19T11:37:22+08:00",
+        "reviewed_by": "resident-agent"
       }
     },
     "orchard": {

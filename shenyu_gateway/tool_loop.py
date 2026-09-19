@@ -290,7 +290,9 @@ def _record_tool_event(
         "phase": phase,
         "tool_call_id": str(tool_call.get("id") or ""),
         "name": name,
-        "target_tool": _target_tool_name(name, args),
+        # Resolve aliases once for every phase/outcome, not only a successful
+        # photo effect. The event name follows the same broker as execution.
+        "target_tool": _broker_target_name(args, ctx.cfg) if name == "shenyu_gateway_tool" else name,
         "round": round_index + 1,
     }
     order_key = str(tool_call.get("id") or f"{name}:{round_index}")
@@ -308,9 +310,6 @@ def _record_tool_event(
         if isinstance(result, dict) and result.get("error_kind"):
             event["error_kind"] = str(result["error_kind"])
         if isinstance(result, AlbumToolResult) and result.shared_media:
-            # The broker accepts short aliases too; the client consumes one
-            # canonical effect name, not whichever alias the caller spelled.
-            event["target_tool"] = "shenyu_album_send"
             event["photo"] = dict(result.shared_media)
             event["reply_version_id"] = ctx.meta["reply_archive_event"]["id"]
     if _tool_event_details_enabled(ctx):

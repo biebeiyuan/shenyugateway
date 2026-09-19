@@ -283,3 +283,62 @@ def test_metadata_only_user_restore_is_fingerprint_driven_not_client_photo_id(tm
     assert user['media'][0]['photo_id'] == saved['id']
     assert user['media'][0]['content'] == '当时写的'
     assert len(store.list_album_photos()) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('mode', ['direct', 'broker', 'short-broker'])
+@pytest.mark.parametrize('action', ['open', 'send'])
+@pytest.mark.parametrize('success', [False, True])
+async def test_album_event_name_is_canonical_at_start_and_end(tmp_path, mode, action, success):
+    from shenyu_gateway.tool_loop import _record_tool_event
+
+    store = _store(tmp_path)
+    ctx = album_context(store)
+    ctx.meta['client_profile']['emit_tool_event_details'] = True
+    photo = store.save_album_photo(raw=b'fixture photo')
+    call = album_call(action, photo['id'] if success else 'phot_missing', 'call', mode)
+    start = _record_tool_event(ctx, phase='tool_start', tool_call=call,
+                              name=call['function']['name'], round_index=0)
+    result, _, name, _, _ = await _execute_internal_tool_call(ctx, call, {}, log_label='test')
+    end = _record_tool_event(ctx, phase='tool_end', tool_call=call,
+                            name=name, round_index=0, result=result)
+    assert start['target_tool'] == end['target_tool'] == f'shenyu_album_{action}'
+    assert end['ok'] is success
+    assert json.loads(end['output'])['ok'] is success
+    if not success:
+        assert end['error_kind'] == 'not_found'
+        assert '不在相册' in json.loads(end['output'])['error']
+        assert 'ps' in json.loads(end['output'])
+        assert 'photo' not in end and 'reply_version_id' not in end
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('reason', ['limit', 'storage', 'malformed'])
+async def test_broker_share_failures_reach_model_and_client_without_a_photo(tmp_path, monkeypatch, reason):
+    from shenyu_gateway.tool_loop import _record_tool_event
+
+    store = _store(tmp_path)
+    ctx = album_context(store)
+    ctx.meta['client_profile']['emit_tool_event_details'] = True
+    photo = store.save_album_photo(raw=b'fixture photo')
+    call = album_call('send', photo['id'], 'new-share', 'short-broker')
+    if reason == 'limit':
+        for n in range(9):
+            store.record_album_share('s', 'reply', f'old-{n}', photo['id'])
+        kind, text = 'validation', '九张照片'
+    elif reason == 'storage':
+        monkeypatch.setattr(store, 'record_album_share', fail_media_lookup)
+        kind, text = 'exception', '没能把照片放进回复'
+    else:
+        call['function']['arguments'] = json.dumps({'tool': 'album_send', 'params': '{broken'})
+        kind, text = 'malformed_arguments', 'JSON 解析失败'
+    result, _, name, _, _ = await _execute_internal_tool_call(ctx, call, {}, log_label='test')
+    end = _record_tool_event(ctx, phase='tool_end', tool_call=call, name=name,
+                            round_index=0, result=result)
+    assert end['target_tool'] == 'shenyu_album_send'
+    assert end['ok'] is False and end['error_kind'] == kind
+    output = json.loads(end['output'])
+    assert text in output['error'] and 'ps' in output
+    assert json.loads(_tool_result_message(call, name, result)['content']) == output
+    assert 'photo' not in end and 'reply_version_id' not in end
+    assert not ctx.meta.get('album_shared_media')
