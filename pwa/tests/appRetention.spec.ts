@@ -262,7 +262,9 @@ it('sends the full pre-target history while keeping the full local transcript', 
 it('releases the clean DONE UI before the final local tail save resolves', async () => {
   const { state } = mount(); await flush()
   let releaseFinal!: (revision: number) => void
-  vi.spyOn(TranscriptStore.prototype, 'save').mockImplementation(() => new Promise(resolve => { releaseFinal = resolve }))
+  vi.spyOn(TranscriptStore.prototype, 'saveTail')
+    .mockResolvedValueOnce(1)
+    .mockImplementationOnce(() => new Promise(resolve => { releaseFinal = resolve }))
   const normalFetch = globalThis.fetch
   vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
     if (String(input).includes('/v1/chat/completions')) {
@@ -401,7 +403,8 @@ it('does not treat an explicit upstream stream failure as a recoverable backgrou
 it('keeps active text streaming free of full transcript checkpoints', async () => {
   const { state } = mount(); await flush()
   const save = vi.spyOn(TranscriptStore.prototype, 'save')
-  save.mockClear()
+  const saveTail = vi.spyOn(TranscriptStore.prototype, 'saveTail')
+  save.mockClear(); saveTail.mockClear()
   const normalFetch = globalThis.fetch
   let closeStream!: () => void
   const encoder = new TextEncoder()
@@ -428,13 +431,15 @@ it('keeps active text streaming free of full transcript checkpoints', async () =
   }
   expect(state.messages.at(-1)?.content).toBe('one')
   expect(save).not.toHaveBeenCalled()
+  const tailCallsDuringStream = saveTail.mock.calls.length
 
   closeStream()
   await sending; await flush()
   expect(state.messages.at(-1).content).toBe('onetwo')
   expect(state.messages.at(-1).truncated).toBeUndefined()
   expect(state.messages.at(-1).error).toBeUndefined()
-  expect(save).toHaveBeenCalled()
+  expect(save).not.toHaveBeenCalled()
+  expect(saveTail.mock.calls.length).toBeGreaterThan(tailCallsDuringStream)
 })
 
 it('uses a lightweight inflight receipt to recover a stream after a process restart', async () => {
