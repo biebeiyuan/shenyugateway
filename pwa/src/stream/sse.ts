@@ -103,7 +103,7 @@ export function parseSseFrame(frame: string, assistant: UiMessage): boolean {
       if (event) appendToolEvent(assistant, event)
       return false
     }
-    if (payload.error) throw new Error(String(payload.error.message || payload.error))
+    if (payload.error) throw new SseStreamError(String(payload.error.message || payload.error), payload.error.recoverable === true)
     const delta = payload.choices?.[0]?.delta || {}
     if (typeof delta.content === 'string') assistant.content += delta.content
     if (typeof delta.reasoning_content === 'string') appendThinking(assistant, delta.reasoning_content)
@@ -114,6 +114,13 @@ export function parseSseFrame(frame: string, assistant: UiMessage): boolean {
     if (error instanceof Error && error.message) throw error
   }
   return false
+}
+
+export class SseStreamError extends Error {
+  constructor(message: string, readonly recoverable = false) {
+    super(message)
+    this.name = 'SseStreamError'
+  }
 }
 
 export const SSE_STALL_ERROR = '连接停滞，可能已断开'
