@@ -314,7 +314,7 @@ function persistMessages(): Promise<boolean> {
 }
 
 // During streaming, submit checkpoints while the page is alive; pagehide is only supplemental.
-const STREAM_PERSIST_INTERVAL_MS = 3_000
+const STREAM_PERSIST_INTERVAL_MS = 1_000
 let lastStreamPersistAt = 0
 
 function onStreamChunkEnd() {
@@ -324,13 +324,6 @@ function onStreamChunkEnd() {
     lastStreamPersistAt = now
     persistMessages()
   }
-}
-
-function onMessageStreamScroll() {
-  // Streaming auto-follow changes scrollTop on every network chunk. Treating
-  // those programmatic scroll events as reading-position edits creates a
-  // second persistence path that bypasses the stream checkpoint cadence.
-  if (!busy.value) transcript.scheduleSave()
 }
 
 function clientContext(): RequestContext {
@@ -916,17 +909,7 @@ function forgetExpiredPhotos(removedIds: string[]) {
 
 // Shared photos use the same visible attachment slots, but their bytes come
 // from the server album and never enter the ordinary cache or next request.
-let photoReferencesDirtyWhileBusy = false
-const photoLoader = createPhotoLoader(clientContext, () => messages.value, () => {
-  // Resolving references can coincide with an active text stream. The reply's
-  // final checkpoint will capture changes that arrived before it; only changes
-  // racing that final write need one deferred follow-up afterward.
-  if (busy.value) {
-    photoReferencesDirtyWhileBusy = true
-    return
-  }
-  void persistMessages()
-})
+const photoLoader = createPhotoLoader(clientContext, () => messages.value, persistMessages)
 async function restoreLocalPhotos() {
   if (!storageReady.value) return
   const generation = openGeneration
@@ -1080,10 +1063,6 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     }
     if (!await persistMessages()) throw new Error('本机未能保存这次发送，尚未发出请求。请先保留当前页面。')
     if (useStreaming) {
-      // The durable pre-send checkpoint already saved the outgoing turn and
-      // reply identity. Start the ordinary stream interval here so the first
-      // visible chunk is not immediately followed by another full snapshot.
-      lastStreamPersistAt = Date.now()
       const stream = await postChatStream(clientContext(), body, activeController.signal)
       // 3 分钟看门狗：Doze/NAT 让 socket 静默死亡时解锁 UI，交给 reconcile 找回。
       const { sawDone } = await pumpSseStream(stream, (frame) => {
@@ -1133,16 +1112,8 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       errorNotice.value = assistant.error
     }
   } finally {
-    // Anything the photo resolver changed before this point is captured here.
-    // Reset first so a resolver that finishes while this write is in flight can
-    // request one post-stream follow-up without writing during streaming.
-    photoReferencesDirtyWhileBusy = false
     await persistMessages()
     busy.value = false
-    if (photoReferencesDirtyWhileBusy) {
-      photoReferencesDirtyWhileBusy = false
-      void persistMessages()
-    }
     activeController = null
     activeAssistantId = null
     status.value = ''
@@ -1519,7 +1490,7 @@ onUnmounted(() => {
       </header>
 
 
-      <section ref="streamRef" class="message-stream" @scroll.passive="onMessageStreamScroll">
+      <section ref="streamRef" class="message-stream" @scroll.passive="transcript.scheduleSave">
         <div v-if="isEmpty" class="welcome-panel">
           <img class="welcome-mark" :src="brandMarkUrl" alt="Claude" />
           <h1>What's on your mind?</h1>
