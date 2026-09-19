@@ -400,6 +400,94 @@ it('does not treat an explicit upstream stream failure as a recoverable backgrou
   expect(state.errorNotice).toContain('peer closed connection')
 })
 
+it('does not call reply recovery on a healthy reopen without an inflight receipt', async () => {
+  const history = [row('user', 'u1', 'question'), row('assistant', 'r1', 'complete answer')]
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify(history))
+  const normalFetch = globalThis.fetch
+  const calls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    calls.push(url.pathname)
+    return normalFetch(input, options)
+  }))
+
+  mount(); await flush(); await new Promise(resolve => setTimeout(resolve, 60))
+  expect(calls.some(path => path.startsWith('/api/gateway/sessions/A'))).toBe(true)
+  expect(calls.filter(path => path.endsWith('/reply-recovery'))).toHaveLength(0)
+})
+
+it('does not recover a stale truncated marker without the exact inflight receipt', async () => {
+  const partial = row('assistant', 'r1', 'old partial')
+  partial.truncated = true
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify([row('user', 'u1', 'question'), partial]))
+  const normalFetch = globalThis.fetch
+  const calls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    calls.push(url.pathname)
+    return normalFetch(input, options)
+  }))
+
+  const { state } = mount(); await flush(); await new Promise(resolve => setTimeout(resolve, 60))
+  expect(state.messages.at(-1)?.content).toBe('old partial')
+  expect(state.messages.at(-1)?.truncated).toBe(true)
+  expect(calls.filter(path => path.endsWith('/reply-recovery'))).toHaveLength(0)
+})
+
+it('does not recover an explicit upstream failure just because a tool_start was rendered', async () => {
+  const { state } = mount(); await flush()
+  const normalFetch = globalThis.fetch
+  const calls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    calls.push(url.pathname)
+    if (url.pathname === '/v1/chat/completions') {
+      return new Response(
+        'event: shenyu_tool\n'
+        + 'data: {"event":{"phase":"tool_start","tool_call_id":"t1","name":"shenyu_recall"}}\n\n'
+        + 'event: shenyu_error\n'
+        + 'data: {"error":{"message":"upstream closed","type":"upstream_stream_error","recoverable":false}}\n\n',
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      )
+    }
+    return normalFetch(input, options)
+  }))
+
+  state.draft = 'tool then explicit failure'
+  await state.submit(); await flush(); await new Promise(resolve => setTimeout(resolve, 60))
+  expect(state.messages.at(-1)?.events.some((event: any) => event.phase === 'tool_start')).toBe(true)
+  expect(state.messages.at(-1)?.truncated).toBeUndefined()
+  expect(state.busy).toBe(false)
+  expect(calls.filter(path => path.endsWith('/reply-recovery'))).toHaveLength(0)
+})
+
+it('keeps a healthy stream healthy when inflight receipt storage throws', async () => {
+  const { state } = mount(); await flush()
+  const originalSetItem = Storage.prototype.setItem
+  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key: string, value: string) {
+    if (String(key).startsWith('shenyu_pwa_inflight:')) throw new DOMException('receipt quota', 'QuotaExceededError')
+    return originalSetItem.call(this, key, value)
+  })
+  const normalFetch = globalThis.fetch
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    if (String(input).includes('/v1/chat/completions')) {
+      return new Response('data: {"choices":[{"delta":{"content":"healthy despite receipt failure"}}]}\n\ndata: [DONE]\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }
+    return normalFetch(input, options)
+  }))
+
+  state.draft = 'receipt storage is not the network'
+  await state.submit(); await flush()
+  expect(state.messages.at(-1)?.content).toBe('healthy despite receipt failure')
+  expect(state.messages.at(-1)?.truncated).toBeUndefined()
+  expect(state.messages.at(-1)?.error).toBeUndefined()
+  expect(state.storageError).toContain('恢复凭据')
+})
+
 it('keeps active text streaming free of full transcript checkpoints', async () => {
   const { state } = mount(); await flush()
   const save = vi.spyOn(TranscriptStore.prototype, 'save')
