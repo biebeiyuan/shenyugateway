@@ -16,6 +16,7 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: fix/pwa-record-retention
+          fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -28,3 +29,18 @@ jobs:
       - run: npm ci
         working-directory: pwa
       - run: python .github/pwa-retention/driver.py
+      - name: Prepare isolated source and dependency bundle
+        if: always()
+        run: |
+          mkdir -p /tmp/retention-workspace
+          git bundle create /tmp/retention-workspace/repository.bundle --all
+          git rev-parse HEAD > /tmp/retention-workspace/source-revision.txt
+          git diff --binary > /tmp/retention-workspace/uncommitted.patch
+          tar -czf /tmp/retention-workspace/frontend-dependencies.tar.gz pwa/node_modules admin/node_modules
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: retention-workspace
+          path: /tmp/retention-workspace/
+          retention-days: 2
+          compression-level: 0
