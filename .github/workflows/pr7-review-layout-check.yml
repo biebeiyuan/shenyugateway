@@ -1,0 +1,113 @@
+name: PR7 narrow-screen review verification (temporary)
+on:
+  push:
+    branches: [work/pr7-review-layout-20260919]
+    paths: [.github/workflows/pr7-review-layout-check.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            admin/package-lock.json
+            pwa/package-lock.json
+      - run: pip install -e '.[dev]'
+      - run: npm ci
+        working-directory: pwa
+      - run: npm ci
+        working-directory: admin
+      - name: Install isolated browser
+        working-directory: admin
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          npm run test:e2e:install
+      - name: Reproduce the narrow-column regression, fix it, and verify all suites
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, os, subprocess
+          base = 'c33aff86ef5a4b22422ee3daba38b9f65d665c6b'
+          assert os.environ['GITHUB_REF'] == 'refs/heads/work/pr7-review-layout-20260919'
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip() == os.environ['GITHUB_SHA']
+          assert subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip() == base
+          assert not subprocess.check_output(['git','status','--porcelain'],text=True).strip()
+          evidence = Path('/tmp/pr7-layout-evidence'); evidence.mkdir(exist_ok=True)
+          def run(cmd, cwd=None, name='command.log', check=True):
+              with (evidence/name).open('w') as log:
+                  result = subprocess.run(cmd,cwd=cwd,stdout=log,stderr=subprocess.STDOUT)
+              print((evidence/name).read_text(),flush=True)
+              if check: assert result.returncode == 0, (cmd,result.returncode)
+              return result.returncode
+          def replace(path, old, new):
+              p=Path(path); s=p.read_text(); assert s.count(old)==1,(path,old)
+              p.write_text(s.replace(old,new))
+          testfile = 'admin/e2e/pwa-retention.spec.ts'
+          replace(testfile, "  await page.screenshot({ path: info.outputPath('conflict-recovery-mobile.png'), animations: 'disabled' })", "  await expect.poll(() => page.locator('.build-proof > div').evaluateAll(rows => rows.every(row => row.getBoundingClientRect().width > 200))).toBe(true)\n  await page.screenshot({ path: info.outputPath('conflict-recovery-mobile.png'), animations: 'disabled' })")
+          run(['npm','run','build'],cwd='pwa',name='red-build.log')
+          run(['npm','run','build'],cwd='admin',name='admin-build.log')
+          assert run(['npx','playwright','test','e2e/pwa-retention.spec.ts','--grep','two real pages'],cwd='admin',name='layout-red.log',check=False)==1
+          replace('pwa/src/styles.css', 'grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) 34px; gap: 8px;', 'grid-template-columns: minmax(0, 1fr) 34px; gap: 8px;')
+          replace('pwa/src/styles.css', '.build-proof > div { min-width: 0; }', '.build-proof > div { min-width: 0; grid-column: 1; }')
+          replace('pwa/src/styles.css', '.build-proof code { display: block; overflow: hidden; color: var(--text-primary); font: 11px/1.3 var(--font-mono); text-overflow: ellipsis; white-space: nowrap; }', '.build-proof code { display: block; color: var(--text-primary); font: 11px/1.3 var(--font-mono); white-space: normal; overflow-wrap: anywhere; }')
+          replace('pwa/src/styles.css', '.build-proof-refresh.icon-button { width: 34px; height: 34px; color: var(--text-secondary); }', '.build-proof-refresh.icon-button { grid-column: 2; grid-row: 1; width: 34px; height: 34px; color: var(--text-secondary); }')
+          replace(testfile, "test('a downloaded update waits safely across two installed pages and becomes the offline build after closing them', async ({ page, context }) => {", "test('a downloaded update waits safely across two installed pages and becomes the offline build after closing them', async ({ page, context }, info) => {")
+          replace(testfile, "    await expect(page.locator('html')).toHaveAttribute('data-update-probe', 'still-here')", "    await expect(page.locator('html')).toHaveAttribute('data-update-probe', 'still-here')\n    await expect.poll(() => page.locator('.build-proof > div').evaluateAll(rows => rows.every(row => row.getBoundingClientRect().width > 200))).toBe(true)\n    await page.locator('.build-proof').scrollIntoViewIfNeeded()\n    await page.screenshot({ path: info.outputPath('waiting-update-mobile.png'), animations: 'disabled' })")
+          run(['python','-m','pytest','tests/','-q'],name='backend.log')
+          run(['npm','test'],cwd='pwa',name='pwa.log')
+          run(['npm','test'],cwd='admin',name='admin.log')
+          run(['npm','run','test:e2e'],cwd='admin',name='browser-and-builds.log')
+          p=Path('project_delivery_log.jsonl'); lines=p.read_text().splitlines(); found=0
+          for i,line in enumerate(lines):
+              row=json.loads(line)
+              if row['id']!='pwa-retention-review-20260919':continue
+              found+=1;row['status']='pushed'
+              row['verification']=[
+                  '完整后端1447、PWA429、Admin15及两端生产构建通过；隔离Chromium28/28通过，当前PR最终head的常规CI在推送后核验。',
+                  '先红后绿覆盖冲突恢复、双方副本保留、排队快照失效、第二写者冲突、草稿找回、晚期IDB写入回滚、未知工具状态和只读版本查询；窄屏版本栏新增真实布局断言。',
+                  '主体核验运行35431598469；窄屏收尾运行'+os.environ['GITHUB_RUN_ID']+'。真实浏览器两页冲突后不刷新恢复保存，以及waiting worker等待所有旧页关闭后离线重开，均保留草稿。',
+                  '本地Chromium在页面加载前被管理策略拦截，未改变策略；浏览器验证在隔离CI完成，不是圆圆手机实测。未合并、未部署、未操作线上数据。']
+              row['lesson']='失败恢复也要有可见入口；已保存副本不等于用户能找回。新增版本栏必须检查窄屏，不能沿用原来只容纳两栏的布局。'
+              lines[i]=json.dumps(row,ensure_ascii=False,separators=(',',':'))
+          assert found==1;p.write_text('\n'.join(lines)+'\n')
+          run(['python','-m','pytest','tests/test_project_map.py','tests/test_owner_project_map.py','tests/test_project_delivery.py','-q'],name='map.log')
+          run(['python','scripts/resident_home.py','check'],name='home.log')
+          subprocess.run(['git','rm','--','.github/workflows/pr7-review-layout-check.yml'],check=True)
+          subprocess.run(['git','add','--','pwa/src/styles.css',testfile,'project_delivery_log.jsonl'],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          subprocess.run(['git','diff','--exit-code'],check=True)
+          changed=set(subprocess.check_output(['git','diff','--cached','--name-only',base],text=True).splitlines())
+          assert changed=={'pwa/src/styles.css',testfile,'project_delivery_log.jsonl'},changed
+          for name in changed:
+              text=Path(name).read_bytes().decode('utf-8');assert '\ufffd' not in text and '\x00' not in text,name
+          tree=subprocess.check_output(['git','write-tree'],text=True).strip()
+          subprocess.run(['git','config','user.name','shenyugateway repair workbench'],check=True)
+          subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
+          commit=subprocess.check_output(['git','commit-tree',tree,'-p',base,'-m','fix(pwa): keep offline build evidence readable on narrow screens'],text=True).strip()
+          subprocess.run(['git','push','origin',commit+':refs/heads/work/pr7-review-layout-checked-'+os.environ['GITHUB_RUN_ID']],check=True)
+          receipt='commit='+commit+'\ntree='+tree+'\nrun='+os.environ['GITHUB_RUN_ID']+'\n'
+          print(receipt,flush=True);(evidence/'receipt.txt').write_text(receipt)
+          (evidence/'changes.patch').write_bytes(subprocess.check_output(['git','diff','--cached','--binary',base]))
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr7-review-layout-evidence
+          path: |
+            /tmp/pr7-layout-evidence/
+            admin/playwright-report/
+            admin/test-results/
+          retention-days: 7
+          if-no-files-found: warn
