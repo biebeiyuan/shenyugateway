@@ -1098,7 +1098,8 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
   openController?.abort()
   invalidateReconcile()
   activeAssistantId = assistant.id
-  activeController = new AbortController()
+  const requestController = new AbortController()
+  activeController = requestController
   userCancelledGeneration = false
   busy.value = true
   status.value = '沈予正在看着这边…'
@@ -1134,13 +1135,13 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       }
     }
 
-    if (!await transcript.checkpointTail(checkpointStart)) {
+    if (!await transcript.checkpointTail(checkpointStart, requestController.signal)) {
       throw new Error('本机未能保存这次发送，尚未发出请求。请先保留当前页面。')
     }
     preSendCheckpointSucceeded = true
 
     if (useStreaming) {
-      const stream = await postChatStream(requestContext, body, activeController.signal)
+      const stream = await postChatStream(requestContext, body, requestController.signal)
       requestAcceptedForRecovery = true
       markInflightReply(requestContext, replyVersionId)
       const { sawDone } = await pumpSseStream(
@@ -1159,7 +1160,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
         assistant.error = undefined
       }
     } else {
-      const completion = await postChatCompletion(requestContext, body, activeController.signal)
+      const completion = await postChatCompletion(requestContext, body, requestController.signal)
       applyChatCompletion(completion, assistant)
     }
 
@@ -1220,17 +1221,21 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
   } finally {
     if (userCancelledGeneration) clearInflightReply(requestContext, replyVersionId)
     photoReferencesDirtyWhileBusy = false
-    const finalSaved = preSendCheckpointSucceeded ? await persistMessages() : false
+    const finalSave = preSendCheckpointSucceeded
+      ? transcript.checkpointTail(checkpointStart)
+      : Promise.resolve(false)
     busy.value = false
-    if (finalSaved && requestAcceptedForRecovery && !assistant.truncated && !assistant.error) {
-      clearInflightReply(requestContext, replyVersionId)
-    }
+    void finalSave.then(finalSaved => {
+      if (finalSaved && requestAcceptedForRecovery && !assistant.truncated && !assistant.error) {
+        clearInflightReply(requestContext, replyVersionId)
+      }
+    })
     if (photoReferencesDirtyWhileBusy) {
       photoReferencesDirtyWhileBusy = false
       void persistMessages()
     }
-    activeController = null
-    activeAssistantId = null
+    if (activeController === requestController) activeController = null
+    if (activeAssistantId === assistant.id) activeAssistantId = null
     status.value = ''
     loadSessions()
     scrollToBottom()

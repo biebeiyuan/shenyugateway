@@ -24,6 +24,15 @@ type SessionRecord = Omit<TranscriptState, 'messages'> & {
 }
 type MessageRecord = { key: string; scope: string; json: string }
 
+type TransactionOptions = { signal?: AbortSignal; timeoutMs?: number }
+// IndexedDB writes should normally finish in milliseconds. Ten seconds is a
+// safety bound for suspended/mobile storage, not a product tuning knob.
+const TRANSCRIPT_WRITE_TIMEOUT_MS = 10_000
+
+function storageAbortError(): DOMException {
+  return new DOMException('本机保存已取消', 'AbortError')
+}
+
 export class StorageConflictError extends Error {
   constructor() { super('另一页已经保存了新记录。本页暂停写入；请先保留本页并重新同步，或导出未保存内容。') }
 }
@@ -105,15 +114,44 @@ export class TranscriptStore {
   }
 
   private async transaction<T>(stores: string[], write: boolean,
-    run: (tx: IDBTransaction, result: (value: T) => void, fail: (error: unknown) => void) => void): Promise<T> {
+    run: (tx: IDBTransaction, result: (value: T) => void, fail: (error: unknown) => void) => void,
+    options: TransactionOptions = {}): Promise<T> {
+    if (options.signal?.aborted) throw storageAbortError()
     const db = await this.open()
+    if (options.signal?.aborted) throw storageAbortError()
     return new Promise<T>((resolve, reject) => {
       const tx = db.transaction(stores, write ? 'readwrite' : 'readonly', { durability: 'strict' })
-      let output: T, failure: unknown
-      const fail = (error: unknown) => { failure = error; try { tx.abort() } catch { reject(error) } }
-      tx.oncomplete = () => resolve(output)
-      tx.onabort = () => reject(failure || tx.error || new Error('本机保存中断，上一份记录未改变'))
+      let output: T, failure: unknown, settled = false
+      let timeout: ReturnType<typeof setTimeout> | undefined
+      const cleanup = () => {
+        if (timeout !== undefined) clearTimeout(timeout)
+        options.signal?.removeEventListener('abort', onAbort)
+      }
+      const resolveOnce = (value: T) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        resolve(value)
+      }
+      const rejectOnce = (error: unknown) => {
+        if (settled) return
+        settled = true
+        cleanup()
+        reject(error)
+      }
+      const fail = (error: unknown) => {
+        if (settled) return
+        failure = error
+        try { tx.abort() } catch { rejectOnce(error) }
+      }
+      const onAbort = () => fail(storageAbortError())
+      tx.oncomplete = () => resolveOnce(output)
+      tx.onabort = () => rejectOnce(failure || tx.error || new Error('本机保存中断，上一份记录未改变'))
       tx.onerror = () => { failure ||= tx.error }
+      options.signal?.addEventListener('abort', onAbort, { once: true })
+      if (options.timeoutMs && options.timeoutMs > 0) {
+        timeout = setTimeout(() => fail(new Error('本机保存超时，已停止本次写入；上一份完整记录仍在。')), options.timeoutMs)
+      }
       // setResult only stages the return value. Only oncomplete resolves it,
       // after every request (including puts queued by get callbacks) commits.
       // A later failure aborts/rolls back the whole transaction and rejects.
@@ -182,7 +220,7 @@ export class TranscriptStore {
           result(revision)
         } catch (error) { fail(error) }
       }
-    })
+    }, { timeoutMs: TRANSCRIPT_WRITE_TIMEOUT_MS })
   }
 
   async saveTail(
@@ -191,6 +229,7 @@ export class TranscriptStore {
     messages: UiMessage[],
     metadata: Omit<TranscriptState, 'messages'>,
     expectedRevision: number,
+    options: { signal?: AbortSignal; timeoutMs?: number } = {},
   ): Promise<number> {
     const start = Math.max(0, Math.floor(startIndex))
     const detachedMessages = encodeStoredMessages(messages)
@@ -234,6 +273,9 @@ export class TranscriptStore {
           result(revision)
         } catch (error) { fail(error) }
       }
+    }, {
+      signal: options.signal,
+      timeoutMs: options.timeoutMs ?? TRANSCRIPT_WRITE_TIMEOUT_MS,
     })
   }
 

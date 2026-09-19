@@ -30,6 +30,16 @@ export function useTranscript(deps: Deps) {
   let saveTimer: ReturnType<typeof setTimeout> | undefined
   const saving = computed(() => pendingWrites.value > 0)
 
+  function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+    if (!signal) return promise
+    if (signal.aborted) return Promise.reject(new DOMException('本机保存已取消', 'AbortError'))
+    return new Promise<T>((resolve, reject) => {
+      const onAbort = () => reject(new DOMException('本机保存已取消', 'AbortError'))
+      signal.addEventListener('abort', onAbort, { once: true })
+      promise.then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort))
+    })
+  }
+
   function position(): ReadingPosition {
     const stream = deps.stream.value
     if (!stream) return { atBottom: true }
@@ -86,7 +96,7 @@ export function useTranscript(deps: Deps) {
     }).finally(() => { pendingWrites.value-- })
   }
 
-  function checkpointTail(startIndex: number): Promise<boolean> {
+  function checkpointTail(startIndex: number, signal?: AbortSignal): Promise<boolean> {
     clearTimeout(saveTimer)
     if (!ready.value || disposed || restoring || recovering.value) return Promise.resolve(false)
     const context = { ...deps.context() }
@@ -114,7 +124,8 @@ export function useTranscript(deps: Deps) {
       if (epoch !== (epochs.get(key) || 0)) return false
       if (conflicts.has(key)) throw new StorageConflictError()
       const { messages, ...metadata } = state
-      const revision = await store.saveTail(key, start, messages, metadata, revisions.get(key) || 0)
+      if (signal?.aborted) throw new DOMException('本机保存已取消', 'AbortError')
+      const revision = await store.saveTail(key, start, messages, metadata, revisions.get(key) || 0, { signal })
       revisions.set(key, revision)
       if (key === activeKey()) {
         savedAt.value = new Date().toISOString()
@@ -123,12 +134,14 @@ export function useTranscript(deps: Deps) {
       return true
     })
     queues.set(key, task)
-    return task.then(value => value, reason => {
+    const result = task.then(value => value, reason => {
+      if (reason instanceof DOMException && reason.name === 'AbortError') throw reason
       if (epoch !== (epochs.get(key) || 0)) return false
       if (reason instanceof StorageConflictError) conflicts.add(key)
       if (key === activeKey()) error.value = reason instanceof Error ? reason.message : '本机保存失败，上一份完整记录仍在。'
       return false
     }).finally(() => { pendingWrites.value-- })
+    return abortable(result, signal)
   }
 
   function scheduleSave() {
