@@ -6,7 +6,7 @@ on:
       - .github/pwa-retention/**
       - .github/workflows/pwa-retention-workbench.yml
 permissions:
-  contents: read
+  contents: write
 jobs:
   probe:
     if: github.ref == 'refs/heads/fix/pwa-record-retention'
@@ -15,7 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          persist-credentials: false
+          ref: fix/pwa-record-retention
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
