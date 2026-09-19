@@ -5,6 +5,7 @@ import App from '../src/App.vue'
 import { TranscriptStore, transcriptKey } from '../src/session/transcriptStore'
 import { closePhotoStore } from '../src/session/photoStore'
 import type { UiMessage } from '../src/types'
+import windowContract from '../../tests/fixtures/pwa_window_contract.json'
 vi.mock('../src/meta/statusSuffix', async importOriginal => ({
   ...await importOriginal<object>(), initWeatherWatch: () => {}, initBatteryWatch: () => {},
 }))
@@ -259,7 +260,7 @@ it('sends the full pre-target history while keeping the full local transcript', 
   } finally { store.close() }
 })
 
-it.each([167, 169, 199, 201])('sends %i pre-target messages without a client-side sliding window', async outboundCount => {
+it.each(windowContract.outbound_counts)('sends %i pre-target messages without a client-side sliding window', async outboundCount => {
   const history: UiMessage[] = []
   for (let index = 0; index <= outboundCount; index++) {
     const role = index % 2 === 0 ? 'user' : 'assistant'
