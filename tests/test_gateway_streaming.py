@@ -2491,9 +2491,11 @@ def test_anthropic_plain_stream_reports_interrupted_status():
             on_complete=lambda *args: completed.append(args),
         )
 
-        with pytest.raises(RuntimeError, match="anthropic stream broke"):
-            async for _chunk in response.body_iterator:
-                pass
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+        assert any('"type":"upstream_stream_error"' in chunk.replace(" ", "") for chunk in chunks)
+        assert chunks[-1] == "data: [DONE]\n\n"
 
         assert upstream_response.closed is True
         assert completed and completed[0][0] == "partial"
