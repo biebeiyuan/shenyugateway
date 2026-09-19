@@ -259,6 +259,25 @@ it('sends only the configured tail window while keeping the full local transcrip
   } finally { store.close() }
 })
 
+it('shows streaming state immediately while the lightweight pre-send checkpoint is still pending', async () => {
+  const { state } = mount(); await flush()
+  let release!: (revision: number) => void
+  vi.spyOn(TranscriptStore.prototype, 'saveTail').mockImplementation(() => new Promise(resolve => { release = resolve }))
+  const normalFetch = globalThis.fetch
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    if (String(input).includes('/v1/chat/completions')) {
+      return new Response('data: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
+    }
+    return normalFetch(input, options)
+  }))
+  state.draft = 'show activity immediately'
+  const sending = state.submit()
+  await nextTick()
+  expect(state.messages.at(-1)?.streaming).toBe(true)
+  release(1)
+  await sending
+})
+
 it('does not invent background recovery when a reroll fetch fails before a stream is accepted', async () => {
   localStorage.setItem('shenyu_pwa_session', 'A')
   localStorage.setItem('shenyu_pwa_messages', JSON.stringify([
@@ -280,6 +299,36 @@ it('does not invent background recovery when a reroll fetch fails before a strea
   expect(state.errorNotice).toContain('Failed to fetch')
   expect(state.messages[1].content).toBe('old answer')
   expect(state.messages[1].truncated).toBeUndefined()
+})
+
+it('does not treat an explicit upstream stream failure as a recoverable background disconnect', async () => {
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify([
+    row('user', 'u1', 'question'),
+    row('assistant', 'a1', 'old answer'),
+  ]))
+  const { state } = mount(); await flush()
+  const normalFetch = globalThis.fetch
+  const calls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    calls.push(url.pathname)
+    if (url.pathname === '/v1/chat/completions') {
+      return new Response(
+        'event: shenyu_error\n'
+        + 'data: {"error":{"message":"peer closed connection without sending complete message body (incomplete chunked read)","type":"upstream_stream_error","recoverable":false}}\n\n'
+        + 'data: [DONE]\n\n',
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      )
+    }
+    return normalFetch(input, options)
+  }))
+
+  await state.retryMessage(1); await flush(); await new Promise(resolve => setTimeout(resolve, 60))
+  expect(calls.filter(path => path.endsWith('/reply-recovery'))).toHaveLength(0)
+  expect(state.messages[1].content).toBe('old answer')
+  expect(state.messages[1].truncated).toBeUndefined()
+  expect(state.errorNotice).toContain('peer closed connection')
 })
 
 it('keeps active text streaming free of full transcript checkpoints', async () => {
