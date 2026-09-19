@@ -1,6 +1,5 @@
 import { createApp } from 'vue'
 import App from './App.vue'
-import { activePwaBuildInfo } from './buildInfo'
 import './styles.css'
 
 const app = createApp(App)
@@ -15,14 +14,12 @@ app.config.errorHandler = (error, _instance, info) => {
 app.mount('#app')
 
 if ('serviceWorker' in navigator && import.meta.env.PROD) {
-  const hadController = Boolean(navigator.serviceWorker.controller)
-  if (hadController) {
-    // An installed PWA can keep the old app alive after the new worker claims it.
-    // Reload once on takeover so the current page actually uses the new bundle.
-    navigator.serviceWorker.addEventListener('controllerchange', () => window.location.reload(), { once: true })
+  const register = () => {
+    // Stable URL; the worker contains its build identity and waits while the
+    // previous version has open clients. Updating never reloads a conversation.
+    navigator.serviceWorker.register(`${import.meta.env.BASE_URL}sw.js`, { updateViaCache: 'none' })
+      .catch(error => console.warn('[PWA] 离线页面尚未准备好', error))
   }
-  window.addEventListener('load', () => {
-    const workerUrl = `${import.meta.env.BASE_URL}sw.js?build=${encodeURIComponent(activePwaBuildInfo.buildId)}`
-    navigator.serviceWorker.register(workerUrl).catch(() => undefined)
-  })
+  if (document.readyState === 'complete') register()
+  else window.addEventListener('load', register, { once: true })
 }

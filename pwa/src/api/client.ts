@@ -119,23 +119,33 @@ export async function fetchSessions(ctx: RequestContext, limit: number, visibili
   return await response.json()
 }
 
-export async function fetchSessionDetail(ctx: RequestContext, sessionTag: string, messagesLimit: number): Promise<Record<string, unknown>> {
-  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(sessionTag)}?messages_limit=${messagesLimit}`), {
-    headers: requestHeaders(ctx),
-  })
-  if (!response.ok) throw new Error('session unavailable')
-  return await response.json()
+// Bound both fetch and body reading. A stalled endpoint must not prevent a
+// successful independent recovery or keep the retry chain pending forever.
+async function recoveryJson(ctx: RequestContext, path: string, parent?: AbortSignal): Promise<Record<string, unknown>> {
+  const controller = new AbortController()
+  const cancel = () => controller.abort()
+  if (parent?.aborted) cancel()
+  parent?.addEventListener('abort', cancel, { once: true })
+  const timeout = setTimeout(cancel, 12_000)
+  try {
+    const response = await fetch(apiUrl(ctx, path), { headers: requestHeaders(ctx), signal: controller.signal })
+    if (!response.ok) throw new Error('会话恢复暂时不可用')
+    return await response.json()
+  } finally {
+    clearTimeout(timeout)
+    parent?.removeEventListener('abort', cancel)
+  }
 }
 
-// 不带 limit：端点最多返回当前这一次请求的一条回复，切片参数没有可切的东西。
+export async function fetchSessionDetail(ctx: RequestContext, sessionTag: string, messagesLimit: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return recoveryJson(ctx, `/api/gateway/sessions/${encodeURIComponent(sessionTag)}?messages_limit=${messagesLimit}`, signal)
+}
+
+// 不带 limit：恢复只返回指定身份的一条回复；没有身份时兼容最新一次请求。
 // 曾经有个 limit = 20 的默认参数，读签名的人会以为"找回能拿回 20 条历史重答"，
 // 而端点里 get_recent_messages 的 5000 是写死的——一个会误导下一位读者的死参数。
-export async function fetchReplyRecovery(ctx: RequestContext): Promise<Record<string, unknown>> {
-  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(ctx.sessionTag)}/reply-recovery`), {
-    headers: requestHeaders(ctx),
-  })
-  if (!response.ok) throw new Error('reply recovery unavailable')
-  return await response.json()
+export async function fetchReplyRecovery(ctx: RequestContext, replyVersionId?: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return recoveryJson(ctx, `/api/gateway/sessions/${encodeURIComponent(ctx.sessionTag)}/reply-recovery${replyVersionId ? `?reply_version_id=${encodeURIComponent(replyVersionId)}` : ''}`, signal)
 }
 
 export async function renameSession(ctx: RequestContext, sessionTag: string, displayName: string): Promise<Record<string, unknown>> {

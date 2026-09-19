@@ -2,7 +2,7 @@ import { mergeAttachments, readMedia, wireMedia } from './media'
 import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
 import { readArchiveEvent, restoredArchiveState, sessionMessageContent, sessionMessageParts } from './history'
-import { hydrateToolEvents, mergeToolEvents, toolEventsFromRows } from './toolHydration'
+import { hydrateToolEvents, mergeToolEvents, toolEventsFromRows, hasUnfinishedTools } from './toolHydration'
 import { stripStatusSuffix } from '../meta/statusSuffix'
 import { applyVariant, selectedVariantIndex, snapshotMessage, syncCurrentVariant } from './variants'
 
@@ -64,7 +64,7 @@ export function tailNeedsReconcile(messages: UiMessage[]): boolean {
   const last = messages[messages.length - 1]
   if (!last) return false
   if (last.role === 'user') return true
-  return Boolean(last.error || last.truncated)
+  return Boolean(last.error || last.truncated || hasUnfinishedTools(last.events))
 }
 
 function recentRows(payload: Record<string, unknown>): RecentRow[] {
@@ -180,6 +180,7 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
   }
   // 快照只有正文；工具事件从原始 tool 行补回（只补 events 为空的行，安全）。
   hydrateToolEvents(messages, rows)
+  messages.forEach(syncCurrentVariant)
   return true
 }
 

@@ -111,3 +111,48 @@ def test_tool_receipt_keeps_real_reply_and_call_identity(tmp_path):
     assert receipt['reply_version_id'] == 'reply-a'
     assert receipt['tool_call_id'] == 'call-a'
     assert __import__('json').loads(receipt['content']) == {'ok': False}
+
+
+@pytest.mark.asyncio
+async def test_exact_reply_recovery_never_substitutes_the_latest_request(tmp_path):
+    from shenyu_gateway.sessions import SessionManager
+    store = GatewayStore(str(tmp_path / 'runtime.db'))
+    session = store.get_or_create_session('exact', 'shenyu-pwa')
+    manager = SessionManager(store, SimpleNamespace())
+    for reply in ('reply-a', 'reply-b'):
+        store.append_message(session['id'], 'user', 'same words')
+        manager.log_tool_result(session['id'], 'shenyu_recall', {}, {'ok': True},
+                                reply_version_id=reply, tool_call_id='call-' + reply)
+        manager.log_assistant_output(session['id'], {'content': 'answer-' + reply}, reply_version_id=reply)
+    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=make_app(store)), base_url='http://test') as client:
+        recovered = (await client.get('/api/gateway/sessions/exact/reply-recovery', params={'reply_version_id': 'reply-a'})).json()
+        assert [reply['reply_version_id'] for reply in recovered['replies']] == ['reply-a']
+        assert recovered['replies'][0]['tool_rows'][0]['tool_call_id'] == 'call-reply-a'
+        missing = (await client.get('/api/gateway/sessions/exact/reply-recovery', params={'reply_version_id': 'missing'})).json()
+        assert missing['replies'] == []
+        assert [reply['reply_version_id'] for reply in (await client.get('/api/gateway/sessions/exact/reply-recovery')).json()['replies']] == ['reply-b']
+
+
+@pytest.mark.asyncio
+async def test_cached_tool_receipt_keeps_its_new_call_identity_without_reexecution(tmp_path):
+    from unittest.mock import AsyncMock
+    from shenyu_gateway.sessions import SessionManager
+    from shenyu_gateway.tool_loop import _execute_internal_tool_call, _tool_call_cache_key
+    store = GatewayStore(str(tmp_path / 'runtime.db'))
+    session = store.get_or_create_session('cached', 'shenyu-pwa')
+    execute = AsyncMock(side_effect=AssertionError('cached tool must not execute again'))
+    context = SimpleNamespace(
+        cfg=SimpleNamespace(), session_id=session['id'], session_tag='cached',
+        sessions=SessionManager(store, SimpleNamespace()), meta={'reply_archive_event': {'id': 'reply-c'}},
+        log_entry={}, execute_gateway_tool=execute,
+    )
+    name = 'shenyu_recall'
+    cache = {_tool_call_cache_key(name, {}): {'ok': True, 'data': 'cached value'}}
+    call = {'id': 'new-cached-call', 'function': {'name': name, 'arguments': '{}'}}
+    result, _, _, cached, _ = await _execute_internal_tool_call(context, call, cache, log_label='test')
+    assert cached and result['cached_duplicate']
+    execute.assert_not_awaited()
+    receipts = store.get_recent_messages(session['id'])
+    assert len(receipts) == 1
+    assert receipts[0]['tool_call_id'] == 'new-cached-call'
+    assert receipts[0]['reply_version_id'] == 'reply-c'

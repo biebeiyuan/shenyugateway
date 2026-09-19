@@ -1060,14 +1060,15 @@ async def _execute_internal_tool_call(
         duration_ms = int((time.monotonic() - t0) * 1000)
         if cacheable:
             tool_result_cache[cache_key] = result
-        ctx.sessions.log_tool_result(
-            ctx.session_id, _logged_tool_name(name, args), args, result,
-            reply_version_id=str((ctx.meta.get("reply_archive_event") or {}).get("id")
-                                 or (ctx.log_entry or {}).get("reply_version_id") or ""),
-            tool_call_id=str(tool_call.get("id") or ""),
-        )
         if isinstance(result, dict) and result.get("ok") is False:
             _record_tool_error(ctx, name, args, result)
+    # Every observed call has a receipt, including a deduplicated execution.
+    ctx.sessions.log_tool_result(
+        ctx.session_id, _logged_tool_name(name, args), args, result,
+        reply_version_id=str((ctx.meta.get("reply_archive_event") or {}).get("id")
+                             or (ctx.log_entry or {}).get("reply_version_id") or ""),
+        tool_call_id=str(tool_call.get("id") or ""),
+    )
     return result, args, name, cached, duration_ms
 
 

@@ -85,13 +85,15 @@ import {
 import {
   FALLBACK_SESSION_MESSAGE_LIMIT,
   STORAGE_SESSION,
-  loadStoredMessages,
-  persistStoredMessages,
+  STORAGE_MESSAGES,
 } from './session/persistence'
 import { photoFingerprint, prunePhotos, putPhoto } from './session/photoStore'
 import { readMedia, photoSource } from './session/media'
 import { createPhotoLoader } from './session/photoLoader'
 import { hydrateToolEvents } from './session/toolHydration'
+import { mergeSessionHistory } from './session/restore'
+import { useTranscript } from './session/useTranscript'
+import { transcriptKey } from './session/transcriptStore'
 import { applyReconciledTail, applyReplyRecovery, tailNeedsReconcile } from './session/reconcile'
 import {
   applyVariant,
@@ -123,12 +125,9 @@ const MESSAGE_IMAGE_LIMIT = 9
 const requestedSessionTag = sessionTagFromLocation()
 const storedSessionTag = localStorage.getItem(STORAGE_SESSION) || ''
 
-// 演示模式下若本地没有历史，就铺一段示例对话，进来就有内容看（?demo=1，见 src/demo/）。
-const messages = ref<UiMessage[]>((() => {
-  const stored = loadStoredMessages()
-  if (stored.length || !isDemoMode()) return stored
-  return demoSeedTranscript()
-})())
+// The complete transcript comes from its gateway/session-scoped store. The old
+// localStorage array is only a migration source, never repeatedly re-imported.
+const messages = ref<UiMessage[]>([])
 const draft = ref('')
 const pendingAttachments = ref<Attachment[]>([])
 // 看图器：点开的是哪条消息的第几张。null = 关着。
@@ -144,7 +143,12 @@ let sessionListGeneration = 0
 watch(showHiddenSessions, () => { void loadSessions() })
 const authToken = ref(localStorage.getItem(STORAGE_TOKEN) || localStorage.getItem('shenyu_token') || '')
 const gatewayUrl = ref(localStorage.getItem(STORAGE_GATEWAY) || '')
-const sessionTag = ref(requestedSessionTag || storedSessionTag || createId('pwa'))
+const sessionTag = ref(storedSessionTag || requestedSessionTag || createId('pwa'))
+const settingsGateway = ref(gatewayUrl.value)
+const settingsToken = ref(authToken.value)
+const sessionLoading = ref(false)
+let openGeneration = 0
+let openController: AbortController | null = null
 const menuOpen = ref(false)
 const settingsOpen = ref(false)
 const reviewOpen = ref(false)
@@ -164,6 +168,10 @@ const inputRef = ref<HTMLTextAreaElement | null>(null)
 const fileRef = ref<HTMLInputElement | null>(null)
 const composerMenuRef = ref<HTMLElement | null>(null)
 const streamRef = ref<HTMLElement | null>(null)
+const transcript = useTranscript({ context: () => clientContext(), messages, draft, pendingAttachments, editId, stream: streamRef })
+const { ready: storageReady, error: storageError, saving: storageSaving, savedAt: lastLocalSave } = transcript
+const controlsBlocked = computed(() => busy.value || sessionLoading.value || !storageReady.value)
+watch([draft, pendingAttachments, editId], transcript.scheduleSave, { deep: true })
 // 上游配置（模型 / effort / 预设 / 请求头）整块在 api/useUpstream.ts。
 // 它只通过 status / errorNotice / busy 与聊天说话，所以那三个注入进去。
 const {
@@ -297,14 +305,12 @@ const quickPrompts = [
 
 
 
-function persistMessages() {
-  if (!persistStoredMessages(messages.value, sessionMessageLimit())) {
-    errorNotice.value = '本机保存没有成功，上一份记录仍在。请先保留当前页面。'
-  }
+function persistMessages(): Promise<boolean> {
+  return transcript.save()
 }
 
-// 流式中途每 ~3 秒落盘一次：进程在后台被杀时半截回复不丢（pagehide 再兜底）。
-const STREAM_PERSIST_INTERVAL_MS = 3_000
+// During streaming, submit checkpoints while the page is alive; pagehide is only supplemental.
+const STREAM_PERSIST_INTERVAL_MS = 1_000
 let lastStreamPersistAt = 0
 
 function onStreamChunkEnd() {
@@ -329,12 +335,21 @@ function sessionMessageLimit(): number {
 
 async function loadSessions() {
   const generation = ++sessionListGeneration
+  const ctx = { ...clientContext() }
+  const visibility = showHiddenSessions.value ? 'hidden' : 'visible'
+  const key = transcriptKey(ctx.gatewayUrl, `list:${visibility}`)
+  let fetched = false
+  void transcript.store.loadList<GatewaySession[]>(key).then(cached => {
+    if (cached && !fetched && generation === sessionListGeneration) recentSessions.value = cached
+  }).catch(() => undefined)
   try {
-    const payload = await fetchSessions(clientContext(), 100, showHiddenSessions.value ? 'hidden' : 'visible')
+    const payload = await fetchSessions(ctx, 100, visibility)
     if (generation !== sessionListGeneration) return
+    fetched = true
     recentSessions.value = Array.isArray(payload.sessions) ? payload.sessions : []
+    void transcript.store.saveList(key, payload.sessions || []).catch(() => undefined)
   } catch {
-    // A network error is not an empty list and must not erase the last view.
+    // Keep the last successfully read list when offline.
   }
 }
 
@@ -435,74 +450,82 @@ async function setSessionHiddenAction(session: GatewaySession) {
 }
 
 async function openSession(session: GatewaySession): Promise<boolean> {
-  if (busy.value || !session.session_tag) return false
+  if (busy.value || !storageReady.value || !session.session_tag) return false
+  const generation = ++openGeneration
+  openController?.abort()
+  const controller = new AbortController()
+  openController = controller
+  invalidateReconcile()
+  sessionLoading.value = true
+  const ctx = { ...clientContext(), sessionTag: session.session_tag }
+  const current = () => generation === openGeneration && gatewayUrl.value === ctx.gatewayUrl && !controller.signal.aborted
   try {
-    const payload = await fetchSessionDetail(clientContext(), session.session_tag, sessionMessageLimit())
-    const rows = sessionHistoryRows(payload)
-    const localMessages = sessionTag.value === session.session_tag ? messages.value : []
-    invalidateReconcile()
-    messages.value = rows
-      .filter((row: Record<string, unknown>) => row.role === 'user' || row.role === 'assistant')
-      .map((row: Record<string, unknown>, index: number, filteredRows: Record<string, unknown>[]) => {
-        const parts = sessionMessageParts(row.content)
-        const restored: UiMessage = {
-          id: String(row.id || createId('message')),
-          role: row.role as Role,
-          ...restoredArchiveState(row),
-          truncated: row.archive_pending === true || undefined,
-          content: parts.content,
-          echo: row.role === 'assistant' ? parts.echo : '',
-          echoSegments: row.role === 'assistant' && parts.echo
-            ? [{ id: createId('echo'), content: parts.echo, textOffset: 0, streamOrder: 0 }]
-            : [],
-          attachments: readMedia(row.media),
-          thinking: '',
-          thinkingSegments: [],
-          events: [],
-          streaming: false,
-          replyVersionId: row.role === 'assistant'
-            ? (row.source_id ? String(row.source_id) : readArchiveEvent(row.archive_event)?.id) : undefined,
-        }
-        // Roll 版本只存在本机；服务器 session detail 只有当前正文。
-        // 同一会话重新打开时，按相邻 user turn + 当前正文把本地版本接回，
-        // 避免一次切会话就把可切换的旧回答全部抹掉。
-        if (row.role === 'assistant' && localMessages.length) {
-          const userContent = index > 0 ? stripStatusSuffix(sessionMessageContent(filteredRows[index - 1].content)) : ''
-          const local = localMessages.find((candidate, localIndex) => {
-            if (candidate.role !== 'assistant' || candidate.content !== parts.content) return false
-            const previous = localMessages[localIndex - 1]
-            return previous?.role === 'user' && stripStatusSuffix(previous.content) === userContent
-          })
-          if (local?.variants?.length) {
-            restored.variants = local.variants
-            restored.selectedVariantIndex = local.selectedVariantIndex
-          }
-        }
-        return restored
-      })
-    // 快照只带正文；用 recent_messages 里的 tool 原始行补回工具事件，
-    // 随后的 persistMessages 会把补好的 events 一起落盘。
-    hydrateToolEvents(messages.value, payload.recent_messages)
-    sessionTag.value = session.session_tag
+    if (!await persistMessages() || !current()) return false
+    const cached = await transcript.load(ctx)
+    if (!current()) return false
+    if (cached) {
+      sessionTag.value = ctx.sessionTag
+      renderTail.value = null
+      await transcript.apply(cached.state, current)
+      if (!current()) return false
+      localStorage.setItem(STORAGE_SESSION, sessionTag.value)
+      sessionLoading.value = false
+      menuOpen.value = false
+      scheduleLocalPhotoRestore()
+      void refreshOpenedSession(ctx, current, controller.signal)
+      return true
+    }
+    const payload = await fetchSessionDetail(ctx, ctx.sessionTag, sessionMessageLimit(), controller.signal)
+    if (!current() || busy.value) return false
+    const restored = mergeSessionHistory([], payload)
+    sessionTag.value = ctx.sessionTag
+    renderTail.value = null
+    await transcript.apply({ messages: restored, draft: '', pendingAttachments: [], editId: null, viewport: { atBottom: true } }, current)
+    if (!current()) return false
     localStorage.setItem(STORAGE_SESSION, sessionTag.value)
-    persistMessages()
+    await persistMessages()
     menuOpen.value = false
     errorNotice.value = ''
-    await nextTick()
-    scrollToBottom()
-    void reconcileTailFromServer(0, 'variants')
+    scheduleLocalPhotoRestore()
+    void reconcileTailFromServer(0, tailNeedsReconcile(messages.value) ? 'tail' : 'variants')
     return true
-  } catch {
-    errorNotice.value = '这页对话暂时拿不到，当前页面还在。'
+  } catch (error) {
+    if (current()) errorNotice.value = error instanceof Error ? error.message : '这页暂时拿不到，当前记录仍在。'
     return false
+  } finally {
+    if (generation === openGeneration) sessionLoading.value = false
+  }
+}
+
+async function refreshOpenedSession(ctx: RequestContext, current: () => boolean, signal: AbortSignal) {
+  try {
+    const payload = await fetchSessionDetail(ctx, ctx.sessionTag, sessionMessageLimit(), signal)
+    if (!current() || busy.value || sessionTag.value !== ctx.sessionTag) return
+    const position = transcript.position()
+    messages.value = mergeSessionHistory(messages.value, payload)
+    await nextTick()
+    if (!current()) return
+    transcript.restorePosition(position)
+    await persistMessages()
+    scheduleLocalPhotoRestore()
+    void reconcileTailFromServer(0, tailNeedsReconcile(messages.value) ? 'tail' : 'variants')
+  } catch {
+    // A failed refresh never substitutes an empty server history for a local one.
   }
 }
 
 async function recoverSessionFromColdStart(session: GatewaySession = { session_tag: sessionTag.value }): Promise<boolean> {
-  if (busy.value || !session.session_tag) return false
+  if (controlsBlocked.value || session.session_tag !== sessionTag.value) return false
   if (!window.confirm('将保留当前 PWA 新消息，只移除完全相同的重复历史，并让下一次请求使用干净冷启动源。继续吗？')) return false
+  const generation = ++openGeneration
+  openController?.abort()
+  const controller = new AbortController(); openController = controller
+  sessionLoading.value = true
+  const ctx = { ...clientContext() }
   try {
-    const payload = await fetchSessionDetail(clientContext(), session.session_tag, sessionMessageLimit())
+    if (!await persistMessages()) return false
+    const payload = await fetchSessionDetail(ctx, session.session_tag, sessionMessageLimit(), controller.signal)
+    if (generation !== openGeneration) return false
     const cleanRows = coldStartHistoryRows(payload, session.session_tag)
     if (!cleanRows.length || hasExactDuplicateRows(cleanRows)) throw new Error('没有找到干净的冷启动源')
     invalidateReconcile()
@@ -531,7 +554,7 @@ async function recoverSessionFromColdStart(session: GatewaySession = { session_t
     }
     sessionTag.value = session.session_tag
     localStorage.setItem(STORAGE_SESSION, sessionTag.value)
-    persistMessages()
+    await persistMessages()
     handoffOpen.value = false
     errorNotice.value = ''
     status.value = `已清理重复历史，保留 PWA 新消息；下一次请求将使用干净基线 ${session.session_tag}`
@@ -539,19 +562,16 @@ async function recoverSessionFromColdStart(session: GatewaySession = { session_t
     scrollToBottom()
     return true
   } catch (error) {
-    errorNotice.value = error instanceof Error ? error.message : '干净恢复失败。'
+    if (generation === openGeneration) errorNotice.value = error instanceof Error ? error.message : '干净恢复失败。'
     return false
+  } finally {
+    if (generation === openGeneration) sessionLoading.value = false
   }
 }
 
 async function adoptInitialSession() {
-  if (!requestedSessionTag) return
-  const matching = recentSessions.value.find((session) => session.session_tag === requestedSessionTag)
-  const opened = await openSession(matching || { session_tag: requestedSessionTag })
-  if (!opened) {
-    localStorage.setItem(STORAGE_SESSION, requestedSessionTag)
-  }
-  status.value = opened ? `已接上线程 ${requestedSessionTag}` : `将继续使用线程 ${requestedSessionTag}`
+  if (!requestedSessionTag || requestedSessionTag === sessionTag.value) return
+  await openSession({ session_tag: requestedSessionTag })
 }
 
 // ---- 尾部对账：后台断流/进程被杀后，从服务器找回 drain 落库的完整回复 ------
@@ -561,11 +581,14 @@ async function adoptInitialSession() {
 const RECONCILE_RETRY_DELAYS_MS = [5_000, 15_000, 30_000]
 const RECONCILE_STATUS = '正在找回后台期间的回复…'
 let reconcileGeneration = 0
+let reconcileController: AbortController | null = null
 let reconcileTimer: number | null = null
 let reconcileNoticeTimer: number | null = null
 
 function invalidateReconcile() {
   reconcileGeneration++
+  reconcileController?.abort()
+  reconcileController = null
   if (reconcileTimer !== null) {
     window.clearTimeout(reconcileTimer)
     reconcileTimer = null
@@ -590,19 +613,27 @@ async function reconcileTailFromServer(attempt = 0, mode: 'tail' | 'variants' = 
   invalidateReconcile()
   const generation = reconcileGeneration
   if (busy.value) return
-  // 只有坏尾巴才进退避链；variants 模式是一次性的 roll 版本回填
+  // 健康尾巴只检查一次；正文或工具回执仍缺失时，两种入口都进入退避。
   if (mode === 'tail' && !tailNeedsReconcile(messages.value)) return
   if (mode === 'tail') status.value = RECONCILE_STATUS
   try {
-    const [payload, recovery] = await Promise.all([
-      fetchSessionDetail(clientContext(), sessionTag.value, sessionMessageLimit()),
-      fetchReplyRecovery(clientContext()),
+    const ctx = { ...clientContext() }
+    const last = messages.value[messages.value.length - 1]
+    const expected = last?.role === 'assistant' ? last.replyVersionId || last.archiveEvent?.id : undefined
+    const controller = new AbortController(); reconcileController = controller
+    const [detailResult, replyResult] = await Promise.allSettled([
+      fetchSessionDetail(ctx, ctx.sessionTag, sessionMessageLimit(), controller.signal),
+      fetchReplyRecovery(ctx, expected, controller.signal),
     ])
-    if (generation !== reconcileGeneration || busy.value) return
+    if (generation !== reconcileGeneration || busy.value || ctx.gatewayUrl !== gatewayUrl.value || ctx.sessionTag !== sessionTag.value) return
+    const position = transcript.position()
+    const recovery = replyResult.status === 'fulfilled' ? replyResult.value : {}
+    const payload = detailResult.status === 'fulfilled' ? detailResult.value : {}
     const recovered = applyReplyRecovery(messages.value, recovery)
     const reconciled = applyReconciledTail(messages.value, payload)
-    if (recovered || reconciled) {
-      persistMessages()
+    const hydrated = hydrateToolEvents(messages.value, payload.recent_messages) > 0
+    if (recovered || reconciled || hydrated) {
+      await persistMessages()
       errorNotice.value = ''
       clearReconcileNotice()
       // 只有修好坏尾巴才弹提示；健康对话补 variant 不该弹。
@@ -614,7 +645,7 @@ async function reconcileTailFromServer(attempt = 0, mode: 'tail' | 'variants' = 
         }, 1800)
       }
       await nextTick()
-      scrollToBottom()
+      if (generation === reconcileGeneration) transcript.restorePosition(position)
     }
   } catch {
     // 网络没恢复，和 drain 未完成一样对待
@@ -622,7 +653,7 @@ async function reconcileTailFromServer(attempt = 0, mode: 'tail' | 'variants' = 
   if (generation !== reconcileGeneration) return
 
   // 唯一的重试依据：尾巴是不是还坏着。没东西可找回不是失败。
-  if (mode !== 'tail' || !tailNeedsReconcile(messages.value)) {
+  if (!tailNeedsReconcile(messages.value)) {
     if (status.value === RECONCILE_STATUS) status.value = ''
     return
   }
@@ -685,16 +716,36 @@ function modelSheetTitle(): string {
 }
 
 
-function saveSettings() {
-  localStorage.setItem(STORAGE_TOKEN, authToken.value.trim())
-  localStorage.setItem(STORAGE_GATEWAY, gatewayUrl.value.trim())
-  settingsOpen.value = false
-  loadModels()
-  loadPresets()
-  loadRuntimeUpstream()
+async function saveSettings() {
+  if (controlsBlocked.value) return
+  const generation = ++openGeneration
+  sessionLoading.value = true
+  openController?.abort(); invalidateReconcile()
+  const ctx = { gatewayUrl: settingsGateway.value.trim(), authToken: settingsToken.value.trim(), sessionTag: sessionTag.value }
+  try {
+    if (!await persistMessages() || generation !== openGeneration) return
+    const changedGateway = transcriptKey(ctx.gatewayUrl, '') !== transcriptKey(gatewayUrl.value, '')
+    const record = changedGateway ? await transcript.load(ctx) : null
+    if (generation !== openGeneration) return
+    gatewayUrl.value = ctx.gatewayUrl; authToken.value = ctx.authToken
+    localStorage.setItem(STORAGE_TOKEN, ctx.authToken)
+    localStorage.setItem(STORAGE_GATEWAY, ctx.gatewayUrl)
+    if (changedGateway) {
+      recentSessions.value = []
+      await transcript.apply(record?.state || { messages: [], draft: '', pendingAttachments: [], editId: null, viewport: { atBottom: true } })
+    }
+    settingsOpen.value = false
+    void loadModels(); loadPresets(); void loadRuntimeUpstream(); void loadSessions()
+  } catch (error) {
+    errorNotice.value = error instanceof Error ? error.message : '设置未保存，原记录还在。'
+  } finally {
+    if (generation === openGeneration) sessionLoading.value = false
+  }
 }
 
 function openSettings() {
+  settingsGateway.value = gatewayUrl.value
+  settingsToken.value = authToken.value
   settingsOpen.value = true
   void checkPwaBuildInfo()
 }
@@ -716,18 +767,27 @@ async function checkPwaBuildInfo() {
   }
 }
 
-function newChat() {
-  if (busy.value) cancelGeneration()
-  invalidateReconcile()
-  messages.value = []
-  pendingAttachments.value = []
-  editId.value = null
-  sessionTag.value = createId('pwa')
-  localStorage.setItem(STORAGE_SESSION, sessionTag.value)
-  persistMessages()
-  loadSessions()
-  menuOpen.value = false
-  nextTick(() => inputRef.value?.focus())
+async function newChat() {
+  if (controlsBlocked.value) return
+  const generation = ++openGeneration
+  sessionLoading.value = true
+  openController?.abort(); invalidateReconcile()
+  try {
+    if (!await persistMessages() || generation !== openGeneration) return
+    const ctx = { ...clientContext(), sessionTag: createId('pwa') }
+    await transcript.load(ctx)
+    if (generation !== openGeneration) return
+    sessionTag.value = ctx.sessionTag
+    await transcript.apply({ messages: [], draft: '', pendingAttachments: [], editId: null, viewport: { atBottom: true } }, () => generation === openGeneration)
+    if (generation !== openGeneration) return
+    localStorage.setItem(STORAGE_SESSION, sessionTag.value)
+    await persistMessages()
+    void loadSessions()
+    menuOpen.value = false
+    nextTick(() => inputRef.value?.focus())
+  } finally {
+    if (generation === openGeneration) sessionLoading.value = false
+  }
 }
 
 // 控制台在同源的 /admin/ 下，共用登录 cookie，所以直接开新标签就行——不需要在
@@ -821,7 +881,13 @@ function forgetExpiredPhotos(removedIds: string[]) {
 // from the server album and never enter the ordinary cache or next request.
 const photoLoader = createPhotoLoader(clientContext, () => messages.value, persistMessages)
 async function restoreLocalPhotos() {
+  if (!storageReady.value) return
+  const generation = openGeneration
+  const scrollTop = streamRef.value?.scrollTop
+  const position = transcript.position()
   await photoLoader.restore()
+  await nextTick()
+  if (generation === openGeneration && !busy.value && streamRef.value?.scrollTop === scrollTop) transcript.restorePosition(position)
 }
 function retryPhoto(message: UiMessage, id: string) {
   void photoLoader.retry(message.attachments.find((item) => item.id === id))
@@ -832,10 +898,8 @@ watch(() => JSON.stringify([
     m.attachments.map((a) => [a.id, a.photoId, a.fingerprint])]),
 ]), () => scheduleLocalPhotoRestore())
 
-// 回填只在 onMounted 跑一次是不够的：装成 PWA 时 Service Worker 接管会强制刷新
-// 页面（main.ts），刷新打断那一次就没有第二次机会，气泡会一直停在未加载状态。
-// 回前台和切会话后各补一次——它本身按 id 幂等，重复跑没有代价。
-// 看图器只收还有字节的图：本机已淘汰的那些没有可看的内容。
+// 本机照片可在初次加载、返回前台和切会话时重试；回填不能抢走用户刚移动的阅读位置。
+// 看图器只收还有字节的图。
 const viewerPhotos = computed(() => {
   const target = messages.value.find((message) => message.id === photoViewer.value?.messageId)
   return (target?.attachments || []).filter((attachment) => photoSource(attachment) && attachment.photoState !== 'error')
@@ -855,6 +919,7 @@ function scheduleLocalPhotoRestore() {
 }
 
 async function chooseImages(event: Event) {
+  if (controlsBlocked.value) return
   const input = event.target as HTMLInputElement
   const files = Array.from(input.files || [])
   input.value = ''
@@ -882,7 +947,7 @@ function openImagePicker() {
 }
 
 async function enterRoom() {
-  if (busy.value || editId.value) return
+  if (controlsBlocked.value || editId.value) return
   composerMenuOpen.value = false
   const user: UiMessage = {
     id: createId('room-entry'),
@@ -932,6 +997,9 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     // leave the template unaware until another top-level ref changes.
     assistant = messages.value[messages.value.length - 1]
   }
+  ++openGeneration
+  openController?.abort()
+  invalidateReconcile()
   activeAssistantId = assistant.id
   activeController = new AbortController()
   userCancelledGeneration = false
@@ -963,10 +1031,15 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
           reply_archive_event: assistant.archiveEvent }
       }
     }
+    if (!await persistMessages()) throw new Error('本机未能保存这次发送，尚未发出请求。请先保留当前页面。')
     if (useStreaming) {
       const stream = await postChatStream(clientContext(), body, activeController.signal)
       // 3 分钟看门狗：Doze/NAT 让 socket 静默死亡时解锁 UI，交给 reconcile 找回。
-      const { sawDone } = await pumpSseStream(stream, (frame) => parseSseFrame(frame, assistant), onStreamChunkEnd, 180_000)
+      const { sawDone } = await pumpSseStream(stream, (frame) => {
+        const finished = parseSseFrame(frame, assistant)
+        if (frame.includes('shenyu.tool_event') || frame.includes('shenyu_tool')) void persistMessages()
+        return finished
+      }, onStreamChunkEnd, 180_000)
       if (!sawDone) {
         assistant.truncated = true
         errorNotice.value = '回复可能被截断，正在尝试找回…'
@@ -1009,11 +1082,11 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       errorNotice.value = assistant.error
     }
   } finally {
+    await persistMessages()
     busy.value = false
     activeController = null
     activeAssistantId = null
     status.value = ''
-    persistMessages()
     loadSessions()
     scrollToBottom()
     // 静默截断（!sawDone）或看门狗/网络错误后，去服务器找回 drain 落库的全文。
@@ -1024,7 +1097,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
 }
 
 async function submit() {
-  if (busy.value || !hasContent.value) return
+  if (controlsBlocked.value || !hasContent.value) return
   // 尾部状态后缀：先剥旧再追新，编辑重发换新不叠加（跨端契约第1条）。
   const text = stampStatusSuffix(draft.value.trim())
   if (editId.value) {
@@ -1073,7 +1146,7 @@ function cancelGeneration() {
 }
 
 function beginEdit(message: UiMessage) {
-  if (message.role !== 'user' || busy.value) return
+  if (message.role !== 'user' || controlsBlocked.value) return
   editId.value = message.id
   draft.value = stripStatusSuffix(message.content)
   pendingAttachments.value = [...message.attachments]
@@ -1091,7 +1164,7 @@ function cancelEdit() {
 }
 
 async function retryMessage(index: number) {
-  if (busy.value) return
+  if (controlsBlocked.value) return
   const assistant = messages.value[index]
   if (!assistant || assistant.role !== 'assistant') return
   syncCurrentVariant(assistant)
@@ -1100,7 +1173,7 @@ async function retryMessage(index: number) {
 }
 
 function switchMessageVariant(index: number, direction: -1 | 1) {
-  if (busy.value) return
+  if (controlsBlocked.value) return
   const message = messages.value[index]
   if (!message || message.role !== 'assistant' || variantCount(message) < 2) return
   syncCurrentVariant(message)
@@ -1196,9 +1269,7 @@ function runQuickPrompt(prompt: string) {
   })
 }
 
-// 切后台瞬间同步落盘（localStorage 是同步 API，来得及写完）；回前台时找回
-// 后台断掉的回复，并顺手核验线上版本（≥5 分钟一次；busy 时跳过——main.ts 的
-// controllerchange reload 会杀掉活动流）。
+// Lifecycle checkpoints supplement normal saves. Updating resources never reloads an active conversation.
 const BUILD_CHECK_INTERVAL_MS = 5 * 60_000
 let lastBuildCheckAt = 0
 
@@ -1207,10 +1278,10 @@ function handleVisibilityChange() {
     persistMessages()
     return
   }
-  // 回前台补一次回填：SW 接管的强制刷新可能打断了 onMounted 那一次。
+  // 回前台补齐照片和可能在后台结束的回复，不重新挂载当前页面。
   scheduleLocalPhotoRestore()
   if (busy.value) return
-  void reconcileTailFromServer(0, 'variants')
+  void reconcileTailFromServer(0, tailNeedsReconcile(messages.value) ? 'tail' : 'variants')
   const now = Date.now()
   if (now - lastBuildCheckAt >= BUILD_CHECK_INTERVAL_MS) {
     lastBuildCheckAt = now
@@ -1228,36 +1299,49 @@ onMounted(async () => {
   window.addEventListener('pagehide', handlePageHide)
   window.visualViewport?.addEventListener('resize', scheduleComposerVisible)
   window.visualViewport?.addEventListener('scroll', scheduleComposerVisible)
-  localStorage.setItem(STORAGE_SESSION, sessionTag.value)
-  initBatteryWatch()
-  initWeatherWatch(clientContext)
-  loadPresets()
-  await loadRuntimeUpstream()
-  await loadModels()
-  await loadSessions()
-  await adoptInitialSession()
-  // 首屏定位：瞬时跳到底，不走动画。重开 App 期待的是「回到上次看的地方」，
-  // 而不是看它从顶部滑下来——那条滑动本身就是圆圆看到的「顶上有进度条」。
-  // 在这之前不能依赖 focus 的副作用来滚动：那条链路（focus → 视口变化 →
-  // keepComposerVisible → scrollToBottom）时机随设备和键盘设置变化。
-  await nextTick()
-  jumpToBottom()
-  // 首屏那 20 条已经在正确位置了，下一帧再把更早的补进 DOM。
-  requestAnimationFrame(() => {
-    // 先取样再补齐：更早的消息插在**上方**，DOM 变高之后 scrollTop 不动就意味着
-    // 距底距离变大，那时再问 atBottom() 永远是 false。
-    const wasAtBottom = atBottom()
-    renderTail.value = null
-    if (wasAtBottom) nextTick(jumpToBottom)
-  })
-  // 本机图先回填；已收藏但本机清理的照片按引用从服务器取回。
-  scheduleLocalPhotoRestore()
-  // 本地恢复的消息可能停在半截，或快照缺少同一 user 的旧 roll：统一后台找回。
-  void reconcileTailFromServer(0, 'variants')
-  nextTick(() => inputRef.value?.focus())
+  try {
+    const raw = localStorage.getItem(STORAGE_MESSAGES) || '[]'
+    if (!storedSessionTag && JSON.parse(raw).length) {
+      throw new Error('旧记录缺少会话标识，未猜测归属或覆盖；请先导出保留。')
+    }
+    await transcript.store.migrateLegacySource(
+      transcriptKey(localStorage.getItem(STORAGE_GATEWAY) || '', storedSessionTag || sessionTag.value), raw)
+    const cached = await transcript.load(clientContext())
+    renderTail.value = cached?.state.viewport.atBottom === false ? null : FIRST_PAINT_MESSAGES
+    await transcript.apply(cached?.state || { messages: isDemoMode() ? demoSeedTranscript() : [],
+      draft: '', pendingAttachments: [], editId: null, viewport: { atBottom: true } })
+    storageReady.value = true
+    localStorage.setItem(STORAGE_SESSION, sessionTag.value)
+    const generation = openGeneration
+    requestAnimationFrame(() => {
+      if (generation !== openGeneration) return
+      const position = transcript.position()
+      renderTail.value = null
+      nextTick(() => { if (generation === openGeneration) transcript.restorePosition(position) })
+    })
+    scheduleLocalPhotoRestore()
+    // First paint/draft/reading position are complete before any configuration or list request.
+    initBatteryWatch(); initWeatherWatch(clientContext); loadPresets()
+    void loadRuntimeUpstream(); void loadModels(); void loadSessions()
+    if (requestedSessionTag && requestedSessionTag !== sessionTag.value) void adoptInitialSession()
+    else if (!cached && !messages.value.length && (storedSessionTag || requestedSessionTag)) {
+      const generation = openGeneration
+      const controller = new AbortController(); openController = controller
+      void refreshOpenedSession({ ...clientContext() }, () => generation === openGeneration, controller.signal)
+    } else void reconcileTailFromServer(0, tailNeedsReconcile(messages.value) ? 'tail' : 'variants')
+    void navigator.storage?.persist?.().catch(() => undefined)
+  } catch (error) {
+    // Preserve the legacy bytes and block writes rather than treating a read failure as an empty chat.
+    storageReady.value = false
+    storageError.value = error instanceof Error ? error.message : '本机记录无法打开，原件没有删除。'
+  }
 })
 
 onUnmounted(() => {
+  ++sessionListGeneration
+  ++openGeneration
+  openController?.abort()
+  transcript.dispose()
   photoLoader.dispose()
   activeController?.abort()
   invalidateReconcile()
@@ -1374,7 +1458,7 @@ onUnmounted(() => {
       </header>
 
 
-      <section ref="streamRef" class="message-stream">
+      <section ref="streamRef" class="message-stream" @scroll.passive="transcript.scheduleSave">
         <div v-if="isEmpty" class="welcome-panel">
           <img class="welcome-mark" :src="brandMarkUrl" alt="Claude" />
           <h1>What's on your mind?</h1>
@@ -1384,6 +1468,7 @@ onUnmounted(() => {
           <ChatMessageRow
             v-if="!isRoomEntry(message.content)"
             :message="message"
+            :data-message-id="message.id"
             :meta-label="assistantMetaLabel(index, message)"
             @open-process="openProcessSheet(message, $event)"
             @copy="copyText"
@@ -1396,6 +1481,10 @@ onUnmounted(() => {
         </template>
       </section>
 
+      <div v-if="storageError" class="notice-line error" role="alert">
+        <span>{{ storageError }}</span>
+        <button type="button" @click="transcript.exportCurrent">导出本页记录</button>
+      </div>
       <div v-if="status || errorNotice" class="notice-line" :class="{ error: errorNotice }">
         <span>{{ errorNotice || status }}</span>
         <button v-if="errorNotice" aria-label="关闭提示" title="关闭提示" @click="errorNotice = ''"><X :size="15" /></button>
@@ -1418,6 +1507,7 @@ onUnmounted(() => {
             <input ref="fileRef" class="visually-hidden" type="file" accept="image/*" multiple @change="chooseImages" />
             <div class="composer-input-row">
               <textarea
+                :disabled="!storageReady || sessionLoading"
                 ref="inputRef"
                 class="composer-input"
                 :value="draft"
@@ -1456,7 +1546,7 @@ onUnmounted(() => {
               </div>
               <span class="composer-spacer" />
               <button v-if="busy" class="send-button stop" aria-label="停止生成" title="停止生成" @click="cancelGeneration"><CircleStop :size="19" /></button>
-              <button v-else class="send-button" :class="{ ready: hasContent }" :disabled="!hasContent" aria-label="发送" title="发送" @click="submit"><Send :size="18" /></button>
+              <button v-else class="send-button" :class="{ ready: hasContent }" :disabled="!hasContent || controlsBlocked" aria-label="发送" title="发送" @click="submit"><Send :size="18" /></button>
             </div>
           </div>
         </div>
@@ -1756,9 +1846,9 @@ onUnmounted(() => {
         <div class="sheet-handle" />
         <div class="sheet-heading"><div><span class="sheet-eyebrow">只保存在这台设备</span><h2>聊天设置</h2></div><button class="icon-button" aria-label="关闭" title="关闭" @click="settingsOpen = false"><X :size="18" /></button></div>
         <label class="field-label" for="gateway-url">网关地址</label>
-        <input id="gateway-url" v-model="gatewayUrl" class="settings-input" placeholder="留空则使用当前站点" />
+        <input id="gateway-url" v-model="settingsGateway" class="settings-input" placeholder="留空则使用当前站点" />
         <label class="field-label" for="gateway-token">网关密钥</label>
-        <input id="gateway-token" v-model="authToken" class="settings-input" type="password" placeholder="只保存在本机 localStorage" />
+        <input id="gateway-token" v-model="settingsToken" class="settings-input" type="password" placeholder="只保存在本机 localStorage" />
         <p class="settings-note">图片会在发送前压缩，聊天端不会把图片放进 Service Worker 缓存。</p>
         <div class="build-proof" :class="`build-proof-${pwaBuildCheck}`" aria-live="polite">
           <div><span>当前运行</span><code>{{ activePwaBuildInfo.buildId }}</code></div>

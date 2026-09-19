@@ -1,0 +1,152 @@
+import { expect, test, type Page } from '@playwright/test'
+
+const TOKEN = process.env.E2E_GATEWAY_TOKEN || 'shenyu-e2e-smoke'
+const AT = '2026-09-19T01:00:00Z'
+function message(role: 'user' | 'assistant', id: string, content: string) {
+  return { role, id, content, echo: '', echoSegments: [], thinking: '', thinkingSegments: [], attachments: [], events: [],
+    archiveEvent: { id, event_at: AT }, ...(role === 'assistant' ? { replyVersionId: id } : {}) }
+}
+async function saved(page: Page) {
+  return page.evaluate(async () => {
+    const db = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open('shenyu-pwa-transcripts-v1', 1)
+      request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error)
+    })
+    try {
+      const tx = db.transaction(['sessions', 'messages'], 'readonly')
+      const get = <T>(request: IDBRequest<T>) => new Promise<T>((resolve, reject) => {
+        request.onsuccess = () => resolve(request.result); request.onerror = () => reject(request.error)
+      })
+      return { sessions: await get(tx.objectStore('sessions').getAll()),
+        rows: await get(tx.objectStore('messages').getAll()) }
+    } finally { db.close() }
+  })
+}
+async function fixtures(page: Page) {
+  const hidden = new Set<string>()
+  const mutations: unknown[] = []
+  const errors: string[] = []
+  page.on('pageerror', error => errors.push(error.message))
+  await page.context().addCookies([{ name: 'shenyu_token', value: TOKEN, domain: '127.0.0.1', path: '/' }])
+  await page.addInitScript(({ token, seed }) => {
+    localStorage.setItem('shenyu_pwa_gateway_token', token)
+    if (!localStorage.getItem('retention-fixture-installed')) {
+      localStorage.setItem('shenyu_pwa_session', 'A')
+      localStorage.setItem('shenyu_pwa_messages', JSON.stringify(seed))
+      localStorage.setItem('retention-fixture-installed', 'true')
+    }
+  }, { token: TOKEN, seed: [message('user', 'u-A', 'question A'), {
+    ...message('assistant', 'r-A', 'reply A'), thinking: 'local thought stays',
+    events: [{ phase: 'tool_end', name: 'shenyu_recall', tool_call_id: 'call-A', ok: true, output: 'local result stays' }],
+  }] })
+  await page.route('**/api/**', async route => {
+    const url = new URL(route.request().url())
+    if (url.pathname === '/api/gateway/sessions') {
+      const filter = url.searchParams.get('visibility')
+      return route.fulfill({ json: { sessions: ['A', 'B'].filter(tag => filter === 'hidden' ? hidden.has(tag) : !hidden.has(tag))
+        .map(tag => ({ session_tag: tag, display_name: `conversation ${tag}`, hidden_at: hidden.has(tag) ? AT : null })) } })
+    }
+    if (url.pathname.endsWith('/visibility')) {
+      const tag = url.pathname.split('/')[4]
+      const body = route.request().postDataJSON()
+      mutations.push({ method: route.request().method(), path: url.pathname, ...body })
+      if (body.hidden) hidden.add(tag); else hidden.delete(tag)
+      return route.fulfill({ json: { ok: true } })
+    }
+    if (route.request().method() === 'DELETE') throw new Error('A browser list action attempted destructive deletion')
+    if (url.pathname.endsWith('/reply-recovery')) return route.fulfill({ json: { replies: [] } })
+    if (url.pathname.includes('/sessions/')) {
+      const tag = url.pathname.split('/')[4]
+      return route.fulfill({ json: { context_snapshots: [{ messages: [message('user', `u-${tag}`, `question ${tag}`),
+        message('assistant', `r-${tag}`, `reply ${tag}`)].map(row => ({ role: row.role, content: row.content, archive_event: row.archiveEvent })) }], recent_messages: [] } })
+    }
+    if (url.pathname.endsWith('/album/resolve')) return route.fulfill({ json: { media: {}, photos: {} } })
+    return route.fulfill({ json: {} })
+  })
+  await page.route('**/v1/models', route => route.fulfill({ json: { data: [{ id: 'isolated-test' }] } }))
+  return { errors, mutations }
+}
+
+test('PWA preserves process records and draft through session switching, reload, and hide/restore', async ({ page }, info) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const fixture = await fixtures(page)
+  await page.goto('/chat/')
+  await expect(page.locator('textarea')).toBeEnabled()
+  await page.locator('textarea').fill('draft for A')
+  await expect.poll(async () => (await saved(page)).sessions.some(row => row.draft === 'draft for A')).toBe(true)
+  await page.getByRole('button', { name: '打开菜单', exact: true }).click()
+  await page.locator('.session-item').filter({ hasText: 'conversation B' }).click()
+  await expect(page.locator('.message-stream')).toContainText('reply B')
+  await page.getByRole('button', { name: '打开菜单', exact: true }).click()
+  await page.locator('.session-item').filter({ hasText: 'conversation A' }).click()
+  await expect(page.locator('textarea')).toHaveValue('draft for A')
+  await page.reload()
+  await expect(page.locator('textarea')).toHaveValue('draft for A')
+  const record = (await saved(page)).rows.map(row => JSON.parse(row.json)).find(row => row.replyVersionId === 'r-A')
+  expect(record.thinking).toBe('local thought stays')
+  expect(record.events[0].output).toBe('local result stays')
+  await page.getByRole('button', { name: '打开菜单', exact: true }).click()
+  await page.locator('.session-item').filter({ hasText: 'conversation A' }).click({ button: 'right' })
+  await page.getByRole('button', { name: '收起对话', exact: true }).click()
+  await page.getByRole('button', { name: '查看已收起', exact: true }).click()
+  await expect(page.locator('.session-item').filter({ hasText: 'conversation A' })).toHaveCount(1)
+  await page.locator('.session-item').filter({ hasText: 'conversation A' }).click({ button: 'right' })
+  await page.getByRole('button', { name: '放回最近对话', exact: true }).click()
+  expect(fixture.mutations).toHaveLength(2)
+  expect((await saved(page)).rows.some(row => JSON.parse(row.json).thinking === 'local thought stays')).toBe(true)
+  expect(fixture.errors).toEqual([])
+  await page.screenshot({ path: info.outputPath('retention-mobile.png'), animations: 'disabled' })
+})
+
+test('PWA commits send identity before POST and keeps tool output after reload', async ({ page }) => {
+  const fixture = await fixtures(page)
+  let checked = false
+  await page.route('**/v1/chat/completions', async route => {
+    const body = route.request().postDataJSON()
+    const record = (await saved(page)).rows.map(row => JSON.parse(row.json))
+      .find(row => row.replyVersionId === body.metadata.reply_version_id)
+    expect(record?.truncated).toBe(true)
+    expect(record?.archiveEvent.id).toBe(body.metadata.reply_version_id)
+    checked = true
+    const call = { name: 'shenyu_recall', tool_call_id: 'live-call' }
+    const frames = [{ ...call, phase: 'tool_start', input: { query: 'hello' } },
+      { ...call, phase: 'tool_end', ok: true, output: 'live retained result' }]
+      .map(event => `event: shenyu_tool\ndata: ${JSON.stringify({ type: 'shenyu.tool_event', event })}\n\n`).join('')
+    await route.fulfill({ contentType: 'text/event-stream', body: frames +
+      'data: {"choices":[{"delta":{"reasoning_content":"retained thought","content":"new reply complete"}}]}\n\ndata: [DONE]\n\n' })
+  })
+  await page.goto('/chat/')
+  await page.locator('textarea').fill('new question')
+  await page.getByRole('button', { name: '发送', exact: true }).click()
+  await expect(page.locator('.message-stream')).toContainText('new reply complete')
+  await expect(page.getByRole('button', { name: '停止生成', exact: true })).toHaveCount(0)
+  expect(checked).toBe(true)
+  await page.reload()
+  await expect(page.locator('.message-stream')).toContainText('new reply complete')
+  const final = (await saved(page)).rows.map(row => JSON.parse(row.json)).find(row => row.content === 'new reply complete')
+  expect(final.thinking).toBe('retained thought')
+  expect(final.events.find((event: any) => event.phase === 'tool_end').output).toBe('live retained result')
+  await page.locator('.message-row.assistant').last().locator('.process-strip').first().click()
+  await page.locator('.process-timeline-item').filter({ hasText: /recall/i }).first().click()
+  await expect(page.locator('.process-code').last()).toContainText('live retained result')
+  expect(fixture.errors).toEqual([])
+})
+
+test('installed PWA opens a query URL offline without losing its draft or forcing a takeover reload', async ({ page, context }) => {
+  const fixture = await fixtures(page)
+  await page.goto('/chat/')
+  await page.evaluate(async () => { await navigator.serviceWorker.ready })
+  await page.reload()
+  await page.locator('textarea').fill('offline draft survives')
+  await expect.poll(async () => (await saved(page)).sessions.some(row => row.draft === 'offline draft survives')).toBe(true)
+  await page.evaluate(() => {
+    document.documentElement.dataset.takeoverProbe = 'present'
+    navigator.serviceWorker.dispatchEvent(new Event('controllerchange'))
+  })
+  await expect(page.locator('html')).toHaveAttribute('data-takeover-probe', 'present')
+  await context.setOffline(true)
+  await page.goto('/chat/?session=A&offline-proof=1')
+  await expect(page.locator('textarea')).toHaveValue('offline draft survives')
+  await expect(page.locator('.message-stream')).toContainText('reply A')
+  expect(fixture.errors).toEqual([])
+})
