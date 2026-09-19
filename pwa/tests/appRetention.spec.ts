@@ -334,28 +334,40 @@ it('does not treat an explicit upstream stream failure as a recoverable backgrou
 it('keeps active text streaming free of full transcript checkpoints', async () => {
   const { state } = mount(); await flush()
   const save = vi.spyOn(TranscriptStore.prototype, 'save')
+  save.mockClear()
   const normalFetch = globalThis.fetch
-  vi.spyOn(Date, 'now').mockReturnValue(8_000_000_000_000_000)
+  let closeStream!: () => void
+  const encoder = new TextEncoder()
   vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
     if (String(input).includes('/v1/chat/completions')) {
-      return new Response(
-        'data: {"choices":[{"delta":{"content":"one"}}]}\n\n'
-        + 'data: {"choices":[{"delta":{"content":"two"}}]}\n\n'
-        + 'data: [DONE]\n\n',
-        { headers: { 'Content-Type': 'text/event-stream' } },
-      )
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"one"}}]}\n\n'))
+          closeStream = () => {
+            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"two"}}]}\n\ndata: [DONE]\n\n'))
+            controller.close()
+          }
+        },
+      })
+      return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } })
     }
     return normalFetch(input, options)
   }))
 
   state.draft = 'stream without snapshot work'
-  await state.submit(); await flush()
-  const midStream = save.mock.calls.filter(([, snapshot]) => {
-    const last = snapshot.messages.at(-1)
-    return last?.role === 'assistant' && last.truncated === true && Boolean(last.content)
-  })
-  expect(midStream).toHaveLength(0)
+  const sending = state.submit()
+  for (let i = 0; i < 20 && state.messages.at(-1)?.content !== 'one'; i++) {
+    await new Promise(resolve => setTimeout(resolve, 5)); await nextTick()
+  }
+  expect(state.messages.at(-1)?.content).toBe('one')
+  expect(save).not.toHaveBeenCalled()
+
+  closeStream()
+  await sending; await flush()
   expect(state.messages.at(-1).content).toBe('onetwo')
+  expect(state.messages.at(-1).truncated).toBeUndefined()
+  expect(state.messages.at(-1).error).toBeUndefined()
+  expect(save).toHaveBeenCalledTimes(1)
 })
 
 it('uses a lightweight inflight receipt to recover a stream after a process restart', async () => {
