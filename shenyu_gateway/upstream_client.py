@@ -471,7 +471,7 @@ def _upstream_auth_headers(upstream: dict, auth: dict[str, str]) -> dict[str, st
 
 def make_upstream_http_client(cfg: Any) -> httpx.AsyncClient:
     kwargs: dict[str, Any] = {
-        "timeout": httpx.Timeout(connect=15.0, read=None, write=30.0, pool=15.0),
+        "timeout": httpx.Timeout(connect=15.0, read=600.0, write=30.0, pool=15.0),
     }
     if cfg.upstream_proxy:
         kwargs["proxy"] = cfg.upstream_proxy
