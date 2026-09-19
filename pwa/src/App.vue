@@ -916,7 +916,17 @@ function forgetExpiredPhotos(removedIds: string[]) {
 
 // Shared photos use the same visible attachment slots, but their bytes come
 // from the server album and never enter the ordinary cache or next request.
-const photoLoader = createPhotoLoader(clientContext, () => messages.value, persistMessages)
+let photoReferencesDirtyWhileBusy = false
+const photoLoader = createPhotoLoader(clientContext, () => messages.value, () => {
+  // Resolving references can coincide with an active text stream. The reply's
+  // final checkpoint will capture changes that arrived before it; only changes
+  // racing that final write need one deferred follow-up afterward.
+  if (busy.value) {
+    photoReferencesDirtyWhileBusy = true
+    return
+  }
+  void persistMessages()
+})
 async function restoreLocalPhotos() {
   if (!storageReady.value) return
   const generation = openGeneration
@@ -1123,8 +1133,16 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       errorNotice.value = assistant.error
     }
   } finally {
+    // Anything the photo resolver changed before this point is captured here.
+    // Reset first so a resolver that finishes while this write is in flight can
+    // request one post-stream follow-up without writing during streaming.
+    photoReferencesDirtyWhileBusy = false
     await persistMessages()
     busy.value = false
+    if (photoReferencesDirtyWhileBusy) {
+      photoReferencesDirtyWhileBusy = false
+      void persistMessages()
+    }
     activeController = null
     activeAssistantId = null
     status.value = ''
