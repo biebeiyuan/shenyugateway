@@ -1070,6 +1070,10 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     }
     if (!await persistMessages()) throw new Error('本机未能保存这次发送，尚未发出请求。请先保留当前页面。')
     if (useStreaming) {
+      // The durable pre-send checkpoint already saved the outgoing turn and
+      // reply identity. Start the ordinary stream interval here so the first
+      // visible chunk is not immediately followed by another full snapshot.
+      lastStreamPersistAt = Date.now()
       const stream = await postChatStream(clientContext(), body, activeController.signal)
       // 3 分钟看门狗：Doze/NAT 让 socket 静默死亡时解锁 UI，交给 reconcile 找回。
       const { sawDone } = await pumpSseStream(stream, (frame) => {
