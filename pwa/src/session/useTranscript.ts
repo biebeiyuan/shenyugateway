@@ -96,7 +96,10 @@ export function useTranscript(deps: Deps) {
     let state: TranscriptState
     try {
       state = snapshotTranscript({
-        messages: deps.messages.value.slice(start),
+        // This checkpoint proves the outgoing turn/reply identity is durable.
+        // UI "streaming" starts immediately for responsiveness, but before the
+        // POST exists it is not evidence of a truncated/recoverable stream.
+        messages: deps.messages.value.slice(start).map(message => ({ ...message, streaming: false })),
         draft: deps.draft.value,
         pendingAttachments: deps.pendingAttachments.value,
         editId: deps.editId.value,
