@@ -337,16 +337,6 @@ function sessionMessageLimit(): number {
 
 type InflightReplyReceipt = { replyVersionId: string }
 
-function requestMessageWindow(source: UiMessage[], limit: number): UiMessage[] {
-  const cap = Math.max(1, Math.floor(limit || FALLBACK_SESSION_MESSAGE_LIMIT))
-  let windowed = source.length > cap ? source.slice(-cap) : [...source]
-  if (windowed[0]?.role === 'assistant') {
-    const firstUser = windowed.findIndex(message => message.role === 'user')
-    if (firstUser > 0) windowed = windowed.slice(firstUser)
-  }
-  return windowed
-}
-
 function inflightReplyKey(ctx: RequestContext): string {
   return `shenyu_pwa_inflight:${transcriptKey(ctx.gatewayUrl, ctx.sessionTag)}`
 }
@@ -1124,10 +1114,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     replyVersionId = createId('reply')
     assistant.replyVersionId = replyVersionId
     assistant.archiveEvent = newArchiveEvent(replyVersionId)
-    const requestSource = requestMessageWindow(
-      source.filter(message => message.id !== assistant.id),
-      sessionMessageLimit(),
-    )
+    const requestSource = source.filter(message => message.id !== assistant.id)
     const body: Record<string, unknown> = {
       model: selectedModel.value,
       messages: wireMessages(requestSource),
