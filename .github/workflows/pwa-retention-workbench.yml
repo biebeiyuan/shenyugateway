@@ -1,0 +1,30 @@
+name: PWA retention workbench (temporary)
+on:
+  push:
+    branches: [fix/pwa-record-retention]
+    paths:
+      - .github/pwa-retention/**
+      - .github/workflows/pwa-retention-workbench.yml
+permissions:
+  contents: read
+jobs:
+  probe:
+    if: github.ref == 'refs/heads/fix/pwa-record-retention'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: pwa/package-lock.json
+      - run: pip install -e '.[dev]'
+      - run: npm ci
+        working-directory: pwa
+      - run: python .github/pwa-retention/work.py
