@@ -531,3 +531,11 @@ button:focus-visible, a:focus-visible { outline: 2px solid var(--accent); outlin
 .saved-actions { display: flex; gap: 8px; }
 .saved-actions button { display: inline-flex; align-items: center; gap: 6px; height: 34px; padding: 0 14px; border-radius: 999px; background: var(--bg-sunken); color: var(--text-secondary); font-size: 13px; transition: color var(--transition); }
 .saved-actions button:hover { color: var(--accent); }
+
+/* Recovery copies are read-only; retrieving a draft is an explicit action. */
+.recovery-copies { margin-block: 16px; min-width: 0; }
+.recovery-copies h3, .recovery-copies h4 { margin-block: 12px 8px; font-size: 14px; }
+.recovery-copy-row { margin-block: 6px; overflow-wrap: anywhere; }
+.recovery-copy-row button { max-width: 100%; text-align: left; white-space: normal; }
+.recovery-copy-preview { min-width: 0; }
+.recovery-copy-preview pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 160px; overflow-y: auto; font: inherit; }

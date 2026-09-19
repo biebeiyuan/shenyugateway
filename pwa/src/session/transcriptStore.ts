@@ -1,6 +1,7 @@
 import type { Attachment, UiMessage } from '../types'
 import { decodeStoredMessages, encodeStoredMessages } from './persistence'
 import { storedAttachments } from './media'
+import { createId } from '../utils'
 
 export type ReadingPosition = { atBottom: boolean; messageId?: string; offset?: number }
 export type TranscriptState = {
@@ -11,13 +12,16 @@ export type TranscriptState = {
   viewport: ReadingPosition
 }
 export type SavedTranscript = { revision: number; savedAt: string; state: TranscriptState }
+export type RecoveryCopyKind = 'local' | 'saved' | 'before-draft'
+export type RecoveryCopyInfo = { id: string; scope: string; kind: RecoveryCopyKind; savedAt: string; messageCount: number; draft: string }
+export type RecoveryCopy = RecoveryCopyInfo & { schema: 1; state: TranscriptState }
 type SessionRecord = Omit<TranscriptState, 'messages'> & {
   schema: 1; key: string; revision: number; savedAt: string; rowKeys: string[]
 }
 type MessageRecord = { key: string; scope: string; json: string }
 
 export class StorageConflictError extends Error {
-  constructor() { super('另一页已经保存了新记录，本页暂停写入以免覆盖。请保留本页并导出未保存内容。') }
+  constructor() { super('另一页已经保存了新记录。本页暂停写入；请先保留本页并重新同步，或导出未保存内容。') }
 }
 
 export function transcriptKey(gateway: string, session: string, base = window.location.href): string {
@@ -91,7 +95,11 @@ export class TranscriptStore {
       tx.oncomplete = () => resolve(output)
       tx.onabort = () => reject(failure || tx.error || new Error('本机保存中断，上一份记录未改变'))
       tx.onerror = () => { failure ||= tx.error }
-      try { run(tx, value => { output = value }, fail) } catch (error) { fail(error) }
+      // setResult only stages the return value. Only oncomplete resolves it,
+      // after every request (including puts queued by get callbacks) commits.
+      // A later failure aborts/rolls back the whole transaction and rejects.
+      const setResult = (value: T) => { output = value }
+      try { run(tx, setResult, fail) } catch (error) { fail(error) }
     })
   }
 
@@ -164,6 +172,58 @@ export class TranscriptStore {
       request.onsuccess = () => {
         try { result(decodeStoredMessages(request.result.map((row: MessageRecord) => JSON.parse(row.json)))) }
         catch (error) { fail(error) }
+      }
+    })
+  }
+
+  async saveRecoveryCopy(scope: string, state: TranscriptState, kind: RecoveryCopyKind = 'local'): Promise<RecoveryCopyInfo> {
+    const detached = snapshotTranscript(state)
+    const copy: RecoveryCopy = { schema: 1, id: createId('recovery'), scope, kind,
+      savedAt: new Date().toISOString(), messageCount: detached.messages.length, draft: detached.draft, state: detached }
+    // Array keys cannot collide with the replaceable session-list string keys.
+    // Additive storage in v1 avoids an upgrade blocking the other open writer.
+    // add (not put) makes each recovery copy immutable, even on an ID collision.
+    await this.transaction(['lists'], true, (tx, result) => {
+      tx.objectStore('lists').add(copy, ['recovery-copy', scope, copy.id])
+      result(undefined)
+    })
+    const { state: _state, schema: _schema, ...info } = copy
+    return info
+  }
+
+  async listRecoveryCopies(scope: string): Promise<RecoveryCopyInfo[]> {
+    return this.transaction(['lists'], false, (tx, result, fail) => {
+      // All generated IDs are strings; an array sorts after every string ID.
+      const range = IDBKeyRange.bound(['recovery-copy', scope], ['recovery-copy', scope, []])
+      const request = tx.objectStore('lists').openCursor(range, 'prev')
+      const copies: RecoveryCopyInfo[] = []
+      request.onsuccess = () => {
+        try {
+          const cursor = request.result
+          if (!cursor) { result(copies); return }
+          const { state: _state, schema: _schema, ...info } = cursor.value as RecoveryCopy
+          if (info.scope !== scope) throw new Error('副本归属不一致，未读取其他会话')
+          copies.push(info)
+          cursor.continue()
+        } catch (error) { fail(error) }
+      }
+    })
+  }
+
+  async loadRecoveryCopy(scope: string, id: string): Promise<RecoveryCopy | null> {
+    return this.transaction(['lists'], false, (tx, result, fail) => {
+      const request = tx.objectStore('lists').get(['recovery-copy', scope, id])
+      request.onsuccess = () => {
+        try {
+          const copy = request.result as RecoveryCopy | undefined
+          if (!copy) { result(null); return }
+          if (copy.schema !== 1 || copy.scope !== scope || copy.id !== id || !Array.isArray(copy.state?.messages)) {
+            throw new Error('保留副本无法读取，原件未改变')
+          }
+          const messages = decodeStoredMessages(copy.state.messages)
+          if (messages.length !== copy.state.messages.length) throw new Error('保留副本的消息不完整，未进行替换')
+          result({ ...copy, state: { ...copy.state, messages } })
+        } catch (error) { fail(error) }
       }
     })
   }

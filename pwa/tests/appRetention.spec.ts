@@ -157,3 +157,39 @@ it('does not place an active conversation in an empty hidden list', async () => 
   expect(host.querySelectorAll('.session-item')).toHaveLength(0)
   expect(host.querySelector('.sidebar-empty')?.textContent).toContain('还没有已收起的对话')
 })
+
+it('can recover a conflict through the visible action without first saving the stale page', async () => {
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify([row('assistant', 'r-A')]))
+  const { state, host } = mount(); await flush()
+  const store = new TranscriptStore()
+  try {
+    const key = transcriptKey('', 'A')
+    const latest = (await store.load(key))!
+    await store.save(key, { ...latest.state, draft: 'draft from another page' }, latest.revision)
+    state.draft = 'my uncommitted draft'
+    expect(await state.persistMessages()).toBe(false)
+    expect(await state.openSession({ session_tag: 'B' })).toBe(false)
+    const button = host.querySelector<HTMLButtonElement>('[data-testid="recover-local-record"]')
+    expect(button).not.toBeNull()
+    button!.click(); await flush(); await flush()
+    expect(state.storageConflict).toBe(false)
+    expect(state.draft).toBe('draft from another page')
+    state.openSettings(); await flush()
+    expect(host.textContent).toContain('保留副本')
+    const copies = await store.listRecoveryCopies(key)
+    const local = copies.find(copy => copy.kind === 'local')!
+    expect(await state.restoreLocalDraft(local.id)).toBe(true)
+    expect(state.draft).toBe('my uncommitted draft')
+    expect(await state.openSession({ session_tag: 'B' })).toBe(true)
+    expect(state.sessionTag).toBe('B')
+  } finally { store.close() }
+})
+
+it('shows page build and offline-worker status as separate evidence in Settings', async () => {
+  const { state, host } = mount(); await flush()
+  state.openSettings(); await flush()
+  expect(host.querySelector('[data-testid="offline-update-status"]')).not.toBeNull()
+  expect(host.querySelector('.build-proof')?.textContent).toContain('本页代码')
+  expect(host.querySelector('.build-proof')?.textContent).toContain('当前离线版本')
+})

@@ -32,6 +32,7 @@ import PhotoViewer from './components/PhotoViewer.vue'
 import ReviewSheet from './components/ReviewSheet.vue'
 import { isDemoMode, demoSeedTranscript } from './demo'
 import { activePwaBuildInfo, samePwaBuild, type PwaBuildInfo } from './buildInfo'
+import { usePwaUpdates } from './usePwaUpdates'
 import { toolState, toolWarmCopy, type ToolEvent } from './toolLanguage'
 import type {
   Attachment,
@@ -153,6 +154,8 @@ const menuOpen = ref(false)
 const settingsOpen = ref(false)
 const reviewOpen = ref(false)
 const deployedPwaBuildInfo = ref<PwaBuildInfo | null>(null)
+const pwaUpdates = usePwaUpdates(deployedPwaBuildInfo, activePwaBuildInfo.buildId)
+const { evidence: offlineBuild, status: offlineUpdateStatus, checkError: offlineUpdateError } = pwaUpdates
 const pwaBuildCheck = ref<'idle' | 'checking' | 'current' | 'outdated' | 'unavailable'>('idle')
 const handoffOpen = ref(false)
 const handoffLoading = ref(false)
@@ -169,8 +172,9 @@ const fileRef = ref<HTMLInputElement | null>(null)
 const composerMenuRef = ref<HTMLElement | null>(null)
 const streamRef = ref<HTMLElement | null>(null)
 const transcript = useTranscript({ context: () => clientContext(), messages, draft, pendingAttachments, editId, stream: streamRef })
-const { ready: storageReady, error: storageError, saving: storageSaving, savedAt: lastLocalSave } = transcript
-const controlsBlocked = computed(() => busy.value || sessionLoading.value || !storageReady.value)
+const { ready: storageReady, error: storageError, saving: storageSaving, savedAt: lastLocalSave,
+  conflicted: storageConflict, recovering: storageRecovering, recoveryNotice, recoveryCopies, selectedRecovery } = transcript
+const controlsBlocked = computed(() => busy.value || sessionLoading.value || !storageReady.value || storageRecovering.value)
 watch([draft, pendingAttachments, editId], transcript.scheduleSave, { deep: true })
 // 上游配置（模型 / effort / 预设 / 请求头）整块在 api/useUpstream.ts。
 // 它只通过 status / errorNotice / busy 与聊天说话，所以那三个注入进去。
@@ -235,7 +239,7 @@ const visibleMessages = computed(() => {
 const pwaBuildStatus = computed(() => {
   if (pwaBuildCheck.value === 'checking') return '正在核验线上版本'
   if (pwaBuildCheck.value === 'current') return '当前页面就是线上版本'
-  if (pwaBuildCheck.value === 'outdated') return '线上已更新，请重新打开页面'
+  if (pwaBuildCheck.value === 'outdated') return '发现新版，本页保持原样；离线更新进度见下方'
   if (pwaBuildCheck.value === 'unavailable') return '暂时无法核验线上版本'
   return '尚未核验线上版本'
 })
@@ -450,7 +454,7 @@ async function setSessionHiddenAction(session: GatewaySession) {
 }
 
 async function openSession(session: GatewaySession): Promise<boolean> {
-  if (busy.value || !storageReady.value || !session.session_tag) return false
+  if (busy.value || storageRecovering.value || !storageReady.value || !session.session_tag) return false
   const generation = ++openGeneration
   openController?.abort()
   const controller = new AbortController()
@@ -747,8 +751,28 @@ function openSettings() {
   settingsGateway.value = gatewayUrl.value
   settingsToken.value = authToken.value
   settingsOpen.value = true
+  void transcript.refreshRecoveryCopies()
   void checkPwaBuildInfo()
 }
+
+async function restoreLocalRecord(copyId?: string): Promise<boolean> {
+  if (controlsBlocked.value) return false
+  // This path intentionally does not persist first: a conflicted writer cannot
+  // save. useTranscript checkpoints both originals before changing anything.
+  const generation = ++openGeneration
+  openController?.abort()
+  invalidateReconcile()
+  renderTail.value = null
+  const current = () => generation === openGeneration
+  const restored = copyId
+    ? await transcript.restoreRecoveryDraft(copyId, current)
+    : await transcript.recoverConflict(current)
+  if (restored && current()) scheduleLocalPhotoRestore()
+  return restored
+}
+const recoverLocalTranscript = () => restoreLocalRecord()
+const restoreLocalDraft = (copyId: string) => restoreLocalRecord(copyId)
+const recoveryCopyLabel = (kind: string) => kind === 'local' ? '重新同步前的本页' : kind === 'saved' ? '另一页已保存的记录' : '找回草稿前的本页'
 
 function openReview() {
   menuOpen.value = false
@@ -756,6 +780,7 @@ function openReview() {
 }
 
 async function checkPwaBuildInfo() {
+  void pwaUpdates.checkForUpdate()
   pwaBuildCheck.value = 'checking'
   try {
     const deployed = await fetchDeployedPwaBuildInfo(clientContext())
@@ -1294,6 +1319,7 @@ function handlePageHide() {
 }
 
 onMounted(async () => {
+  pwaUpdates.start()
   document.addEventListener('pointerdown', closeComposerMenuFromOutside)
   document.addEventListener('visibilitychange', handleVisibilityChange)
   window.addEventListener('pagehide', handlePageHide)
@@ -1338,6 +1364,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  pwaUpdates.stop()
   ++sessionListGeneration
   ++openGeneration
   openController?.abort()
@@ -1434,7 +1461,7 @@ onUnmounted(() => {
         <MessageCirclePlus :size="18" />
         <span>New chat</span>
       </button>
-      <button class="sidebar-link" @click="openSettings(); menuOpen = false">
+      <button class="sidebar-link" data-testid="open-chat-settings" @click="openSettings(); menuOpen = false">
         <Settings2 :size="17" />
         <span>Settings</span>
       </button>
@@ -1483,7 +1510,13 @@ onUnmounted(() => {
 
       <div v-if="storageError" class="notice-line error" role="alert">
         <span>{{ storageError }}</span>
+        <button v-if="storageConflict" type="button" data-testid="recover-local-record" :disabled="controlsBlocked" @click="recoverLocalTranscript">{{ storageRecovering ? '正在保留与同步' : '保留本页并重新同步' }}</button>
         <button type="button" @click="transcript.exportCurrent">导出本页记录</button>
+      </div>
+      <div v-if="recoveryNotice" class="notice-line" role="status">
+        <span>{{ recoveryNotice }}</span>
+        <button type="button" @click="openSettings">查看保留副本</button>
+        <button aria-label="关闭恢复提示" @click="recoveryNotice = ''"><X :size="15" /></button>
       </div>
       <div v-if="status || errorNotice" class="notice-line" :class="{ error: errorNotice }">
         <span>{{ errorNotice || status }}</span>
@@ -1507,7 +1540,7 @@ onUnmounted(() => {
             <input ref="fileRef" class="visually-hidden" type="file" accept="image/*" multiple @change="chooseImages" />
             <div class="composer-input-row">
               <textarea
-                :disabled="!storageReady || sessionLoading"
+                :disabled="!storageReady || sessionLoading || storageRecovering"
                 ref="inputRef"
                 class="composer-input"
                 :value="draft"
@@ -1850,11 +1883,36 @@ onUnmounted(() => {
         <label class="field-label" for="gateway-token">网关密钥</label>
         <input id="gateway-token" v-model="settingsToken" class="settings-input" type="password" placeholder="只保存在本机 localStorage" />
         <p class="settings-note">图片会在发送前压缩，聊天端不会把图片放进 Service Worker 缓存。</p>
+        <section class="recovery-copies" aria-label="本机保存与恢复">
+          <h3>本机保存与恢复</h3>
+          <p class="settings-note">{{ storageRecovering ? '正在保留原件并重新同步，请保持本页打开。' : storageError || (storageSaving ? '正在保存本页。' : lastLocalSave ? '本页已保存。' : '本机记录已打开。') }}</p>
+          <p v-if="storageConflict" class="settings-note">重新同步会先保留两边副本，再接回最新记录。分歧草稿不混在一起，之后可单独找回；不会发送消息。</p>
+          <button v-if="storageConflict" class="quiet-button" :disabled="controlsBlocked" @click="recoverLocalTranscript">保留本页并重新同步</button>
+          <h4>保留副本</h4>
+          <p v-if="!recoveryCopies.length" class="settings-note">当前对话没有恢复副本。正常聊天仍保存在本机记录中。</p>
+          <div v-for="copy in recoveryCopies" :key="copy.id" class="recovery-copy-row">
+            <button class="quiet-button" @click="transcript.inspectRecoveryCopy(copy.id)">{{ recoveryCopyLabel(copy.kind) }} · {{ new Date(copy.savedAt).toLocaleString() }}</button>
+          </div>
+          <div v-if="selectedRecovery" class="recovery-copy-preview" data-testid="recovery-copy-preview">
+            <p>{{ recoveryCopyLabel(selectedRecovery.kind) }} · {{ selectedRecovery.messageCount }} 条消息</p>
+            <pre>{{ selectedRecovery.state.draft || '这份副本没有文字草稿。' }}</pre>
+            <p class="settings-note">副本保留整段消息、回复版本与工具过程。找回草稿只放进输入框，不替换当前对话；原输入也会先留副本。</p>
+            <div class="settings-actions">
+              <button class="quiet-button" :disabled="controlsBlocked || storageConflict" @click="restoreLocalDraft(selectedRecovery.id)">找回这份草稿</button>
+              <button class="quiet-button" @click="transcript.exportRecoveryCopy(selectedRecovery.id)">导出完整副本</button>
+            </div>
+          </div>
+        </section>
         <div class="build-proof" :class="`build-proof-${pwaBuildCheck}`" aria-live="polite">
-          <div><span>当前运行</span><code>{{ activePwaBuildInfo.buildId }}</code></div>
+          <div><span>本页代码</span><code>{{ activePwaBuildInfo.buildId }}</code></div>
           <div><span>线上已部署</span><code>{{ deployedPwaBuildInfo?.buildId || pwaBuildStatus }}</code></div>
+          <div><span>当前离线版本</span><code>{{ offlineBuild.controllerBuildId || offlineBuild.activeBuildId || '尚未核验' }}</code></div>
+          <div v-if="offlineBuild.waiting"><span>等待切换</span><code>{{ offlineBuild.waitingBuildId || '已下载，版本待核验' }}</code></div>
           <button class="icon-button build-proof-refresh" :disabled="pwaBuildCheck === 'checking'" aria-label="重新核验线上版本" title="重新核验线上版本" @click="checkPwaBuildInfo"><RotateCcw :size="16" /></button>
         </div>
+        <p class="settings-note" data-testid="offline-update-status" role="status">{{ offlineUpdateStatus }}</p>
+        <p v-if="offlineUpdateError" class="settings-note">{{ offlineUpdateError }}</p>
+        <p class="settings-note">更新前请确认记录已保存；其他标签页也要关闭。不要清除站点数据。页面不会为了更新自动重启。</p>
         <div class="settings-actions"><button class="quiet-button" @click="newChat"><Trash2 :size="16" /> 清空当前对话</button><button class="primary-button" @click="saveSettings"><Check :size="16" /> 收好设置</button></div>
       </section>
     </div>

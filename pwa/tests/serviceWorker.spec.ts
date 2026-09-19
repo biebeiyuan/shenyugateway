@@ -42,7 +42,7 @@ function harness() {
     listeners.fetch({ request: new Request(origin + path), respondWith: (value: Promise<Response>) => { response = value }, waitUntil: () => {} })
     return response
   }
-  return { caches, values, fetcher, clients, skipWaiting, lifecycle, request }
+  return { caches, values, fetcher, clients, skipWaiting, lifecycle, request, listeners }
 }
 afterEach(() => vi.useRealTimers())
 
@@ -95,4 +95,16 @@ describe('non-disruptive app shell updates', () => {
     expect(h.values.has('shenyu-pwa-shell-old')).toBe(true)
     expect([...h.values.keys()].filter(name => name !== 'shenyu-pwa-shell-old')).toHaveLength(0)
   })
+})
+
+it('reports its own paired build over a read-only message port, without activation side effects', () => {
+  const h = harness()
+  const port = { postMessage: vi.fn() }
+  expect(h.listeners.message).toBeTypeOf('function')
+  h.listeners.message({ data: { type: 'SHENYU_PWA_BUILD_INFO' }, ports: [port] })
+  expect(port.postMessage).toHaveBeenCalledWith({ type: 'SHENYU_PWA_BUILD_INFO', schema: 1, buildId: 'build-test' })
+  h.listeners.message({ data: { type: 'SKIP_WAITING' }, ports: [port] })
+  expect(port.postMessage).toHaveBeenCalledTimes(1)
+  expect(h.skipWaiting).not.toHaveBeenCalled()
+  expect(h.clients.claim).not.toHaveBeenCalled()
 })

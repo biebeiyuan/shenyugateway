@@ -65,6 +65,7 @@ export function toolEventsFromRows(tools: RecentRow[], keyBase: string): ToolEve
 // fields/phases. Synthetic legacy IDs cannot complete a real in-flight call.
 export function mergeToolEvents(local: ToolEvent[], incoming: ToolEvent[]): ToolEvent[] {
   const result = local.map(event => ({ ...event }))
+  let changed = false
   for (const event of incoming) {
     const id = event.tool_call_id
     if (!id) continue
@@ -73,8 +74,19 @@ export function mergeToolEvents(local: ToolEvent[], incoming: ToolEvent[]): Tool
     const existing = sameCall.find(item => item.phase === event.phase)
     if (existing) {
       for (const [key, value] of Object.entries(event)) {
-        if (value !== undefined && (existing as unknown as Record<string, unknown>)[key] === undefined) {
-          (existing as unknown as Record<string, unknown>)[key] = value
+        const fields = existing as unknown as Record<string, unknown>
+        const old = fields[key]
+        // Field semantics, not truthiness: false, 0, empty tool output and null
+        // tool input are observed values. Only a null outcome is "unknown";
+        // legacy null output/empty labels are invalid placeholders.
+        const missing = old === undefined
+          || (key === 'ok' && old === null && typeof value === 'boolean')
+          || (key === 'output' && old === null && typeof value === 'string')
+          || (['name', 'target_tool', 'reply_version_id', 'error_kind'].includes(key)
+            && old === '' && typeof value === 'string' && value !== '')
+        if (value !== undefined && missing) {
+          fields[key] = value
+          changed = true
         }
       }
       continue
@@ -87,8 +99,11 @@ export function mergeToolEvents(local: ToolEvent[], incoming: ToolEvent[]): Tool
       target_tool: start?.target_tool || event.target_tool,
       text_offset: start?.text_offset ?? event.text_offset,
       stream_order: start?.stream_order ?? event.stream_order })
+    changed = true
   }
-  return result
+  // Stable no-change signal avoids stringify order dependence and needless
+  // persistence of large results. Changed arrays never mutate the input.
+  return changed ? result : local
 }
 
 export function hasUnfinishedTools(events: ToolEvent[]): boolean {
@@ -121,7 +136,7 @@ export function hydrateToolEvents(messages: UiMessage[], recentRows: unknown): n
       ? rows.filter(row => row.role === 'tool' && String(row.reply_version_id || '') === identity) : [])
     if (!tools.length) continue
     const merged = mergeToolEvents(message.events, toolEventsFromRows(tools, message.id))
-    if (JSON.stringify(merged) !== JSON.stringify(message.events)) {
+    if (merged !== message.events) {
       message.events = merged
       hydrated++
     }

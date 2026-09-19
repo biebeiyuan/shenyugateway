@@ -152,3 +152,131 @@ test('installed PWA opens a query URL offline without losing its draft or forcin
   await expect(page.locator('.message-stream')).toContainText('reply A')
   expect(fixture.errors).toEqual([])
 })
+
+test('two real pages recover a stale-writer conflict without a reload, then retrieve the retained draft', async ({ page, context }, info) => {
+  await page.setViewportSize({ width: 390, height: 844 })
+  const first = await fixtures(page)
+  await page.goto('/chat/')
+  await expect(page.locator('textarea')).toBeEnabled()
+  const other = await context.newPage()
+  const second = await fixtures(other)
+  await other.goto('/chat/')
+  await other.locator('textarea').fill('draft saved by the second page')
+  await expect.poll(async () => (await saved(other)).sessions.some(row => row.draft === 'draft saved by the second page')).toBe(true)
+  await page.locator('textarea').fill('draft written in the first page')
+  await expect(page.getByTestId('recover-local-record')).toBeVisible()
+  await other.close()
+  await page.evaluate(() => { document.documentElement.dataset.conflictProbe = 'same-page' })
+  await page.getByTestId('recover-local-record').click()
+  await expect(page.locator('textarea')).toHaveValue('draft saved by the second page')
+  await expect(page.getByTestId('recover-local-record')).toHaveCount(0)
+  await expect(page.locator('html')).toHaveAttribute('data-conflict-probe', 'same-page')
+  await page.getByRole('button', { name: '查看保留副本', exact: true }).click()
+  await page.getByRole('button', { name: /重新同步前的本页/ }).click()
+  await expect(page.getByTestId('recovery-copy-preview')).toContainText('draft written in the first page')
+  await page.getByRole('button', { name: '找回这份草稿', exact: true }).click()
+  await expect.poll(async () => (await saved(page)).sessions.some(row => row.draft === 'draft written in the first page')).toBe(true)
+  await page.screenshot({ path: info.outputPath('conflict-recovery-mobile.png'), animations: 'disabled' })
+  await page.reload()
+  await expect(page.locator('textarea')).toHaveValue('draft written in the first page')
+  expect(first.errors).toEqual([])
+  expect(second.errors).toEqual([])
+})
+
+// Two internally consistent deployments of the production build, on a private
+// loopback server. Only build identity and its hashed JS URL change. The first
+// worker omits the new read-only message, like an already installed old worker.
+import { createServer } from 'node:http'
+import { readFileSync, readdirSync } from 'node:fs'
+import { resolve, relative } from 'node:path'
+import { createHash } from 'node:crypto'
+async function updateFixture() {
+  const root = resolve('../pwa/dist')
+  const files = new Map<string, Buffer>()
+  for (const path of readdirSync(root, { recursive: true, withFileTypes: true })) {
+    if (path.isFile()) {
+      const file = resolve(path.parentPath, path.name)
+      files.set('/chat/' + relative(root, file).replaceAll('\\', '/'), readFileSync(file))
+    }
+  }
+  const build = JSON.parse(files.get('/chat/build-info.json')!.toString())
+  const nextId = `${build.buildId}-review-update`
+  const index = files.get('/chat/index.html')!.toString()
+  const jsPath = index.match(/src="([^"]+\.js)"/)![1]
+  const nextJs = files.get(jsPath)!.toString().replaceAll(build.buildId, nextId)
+  const nextJsPath = `/chat/assets/review-${createHash('sha256').update(nextJs).digest('hex').slice(0, 12)}.js`
+  const nextIndex = index.replace(jsPath, nextJsPath)
+  const worker = files.get('/chat/sw.js')!.toString()
+  const messageStart = worker.indexOf('// Read-only build evidence')
+  const messageEnd = worker.indexOf('async function deployedBuild()')
+  expect(messageStart).toBeGreaterThan(0)
+  expect(messageEnd).toBeGreaterThan(messageStart)
+  const oldWorker = worker.slice(0, messageStart) + worker.slice(messageEnd)
+  const nextWorker = worker.replaceAll(build.buildId, nextId).replaceAll(jsPath, nextJsPath)
+  let upgraded = false
+  const server = createServer((request, response) => {
+    const path = new URL(request.url!, 'http://fixture').pathname
+    let content = files.get(path)
+    if (path === '/chat/' || path === '/chat/index.html') content = Buffer.from(upgraded ? nextIndex : index)
+    if (path === '/chat/sw.js') content = Buffer.from(upgraded ? nextWorker : oldWorker)
+    if (path === '/chat/build-info.json') content = Buffer.from(JSON.stringify(upgraded ? { ...build, buildId: nextId } : build))
+    if (path === nextJsPath) content = Buffer.from(nextJs)
+    response.writeHead(content ? 200 : 404, { 'Cache-Control': 'no-store',
+      'Content-Type': path.endsWith('.js') ? 'text/javascript' : path.endsWith('.css') ? 'text/css'
+        : path.endsWith('.json') ? 'application/json' : path.endsWith('/') || path.endsWith('.html') ? 'text/html' : 'application/octet-stream' })
+    response.end(content || 'not found')
+  })
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+  const address = server.address() as { port: number }
+  return { base: `http://127.0.0.1:${address.port}`, nextId, upgrade: () => { upgraded = true },
+    close: () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) }
+}
+
+test('a downloaded update waits safely across two installed pages and becomes the offline build after closing them', async ({ page, context }) => {
+  test.setTimeout(60_000)
+  const deployment = await updateFixture()
+  const pages: Page[] = [page]
+  try {
+    await page.setViewportSize({ width: 390, height: 844 })
+    const first = await fixtures(page)
+    await page.goto(deployment.base + '/chat/')
+    await page.evaluate(async () => { await navigator.serviceWorker.ready })
+    await page.reload()
+    await page.locator('textarea').fill('draft across a real waiting worker')
+    await expect.poll(async () => (await saved(page)).sessions.some(row => row.draft === 'draft across a real waiting worker')).toBe(true)
+    const other = await context.newPage(); pages.push(other)
+    const second = await fixtures(other)
+    await other.goto(deployment.base + '/chat/')
+    await expect(other.locator('textarea')).toHaveValue('draft across a real waiting worker')
+    await page.evaluate(() => { document.documentElement.dataset.updateProbe = 'still-here' })
+    deployment.upgrade()
+    await page.evaluate(async () => { await (await navigator.serviceWorker.getRegistration('/chat/'))!.update() })
+    await page.getByRole('button', { name: '打开菜单', exact: true }).click()
+    await page.getByTestId('open-chat-settings').click()
+    await expect(page.getByTestId('offline-update-status')).toContainText('已准备')
+    await expect(page.getByTestId('offline-update-status')).toContainText('关闭')
+    await expect(page.locator('.build-proof')).toContainText(deployment.nextId)
+    await expect(page.locator('html')).toHaveAttribute('data-update-probe', 'still-here')
+    await page.close()
+    expect(await other.evaluate(async () => Boolean((await navigator.serviceWorker.getRegistration('/chat/'))!.waiting))).toBe(true)
+    await expect(other.locator('textarea')).toHaveValue('draft across a real waiting worker')
+    await other.close()
+    const reopened = await context.newPage(); pages.push(reopened)
+    const third = await fixtures(reopened)
+    await reopened.goto(deployment.base + '/chat/')
+    await reopened.evaluate(async () => { await navigator.serviceWorker.ready })
+    await reopened.reload()
+    await expect(reopened.locator('textarea')).toHaveValue('draft across a real waiting worker')
+    await context.setOffline(true)
+    await reopened.goto(deployment.base + '/chat/?update-offline-proof=1')
+    await expect(reopened.locator('textarea')).toHaveValue('draft across a real waiting worker')
+    await reopened.getByRole('button', { name: '打开菜单', exact: true }).click()
+    await reopened.getByTestId('open-chat-settings').click()
+    await expect(reopened.locator('.build-proof')).toContainText(deployment.nextId)
+    expect(first.errors).toEqual([]); expect(second.errors).toEqual([]); expect(third.errors).toEqual([])
+  } finally {
+    await context.setOffline(false)
+    await Promise.all(pages.map(value => value.close().catch(() => {})))
+    await deployment.close()
+  }
+})

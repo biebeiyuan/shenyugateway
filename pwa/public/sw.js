@@ -5,6 +5,13 @@ const PREFIX = 'shenyu-pwa-shell-'
 const CACHE = `${PREFIX}${BUILD_ID}`
 const ENTRY = '/chat/'
 
+// Read-only build evidence for Settings; old workers can simply not answer.
+// This protocol never requests activation, cache deletion, or a page reload.
+self.addEventListener('message', event => {
+  if (event.data?.type !== 'SHENYU_PWA_BUILD_INFO') return
+  event.ports?.[0]?.postMessage({ type: 'SHENYU_PWA_BUILD_INFO', schema: 1, buildId: BUILD_ID })
+})
+
 async function deployedBuild() {
   const response = await fetch(new Request(new URL('/chat/build-info.json', self.location.origin), { cache: 'no-store' }))
   if (!response.ok) throw new Error('build proof unavailable')

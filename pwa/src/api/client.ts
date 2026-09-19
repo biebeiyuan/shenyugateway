@@ -94,14 +94,21 @@ export async function fetchRuntimeConfig(ctx: RequestContext): Promise<Record<st
 }
 
 export async function fetchDeployedPwaBuildInfo(ctx: RequestContext): Promise<PwaBuildInfo> {
-  const response = await fetch(apiUrl(ctx, '/chat/build-info.json'), {
-    headers: authHeader(ctx),
-    cache: 'no-store',
-  })
-  if (!response.ok) throw new Error(`线上版本暂时拿不到（${response.status}）`)
-  const buildInfo = parsePwaBuildInfo(await response.json())
-  if (!buildInfo) throw new Error('线上版本文件格式不正确')
-  return buildInfo
+  // Shell/worker belong to the page origin, not a separately configured chat
+  // gateway. Its token must not be sent to the hosting site for this query.
+  const gateway = new URL(ctx.gatewayUrl.trim() || window.location.origin, window.location.href)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 12_000)
+  try {
+    const response = await fetch('/chat/build-info.json', {
+      headers: gateway.origin === window.location.origin ? authHeader(ctx) : {},
+      cache: 'no-store', signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`线上版本暂时拿不到（${response.status}）`)
+    const buildInfo = parsePwaBuildInfo(await response.json())
+    if (!buildInfo) throw new Error('线上版本文件格式不正确')
+    return buildInfo
+  } finally { clearTimeout(timer) }
 }
 
 export async function fetchModels(ctx: RequestContext, auth?: UpstreamAuth): Promise<Record<string, unknown>> {
@@ -163,16 +170,6 @@ export async function setSessionVisibility(ctx: RequestContext, sessionTag: stri
     method: 'PATCH', headers: requestHeaders(ctx), body: JSON.stringify({ hidden }),
   })
   if (!response.ok) throw new Error(gatewayErrorMessage(response.status, await response.text()))
-}
-
-export async function deleteSession(ctx: RequestContext, sessionTag: string): Promise<Record<string, unknown>> {
-  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(sessionTag)}`), {
-    method: 'DELETE',
-    headers: requestHeaders(ctx),
-    body: JSON.stringify({ confirm: sessionTag }),
-  })
-  if (!response.ok) throw new Error('删除没有成功')
-  return await response.json()
 }
 
 export async function fetchWeather(ctx: RequestContext): Promise<Record<string, unknown>> {

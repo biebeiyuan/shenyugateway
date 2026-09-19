@@ -4,6 +4,7 @@ import { sessionHistoryRows, readArchiveEvent, restoredArchiveState, sessionMess
 import { mergeAttachments, readMedia } from './media'
 import { hydrateToolEvents, mergeToolEvents } from './toolHydration'
 import { syncCurrentVariant } from './variants'
+import { snapshotTranscript, type TranscriptState } from './transcriptStore'
 
 function identity(message: UiMessage): string | undefined {
   if (message.replyVersionId && message.archiveEvent && message.replyVersionId !== message.archiveEvent.id) return undefined
@@ -12,6 +13,33 @@ function identity(message: UiMessage): string | undefined {
 }
 const normalized = (text: string) => text.replace(/\s+/g, ' ').trim()
 const covers = (incoming: string, local: string) => normalized(incoming).includes(normalized(local))
+
+// Both originals are checkpointed before this merge. The newly loaded active
+// branch wins; a different draft/roll/history stays accessible in its copy, not
+// silently spliced into the next model request. Only identical known replies
+// may contribute locally observed process data to that active branch.
+export function mergeConcurrentTranscript(saved: TranscriptState, local: TranscriptState): TranscriptState {
+  const result = snapshotTranscript(saved)
+  for (const message of result.messages) {
+    const key = identity(message)
+    if (!key || message.role !== 'assistant') continue
+    const matches = local.messages.filter(item => identity(item) === key)
+    const other = matches.length === 1 ? matches[0] : undefined
+    if (!other || other.content !== message.content || other.echo !== message.echo) continue
+    message.events = mergeToolEvents(message.events, other.events)
+    message.attachments = mergeAttachments(message.attachments, other.attachments)
+    if (!message.thinking) {
+      message.thinking = other.thinking
+      message.thinkingSegments = other.thinkingSegments.map(segment => ({ ...segment }))
+    } else if (message.thinking === other.thinking && !message.thinkingSegments.length) {
+      message.thinkingSegments = other.thinkingSegments.map(segment => ({ ...segment }))
+    }
+    if (!message.echoSegments.length) message.echoSegments = other.echoSegments.map(segment => ({ ...segment }))
+    if (other.responseMeta) message.responseMeta = { ...other.responseMeta, ...message.responseMeta }
+    syncCurrentVariant(message)
+  }
+  return result
+}
 
 function serverMessages(payload: Record<string, unknown>): UiMessage[] {
   const rows = sessionHistoryRows(payload)

@@ -85,3 +85,29 @@ describe('hydrateToolEvents', () => {
     expect(row.input).toBe('not json')
   })
 })
+
+// Null is an unknown outcome, whereas false/0/empty output are real values.
+import { mergeToolEvents } from '../src/session/toolHydration'
+import type { ToolEvent } from '../src/toolLanguage'
+it('fills an unknown outcome without overwriting valid false, zero, empty result or null input', () => {
+  const base: ToolEvent = { phase: 'tool_end', tool_call_id: 'real-call', name: 'shenyu_recall', ok: null,
+    text_offset: 0, stream_order: 0, cached: false, input: null, output: '' }
+  const local = [base]
+  const incoming = [{ ...base, ok: false, output: 'server value', input: { q: 'new' }, text_offset: 8, stream_order: 9, cached: true }]
+  const merged = mergeToolEvents(local, incoming)
+  expect(merged[0]).toEqual({ ...base, ok: false })
+  expect(local[0].ok).toBeNull()
+  expect(mergeToolEvents(merged, incoming)).toBe(merged)
+})
+
+it('repairs invalid legacy null output and empty identity labels but not a legitimate empty output', () => {
+  const local = [{ phase: 'tool_end', tool_call_id: 'real-call', name: '', output: null } as unknown as ToolEvent]
+  expect(mergeToolEvents(local, [{ phase: 'tool_end', tool_call_id: 'real-call', name: 'shenyu_recall', output: 'receipt' }])[0])
+    .toEqual({ phase: 'tool_end', tool_call_id: 'real-call', name: 'shenyu_recall', output: 'receipt' })
+})
+
+it('returns the unchanged array on a repeated receipt regardless of incoming property order', () => {
+  const local: ToolEvent[] = [{ output: 'kept', name: 'tool', tool_call_id: 'c', phase: 'tool_end', ok: false }]
+  const incoming: ToolEvent[] = [{ phase: 'tool_end', ok: false, tool_call_id: 'c', name: 'tool', output: 'kept' }]
+  expect(mergeToolEvents(local, incoming)).toBe(local)
+})

@@ -121,3 +121,16 @@ it('records an empty legacy slot without creating an empty conversation or impor
   await db.migrateLegacySource('another-gateway', JSON.stringify([row('stale-later')]))
   expect(await db.load('another-gateway')).toBeNull()
 })
+
+it('rolls back the manifest if a later message write fails after the result was staged', async () => {
+  const db = store()
+  await db.save('A', state([row('r', 'original')], 'original draft'), 0)
+  const before = await db.load('A')
+  const original = IDBObjectStore.prototype.put
+  vi.spyOn(IDBObjectStore.prototype, 'put').mockImplementation(function (this: IDBObjectStore, ...args) {
+    if (this.name === 'messages') throw new DOMException('late message failure', 'QuotaExceededError')
+    return original.apply(this, args)
+  })
+  await expect(db.save('A', state([row('r', 'changed')], 'changed draft'), 1)).rejects.toThrow('late message failure')
+  expect(await db.load('A')).toEqual(before)
+})
