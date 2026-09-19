@@ -47,6 +47,8 @@ jobs:
       - run: pip install -e .
       - run: npm ci
         working-directory: admin
+      - run: npm ci
+        working-directory: pwa
       - name: Install Playwright Chromium dependencies
         working-directory: admin
         shell: bash
@@ -70,8 +72,8 @@ jobs:
           exit 1
       - run: npm run test:e2e
         working-directory: admin
-      - name: Upload Playwright failure report
-        if: failure()
+      - name: Upload Playwright report and album screenshots
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: playwright-report-${{ github.run_attempt }}
