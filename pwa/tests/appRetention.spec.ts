@@ -138,7 +138,7 @@ it('does not relabel the legacy single slot after changing gateways and restarti
 
 it('does not send when the initial durable checkpoint fails', async () => {
   const { state } = mount(); await flush()
-  vi.spyOn(TranscriptStore.prototype, 'save').mockRejectedValue(new DOMException('full', 'QuotaExceededError'))
+  vi.spyOn(TranscriptStore.prototype, 'saveTail').mockRejectedValue(new DOMException('full', 'QuotaExceededError'))
   state.draft = 'must stay on device if checkpoint failed'
   await state.submit(); await flush()
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/v1/chat/completions'))).toBe(false)
