@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 const BASE = process.env.E2E_BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || 18110}`
 const TOKEN = process.env.E2E_GATEWAY_TOKEN || 'shenyu-e2e-smoke'
-const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAPAAAACgCAIAAAC9uXYyAAABxklEQVR4nO3SUQkAIBTAwNc/jyEMYRhLCMI4uAD72Kx9IGO+F8BDhibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNygWst6SSJ8vkWgAAAABJRU5ErkJggg=='
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAPAAAACgAQMAAAAIFXMmAAAABlBMVEW0yNwAAACR202XAAAAHElEQVR42u3BMQEAAADCoPVPbQdvoAAAAACA1wATYAAB+o0sSQAAAABJRU5ErkJggg=='
 const EVENT_AT = '2026-09-19T00:00:00Z'
 const reference = (id = 'call-old', photo_id = 'phot_one') => ({id, photo_id, title:'想留的', content:'以前写下的话', name:'想留的', mime:'image/png'})
 const userMedia = [
