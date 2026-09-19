@@ -259,6 +259,71 @@ it('sends the full pre-target history while keeping the full local transcript', 
   } finally { store.close() }
 })
 
+it('releases the clean DONE UI before the final local tail save resolves', async () => {
+  const { state } = mount(); await flush()
+  let releaseFinal!: (revision: number) => void
+  vi.spyOn(TranscriptStore.prototype, 'save').mockImplementation(() => new Promise(resolve => { releaseFinal = resolve }))
+  const normalFetch = globalThis.fetch
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    if (String(input).includes('/v1/chat/completions')) {
+      return new Response('data: {"choices":[{"delta":{"content":"done"}}]}\n\ndata: [DONE]\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }
+    return normalFetch(input, options)
+  }))
+
+  state.draft = 'do not let disk block DONE'
+  const sending = state.submit()
+  for (let i = 0; i < 40 && !releaseFinal; i++) {
+    await new Promise(resolve => setTimeout(resolve, 5)); await nextTick()
+  }
+  expect(releaseFinal).toBeTypeOf('function')
+  const contentBeforeRelease = state.messages.at(-1)?.content
+  const busyBeforeRelease = state.busy
+  const blockedBeforeRelease = state.controlsBlocked
+  releaseFinal(2)
+  await sending; await flush()
+
+  expect(contentBeforeRelease).toBe('done')
+  expect(busyBeforeRelease).toBe(false)
+  expect(blockedBeforeRelease).toBe(false)
+  expect(state.messages.at(-1)?.truncated).toBeUndefined()
+})
+
+it('cancels a pending pre-send checkpoint without a late POST', async () => {
+  const { state } = mount(); await flush()
+  let releaseCheckpoint!: (revision: number) => void
+  vi.spyOn(TranscriptStore.prototype, 'saveTail').mockImplementation(() => new Promise(resolve => { releaseCheckpoint = resolve }))
+  const normalFetch = globalThis.fetch
+  const chatCalls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    if (url.pathname === '/v1/chat/completions') {
+      chatCalls.push(url.pathname)
+      if (options?.signal?.aborted) throw new DOMException('cancelled', 'AbortError')
+      return new Response('data: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
+    }
+    return normalFetch(input, options)
+  }))
+
+  state.draft = 'cancel before the request exists'
+  let settled = false
+  const sending = state.submit().finally(() => { settled = true })
+  for (let i = 0; i < 40 && !releaseCheckpoint; i++) await new Promise(resolve => setTimeout(resolve, 5))
+  expect(releaseCheckpoint).toBeTypeOf('function')
+  state.cancelGeneration()
+  await new Promise(resolve => setTimeout(resolve, 20)); await nextTick()
+  const busyBeforeRelease = state.busy
+  const settledBeforeRelease = settled
+  releaseCheckpoint(1)
+  await sending; await flush()
+
+  expect(busyBeforeRelease).toBe(false)
+  expect(settledBeforeRelease).toBe(true)
+  expect(chatCalls).toHaveLength(0)
+})
+
 it('shows streaming state immediately while the lightweight pre-send checkpoint is still pending', async () => {
   const { state } = mount(); await flush()
   let release!: (revision: number) => void
