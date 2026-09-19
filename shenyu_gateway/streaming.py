@@ -152,6 +152,26 @@ def _stream_tool_event(
     return f"event: shenyu_tool\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
 
 
+def _stream_error_event(
+    model: str,
+    message: str,
+    *,
+    chunk_id: Optional[str] = None,
+    created: Optional[int] = None,
+) -> str:
+    body = {
+        "id": chunk_id or _new_stream_chunk_id(),
+        "created": created if created is not None else _now_ts(),
+        "model": model,
+        "error": {
+            "message": str(message or "Upstream stream failed."),
+            "type": "upstream_stream_error",
+            "recoverable": False,
+        },
+    }
+    return f"event: shenyu_error\ndata: {json.dumps(body, ensure_ascii=False)}\n\n"
+
+
 def _stream_response_meta_event(
     model: str,
     metadata: dict[str, Any],
