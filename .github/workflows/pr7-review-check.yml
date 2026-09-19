@@ -1,0 +1,92 @@
+name: PR7 review repair verification (temporary)
+on:
+  push:
+    branches: [work/pr7-review-verification-20260919]
+    paths: [.github/pr7-review/**, .github/workflows/pr7-review-check.yml]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 18
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+      - name: Apply exact reviewed delta to the pinned PR baseline
+        shell: bash
+        run: |
+          set -euo pipefail
+          python - <<'PY'
+          import base64, hashlib, lzma, os, subprocess
+          from pathlib import Path
+          assert os.environ['GITHUB_REF'] == 'refs/heads/work/pr7-review-verification-20260919'
+          assert subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip() == os.environ['GITHUB_SHA']
+          base = '993541fc43f82c57c2c6a6c1ce2e7a89fcd9b2fa'
+          assert subprocess.check_output(['git','rev-parse','HEAD^'],text=True).strip() == base
+          assert not subprocess.check_output(['git','status','--porcelain'],text=True).strip()
+          payload = ''.join(Path('.github/pr7-review/' + name).read_text() for name in ['part1.xz64','part2.xz64'])
+          patch = lzma.decompress(base64.b64decode(payload,validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '39b0e2f601d9467f1120a516cc98474d7d7a82f0a0782c3a79ed6503045b960b'
+          Path('/tmp/pr7-followup-evidence').mkdir(exist_ok=True)
+          Path('/tmp/pr7-followup-evidence/changes.patch').write_bytes(patch)
+          subprocess.run(['git','apply','--check','--index','/tmp/pr7-followup-evidence/changes.patch'],check=True)
+          subprocess.run(['git','apply','--index','/tmp/pr7-followup-evidence/changes.patch'],check=True)
+          subprocess.run(['git','rm','--','.github/pr7-review/part1.xz64','.github/pr7-review/part2.xz64','.github/workflows/pr7-review-check.yml'],check=True)
+          tree = subprocess.check_output(['git','write-tree'],text=True).strip()
+          assert tree == '15f067ebe39e5d4ec3a0c0b253e503ebad103efc', tree
+          print('EXACT_PRODUCT_TREE',tree,flush=True)
+          PY
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: |
+            pwa/package-lock.json
+            admin/package-lock.json
+      - run: pip install -e '.[dev]'
+      - run: npm ci
+        working-directory: pwa
+      - run: npm ci
+        working-directory: admin
+      - name: Install isolated Playwright browser
+        working-directory: admin
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          npm run test:e2e:install
+      - name: Verify complete backend, frontend, browser and map suites
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pytest tests/ -q 2>&1 | tee /tmp/pr7-followup-evidence/backend.log
+          npm --prefix pwa test 2>&1 | tee /tmp/pr7-followup-evidence/pwa.log
+          npm --prefix admin test 2>&1 | tee /tmp/pr7-followup-evidence/admin.log
+          (cd admin && npm run test:e2e) 2>&1 | tee /tmp/pr7-followup-evidence/browser-and-builds.log
+          python -m pytest tests/test_project_map.py tests/test_owner_project_map.py tests/test_project_delivery.py -q 2>&1 | tee /tmp/pr7-followup-evidence/map.log
+          python scripts/resident_home.py check 2>&1 | tee /tmp/pr7-followup-evidence/home.log
+          git diff --cached --check
+      - name: Publish only the checked feature candidate, never master or PR directly
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$GITHUB_REF" = refs/heads/work/pr7-review-verification-20260919
+          test "$(git write-tree)" = 15f067ebe39e5d4ec3a0c0b253e503ebad103efc
+          git diff --exit-code
+          git config user.name 'shenyugateway repair workbench'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          COMMIT=$(git commit-tree 15f067ebe39e5d4ec3a0c0b253e503ebad103efc -p 993541fc43f82c57c2c6a6c1ce2e7a89fcd9b2fa -m 'fix(pwa): recover save conflicts without discarding either page')
+          git push origin "$COMMIT:refs/heads/work/pr7-review-checked-$GITHUB_RUN_ID"
+          printf 'commit=%s\ntree=%s\nrun=%s\n' "$COMMIT" 15f067ebe39e5d4ec3a0c0b253e503ebad103efc "$GITHUB_RUN_ID" | tee /tmp/pr7-followup-evidence/receipt.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr7-review-evidence
+          path: |
+            /tmp/pr7-followup-evidence/
+            admin/playwright-report/
+            admin/test-results/
+          retention-days: 7
+          if-no-files-found: warn
