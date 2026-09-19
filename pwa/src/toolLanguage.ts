@@ -43,7 +43,7 @@ const EXACT_COPY: Record<string, string> = {
   recall_read: '把那段翻出来看了',
   recall_main_thread: '回头看了看主线',
   ask_memory: '想起了一些事',
-  surface_passages: '想起了一些事',
+  surface_passages: '翻了翻原文',
   search_primary_texts: '翻了翻原文',
   get_meta_summaries: '回头看了看脉络',
   last_seen: '看了看上次是什么时候',
@@ -126,6 +126,13 @@ const PREFIX_COPY: [string, string][] = [
 
 export function toolWarmCopy(event: ToolEvent): string {
   const target = toolName(event).toLowerCase()
+  // The process strip must not describe a rejected share/open as completed.
+  // Keep toolState's existing three-state vocabulary and full detail output.
+  if (target === 'album_send' && event.ok === false) return '这张照片没能发出来'
+  if (target === 'album_open') {
+    if (event.ok === false) return '这张照片暂时没能打开'
+    if (event.phase === 'tool_start') return '重新看这张照片'
+  }
   const exact = EXACT_COPY[target]
   if (exact) return exact
   for (const [prefix, copy] of PREFIX_COPY) {
