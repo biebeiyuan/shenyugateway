@@ -1,3 +1,4 @@
+import { mergeAttachments, readMedia, wireMedia } from './media'
 import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
 import { readArchiveEvent, restoredArchiveState, sessionMessageContent, sessionMessageParts } from './history'
@@ -11,6 +12,7 @@ import { applyVariant, selectedVariantIndex, snapshotMessage, syncCurrentVariant
 type RecentRow = Record<string, unknown>
 
 type RecoveryReply = {
+  media?: unknown
   id?: unknown
   reply_version_id?: unknown
   archive_event?: unknown
@@ -128,7 +130,8 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
     archiveEvent: readArchiveEvent(selectedReply.archive_event),
   })) return false
   const parts = sessionMessageParts(selectedReply.content)
-  if (!parts.content && !parts.echo) return false
+  const attachments = readMedia(selectedReply.media)
+  if (!parts.content && !parts.echo && !attachments.length) return false
 
   if (target) {
     const nextContent = parts.content
@@ -144,6 +147,7 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
 
     target.archiveEvent = target.archiveEvent || readArchiveEvent(selectedReply.archive_event)
     target.archiveReplay = true
+    target.attachments = mergeAttachments(target.attachments, attachments)
     target.content = nextContent
     target.echo = nextEcho
     // 只在本地没有 echoSegments 时才用服务端的（服务端只能给 offset 0 的单段）
@@ -166,7 +170,7 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
       echoSegments: parts.echo
         ? [{ id: createId('echo'), content: parts.echo, textOffset: 0, streamOrder: 0 }]
         : [],
-      attachments: [],
+      attachments,
       thinking: '',
       thinkingSegments: [],
       events: [],
@@ -180,8 +184,10 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
 
 function recoveryVariant(reply: RecoveryReply): MessageVariant | undefined {
   const parts = sessionMessageParts(reply.content)
-  if (!parts.content && !parts.echo) return undefined
+  const attachments = readMedia(reply.media)
+  if (!parts.content && !parts.echo && !attachments.length) return undefined
   const variant: MessageVariant = {
+    attachments,
     ...restoredArchiveState(reply),
     replyVersionId: reply.reply_version_id ? String(reply.reply_version_id) : undefined,
     content: parts.content,
@@ -220,6 +226,7 @@ function recoveryVariant(reply: RecoveryReply): MessageVariant | undefined {
 function mergeRecoveredVariant(local: MessageVariant, incoming: MessageVariant): MessageVariant {
   return {
     ...incoming,
+    attachments: mergeAttachments(local.attachments || [], incoming.attachments || []),
     thinking: local.thinking || incoming.thinking,
     thinkingSegments: local.thinkingSegments.length ? local.thinkingSegments : incoming.thinkingSegments,
     echoSegments: local.echoSegments.length ? local.echoSegments : incoming.echoSegments,
@@ -328,12 +335,14 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   const index = selectedVariantIndex(target)
   const contentChanged = normalizeText(candidate.content) !== normalizeText(target.content || '')
     || normalizeText(candidate.echo) !== normalizeText(target.echo || '')
-  if (contentChanged) {
+  const attachments = mergeAttachments(target.attachments, candidate.attachments || [])
+  const mediaChanged = JSON.stringify(wireMedia(attachments)) !== JSON.stringify(wireMedia(target.attachments))
+  if (contentChanged || mediaChanged) {
     // 服务端永远没有 thinking，events 只有塌到 offset 0 的补水版，echoSegments 只有单段，
     // responseMeta 压根不在恢复载荷里。本地有的一律以本地为准，服务端只补本地空着的。
     // error 例外：上面刚判定找回成功清掉了它，快照里那份不能再传染回来。
     const merged = { ...mergeRecoveredVariant(variants[index], candidate),
-      archiveEvent: target.archiveEvent || candidate.archiveEvent, truncated: false, error: undefined }
+      archiveEvent: target.archiveEvent || candidate.archiveEvent, attachments, truncated: false, error: undefined }
     applyVariant(target, merged, index)
     syncCurrentVariant(target)
     changed = true

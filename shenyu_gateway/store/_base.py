@@ -354,6 +354,23 @@ class BaseStoreMixin:
                     ON album_photos(fingerprint)
                     WHERE fingerprint <> '';
 
+                CREATE INDEX IF NOT EXISTS idx_album_photos_page
+                    ON album_photos(saved_at DESC, id DESC);
+
+                -- Metadata only, never ordinary chat pixels. No session FK:
+                -- runtime cleanup must not destroy references to album shares.
+                CREATE TABLE IF NOT EXISTS album_message_media (
+                    session_tag TEXT NOT NULL,
+                    event_id TEXT NOT NULL,
+                    role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
+                    item_id TEXT NOT NULL,
+                    position INTEGER NOT NULL,
+                    metadata_json TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(session_tag, event_id, role, item_id),
+                    UNIQUE(session_tag, event_id, role, position)
+                );
+
                 -- 盼圃园子里过过的天气。只有会在果子上留下后果的那几类进来
                 -- （冰雹、暴雨、大风、雪、寒潮、高温…），普通阴晴不记。
                 -- 存在本机卷而不是 Supabase：没人会去回忆搜索一场天气，它只是

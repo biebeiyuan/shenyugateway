@@ -209,16 +209,16 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "6ee25a2ea721fa50282ac9bec5d0c8e610d7e4cef05976d216d4477502d96317",
+        "fingerprint": "f5e061609234a994a66c856a17425284ce19cd0f278c2722d9d2e52bb363af39",
         "file_hashes": {
           "shenyu_gateway/gateway_tools/_windowsill.py": "d18c9434a6f37a318ea89992d8b9b67ba0bcc90ba6ab17a5b4e877d6044f17f3",
-          "shenyu_gateway/tool_schemas.py": "7df4e5c26d2b0370dcd7e3f013a7465596ea2ae331ff81528946be89007eb06a"
+          "shenyu_gateway/tool_schemas.py": "77b47555d95f4c1b63163cdb81e491b2a0a5b32723b592cabb0dec0a4d030209"
         },
-        "commit": "406b6b999e0df7d22f3299d52d0a473dd08347d1",
-        "revision": "406b6b999e0df7d22f3299d52d0a473dd08347d1-dirty",
+        "commit": "42e82c807f723a9e7ffebc331490b64738334bc9",
+        "revision": "42e82c807f723a9e7ffebc331490b64738334bc9-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-15T19:51:51+08:00",
-        "reviewed_by": "Claude Opus 5"
+        "reviewed_at": "2026-09-19T09:11:18+08:00",
+        "reviewed_by": "ChatGPT"
       }
     },
     "album": {
@@ -229,29 +229,36 @@
         "备注文字另存 Supabase 并进 Recall，所以以后聊到相关的事它能自己想起来。",
         "同一张图在聊天里过期后，读到的是自己当时写下的那句话，不是通用占位；没存过的图仍是通用占位。",
         "那句话按原文送达，不概括、不改写；查不到备注或查库出错都退回通用占位，绝不挡住对话。",
-        "存不存、放哪本、写什么，都由自己决定，不需要圆圆批准。"
+        "存不存、放哪本、写什么，都由自己决定，不需要圆圆批准。",
+        "翻相册默认读标题、当时的话和照片引用；想看画面再打开，想分享可以直接发给圆圆，两件事互不强迫。"
       ],
-      "resident_effect": "遇到喜欢的图可以留下来，之后再看到它读到的是自己当时写的话。",
+      "resident_effect": "收藏的图可以翻页、按需重看或直接分享；圆圆的聊天页面能找回收藏图，普通图仍只在她本机留最近三十张。",
       "source_globs": [
         "shenyu_gateway/gateway_tools/_album.py",
         "shenyu_gateway/store/_album.py",
         "shenyu_gateway/context_layers.py",
-        "shenyu_gateway/tool_schemas.py"
+        "shenyu_gateway/tool_schemas.py",
+        "shenyu_gateway/album_media.py",
+        "pwa/src/session/media.ts",
+        "pwa/src/session/photoLoader.ts"
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "2c4130ba7677d041125524686cf81d39db5ee1e680e42fbdca7b783aa53fb10a",
+        "fingerprint": "e14f2e26531d8e00b2c4982aec0281ef3797f792871641ed453279da205dee76",
         "file_hashes": {
+          "pwa/src/session/media.ts": "0304cabcabf093fe489c00e0d4ec886738aaf6babc09e854d67dc582c81e9af8",
+          "pwa/src/session/photoLoader.ts": "0755054c68241683c53fadcd4390a06ff7c5dc7b5a5eab7be71c205a62b55f2a",
+          "shenyu_gateway/album_media.py": "31026f6c319bc062bf0261f6c9f947ee47607dade36750e29aa2d58333b26648",
           "shenyu_gateway/context_layers.py": "7f50744b1d929134f6fb0a783253f65e09c42ee49351d1ad3586839d9184ee86",
-          "shenyu_gateway/gateway_tools/_album.py": "0e251e43bf094906a9fe18abe6292c41f47a69539d7685195d9e4f2a02638b19",
-          "shenyu_gateway/store/_album.py": "cad6fcffeee27dc411d886eb62c2825b51fd68102ef112265a94878a982b4e85",
-          "shenyu_gateway/tool_schemas.py": "7df4e5c26d2b0370dcd7e3f013a7465596ea2ae331ff81528946be89007eb06a"
+          "shenyu_gateway/gateway_tools/_album.py": "b866c08a8b8c70b3519e23b6d3a694b2368f41556b3e8e8fa25307d4f70977c5",
+          "shenyu_gateway/store/_album.py": "2bdd0fbd1e03ea9ee984ff53a0cfe611e9ac5e460beef76d1666b5d83ac075ee",
+          "shenyu_gateway/tool_schemas.py": "77b47555d95f4c1b63163cdb81e491b2a0a5b32723b592cabb0dec0a4d030209"
         },
-        "commit": "406b6b999e0df7d22f3299d52d0a473dd08347d1",
-        "revision": "406b6b999e0df7d22f3299d52d0a473dd08347d1-dirty",
+        "commit": "4c13056ab18c6c08efb19c74647cacef34d21189",
+        "revision": "4c13056ab18c6c08efb19c74647cacef34d21189-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-15T19:51:51+08:00",
-        "reviewed_by": "Claude Opus 5"
+        "reviewed_at": "2026-09-19T11:37:22+08:00",
+        "reviewed_by": "resident-agent"
       }
     },
     "orchard": {
@@ -281,19 +288,19 @@
       ],
       "config_keys": [],
       "reviewed": {
-        "fingerprint": "3460f77cfb5a982140f0282220aef52ef5174ccb08d54b8ff89d7316917da3e8",
+        "fingerprint": "fcc660d50e6a87a77a9be1b2a31b30728ee6b10121605341b41dcab683596de2",
         "file_hashes": {
           "shenyu_gateway/gateway_tools/_orchard.py": "4c1760f22388c3d66fbb36b3aa09703da86a214810e8f49fa50799e4bc09b7f0",
           "shenyu_gateway/orchard.py": "15d12744eb145539baab57d97696712bcf916f1fd8b5dab5a56001fc4a783736",
           "shenyu_gateway/orchard_service.py": "0584f1f512501c8388a3355917beec7d31672aceff6aa153007d814d0b0e43ee",
           "shenyu_gateway/store/_orchard.py": "b4092657d271d5b48d23ac6d50ff08cdda4b89997b077f8e93c7a0e4298f4a5f",
-          "shenyu_gateway/tool_schemas.py": "7df4e5c26d2b0370dcd7e3f013a7465596ea2ae331ff81528946be89007eb06a"
+          "shenyu_gateway/tool_schemas.py": "77b47555d95f4c1b63163cdb81e491b2a0a5b32723b592cabb0dec0a4d030209"
         },
-        "commit": "406b6b999e0df7d22f3299d52d0a473dd08347d1",
-        "revision": "406b6b999e0df7d22f3299d52d0a473dd08347d1-dirty",
+        "commit": "42e82c807f723a9e7ffebc331490b64738334bc9",
+        "revision": "42e82c807f723a9e7ffebc331490b64738334bc9-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-15T19:51:51+08:00",
-        "reviewed_by": "Claude Opus 5"
+        "reviewed_at": "2026-09-19T09:11:18+08:00",
+        "reviewed_by": "ChatGPT"
       }
     },
     "room": {
@@ -360,18 +367,18 @@
         "inject_conflict_shelf"
       ],
       "reviewed": {
-        "fingerprint": "fffff3094da4a0821f16d0159722082fb15b4d93fe2e7156a14268a46757a93a",
+        "fingerprint": "dc8b93cdadbac807f8136929092ca98ee58f807733d3e741a155a16e1ae86b85",
         "file_hashes": {
           "shenyu_gateway/archive_routes.py": "99986723e8f464776827e29bcce59f6ee340b802e13cfc126b5c3df75574d178",
           "shenyu_gateway/conflict_books.py": "e9b4d7b8f961e7143d21ade98cd66594e7e9522bcd47797efa4dec06958e01b3",
           "shenyu_gateway/context_layers.py": "7f50744b1d929134f6fb0a783253f65e09c42ee49351d1ad3586839d9184ee86",
           "shenyu_gateway/gateway_tools/_books.py": "9c02f8065cc671b9519e83f7b6ba936b37c4a7a6e5ca24b2ff9be6d11c82520f",
-          "shenyu_gateway/tool_schemas.py": "7df4e5c26d2b0370dcd7e3f013a7465596ea2ae331ff81528946be89007eb06a"
+          "shenyu_gateway/tool_schemas.py": "77b47555d95f4c1b63163cdb81e491b2a0a5b32723b592cabb0dec0a4d030209"
         },
-        "commit": "3104bef2962e723514fd40adca6e345c9fcb5d86",
-        "revision": "3104bef2962e723514fd40adca6e345c9fcb5d86-dirty",
+        "commit": "42e82c807f723a9e7ffebc331490b64738334bc9",
+        "revision": "42e82c807f723a9e7ffebc331490b64738334bc9-dirty",
         "worktree_dirty": true,
-        "reviewed_at": "2026-09-17T19:36:07+08:00",
+        "reviewed_at": "2026-09-19T09:11:18+08:00",
         "reviewed_by": "ChatGPT"
       }
     },

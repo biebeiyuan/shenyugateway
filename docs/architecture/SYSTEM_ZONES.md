@@ -471,6 +471,7 @@ Hisense（海信）专用线程——独立客户端识别与上游、独立 hea
 | `chat_pipeline.py` | 请求、工具、上游、日志、保存 | 分支一致性、完成状态、错误语义 |
 | `tool_registry.py` | schema、配置、gateway/client tools | 名称边界、工具合并、供应商 payload |
 | `tool_loop.py` | 工具、流式、上游、pending 状态 | 多轮正文、断连、资源关闭 |
+| `album_media.py` | 相册工具、回复身份、快照、PWA、上游图片 | 分享只传引用；按需看图才加载视觉输入；契约见 `docs/architecture/REQUEST_CONTEXT.md` § Album media transport |
 | `gateway_admin_routes.py` | Admin、存储、记忆、日志 | API 重量、隐私、领域拆分 |
 | `project_map.py` | Admin、现行文档、住户组件映射与变化记录 | 权威源解析、只展示双组件专属共享路径、通用总线留在全屋桥梁、部署内可读性、不得进入模型上下文 |
 | `sessions.py` | 请求、持久化、Admin 会话 | 消息计数、写入时机、读取范围 |

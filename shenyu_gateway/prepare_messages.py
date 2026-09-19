@@ -9,6 +9,7 @@ from typing import Any, Callable, Optional
 from fastapi import Request
 
 from .chat_archive import ChatArchiveService, archive_window_safely, parse_archive_event
+from .album_media import retain_request_media, media_context, hydrate_album_views
 from .client_extra import expired_image_note_text
 from .context_layers import (
     assemble_layered_messages,
@@ -78,6 +79,7 @@ def _resolve_client_profile(request: Request, client_name: str, cfg: Any) -> dic
         "emit_tool_event_details": emit_tool_event_details,
         "emit_response_meta": pwa_client,
         "emit_echo_events": pwa_client,
+        "emit_album_photos": pwa_client and (request.headers.get("X-Shenyu-Album-Photos") or "").lower() == "true",
         "tool_event_protocol": "sse+json" if emit_tool_events else "none",
     }
 
@@ -460,6 +462,7 @@ async def prepare_messages(
         event = parse_archive_event(message.pop("archive_event", None))
         if event and message.get("role") in {"user", "assistant"}:
             message["archive_event"] = event
+    retain_request_media(raw_messages, session_tag, store)
     raw_messages_for_archive, _ = _trim_client_image_blocks(raw_messages, keep_recent_messages=0)
     raw_messages_for_lineage = compact_history_event_messages(raw_messages)
     raw_messages_for_event = normalize_history_event_messages(raw_messages_for_lineage)
@@ -646,6 +649,7 @@ async def prepare_messages(
     if reply_archive_event and reply_archive_event["id"] != (body.metadata or {}).get("reply_version_id"):
         reply_archive_event = None
     # Archive metadata lives in the original/snapshot copy, never model context.
+    messages = hydrate_album_views(media_context(messages), store)
     messages = [{key: value for key, value in message.items()
                  if key not in ARCHIVE_MESSAGE_FIELDS} for message in messages]
 

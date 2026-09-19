@@ -511,15 +511,24 @@ class FakeToolService:
         )
         return {"ok": True, "note": note}
 
-    async def album_list(self, book="", limit: int = 20):
+    async def album_list(self, book="", limit: int = 20, cursor=""):
         self.calls.append(
             {
                 "tool": "shenyu_album_list",
+                "cursor": cursor,
                 "book": book,
                 "limit": limit,
             }
         )
         return {"ok": True, "limit": limit}
+
+    async def album_open(self, photo_id=""):
+        self.calls.append({"tool": "shenyu_album_open", "photo_id": photo_id})
+        return {"ok": True}
+
+    async def album_send(self, photo_id=""):
+        self.calls.append({"tool": "shenyu_album_send", "photo_id": photo_id})
+        return {"ok": True}
 
     async def web_search(self, query="", limit: int = 5):
         self.calls.append(
@@ -708,7 +717,9 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
         },
         "shenyu_windowsill_list": {"mood": "安静", "limit": 6},
         "shenyu_album_save": {"note": "海边那天的光", "mood": "安静", "book": "想留的", "which": 2},
-        "shenyu_album_list": {"book": "想留的", "limit": 7},
+        "shenyu_album_list": {"book": "想留的", "limit": 7, "cursor": "next-page"},
+        "shenyu_album_open": {"photo_id": "phot_one"},
+        "shenyu_album_send": {"photo_id": "phot_one"},
         "shenyu_web_search": {"q": "邵阳 明天 天气", "limit": 3},
         "shenyu_web_read": {"url": "https://example.com/article", "part": 2},
         "shenyu_list_mem_notes": {"query": "list", "status": "all", "mem_type": "memory", "limit": 8},
@@ -932,7 +943,10 @@ def test_execute_gateway_tool_routes_every_exposed_full_mode_tool():
             "image_count": 0,
             "session_tag": "default",
         },
+        "shenyu_album_open": {"tool": "shenyu_album_open", "photo_id": "phot_one"},
+        "shenyu_album_send": {"tool": "shenyu_album_send", "photo_id": "phot_one"},
         "shenyu_album_list": {
+            "cursor": "next-page",
             "tool": "shenyu_album_list",
             "book": "想留的",
             "limit": 7,
@@ -2505,3 +2519,15 @@ def test_daily_surface_names_all_exist_in_tool_schemas():
     }
     unknown = DAILY_GATEWAY_TOOL_NAMES - schema_names
     assert not unknown, f"DAILY_GATEWAY_TOOL_NAMES has entries with no schema: {sorted(unknown)}"
+
+
+@pytest.mark.parametrize('surface', ['full', 'daily'])
+def test_album_actions_are_discoverable_in_the_broker_surface(surface):
+    tools = gateway_native_tools(_cfg(gateway_tool_surface=surface))
+    broker = next(tool['function'] for tool in tools if tool['function']['name'] == 'shenyu_gateway_tool')
+    names = set(broker['parameters']['properties']['tool']['enum'])
+    assert {'shenyu_album_save', 'shenyu_album_list', 'shenyu_album_open', 'shenyu_album_send'} <= names
+    for short in ['album_list', 'album_open', 'album_send']:
+        assert _mentioned_as_own_word(short, broker['description'])
+    assert 'cursor' in broker['description']
+    assert '不必先 open' in broker['description']

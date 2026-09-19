@@ -5,7 +5,7 @@ from typing import Any, Optional
 
 from .chat_archive import parse_archive_event
 from .private_capture import restore_assistant_echo
-from .runtime import json_dumps
+from .runtime import json_dumps, logger
 from .utils import normalize_text
 
 
@@ -48,8 +48,17 @@ def write_completion_context_snapshot(
 
     messages = completion_snapshot_messages(base_messages, restore_assistant_echo(assistant_content, echo))
     event = parse_archive_event(meta.get("reply_archive_event"))
+    try:
+        media = store.message_media(session_tag, event["id"], "assistant") if event else []
+    except Exception:
+        logger.warning("[Album] 完成快照暂时无法补图，仍保存文字", exc_info=True)
+        media = []
+    if media and len(messages) == len(base_messages):
+        messages.append({"role": "assistant", "content": normalize_text(assistant_content)})
     if event and len(messages) > len(base_messages):
         messages[-1]["archive_event"] = event
+        if media:
+            messages[-1]["media"] = media
     latest_user_text = meta.get("snapshot_latest_user_text") or _latest_user_text(messages)
     return store.write_request_context_snapshot(
         session_id=session_id,

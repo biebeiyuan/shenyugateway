@@ -369,15 +369,15 @@ def test_album_api_serves_listings_and_one_immutable_bytes_route(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_album_list_shows_books_then_photos(tmp_path):
+async def test_album_list_shows_light_photos_with_optional_book_filter(tmp_path):
     store = _store(tmp_path)
     service = AlbumService(store, FakeSupabase())
     store.save_album_photo(raw=os.urandom(64), note="一", book_name="想留的")
     store.save_album_photo(raw=os.urandom(64), note="二", book_name="我们俩")
 
-    books = await service.album_list()
-    assert {book["name"] for book in books["data"]["books"]} == {"想留的", "我们俩"}
+    photos = await service.album_list()
+    assert {photo["title"] for photo in photos["data"]["photos"]} == {"想留的", "我们俩"}
 
     photos = await service.album_list(book="我们俩")
-    assert [photo["note"] for photo in photos["data"]["photos"]] == ["二"]
+    assert [photo["content"] for photo in photos["data"]["photos"]] == ["二"]
     assert all("bytes" not in photo for photo in photos["data"]["photos"])

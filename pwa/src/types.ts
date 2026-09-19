@@ -14,6 +14,12 @@ export type Attachment = {
   // 只在本机还留着这张图时有值。附件元数据一直落盘，图本身按 30 张淘汰——
   // 所以「有 attachment 但没有 dataUrl」就是「这张图在本机过期了」。
   dataUrl?: string
+  // Album display is reference-only. Never use these URLs as model input.
+  photoId?: string
+  title?: string
+  description?: string
+  displayUrl?: string
+  photoState?: 'loading' | 'error' | 'cleared'
 }
 
 export type ThinkingSegment = {
@@ -31,6 +37,7 @@ export type EchoSegment = {
 }
 
 export type MessageVariant = {
+  attachments?: Attachment[]
   truncated?: boolean
   archiveReplay?: boolean
   archiveEvent?: ArchiveEvent

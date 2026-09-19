@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from .gateway_tools import GatewayToolService, WINDOWSILL_ORIGIN_ROOM
 from .client_extra import strip_pwa_status_suffix
 from .chat_archive import parse_archive_event
+from .album_media import FINGERPRINT, PHOTO_MIME_TYPES, enrich_history_media, photo_reference
 from .mem_notes import MemNoteService
 from .memory_graph import MemoryGraphService
 from .orchard_service import ACTOR_YUANYUAN, OrchardService
@@ -23,6 +24,7 @@ from .room_newspaper import RoomNewspaperService, source_catalog
 from .room_tools import sync_legacy_room_scribbles
 from .runtime import iso_now as _iso_now, logger
 from .schemas import (
+    AlbumResolveRequest,
     ColdStartPreviewRequest,
     DrawerNoteCreateRequest,
     DrawerNoteMarkReadRequest,
@@ -104,7 +106,8 @@ def collect_reply_recovery_rows(
             assistant_rows.append(row)
     if first_assistant and assistant_rows:
         full_content = "".join(str(r.get("content") or "") for r in assistant_rows)
-        if full_content.strip():
+        media = [item for row in assistant_rows for item in row.get("media", [])]
+        if full_content.strip() or media:
             replies.append(
                 {
                     "id": first_assistant.get("id"),
@@ -112,6 +115,7 @@ def collect_reply_recovery_rows(
                     "content": full_content,
                     "tool_rows": tool_rows,
                     "user_message_id": rows[latest_user_index].get("id"),
+                    **({"media": media} if media else {}),
                 }
             )
     # Only carry identities recorded by the new request/snapshot contract.
@@ -262,12 +266,29 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         photo = store.album_photo_bytes(photo_id)
         if not photo:
             raise HTTPException(status_code=404, detail="这张照片不在相册里。")
+        if photo["mime"] not in PHOTO_MIME_TYPES:
+            raise HTTPException(status_code=415, detail="这张照片的格式暂时不能直接看。")
         return Response(
             content=photo["bytes"],
             media_type=str(photo["mime"] or "image/jpeg"),
             # 按 id 寻址、内容永不改写，所以可以长缓存；private 避免中间层留存。
-            headers={"Cache-Control": "private, max-age=31536000, immutable"},
+            headers={"Cache-Control": "private, max-age=31536000, immutable", "X-Content-Type-Options": "nosniff"},
         )
+
+    @router.post("/api/gateway/album/resolve")
+    async def resolve_album_media(body: AlbumResolveRequest):
+        """Resolve references without uploading or returning any image bytes."""
+        store = deps.require_session_store()
+        try:
+            media = store.message_media_batch(body.session_tag, [(e.role, e.event_id) for e in body.events])
+            digests = list(dict.fromkeys(value for value in body.fingerprints if FINGERPRINT.fullmatch(value)))
+            photos = store.album_notes_by_fingerprints(digests)
+        except Exception as exc:
+            logger.warning("[Album] 图片引用查询暂时失败", exc_info=True)
+            # A successful empty response would falsely tell PWA the photo was
+            # cleared. Keep lookup failure distinct from an authoritative miss.
+            raise HTTPException(status_code=503, detail="相册暂时读不到，请稍后重试。") from exc
+        return {"media": media, "photos": {digest: photo_reference(photo) for digest, photo in photos.items()}}
 
     # 盼圃：圆圆这一侧的四个动作。走这条路进来的一律记作圆圆，走
     # `shenyu_orchard` 工具进来的是沈予——谁挂上去的不做参数，由入口决定。
@@ -955,6 +976,9 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             limit=max(1, min(int(window_limit or cfg.gateway_message_retention), cfg.gateway_message_retention)),
         )
         context_snapshots = store.get_recent_context_snapshots(session["id"], limit=5)
+        messages = enrich_history_media(messages, session_tag, store)
+        context_snapshots = [{**s, "messages": enrich_history_media(s.get("messages", []), session_tag, store)}
+                             for s in context_snapshots]
         cold_start = store.latest_cold_start_snapshot(session["id"])
         cold_start_snapshots = store.recent_cold_start_snapshots(session["id"], limit=8)
         heartbeats = store.read_heartbeats(
@@ -1000,6 +1024,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         if not session:
             raise HTTPException(status_code=404, detail="Session not found.")
         rows = store.get_recent_messages(session["id"], limit=5000)
+        rows = enrich_history_media(rows, session_tag, store)
         recovery = collect_reply_recovery_rows(
             rows, store.get_recent_context_snapshots(session["id"], limit=5))
         cap = max(1, min(int(limit or 20), 100))

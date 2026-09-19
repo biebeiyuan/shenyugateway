@@ -94,3 +94,23 @@ describe('toolState', () => {
     expect(toolState({ phase: 'tool_end', tool_call_id: '', name: 'x', ok: true })).toBe('完成')
   })
 })
+
+// Broker events must describe the actual outcome, not claim a failed share happened.
+describe('album broker outcome copy', () => {
+  for (const action of ['open', 'send']) {
+    for (const target of [`album_${action}`, `shenyu_album_${action}`]) {
+      it(`shows the outcome for ${target}`, () => {
+        const base = { name: 'shenyu_gateway_tool', target_tool: target, tool_call_id: 'call' }
+        const start = { ...base, phase: 'tool_start' }
+        const failed = { ...base, phase: 'tool_end', ok: false }
+        const done = { ...base, phase: 'tool_end', ok: true }
+        expect(toolState(start)).toBe('进行中')
+        expect(toolState(failed)).toBe('遇到一点阻塞')
+        expect(toolState(done)).toBe('完成')
+        expect(toolWarmCopy(failed)).toBe(action === 'send' ? '这张照片没能发出来' : '这张照片暂时没能打开')
+        expect(toolWarmCopy(done)).toBe(action === 'send' ? '把相册里的照片发给你' : '重新看了这张照片')
+        if (action === 'open') expect(toolWarmCopy(start)).toBe('重新看这张照片')
+      })
+    }
+  }
+})

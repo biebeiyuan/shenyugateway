@@ -211,7 +211,7 @@ describe('photos in a message row', () => {
     const host = render([live(1), live(2), expired(1)])
     await nextTick()
     expect(host.querySelectorAll('.photo-stack-card')).toHaveLength(2)
-    expect(host.querySelector('.message-image-expired')?.textContent).toContain('另有 1 张过期了')
+    expect(host.querySelector('.message-image-expired')?.textContent).toContain('本机图片已清理')
   })
 
   it('falls back to plain expiry markers when nothing is left to show', async () => {

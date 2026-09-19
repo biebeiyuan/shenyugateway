@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import hashlib
+import base64
+import json
 import uuid
 from typing import Any, Optional
 
 from ..runtime import iso_now
+from ..album_media import MAX_MEDIA_ITEMS, PHOTO_MIME_TYPES, clean_media, photo_reference
 
 # 沈予的相册。跟聊天里随手发的图是两回事：聊天图只留最近 30 张、过期就清；
 # 相册是他自己挑出来放进去的，不限张数、不会过期。
@@ -38,10 +41,16 @@ class AlbumMixin:
                 return existing
             book_id = f"albm_{uuid.uuid4().hex[:12]}"
             conn.execute(
-                "INSERT INTO album_books (id, name, created_at) VALUES (?, ?, ?)",
+                """INSERT INTO album_books (id, name, created_at) VALUES (?, ?, ?)
+                   ON CONFLICT(name) DO NOTHING""",
                 (book_id, book_name, iso_now()),
             )
-            return {"id": book_id, "name": book_name, "created_at": iso_now()}
+            # Another saver may have created this name after our first read.
+            # Read its canonical row; never REPLACE a book with existing photos.
+            book = self._album_book_row(conn, book_name)
+            if book is None:
+                raise RuntimeError("相册创建后未能读回。")
+            return book
 
     def save_album_photo(
         self,
@@ -58,6 +67,9 @@ class AlbumMixin:
             raise ValueError("photo bytes are required.")
         if len(raw) > MAX_PHOTO_BYTES:
             raise ValueError(f"photo is larger than {MAX_PHOTO_BYTES} bytes.")
+        mime = str(mime or "image/jpeg").partition(";")[0].strip().lower()
+        if mime not in PHOTO_MIME_TYPES:
+            raise ValueError("这张照片的格式暂时不能保存，请使用 JPEG、PNG、WebP 或 GIF。")
         book = self.ensure_album_book(book_name)
         photo_id = f"phot_{uuid.uuid4().hex[:12]}"
         digest = str(fingerprint or "").strip() or photo_fingerprint(raw)
@@ -73,7 +85,7 @@ class AlbumMixin:
                 (
                     photo_id,
                     book["id"],
-                    str(mime or "image/jpeg"),
+                    mime,
                     raw,
                     len(raw),
                     digest,
@@ -87,7 +99,7 @@ class AlbumMixin:
             "id": photo_id,
             "book_id": book["id"],
             "book_name": book["name"],
-            "mime": str(mime or "image/jpeg"),
+            "mime": mime,
             "byte_size": len(raw),
             "fingerprint": digest,
             "note": str(note or "").strip(),
@@ -147,6 +159,126 @@ class AlbumMixin:
                 (str(photo_id),),
             ).fetchone()
         return dict(row) if row else None
+
+    def album_photo_info(self, photo_id: str) -> Optional[dict]:
+        with self._connect() as conn:
+            row = conn.execute(
+                """SELECT p.id, p.note, p.mood, p.mime, p.byte_size, p.fingerprint,
+                          b.name AS book_name FROM album_photos p
+                   JOIN album_books b ON b.id = p.book_id WHERE p.id = ?""",
+                (str(photo_id),),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def album_photo_page(self, book_name: str = "", limit: int = 20, cursor: str = "") -> dict:
+        """Keyset paging, never OFFSET and never read the image BLOB."""
+        name = str(book_name or "").strip()
+        limit = max(1, min(int(limit), 100))
+        boundary = None
+        if cursor:
+            try:
+                if not isinstance(cursor, str) or len(cursor) > 4096:
+                    raise ValueError
+                boundary = json.loads(base64.b64decode(cursor.encode(), altchars=b"-_", validate=True))
+                if (not isinstance(boundary, list) or len(boundary) != 3
+                        or not all(isinstance(x, str) for x in boundary) or boundary[0] != name):
+                    raise ValueError
+            except (ValueError, TypeError, UnicodeError) as exc:
+                raise ValueError("这一页的位置无效，请重新翻相册。") from exc
+        query = """SELECT p.id, p.note, p.mood, p.saved_at, b.name AS book_name
+                   FROM album_photos p JOIN album_books b ON b.id = p.book_id WHERE 1=1"""
+        params: list[Any] = []
+        if name:
+            query += " AND b.name = ?"
+            params.append(name)
+        if boundary:
+            query += " AND (p.saved_at, p.id) < (?, ?)"
+            params.extend(boundary[1:])
+        query += " ORDER BY p.saved_at DESC, p.id DESC LIMIT ?"
+        params.append(limit + 1)
+        with self._connect() as conn:
+            rows = [dict(row) for row in conn.execute(query, params).fetchall()]
+        page = rows[:limit]
+        next_cursor = None
+        if len(rows) > limit and page:
+            last = page[-1]
+            next_cursor = base64.urlsafe_b64encode(json.dumps(
+                [name, last["saved_at"], last["id"]], ensure_ascii=False,
+            ).encode()).decode()
+        return {"photos": [photo_reference(row) for row in page], "next_cursor": next_cursor}
+
+    def retain_message_media(self, session_tag: str, event_id: str, role: str, media: list[dict]) -> None:
+        if role != "user" or not session_tag or not event_id:
+            return
+        with self._connect() as conn:
+            for position, item in enumerate(clean_media(media)):
+                conn.execute(
+                    """INSERT OR IGNORE INTO album_message_media
+                       (session_tag, event_id, role, item_id, position, metadata_json, created_at)
+                       VALUES (?, ?, ?, ?, ?, ?, ?)""",
+                    (session_tag, event_id, role, item["id"], position,
+                     json.dumps(item, ensure_ascii=False), iso_now()),
+                )
+
+    def record_album_share(self, session_tag: str, event_id: str, share_id: str, photo_id: str) -> dict:
+        photo = self.album_photo_info(photo_id)
+        if not photo:
+            raise ValueError("这张照片不在相册里。")
+        if not session_tag or not event_id or not share_id:
+            raise ValueError("这次回复没有可用的照片关联。")
+        media = {"id": share_id, "name": str(photo["book_name"]), "mime": photo["mime"],
+                 **photo_reference(photo)}
+        with self._connect() as conn:
+            conn.execute("BEGIN IMMEDIATE")
+            rows = conn.execute(
+                """SELECT item_id, metadata_json FROM album_message_media
+                   WHERE session_tag = ? AND event_id = ? AND role = 'assistant'""",
+                (session_tag, event_id),
+            ).fetchall()
+            for row in rows:
+                if row["item_id"] == share_id:
+                    existing = json.loads(row["metadata_json"])
+                    if existing.get("photo_id") != photo_id:
+                        raise ValueError("这次分享的编号已经关联了另一张照片。")
+                    return existing
+            if len(rows) >= MAX_MEDIA_ITEMS:
+                raise ValueError("这次回复已经放了九张照片，先把这些给圆圆看。")
+            conn.execute(
+                """INSERT INTO album_message_media
+                   (session_tag, event_id, role, item_id, position, metadata_json, created_at)
+                   VALUES (?, ?, 'assistant', ?, ?, ?, ?)""",
+                (session_tag, event_id, share_id, len(rows), json.dumps(media, ensure_ascii=False), iso_now()),
+            )
+        return media
+
+    def message_media_batch(self, session_tag: str, events: list[tuple[str, str]]) -> dict[str, list[dict]]:
+        keys = list(dict.fromkeys((str(role), str(event_id)) for role, event_id in events
+                                  if role in {"user", "assistant"} and event_id))
+        found: dict[str, list[dict]] = {}
+        with self._connect() as conn:
+            for start in range(0, len(keys), 200):
+                batch = keys[start:start + 200]
+                conditions = " OR ".join("(role = ? AND event_id = ?)" for _ in batch)
+                if not conditions:
+                    continue
+                rows = conn.execute(
+                    f"""SELECT role, event_id, metadata_json FROM album_message_media
+                        WHERE session_tag = ? AND ({conditions}) ORDER BY position ASC""",
+                    [session_tag, *(value for pair in batch for value in pair)],
+                ).fetchall()
+                for row in rows:
+                    found.setdefault(f"{row['role']}:{row['event_id']}", []).append(json.loads(row["metadata_json"]))
+        digests = [m["fingerprint"] for items in found.values() for m in items if m.get("fingerprint")]
+        saved = self.album_notes_by_fingerprints(digests)
+        for items in found.values():
+            for media in items:
+                photo = saved.get(media.get("fingerprint", ""))
+                if photo:
+                    media.update(photo_reference(photo))
+        return found
+
+    def message_media(self, session_tag: str, event_id: str, role: str) -> list[dict]:
+        return self.message_media_batch(session_tag, [(role, event_id)]).get(f"{role}:{event_id}", [])
 
     # 过期回填的入口：给一批指纹，返回哪些图沈予存过、他当时写了什么。
     # 一次查完，不在 trim 循环里逐张查库。

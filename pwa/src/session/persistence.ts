@@ -1,3 +1,4 @@
+import { storedAttachments } from './media'
 import type { ToolEvent } from '../toolLanguage'
 import { clampErrorText } from '../api/errors'
 import type { ArchiveEvent, Attachment, EchoSegment, MessageVariant, ResponseMeta, Role, ThinkingSegment, UiMessage } from '../types'
@@ -36,16 +37,7 @@ function cloneStoredThinkingSegments(value: unknown): ThinkingSegment[] {
 // 附件只落元数据，绝不落 dataUrl：base64 图片进 localStorage 就是当初
 // 「附件干脆不存」的原因（一张约 560KB，5MB 配额装九张）。字节在 IndexedDB。
 function cloneStoredAttachments(value: unknown): Attachment[] {
-  return Array.isArray(value)
-    ? value
-        .filter((item): item is Partial<Attachment> => Boolean(item && typeof item === 'object'))
-        .map((item) => ({
-          id: String(item.id || createId('image')),
-          name: String(item.name || ''),
-          mime: String(item.mime || 'image/jpeg'),
-          fingerprint: item.fingerprint ? String(item.fingerprint) : undefined,
-        }))
-    : []
+  return storedAttachments(value)
 }
 
 function cloneStoredEchoSegments(value: unknown): EchoSegment[] {
@@ -220,12 +212,7 @@ export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit
     echoSegments: message.echoSegments || [],
     // dataUrl 刻意剥掉：base64 图片进 localStorage 正是当初「附件干脆不存」的
     // 原因。字节在 IndexedDB，这里只留够回填和过期上传用的元数据。
-    attachments: (message.attachments || []).map((attachment) => ({
-      id: attachment.id,
-      name: attachment.name,
-      mime: attachment.mime,
-      fingerprint: attachment.fingerprint,
-    })),
+    attachments: storedAttachments(message.attachments),
     thinking: message.thinking,
     thinkingSegments: message.thinkingSegments,
     events: message.events,
@@ -234,7 +221,7 @@ export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit
     // streaming 再落盘。它留在存储里就意味着进程死在了流中间——按截断标记，
     // 重启后 reconcile 会去服务器找回全文。
     truncated: message.truncated || message.streaming || undefined,
-    variants: message.variants,
+    variants: message.variants?.map(cloneVariant),
     selectedVariantIndex: message.selectedVariantIndex,
     responseMeta: message.responseMeta,
     replyVersionId: message.replyVersionId,

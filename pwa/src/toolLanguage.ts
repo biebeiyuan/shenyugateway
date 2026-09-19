@@ -1,4 +1,6 @@
 export type ToolEvent = {
+  photo?: unknown
+  reply_version_id?: string
   phase: string
   tool_call_id: string
   name: string
@@ -73,6 +75,8 @@ const EXACT_COPY: Record<string, string> = {
   // 相册
   album_save: '把这张存进了相册',
   album_list: '翻了翻相册',
+  album_open: '重新看了这张照片',
+  album_send: '把相册里的照片发给你',
 
   // 盼圃。四个动作是一个工具，所以这里只能说个大概——
   // 说「在盼圃前站了一会儿」比猜错他是挂上去还是摘下来更好。
@@ -122,6 +126,13 @@ const PREFIX_COPY: [string, string][] = [
 
 export function toolWarmCopy(event: ToolEvent): string {
   const target = toolName(event).toLowerCase()
+  // The process strip must not describe a rejected share/open as completed.
+  // Keep toolState's existing three-state vocabulary and full detail output.
+  if (target === 'album_send' && event.ok === false) return '这张照片没能发出来'
+  if (target === 'album_open') {
+    if (event.ok === false) return '这张照片暂时没能打开'
+    if (event.phase === 'tool_start') return '重新看这张照片'
+  }
   const exact = EXACT_COPY[target]
   if (exact) return exact
   for (const [prefix, copy] of PREFIX_COPY) {

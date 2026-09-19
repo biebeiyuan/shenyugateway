@@ -83,6 +83,7 @@ def test_tool_event_details_are_opt_in_and_not_written_to_request_logs():
     }
     result = {"ok": True, "items": [{"content": "private note"}]}
     ctx = SimpleNamespace(
+        cfg=RuntimeConfig(),
         meta={"client_profile": {"emit_tool_events": True, "emit_tool_event_details": True}},
         log_entry={},
     )

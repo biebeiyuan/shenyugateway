@@ -88,7 +88,9 @@ import {
   loadStoredMessages,
   persistStoredMessages,
 } from './session/persistence'
-import { getPhotos, photoDataUrl, prunePhotos, putPhoto } from './session/photoStore'
+import { photoFingerprint, prunePhotos, putPhoto } from './session/photoStore'
+import { readMedia, photoSource } from './session/media'
+import { createPhotoLoader } from './session/photoLoader'
 import { hydrateToolEvents } from './session/toolHydration'
 import { applyReconciledTail, applyReplyRecovery, tailNeedsReconcile } from './session/reconcile'
 import {
@@ -447,7 +449,7 @@ async function openSession(session: GatewaySession): Promise<boolean> {
           echoSegments: row.role === 'assistant' && parts.echo
             ? [{ id: createId('echo'), content: parts.echo, textOffset: 0, streamOrder: 0 }]
             : [],
-          attachments: [],
+          attachments: readMedia(row.media),
           thinking: '',
           thinkingSegments: [],
           events: [],
@@ -512,7 +514,7 @@ async function recoverSessionFromColdStart(session: GatewaySession = { session_t
           echoSegments: row.role === 'assistant' && parts.echo
             ? [{ id: createId('echo'), content: parts.echo, textOffset: 0, streamOrder: 0 }]
             : [],
-          attachments: [],
+          attachments: readMedia(row.media),
           thinking: '',
           thinkingSegments: [],
           events: [],
@@ -756,11 +758,16 @@ async function keepPhotoLocally(attachment: Attachment): Promise<Attachment> {
   try {
     const meta = await putPhoto(attachment.id, dataUrlToBlob(attachment.dataUrl, attachment.mime), attachment.mime)
     void prunePhotos().then((removed) => {
-      if (removed.length) forgetExpiredPhotos(removed)
+      if (removed.length) {
+        forgetExpiredPhotos(removed)
+        scheduleLocalPhotoRestore()
+      }
     })
     return { ...attachment, fingerprint: meta.fingerprint }
   } catch {
-    return attachment
+    try {
+      return { ...attachment, fingerprint: await photoFingerprint(dataUrlToBlob(attachment.dataUrl, attachment.mime)) }
+    } catch { return attachment }
   }
 }
 
@@ -792,8 +799,8 @@ async function resizeImage(file: File): Promise<Attachment> {
   }
 }
 
-// 本机淘汰掉的图：清掉 dataUrl，气泡改说「图过期了」。指纹留着——过期后正是靠它
-// 让网关认出这张图，从而把占位换成沈予存相册时写的那句话（第三批）。
+// 本机淘汰只清掉上传字节。指纹和收藏引用留着：收藏图从服务器回填 displayUrl，
+// 未收藏的才显示本机已清理；这与模型的两轮视觉窗口相互独立。
 function forgetExpiredPhotos(removedIds: string[]) {
   if (!removedIds.length) return
   const gone = new Set(removedIds)
@@ -804,39 +811,32 @@ function forgetExpiredPhotos(removedIds: string[]) {
   }
 }
 
-// 启动时把本机还留着的图接回气泡。元数据一直在 localStorage，字节按 30 张淘汰，
-// 所以「有 attachment 没有 dataUrl」就是「这张图在本机过期了」。
+// Shared photos use the same visible attachment slots, but their bytes come
+// from the server album and never enter the ordinary cache or next request.
+const photoLoader = createPhotoLoader(clientContext, () => messages.value, persistMessages)
 async function restoreLocalPhotos() {
-  const wanted = messages.value.flatMap((message) =>
-    message.attachments.filter((attachment) => !attachment.dataUrl).map((attachment) => attachment.id))
-  if (!wanted.length) return
-  try {
-    const found = await getPhotos(wanted)
-    if (!found.size) return
-    for (const message of messages.value) {
-      for (const attachment of message.attachments) {
-        const stored = found.get(attachment.id)
-        // 必须是 data URL 而不是 createObjectURL 的 blob: 地址——后者只在本进程
-        // 有效，写进 dataUrl 就会当真图上传，上游取不到（线上 500）。
-        if (stored) attachment.dataUrl = photoDataUrl(stored)
-      }
-    }
-  } catch {
-    // 本机图取不回来就按过期显示，不影响对话本身。
-  }
+  await photoLoader.restore()
 }
+function retryPhoto(message: UiMessage, id: string) {
+  void photoLoader.retry(message.attachments.find((item) => item.id === id))
+}
+watch(() => JSON.stringify([
+  gatewayUrl.value, authToken.value, sessionTag.value,
+  messages.value.map((m) => [m.role, m.archiveEvent?.id, m.replyVersionId,
+    m.attachments.map((a) => [a.id, a.photoId, a.fingerprint])]),
+]), () => scheduleLocalPhotoRestore())
 
 // 回填只在 onMounted 跑一次是不够的：装成 PWA 时 Service Worker 接管会强制刷新
-// 页面（main.ts），刷新打断那一次就没有第二次机会，气泡会一直停在「图过期了」。
+// 页面（main.ts），刷新打断那一次就没有第二次机会，气泡会一直停在未加载状态。
 // 回前台和切会话后各补一次——它本身按 id 幂等，重复跑没有代价。
 // 看图器只收还有字节的图：本机已淘汰的那些没有可看的内容。
 const viewerPhotos = computed(() => {
   const target = messages.value.find((message) => message.id === photoViewer.value?.messageId)
-  return (target?.attachments || []).filter((attachment) => attachment.dataUrl)
+  return (target?.attachments || []).filter((attachment) => photoSource(attachment) && attachment.photoState !== 'error')
 })
 
 function openPhotoViewer(message: UiMessage, position: number) {
-  const usable = message.attachments.filter((attachment) => attachment.dataUrl)
+  const usable = message.attachments.filter((attachment) => photoSource(attachment) && attachment.photoState !== 'error')
   // position 是在全部附件里的下标；换算成「可看的那些」里的下标。
   const clicked = message.attachments[position]
   const index = Math.max(0, usable.findIndex((attachment) => attachment.id === clicked?.id))
@@ -970,7 +970,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       applyChatCompletion(completion, assistant)
     }
     assistant.streaming = false
-    if (!assistant.content && !assistant.echo && !assistant.thinking && !assistant.events.length) {
+    if (!assistant.content && !assistant.echo && !assistant.thinking && !assistant.events.length && !assistant.attachments.length) {
       assistant.content = '这次没有收到可显示的回应。'
     }
     syncCurrentVariant(assistant)
@@ -1012,6 +1012,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     scrollToBottom()
     // 静默截断（!sawDone）或看门狗/网络错误后，去服务器找回 drain 落库的全文。
     // 用户主动停止不带 error/truncated，这里自然是无操作。
+    scheduleLocalPhotoRestore()
     if (tailNeedsReconcile(messages.value)) void reconcileTailFromServer()
   }
 }
@@ -1243,7 +1244,7 @@ onMounted(async () => {
     renderTail.value = null
     if (wasAtBottom) nextTick(jumpToBottom)
   })
-  // 把本机还留着的图接回气泡；淘汰掉的保持「过期」样子。
+  // 本机图先回填；已收藏但本机清理的照片按引用从服务器取回。
   scheduleLocalPhotoRestore()
   // 本地恢复的消息可能停在半截，或快照缺少同一 user 的旧 roll：统一后台找回。
   void reconcileTailFromServer(0, 'variants')
@@ -1251,6 +1252,7 @@ onMounted(async () => {
 })
 
 onUnmounted(() => {
+  photoLoader.dispose()
   activeController?.abort()
   invalidateReconcile()
   clearKeyboardTimers()
@@ -1382,6 +1384,7 @@ onUnmounted(() => {
             @switch-variant="switchMessageVariant(index, $event)"
             @edit="beginEdit(message)"
             @open-photo="openPhotoViewer(message, $event)"
+            @retry-photo="retryPhoto(message, $event)"
           />
         </template>
       </section>
@@ -1455,7 +1458,7 @@ onUnmounted(() => {
 
     <PhotoViewer
       v-if="photoViewer && viewerPhotos.length"
-      :urls="viewerPhotos.map((attachment) => attachment.dataUrl || '')"
+      :urls="viewerPhotos.map(photoSource)"
       :index="photoViewer.position"
       @close="photoViewer = null"
       @change="(next) => { if (photoViewer) photoViewer.position = next }"

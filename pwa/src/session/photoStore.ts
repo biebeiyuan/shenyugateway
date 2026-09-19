@@ -183,3 +183,20 @@ export async function closePhotoStore() {
     // 本来就没开成，没什么要关的。
   }
 }
+
+/** Recover old attachment IDs by the exact byte digest, without renewing age.
+ * The device cache is bounded to 30 entries; scanning it needs no DB migration.
+ */
+export async function findCachedPhotos(attachments: Array<{id: string; fingerprint?: string}>): Promise<Map<string, LoadedPhoto>> {
+  const found = await getPhotos(attachments.map((item) => item.id))
+  const missing = attachments.filter((item) => !found.has(item.id) && item.fingerprint)
+  if (!missing.length) return found
+  const db = await openDb()
+  const rows = await runRequest<StoredPhoto[]>(db.transaction(STORE, 'readonly').objectStore(STORE).getAll())
+  const byDigest = new Map(rows.map((row) => [row.fingerprint, row]))
+  for (const item of missing) {
+    const row = byDigest.get(item.fingerprint!)
+    if (row) found.set(item.id, toLoaded(row))
+  }
+  return found
+}

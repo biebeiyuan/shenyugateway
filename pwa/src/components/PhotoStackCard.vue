@@ -15,7 +15,7 @@ import {
 // 这里只负责事件与渲染：上游直接写 DOM style，我们把状态交给 Vue。
 
 const props = defineProps<{ urls: string[] }>()
-const emit = defineEmits<{ tap: [index: number]; change: [index: number] }>()
+const emit = defineEmits<{ tap: [index: number]; change: [index: number]; imageError: [index: number] }>()
 
 const current = ref(0)
 const scrub = ref<CardState[] | null>(null)
@@ -159,7 +159,7 @@ onBeforeUnmount(() => cancelAnimationFrame(frame))
         opacity: states[index].opacity,
       }"
     >
-      <img :src="url" alt="" draggable="false" />
+      <img :src="url" @error="emit('imageError', index)" alt="" draggable="false" />
     </div>
   </div>
 </template>

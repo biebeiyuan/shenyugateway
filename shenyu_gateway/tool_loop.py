@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Optional
 
 from fastapi import HTTPException
+from .album_media import AlbumToolResult, ALBUM_VIEW_KEY, finish_album_action, hydrate_album_views
 
 from .request_logs import (
     _mark_request_log_phase,
@@ -41,7 +42,7 @@ from .streaming import (
     flush_stream_tail_events,
     read_next_stream_chunk,
 )
-from .tool_registry import is_gateway_native_tool
+from .tool_registry import _broker_target_name, is_gateway_native_tool
 from .upstream_adapter import (
     ANTHROPIC_CONTENT_BLOCKS_KEY,
     ANTHROPIC_THINKING_CONFIG_KEY,
@@ -289,7 +290,9 @@ def _record_tool_event(
         "phase": phase,
         "tool_call_id": str(tool_call.get("id") or ""),
         "name": name,
-        "target_tool": _target_tool_name(name, args),
+        # Resolve aliases once for every phase/outcome, not only a successful
+        # photo effect. The event name follows the same broker as execution.
+        "target_tool": _broker_target_name(args, ctx.cfg) if name == "shenyu_gateway_tool" else name,
         "round": round_index + 1,
     }
     order_key = str(tool_call.get("id") or f"{name}:{round_index}")
@@ -306,6 +309,9 @@ def _record_tool_event(
         event["ok"] = raw_ok if isinstance(raw_ok, bool) else None
         if isinstance(result, dict) and result.get("error_kind"):
             event["error_kind"] = str(result["error_kind"])
+        if isinstance(result, AlbumToolResult) and result.shared_media:
+            event["photo"] = dict(result.shared_media)
+            event["reply_version_id"] = ctx.meta["reply_archive_event"]["id"]
     if _tool_event_details_enabled(ctx):
         event["input"] = args
         if result is not None:
@@ -315,7 +321,7 @@ def _record_tool_event(
     if ctx.log_entry is not None:
         # Tool details are for the current opted-in client only. Request logs retain the
         # existing compact diagnostic metadata and must not persist raw resident data.
-        log_event = {key: value for key, value in event.items() if key not in {"input", "output"}}
+        log_event = {key: value for key, value in event.items() if key not in {"input", "output", "photo"}}
         ctx.log_entry.setdefault("tool_events", []).append(log_event)
     return event
 
@@ -387,18 +393,11 @@ async def _execute_mixed_gateway_tool_calls(
         except Exception as exc:
             logger.exception("[GatewayTool] Mixed tool call failed: %s", name)
             result = {"ok": False, "error": str(exc), "error_kind": "exception"}
-        result = _decorate_tool_error_result(result)
+        result = _decorate_tool_error_result(finish_album_action(ctx, result, str(tool_call.get("id") or "")))
         ctx.sessions.log_tool_result(ctx.session_id, _logged_tool_name(name, args), args, result)
         if isinstance(result, dict) and result.get("ok") is False:
             _record_tool_error(ctx, name, args, result)
-        gateway_tool_messages.append(
-            {
-                "role": "tool",
-                "tool_call_id": tool_call.get("id"),
-                "name": name,
-                "content": _json_dumps(result),
-            }
-        )
+        gateway_tool_messages.append(_tool_result_message(tool_call, name, result))
 
     original_assistant_message = _pending_assistant_tool_call_message(assistant_message, normalized_tool_calls)
     ctx.store.create_pending_gateway_tool_turn(
@@ -441,6 +440,7 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
     working_messages = list(ctx.prepared_messages)
     upstream_usages: list[dict] = []
     tool_result_cache: dict[str, dict] = {}
+    album_view_cache: dict[tuple[str, str], dict] = {}
     latest_user_text = _latest_user_text(ctx.prepared_messages)
 
     for round_index in range(max(1, ctx.cfg.max_internal_tool_rounds)):
@@ -448,7 +448,7 @@ async def run_internal_tool_loop(ctx: InternalToolLoopContext) -> dict:
         payload, headers, _, cache_meta, upstream = await ctx.build_upstream_request(
             ctx.request,
             ctx.body,
-            messages_override=working_messages,
+            messages_override=hydrate_album_views(working_messages, ctx.store, view_cache=album_view_cache),
             meta=ctx.meta,
         )
         _mark_request_log_phase(
@@ -556,6 +556,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
     working_messages = list(ctx.prepared_messages)
     upstream_usages: list[dict] = []
     tool_result_cache: dict[str, dict] = {}
+    album_view_cache: dict[tuple[str, str], dict] = {}
     latest_user_text = _latest_user_text(ctx.prepared_messages)
     stream_chunk_id = _new_stream_chunk_id()
     stream_created = _now_ts()
@@ -569,7 +570,7 @@ async def run_internal_tool_loop_stream(ctx: InternalToolLoopContext):
         payload, headers, _, cache_meta, upstream = await ctx.build_upstream_request(
             ctx.request,
             ctx.body,
-            messages_override=working_messages,
+            messages_override=hydrate_album_views(working_messages, ctx.store, view_cache=album_view_cache),
             meta=ctx.meta,
         )
         _mark_request_log_phase(
@@ -926,7 +927,7 @@ def _salvage_exhausted_tool_rounds(ctx: InternalToolLoopContext) -> None:
         else ""
     )
     combined_echo = _combined_echo_text(ctx)
-    if not salvaged and not combined_echo:
+    if not salvaged and not combined_echo and not ctx.meta.get("album_shared_media"):
         return
     ctx.sessions.log_assistant_output(
         ctx.session_id,
@@ -1023,13 +1024,17 @@ async def _execute_internal_tool_call(
     args = _tool_call_arguments(tool_call)
     name = _tool_call_name(tool_call)
     cache_key = _tool_call_cache_key(name, args)
-    cached = cache_key in tool_result_cache
+    target_name = _broker_target_name(args, ctx.cfg) if name == "shenyu_gateway_tool" else name
+    # These effects belong to the call identity, not just to identical args.
+    # A new open may retry a failed observation; share replay is owned by SQL.
+    cacheable = target_name not in {"shenyu_album_open", "shenyu_album_send"}
+    cached = cacheable and cache_key in tool_result_cache
     if cached:
-        result = {
-            "ok": True,
-            "cached_duplicate": True,
-            "result": tool_result_cache[cache_key],
-        }
+        previous = tool_result_cache[cache_key]
+        if isinstance(previous, dict) and previous.get("ok") is False:
+            result = {**previous, "cached_duplicate": True}
+        else:
+            result = {"ok": True, "cached_duplicate": True, "result": previous}
         duration_ms = 0
     else:
         t0 = time.monotonic()
@@ -1046,9 +1051,10 @@ async def _execute_internal_tool_call(
         except Exception as exc:
             logger.exception("[GatewayTool] %s: %s", log_label, name)
             result = {"ok": False, "error": str(exc), "error_kind": "exception"}
-        result = _decorate_tool_error_result(result)
+        result = _decorate_tool_error_result(finish_album_action(ctx, result, str(tool_call.get("id") or "")))
         duration_ms = int((time.monotonic() - t0) * 1000)
-        tool_result_cache[cache_key] = result
+        if cacheable:
+            tool_result_cache[cache_key] = result
         ctx.sessions.log_tool_result(ctx.session_id, _logged_tool_name(name, args), args, result)
         if isinstance(result, dict) and result.get("ok") is False:
             _record_tool_error(ctx, name, args, result)
@@ -1165,9 +1171,12 @@ def _record_tool_error(ctx: InternalToolLoopContext, name: str, args: dict, resu
 
 
 def _tool_result_message(tool_call: dict, name: str, result: dict) -> dict:
-    return {
+    message = {
         "role": "tool",
         "tool_call_id": tool_call.get("id"),
         "name": name,
         "content": _json_dumps(result),
     }
+    if isinstance(result, AlbumToolResult) and result.view_photo_id:
+        message[ALBUM_VIEW_KEY] = result.view_photo_id
+    return message
