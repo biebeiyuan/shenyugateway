@@ -4,43 +4,26 @@ on:
     branches: [work/album-offline-workbench]
     paths: [.github/workflows/album-offline-workbench.yml]
 permissions:
-  contents: write
+  contents: read
 jobs:
-  publish-verified-tree:
+  export-review-source:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
-          path: transfer
+          ref: 37690c6730b6a0fd8b672d6d0e01db4e3343c699
           persist-credentials: false
-      - name: Verify transferred patch
+          fetch-depth: 0
+      - name: Export Git objects only, never credentials or working data
         run: |
-          python - <<'PY'
-          import base64, hashlib, lzma
-          from pathlib import Path
-          encoded = ''.join(Path(f'transfer/.github/album-patch/part{i}.b64').read_text().strip() for i in (1, 2, 3))
-          patch = lzma.decompress(base64.b64decode(encoded, validate=True))
-          assert hashlib.sha256(patch).hexdigest() == '0f4972b8f513f73bac82b2dd8b1e7042eba09159a0035b3a05d4f083e6ba6e9f'
-          Path('/tmp/album.patch').write_bytes(patch)
-          PY
-      - uses: actions/checkout@v4
+          test "$(git rev-parse HEAD)" = 37690c6730b6a0fd8b672d6d0e01db4e3343c699
+          git bundle create /tmp/album-review-source.bundle HEAD
+          git rev-parse HEAD HEAD^{tree} > /tmp/album-review-source.txt
+      - uses: actions/upload-artifact@v4
         with:
-          ref: 42e82c807f723a9e7ffebc331490b64738334bc9
-          path: source
-      - name: Publish feature source only (workflow change uses separate authorized connector)
-        working-directory: source
-        run: |
-          git apply --check --unidiff-zero /tmp/album.patch
-          git apply --index --unidiff-zero /tmp/album.patch
-          test "$(git write-tree)" = '5a5fffa0b70a873501ab128fa12ee649fc5444d5'
-          git diff --cached --check
-          # Actions contents:write cannot alter workflows. The owner-authorized
-          # GitHub connector will apply this one file and recheck the full tree.
-          git restore --source=HEAD --staged --worktree .github/workflows/ci.yml
-          git switch -c feat/album-references-sharing
-          git config user.name 'github-actions[bot]'
-          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
-          git commit -m 'feat: paginated album references, on-demand vision and durable photo sharing'
-          git push origin HEAD:refs/heads/feat/album-references-sharing
-          printf 'Feature commit: %s\nSource tree (CI change pending): %s\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" >> "$GITHUB_STEP_SUMMARY"
+          name: album-review-source
+          path: |
+            /tmp/album-review-source.bundle
+            /tmp/album-review-source.txt
+          retention-days: 1
