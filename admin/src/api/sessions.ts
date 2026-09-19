@@ -1,6 +1,7 @@
 import { api } from './http'
 
 export interface GatewaySession {
+  hidden_at?: string | null
   id: string
   session_tag: string
   client_name: string | null
@@ -126,10 +127,8 @@ export async function fetchGatewaySession(sessionTag: string, params: { messages
   return data
 }
 
-export async function deleteGatewaySession(sessionTag: string) {
-  const { data } = await api.delete(`/api/gateway/sessions/${encodeURIComponent(sessionTag)}`, {
-    data: { confirm: sessionTag },
-  })
+export async function setGatewaySessionVisibility(sessionTag: string, hidden: boolean) {
+  const { data } = await api.patch(`/api/gateway/sessions/${encodeURIComponent(sessionTag)}/visibility`, { hidden })
   return data
 }
 

@@ -1,0 +1,223 @@
+import 'fake-indexeddb/auto'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { createApp, nextTick, type App as VueApp } from 'vue'
+import App from '../src/App.vue'
+import { TranscriptStore, transcriptKey } from '../src/session/transcriptStore'
+import { closePhotoStore } from '../src/session/photoStore'
+import type { UiMessage } from '../src/types'
+vi.mock('../src/meta/statusSuffix', async importOriginal => ({
+  ...await importOriginal<object>(), initWeatherWatch: () => {}, initBatteryWatch: () => {},
+}))
+vi.mock('../src/ChatNestSprite.vue', () => ({ default: { template: '<span />' } }))
+const apps: VueApp[] = []
+function row(role: 'user' | 'assistant', id: string, content = id): UiMessage {
+  return { id, role, content, echo: '', echoSegments: [], thinking: '', thinkingSegments: [], attachments: [], events: [],
+    archiveEvent: { id, event_at: '2026-09-19T01:00:00Z' }, ...(role === 'assistant' ? { replyVersionId: id } : {}) }
+}
+function detail(tag: string) {
+  return { context_snapshots: [{ messages: [row('user', `u-${tag}`), row('assistant', `r-${tag}`)].map(m => ({
+    role: m.role, content: m.content, archive_event: m.archiveEvent,
+  })) }], recent_messages: [] }
+}
+function setupFetch(details: (tag: string) => Promise<unknown> = async tag => detail(tag)) {
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    if (url.pathname.endsWith('/reply-recovery')) return Response.json({ replies: [] })
+    if (url.pathname === '/api/gateway/sessions') return Response.json({ sessions: [{ session_tag: 'A' }, { session_tag: 'B' }] })
+    if (url.pathname.startsWith('/api/gateway/sessions/')) return Response.json(await details(decodeURIComponent(url.pathname.split('/')[4])))
+    if (url.pathname.endsWith('/album/resolve')) return Response.json({ media: {}, photos: {} })
+    if (url.pathname === '/api/config') return Response.json({ max_client_messages: 75 })
+    if (url.pathname === '/v1/models') return Response.json({ data: [] })
+    throw new Error(`Unexpected request ${options?.method || 'GET'} ${url.pathname}`)
+  }))
+}
+function mount() {
+  const host = document.createElement('div'); document.body.append(host)
+  const app = createApp(App); apps.push(app)
+  const vm = app.mount(host) as any
+  return { host, state: vm.$.setupState as any }
+}
+async function flush() { await nextTick(); await new Promise(resolve => setTimeout(resolve, 40)); await nextTick() }
+
+beforeEach(async () => {
+  localStorage.clear(); sessionStorage.clear(); window.history.replaceState(null, '', '/chat/')
+  await closePhotoStore()
+  await new Promise<void>((resolve, reject) => {
+    const request = indexedDB.deleteDatabase('shenyu-pwa-transcripts-v1')
+    request.onsuccess = () => resolve(); request.onerror = () => reject(request.error)
+  })
+  setupFetch()
+})
+afterEach(async () => {
+  apps.splice(0).forEach(app => app.unmount()); await flush()
+  document.body.innerHTML = ''; vi.unstubAllGlobals(); vi.restoreAllMocks()
+})
+
+describe('real PWA retention wiring', () => {
+  it('keeps rich process state through actual A to B to A and a new page mount', async () => {
+    const a = [row('user', 'u-A'), row('assistant', 'r-A')]
+    a[1].thinking = 'remember this local thought'
+    a[1].events = [{ phase: 'tool_end', name: 'shenyu_recall', tool_call_id: 'call-A', output: 'saved result', ok: true }]
+    localStorage.setItem('shenyu_pwa_session', 'A')
+    localStorage.setItem('shenyu_pwa_messages', JSON.stringify(a))
+    const { state } = mount(); await flush()
+    await state.openSession({ session_tag: 'B' }); await flush()
+    await state.openSession({ session_tag: 'A' }); await flush()
+    expect(state.messages[1].thinking).toBe('remember this local thought')
+    expect(state.messages[1].events[0]?.output).toBe('saved result')
+    state.draft = 'a draft still being written'
+    await state.persistMessages()
+    apps.splice(0).forEach(app => app.unmount()); await flush()
+    const restarted = mount(); await flush()
+    expect(restarted.state.draft).toBe('a draft still being written')
+    expect(restarted.state.messages[1].events[0]?.output).toBe('saved result')
+  })
+
+  it('does not wait for configuration network requests to restore local draft and messages', async () => {
+    const store = new TranscriptStore()
+    await store.save(transcriptKey('', 'A'), { messages: [row('user','u-A')], draft: 'offline draft', pendingAttachments: [], editId: null, viewport: { atBottom: true } }, 0)
+    store.close()
+    localStorage.setItem('shenyu_pwa_session', 'A')
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
+    const { state, host } = mount(); await flush()
+    expect(state.draft).toBe('offline draft')
+    expect(host.textContent).toContain('u-A')
+    expect(state.storageReady).toBe(true)
+  })
+
+  it('ignores a stale A response after B has become the selected conversation', async () => {
+    let resolveA!: (value: unknown) => void
+    setupFetch(tag => tag === 'A' ? new Promise(resolve => { resolveA = resolve }) : Promise.resolve(detail(tag)))
+    const { state } = mount(); await flush()
+    const pendingA = state.openSession({ session_tag: 'A' }); await flush()
+    await state.openSession({ session_tag: 'B' }); await flush()
+    resolveA(detail('A')); await pendingA; await flush()
+    expect(state.sessionTag).toBe('B')
+    expect(state.messages.at(-1).content).toBe('r-B')
+  })
+})
+
+it('commits the outgoing turn and reply identity before starting the network request', async () => {
+  const { state } = mount(); await flush()
+  const normalFetch = globalThis.fetch
+  let committed = false
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    if (String(input).includes('/v1/chat/completions')) {
+      const body = JSON.parse(String(options?.body))
+      const store = new TranscriptStore()
+      const record = await store.load(transcriptKey('', state.sessionTag))
+      store.close()
+      expect(record?.state.messages.at(-1)?.replyVersionId).toBe(body.metadata.reply_version_id)
+      expect(record?.state.messages.at(-1)?.truncated).toBe(true)
+      expect(record?.state.messages.at(-2)?.content).toContain('save before send')
+      committed = true
+      return new Response('data: {"choices":[{"delta":{"content":"received"}}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
+    }
+    return normalFetch(input, options)
+  }))
+  state.draft = 'save before send'
+  await state.submit(); await flush()
+  expect(committed).toBe(true)
+  expect(state.messages.at(-1).content).toBe('received')
+})
+
+it('does not relabel the legacy single slot after changing gateways and restarting', async () => {
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify([row('user', 'private-to-origin')]))
+  const { state } = mount(); await flush()
+  state.settingsGateway = 'https://second.example'
+  await state.saveSettings(); await flush()
+  expect(state.messages).toHaveLength(0)
+  state.draft = 'second gateway draft'
+  await state.persistMessages()
+  apps.splice(0).forEach(app => app.unmount()); await flush()
+  const restarted = mount(); await flush()
+  expect(restarted.state.draft).toBe('second gateway draft')
+  expect(restarted.state.messages).toHaveLength(0)
+})
+
+it('does not send when the initial durable checkpoint fails', async () => {
+  const { state } = mount(); await flush()
+  vi.spyOn(TranscriptStore.prototype, 'save').mockRejectedValue(new DOMException('full', 'QuotaExceededError'))
+  state.draft = 'must stay on device if checkpoint failed'
+  await state.submit(); await flush()
+  expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/v1/chat/completions'))).toBe(false)
+  expect(state.storageError).toBeTruthy()
+  expect(state.messages[0].content).toContain('must stay on device')
+})
+
+
+it('does not place an active conversation in an empty hidden list', async () => {
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify([row('user', 'u-A')]))
+  const { state, host } = mount(); await flush()
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ sessions: [] })))
+  state.showHiddenSessions = true; await flush()
+  await state.loadSessions(); await flush()
+  expect(host.querySelectorAll('.session-item')).toHaveLength(0)
+  expect(host.querySelector('.sidebar-empty')?.textContent).toContain('还没有已收起的对话')
+})
+
+it('can recover a conflict through the visible action without first saving the stale page', async () => {
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify([row('assistant', 'r-A')]))
+  const { state, host } = mount(); await flush()
+  const store = new TranscriptStore()
+  try {
+    const key = transcriptKey('', 'A')
+    const latest = (await store.load(key))!
+    await store.save(key, { ...latest.state, draft: 'draft from another page' }, latest.revision)
+    state.draft = 'my uncommitted draft'
+    expect(await state.persistMessages()).toBe(false)
+    expect(await state.openSession({ session_tag: 'B' })).toBe(false)
+    const button = host.querySelector<HTMLButtonElement>('[data-testid="recover-local-record"]')
+    expect(button).not.toBeNull()
+    button!.click(); await flush(); await flush()
+    expect(state.storageConflict).toBe(false)
+    expect(state.draft).toBe('draft from another page')
+    state.openSettings(); await flush()
+    expect(host.textContent).toContain('保留副本')
+    const copies = await store.listRecoveryCopies(key)
+    const local = copies.find(copy => copy.kind === 'local')!
+    expect(await state.restoreLocalDraft(local.id)).toBe(true)
+    expect(state.draft).toBe('my uncommitted draft')
+    expect(await state.openSession({ session_tag: 'B' })).toBe(true)
+    expect(state.sessionTag).toBe('B')
+  } finally { store.close() }
+})
+
+it('shows page build and offline-worker status as separate evidence in Settings', async () => {
+  const { state, host } = mount(); await flush()
+  state.openSettings(); await flush()
+  expect(host.querySelector('[data-testid="offline-update-status"]')).not.toBeNull()
+  expect(host.querySelector('.build-proof')?.textContent).toContain('本页代码')
+  expect(host.querySelector('.build-proof')?.textContent).toContain('当前离线版本')
+})
+
+
+it('only removes a selected recovery copy after explicit confirmation and leaves the main record intact', async () => {
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  const { state, host } = mount(); await flush()
+  const store = new TranscriptStore()
+  try {
+    const key = transcriptKey('', 'A')
+    const active = (await store.load(key))!
+    const copy = await store.saveRecoveryCopy(key, { ...active.state, draft: 'only in this copy' })
+    state.openSettings(); await flush()
+    const select = Array.from(host.querySelectorAll<HTMLButtonElement>('.recovery-copy-row button'))[0]
+    select.click(); await flush()
+    const remove = () => host.querySelector<HTMLButtonElement>('[data-testid="remove-recovery-copy"]')
+    expect(remove()).not.toBeNull()
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    remove()!.click(); await flush()
+    expect(await store.loadRecoveryCopy(key, copy.id)).not.toBeNull()
+    confirm.mockReturnValue(true)
+    const before = await store.load(key)
+    remove()!.click(); await flush()
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('无法恢复'))
+    expect(await store.loadRecoveryCopy(key, copy.id)).toBeNull()
+    expect(await store.load(key)).toEqual(before)
+    expect(host.textContent).toContain('当前对话没有恢复副本')
+  } finally { store.close() }
+})

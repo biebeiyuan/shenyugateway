@@ -21,3 +21,12 @@ const embedded = runtimeBundles.some((name) => readFileSync(resolve(assets, name
 if (!embedded) throw new Error('PWA runtime bundle does not embed the build identity')
 
 console.log(`PWA build identity verified: ${buildInfo.buildId}`)
+
+const worker = readFileSync(resolve(dist, 'sw.js'), 'utf8')
+if (!worker.includes(JSON.stringify(buildInfo.buildId)) || worker.includes('const BUILD_ID = null')) {
+  throw new Error('PWA worker must be paired with the runtime build')
+}
+for (const filename of runtimeBundles) {
+  if (!worker.includes(`/chat/assets/${filename}`)) throw new Error(`Missing precached runtime bundle: ${filename}`)
+}
+if (!worker.includes('"/chat/"')) throw new Error('PWA worker lacks the canonical offline entry')

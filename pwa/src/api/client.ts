@@ -94,14 +94,21 @@ export async function fetchRuntimeConfig(ctx: RequestContext): Promise<Record<st
 }
 
 export async function fetchDeployedPwaBuildInfo(ctx: RequestContext): Promise<PwaBuildInfo> {
-  const response = await fetch(apiUrl(ctx, '/chat/build-info.json'), {
-    headers: authHeader(ctx),
-    cache: 'no-store',
-  })
-  if (!response.ok) throw new Error(`线上版本暂时拿不到（${response.status}）`)
-  const buildInfo = parsePwaBuildInfo(await response.json())
-  if (!buildInfo) throw new Error('线上版本文件格式不正确')
-  return buildInfo
+  // Shell/worker belong to the page origin, not a separately configured chat
+  // gateway. Its token must not be sent to the hosting site for this query.
+  const gateway = new URL(ctx.gatewayUrl.trim() || window.location.origin, window.location.href)
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 12_000)
+  try {
+    const response = await fetch('/chat/build-info.json', {
+      headers: gateway.origin === window.location.origin ? authHeader(ctx) : {},
+      cache: 'no-store', signal: controller.signal,
+    })
+    if (!response.ok) throw new Error(`线上版本暂时拿不到（${response.status}）`)
+    const buildInfo = parsePwaBuildInfo(await response.json())
+    if (!buildInfo) throw new Error('线上版本文件格式不正确')
+    return buildInfo
+  } finally { clearTimeout(timer) }
 }
 
 export async function fetchModels(ctx: RequestContext, auth?: UpstreamAuth): Promise<Record<string, unknown>> {
@@ -113,29 +120,39 @@ export async function fetchModels(ctx: RequestContext, auth?: UpstreamAuth): Pro
   return await response.json()
 }
 
-export async function fetchSessions(ctx: RequestContext, limit: number): Promise<Record<string, unknown>> {
-  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions?limit=${limit}`), { headers: requestHeaders(ctx) })
+export async function fetchSessions(ctx: RequestContext, limit: number, visibility: "visible" | "hidden" | "all" = "visible"): Promise<Record<string, unknown>> {
+  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions?limit=${limit}&visibility=${visibility}`), { headers: requestHeaders(ctx) })
   if (!response.ok) throw new Error('session list unavailable')
   return await response.json()
 }
 
-export async function fetchSessionDetail(ctx: RequestContext, sessionTag: string, messagesLimit: number): Promise<Record<string, unknown>> {
-  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(sessionTag)}?messages_limit=${messagesLimit}`), {
-    headers: requestHeaders(ctx),
-  })
-  if (!response.ok) throw new Error('session unavailable')
-  return await response.json()
+// Bound both fetch and body reading. A stalled endpoint must not prevent a
+// successful independent recovery or keep the retry chain pending forever.
+async function recoveryJson(ctx: RequestContext, path: string, parent?: AbortSignal): Promise<Record<string, unknown>> {
+  const controller = new AbortController()
+  const cancel = () => controller.abort()
+  if (parent?.aborted) cancel()
+  parent?.addEventListener('abort', cancel, { once: true })
+  const timeout = setTimeout(cancel, 12_000)
+  try {
+    const response = await fetch(apiUrl(ctx, path), { headers: requestHeaders(ctx), signal: controller.signal })
+    if (!response.ok) throw new Error('会话恢复暂时不可用')
+    return await response.json()
+  } finally {
+    clearTimeout(timeout)
+    parent?.removeEventListener('abort', cancel)
+  }
 }
 
-// 不带 limit：端点最多返回当前这一次请求的一条回复，切片参数没有可切的东西。
+export async function fetchSessionDetail(ctx: RequestContext, sessionTag: string, messagesLimit: number, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return recoveryJson(ctx, `/api/gateway/sessions/${encodeURIComponent(sessionTag)}?messages_limit=${messagesLimit}`, signal)
+}
+
+// 不带 limit：恢复只返回指定身份的一条回复；没有身份时兼容最新一次请求。
 // 曾经有个 limit = 20 的默认参数，读签名的人会以为"找回能拿回 20 条历史重答"，
 // 而端点里 get_recent_messages 的 5000 是写死的——一个会误导下一位读者的死参数。
-export async function fetchReplyRecovery(ctx: RequestContext): Promise<Record<string, unknown>> {
-  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(ctx.sessionTag)}/reply-recovery`), {
-    headers: requestHeaders(ctx),
-  })
-  if (!response.ok) throw new Error('reply recovery unavailable')
-  return await response.json()
+export async function fetchReplyRecovery(ctx: RequestContext, replyVersionId?: string, signal?: AbortSignal): Promise<Record<string, unknown>> {
+  return recoveryJson(ctx, `/api/gateway/sessions/${encodeURIComponent(ctx.sessionTag)}/reply-recovery${replyVersionId ? `?reply_version_id=${encodeURIComponent(replyVersionId)}` : ''}`, signal)
 }
 
 export async function renameSession(ctx: RequestContext, sessionTag: string, displayName: string): Promise<Record<string, unknown>> {
@@ -148,14 +165,11 @@ export async function renameSession(ctx: RequestContext, sessionTag: string, dis
   return await response.json()
 }
 
-export async function deleteSession(ctx: RequestContext, sessionTag: string): Promise<Record<string, unknown>> {
-  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(sessionTag)}`), {
-    method: 'DELETE',
-    headers: requestHeaders(ctx),
-    body: JSON.stringify({ confirm: sessionTag }),
+export async function setSessionVisibility(ctx: RequestContext, sessionTag: string, hidden: boolean): Promise<void> {
+  const response = await fetch(apiUrl(ctx, `/api/gateway/sessions/${encodeURIComponent(sessionTag)}/visibility`), {
+    method: 'PATCH', headers: requestHeaders(ctx), body: JSON.stringify({ hidden }),
   })
-  if (!response.ok) throw new Error('删除没有成功')
-  return await response.json()
+  if (!response.ok) throw new Error(gatewayErrorMessage(response.status, await response.text()))
 }
 
 export async function fetchWeather(ctx: RequestContext): Promise<Record<string, unknown>> {

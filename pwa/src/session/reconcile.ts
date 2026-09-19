@@ -2,7 +2,8 @@ import { mergeAttachments, readMedia, wireMedia } from './media'
 import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
 import { readArchiveEvent, restoredArchiveState, sessionMessageContent, sessionMessageParts } from './history'
-import { hydrateToolEvents } from './toolHydration'
+import { hydrateToolEvents, mergeToolEvents, toolEventsFromRows, hasUnfinishedTools } from './toolHydration'
+import { stripStatusSuffix } from '../meta/statusSuffix'
 import { applyVariant, selectedVariantIndex, snapshotMessage, syncCurrentVariant } from './variants'
 
 // Tail recovery has two inputs: /reply-recovery and the legacy recent_messages
@@ -63,7 +64,7 @@ export function tailNeedsReconcile(messages: UiMessage[]): boolean {
   const last = messages[messages.length - 1]
   if (!last) return false
   if (last.role === 'user') return true
-  return Boolean(last.error || last.truncated)
+  return Boolean(last.error || last.truncated || hasUnfinishedTools(last.events))
 }
 
 function recentRows(payload: Record<string, unknown>): RecentRow[] {
@@ -179,6 +180,7 @@ export function applyReconciledTail(messages: UiMessage[], payload: Record<strin
   }
   // 快照只有正文；工具事件从原始 tool 行补回（只补 events 为空的行，安全）。
   hydrateToolEvents(messages, rows)
+  messages.forEach(syncCurrentVariant)
   return true
 }
 
@@ -203,21 +205,8 @@ function recoveryVariant(reply: RecoveryReply): MessageVariant | undefined {
   const toolRows = Array.isArray(reply.tool_rows)
     ? reply.tool_rows.filter((row): row is RecentRow => Boolean(row && typeof row === 'object'))
     : []
-  if (toolRows.length) {
-    const holder: UiMessage = {
-      id: String(reply.id || createId('recovery')),
-      role: 'assistant',
-      content: variant.content,
-      echo: variant.echo,
-      echoSegments: variant.echoSegments,
-      attachments: [],
-      thinking: '',
-      thinkingSegments: [],
-      events: [],
-    }
-    hydrateToolEvents([holder], [...toolRows, { role: 'assistant', content: variant.content }])
-    variant.events = holder.events
-  }
+  variant.events = toolEventsFromRows(toolRows.filter(row => !row.reply_version_id
+    || String(row.reply_version_id) === replyIdentity(variant)), String(reply.id || replyIdentity(variant) || 'recovery'))
   return variant
 }
 
@@ -230,7 +219,7 @@ function mergeRecoveredVariant(local: MessageVariant, incoming: MessageVariant):
     thinking: local.thinking || incoming.thinking,
     thinkingSegments: local.thinkingSegments.length ? local.thinkingSegments : incoming.thinkingSegments,
     echoSegments: local.echoSegments.length ? local.echoSegments : incoming.echoSegments,
-    events: local.events.length ? local.events : incoming.events,
+    events: mergeToolEvents(local.events, incoming.events),
     error: local.error ?? incoming.error,
     responseMeta: local.responseMeta ?? incoming.responseMeta,
   }
@@ -258,6 +247,13 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
   const lastUserIndex = messages.map((message) => message.role).lastIndexOf('user')
   if (lastUserIndex < 0) return false
   let target = messages[lastUserIndex + 1]
+  // Validate the legacy user anchor BEFORE allocating a reply placeholder.
+  // A known reply identity is stronger than any normalized visible text.
+  if (!replyIdentity(target)) {
+    const incomingUser = normalizeText(stripStatusSuffix(sessionMessageContent(payload.user_content)))
+    const localUser = normalizeText(stripStatusSuffix(messages[lastUserIndex].content))
+    if (!incomingUser || incomingUser !== localUser) return false
+  }
   if (!target || target.role !== 'assistant') {
     target = {
       id: createId('assistant'),
@@ -337,6 +333,13 @@ export function applyReplyRecovery(messages: UiMessage[], payload: Record<string
     || normalizeText(candidate.echo) !== normalizeText(target.echo || '')
   const attachments = mergeAttachments(target.attachments, candidate.attachments || [])
   const mediaChanged = JSON.stringify(wireMedia(attachments)) !== JSON.stringify(wireMedia(target.attachments))
+  const mergedEvents = mergeToolEvents(target.events, candidate.events)
+  const eventsChanged = JSON.stringify(mergedEvents) !== JSON.stringify(target.events)
+  if (eventsChanged) {
+    target.events = mergedEvents
+    variants[index].events = mergedEvents.map(event => ({ ...event }))
+    changed = true
+  }
   if (contentChanged || mediaChanged) {
     // 服务端永远没有 thinking，events 只有塌到 offset 0 的补水版，echoSegments 只有单段，
     // responseMeta 压根不在恢复载荷里。本地有的一律以本地为准，服务端只补本地空着的。

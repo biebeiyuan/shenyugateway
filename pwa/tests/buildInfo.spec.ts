@@ -21,3 +21,16 @@ describe('PWA build information', () => {
     expect(samePwaBuild(build, { ...build, buildId: 'newer-build' })).toBe(false)
   })
 })
+
+import { vi } from 'vitest'
+import { fetchDeployedPwaBuildInfo } from '../src/api/client'
+it('checks the hosting page build, not an unrelated configured gateway, and does not leak its token', async () => {
+  const fetcher = vi.fn(async () => Response.json(build))
+  vi.stubGlobal('fetch', fetcher)
+  try {
+    await fetchDeployedPwaBuildInfo({ gatewayUrl: 'https://other-gateway.example', authToken: 'foreign-secret', sessionTag: 'A' })
+    const [url, options] = fetcher.mock.calls[0] as unknown as [string, RequestInit]
+    expect(new URL(url, window.location.href).origin).toBe(window.location.origin)
+    expect(JSON.stringify(options.headers)).not.toContain('foreign-secret')
+  } finally { vi.unstubAllGlobals() }
+})

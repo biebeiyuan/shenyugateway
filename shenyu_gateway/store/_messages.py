@@ -18,14 +18,16 @@ class MessagesMixin:
         tool_result_summary: Optional[str] = None,
         source_table: Optional[str] = None,
         source_id: Optional[str] = None,
+        reply_version_id: Optional[str] = None,
+        tool_call_id: Optional[str] = None,
     ):
         with self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO gateway_messages (
                     id, session_id, role, content, tool_name, tool_args_json,
-                    tool_result_summary, source_table, source_id, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    tool_result_summary, source_table, source_id, created_at, reply_version_id, tool_call_id
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     f"gm_{uuid.uuid4().hex[:12]}",
@@ -38,6 +40,8 @@ class MessagesMixin:
                     source_table,
                     source_id,
                     iso_now(),
+                    reply_version_id,
+                    tool_call_id,
                 ),
             )
 

@@ -10,9 +10,6 @@ export const STORAGE_MESSAGES = 'shenyu_pwa_messages'
 export const STORAGE_SESSION = 'shenyu_pwa_session'
 export const FALLBACK_SESSION_MESSAGE_LIMIT = 75
 
-// 配额告急时先把工具输出截到这个长度再重试落盘。
-const EVENT_OUTPUT_PERSIST_LIMIT = 2000
-
 function cloneStoredEvents(value: unknown): ToolEvent[] {
   return Array.isArray(value)
     ? value
@@ -72,63 +69,86 @@ function cloneStoredResponseMeta(value: unknown): ResponseMeta | undefined {
   }
 }
 
+export function decodeStoredMessages(raw: unknown): UiMessage[] {
+  if (!Array.isArray(raw)) throw new Error('本机记录格式无法读取，原记录已保留')
+  return raw.filter((item) => item && (item.role === 'user' || item.role === 'assistant'))
+    .map((item) => {
+      const storedSegments = cloneStoredThinkingSegments(item.thinkingSegments)
+      const storedEchoSegments = cloneStoredEchoSegments(item.echoSegments)
+      const message: UiMessage = {
+        ...item,
+        id: String(item.id || createId('message')),
+        role: item.role as Role,
+        content: String(item.content || ''),
+        echo: String(item.echo || ''),
+        echoSegments: storedEchoSegments.length
+          ? storedEchoSegments
+          : item.echo
+            ? [{ id: createId('echo'), content: String(item.echo), textOffset: 0, streamOrder: 0 }]
+            : [],
+        // 附件元数据（id / 指纹 / 名字）一直落盘，图片字节在 IndexedDB。
+        // dataUrl 留空，由 App 启动时按 id 回填本机还留着的那些——这就是
+        // 「本机最近 30 张」的实现方式：元数据一直在，图会过期。
+        attachments: cloneStoredAttachments(item.attachments),
+        thinking: String(item.thinking || ''),
+        thinkingSegments: storedSegments.length
+          ? storedSegments
+          : item.thinking
+            ? [{ id: createId('thinking'), content: String(item.thinking), textOffset: 0, streamOrder: 0 }]
+            : [],
+        events: cloneStoredEvents(item.events),
+        streaming: false,
+        // 读回也截断：早于错误护栏落盘的那条整页 HTML 还躺在 localStorage 里，
+        // 每次重开都会重新顶飞界面。截在读回这一步，旧记录自己就好了。
+        error: item.error ? clampErrorText(String(item.error)) : undefined,
+        truncated: item.truncated === true ? true : undefined,
+        responseMeta: cloneStoredResponseMeta(item.responseMeta),
+        archiveEvent: readArchiveEvent(item.archiveEvent),
+        archiveReplay: item.archiveReplay === true || undefined,
+        replyVersionId: item.replyVersionId ? String(item.replyVersionId) : undefined,
+      }
+      if (message.role === 'assistant' && Array.isArray(item.variants) && item.variants.length) {
+        const variants = item.variants.map((variant: Partial<MessageVariant>) => ({ ...variant, ...cloneVariant(variant) }))
+        message.variants = variants
+        const storedIndex = Number(item.selectedVariantIndex)
+        message.selectedVariantIndex = selectedVariantIndex({
+          ...message,
+          variants,
+          selectedVariantIndex: Number.isFinite(storedIndex) ? storedIndex : 0,
+        })
+        const selected = variants[message.selectedVariantIndex]
+        applyVariant(message, selected, message.selectedVariantIndex)
+        if (selected.truncated === undefined && item.truncated === true) message.truncated = true
+      }
+      return message
+    })
+}
+
 export function loadStoredMessages(): UiMessage[] {
   try {
-    const raw = JSON.parse(localStorage.getItem(STORAGE_MESSAGES) || '[]')
-    if (!Array.isArray(raw)) return []
-    return raw.filter((item) => item && (item.role === 'user' || item.role === 'assistant'))
-      .map((item) => {
-        const storedSegments = cloneStoredThinkingSegments(item.thinkingSegments)
-        const storedEchoSegments = cloneStoredEchoSegments(item.echoSegments)
-        const message: UiMessage = {
-          id: String(item.id || createId('message')),
-          role: item.role as Role,
-          content: String(item.content || ''),
-          echo: String(item.echo || ''),
-          echoSegments: storedEchoSegments.length
-            ? storedEchoSegments
-            : item.echo
-              ? [{ id: createId('echo'), content: String(item.echo), textOffset: 0, streamOrder: 0 }]
-              : [],
-          // 附件元数据（id / 指纹 / 名字）一直落盘，图片字节在 IndexedDB。
-          // dataUrl 留空，由 App 启动时按 id 回填本机还留着的那些——这就是
-          // 「本机最近 30 张」的实现方式：元数据一直在，图会过期。
-          attachments: cloneStoredAttachments(item.attachments),
-          thinking: String(item.thinking || ''),
-          thinkingSegments: storedSegments.length
-            ? storedSegments
-            : item.thinking
-              ? [{ id: createId('thinking'), content: String(item.thinking), textOffset: 0, streamOrder: 0 }]
-              : [],
-          events: cloneStoredEvents(item.events),
-          streaming: false,
-          // 读回也截断：早于错误护栏落盘的那条整页 HTML 还躺在 localStorage 里，
-          // 每次重开都会重新顶飞界面。截在读回这一步，旧记录自己就好了。
-          error: item.error ? clampErrorText(String(item.error)) : undefined,
-          truncated: item.truncated === true ? true : undefined,
-          responseMeta: cloneStoredResponseMeta(item.responseMeta),
-          archiveEvent: readArchiveEvent(item.archiveEvent),
-          archiveReplay: item.archiveReplay === true || undefined,
-          replyVersionId: item.replyVersionId ? String(item.replyVersionId) : undefined,
-        }
-        if (message.role === 'assistant' && Array.isArray(item.variants) && item.variants.length) {
-          const variants = item.variants.map((variant: Partial<MessageVariant>) => cloneVariant(variant))
-          message.variants = variants
-          const storedIndex = Number(item.selectedVariantIndex)
-          message.selectedVariantIndex = selectedVariantIndex({
-            ...message,
-            variants,
-            selectedVariantIndex: Number.isFinite(storedIndex) ? storedIndex : 0,
-          })
-          const selected = variants[message.selectedVariantIndex]
-          applyVariant(message, selected, message.selectedVariantIndex)
-          if (selected.truncated === undefined && item.truncated === true) message.truncated = true
-        }
-        return message
-      })
+    return decodeStoredMessages(JSON.parse(localStorage.getItem(STORAGE_MESSAGES) || '[]'))
   } catch {
     return []
   }
+}
+
+// Detached metadata-only snapshot for IndexedDB transactions. Streaming is an
+// unfinished receipt, not a reason to forget the reply identity on restart.
+export function encodeStoredMessages(messages: UiMessage[]): UiMessage[] {
+  return messages.map(message => {
+    const stored = { ...message,
+      attachments: storedAttachments(message.attachments),
+      error: message.error ? clampErrorText(message.error) : undefined,
+      streaming: false,
+      truncated: Boolean(message.truncated || message.streaming) || undefined,
+      variants: message.variants?.map(variant => ({ ...variant, ...cloneVariant(variant) })),
+    }
+    if (stored.variants?.length && message.role === 'assistant') {
+      const index = selectedVariantIndex(message)
+      stored.variants[index] = { ...stored.variants[index], ...cloneVariant(stored) }
+    }
+    return JSON.parse(JSON.stringify(stored)) as UiMessage
+  })
 }
 
 type StoredRow = {
@@ -150,22 +170,6 @@ type StoredRow = {
   selectedVariantIndex?: number
   responseMeta?: ResponseMeta
   replyVersionId?: string
-}
-
-function mapRowEvents(row: StoredRow, mapper: (events: ToolEvent[]) => ToolEvent[]): StoredRow {
-  return {
-    ...row,
-    events: mapper(row.events),
-    variants: row.variants?.map((variant) => ({ ...variant, events: mapper(variant.events || []) })),
-  }
-}
-
-function truncateEventOutputs(events: ToolEvent[]): ToolEvent[] {
-  return events.map((event) => (
-    typeof event.output === 'string' && event.output.length > EVENT_OUTPUT_PERSIST_LIMIT
-      ? { ...event, output: event.output.slice(0, EVENT_OUTPUT_PERSIST_LIMIT) }
-      : event
-  ))
 }
 
 // 落盘是「从 UiMessage 重建一行」，所以任何本版本不认识的字段都会在重建时消失。
@@ -232,19 +236,14 @@ export function persistStoredMessages(messages: UiMessage[], sessionMessageLimit
   // can stop relying on a temporary cold-start handoff.
   const storageLimit = Math.max(240, sessionMessageLimit + 72)
   const windowRows = safe.slice(-storageLimit)
-  // 落盘失败绝不打断 UI：配额爆时逐级降级——截短工具输出 → 丢弃工具事件 → 放弃。
-  const attempts: Array<() => StoredRow[]> = [
-    () => windowRows,
-    () => windowRows.map((row) => mapRowEvents(row, truncateEventOutputs)),
-    () => windowRows.map((row) => mapRowEvents(row, () => [])),
-  ]
-  for (const build of attempts) {
-    try {
-      localStorage.setItem(STORAGE_MESSAGES, JSON.stringify(build()))
-      return
-    } catch {
-      // 换下一级瘦身方案重试。
-    }
+  // A failed full write leaves the previous committed record untouched.
+  // Rich process history is not disposable data: never trim outputs or erase events.
+  try {
+    localStorage.setItem(STORAGE_MESSAGES, JSON.stringify(windowRows))
+    return true
+  } catch {
+    // The caller receives an explicit unsuccessful save, not a thinner success.
   }
-  console.warn('persistStoredMessages: localStorage 配额不足，这一轮消息没有落盘')
+  console.warn('persistStoredMessages: 本机保存失败，上一份记录已保留')
+  return false
 }

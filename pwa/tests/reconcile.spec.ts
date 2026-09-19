@@ -1,9 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import { applyReconciledTail, applyReplyRecovery, tailNeedsReconcile } from '../src/session/reconcile'
+import { applyReconciledTail, applyReplyRecovery as recoverReply, tailNeedsReconcile } from '../src/session/reconcile'
 import type { UiMessage } from '../src/types'
 
 function uiMessage(role: 'user' | 'assistant', content: string, extra: Partial<UiMessage> = {}): UiMessage {
   return { id: `id-${role}-${content.slice(0, 8)}`, role, content, echo: '', echoSegments: [], attachments: [], thinking: '', thinkingSegments: [], events: [], ...extra }
+}
+
+function applyReplyRecovery(messages: UiMessage[], payload: Record<string, unknown>): boolean {
+  const user = [...messages].reverse().find(message => message.role === 'user')
+  return recoverReply(messages, { user_content: user?.content, ...payload })
 }
 
 function payloadOf(rows: Array<Record<string, unknown>>): Record<string, unknown> {
@@ -58,7 +63,8 @@ describe('applyReconciledTail — append branch', () => {
     expect(messages[1].content).toBe('查到了')
     expect(messages[1].events).toHaveLength(2)
     expect(messages[1].events[0].name).toBe('shenyu_recall')
-    expect(messages[1].events[1].ok).toBe(true)
+    // The payload is not a recorded tool_ok receipt.
+    expect(messages[1].events[1].ok).toBeNull()
   })
 
   it('concatenates all assistant rows in a multi-turn tool round', () => {

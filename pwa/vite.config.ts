@@ -1,3 +1,5 @@
+import { readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
@@ -42,8 +44,21 @@ function createBuildInfo(): BuildInfo {
 }
 
 function buildInfoAsset(buildInfo: BuildInfo): Plugin {
+  let output = resolve('dist')
   return {
+    apply: 'build',
+    configResolved(config) { output = resolve(config.root, config.build.outDir) },
     name: 'shenyu-pwa-build-info',
+    closeBundle() {
+      const files = (readdirSync(output, { recursive: true }) as string[])
+        .filter(path => statSync(resolve(output, path)).isFile() && !['sw.js', 'build-info.json'].includes(path))
+        .map(path => path === 'index.html' ? '/chat/' : `/chat/${path.split('\\').join('/')}`)
+        .sort()
+      const worker = readFileSync(resolve(output, 'sw.js'), 'utf8')
+        .replace('const BUILD_ID = null', `const BUILD_ID = ${JSON.stringify(buildInfo.buildId)}`)
+        .replace('const PRECACHE_FILES = []', `const PRECACHE_FILES = ${JSON.stringify(files)}`)
+      writeFileSync(resolve(output, 'sw.js'), worker)
+    },
     generateBundle() {
       this.emitFile({
         type: 'asset',

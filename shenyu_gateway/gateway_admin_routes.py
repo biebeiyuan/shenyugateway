@@ -1,9 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Literal, Optional
 
-from fastapi import APIRouter, HTTPException, Request, Response
+from fastapi import APIRouter, HTTPException, Query, Request, Response
 from fastapi.responses import JSONResponse
 
 from .gateway_tools import GatewayToolService, WINDOWSILL_ORIGIN_ROOM
@@ -54,6 +54,7 @@ from .schemas import (
     StarScenesRequest,
     SessionDeleteRequest,
     SessionRenameRequest,
+    SessionVisibilityRequest,
 )
 from .sessions import SessionManager
 from .stars import StarService
@@ -68,7 +69,7 @@ def _recovery_user_key(value: Any) -> str:
 
 
 def collect_reply_recovery_rows(
-    rows: list[dict[str, Any]], snapshots: Optional[list[dict]] = None,
+    rows: list[dict[str, Any]], snapshots: Optional[list[dict]] = None, *, reply_version_id: str = "",
 ) -> dict[str, Any]:
     """Collect the completed reply for the latest user request only.
 
@@ -79,22 +80,31 @@ def collect_reply_recovery_rows(
     """
     if not rows:
         return {"user_content": "", "replies": []}
-    latest_user_index = next(
-        (index for index in range(len(rows) - 1, -1, -1) if rows[index].get("role") == "user"),
-        -1,
-    )
-    if latest_user_index < 0:
-        return {"user_content": "", "replies": []}
-    latest_user = str(rows[latest_user_index].get("content") or "")
-    user_key = _recovery_user_key(latest_user)
-    if not user_key:
+    if reply_version_id:
+        matching = [index for index, row in enumerate(rows)
+                    if row.get("role") == "assistant" and row.get("source_id") == reply_version_id]
+        if not matching:
+            return {"user_content": "", "replies": []}
+        latest_user_index = next((index for index in range(matching[0] - 1, -1, -1)
+                                  if rows[index].get("role") == "user"), -1)
+        selected_rows = [row for row in rows
+                         if (row.get("role") == "assistant" and row.get("source_id") == reply_version_id)
+                         or (row.get("role") == "tool" and row.get("reply_version_id") == reply_version_id)]
+    else:
+        latest_user_index = next(
+            (index for index in range(len(rows) - 1, -1, -1) if rows[index].get("role") == "user"), -1)
+        if latest_user_index < 0:
+            return {"user_content": "", "replies": []}
+        selected_rows = rows[latest_user_index + 1:]
+    latest_user = str(rows[latest_user_index].get("content") or "") if latest_user_index >= 0 else ""
+    if not reply_version_id and not _recovery_user_key(latest_user):
         return {"user_content": latest_user, "replies": []}
 
     replies: list[dict[str, Any]] = []
     assistant_rows: list[dict[str, Any]] = []
     tool_rows: list[dict[str, Any]] = []
     first_assistant: dict[str, Any] | None = None
-    for row in rows[latest_user_index + 1:]:
+    for row in selected_rows:
         role = row.get("role")
         if role == "user":
             break
@@ -114,7 +124,7 @@ def collect_reply_recovery_rows(
                     "reply_version_id": first_assistant.get("source_id"),
                     "content": full_content,
                     "tool_rows": tool_rows,
-                    "user_message_id": rows[latest_user_index].get("id"),
+                    "user_message_id": rows[latest_user_index].get("id") if latest_user_index >= 0 else None,
                     **({"media": media} if media else {}),
                 }
             )
@@ -955,9 +965,9 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         return await QWeatherService(cfg).current()
 
     @router.get("/api/gateway/sessions")
-    async def list_gateway_sessions(limit: int = 100, q: str = ""):
+    async def list_gateway_sessions(limit: int = 100, q: str = "", visibility: Literal["all", "visible", "hidden"] = "all"):
         store = deps.require_session_store()
-        sessions = store.list_sessions(limit=limit, query=q)
+        sessions = store.list_sessions(limit=limit, query=q, visibility=visibility)
         return {"sessions": sessions, "limit": max(1, min(int(limit or 100), 500)), "query": q}
 
     @router.get("/api/gateway/sessions/{session_tag}")
@@ -1007,7 +1017,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         }
 
     @router.get("/api/gateway/sessions/{session_tag}/reply-recovery")
-    async def session_reply_recovery(session_tag: str, limit: int = 20):
+    async def session_reply_recovery(session_tag: str, limit: int = 20, reply_version_id: str = Query(default="", max_length=160)):
         """Return the durable reply to the latest user request, and only that one.
 
         Historical roll variants are deliberately not returned: repeated user
@@ -1026,7 +1036,7 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
         rows = store.get_recent_messages(session["id"], limit=5000)
         rows = enrich_history_media(rows, session_tag, store)
         recovery = collect_reply_recovery_rows(
-            rows, store.get_recent_context_snapshots(session["id"], limit=5))
+            rows, store.get_recent_context_snapshots(session["id"], limit=5), reply_version_id=reply_version_id)
         cap = max(1, min(int(limit or 20), 100))
         recovery["replies"] = recovery["replies"][-cap:]
         recovery["session_tag"] = session_tag
@@ -1115,22 +1125,20 @@ def build_gateway_admin_router(deps: GatewayAdminRouteDeps) -> APIRouter:
             headers={"Content-Disposition": f'attachment; filename="{filename}"'},
         )
 
-    @router.delete("/api/gateway/sessions/{session_tag}")
-    async def delete_gateway_session(session_tag: str, body: SessionDeleteRequest):
+    @router.patch("/api/gateway/sessions/{session_tag}/visibility")
+    async def set_gateway_session_visibility(session_tag: str, body: SessionVisibilityRequest):
         store = deps.require_session_store()
-        if body.confirm != session_tag:
-            raise HTTPException(status_code=400, detail="Confirmation must match session_tag.")
         session = store.get_session_by_tag(session_tag)
         if not session:
             raise HTTPException(status_code=404, detail="Session not found.")
-        deleted = store.delete_session(session["id"])
-        return {
-            "ok": True,
-            "session_tag": session_tag,
-            "scope": "local_sqlite_session",
-            "external_archives_deleted": False,
-            "deleted": deleted,
-        }
+        updated = store.set_session_visibility(session["id"], body.hidden)
+        return {"ok": True, "session": updated}
+
+    @router.delete("/api/gateway/sessions/{session_tag}")
+    async def delete_gateway_session(session_tag: str, body: SessionDeleteRequest):
+        # Cached PWA/Admin bundles can still send the old request. A browser
+        # conversation-list action must never delete the shared heartbeat pool.
+        raise HTTPException(status_code=409, detail="旧版删除入口已停用，请更新页面后使用收起对话。所有记录都未删除。")
 
     @router.get("/api/gateway/logs")
     async def gateway_logs(limit: int = 30):
