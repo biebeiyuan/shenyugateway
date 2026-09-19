@@ -104,7 +104,7 @@ import {
   syncCurrentVariant,
   variantCount,
 } from './session/variants'
-import { parseSseFrame, pumpSseStream, toolEventKey } from './stream/sse'
+import { SSE_STALL_TIMEOUT_MS, parseSseFrame, pumpSseStream, toolEventKey } from './stream/sse'
 import { applyChatCompletion } from './stream/completion'
 import {
   formatToolInput,
@@ -1161,7 +1161,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
         stream,
         frame => parseSseFrame(frame, assistant),
         onStreamChunkEnd,
-        180_000,
+        SSE_STALL_TIMEOUT_MS,
       )
       if (!sawDone) {
         assistant.truncated = true
