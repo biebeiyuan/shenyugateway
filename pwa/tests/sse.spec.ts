@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SSE_STALL_ERROR, appendEcho, appendThinking, appendToolEvent, parseSseFrame, pumpSseStream, toolEventKey } from '../src/stream/sse'
+import { SSE_STALL_ERROR, SSE_STALL_TIMEOUT_MS, appendEcho, appendThinking, appendToolEvent, parseSseFrame, pumpSseStream, toolEventKey } from '../src/stream/sse'
 import type { UiMessage } from '../src/types'
 
 function assistant(): UiMessage {
@@ -121,6 +121,10 @@ describe('toolEventKey', () => {
 })
 
 describe('pumpSseStream', () => {
+  it('uses a ten-minute default stall watchdog for PWA streams', () => {
+    expect(SSE_STALL_TIMEOUT_MS).toBe(600_000)
+  })
+
   it('reassembles frames split across chunk boundaries', async () => {
     const message = assistant()
     await pumpSseStream(streamOf([
