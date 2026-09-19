@@ -259,6 +259,74 @@ it('sends the full pre-target history while keeping the full local transcript', 
   } finally { store.close() }
 })
 
+it.each([167, 169, 199, 201])('sends %i pre-target messages without a client-side sliding window', async outboundCount => {
+  const history: UiMessage[] = []
+  for (let index = 0; index <= outboundCount; index++) {
+    const role = index % 2 === 0 ? 'user' : 'assistant'
+    history.push(row(role, `${role}-${index}`, `message-${index}`))
+  }
+  expect(history.at(-1)?.role).toBe('assistant')
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify(history))
+  const { state } = mount(); await flush()
+  state.maxClientMessages = 5
+  const normalFetch = globalThis.fetch
+  let sent: Record<string, unknown> | undefined
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    if (String(input).includes('/v1/chat/completions')) {
+      sent = JSON.parse(String(options?.body))
+      return new Response('data: {"choices":[{"delta":{"content":"boundary ok"}}]}\n\ndata: [DONE]\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }
+    return normalFetch(input, options)
+  }))
+
+  await state.retryMessage(history.length - 1); await flush()
+  expect((sent?.messages as unknown[])).toHaveLength(outboundCount)
+  expect((sent?.messages as any[])[0]).toMatchObject({ role: 'user', content: 'message-0' })
+  expect(state.messages).toHaveLength(history.length)
+})
+
+it('records the 1000-message request cost without truncating local history or reviving old image bytes', async () => {
+  const history: UiMessage[] = []
+  for (let index = 0; index < 1000; index++) {
+    const role = index % 2 === 0 ? 'user' : 'assistant'
+    history.push(row(role, `${role}-large-${index}`, `synthetic-${index}-${'x'.repeat(64)}`))
+  }
+  history[0].attachments = [{
+    id: 'expired-image', name: 'expired.jpg', mime: 'image/jpeg', fingerprint: 'c'.repeat(64),
+  }]
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify(history))
+  const { state } = mount(); await flush()
+  state.maxClientMessages = 5
+  const normalFetch = globalThis.fetch
+  let bodyText = ''
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    if (String(input).includes('/v1/chat/completions')) {
+      bodyText = String(options?.body)
+      return new Response('data: {"choices":[{"delta":{"content":"large ok"}}]}\n\ndata: [DONE]\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }
+    return normalFetch(input, options)
+  }))
+
+  await state.retryMessage(999); await flush()
+  const parsed = JSON.parse(bodyText)
+  const started = performance.now()
+  const reserialized = JSON.stringify(parsed)
+  const serializeMs = performance.now() - started
+  console.info(`PWA_WINDOW_METRIC messages=${parsed.messages.length} bytes=${new TextEncoder().encode(bodyText).byteLength} reserialize_ms=${serializeMs.toFixed(3)}`)
+  expect(parsed.messages).toHaveLength(999)
+  expect(bodyText).not.toContain('data:image')
+  expect(bodyText).toContain('expired_image')
+  expect(reserialized.length).toBe(bodyText.length)
+  expect(Number.isFinite(serializeMs)).toBe(true)
+  expect(state.messages).toHaveLength(1000)
+})
+
 it('releases the clean DONE UI before the final local tail save resolves', async () => {
   const { state } = mount(); await flush()
   let releaseFinal!: (revision: number) => void
