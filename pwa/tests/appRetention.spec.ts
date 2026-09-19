@@ -370,6 +370,59 @@ it('does not invent background recovery when a reroll fetch fails before a strea
   expect(state.messages[1].truncated).toBeUndefined()
 })
 
+it('invalidates an old interrupted receipt before a new reroll and restores the rich old version losslessly', async () => {
+  const old = row('assistant', 'old-reply', 'old answer')
+  old.echo = 'old echo'
+  old.echoSegments = [{ id: 'echo-old', content: 'old echo', textOffset: 0, streamOrder: 0 }]
+  old.thinking = 'old thinking'
+  old.thinkingSegments = [{ id: 'think-old', content: 'old thinking', textOffset: 0, streamOrder: 1 }]
+  old.events = [
+    { phase: 'tool_start', tool_call_id: 'old-call', name: 'shenyu_recall', input: '{"q":"kept"}' },
+    { phase: 'tool_end', tool_call_id: 'old-call', name: 'shenyu_recall', ok: true, output: 'full old tool result' },
+  ]
+  old.attachments = [{ id: 'old-photo', name: 'kept.jpg', mime: 'image/jpeg', fingerprint: 'a'.repeat(64), photoId: 'phot_kept' }]
+  old.truncated = true
+  old.variants = [
+    {
+      content: 'older answer', echo: '', echoSegments: [], thinking: '', thinkingSegments: [], events: [],
+      attachments: [], replyVersionId: 'older-reply', archiveEvent: { id: 'older-reply', event_at: '2026-09-19T00:30:00Z' },
+    },
+    {
+      content: old.content, echo: old.echo, echoSegments: old.echoSegments, thinking: old.thinking,
+      thinkingSegments: old.thinkingSegments, events: old.events, attachments: old.attachments,
+      replyVersionId: old.replyVersionId, archiveEvent: old.archiveEvent, truncated: true,
+    },
+  ]
+  old.selectedVariantIndex = 1
+  const history = [row('user', 'u1', 'question'), old]
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify(history))
+  localStorage.setItem(`shenyu_pwa_inflight:${transcriptKey('', 'A')}`, JSON.stringify({ replyVersionId: 'old-reply' }))
+  const { state } = mount(); await flush()
+  const before = JSON.parse(JSON.stringify(state.messages[1]))
+  const normalFetch = globalThis.fetch
+  const calls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    calls.push(url.pathname)
+    if (url.pathname === '/v1/chat/completions') throw new TypeError('Failed to fetch')
+    return normalFetch(input, options)
+  }))
+
+  await state.retryMessage(1); await flush(); await new Promise(resolve => setTimeout(resolve, 60))
+  expect(state.busy).toBe(false)
+  expect(state.controlsBlocked).toBe(false)
+  expect(state.messages[1].content).toBe(before.content)
+  expect(state.messages[1].echo).toBe(before.echo)
+  expect(state.messages[1].thinking).toBe(before.thinking)
+  expect(state.messages[1].events).toEqual(before.events)
+  expect(state.messages[1].attachments).toEqual(before.attachments)
+  expect(state.messages[1].selectedVariantIndex).toBe(1)
+  expect(state.messages[1].variants).toEqual(before.variants)
+  expect(calls.filter(path => path.endsWith('/reply-recovery'))).toHaveLength(0)
+  expect(localStorage.getItem(`shenyu_pwa_inflight:${transcriptKey('', 'A')}`)).toBeNull()
+})
+
 it('does not treat an explicit upstream stream failure as a recoverable background disconnect', async () => {
   localStorage.setItem('shenyu_pwa_session', 'A')
   localStorage.setItem('shenyu_pwa_messages', JSON.stringify([
