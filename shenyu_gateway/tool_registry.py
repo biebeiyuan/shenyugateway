@@ -50,6 +50,8 @@ DAILY_GATEWAY_TOOL_NAMES = {
     "shenyu_windowsill_list",
     "shenyu_album_save",
     "shenyu_album_list",
+    "shenyu_album_open",
+    "shenyu_album_send",
     "shenyu_orchard",
     "shenyu_read_heartbeat",
     "shenyu_write_mem_note",
@@ -119,7 +121,9 @@ _BROKER_CATEGORIZED_DESCRIPTION = """\
 
 相册
   album_save(note?, mood?, book?, which?)  — 存这一轮看到的图；which 选第几张
-  album_list(book?, limit?)  — 不给 book 就是列出所有本子
+  album_list(book?, limit?, cursor?)  — 标题、当时写的话、照片引用；next_cursor 翻下一页
+  album_open(photo_id*)  — 重新看一张照片的画面，不发给圆圆
+  album_send(photo_id*)  — 把照片分享给圆圆，不必先 open；我这边只收到文字回执
 
 盼圃
   orchard(action: plant|note|pick|look, name?, fruit_id?, content?, due_on?, words?)
@@ -177,7 +181,9 @@ _BROKER_DAILY_DESCRIPTION = """\
 
 相册
   album_save(note?, mood?, book?, which?)  — 存这一轮看到的图；which 选第几张
-  album_list(book?, limit?)  — 不给 book 就是列出所有本子
+  album_list(book?, limit?, cursor?)  — 标题、当时写的话、照片引用；next_cursor 翻下一页
+  album_open(photo_id*)  — 重新看一张照片的画面，不发给圆圆
+  album_send(photo_id*)  — 把照片分享给圆圆，不必先 open；我这边只收到文字回执
 
 盼圃
   orchard(action: plant|note|pick|look, name?, fruit_id?, content?, due_on?, words?)
@@ -968,7 +974,18 @@ async def _handle_album_list(ctx: ToolContext) -> dict:
     return await ctx.service.album_list(
         book=ctx.arguments.get("book", ""),
         limit=_int_arg(ctx.arguments, "limit", 20),
+        cursor=ctx.arguments.get("cursor", ""),
     )
+
+
+@_tool_handler("shenyu_album_open")
+async def _handle_album_open(ctx: ToolContext) -> dict:
+    return await ctx.service.album_open(photo_id=ctx.arguments.get("photo_id", ""))
+
+
+@_tool_handler("shenyu_album_send")
+async def _handle_album_send(ctx: ToolContext) -> dict:
+    return await ctx.service.album_send(photo_id=ctx.arguments.get("photo_id", ""))
 
 
 @_tool_handler("shenyu_notebook_write")

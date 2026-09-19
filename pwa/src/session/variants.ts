@@ -2,9 +2,11 @@ import { clampErrorText } from '../api/errors'
 import type { MessageVariant, UiMessage } from '../types'
 import { createId } from '../utils'
 import { readArchiveEvent } from './history'
+import { storedAttachments } from './media'
 
 export function cloneVariant(variant: Partial<MessageVariant>): MessageVariant {
   return {
+    ...(variant.attachments?.length ? { attachments: storedAttachments(variant.attachments) } : {}),
     truncated: typeof variant.truncated === 'boolean' ? variant.truncated : undefined,
     archiveReplay: variant.archiveReplay === true || undefined,
     archiveEvent: readArchiveEvent(variant.archiveEvent),
@@ -61,6 +63,7 @@ export function syncCurrentVariant(message: UiMessage) {
 export function applyVariant(message: UiMessage, variant: MessageVariant, index: number) {
   const normalized = cloneVariant(variant)
   message.selectedVariantIndex = index
+  message.attachments = normalized.attachments || []
   message.content = normalized.content
   message.echo = normalized.echo
   message.echoSegments = normalized.echoSegments.map((item) => ({ ...item }))

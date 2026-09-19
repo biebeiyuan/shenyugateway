@@ -683,14 +683,18 @@ def _record_upstream_payload(
 
 
 def _payload_without_image_blocks(payload: dict) -> dict:
-    from shenyu_gateway.context_layers import trim_client_image_blocks
+    from shenyu_gateway.context_layers import trim_client_image_blocks, _is_image_content_block
+    from shenyu_gateway.album_media import TOOL_IMAGES_KEY
 
     def redact_anthropic_thinking(value: Any) -> Any:
         if isinstance(value, list):
             return [redact_anthropic_thinking(item) for item in value]
         if not isinstance(value, dict):
             return value
-        clean_value = {key: redact_anthropic_thinking(item) for key, item in value.items()}
+        if _is_image_content_block(value):
+            return {"type": "text", "text": "[图片数据未写入日志]"}
+        clean_value = {key: redact_anthropic_thinking(item) for key, item in value.items()
+                       if key != TOOL_IMAGES_KEY}
         block_type = clean_value.get("type")
         if block_type == "thinking":
             thinking = str(value.get("thinking") or "")

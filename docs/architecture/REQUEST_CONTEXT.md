@@ -257,6 +257,18 @@ Variant deduplication uses the same reply identity (`replyVersionId`, otherwise 
 
 Missing envelope: retain display/context, do not invent identity. Formal archive acceptance and the `archive_replay` gate live in § Chat archive (L0 source of truth), not in recovery. Proof: `tests/test_archive_identity.py` (real completion/recovery API, no resend, cache loss), `pwa/tests/history.spec.ts`, `pwa/tests/recoveryIdentity.spec.ts`, `pwa/tests/persistence.spec.ts`.
 
+### Album media transport
+
+Album product behavior and storage ownership: `README.md` § Album. `shenyu_gateway/album_media.py` is the bridge between tools, exact-event metadata, snapshots and provider input; the PWA counterpart is `pwa/src/session/media.ts` plus `photoLoader.ts`.
+
+- New PWA opts in with `X-Shenyu-Album-Photos: true`. Explicit `shenyu_album_send` commits `album_message_media` before reporting success and emits an existing `shenyu.tool_event` with `photo` and `reply_version_id`. The same fields travel in non-streaming tool events. A client without this capability or a valid reply envelope receives a clear failure, never a pretend share.
+- A user message's `media` is whitelisted metadata bound to its `archive_event.id`. PWA's per-attachment `image_index` matches compacted wire image slots when an older attachment has neither bytes nor a fingerprint; the backend computes real byte fingerprints where pixels are present, then drops the slot helper. No ordinary-image BLOB is created. Incoming assistant `media` cannot authorize a share: only the server ledger supplies share references.
+- `media` is gateway-only, retained in snapshots and removed before provider calls. Upstream history receives an assistant text receipt naming shared photo references, not pixels or browser URLs. `POST /api/gateway/album/resolve` batch-resolves session + role + event IDs and fingerprints without altering history. Completion snapshots and reply recovery enrich by exact reply identity, including photo-only completions; omission of client metadata never erases retained references.
+- `shenyu_album_open` has a private, in-process view effect. Working transcripts and mixed-tool pending rows contain only the photo pointer. At the provider boundary it is hydrated transiently: Anthropic puts the image inside `tool_result.content`; OpenAI-compatible input adds a user image message after the contiguous tool-result batch. Sharing does not enter this path. Both adapters remove private transport keys, and recursive request-log redaction removes images even inside nested tool results.
+- PWA fetches saved pixels through the authenticated photo route using a header, never a token-bearing URL. `displayUrl` is transient and distinct from upload `dataUrl`; neither display URLs nor pixels enter localStorage, reply variants or a subsequent assistant wire message. Generation/session/reply guards discard stale loads. The reference ledger is not a pixel backup for ordinary photos or a reconstruction of previously lost identities.
+
+Tests: `tests/test_album_media.py`, `tests/test_album_delivery.py`, `pwa/tests/albumMedia.spec.ts`, `pwa/tests/photoLoader.spec.ts`, `pwa/tests/albumPhotos.spec.ts`, and isolated browser scenarios in `admin/e2e/album-photos.spec.ts`.
+
 ## Supabase Long-Term State
 
 Supabase remains the durable fact and content source:

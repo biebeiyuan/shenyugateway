@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from shenyu_gateway.runtime import logger
 from shenyu_gateway.store import DEFAULT_ALBUM_NAME, MAX_PHOTO_BYTES, photo_fingerprint
+from shenyu_gateway.album_media import AlbumToolResult, PHOTO_MIME_TYPES
 
 ALBUM_NOTES_TABLE = "shenyu_album_notes"
 
@@ -176,7 +177,7 @@ class AlbumToolsMixin:
             },
         }
 
-    async def album_list(self, book: Any = "", limit: Any = 20) -> dict:
+    async def album_list(self, book: Any = "", limit: Any = 20, cursor: Any = "") -> dict:
         if not self.store:
             return {"ok": False, "error": "Local store is not configured.", "error_kind": "config"}
         try:
@@ -184,12 +185,27 @@ class AlbumToolsMixin:
         except (TypeError, ValueError):
             clamped = 20
         try:
-            book_name = str(book or "").strip()
-            if not book_name:
-                books = self.store.list_album_books()
-                return {"ok": True, "count": len(books), "data": {"books": books}}
-            photos = self.store.list_album_photos(book_name=book_name, limit=clamped)
-            return {"ok": True, "count": len(photos), "data": {"book": book_name, "photos": photos}}
+            return {"ok": True, "data": self.store.album_photo_page(
+                book_name=str(book or "").strip(), limit=clamped, cursor=cursor or "",
+            )}
+        except ValueError as exc:
+            return {"ok": False, "error": str(exc), "error_kind": "validation"}
         except Exception as exc:
             logger.exception("[Album] 翻相册失败")
             return {"ok": False, "error": str(exc), "error_kind": "exception"}
+
+    async def album_open(self, photo_id: Any = "") -> dict:
+        return self._album_action(photo_id, view=True)
+
+    async def album_send(self, photo_id: Any = "") -> dict:
+        return self._album_action(photo_id, send=True)
+
+    def _album_action(self, photo_id: Any, *, view: bool = False, send: bool = False) -> dict:
+        if not self.store:
+            return {"ok": False, "error": "相册现在打不开。", "error_kind": "config"}
+        photo = self.store.album_photo_info(str(photo_id or ""))
+        if not photo:
+            return {"ok": False, "error": "这张照片不在相册里。", "error_kind": "not_found"}
+        if photo["mime"] not in PHOTO_MIME_TYPES:
+            return {"ok": False, "error": "这张照片的格式暂时不能直接看。", "error_kind": "validation"}
+        return AlbumToolResult(photo, view=view, send=send)

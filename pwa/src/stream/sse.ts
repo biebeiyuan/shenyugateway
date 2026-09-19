@@ -1,3 +1,4 @@
+import { receiveSharedPhoto } from '../session/media'
 import type { ToolEvent } from '../toolLanguage'
 import type { ResponseMeta, UiMessage } from '../types'
 import { createId, textLength } from '../utils'
@@ -20,6 +21,7 @@ export function nextProcessOrder(message: UiMessage): number {
 }
 
 export function appendToolEvent(message: UiMessage, event: ToolEvent, preserveProvidedOrder = false) {
+  receiveSharedPhoto(message, event)
   const key = `${event.phase}:${event.tool_call_id || event.name}`
   const existingIndex = message.events.findIndex((item) => `${item.phase}:${item.tool_call_id || item.name}` === key)
   const existing = existingIndex >= 0 ? message.events[existingIndex] : undefined

@@ -48,8 +48,13 @@ def write_completion_context_snapshot(
 
     messages = completion_snapshot_messages(base_messages, restore_assistant_echo(assistant_content, echo))
     event = parse_archive_event(meta.get("reply_archive_event"))
+    media = store.message_media(session_tag, event["id"], "assistant") if event else []
+    if media and len(messages) == len(base_messages):
+        messages.append({"role": "assistant", "content": normalize_text(assistant_content)})
     if event and len(messages) > len(base_messages):
         messages[-1]["archive_event"] = event
+        if media:
+            messages[-1]["media"] = media
     latest_user_text = meta.get("snapshot_latest_user_text") or _latest_user_text(messages)
     return store.write_request_context_snapshot(
         session_id=session_id,

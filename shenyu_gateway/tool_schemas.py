@@ -427,14 +427,35 @@ def _gateway_core_tools() -> list[dict]:
             "type": "function",
             "function": {
                 "name": "shenyu_album_list",
-                "description": "翻自己的相册。不给 book 就是看有哪些本子；给了就看那本里的照片和当时写的话。",
+                "description": "翻自己的相册，读标题和当时写的话，不自动看画面。不给 book 就从所有收藏里翻；next_cursor 不为空时带入 cursor 翻下一页。拿到 photo_id 可以直接分享，也可以先打开看图。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "book": {"type": "string", "description": "可选；只看这个本子。"},
                         "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20},
+                        "cursor": {"type": "string", "description": "上一页给的 next_cursor；不填从最新的开始。"},
                     },
                 },
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_album_open",
+                "description": "重新打开一张收藏的照片看画面；只给我看，不自动分享给圆圆。",
+                "parameters": {"type": "object", "properties": {
+                    "photo_id": {"type": "string", "description": "翻相册或回忆时拿到的照片引用。"},
+                }, "required": ["photo_id"]},
+            },
+        },
+        {
+            "type": "function",
+            "function": {
+                "name": "shenyu_album_send",
+                "description": "把一张收藏的照片放进这次回复给圆圆看。直接给 photo_id 即可，不必先打开；这里只返回文字确认，不让我重新看图。想配的话正常说，不要编图片网址。",
+                "parameters": {"type": "object", "properties": {
+                    "photo_id": {"type": "string", "description": "要分享的照片引用。"},
+                }, "required": ["photo_id"]},
             },
         },
         _gateway_orchard_tool(),

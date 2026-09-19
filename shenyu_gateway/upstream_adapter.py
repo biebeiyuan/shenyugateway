@@ -6,6 +6,7 @@ from typing import Any, Optional
 
 from .runtime import now_ts as _now_ts
 from .client_extra import UNAVAILABLE_IMAGE_NOTE, is_unfetchable_image_url
+from .album_media import ALBUM_VIEW_KEY, TOOL_IMAGES_KEY
 from .context_window import (
     INTERNAL_LAYER_KEY,
     MEMORY_ISLAND_BUMP_KEY,
@@ -163,13 +164,24 @@ def _json_dumps_compact(value: Any) -> str:
 
 def _sanitize_openai_compatible_messages(messages: list[dict]) -> list[dict]:
     sanitized: list[dict] = []
+    pending_images: list[dict] = []
+
+    def flush_tool_images() -> None:
+        if pending_images:
+            sanitized.append({"role": "user", "content": list(pending_images)})
+            pending_images.clear()
+
     for msg in messages:
         if not isinstance(msg, dict):
             continue
         clean = {key: value for key, value in msg.items() if value is not None}
+        images = clean.pop(TOOL_IMAGES_KEY, None)
+        clean.pop(ALBUM_VIEW_KEY, None)
         clean.pop(INTERNAL_LAYER_KEY, None)
         bump_text = _normalize_text(clean.pop(MEMORY_ISLAND_BUMP_KEY, "")).strip()
         role = clean.get("role")
+        if role != "tool":
+            flush_tool_images()
         content = clean.get("content")
 
         if isinstance(content, list):
@@ -195,11 +207,18 @@ def _sanitize_openai_compatible_messages(messages: list[dict]) -> list[dict]:
         if "content" not in clean and not (role == "assistant" and clean.get("tool_calls")):
             continue
         sanitized.append(clean)
+        if role == "tool" and isinstance(images, list) and images:
+            # Chat Completions tool messages are text-only. All parallel tool
+            # results must precede this synthetic, runtime-only vision input.
+            pending_images.append({"type": "text", "text":
+                f"工具 {msg.get('tool_call_id') or ''} 打开的相册照片（供观察，不是新的用户发言）："})
+            pending_images.extend(_sanitize_openai_content_blocks(images))
         # 小突起作为岛后面紧挨着的一条独立消息，而不是拼进岛正文：岛消息本身要
         # 逐字节稳定（断点就打在它上面），突起每次写入都会变。放在这里意味着
         # cache_control 开或关都会出现，两条路径都走同一个 sanitize。
         if bump_text:
             sanitized.append({"role": "system", "content": bump_text})
+    flush_tool_images()
     return sanitized
 
 
@@ -835,6 +854,12 @@ def _openai_to_anthropic(
                 "tool_use_id": msg.get("tool_call_id") or "unknown_tool_call",
                 "content": _normalize_text(content),
             }
+            images = msg.get(TOOL_IMAGES_KEY)
+            if isinstance(images, list) and images:
+                result_block["content"] = [
+                    {"type": "text", "text": _normalize_text(content) or "照片已打开。"},
+                    *_content_blocks(images),
+                ]
             # 并行工具调用：一条 assistant 里有 N 个 tool_use，Anthropic 要求紧跟着的
             # 那一条 user 消息装齐全部 N 个 tool_result。一个一条地发会被判成
             # TOOL_USE_RESULT_MISMATCH，所以连续的 tool 消息合并进同一条 user。

@@ -1,13 +1,13 @@
 from __future__ import annotations
 
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 
 from pydantic import BaseModel, Field
 
 
 # Gateway-only message fields. Preparation and direct provider calls remove
 # this same set; snapshots retain it without making it model context.
-ARCHIVE_MESSAGE_FIELDS = frozenset({'archive_event', 'archive_pending', 'archive_replay'})
+ARCHIVE_MESSAGE_FIELDS = frozenset({'archive_event', 'archive_pending', 'archive_replay', 'media'})
 
 
 class ChatMessage(BaseModel):
@@ -16,6 +16,9 @@ class ChatMessage(BaseModel):
     archive_event: Optional[Any] = None
     archive_pending: Optional[Any] = None
     archive_replay: Optional[Any] = None
+    # Display metadata only. Preparation validates it before storing; never
+    # forwarded as model input or treated as an instruction to share a photo.
+    media: Optional[Any] = None
     role: str
     content: Optional[Any] = None
     name: Optional[str] = None
@@ -36,6 +39,17 @@ class ChatRequest(BaseModel):
     upstream_headers: Optional[dict[str, str]] = None
     upstream_auth: Optional[dict[str, str]] = None
     metadata: Optional[dict[str, Any]] = None
+
+
+class AlbumResolveEvent(BaseModel):
+    role: Literal["user", "assistant"]
+    event_id: str = Field(min_length=1, max_length=160)
+
+
+class AlbumResolveRequest(BaseModel):
+    session_tag: str = Field(min_length=1, max_length=256)
+    events: list[AlbumResolveEvent] = Field(default_factory=list, max_length=500)
+    fingerprints: list[str] = Field(default_factory=list, max_length=500)
 
 
 class ConfigUpdate(BaseModel):

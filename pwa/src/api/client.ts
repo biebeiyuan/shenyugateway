@@ -1,3 +1,4 @@
+import { wireMedia } from '../session/media'
 import type { UiMessage } from '../types'
 import { joinEcho } from '../echo'
 import { readArchiveEvent } from '../session/history'
@@ -33,6 +34,7 @@ export function requestHeaders(ctx: RequestContext): Record<string, string> {
     'X-Shenyu-Client': 'shenyu-pwa',
     'X-Shenyu-Tool-Events': 'true',
     'X-Shenyu-Tool-Details': 'true',
+    'X-Shenyu-Album-Photos': 'true',
     'X-Shenyu-Session-Tag': ctx.sessionTag,
   }
   return { ...headers, ...authHeader(ctx) }
@@ -53,7 +55,7 @@ function expiredImageBlock(fingerprint: string): Record<string, unknown> {
 
 export function wireContent(message: UiMessage): string | Array<Record<string, unknown>> {
   const content = message.role === 'assistant' ? joinEcho(message.content, message.echo || '') : message.content
-  if (!message.attachments.length) return content
+  if (message.role === 'assistant' || !message.attachments.length) return content
   const blocks: Array<Record<string, unknown>> = []
   if (content.trim()) blocks.push({ type: 'text', text: content })
   for (const attachment of message.attachments) {
@@ -78,6 +80,7 @@ export function wireMessages(source: UiMessage[]) {
   return source.map((message) => ({
     role: message.role,
     content: wireContent(message),
+    ...(message.attachments.length ? { media: wireMedia(message.attachments, message.role === 'user') } : {}),
     ...(readArchiveEvent(message.archiveEvent) ? { archive_event: readArchiveEvent(message.archiveEvent) } : {}),
     ...(message.archiveReplay ? { archive_replay: true } : {}),
     ...((message.streaming || message.truncated || message.error) ? { archive_pending: true } : {}),
@@ -194,4 +197,40 @@ export async function postChatCompletion(ctx: RequestContext, body: Record<strin
   const payload: unknown = await response.json()
   if (!payload || typeof payload !== 'object' || Array.isArray(payload)) throw new Error('没有收到可识别的回应')
   return payload as Record<string, unknown>
+}
+
+export type AlbumResolvePayload = { media: Record<string, unknown>; photos: Record<string, unknown> }
+
+export async function resolveAlbumMedia(
+  ctx: RequestContext,
+  events: Array<{role: 'user' | 'assistant'; event_id: string}>,
+  fingerprints: string[],
+  signal?: AbortSignal,
+): Promise<AlbumResolvePayload> {
+  const result: AlbumResolvePayload = { media: {}, photos: {} }
+  // A long-lived open tab can hold more than the persisted window. Keep each
+  // read within the server's bound, including the fingerprint-only legacy path.
+  for (let offset = 0; offset < Math.max(events.length, fingerprints.length); offset += 500) {
+    const response = await fetch(apiUrl(ctx, '/api/gateway/album/resolve'), {
+      method: 'POST', headers: requestHeaders(ctx), signal,
+      body: JSON.stringify({session_tag: ctx.sessionTag, events: events.slice(offset, offset + 500), fingerprints: fingerprints.slice(offset, offset + 500)}),
+    })
+    if (!response.ok) throw new Error('照片引用暂时拿不到')
+    const payload = await response.json()
+    if (!payload || typeof payload.media !== 'object' || !payload.media || typeof payload.photos !== 'object' || !payload.photos) throw new Error('照片引用格式不正确')
+    Object.assign(result.media, payload.media)
+    Object.assign(result.photos, payload.photos)
+  }
+  return result
+}
+
+export async function fetchAlbumPhoto(ctx: RequestContext, photoId: string, signal?: AbortSignal): Promise<Blob> {
+  if (!/^phot_[a-zA-Z0-9_-]{1,100}$/.test(photoId)) throw new Error('照片引用不正确')
+  const response = await fetch(apiUrl(ctx, `/api/gateway/album/photo/${encodeURIComponent(photoId)}`), {
+    headers: authHeader(ctx), signal,
+  })
+  if (!response.ok) throw new Error('照片暂时加载不了')
+  const image = await response.blob()
+  if (!/^image\/(?:jpeg|png|webp|gif)$/.test(image.type) || !image.size || image.size > 2 * 1024 * 1024) throw new Error('照片格式不正确')
+  return image
 }
