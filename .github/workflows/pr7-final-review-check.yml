@@ -1,0 +1,87 @@
+name: PR7 bounded final review (temporary)
+on:
+  push:
+    branches: [work/pr7-final-verify-20260919]
+permissions:
+  contents: write
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Apply only the integrity-checked final review patch to its exact baseline
+        run: |
+          python - <<'PY'
+          import base64, hashlib, lzma, os, subprocess
+          from pathlib import Path
+          assert os.environ['GITHUB_REF'] == 'refs/heads/work/pr7-final-verify-20260919'
+          assert subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip() == os.environ['GITHUB_SHA']
+          assert not subprocess.check_output(['git','status','--porcelain'],text=True).strip()
+          data = ''.join(Path(f'.github/pr7-final-review/part{i}.xz64').read_text() for i in (1,2))
+          patch = lzma.decompress(base64.b64decode(data))
+          assert hashlib.sha256(patch).hexdigest() == '47b1b6f8c644212152424b32fdb9703cc16ca2ad44f091b4f3ed73a30e563b4c'
+          subprocess.run(['git','checkout','--detach','5592e6d16846f9c3db3517e3e6015186d59fcd06'],check=True)
+          assert subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip() == '308f079dd9d9f0d6c865fec5e014925b9cdab842'
+          subprocess.run(['git','apply','--check','--unidiff-zero','-'],input=patch,check=True)
+          subprocess.run(['git','apply','--unidiff-zero','-'],input=patch,check=True)
+          paths = ['README.md','admin/e2e/pwa-retention.spec.ts','docs/architecture/REQUEST_CONTEXT.md','project_delivery_log.jsonl','pwa/src/App.vue','pwa/src/session/restore.ts','pwa/src/session/toolHydration.ts','pwa/src/session/transcriptStore.ts','pwa/src/session/useTranscript.ts','pwa/src/stream/timeline.ts','pwa/src/toolLanguage.ts','pwa/tests/appRetention.spec.ts','pwa/tests/conflictRecovery.spec.ts','pwa/tests/reconcile.spec.ts','pwa/tests/toolHydration.spec.ts','pwa/tests/transcriptStore.spec.ts']
+          assert subprocess.check_output(['git','diff','--name-only'],text=True).splitlines() == paths
+          subprocess.run(['git','add','--',*paths],check=True)
+          assert subprocess.check_output(['git','write-tree'],text=True).strip() == 'cf9c83124abd9ffb6dc5d119f8b5889b4c5802b8'
+          PY
+      - run: pip install -e '.[dev]'
+      - run: npm ci
+        working-directory: pwa
+      - run: npm ci
+        working-directory: admin
+      - run: python -m pytest tests/ -q
+      - run: npm test && npm run build
+        working-directory: pwa
+      - run: npm test && npm run build
+        working-directory: admin
+      - name: Install isolated Chromium
+        working-directory: admin
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          npm run test:e2e:install
+      - run: npx playwright test
+        working-directory: admin
+      - name: Check maps, resident boundaries and checked candidate tree
+        run: |
+          python -m pytest -q tests/test_project_map.py tests/test_owner_project_map.py tests/test_project_delivery.py
+          python scripts/resident_home.py check
+          git diff --check
+          git diff --cached --check
+          test "$(git write-tree)" = cf9c83124abd9ffb6dc5d119f8b5889b4c5802b8
+          test -z "$(git diff --name-only)"
+      - name: Publish verified candidate only to a non-deployed work branch
+        run: |
+          test "$GITHUB_REF" = refs/heads/work/pr7-final-verify-20260919
+          test "$(git rev-parse HEAD)" = 5592e6d16846f9c3db3517e3e6015186d59fcd06
+          git config user.name 'shenyugateway repair workbench'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix(pwa): bound recovery copies and preserve honest tool outcomes'
+          git push origin HEAD:refs/heads/work/pr7-final-reviewed-20260919
+          mkdir -p /tmp/pr7-final-receipt
+          git rev-parse HEAD > /tmp/pr7-final-receipt/head.txt
+          git rev-parse HEAD^{tree} > /tmp/pr7-final-receipt/tree.txt
+          git diff HEAD^ HEAD --binary > /tmp/pr7-final-receipt/changes.patch
+          git bundle create /tmp/pr7-final-receipt/repository.bundle HEAD
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: pr7-final-review-evidence
+          path: |
+            /tmp/pr7-final-receipt/
+            admin/playwright-report/
+            admin/test-results/
+          retention-days: 7
