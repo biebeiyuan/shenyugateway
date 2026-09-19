@@ -16,9 +16,12 @@ function payloadOf(rows: Array<Record<string, unknown>>): Record<string, unknown
 }
 
 describe('tailNeedsReconcile', () => {
-  it('only flags a reply explicitly known to have started and then become incomplete', () => {
+  it('only flags an explicitly truncated reply, never a stale unfinished tool by itself', () => {
     expect(tailNeedsReconcile([uiMessage('user', '问题')])).toBe(false)
     expect(tailNeedsReconcile([uiMessage('user', '问题'), uiMessage('assistant', '', { error: 'Failed to fetch' })])).toBe(false)
+    expect(tailNeedsReconcile([uiMessage('user', '问题'), uiMessage('assistant', '', {
+      events: [{ phase: 'tool_start', tool_call_id: 'old-call', name: 'shenyu_recall' }],
+    })])).toBe(false)
     expect(tailNeedsReconcile([uiMessage('user', '问题'), uiMessage('assistant', '半截', { truncated: true })])).toBe(true)
   })
 
