@@ -1,7 +1,7 @@
 import { fetchAlbumPhoto, resolveAlbumMedia, type RequestContext } from '../api/client'
 import type { Attachment, UiMessage } from '../types'
 import { readArchiveEvent } from './history'
-import { mergeAttachments, photoSource, readMedia } from './media'
+import { mergeAttachments, photoSource, readMedia, wireMedia } from './media'
 import { findCachedPhotos, photoDataUrl } from './photoStore'
 
 function scope(ctx: RequestContext): string {
@@ -81,17 +81,20 @@ export function createPhotoLoader(
       const payload = await resolveAlbumMedia(ctx, events, fingerprints, controller.signal)
       if (!valid()) return
       resolved = true
+      let referencesChanged = false
       for (const entry of entries) {
         if (!matches(entry)) continue
         const m = entry.message
+        const before = JSON.stringify(wireMedia(m.attachments))
         m.attachments = mergeAttachments(m.attachments, readMedia(payload.media[`${m.role}:${entry.eventId}`]))
         for (const item of m.attachments) {
           const raw = item.fingerprint ? payload.photos[item.fingerprint] : undefined
           const reference = readMedia(raw && typeof raw === 'object' ? [{...raw, id:item.id, name:item.name, mime:item.mime}] : [])[0]
           if (reference?.photoId) Object.assign(item, {photoId: reference.photoId, title: reference.title, description: reference.description})
         }
+        if (JSON.stringify(wireMedia(m.attachments)) !== before) referencesChanged = true
       }
-      onReferences()
+      if (referencesChanged) onReferences()
     } catch {
       // Offline is not evidence that a photo was deleted or never saved.
     }
