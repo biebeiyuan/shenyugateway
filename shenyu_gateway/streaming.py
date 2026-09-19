@@ -281,6 +281,13 @@ def resilient_sse_response(
                     event = finished.result()
                 except StopAsyncIteration:
                     break
+                except asyncio.CancelledError:
+                    # The inner upstream generator can terminate itself with
+                    # CancelledError. That is not the same as cancellation of
+                    # this response task by a disconnected client: stream_proxy
+                    # already records the incomplete terminal status in its
+                    # finally path, so end the client stream without detaching.
+                    break
                 yield event
         except (asyncio.CancelledError, GeneratorExit):
             pending = current_next
