@@ -7,6 +7,7 @@ from shenyu_gateway.upstream_client import (
     _default_upstream_auth,
     build_upstream_request,
     fetch_upstream_models,
+    make_upstream_http_client,
     validated_upstream_auth,
 )
 
@@ -92,6 +93,18 @@ async def test_fetch_upstream_models_prefers_pwa_auth_override(request_headers, 
         await request.app.state.http.aclose()
 
     assert models[0]["id"] == "model-a"
+
+
+@pytest.mark.asyncio
+async def test_upstream_http_client_uses_ten_minute_read_stall_timeout():
+    client = make_upstream_http_client(SimpleNamespace(upstream_proxy="", upstream_trust_env=False))
+    try:
+        assert client.timeout.connect == 15.0
+        assert client.timeout.read == 600.0
+        assert client.timeout.write == 30.0
+        assert client.timeout.pool == 15.0
+    finally:
+        await client.aclose()
 
 
 def test_upstream_auth_validation_is_mutually_exclusive_and_defaults_by_protocol():
