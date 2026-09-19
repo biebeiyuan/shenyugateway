@@ -1137,6 +1137,10 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
   scrollToBottom()
 
   const requestContext = { ...clientContext() }
+  // A user-initiated new attempt supersedes any older detached reply. If this
+  // attempt never reaches an accepted response, restoring the old display
+  // version must not revive the previous attempt's recovery receipt.
+  clearInflightReply(requestContext)
   let replyVersionId = ''
   let preSendCheckpointSucceeded = false
   let requestAcceptedForRecovery = false
