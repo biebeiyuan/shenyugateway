@@ -185,6 +185,58 @@ export class TranscriptStore {
     })
   }
 
+  async saveTail(
+    key: string,
+    startIndex: number,
+    messages: UiMessage[],
+    metadata: Omit<TranscriptState, 'messages'>,
+    expectedRevision: number,
+  ): Promise<number> {
+    const start = Math.max(0, Math.floor(startIndex))
+    const detachedMessages = encodeStoredMessages(messages)
+    const detachedMetadata = {
+      draft: metadata.draft,
+      pendingAttachments: storedAttachments(metadata.pendingAttachments),
+      editId: metadata.editId,
+      viewport: { ...metadata.viewport },
+    }
+    const records: MessageRecord[] = detachedMessages.map(message => ({
+      key: rowKey(key, message), scope: key, json: JSON.stringify(message),
+    }))
+    return this.transaction(['sessions', 'messages'], true, (tx, result, fail) => {
+      const sessions = tx.objectStore('sessions'), rows = tx.objectStore('messages')
+      const request = sessions.get(key)
+      request.onsuccess = () => {
+        try {
+          const previous = request.result as SessionRecord | undefined
+          if (previous) validate(previous)
+          if ((previous?.revision || 0) !== expectedRevision) throw new StorageConflictError()
+          if (!previous && start !== 0) throw new Error('本机记录缺少前半段，未发送请求')
+          if (previous && start > previous.rowKeys.length) throw new Error('本机记录尾部位置不一致，未发送请求')
+          const rowKeys = [...(previous?.rowKeys.slice(0, start) || []), ...records.map(record => record.key)]
+          if (new Set(rowKeys).size !== rowKeys.length) throw new Error('消息身份重复，未覆盖本机记录')
+          for (const record of records) {
+            const old = rows.get(record.key)
+            old.onsuccess = () => {
+              try { if (old.result?.json !== record.json) rows.put(record) } catch (error) { fail(error) }
+            }
+          }
+          const revision = expectedRevision + 1
+          sessions.put({
+            ...previous,
+            ...detachedMetadata,
+            schema: 1,
+            key,
+            revision,
+            savedAt: new Date().toISOString(),
+            rowKeys,
+          } satisfies SessionRecord)
+          result(revision)
+        } catch (error) { fail(error) }
+      }
+    })
+  }
+
   async readRetainedMessages(key: string): Promise<UiMessage[]> {
     return this.transaction(['messages'], false, (tx, result, fail) => {
       const request = tx.objectStore('messages').index('scope').getAll(key)

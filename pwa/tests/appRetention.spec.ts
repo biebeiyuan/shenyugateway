@@ -108,7 +108,7 @@ it('commits the outgoing turn and reply identity before starting the network req
       const record = await store.load(transcriptKey('', state.sessionTag))
       store.close()
       expect(record?.state.messages.at(-1)?.replyVersionId).toBe(body.metadata.reply_version_id)
-      expect(record?.state.messages.at(-1)?.truncated).toBe(true)
+      expect(record?.state.messages.at(-1)?.truncated).toBeUndefined()
       expect(record?.state.messages.at(-2)?.content).toContain('save before send')
       committed = true
       return new Response('data: {"choices":[{"delta":{"content":"received"}}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
@@ -138,11 +138,11 @@ it('does not relabel the legacy single slot after changing gateways and restarti
 
 it('does not send when the initial durable checkpoint fails', async () => {
   const { state } = mount(); await flush()
-  vi.spyOn(TranscriptStore.prototype, 'save').mockRejectedValue(new DOMException('full', 'QuotaExceededError'))
+  vi.spyOn(TranscriptStore.prototype, 'saveTail').mockRejectedValue(new DOMException('full', 'QuotaExceededError'))
   state.draft = 'must stay on device if checkpoint failed'
   await state.submit(); await flush()
   expect(vi.mocked(fetch).mock.calls.some(([url]) => String(url).includes('/v1/chat/completions'))).toBe(false)
-  expect(state.storageError).toBeTruthy()
+  expect(state.errorNotice).toContain('本机未能保存这次发送')
   expect(state.messages[0].content).toContain('must stay on device')
 })
 
@@ -220,4 +220,190 @@ it('only removes a selected recovery copy after explicit confirmation and leaves
     expect(await store.load(key)).toEqual(before)
     expect(host.textContent).toContain('当前对话没有恢复副本')
   } finally { store.close() }
+})
+
+
+it('sends only the configured tail window while keeping the full local transcript', async () => {
+  const history: UiMessage[] = []
+  for (let turn = 0; turn < 6; turn++) {
+    history.push(row('user', `u${turn}`, `question-${turn}`))
+    history.push(row('assistant', `a${turn}`, `answer-${turn}`))
+  }
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify(history))
+  const { state } = mount(); await flush()
+  state.maxClientMessages = 5
+
+  const normalFetch = globalThis.fetch
+  let sent: Record<string, unknown> | undefined
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    if (String(input).includes('/v1/chat/completions')) {
+      sent = JSON.parse(String(options?.body))
+      return new Response('data: {"choices":[{"delta":{"content":"new-roll"}}]}\n\ndata: [DONE]\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }
+    return normalFetch(input, options)
+  }))
+
+  await state.retryMessage(11); await flush()
+  const outbound = sent?.messages as Array<{role: string; content: string}>
+  expect(outbound).toHaveLength(5)
+  expect(outbound[0]).toMatchObject({ role: 'user', content: 'question-3' })
+  expect(outbound.at(-1)).toMatchObject({ role: 'user', content: 'question-5' })
+  expect(state.messages).toHaveLength(12)
+  const store = new TranscriptStore()
+  try {
+    const saved = await store.load(transcriptKey('', 'A'))
+    expect(saved?.state.messages).toHaveLength(12)
+  } finally { store.close() }
+})
+
+it('shows streaming state immediately while the lightweight pre-send checkpoint is still pending', async () => {
+  const { state } = mount(); await flush()
+  let release!: (revision: number) => void
+  vi.spyOn(TranscriptStore.prototype, 'saveTail').mockImplementation(() => new Promise(resolve => { release = resolve }))
+  const normalFetch = globalThis.fetch
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    if (String(input).includes('/v1/chat/completions')) {
+      return new Response('data: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
+    }
+    return normalFetch(input, options)
+  }))
+  state.draft = 'show activity immediately'
+  const sending = state.submit()
+  await nextTick()
+  expect(state.messages.at(-1)?.streaming).toBe(true)
+  for (let i = 0; i < 20 && !release; i++) await new Promise(resolve => setTimeout(resolve, 5))
+  expect(release).toBeTypeOf('function')
+  release(1)
+  await sending
+})
+
+it('does not invent background recovery when a reroll fetch fails before a stream is accepted', async () => {
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify([
+    row('user', 'u1', 'question'),
+    row('assistant', 'a1', 'old answer'),
+  ]))
+  const { state } = mount(); await flush()
+  const normalFetch = globalThis.fetch
+  const calls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    calls.push(url.pathname)
+    if (url.pathname === '/v1/chat/completions') throw new TypeError('Failed to fetch')
+    return normalFetch(input, options)
+  }))
+
+  await state.retryMessage(1); await flush(); await new Promise(resolve => setTimeout(resolve, 60))
+  expect(calls.filter(path => path.endsWith('/reply-recovery'))).toHaveLength(0)
+  expect(state.errorNotice).toContain('Failed to fetch')
+  expect(state.messages[1].content).toBe('old answer')
+  expect(state.messages[1].truncated).toBeUndefined()
+})
+
+it('does not treat an explicit upstream stream failure as a recoverable background disconnect', async () => {
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify([
+    row('user', 'u1', 'question'),
+    row('assistant', 'a1', 'old answer'),
+  ]))
+  const { state } = mount(); await flush()
+  const normalFetch = globalThis.fetch
+  const calls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    calls.push(url.pathname)
+    if (url.pathname === '/v1/chat/completions') {
+      return new Response(
+        'event: shenyu_error\n'
+        + 'data: {"error":{"message":"peer closed connection without sending complete message body (incomplete chunked read)","type":"upstream_stream_error","recoverable":false}}\n\n'
+        + 'data: [DONE]\n\n',
+        { headers: { 'Content-Type': 'text/event-stream' } },
+      )
+    }
+    return normalFetch(input, options)
+  }))
+
+  await state.retryMessage(1); await flush(); await new Promise(resolve => setTimeout(resolve, 60))
+  expect(calls.filter(path => path.endsWith('/reply-recovery'))).toHaveLength(0)
+  expect(state.messages[1].content).toBe('old answer')
+  expect(state.messages[1].truncated).toBeUndefined()
+  expect(state.errorNotice).toContain('peer closed connection')
+})
+
+it('keeps active text streaming free of full transcript checkpoints', async () => {
+  const { state } = mount(); await flush()
+  const save = vi.spyOn(TranscriptStore.prototype, 'save')
+  save.mockClear()
+  const normalFetch = globalThis.fetch
+  let closeStream!: () => void
+  const encoder = new TextEncoder()
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    if (String(input).includes('/v1/chat/completions')) {
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"one"}}]}\n\n'))
+          closeStream = () => {
+            controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"two"}}]}\n\ndata: [DONE]\n\n'))
+            controller.close()
+          }
+        },
+      })
+      return new Response(stream, { headers: { 'Content-Type': 'text/event-stream' } })
+    }
+    return normalFetch(input, options)
+  }))
+
+  state.draft = 'stream without snapshot work'
+  const sending = state.submit()
+  for (let i = 0; i < 20 && state.messages.at(-1)?.content !== 'one'; i++) {
+    await new Promise(resolve => setTimeout(resolve, 5)); await nextTick()
+  }
+  expect(state.messages.at(-1)?.content).toBe('one')
+  expect(save).not.toHaveBeenCalled()
+
+  closeStream()
+  await sending; await flush()
+  expect(state.messages.at(-1).content).toBe('onetwo')
+  expect(state.messages.at(-1).truncated).toBeUndefined()
+  expect(state.messages.at(-1).error).toBeUndefined()
+  expect(save).toHaveBeenCalled()
+})
+
+it('uses a lightweight inflight receipt to recover a stream after a process restart', async () => {
+  const store = new TranscriptStore()
+  const key = transcriptKey('', 'A')
+  await store.save(key, {
+    messages: [
+      row('user', 'u1', 'question'),
+      { ...row('assistant', 'reply-1', ''), replyVersionId: 'reply-1', archiveEvent: { id: 'reply-1', event_at: '2026-09-19T01:00:00Z' } },
+    ],
+    draft: '', pendingAttachments: [], editId: null, viewport: { atBottom: true },
+  }, 0)
+  store.close()
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem(`shenyu_pwa_inflight:${key}`, JSON.stringify({ replyVersionId: 'reply-1' }))
+
+  vi.stubGlobal('fetch', vi.fn(async (input: string) => {
+    const url = new URL(String(input), window.location.href)
+    if (url.pathname.endsWith('/reply-recovery')) {
+      return Response.json({
+        user_content: 'question',
+        replies: [{ reply_version_id: 'reply-1', content: 'recovered after restart' }],
+      })
+    }
+    if (url.pathname.startsWith('/api/gateway/sessions/')) return Response.json({ context_snapshots: [], recent_messages: [] })
+    if (url.pathname === '/api/gateway/sessions') return Response.json({ sessions: [] })
+    if (url.pathname.endsWith('/album/resolve')) return Response.json({ media: {}, photos: {} })
+    if (url.pathname === '/api/config') return Response.json({ max_client_messages: 75 })
+    if (url.pathname === '/v1/models') return Response.json({ data: [] })
+    throw new Error(`Unexpected request ${url.pathname}`)
+  }))
+
+  const { state } = mount(); await flush(); await new Promise(resolve => setTimeout(resolve, 80)); await nextTick()
+  expect(state.messages.at(-1).content).toBe('recovered after restart')
+  expect(state.messages.at(-1).truncated).toBeUndefined()
+  expect(localStorage.getItem(`shenyu_pwa_inflight:${key}`)).toBeNull()
 })

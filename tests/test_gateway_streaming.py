@@ -2295,9 +2295,11 @@ def test_openai_plain_stream_reports_incomplete_terminal_status(interruption, ex
                 chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
             assert not any("[DONE]" in chunk for chunk in chunks)
         else:
-            with pytest.raises(type(interruption), match="upstream stream broke"):
-                async for _chunk in response.body_iterator:
-                    pass
+            chunks = []
+            async for chunk in response.body_iterator:
+                chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+            assert any('"type":"upstream_stream_error"' in chunk.replace(" ", "") for chunk in chunks)
+            assert chunks[-1] == "data: [DONE]\n\n"
 
         assert upstream_response.closed is True
         assert completed and completed[0][0] == "partial"
@@ -2412,6 +2414,35 @@ def test_resilient_sse_response_passes_inner_events_through():
     asyncio.run(run_case())
 
 
+def test_resilient_sse_response_preserves_backpressure_while_client_is_connected():
+    async def run_case():
+        advanced: list[str] = []
+
+        async def inner():
+            for value in ("one", "two", "three"):
+                advanced.append(value)
+                yield f"data: {value}\\n\\n"
+
+        response = resilient_sse_response(inner(), model="test-model")
+        iterator = response.body_iterator.__aiter__()
+
+        assert await anext(iterator) == "data: one\\n\\n"
+        await asyncio.sleep(0)
+        assert advanced == ["one"]
+
+        assert await anext(iterator) == "data: two\\n\\n"
+        await asyncio.sleep(0)
+        assert advanced == ["one", "two"]
+
+        assert await anext(iterator) == "data: three\\n\\n"
+        with pytest.raises(StopAsyncIteration):
+            await anext(iterator)
+        assert advanced == ["one", "two", "three"]
+        assert not _DETACHED_STREAM_TASKS
+
+    asyncio.run(run_case())
+
+
 def test_resilient_sse_response_emits_keepalive_while_inner_is_slow():
     async def run_case():
         async def inner():
@@ -2460,9 +2491,11 @@ def test_anthropic_plain_stream_reports_interrupted_status():
             on_complete=lambda *args: completed.append(args),
         )
 
-        with pytest.raises(RuntimeError, match="anthropic stream broke"):
-            async for _chunk in response.body_iterator:
-                pass
+        chunks = []
+        async for chunk in response.body_iterator:
+            chunks.append(chunk.decode() if isinstance(chunk, bytes) else chunk)
+        assert any('"type":"upstream_stream_error"' in chunk.replace(" ", "") for chunk in chunks)
+        assert chunks[-1] == "data: [DONE]\n\n"
 
         assert upstream_response.closed is True
         assert completed and completed[0][0] == "partial"

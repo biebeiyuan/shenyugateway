@@ -107,7 +107,7 @@ test('PWA commits send identity before POST and keeps tool output after reload',
     const body = route.request().postDataJSON()
     const record = (await saved(page)).rows.map(row => JSON.parse(row.json))
       .find(row => row.replyVersionId === body.metadata.reply_version_id)
-    expect(record?.truncated).toBe(true)
+    expect(record?.truncated).toBeUndefined()
     expect(record?.archiveEvent.id).toBe(body.metadata.reply_version_id)
     checked = true
     const call = { name: 'shenyu_recall', tool_call_id: 'live-call' }

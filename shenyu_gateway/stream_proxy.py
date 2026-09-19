@@ -16,6 +16,7 @@ from .streaming import (
     _new_stream_chunk_id,
     _stream_content_event,
     _stream_echo_event,
+    _stream_error_event,
     _stream_response_meta_event,
     flush_stream_tail_events,
     resilient_sse_response,
@@ -259,7 +260,17 @@ async def stream_chat(
             except Exception as exc:
                 terminal_status = "error"
                 terminal_error = f"Upstream stream interrupted: {exc}"
-                raise
+                # Upstream failed after our response already started. Close our
+                # own SSE cleanly and mark it non-recoverable; otherwise the
+                # browser sees a broken chunked body and the PWA mistakes that
+                # for a client-side disconnect with a background reply to find.
+                yield _stream_error_event(
+                    model,
+                    terminal_error,
+                    chunk_id=stream_chunk_id,
+                    created=stream_created,
+                )
+                yield "data: [DONE]\n\n"
             finally:
                 await resp.aclose()
                 if on_complete:
@@ -458,7 +469,13 @@ async def stream_chat(
         except Exception as exc:
             terminal_status = "error"
             terminal_error = f"Upstream stream interrupted: {exc}"
-            raise
+            yield _stream_error_event(
+                model,
+                terminal_error,
+                chunk_id=stream_chunk_id,
+                created=stream_created,
+            )
+            yield "data: [DONE]\n\n"
         finally:
             await resp.aclose()
             if on_complete:

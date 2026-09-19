@@ -104,7 +104,7 @@ import {
   syncCurrentVariant,
   variantCount,
 } from './session/variants'
-import { parseSseFrame, pumpSseStream, toolEventKey } from './stream/sse'
+import { SSE_STALL_TIMEOUT_MS, SseStreamError, parseSseFrame, pumpSseStream, toolEventKey } from './stream/sse'
 import { applyChatCompletion } from './stream/completion'
 import {
   formatToolInput,
@@ -175,7 +175,9 @@ const transcript = useTranscript({ context: () => clientContext(), messages, dra
 const { ready: storageReady, error: storageError, saving: storageSaving, savedAt: lastLocalSave,
   conflicted: storageConflict, recovering: storageRecovering, recoveryNotice, recoveryCopies, selectedRecovery } = transcript
 const controlsBlocked = computed(() => busy.value || sessionLoading.value || !storageReady.value || storageRecovering.value)
-watch([draft, pendingAttachments, editId], transcript.scheduleSave, { deep: true })
+watch([draft, pendingAttachments, editId], () => {
+  if (!busy.value) transcript.scheduleSave()
+}, { deep: true })
 // 上游配置（模型 / effort / 预设 / 请求头）整块在 api/useUpstream.ts。
 // 它只通过 status / errorNotice / busy 与聊天说话，所以那三个注入进去。
 const {
@@ -313,17 +315,14 @@ function persistMessages(): Promise<boolean> {
   return transcript.save()
 }
 
-// During streaming, submit checkpoints while the page is alive; pagehide is only supplemental.
-const STREAM_PERSIST_INTERVAL_MS = 1_000
-let lastStreamPersistAt = 0
-
+// Rendering owns the hot path. Durable state is checkpointed before the
+// request, when the page is hidden, and after completion — never per text chunk.
 function onStreamChunkEnd() {
   scrollToBottom()
-  const now = Date.now()
-  if (now - lastStreamPersistAt >= STREAM_PERSIST_INTERVAL_MS) {
-    lastStreamPersistAt = now
-    persistMessages()
-  }
+}
+
+function onMessageStreamScroll() {
+  if (!busy.value) transcript.scheduleSave()
 }
 
 function clientContext(): RequestContext {
@@ -334,6 +333,71 @@ function clientContext(): RequestContext {
 
 function sessionMessageLimit(): number {
   return maxClientMessages.value || FALLBACK_SESSION_MESSAGE_LIMIT
+}
+
+type InflightReplyReceipt = { replyVersionId: string }
+
+function requestMessageWindow(source: UiMessage[], limit: number): UiMessage[] {
+  const cap = Math.max(1, Math.floor(limit || FALLBACK_SESSION_MESSAGE_LIMIT))
+  let windowed = source.length > cap ? source.slice(-cap) : [...source]
+  if (windowed[0]?.role === 'assistant') {
+    const firstUser = windowed.findIndex(message => message.role === 'user')
+    if (firstUser > 0) windowed = windowed.slice(firstUser)
+  }
+  return windowed
+}
+
+function inflightReplyKey(ctx: RequestContext): string {
+  return `shenyu_pwa_inflight:${transcriptKey(ctx.gatewayUrl, ctx.sessionTag)}`
+}
+
+function readInflightReply(ctx: RequestContext): InflightReplyReceipt | null {
+  try {
+    const parsed = JSON.parse(localStorage.getItem(inflightReplyKey(ctx)) || 'null')
+    return parsed && typeof parsed.replyVersionId === 'string' && parsed.replyVersionId
+      ? { replyVersionId: parsed.replyVersionId }
+      : null
+  } catch {
+    return null
+  }
+}
+
+function markInflightReply(ctx: RequestContext, replyVersionId: string) {
+  localStorage.setItem(inflightReplyKey(ctx), JSON.stringify({ replyVersionId }))
+}
+
+function clearInflightReply(ctx: RequestContext, replyVersionId?: string) {
+  const current = readInflightReply(ctx)
+  if (!current || (replyVersionId && current.replyVersionId !== replyVersionId)) return
+  localStorage.removeItem(inflightReplyKey(ctx))
+}
+
+function resumeInflightReply(ctx: RequestContext): boolean {
+  const receipt = readInflightReply(ctx)
+  if (!receipt) return false
+  const assistant = [...messages.value].reverse().find(message => {
+    if (message.role !== 'assistant') return false
+    if (message.replyVersionId === receipt.replyVersionId || message.archiveEvent?.id === receipt.replyVersionId) return true
+    return message.variants?.some(variant =>
+      variant.replyVersionId === receipt.replyVersionId || variant.archiveEvent?.id === receipt.replyVersionId)
+  })
+  if (!assistant) {
+    clearInflightReply(ctx, receipt.replyVersionId)
+    return false
+  }
+  if (assistant.replyVersionId !== receipt.replyVersionId && assistant.variants?.length) {
+    const index = assistant.variants.findIndex(variant =>
+      variant.replyVersionId === receipt.replyVersionId || variant.archiveEvent?.id === receipt.replyVersionId)
+    if (index >= 0) applyVariant(assistant, assistant.variants[index], index)
+  }
+  if (assistant.replyVersionId !== receipt.replyVersionId && assistant.archiveEvent?.id !== receipt.replyVersionId) {
+    clearInflightReply(ctx, receipt.replyVersionId)
+    return false
+  }
+  assistant.streaming = false
+  assistant.truncated = true
+  syncCurrentVariant(assistant)
+  return true
 }
 
 
@@ -472,6 +536,7 @@ async function openSession(session: GatewaySession): Promise<boolean> {
       renderTail.value = null
       await transcript.apply(cached.state, current)
       if (!current()) return false
+      resumeInflightReply(ctx)
       localStorage.setItem(STORAGE_SESSION, sessionTag.value)
       sessionLoading.value = false
       menuOpen.value = false
@@ -638,6 +703,7 @@ async function reconcileTailFromServer(attempt = 0, mode: 'tail' | 'variants' = 
     const hydrated = hydrateToolEvents(messages.value, payload.recent_messages) > 0
     if (recovered || reconciled || hydrated) {
       await persistMessages()
+      if (!tailNeedsReconcile(messages.value)) clearInflightReply(ctx, expected)
       errorNotice.value = ''
       clearReconcileNotice()
       // 只有修好坏尾巴才弹提示；健康对话补 variant 不该弹。
@@ -909,7 +975,14 @@ function forgetExpiredPhotos(removedIds: string[]) {
 
 // Shared photos use the same visible attachment slots, but their bytes come
 // from the server album and never enter the ordinary cache or next request.
-const photoLoader = createPhotoLoader(clientContext, () => messages.value, persistMessages)
+let photoReferencesDirtyWhileBusy = false
+const photoLoader = createPhotoLoader(clientContext, () => messages.value, () => {
+  if (busy.value) {
+    photoReferencesDirtyWhileBusy = true
+    return
+  }
+  void persistMessages()
+})
 async function restoreLocalPhotos() {
   if (!storageReady.value) return
   const generation = openGeneration
@@ -926,7 +999,9 @@ watch(() => JSON.stringify([
   gatewayUrl.value, authToken.value, sessionTag.value,
   messages.value.map((m) => [m.role, m.archiveEvent?.id, m.replyVersionId,
     m.attachments.map((a) => [a.id, a.photoId, a.fingerprint])]),
-]), () => scheduleLocalPhotoRestore())
+]), () => {
+  if (!busy.value) scheduleLocalPhotoRestore()
+})
 
 // 本机照片可在初次加载、返回前台和切会话时重试；回填不能抢走用户刚移动的阅读位置。
 // 看图器只收还有字节的图。
@@ -996,19 +1071,23 @@ async function enterRoom() {
 }
 
 async function sendConversation(source: UiMessage[], target?: UiMessage) {
+  const useStreaming = streamResponses.value
   let assistant: UiMessage
   let previousVariantIndex: number | null = null
   let generatedVariantIndex: number | null = null
+  let checkpointStart = 0
   if (target) {
+    checkpointStart = Math.max(0, messages.value.findIndex(message => message.id === target.id))
     const variants = ensureVariants(target)
     previousVariantIndex = selectedVariantIndex(target)
     variants.push(emptyVariant())
     generatedVariantIndex = variants.length - 1
     applyVariant(target, variants[generatedVariantIndex], generatedVariantIndex)
     target.error = undefined
-    target.streaming = true
+    target.streaming = useStreaming
     assistant = target
   } else {
+    checkpointStart = Math.max(0, messages.value.length - 1)
     const assistantDraft: UiMessage = {
       id: createId('assistant'),
       role: 'assistant',
@@ -1019,12 +1098,10 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       thinking: '',
       thinkingSegments: [],
       events: [],
-      streaming: true,
+      streaming: useStreaming,
       replyVersionId: undefined,
     }
     messages.value.push(assistantDraft)
-    // Read the object back through Vue's proxy. Mutating the detached draft would
-    // leave the template unaware until another top-level ref changes.
     assistant = messages.value[messages.value.length - 1]
   }
   ++openGeneration
@@ -1038,14 +1115,22 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
   errorNotice.value = ''
   scrollToBottom()
 
+  const requestContext = { ...clientContext() }
+  let replyVersionId = ''
+  let preSendCheckpointSucceeded = false
+  let requestAcceptedForRecovery = false
+
   try {
-    const useStreaming = streamResponses.value
-    const replyVersionId = createId('reply')
+    replyVersionId = createId('reply')
     assistant.replyVersionId = replyVersionId
     assistant.archiveEvent = newArchiveEvent(replyVersionId)
+    const requestSource = requestMessageWindow(
+      source.filter(message => message.id !== assistant.id),
+      sessionMessageLimit(),
+    )
     const body: Record<string, unknown> = {
       model: selectedModel.value,
-      messages: wireMessages(source.filter((message) => message.id !== assistant.id)),
+      messages: wireMessages(requestSource),
       stream: useStreaming,
       reasoning_effort: effectiveEffort.value,
       metadata: { reply_version_id: replyVersionId, reply_archive_event: assistant.archiveEvent },
@@ -1061,23 +1146,36 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
           reply_archive_event: assistant.archiveEvent }
       }
     }
-    if (!await persistMessages()) throw new Error('本机未能保存这次发送，尚未发出请求。请先保留当前页面。')
+
+    if (!await transcript.checkpointTail(checkpointStart)) {
+      throw new Error('本机未能保存这次发送，尚未发出请求。请先保留当前页面。')
+    }
+    preSendCheckpointSucceeded = true
+
     if (useStreaming) {
-      const stream = await postChatStream(clientContext(), body, activeController.signal)
-      // 3 分钟看门狗：Doze/NAT 让 socket 静默死亡时解锁 UI，交给 reconcile 找回。
-      const { sawDone } = await pumpSseStream(stream, (frame) => {
-        const finished = parseSseFrame(frame, assistant)
-        if (frame.includes('shenyu.tool_event') || frame.includes('shenyu_tool')) void persistMessages()
-        return finished
-      }, onStreamChunkEnd, 180_000)
+      const stream = await postChatStream(requestContext, body, activeController.signal)
+      requestAcceptedForRecovery = true
+      markInflightReply(requestContext, replyVersionId)
+      const { sawDone } = await pumpSseStream(
+        stream,
+        frame => parseSseFrame(frame, assistant),
+        onStreamChunkEnd,
+        SSE_STALL_TIMEOUT_MS,
+      )
       if (!sawDone) {
         assistant.truncated = true
         errorNotice.value = '回复可能被截断，正在尝试找回…'
+      } else {
+        // A normal [DONE] is an explicit clean boundary: no recovery marker may
+        // leak forward from an earlier interrupted/restarted state.
+        assistant.truncated = undefined
+        assistant.error = undefined
       }
     } else {
-      const completion = await postChatCompletion(clientContext(), body, activeController.signal)
+      const completion = await postChatCompletion(requestContext, body, activeController.signal)
       applyChatCompletion(completion, assistant)
     }
+
     assistant.streaming = false
     if (!assistant.content && !assistant.echo && !assistant.thinking && !assistant.events.length && !assistant.attachments.length) {
       assistant.content = '这次没有收到可显示的回应。'
@@ -1085,42 +1183,70 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     syncCurrentVariant(assistant)
   } catch (error) {
     assistant.streaming = false
+    const aborted = error instanceof DOMException && error.name === 'AbortError'
+    const explicitUpstreamFailure = error instanceof SseStreamError && !error.recoverable
+    const errorText = error instanceof Error ? error.message : '请求没有完成'
     if (target && generatedVariantIndex !== null && previousVariantIndex !== null) {
       const variants = target.variants || []
-      if (error instanceof DOMException && error.name === 'AbortError' && userCancelledGeneration) {
+      if (explicitUpstreamFailure) {
+        // The gateway explicitly told us the upstream itself failed. There is
+        // no detached reply to poll for. Preserve any partial failed roll in
+        // variants, but put the last good answer back on screen immediately.
+        clearInflightReply(requestContext, replyVersionId)
+        const generatedHasOutput = Boolean(
+          target.content || target.echo || target.thinking || target.events.length || target.attachments.length,
+        )
+        if (generatedHasOutput) {
+          target.truncated = undefined
+          target.error = errorText
+          syncCurrentVariant(target)
+        } else {
+          variants.splice(generatedVariantIndex, 1)
+        }
+        const restoredIndex = Math.max(0, Math.min(previousVariantIndex, variants.length - 1))
+        if (variants[restoredIndex]) applyVariant(target, variants[restoredIndex], restoredIndex)
+      } else if ((aborted && userCancelledGeneration) || !requestAcceptedForRecovery) {
         variants.splice(generatedVariantIndex, 1)
         const restoredIndex = Math.max(0, Math.min(previousVariantIndex, variants.length - 1))
         if (variants[restoredIndex]) applyVariant(target, variants[restoredIndex], restoredIndex)
       } else {
-        // 后台断开时保留重新回答产生的新变体；网关会继续 drain，finally
-        // 的 reconcile 将服务器版本填回当前选中的这个变体。
+        // Only a stream that was accepted and then lost from the client side
+        // is eligible for server-side background recovery.
         target.truncated = true
         syncCurrentVariant(target)
       }
       target.streaming = false
-      // 重试期间客户端可能已断开，但网关仍会在后台 drain 并落库完整回复。
-      // 旧变体看起来是完整的，若不留下这个标记，finally 的 reconcile
-      // 会误以为尾部无需找回，从而把已成功写入服务器的新回答隐藏掉。
-      target.truncated = true
-      if (!(error instanceof DOMException && error.name === 'AbortError')) {
-        errorNotice.value = error instanceof Error ? error.message : '请求没有完成'
-      }
-    } else if (error instanceof DOMException && error.name === 'AbortError') {
+      if (!(aborted && userCancelledGeneration)) errorNotice.value = errorText
+    } else if (aborted && userCancelledGeneration) {
+      clearInflightReply(requestContext, replyVersionId)
       assistant.content = assistant.content || '这次先停在这里。'
     } else {
-      assistant.error = error instanceof Error ? error.message : '请求没有完成'
+      if (explicitUpstreamFailure) {
+        clearInflightReply(requestContext, replyVersionId)
+        assistant.truncated = undefined
+      } else if (requestAcceptedForRecovery) {
+        assistant.truncated = true
+      }
+      assistant.error = errorText
       errorNotice.value = assistant.error
     }
   } finally {
-    await persistMessages()
+    if (userCancelledGeneration) clearInflightReply(requestContext, replyVersionId)
+    photoReferencesDirtyWhileBusy = false
+    const finalSaved = preSendCheckpointSucceeded ? await persistMessages() : false
     busy.value = false
+    if (finalSaved && requestAcceptedForRecovery && !assistant.truncated && !assistant.error) {
+      clearInflightReply(requestContext, replyVersionId)
+    }
+    if (photoReferencesDirtyWhileBusy) {
+      photoReferencesDirtyWhileBusy = false
+      void persistMessages()
+    }
     activeController = null
     activeAssistantId = null
     status.value = ''
     loadSessions()
     scrollToBottom()
-    // 静默截断（!sawDone）或看门狗/网络错误后，去服务器找回 drain 落库的全文。
-    // 用户主动停止不带 error/truncated，这里自然是无操作。
     scheduleLocalPhotoRestore()
     if (tailNeedsReconcile(messages.value)) void reconcileTailFromServer()
   }
@@ -1341,6 +1467,7 @@ onMounted(async () => {
     renderTail.value = cached?.state.viewport.atBottom === false ? null : FIRST_PAINT_MESSAGES
     await transcript.apply(cached?.state || { messages: isDemoMode() ? demoSeedTranscript() : [],
       draft: '', pendingAttachments: [], editId: null, viewport: { atBottom: true } })
+    resumeInflightReply(clientContext())
     storageReady.value = true
     localStorage.setItem(STORAGE_SESSION, sessionTag.value)
     const generation = openGeneration
@@ -1490,7 +1617,7 @@ onUnmounted(() => {
       </header>
 
 
-      <section ref="streamRef" class="message-stream" @scroll.passive="transcript.scheduleSave">
+      <section ref="streamRef" class="message-stream" @scroll.passive="onMessageStreamScroll">
         <div v-if="isEmpty" class="welcome-panel">
           <img class="welcome-mark" :src="brandMarkUrl" alt="Claude" />
           <h1>What's on your mind?</h1>
