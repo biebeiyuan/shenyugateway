@@ -20,6 +20,15 @@ beforeEach(async()=>{
   vi.spyOn(URL,'revokeObjectURL').mockImplementation(()=>{})
 })
 afterEach(()=>vi.restoreAllMocks())
+it('does not request transcript persistence when stable photo references are unchanged',async()=>{
+  const m=msg();m.attachments=[];const rows=[m]
+  const onReferences=vi.fn()
+  vi.stubGlobal('fetch',vi.fn(async()=>json({media:{},photos:{}})))
+  const loader=createPhotoLoader(()=>context,()=>rows,onReferences)
+  await loader.restore()
+  expect(onReferences).not.toHaveBeenCalled()
+  loader.dispose()
+})
 it('restores device bytes by fingerprint after a server handoff without uploading ordinary images',async()=>{
   const meta=await putPhoto('old-local-id',new Blob(['local'],{type:'image/jpeg'}),'image/jpeg')
   const m=msg(); m.attachments[0].fingerprint=meta.fingerprint
