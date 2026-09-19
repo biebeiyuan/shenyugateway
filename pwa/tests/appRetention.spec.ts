@@ -519,7 +519,7 @@ it('does not recover an explicit upstream failure just because a tool_start was 
 it('keeps a healthy stream healthy when inflight receipt storage throws', async () => {
   const { state } = mount(); await flush()
   const originalSetItem = window.localStorage.setItem.bind(window.localStorage)
-  vi.spyOn(window.localStorage, 'setItem').mockImplementation((key: string, value: string) => {
+  const receiptWrite = vi.spyOn(window.localStorage, 'setItem').mockImplementation((key: string, value: string) => {
     if (String(key).startsWith('shenyu_pwa_inflight:')) throw new DOMException('receipt quota', 'QuotaExceededError')
     return originalSetItem(key, value)
   })
@@ -533,12 +533,16 @@ it('keeps a healthy stream healthy when inflight receipt storage throws', async 
     return normalFetch(input, options)
   }))
 
-  state.draft = 'receipt storage is not the network'
-  await state.submit(); await flush()
-  expect(state.messages.at(-1)?.content).toBe('healthy despite receipt failure')
-  expect(state.messages.at(-1)?.truncated).toBeUndefined()
-  expect(state.messages.at(-1)?.error).toBeUndefined()
-  expect(state.receiptStorageError).toContain('恢复凭据')
+  try {
+    state.draft = 'receipt storage is not the network'
+    await state.submit(); await flush()
+    expect(state.messages.at(-1)?.content).toBe('healthy despite receipt failure')
+    expect(state.messages.at(-1)?.truncated).toBeUndefined()
+    expect(state.messages.at(-1)?.error).toBeUndefined()
+    expect(state.receiptStorageError).toContain('恢复凭据')
+  } finally {
+    receiptWrite.mockRestore()
+  }
 })
 
 it('keeps active text streaming free of full transcript checkpoints', async () => {
