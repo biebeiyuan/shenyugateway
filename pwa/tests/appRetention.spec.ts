@@ -269,6 +269,11 @@ it.each([167, 169, 199, 201])('sends %i pre-target messages without a client-sid
   localStorage.setItem('shenyu_pwa_session', 'A')
   localStorage.setItem('shenyu_pwa_messages', JSON.stringify(history))
   const { state } = mount(); await flush()
+  for (let i = 0; i < 100 && (!state.storageReady || state.messages.length !== history.length); i++) {
+    await new Promise(resolve => setTimeout(resolve, 5)); await nextTick()
+  }
+  expect(state.storageReady).toBe(true)
+  expect(state.messages).toHaveLength(history.length)
   state.maxClientMessages = 5
   const normalFetch = globalThis.fetch
   let sent: Record<string, unknown> | undefined
