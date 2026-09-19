@@ -1254,6 +1254,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     }
   } finally {
     if (userCancelledGeneration) clearInflightReply(requestContext, replyVersionId)
+    const persistOlderPhotoReferences = photoReferencesDirtyWhileBusy
     photoReferencesDirtyWhileBusy = false
     const finalSave = preSendCheckpointSucceeded
       ? transcript.checkpointTail(checkpointStart)
@@ -1264,10 +1265,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
         clearInflightReply(requestContext, replyVersionId)
       }
     })
-    if (photoReferencesDirtyWhileBusy) {
-      photoReferencesDirtyWhileBusy = false
-      void persistMessages()
-    }
+    if (persistOlderPhotoReferences) void persistMessages()
     if (activeController === requestController) activeController = null
     if (activeAssistantId === assistant.id) activeAssistantId = null
     status.value = ''
