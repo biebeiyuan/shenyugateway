@@ -59,12 +59,12 @@ function acceptRecovery(
   return true
 }
 
-// 末轮是否不完整：最后一条是 user（没等到回复），或 assistant 带 error/truncated。
+// 只有已经开始过、后来变得不完整的 assistant 才有后台可找。
+// 单独的 user 或普通 fetch error 不能证明请求到过网关。
 export function tailNeedsReconcile(messages: UiMessage[]): boolean {
   const last = messages[messages.length - 1]
-  if (!last) return false
-  if (last.role === 'user') return true
-  return Boolean(last.error || last.truncated || hasUnfinishedTools(last.events))
+  if (!last || last.role !== 'assistant') return false
+  return Boolean(last.truncated || hasUnfinishedTools(last.events))
 }
 
 function recentRows(payload: Record<string, unknown>): RecentRow[] {
