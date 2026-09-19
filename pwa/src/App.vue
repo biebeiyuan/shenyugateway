@@ -1116,6 +1116,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
 
   const requestContext = { ...clientContext() }
   let replyVersionId = ''
+  let preSendCheckpointSucceeded = false
   let requestAcceptedForRecovery = false
 
   try {
@@ -1149,6 +1150,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     if (!await transcript.checkpointTail(checkpointStart)) {
       throw new Error('本机未能保存这次发送，尚未发出请求。请先保留当前页面。')
     }
+    preSendCheckpointSucceeded = true
 
     if (useStreaming) {
       assistant.streaming = true
@@ -1203,7 +1205,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
   } finally {
     if (userCancelledGeneration) clearInflightReply(requestContext, replyVersionId)
     photoReferencesDirtyWhileBusy = false
-    const finalSaved = await persistMessages()
+    const finalSaved = preSendCheckpointSucceeded ? await persistMessages() : false
     busy.value = false
     if (finalSaved && requestAcceptedForRecovery && !assistant.truncated && !assistant.error) {
       clearInflightReply(requestContext, replyVersionId)
