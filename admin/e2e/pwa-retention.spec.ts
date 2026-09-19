@@ -92,6 +92,8 @@ test('PWA preserves process records and draft through session switching, reload,
   await expect(page.locator('.session-item').filter({ hasText: 'conversation A' })).toHaveCount(1)
   await page.locator('.session-item').filter({ hasText: 'conversation A' }).click({ button: 'right' })
   await page.getByRole('button', { name: '放回最近对话', exact: true }).click()
+  await expect(page.locator('.session-item')).toHaveCount(0)
+  await expect(page.locator('.sidebar-empty')).toContainText('还没有已收起的对话')
   expect(fixture.mutations).toHaveLength(2)
   expect((await saved(page)).rows.some(row => JSON.parse(row.json).thinking === 'local thought stays')).toBe(true)
   expect(fixture.errors).toEqual([])

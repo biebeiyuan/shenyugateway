@@ -1402,8 +1402,8 @@ onUnmounted(() => {
 
       <div class="sidebar-section-title">{{ showHiddenSessions ? "已收起" : "最近对话" }}</div>
       <button class="sidebar-link" type="button" @click="showHiddenSessions = !showHiddenSessions">{{ showHiddenSessions ? "返回最近对话" : "查看已收起" }}</button>
-      <div class="sidebar-empty" v-if="!recentSessions.length && isEmpty">
-        还没有最近对话。
+      <div class="sidebar-empty" v-if="!recentSessions.length && (showHiddenSessions || isEmpty)">
+        {{ showHiddenSessions ? "还没有已收起的对话。" : "还没有最近对话。" }}
       </div>
       <div v-else class="session-list">
         <button
@@ -1423,7 +1423,7 @@ onUnmounted(() => {
           <span class="session-title">{{ sessionTitle(session) }}</span>
           <small>{{ sessionMeta(session) }}</small>
         </button>
-        <button v-if="!recentSessions.length" class="session-item active" type="button" @click="menuOpen = false">
+        <button v-if="!recentSessions.length && !showHiddenSessions" class="session-item active" type="button" @click="menuOpen = false">
           <span class="session-title">当前对话</span>
           <small>{{ messages.filter((message) => message.role === 'user').length }} 轮</small>
         </button>

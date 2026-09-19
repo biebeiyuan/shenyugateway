@@ -145,3 +145,15 @@ it('does not send when the initial durable checkpoint fails', async () => {
   expect(state.storageError).toBeTruthy()
   expect(state.messages[0].content).toContain('must stay on device')
 })
+
+
+it('does not place an active conversation in an empty hidden list', async () => {
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify([row('user', 'u-A')]))
+  const { state, host } = mount(); await flush()
+  vi.stubGlobal('fetch', vi.fn(async () => Response.json({ sessions: [] })))
+  state.showHiddenSessions = true; await flush()
+  await state.loadSessions(); await flush()
+  expect(host.querySelectorAll('.session-item')).toHaveLength(0)
+  expect(host.querySelector('.sidebar-empty')?.textContent).toContain('还没有已收起的对话')
+})
