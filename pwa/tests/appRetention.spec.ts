@@ -108,7 +108,7 @@ it('commits the outgoing turn and reply identity before starting the network req
       const record = await store.load(transcriptKey('', state.sessionTag))
       store.close()
       expect(record?.state.messages.at(-1)?.replyVersionId).toBe(body.metadata.reply_version_id)
-      expect(record?.state.messages.at(-1)?.truncated).toBe(true)
+      expect(record?.state.messages.at(-1)?.truncated).toBeUndefined()
       expect(record?.state.messages.at(-2)?.content).toContain('save before send')
       committed = true
       return new Response('data: {"choices":[{"delta":{"content":"received"}}]}\n\ndata: [DONE]\n\n', { headers: { 'Content-Type': 'text/event-stream' } })
