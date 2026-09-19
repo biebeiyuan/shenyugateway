@@ -465,10 +465,10 @@ it('does not recover an explicit upstream failure just because a tool_start was 
 
 it('keeps a healthy stream healthy when inflight receipt storage throws', async () => {
   const { state } = mount(); await flush()
-  const originalSetItem = Storage.prototype.setItem
-  vi.spyOn(Storage.prototype, 'setItem').mockImplementation(function (key: string, value: string) {
+  const originalSetItem = window.localStorage.setItem.bind(window.localStorage)
+  vi.spyOn(window.localStorage, 'setItem').mockImplementation((key: string, value: string) => {
     if (String(key).startsWith('shenyu_pwa_inflight:')) throw new DOMException('receipt quota', 'QuotaExceededError')
-    return originalSetItem.call(this, key, value)
+    return originalSetItem(key, value)
   })
   const normalFetch = globalThis.fetch
   vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
