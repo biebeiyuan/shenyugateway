@@ -1,0 +1,108 @@
+name: PWA retention final check (temporary)
+on:
+  push:
+    branches: [fix/pwa-record-retention]
+    paths: [.github/workflows/pwa-retention-finalize.yml]
+permissions:
+  contents: write
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/pwa-record-retention
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+          cache-dependency-path: pwa/package-lock.json
+      - run: pip install -e '.[dev]'
+      - run: npm ci
+        working-directory: pwa
+      - run: npm ci
+        working-directory: admin
+      - name: Install isolated browser
+        working-directory: admin
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          npm run test:e2e:install
+      - name: Verify empty hidden list, retain all prior invariants, publish checked candidate
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import json, os, subprocess
+          assert os.environ['GITHUB_REF'] == 'refs/heads/fix/pwa-record-retention'
+          start = subprocess.check_output(['git','rev-parse','HEAD'], text=True).strip()
+          assert start == os.environ['GITHUB_SHA']
+          assert not subprocess.check_output(['git','status','--porcelain'], text=True).strip()
+          def replace(path, old, new):
+              p = Path(path); s = p.read_text(); assert s.count(old) == 1, (path, old)
+              p.write_text(s.replace(old, new))
+          test = Path('pwa/tests/appRetention.spec.ts')
+          test.write_text(test.read_text() + '''\n\nit('does not place an active conversation in an empty hidden list', async () => {
+            localStorage.setItem('shenyu_pwa_session', 'A')
+            localStorage.setItem('shenyu_pwa_messages', JSON.stringify([row('user', 'u-A')]))
+            const { state, host } = mount(); await flush()
+            vi.stubGlobal('fetch', vi.fn(async () => Response.json({ sessions: [] })))
+            state.showHiddenSessions = true; await flush()
+            await state.loadSessions(); await flush()
+            expect(host.querySelectorAll('.session-item')).toHaveLength(0)
+            expect(host.querySelector('.sidebar-empty')?.textContent).toContain('还没有已收起的对话')
+          })\n''')
+          assert subprocess.run(['npm','test','--','tests/appRetention.spec.ts'], cwd='pwa').returncode == 1
+          replace('pwa/src/App.vue', 'v-if="!recentSessions.length && isEmpty"', 'v-if="!recentSessions.length && (showHiddenSessions || isEmpty)"')
+          replace('pwa/src/App.vue', '        还没有最近对话。', '        {{ showHiddenSessions ? "还没有已收起的对话。" : "还没有最近对话。" }}')
+          replace('pwa/src/App.vue', 'v-if="!recentSessions.length" class="session-item active"', 'v-if="!recentSessions.length && !showHiddenSessions" class="session-item active"')
+          replace('admin/e2e/pwa-retention.spec.ts', '  expect(fixture.mutations).toHaveLength(2)', "  await expect(page.locator('.session-item')).toHaveCount(0)\n  await expect(page.locator('.sidebar-empty')).toContainText('还没有已收起的对话')\n  expect(fixture.mutations).toHaveLength(2)")
+          for cmd, cwd in [(['python','-m','pytest','tests/','-q'],None), (['npm','test'],'pwa'), (['npm','run','build'],'pwa'), (['npm','test'],'admin'), (['npm','run','build'],'admin'), (['npx','playwright','test'],'admin')]:
+              subprocess.run(cmd,cwd=cwd,check=True)
+          journal = Path('project_delivery_log.jsonl')
+          lines = journal.read_text().splitlines(keepends=True)
+          matches = [i for i,line in enumerate(lines) if json.loads(line)['id'] == 'pwa-record-retention-20260919']
+          assert len(matches) == 1
+          i = matches[0]; item = json.loads(lines[i])
+          item['status'] = 'pushed'
+          item['commit'] = '686414b0067992eb370a8057c60478809902726b'
+          item['verification'] = [
+              '验证基线：隔离环境后端1447、PWA404、Admin15和两端构建通过；本次26个浏览器场景全部通过。当前最终提交常规CI和手机实测尚待执行。',
+              '发送前身份落盘、A-B-A与重开保留工具/思考/草稿、quota保留、旧写者冲突、来源绑定迁移、等文补工具、旧DELETE拒绝和收起数据不删均有回归。',
+              'Chromium验证刷新后可点开工具结果、带query离线重开、无接管强刷及收起/恢复后正确空态；运行35426152785已验证主体，收尾验证见本提交所依的final-check运行。',
+          ]
+          item['lesson'] = '浏览器截图仍需核验：旧的当前对话兜底不能出现在已收起空列表中。'
+          lines[i] = json.dumps(item,ensure_ascii=False,separators=(',',':')) + '\n'
+          journal.write_text(''.join(lines))
+          subprocess.run(['python','-m','pytest','tests/test_project_delivery.py','tests/test_project_map.py','tests/test_owner_project_map.py','-q'],check=True)
+          subprocess.run(['python','scripts/resident_home.py','check'],check=True)
+          subprocess.run(['git','diff','--check'],check=True)
+          subprocess.run(['git','rm','--','.github/workflows/pwa-retention-finalize.yml'],check=True)
+          paths = ['pwa/src/App.vue','pwa/tests/appRetention.spec.ts','admin/e2e/pwa-retention.spec.ts','project_delivery_log.jsonl']
+          subprocess.run(['git','add','--',*paths],check=True)
+          subprocess.run(['git','diff','--cached','--check'],check=True)
+          subprocess.run(['git','config','user.name','shenyugateway repair workbench'],check=True)
+          subprocess.run(['git','config','user.email','41898282+github-actions[bot]@users.noreply.github.com'],check=True)
+          subprocess.run(['git','commit','-m','fix(pwa): keep the hidden-list empty state distinct from the current conversation'],check=True)
+          subprocess.run(['git','push','origin','HEAD:refs/heads/work/pwa-retention-final-checked'],check=True)
+          print('CHECKED_HEAD',subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),flush=True)
+          print('CHECKED_TREE',subprocess.check_output(['git','rev-parse','HEAD^{tree}'],text=True).strip(),flush=True)
+          PY
+      - name: Export final source receipt
+        if: always()
+        run: |
+          mkdir -p /tmp/retention-source
+          git bundle create /tmp/retention-source/repository.bundle --all
+          git rev-parse HEAD > /tmp/retention-source/head.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: retention-final-check
+          path: |
+            admin/playwright-report/
+            admin/test-results/
+            /tmp/retention-source/
+          retention-days: 3
