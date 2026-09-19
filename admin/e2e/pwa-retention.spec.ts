@@ -176,6 +176,7 @@ test('two real pages recover a stale-writer conflict without a reload, then retr
   await expect(page.getByTestId('recovery-copy-preview')).toContainText('draft written in the first page')
   await page.getByRole('button', { name: '找回这份草稿', exact: true }).click()
   await expect.poll(async () => (await saved(page)).sessions.some(row => row.draft === 'draft written in the first page')).toBe(true)
+  await expect.poll(() => page.locator('.build-proof > div').evaluateAll(rows => rows.every(row => row.getBoundingClientRect().width > 200))).toBe(true)
   await page.screenshot({ path: info.outputPath('conflict-recovery-mobile.png'), animations: 'disabled' })
   await page.reload()
   await expect(page.locator('textarea')).toHaveValue('draft written in the first page')
@@ -232,7 +233,7 @@ async function updateFixture() {
     close: () => new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve())) }
 }
 
-test('a downloaded update waits safely across two installed pages and becomes the offline build after closing them', async ({ page, context }) => {
+test('a downloaded update waits safely across two installed pages and becomes the offline build after closing them', async ({ page, context }, info) => {
   test.setTimeout(60_000)
   const deployment = await updateFixture()
   const pages: Page[] = [page]
@@ -257,6 +258,9 @@ test('a downloaded update waits safely across two installed pages and becomes th
     await expect(page.getByTestId('offline-update-status')).toContainText('关闭')
     await expect(page.locator('.build-proof')).toContainText(deployment.nextId)
     await expect(page.locator('html')).toHaveAttribute('data-update-probe', 'still-here')
+    await expect.poll(() => page.locator('.build-proof > div').evaluateAll(rows => rows.every(row => row.getBoundingClientRect().width > 200))).toBe(true)
+    await page.locator('.build-proof').scrollIntoViewIfNeeded()
+    await page.screenshot({ path: info.outputPath('waiting-update-mobile.png'), animations: 'disabled' })
     await page.close()
     expect(await other.evaluate(async () => Boolean((await navigator.serviceWorker.getRegistration('/chat/'))!.waiting))).toBe(true)
     await expect(other.locator('textarea')).toHaveValue('draft across a real waiting worker')
