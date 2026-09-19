@@ -545,6 +545,76 @@ it('keeps a healthy stream healthy when inflight receipt storage throws', async 
   }
 })
 
+it('persists an older photo reference that resolves while a new reply is streaming', async () => {
+  const oldUser = row('user', 'u-old', 'old question')
+  const oldReply = row('assistant', 'r-old', 'old answer')
+  oldReply.attachments = [{ id: 'shared-photo', name: 'shared.jpg', mime: 'image/jpeg', fingerprint: 'b'.repeat(64) }]
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify([oldUser, oldReply]))
+
+  const normalFetch = globalThis.fetch
+  let releaseAlbum!: () => void
+  let closeStream!: () => void
+  const encoder = new TextEncoder()
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    if (url.pathname.endsWith('/album/resolve')) {
+      await new Promise<void>(resolve => { releaseAlbum = resolve })
+      return Response.json({
+        media: {
+          'assistant:r-old': [{
+            id: 'shared-photo', name: 'shared.jpg', mime: 'image/jpeg', fingerprint: 'b'.repeat(64),
+            photo_id: 'phot_late_reference', title: 'kept', content: 'late stable reference',
+          }],
+        },
+        photos: {},
+      })
+    }
+    if (url.pathname === '/v1/chat/completions') {
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(encoder.encode('data: {"choices":[{"delta":{"content":"streaming"}}]}\n\n'))
+          closeStream = () => {
+            controller.enqueue(encoder.encode('data: [DONE]\n\n'))
+            controller.close()
+          }
+        },
+      }), { headers: { 'Content-Type': 'text/event-stream' } })
+    }
+    return normalFetch(input, options)
+  }))
+
+  const { state } = mount()
+  for (let i = 0; i < 40 && !releaseAlbum; i++) await new Promise(resolve => setTimeout(resolve, 5))
+  expect(releaseAlbum).toBeTypeOf('function')
+  state.draft = 'new question while old photo resolves'
+  const sending = state.submit()
+  for (let i = 0; i < 40 && state.messages.at(-1)?.content !== 'streaming'; i++) {
+    await new Promise(resolve => setTimeout(resolve, 5)); await nextTick()
+  }
+  expect(state.busy).toBe(true)
+
+  releaseAlbum()
+  for (let i = 0; i < 40 && state.messages[1]?.attachments[0]?.photoId !== 'phot_late_reference'; i++) {
+    await new Promise(resolve => setTimeout(resolve, 5)); await nextTick()
+  }
+  expect(state.messages[1].attachments[0].photoId).toBe('phot_late_reference')
+  expect(state.busy).toBe(true)
+
+  closeStream()
+  await sending; await flush()
+  let persistedPhotoId: string | undefined
+  for (let i = 0; i < 40 && persistedPhotoId !== 'phot_late_reference'; i++) {
+    const store = new TranscriptStore()
+    try {
+      const saved = await store.load(transcriptKey('', 'A'))
+      persistedPhotoId = saved?.state.messages[1]?.attachments[0]?.photoId
+    } finally { store.close() }
+    if (persistedPhotoId !== 'phot_late_reference') await new Promise(resolve => setTimeout(resolve, 5))
+  }
+  expect(persistedPhotoId).toBe('phot_late_reference')
+})
+
 it('keeps active text streaming free of full transcript checkpoints', async () => {
   const { state } = mount(); await flush()
   const save = vi.spyOn(TranscriptStore.prototype, 'save')
