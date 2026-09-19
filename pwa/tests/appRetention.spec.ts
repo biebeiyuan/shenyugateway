@@ -221,3 +221,19 @@ it('only removes a selected recovery copy after explicit confirmation and leaves
     expect(host.textContent).toContain('当前对话没有恢复副本')
   } finally { store.close() }
 })
+
+
+it('does not persist programmatic stream scrolling while a reply is active, but still persists idle reading position', async () => {
+  const { state, host } = mount(); await flush()
+  const save = vi.spyOn(TranscriptStore.prototype, 'save')
+  const stream = host.querySelector<HTMLElement>('.message-stream')!
+  state.busy = true
+  stream.dispatchEvent(new Event('scroll'))
+  await new Promise(resolve => setTimeout(resolve, 320))
+  expect(save).not.toHaveBeenCalled()
+
+  state.busy = false
+  stream.dispatchEvent(new Event('scroll'))
+  await new Promise(resolve => setTimeout(resolve, 320))
+  expect(save).toHaveBeenCalledTimes(1)
+})
