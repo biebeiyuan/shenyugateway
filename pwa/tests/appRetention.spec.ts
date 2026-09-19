@@ -223,7 +223,7 @@ it('only removes a selected recovery copy after explicit confirmation and leaves
 })
 
 
-it('sends only the configured tail window while keeping the full local transcript', async () => {
+it('sends the full pre-target history while keeping the full local transcript', async () => {
   const history: UiMessage[] = []
   for (let turn = 0; turn < 6; turn++) {
     history.push(row('user', `u${turn}`, `question-${turn}`))
@@ -248,8 +248,8 @@ it('sends only the configured tail window while keeping the full local transcrip
 
   await state.retryMessage(11); await flush()
   const outbound = sent?.messages as Array<{role: string; content: string}>
-  expect(outbound).toHaveLength(5)
-  expect(outbound[0]).toMatchObject({ role: 'user', content: 'question-3' })
+  expect(outbound).toHaveLength(11)
+  expect(outbound[0]).toMatchObject({ role: 'user', content: 'question-0' })
   expect(outbound.at(-1)).toMatchObject({ role: 'user', content: 'question-5' })
   expect(state.messages).toHaveLength(12)
   const store = new TranscriptStore()
