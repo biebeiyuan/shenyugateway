@@ -166,14 +166,14 @@ export function toolLabel(event: ToolEvent): string {
 }
 
 export function toolResultPreview(event: ToolEvent): string {
-  if (event.phase === 'tool_start' || event.ok === undefined) return '正在执行…'
+  if (event.phase === 'tool_start') return '正在执行…'
   const output = String(event.output || '').replace(/\s+/g, ' ').trim()
   if (output) return output.length > 72 ? `${output.slice(0, 72)}…` : output
-  return event.ok === false ? '执行失败' : '执行成功'
+  return event.ok === false ? '执行失败' : event.ok === true ? '执行成功' : '结果已返回，状态未知'
 }
 
 export function processSummary(group: ProcessGroup): string {
-  const active = group.tools.find((event) => event.phase === 'tool_start' || event.ok === undefined)
+  const active = group.tools.find((event) => event.phase === 'tool_start')
   if (active) return `正在${toolWarmCopy(active)} · ${toolLabel(active)}…`
   const timeline = processTimeline(group)
   const latest = timeline[timeline.length - 1]
@@ -201,7 +201,7 @@ export function formatToolInput(event?: ToolEvent): string {
 
 export function formatToolOutput(event?: ToolEvent): string {
   if (!event) return '（找不到这一步工具记录）'
-  if (event.phase === 'tool_start' || event.ok === undefined) return '正在执行…'
+  if (event.phase === 'tool_start') return '正在执行…'
   if (event.output !== undefined) return event.output || '（工具没有返回正文）'
   return '（这条旧的工具记录没有保留结果）'
 }

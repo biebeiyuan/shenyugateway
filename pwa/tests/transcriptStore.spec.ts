@@ -134,3 +134,77 @@ it('rolls back the manifest if a later message write fails after the result was 
   await expect(db.save('A', state([row('r', 'changed')], 'changed draft'), 1)).rejects.toThrow('late message failure')
   expect(await db.load('A')).toEqual(before)
 })
+
+
+describe('bounded recovery copies, never automatic transcript eviction', () => {
+  it('reuses an identical same-kind checkpoint even if only the viewport changed', async () => {
+    const db = store()
+    const original = await db.saveRecoveryCopy('A', state([row('r')], 'kept'), 'local')
+    const again = await db.saveRecoveryCopy('A', { ...state([row('r')], 'kept'), viewport: { atBottom: false } }, 'local')
+    expect(again.id).toBe(original.id)
+    expect(await db.listRecoveryCopies('A')).toHaveLength(1)
+  })
+
+  it('caps additional copies at 20 without evicting originals or blocking ordinary saves', async () => {
+    const db = store()
+    await db.save('A', state([row('r')], 'active'), 0)
+    for (let n = 0; n < 20; n++) await db.saveRecoveryCopy('A', state([row('r')], `copy-${n}`))
+    const before = await db.listRecoveryCopies('A')
+    await expect(db.saveRecoveryCopy('A', state([row('r')], 'overflow'))).rejects.toThrow(/副本.*上限/)
+    expect(await db.listRecoveryCopies('A')).toEqual(before)
+    await expect(db.save('A', state([row('r')], 'ordinary save still works'), 1)).resolves.toBe(2)
+    await expect(db.saveRecoveryCopy('B', state([row('b')], 'separate scope'))).resolves.toBeTruthy()
+  })
+
+  it('also bounds recovery bytes and never alters an existing main transcript', async () => {
+    const db = store()
+    await db.save('A', state([row('r')], 'active'), 0)
+    const before = await db.load('A')
+    await expect(db.saveRecoveryCopy('A', state([row('large', 'x'.repeat(32 * 1024 * 1024))]))).rejects.toThrow(/副本.*上限/)
+    expect(await db.listRecoveryCopies('A')).toHaveLength(0)
+    expect(await db.load('A')).toEqual(before)
+  })
+
+  it('scoped removal frees a copy slot, leaving other copies, main rows, list cache and legacy bytes alone', async () => {
+    const db = store()
+    await db.migrateLegacy('A', JSON.stringify([row('legacy')]))
+    const main = await db.load('A'), legacy = await db.legacyBackup('A')
+    await db.saveList('A', { sessions: [{ session_tag: 'A' }] })
+    const first = await db.saveRecoveryCopy('A', state([row('r')], 'first'))
+    const second = await db.saveRecoveryCopy('A', state([row('r')], 'second'))
+    await expect(db.removeRecoveryCopy('B', first.id)).resolves.toBe(false)
+    await expect(db.removeRecoveryCopy('A', first.id)).resolves.toBe(true)
+    expect(await db.loadRecoveryCopy('A', first.id)).toBeNull()
+    expect((await db.loadRecoveryCopy('A', second.id))?.state.draft).toBe('second')
+    expect(await db.load('A')).toEqual(main)
+    expect(await db.legacyBackup('A')).toBe(legacy)
+    expect(await db.loadList('A')).toEqual({ sessions: [{ session_tag: 'A' }] })
+  })
+})
+
+
+it('serializes concurrent copy admissions so two tabs cannot exceed the cap', async () => {
+  const name = `copy-race-${Math.random()}`
+  const one = store(name), two = store(name)
+  for (let n = 0; n < 19; n++) await one.saveRecoveryCopy('A', state([row('r')], `copy-${n}`))
+  const results = await Promise.allSettled([
+    one.saveRecoveryCopy('A', state([row('r')], 'first tab')),
+    two.saveRecoveryCopy('A', state([row('r')], 'second tab')),
+  ])
+  expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1)
+  const copies = await one.listRecoveryCopies('A')
+  expect(copies).toHaveLength(20)
+  await one.removeRecoveryCopy('A', copies[0].id)
+  await expect(two.saveRecoveryCopy('A', state([row('r')], 'after explicit cleanup'))).resolves.toBeTruthy()
+})
+
+it('does not drop a copy or the active record when confirmed deletion fails', async () => {
+  const db = store()
+  await db.save('A', state([row('r')], 'active'), 0)
+  const main = await db.load('A')
+  const copy = await db.saveRecoveryCopy('A', state([row('r')], 'only in copy'))
+  vi.spyOn(IDBObjectStore.prototype, 'delete').mockImplementation(() => { throw new Error('write unavailable') })
+  await expect(db.removeRecoveryCopy('A', copy.id)).rejects.toThrow('write unavailable')
+  expect((await db.loadRecoveryCopy('A', copy.id))?.state.draft).toBe('only in copy')
+  expect(await db.load('A')).toEqual(main)
+})

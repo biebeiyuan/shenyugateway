@@ -20,6 +20,13 @@ const covers = (incoming: string, local: string) => normalized(incoming).include
 // may contribute locally observed process data to that active branch.
 export function mergeConcurrentTranscript(saved: TranscriptState, local: TranscriptState): TranscriptState {
   const result = snapshotTranscript(saved)
+  // Keep an ordinary unsent draft when there is no saved input to displace.
+  // Edit-mode drafts and attachment-only saved input are not empty composers.
+  if (!saved.draft && !saved.pendingAttachments.length && !saved.editId && !local.editId) {
+    const own = snapshotTranscript(local)
+    result.draft = own.draft
+    result.pendingAttachments = own.pendingAttachments
+  }
   for (const message of result.messages) {
     const key = identity(message)
     if (!key || message.role !== 'assistant') continue

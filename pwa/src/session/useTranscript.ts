@@ -1,7 +1,7 @@
 import { computed, nextTick, reactive, ref, type Ref } from 'vue'
 import type { Attachment, UiMessage } from '../types'
 import type { RequestContext } from '../api/client'
-import { TranscriptStore, StorageConflictError, snapshotTranscript, transcriptKey, type ReadingPosition, type TranscriptState, type RecoveryCopy, type RecoveryCopyInfo } from './transcriptStore'
+import { TranscriptStore, StorageConflictError, snapshotTranscript, transcriptContentStamp, transcriptKey, type ReadingPosition, type TranscriptState, type RecoveryCopy, type RecoveryCopyInfo } from './transcriptStore'
 import { getPhotos, photoDataUrl } from './photoStore'
 import { mergeConcurrentTranscript } from './restore'
 
@@ -127,7 +127,11 @@ export function useTranscript(deps: Deps) {
   async function protectedRestore(copyId?: string, isCurrent: () => boolean = () => true): Promise<boolean> {
     if (!ready.value || disposed || recovering.value) return false
     const key = activeKey()
-    if (copyId && conflicts.has(key)) return false
+    if (!copyId && !conflicts.has(key)) return false
+    if (copyId && conflicts.has(key)) {
+      error.value = '请先重新同步当前对话，再找回这份草稿；本页和副本都未改变。'
+      return false
+    }
     const epoch = (epochs.get(key) || 0) + 1
     epochs.set(key, epoch)
     recovering.value = true
@@ -138,10 +142,10 @@ export function useTranscript(deps: Deps) {
       await queues.get(key)?.catch(() => undefined)
       if (!current()) return false
       const local = snapshot()
-      const captured = JSON.stringify(local)
+      const captured = transcriptContentStamp(local)
       const assertUnchanged = () => {
         if (!current()) throw new Error('页面已切换，未把旧会话恢复到新页面。')
-        if (JSON.stringify(snapshot()) !== captured) throw new Error('本页有新改动，已保留当前内容；请重新同步。')
+        if (transcriptContentStamp(snapshot()) !== captured) throw new Error('本页有新改动，已保留当前内容；请重新同步。')
       }
       await store.saveRecoveryCopy(key, local, copyId ? 'before-draft' : 'local')
       assertUnchanged()
@@ -161,8 +165,11 @@ export function useTranscript(deps: Deps) {
       assertUnchanged()
       // Still CAS-protected: another write during the read/checkpoint/merge
       // makes this fail without changing live state. Never blindly retry it.
+      next.viewport = position()
       const revision = await store.save(key, next, latest.revision)
       assertUnchanged()
+      // A swipe while storage was busy must not fail recovery or jump backwards.
+      next.viewport = position()
       await apply(next, current)
       if (!current()) return false
       revisions.set(key, revision)
@@ -176,7 +183,7 @@ export function useTranscript(deps: Deps) {
       return true
     } catch (reason) {
       // Failed recovery does not turn a stale page into an authorized writer.
-      if (reason instanceof StorageConflictError || !copyId) conflicts.add(key)
+      if (reason instanceof StorageConflictError) conflicts.add(key)
       if (current()) error.value = reason instanceof Error ? reason.message : '重新同步失败，本页与已保存记录都未删除。'
       return false
     } finally {
@@ -186,6 +193,22 @@ export function useTranscript(deps: Deps) {
 
   const recoverConflict = (isCurrent?: () => boolean) => protectedRestore(undefined, isCurrent)
   const restoreRecoveryDraft = (id: string, isCurrent?: () => boolean) => protectedRestore(id, isCurrent)
+
+  async function removeRecoveryCopy(id: string): Promise<boolean> {
+    if (!ready.value || disposed || recovering.value) return false
+    const key = activeKey()
+    try {
+      const removed = await store.removeRecoveryCopy(key, id)
+      if (!disposed && key === activeKey()) {
+        await refreshRecoveryCopies()
+        recoveryNotice.value = removed ? '已移除这份恢复副本，当前聊天和其他副本未改变。' : '这份副本已不在本机，当前聊天未改变。'
+      }
+      return removed
+    } catch {
+      if (!disposed && key === activeKey()) error.value = '副本未能移除，请重试；当前聊天没有改变。'
+      return false
+    }
+  }
 
   async function apply(state: TranscriptState, isCurrent: () => boolean = () => true) {
     if (disposed || !isCurrent()) return
@@ -240,5 +263,5 @@ export function useTranscript(deps: Deps) {
 
   return { store, ready, error, savedAt, saving, save, scheduleSave, load, apply, position, restorePosition, exportCurrent, dispose,
     conflicted, recovering, recoveryNotice, recoveryCopies, selectedRecovery, recoverConflict, restoreRecoveryDraft,
-    refreshRecoveryCopies, inspectRecoveryCopy, exportRecoveryCopy }
+    refreshRecoveryCopies, inspectRecoveryCopy, exportRecoveryCopy, removeRecoveryCopy }
 }

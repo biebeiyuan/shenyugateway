@@ -772,6 +772,11 @@ async function restoreLocalRecord(copyId?: string): Promise<boolean> {
 }
 const recoverLocalTranscript = () => restoreLocalRecord()
 const restoreLocalDraft = (copyId: string) => restoreLocalRecord(copyId)
+async function removeLocalRecoveryCopy(copyId: string) {
+  if (controlsBlocked.value) return
+  if (!window.confirm('移除这份恢复副本？仅存在于这份副本中的草稿或回复将无法恢复，请先导出需要保留的内容。当前聊天、其他副本和网关档案不会被删除。')) return
+  await transcript.removeRecoveryCopy(copyId)
+}
 const recoveryCopyLabel = (kind: string) => kind === 'local' ? '重新同步前的本页' : kind === 'saved' ? '另一页已保存的记录' : '找回草稿前的本页'
 
 function openReview() {
@@ -1889,6 +1894,7 @@ onUnmounted(() => {
           <p v-if="storageConflict" class="settings-note">重新同步会先保留两边副本，再接回最新记录。分歧草稿不混在一起，之后可单独找回；不会发送消息。</p>
           <button v-if="storageConflict" class="quiet-button" :disabled="controlsBlocked" @click="recoverLocalTranscript">保留本页并重新同步</button>
           <h4>保留副本</h4>
+          <p class="settings-note">副本只用于异常恢复，每个对话最多 20 份、合计 32 MiB。到上限时会提示，不会自动删除；这不是聊天记录的保留上限。</p>
           <p v-if="!recoveryCopies.length" class="settings-note">当前对话没有恢复副本。正常聊天仍保存在本机记录中。</p>
           <div v-for="copy in recoveryCopies" :key="copy.id" class="recovery-copy-row">
             <button class="quiet-button" @click="transcript.inspectRecoveryCopy(copy.id)">{{ recoveryCopyLabel(copy.kind) }} · {{ new Date(copy.savedAt).toLocaleString() }}</button>
@@ -1897,9 +1903,11 @@ onUnmounted(() => {
             <p>{{ recoveryCopyLabel(selectedRecovery.kind) }} · {{ selectedRecovery.messageCount }} 条消息</p>
             <pre>{{ selectedRecovery.state.draft || '这份副本没有文字草稿。' }}</pre>
             <p class="settings-note">副本保留整段消息、回复版本与工具过程。找回草稿只放进输入框，不替换当前对话；原输入也会先留副本。</p>
+            <p v-if="storageConflict" class="settings-note">请先重新同步当前对话，再找回这份草稿。</p>
             <div class="settings-actions">
               <button class="quiet-button" :disabled="controlsBlocked || storageConflict" @click="restoreLocalDraft(selectedRecovery.id)">找回这份草稿</button>
               <button class="quiet-button" @click="transcript.exportRecoveryCopy(selectedRecovery.id)">导出完整副本</button>
+              <button class="quiet-button" data-testid="remove-recovery-copy" :disabled="controlsBlocked" @click="removeLocalRecoveryCopy(selectedRecovery.id)">移除这份副本</button>
             </div>
           </div>
         </section>

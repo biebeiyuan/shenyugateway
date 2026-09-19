@@ -15,6 +15,10 @@ export type SavedTranscript = { revision: number; savedAt: string; state: Transc
 export type RecoveryCopyKind = 'local' | 'saved' | 'before-draft'
 export type RecoveryCopyInfo = { id: string; scope: string; kind: RecoveryCopyKind; savedAt: string; messageCount: number; draft: string }
 export type RecoveryCopy = RecoveryCopyInfo & { schema: 1; state: TranscriptState }
+// Admission limits apply only to auxiliary recovery copies, never chat history.
+// Hitting a limit asks the owner to export/remove copies; nothing is evicted.
+export const RECOVERY_COPY_LIMIT = 20
+export const RECOVERY_COPY_BYTE_LIMIT = 32 * 1024 * 1024
 type SessionRecord = Omit<TranscriptState, 'messages'> & {
   schema: 1; key: string; revision: number; savedAt: string; rowKeys: string[]
 }
@@ -40,6 +44,21 @@ export function snapshotTranscript(state: TranscriptState): TranscriptState {
 
 function rowKey(scope: string, message: UiMessage): string {
   return JSON.stringify([scope, message.role, message.archiveEvent?.id || message.replyVersionId || message.id])
+}
+
+// Reading position is not an edit. Callers supply an already detached snapshot.
+export function transcriptContentStamp(state: TranscriptState): string {
+  const { viewport: _viewport, ...content } = state
+  return JSON.stringify(content)
+}
+
+function recoveryRange(scope: string): IDBKeyRange {
+  return IDBKeyRange.bound(['recovery-copy', scope], ['recovery-copy', scope, []])
+}
+
+function recoveryInfo(copy: RecoveryCopy): RecoveryCopyInfo {
+  const { state: _state, schema: _schema, ...info } = copy
+  return info
 }
 function validate(record: SessionRecord): void {
   if (record.schema !== 1 || !Number.isInteger(record.revision) || record.revision < 1
@@ -183,18 +202,59 @@ export class TranscriptStore {
     // Array keys cannot collide with the replaceable session-list string keys.
     // Additive storage in v1 avoids an upgrade blocking the other open writer.
     // add (not put) makes each recovery copy immutable, even on an ID collision.
-    await this.transaction(['lists'], true, (tx, result) => {
-      tx.objectStore('lists').add(copy, ['recovery-copy', scope, copy.id])
-      result(undefined)
+    const content = transcriptContentStamp(detached)
+    const bytes = (value: RecoveryCopy) => new TextEncoder().encode(JSON.stringify(value)).byteLength
+    const incomingBytes = bytes(copy)
+    return this.transaction(['lists'], true, (tx, result, fail) => {
+      const lists = tx.objectStore('lists')
+      const request = lists.openCursor(recoveryRange(scope))
+      let count = 0, retainedBytes = 0
+      request.onsuccess = () => {
+        try {
+          const cursor = request.result
+          if (cursor) {
+            const existing = cursor.value as RecoveryCopy
+            if (existing.scope !== scope || existing.schema !== 1 || !existing.state) throw new Error('恢复副本无法核验，未覆盖原件')
+            // Retrying a failed recovery must not fill the budget with the same
+            // immutable original. Its timestamp and reading position stay put.
+            if (existing.kind === kind && transcriptContentStamp(existing.state) === content) {
+              result(recoveryInfo(existing)); return
+            }
+            count++; retainedBytes += bytes(existing)
+            cursor.continue(); return
+          }
+          // Count/check/add share one transaction, including concurrent tabs.
+          if (count >= RECOVERY_COPY_LIMIT || retainedBytes + incomingBytes > RECOVERY_COPY_BYTE_LIMIT) {
+            throw new Error('本对话恢复副本已达上限。请在设置中先导出并移除不再需要的副本，再重新同步；当前聊天记录未改变。')
+          }
+          lists.add(copy, ['recovery-copy', scope, copy.id])
+          result(recoveryInfo(copy))
+        } catch (error) { fail(error) }
+      }
     })
-    const { state: _state, schema: _schema, ...info } = copy
-    return info
+  }
+
+  // Only the explicit, confirmed owner action calls this. Never a quota fallback
+  // or automatic cleanup; this transaction cannot touch main/legacy records.
+  async removeRecoveryCopy(scope: string, id: string): Promise<boolean> {
+    return this.transaction(['lists'], true, (tx, result, fail) => {
+      const lists = tx.objectStore('lists'), key = ['recovery-copy', scope, id]
+      const request = lists.get(key)
+      request.onsuccess = () => {
+        try {
+          const copy = request.result as RecoveryCopy | undefined
+          if (!copy) { result(false); return }
+          if (copy.scope !== scope || copy.id !== id) throw new Error('副本归属不一致，未移除')
+          lists.delete(key); result(true)
+        } catch (error) { fail(error) }
+      }
+    })
   }
 
   async listRecoveryCopies(scope: string): Promise<RecoveryCopyInfo[]> {
     return this.transaction(['lists'], false, (tx, result, fail) => {
       // All generated IDs are strings; an array sorts after every string ID.
-      const range = IDBKeyRange.bound(['recovery-copy', scope], ['recovery-copy', scope, []])
+      const range = recoveryRange(scope)
       const request = tx.objectStore('lists').openCursor(range, 'prev')
       const copies: RecoveryCopyInfo[] = []
       request.onsuccess = () => {

@@ -193,3 +193,31 @@ it('shows page build and offline-worker status as separate evidence in Settings'
   expect(host.querySelector('.build-proof')?.textContent).toContain('本页代码')
   expect(host.querySelector('.build-proof')?.textContent).toContain('当前离线版本')
 })
+
+
+it('only removes a selected recovery copy after explicit confirmation and leaves the main record intact', async () => {
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  const { state, host } = mount(); await flush()
+  const store = new TranscriptStore()
+  try {
+    const key = transcriptKey('', 'A')
+    const active = (await store.load(key))!
+    const copy = await store.saveRecoveryCopy(key, { ...active.state, draft: 'only in this copy' })
+    state.openSettings(); await flush()
+    const select = Array.from(host.querySelectorAll<HTMLButtonElement>('.recovery-copy-row button'))[0]
+    select.click(); await flush()
+    const remove = () => host.querySelector<HTMLButtonElement>('[data-testid="remove-recovery-copy"]')
+    expect(remove()).not.toBeNull()
+    const confirm = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirm)
+    remove()!.click(); await flush()
+    expect(await store.loadRecoveryCopy(key, copy.id)).not.toBeNull()
+    confirm.mockReturnValue(true)
+    const before = await store.load(key)
+    remove()!.click(); await flush()
+    expect(confirm).toHaveBeenCalledWith(expect.stringContaining('无法恢复'))
+    expect(await store.loadRecoveryCopy(key, copy.id)).toBeNull()
+    expect(await store.load(key)).toEqual(before)
+    expect(host.textContent).toContain('当前对话没有恢复副本')
+  } finally { store.close() }
+})

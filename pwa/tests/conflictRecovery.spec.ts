@@ -175,3 +175,61 @@ it('stops recovery rather than discarding edits made while the checkpoint was in
   expect(deps.draft.value).toBe('typed during checkpoint')
   expect((await handle.store.load(key()))?.state.draft).toBe('other page draft')
 })
+
+
+it('scrolling during a recovery checkpoint is not an edit and keeps the latest reading position', async () => {
+  const { handle, deps } = await conflict()
+  const stream = document.createElement('div')
+  Object.defineProperties(stream, { scrollHeight: { value: 1000 }, clientHeight: { value: 100 } })
+  stream.scrollTop = 900
+  deps.stream.value = stream
+  const original = handle.store.saveRecoveryCopy.bind(handle.store)
+  vi.spyOn(handle.store, 'saveRecoveryCopy').mockImplementationOnce(async (...args) => {
+    const copy = await original(...args)
+    stream.scrollTop = 0
+    return copy
+  })
+  expect(await handle.recoverConflict()).toBe(true)
+  expect(handle.conflicted.value).toBe(false)
+  expect(stream.scrollTop).toBe(0)
+  expect(await handle.save()).toBe(true)
+})
+
+it('a healthy page cannot enter the conflict path or become locked by a checkpoint failure', async () => {
+  const { handle, deps } = page()
+  handle.ready.value = true; deps.draft.value = 'healthy'
+  expect(await handle.save()).toBe(true)
+  const checkpoint = vi.spyOn(handle.store, 'saveRecoveryCopy').mockRejectedValue(new Error('full'))
+  expect(await handle.recoverConflict()).toBe(false)
+  expect(checkpoint).not.toHaveBeenCalled()
+  expect(handle.conflicted.value).toBe(false)
+  expect(await handle.save()).toBe(true)
+})
+
+it('explains why a retained draft cannot be retrieved before resynchronizing', async () => {
+  const { handle, deps } = await conflict()
+  handle.error.value = ''
+  expect(await handle.restoreRecoveryDraft('some-copy')).toBe(false)
+  expect(handle.error.value).toContain('先重新同步')
+  expect(deps.draft.value).toBe('this page draft')
+})
+
+it('keeps a non-editing local draft when the saved composer has nothing to displace', async () => {
+  const { handle, deps } = await conflict()
+  const saved = (await handle.store.load(key()))!
+  await handle.store.save(key(), { ...saved.state, draft: '' }, saved.revision)
+  expect(await handle.recoverConflict()).toBe(true)
+  expect(deps.draft.value).toBe('this page draft')
+  expect((await handle.store.load(key()))?.state.draft).toBe('this page draft')
+})
+
+it('does not transplant an edit-mode draft into a different saved branch with an empty composer', async () => {
+  const { handle, deps } = await conflict()
+  deps.editId.value = 'a-prior-turn'
+  const saved = (await handle.store.load(key()))!
+  await handle.store.save(key(), { ...saved.state, draft: '' }, saved.revision)
+  expect(await handle.recoverConflict()).toBe(true)
+  expect(deps.draft.value).toBe('')
+  const copies = await handle.store.listRecoveryCopies(key())
+  expect(copies.some(copy => copy.draft === 'this page draft')).toBe(true)
+})

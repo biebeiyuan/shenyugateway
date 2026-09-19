@@ -63,7 +63,8 @@ describe('applyReconciledTail — append branch', () => {
     expect(messages[1].content).toBe('查到了')
     expect(messages[1].events).toHaveLength(2)
     expect(messages[1].events[0].name).toBe('shenyu_recall')
-    expect(messages[1].events[1].ok).toBe(true)
+    // The payload is not a recorded tool_ok receipt.
+    expect(messages[1].events[1].ok).toBeNull()
   })
 
   it('concatenates all assistant rows in a multi-turn tool round', () => {

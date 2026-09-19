@@ -27,16 +27,6 @@ function groupsFromRows(rows: RecentRow[]): Group[] {
   return groups
 }
 
-function inferOk(parsed: unknown): boolean {
-  if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
-    const record = parsed as Record<string, unknown>
-    if (typeof record.ok === 'boolean') return record.ok
-    if (typeof record.success === 'boolean') return record.success
-    if (record.error || record.is_error) return false
-  }
-  return true
-}
-
 export function toolEventsFromRows(tools: RecentRow[], keyBase: string): ToolEvent[] {
   return tools.flatMap((row, index) => {
     const callId = String(row.tool_call_id || '') || `hydrated-${String(row.id ?? `${keyBase}-${index}`)}`
@@ -54,7 +44,9 @@ export function toolEventsFromRows(tools: RecentRow[], keyBase: string): ToolEve
     return [
       { ...common, phase: 'tool_start', input },
       { ...common, phase: 'tool_end', stream_order: index * 2 + 1,
-        ok: typeof row.tool_ok === 'boolean' ? row.tool_ok : inferOk(parsed),
+        // Payload text (including JSON) is not an execution-status receipt.
+        // Old rows without recorded status stay unknown, never guessed success.
+        ok: typeof row.tool_ok === 'boolean' ? row.tool_ok : null,
         output: output || undefined,
         ...(details.error_kind ? { error_kind: String(details.error_kind) } : {}) },
     ] as ToolEvent[]

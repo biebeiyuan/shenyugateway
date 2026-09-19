@@ -127,7 +127,7 @@ const PREFIX_COPY: [string, string][] = [
 export function toolWarmCopy(event: ToolEvent): string {
   const target = toolName(event).toLowerCase()
   // The process strip must not describe a rejected share/open as completed.
-  // Keep toolState's existing three-state vocabulary and full detail output.
+  // Keep known failures distinct from unknown outcomes and full detail output.
   if (target === 'album_send' && event.ok === false) return '这张照片没能发出来'
   if (target === 'album_open') {
     if (event.ok === false) return '这张照片暂时没能打开'
@@ -148,5 +148,5 @@ export function toolWarmCopy(event: ToolEvent): string {
 export function toolState(event: ToolEvent): string {
   if (event.phase === 'tool_start') return '进行中'
   if (event.ok === false) return '遇到一点阻塞'
-  return '完成'
+  return event.ok === true ? '完成' : '结果已返回'
 }

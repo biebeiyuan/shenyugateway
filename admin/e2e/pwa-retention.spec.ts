@@ -176,6 +176,22 @@ test('two real pages recover a stale-writer conflict without a reload, then retr
   await expect(page.getByTestId('recovery-copy-preview')).toContainText('draft written in the first page')
   await page.getByRole('button', { name: '找回这份草稿', exact: true }).click()
   await expect.poll(async () => (await saved(page)).sessions.some(row => row.draft === 'draft written in the first page')).toBe(true)
+  // Copy cleanup is explicit and scoped; cancel leaves it intact, confirming
+  // cannot remove the main conversation or its current draft/tool records.
+  await page.getByRole('button', { name: /重新同步前的本页/ }).click()
+  const beforeRemoval = await saved(page)
+  const copies = page.locator('.recovery-copy-row')
+  const count = await copies.count()
+  page.once('dialog', dialog => dialog.dismiss())
+  await page.getByTestId('remove-recovery-copy').click()
+  await expect(copies).toHaveCount(count)
+  page.once('dialog', async dialog => {
+    expect(dialog.message()).toContain('无法恢复')
+    await dialog.accept()
+  })
+  await page.getByTestId('remove-recovery-copy').click()
+  await expect(copies).toHaveCount(count - 1)
+  expect(await saved(page)).toEqual(beforeRemoval)
   await expect.poll(() => page.locator('.build-proof > div').evaluateAll(rows => rows.every(row => row.getBoundingClientRect().width > 200))).toBe(true)
   await page.screenshot({ path: info.outputPath('conflict-recovery-mobile.png'), animations: 'disabled' })
   await page.reload()

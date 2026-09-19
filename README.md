@@ -295,7 +295,7 @@ Route modules are HTTP adapters, not a separate business zone. `gateway.py` moun
 - `pwa/src/meta/statusSuffix.ts` / `pwa/src/meta/roomEntry.ts`: generates and parses the normal user-status suffix and the exact timestamped Room-entry contract used for hidden entry rows and `HH:mm · 房间` reply labels.
 - `pwa/src/session/history.ts`: snapshot-first handoff selection, explicit cold-start recovery, restored-history provenance and identity-aware dedupe; see `docs/architecture/REQUEST_CONTEXT.md` § Transcript identity and recovery.
 - `pwa/src/session/reconcile.ts`: primary and session-detail reply recovery, version validation and preservation of local process data. Sources, missing-identity behavior and write gates: `docs/architecture/REQUEST_CONTEXT.md` § Transcript identity and recovery.
-- `pwa/src/session/transcriptStore.ts`: per-gateway/session IndexedDB manifests, changed-message transactions, stale-writer checks, one-time legacy migration, immutable recovery copies and retained branch rows.
+- `pwa/src/session/transcriptStore.ts`: per-gateway/session IndexedDB manifests, changed-message transactions, stale-writer checks, one-time legacy migration, bounded immutable recovery copies with explicit owner-confirmed removal and retained branch rows.
 - `pwa/src/session/useTranscript.ts`: serialized save checkpoints, local restore, protected conflict resync, scoped recovery-copy/draft retrieval and owner export.
 - `pwa/src/session/restore.ts`: identity-bound, non-destructive merge of server history into local display records.
 - `pwa/src/usePwaUpdates.ts`: read-only page/worker update evidence and lifecycle observation; Settings distinguishes installed, downloading and waiting offline builds without forcing a reload.

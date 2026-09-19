@@ -21,7 +21,7 @@ describe('hydrateToolEvents', () => {
     const messages = [uiMessage('user', '帮我查查'), uiMessage('assistant', '查到了。')]
     const recent = [
       { id: 1, role: 'user', content: '帮我查查' },
-      toolRow(2, 'shenyu_recall', { query: 'x' }, { ok: true, notes: ['a'] }),
+      { ...toolRow(2, 'shenyu_recall', { query: 'x' }, { ok: true, notes: ['a'] }), tool_ok: true },
       { id: 3, role: 'assistant', content: '查到了。' },
     ]
     expect(hydrateToolEvents(messages, recent)).toBe(1)
@@ -47,7 +47,7 @@ describe('hydrateToolEvents', () => {
     expect(messages[0].events).toHaveLength(0)
   })
 
-  it('normalizes whitespace when matching and infers failure from the result JSON', () => {
+  it('normalizes whitespace without treating result JSON as recorded status', () => {
     const messages = [uiMessage('assistant', '  有点  受阻。 ')]
     const recent = [
       toolRow(4, 'shenyu_recall', { q: 1 }, { error: 'not found' }),
@@ -55,7 +55,7 @@ describe('hydrateToolEvents', () => {
     ]
     hydrateToolEvents(messages, recent)
     const [row] = traceRows(messages[0])
-    expect(row.ok).toBe(false)
+    expect(row.ok).toBeNull()
   })
 
   it('breaks tool continuity at user rows and never throws on garbage', () => {
@@ -72,7 +72,7 @@ describe('hydrateToolEvents', () => {
     expect(hydrateToolEvents(messages, undefined)).toBe(0)
   })
 
-  it('falls back to the summary and defaults ok=true when the result is not JSON', () => {
+  it('falls back to the summary without guessing success when the result is not JSON', () => {
     const messages = [uiMessage('assistant', '好了')]
     const recent = [
       { id: 7, role: 'tool', tool_name: 'shenyu_note', tool_args_json: 'not json', content: '', tool_result_summary: '写好了' },
@@ -80,7 +80,7 @@ describe('hydrateToolEvents', () => {
     ]
     hydrateToolEvents(messages, recent)
     const [row] = traceRows(messages[0])
-    expect(row.ok).toBe(true)
+    expect(row.ok).toBeNull()
     expect(row.output).toBe('写好了')
     expect(row.input).toBe('not json')
   })
@@ -110,4 +110,31 @@ it('returns the unchanged array on a repeated receipt regardless of incoming pro
   const local: ToolEvent[] = [{ output: 'kept', name: 'tool', tool_call_id: 'c', phase: 'tool_end', ok: false }]
   const incoming: ToolEvent[] = [{ phase: 'tool_end', ok: false, tool_call_id: 'c', name: 'tool', output: 'kept' }]
   expect(mergeToolEvents(local, incoming)).toBe(local)
+})
+
+
+import { toolEventsFromRows } from '../src/session/toolHydration'
+import { toolState } from '../src/toolLanguage'
+import { toolResultPreview, formatToolOutput } from '../src/stream/timeline'
+
+it.each(['permission denied', '{"ok":true}', '{"error":"denied"}'])('does not turn payload text %s into recorded execution status', content => {
+  const local: ToolEvent[] = [{ phase: 'tool_end', tool_call_id: 'real-call', name: 'tool', ok: null }]
+  const events = toolEventsFromRows([{ tool_call_id: 'real-call', tool_name: 'tool', content }], 'r')
+  const merged = mergeToolEvents(local, events)
+  expect(events.find(event => event.phase === 'tool_end')?.ok).toBeNull()
+  expect(merged.find(event => event.phase === 'tool_end')?.ok).toBeNull()
+  expect(toolState(merged.find(event => event.phase === 'tool_end')!)).toBe('结果已返回')
+})
+
+it.each([true, false])('fills unknown status only from a recorded tool_ok=%s', ok => {
+  const local: ToolEvent[] = [{ phase: 'tool_end', tool_call_id: 'real-call', name: 'tool', ok: null }]
+  const incoming = toolEventsFromRows([{ tool_call_id: 'real-call', tool_name: 'tool', tool_ok: ok, content: 'opaque result' }], 'r')
+  expect(mergeToolEvents(local, incoming).find(event => event.phase === 'tool_end')?.ok).toBe(ok)
+})
+
+it.each([null, undefined])('does not render unknown terminal status %s as success or still running', ok => {
+  const end: ToolEvent = { phase: 'tool_end', tool_call_id: 'real-call', name: 'tool', ok }
+  expect(toolState(end)).toBe('结果已返回')
+  expect(toolResultPreview(end)).toBe('结果已返回，状态未知')
+  expect(formatToolOutput({ ...end, output: 'permission denied' })).toBe('permission denied')
 })
