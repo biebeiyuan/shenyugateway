@@ -326,6 +326,13 @@ function onStreamChunkEnd() {
   }
 }
 
+function onMessageStreamScroll() {
+  // Streaming auto-follow changes scrollTop on every network chunk. Treating
+  // those programmatic scroll events as reading-position edits creates a
+  // second persistence path that bypasses the stream checkpoint cadence.
+  if (!busy.value) transcript.scheduleSave()
+}
+
 function clientContext(): RequestContext {
   return { gatewayUrl: gatewayUrl.value, authToken: authToken.value, sessionTag: sessionTag.value }
 }
@@ -1490,7 +1497,7 @@ onUnmounted(() => {
       </header>
 
 
-      <section ref="streamRef" class="message-stream" @scroll.passive="transcript.scheduleSave">
+      <section ref="streamRef" class="message-stream" @scroll.passive="onMessageStreamScroll">
         <div v-if="isEmpty" class="welcome-panel">
           <img class="welcome-mark" :src="brandMarkUrl" alt="Claude" />
           <h1>What's on your mind?</h1>
