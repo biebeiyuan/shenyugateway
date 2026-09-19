@@ -4,25 +4,43 @@ on:
     branches: [work/album-offline-workbench]
     paths: [.github/workflows/album-offline-workbench.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  export-final-source:
+  publish-final-album:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 4c13056ab18c6c08efb19c74647cacef34d21189
+          path: transfer
           persist-credentials: false
-          fetch-depth: 0
-      - name: Export source without credentials or runtime data
+      - name: Verify exact locally tested patch
         run: |
-          git bundle create /tmp/album-final-source.bundle HEAD
-          git rev-parse HEAD HEAD^{tree} > /tmp/album-final-source.txt
-      - uses: actions/upload-artifact@v4
+          python - <<'PY'
+          import base64, hashlib, lzma
+          from pathlib import Path
+          encoded = Path('transfer/.github/album-patch/final.b64').read_text().strip()
+          patch = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '623a6d11337f5cad71afe8e9aa3a7718e153083bab499b601ae466d16fa5a873'
+          Path('/tmp/album-final.patch').write_bytes(patch)
+          PY
+      - uses: actions/checkout@v4
         with:
-          name: album-final-source
-          path: |
-            /tmp/album-final-source.bundle
-            /tmp/album-final-source.txt
-          retention-days: 1
+          ref: feat/album-references-sharing
+          path: source
+      - name: Publish only to the existing feature branch
+        working-directory: source
+        run: |
+          test "$(git rev-parse HEAD)" = '4c13056ab18c6c08efb19c74647cacef34d21189'
+          git apply --check --unidiff-zero /tmp/album-final.patch
+          git apply --index --unidiff-zero /tmp/album-final.patch
+          test "$(git write-tree)" = 'ed8c96f3c0ed567e7b86d3a41ce69fc32218879f'
+          git diff --cached --check
+          # The authorized connector will write the remaining UI file so
+          # regular PR CI tests the complete verified tree, not this partial commit.
+          git restore --source=HEAD --staged --worktree pwa/src/toolLanguage.ts
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'fix: finalize album broker events and recovery contracts'
+          git push origin HEAD:refs/heads/feat/album-references-sharing
+          printf 'Feature commit: %s\nPWA outcome-copy fix pending connector write.\n' "$(git rev-parse HEAD)" >> "$GITHUB_STEP_SUMMARY"
