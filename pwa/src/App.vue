@@ -104,7 +104,7 @@ import {
   syncCurrentVariant,
   variantCount,
 } from './session/variants'
-import { SSE_STALL_TIMEOUT_MS, parseSseFrame, pumpSseStream, toolEventKey } from './stream/sse'
+import { SSE_STALL_TIMEOUT_MS, SseStreamError, parseSseFrame, pumpSseStream, toolEventKey } from './stream/sse'
 import { applyChatCompletion } from './stream/completion'
 import {
   formatToolInput,
@@ -1071,6 +1071,7 @@ async function enterRoom() {
 }
 
 async function sendConversation(source: UiMessage[], target?: UiMessage) {
+  const useStreaming = streamResponses.value
   let assistant: UiMessage
   let previousVariantIndex: number | null = null
   let generatedVariantIndex: number | null = null
@@ -1083,7 +1084,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     generatedVariantIndex = variants.length - 1
     applyVariant(target, variants[generatedVariantIndex], generatedVariantIndex)
     target.error = undefined
-    target.streaming = false
+    target.streaming = useStreaming
     assistant = target
   } else {
     checkpointStart = Math.max(0, messages.value.length - 1)
@@ -1097,7 +1098,7 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       thinking: '',
       thinkingSegments: [],
       events: [],
-      streaming: false,
+      streaming: useStreaming,
       replyVersionId: undefined,
     }
     messages.value.push(assistantDraft)
@@ -1120,7 +1121,6 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
   let requestAcceptedForRecovery = false
 
   try {
-    const useStreaming = streamResponses.value
     replyVersionId = createId('reply')
     assistant.replyVersionId = replyVersionId
     assistant.archiveEvent = newArchiveEvent(replyVersionId)
@@ -1153,7 +1153,6 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
     preSendCheckpointSucceeded = true
 
     if (useStreaming) {
-      assistant.streaming = true
       const stream = await postChatStream(requestContext, body, activeController.signal)
       requestAcceptedForRecovery = true
       markInflightReply(requestContext, replyVersionId)
@@ -1166,6 +1165,11 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
       if (!sawDone) {
         assistant.truncated = true
         errorNotice.value = '回复可能被截断，正在尝试找回…'
+      } else {
+        // A normal [DONE] is an explicit clean boundary: no recovery marker may
+        // leak forward from an earlier interrupted/restarted state.
+        assistant.truncated = undefined
+        assistant.error = undefined
       }
     } else {
       const completion = await postChatCompletion(requestContext, body, activeController.signal)
@@ -1180,26 +1184,50 @@ async function sendConversation(source: UiMessage[], target?: UiMessage) {
   } catch (error) {
     assistant.streaming = false
     const aborted = error instanceof DOMException && error.name === 'AbortError'
+    const explicitUpstreamFailure = error instanceof SseStreamError && !error.recoverable
+    const errorText = error instanceof Error ? error.message : '请求没有完成'
     if (target && generatedVariantIndex !== null && previousVariantIndex !== null) {
       const variants = target.variants || []
-      if ((aborted && userCancelledGeneration) || !requestAcceptedForRecovery) {
+      if (explicitUpstreamFailure) {
+        // The gateway explicitly told us the upstream itself failed. There is
+        // no detached reply to poll for. Preserve any partial failed roll in
+        // variants, but put the last good answer back on screen immediately.
+        clearInflightReply(requestContext, replyVersionId)
+        const generatedHasOutput = Boolean(
+          target.content || target.echo || target.thinking || target.events.length || target.attachments.length,
+        )
+        if (generatedHasOutput) {
+          target.truncated = undefined
+          target.error = errorText
+          syncCurrentVariant(target)
+        } else {
+          variants.splice(generatedVariantIndex, 1)
+        }
+        const restoredIndex = Math.max(0, Math.min(previousVariantIndex, variants.length - 1))
+        if (variants[restoredIndex]) applyVariant(target, variants[restoredIndex], restoredIndex)
+      } else if ((aborted && userCancelledGeneration) || !requestAcceptedForRecovery) {
         variants.splice(generatedVariantIndex, 1)
         const restoredIndex = Math.max(0, Math.min(previousVariantIndex, variants.length - 1))
         if (variants[restoredIndex]) applyVariant(target, variants[restoredIndex], restoredIndex)
       } else {
+        // Only a stream that was accepted and then lost from the client side
+        // is eligible for server-side background recovery.
         target.truncated = true
         syncCurrentVariant(target)
       }
       target.streaming = false
-      if (!(aborted && userCancelledGeneration)) {
-        errorNotice.value = error instanceof Error ? error.message : '请求没有完成'
-      }
+      if (!(aborted && userCancelledGeneration)) errorNotice.value = errorText
     } else if (aborted && userCancelledGeneration) {
       clearInflightReply(requestContext, replyVersionId)
       assistant.content = assistant.content || '这次先停在这里。'
     } else {
-      if (requestAcceptedForRecovery) assistant.truncated = true
-      assistant.error = error instanceof Error ? error.message : '请求没有完成'
+      if (explicitUpstreamFailure) {
+        clearInflightReply(requestContext, replyVersionId)
+        assistant.truncated = undefined
+      } else if (requestAcceptedForRecovery) {
+        assistant.truncated = true
+      }
+      assistant.error = errorText
       errorNotice.value = assistant.error
     }
   } finally {
