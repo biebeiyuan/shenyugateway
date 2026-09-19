@@ -28,19 +28,28 @@ jobs:
       - run: pip install -e '.[dev]'
       - run: npm ci
         working-directory: pwa
+      - run: npm ci
+        working-directory: admin
+      - name: Install isolated Playwright Chromium
+        working-directory: admin
+        run: |
+          sudo rm -f /etc/apt/sources.list.d/google-chrome.list /etc/apt/sources.list.d/google-chrome.sources
+          npm run test:e2e:install
       - run: python .github/pwa-retention/driver.py
-      - name: Prepare isolated source and dependency bundle
+      - name: Export source receipt
         if: always()
         run: |
-          mkdir -p /tmp/retention-workspace
-          git bundle create /tmp/retention-workspace/repository.bundle --all
-          git rev-parse HEAD > /tmp/retention-workspace/source-revision.txt
-          git diff --binary > /tmp/retention-workspace/uncommitted.patch
-          tar -czf /tmp/retention-workspace/frontend-dependencies.tar.gz pwa/node_modules admin/node_modules
+          mkdir -p /tmp/retention-source
+          git bundle create /tmp/retention-source/repository.bundle --all
+          git rev-parse HEAD > /tmp/retention-source/head.txt
+          git diff --binary > /tmp/retention-source/uncommitted.patch
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: retention-workspace
-          path: /tmp/retention-workspace/
-          retention-days: 2
-          compression-level: 0
+          name: retention-final-verification
+          path: |
+            admin/playwright-report/
+            admin/test-results/
+            /tmp/retention-source/
+          if-no-files-found: ignore
+          retention-days: 3
