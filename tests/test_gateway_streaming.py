@@ -2412,6 +2412,35 @@ def test_resilient_sse_response_passes_inner_events_through():
     asyncio.run(run_case())
 
 
+def test_resilient_sse_response_preserves_backpressure_while_client_is_connected():
+    async def run_case():
+        advanced: list[str] = []
+
+        async def inner():
+            for value in ("one", "two", "three"):
+                advanced.append(value)
+                yield f"data: {value}\\n\\n"
+
+        response = resilient_sse_response(inner(), model="test-model")
+        iterator = response.body_iterator.__aiter__()
+
+        assert await anext(iterator) == "data: one\\n\\n"
+        await asyncio.sleep(0)
+        assert advanced == ["one"]
+
+        assert await anext(iterator) == "data: two\\n\\n"
+        await asyncio.sleep(0)
+        assert advanced == ["one", "two"]
+
+        assert await anext(iterator) == "data: three\\n\\n"
+        with pytest.raises(StopAsyncIteration):
+            await anext(iterator)
+        assert advanced == ["one", "two", "three"]
+        assert not _DETACHED_STREAM_TASKS
+
+    asyncio.run(run_case())
+
+
 def test_resilient_sse_response_emits_keepalive_while_inner_is_slow():
     async def run_case():
         async def inner():
