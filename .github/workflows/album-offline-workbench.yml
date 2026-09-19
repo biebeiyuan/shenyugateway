@@ -1,0 +1,33 @@
+name: Album offline workbench
+on:
+  push:
+    branches: [work/album-offline-workbench]
+    paths: [.github/workflows/album-offline-workbench.yml]
+permissions:
+  contents: read
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: npm ci --prefix pwa && npm ci --prefix admin
+      - name: Package source and locked test dependencies (no git credentials)
+        run: |
+          git archive --format=tar HEAD > /tmp/source.tar
+          tar -czf /tmp/frontend-deps.tar.gz pwa/node_modules admin/node_modules
+          git rev-parse HEAD > /tmp/source-commit.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: album-offline-workspace
+          path: |
+            /tmp/source.tar
+            /tmp/frontend-deps.tar.gz
+            /tmp/source-commit.txt
+          retention-days: 1
+          compression-level: 0
