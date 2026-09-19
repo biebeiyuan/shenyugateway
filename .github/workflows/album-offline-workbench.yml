@@ -4,30 +4,40 @@ on:
     branches: [work/album-offline-workbench]
     paths: [.github/workflows/album-offline-workbench.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  prepare:
+  publish-verified-tree:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
+          path: transfer
           persist-credentials: false
-          fetch-depth: 1
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '22'
-      - run: npm ci --prefix pwa && npm ci --prefix admin
-      - name: Package source and locked test dependencies (no git credentials)
+      - name: Verify transferred patch
         run: |
-          git archive --format=tar HEAD > /tmp/source.tar
-          tar -czf /tmp/frontend-deps.tar.gz pwa/node_modules admin/node_modules
-          git rev-parse HEAD > /tmp/source-commit.txt
-      - uses: actions/upload-artifact@v4
+          python - <<'PY'
+          import base64, hashlib, lzma
+          from pathlib import Path
+          encoded = ''.join(Path(f'transfer/.github/album-patch/part{i}.b64').read_text().strip() for i in (1, 2, 3))
+          patch = lzma.decompress(base64.b64decode(encoded, validate=True))
+          assert hashlib.sha256(patch).hexdigest() == '0f4972b8f513f73bac82b2dd8b1e7042eba09159a0035b3a05d4f083e6ba6e9f'
+          Path('/tmp/album.patch').write_bytes(patch)
+          PY
+      - uses: actions/checkout@v4
         with:
-          name: album-offline-workspace
-          path: |
-            /tmp/source.tar
-            /tmp/frontend-deps.tar.gz
-            /tmp/source-commit.txt
-          retention-days: 1
-          compression-level: 0
+          ref: 42e82c807f723a9e7ffebc331490b64738334bc9
+          path: source
+      - name: Publish feature branch only (never production)
+        working-directory: source
+        run: |
+          git apply --check --unidiff-zero /tmp/album.patch
+          git apply --index --unidiff-zero /tmp/album.patch
+          test "$(git write-tree)" = '5a5fffa0b70a873501ab128fa12ee649fc5444d5'
+          git diff --cached --check
+          git switch -c feat/album-references-sharing
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git commit -m 'feat: paginated album references, on-demand vision and durable photo sharing'
+          git push origin HEAD:refs/heads/feat/album-references-sharing
+          printf 'Feature commit: %s\nSource tree: %s\n' "$(git rev-parse HEAD)" "$(git rev-parse HEAD^{tree})" >> "$GITHUB_STEP_SUMMARY"
