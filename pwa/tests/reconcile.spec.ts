@@ -16,10 +16,10 @@ function payloadOf(rows: Array<Record<string, unknown>>): Record<string, unknown
 }
 
 describe('tailNeedsReconcile', () => {
-  it('flags a trailing user message and an assistant with error or truncated', () => {
-    expect(tailNeedsReconcile([uiMessage('user', '问题')])).toBe(true)
+  it('only flags a reply explicitly known to have started and then become incomplete', () => {
+    expect(tailNeedsReconcile([uiMessage('user', '问题')])).toBe(false)
+    expect(tailNeedsReconcile([uiMessage('user', '问题'), uiMessage('assistant', '', { error: 'Failed to fetch' })])).toBe(false)
     expect(tailNeedsReconcile([uiMessage('user', '问题'), uiMessage('assistant', '半截', { truncated: true })])).toBe(true)
-    expect(tailNeedsReconcile([uiMessage('user', '问题'), uiMessage('assistant', '', { error: '连接停滞' })])).toBe(true)
   })
 
   it('leaves a complete tail and an empty transcript alone', () => {
