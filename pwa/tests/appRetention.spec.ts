@@ -688,6 +688,138 @@ it('persists an older photo reference that resolves while a new reply is streami
   expect(persistedPhotoId).toBe('phot_late_reference')
 })
 
+it('bounds empty reply recovery retries without locking the UI or resending the model request', async () => {
+  vi.useFakeTimers()
+  try {
+    const partial = row('assistant', 'reply-retry', 'kept partial')
+    partial.truncated = true
+    localStorage.setItem('shenyu_pwa_session', 'A')
+    localStorage.setItem('shenyu_pwa_messages', JSON.stringify([row('user', 'u-retry', 'question'), partial]))
+    localStorage.setItem(`shenyu_pwa_inflight:${transcriptKey('', 'A')}`, JSON.stringify({ replyVersionId: 'reply-retry' }))
+    const normalFetch = globalThis.fetch
+    const recoveryCalls: string[] = []
+    const modelCalls: string[] = []
+    vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+      const url = new URL(String(input), window.location.href)
+      if (url.pathname.endsWith('/reply-recovery')) {
+        recoveryCalls.push(url.pathname)
+        return Response.json({ replies: [] })
+      }
+      if (url.pathname === '/v1/chat/completions') {
+        modelCalls.push(url.pathname)
+        throw new Error('model must not be resent')
+      }
+      return normalFetch(input, options)
+    }))
+
+    const { state } = mount()
+    await nextTick(); await vi.advanceTimersByTimeAsync(100)
+    expect(recoveryCalls).toHaveLength(1)
+    expect(state.busy).toBe(false)
+    expect(state.controlsBlocked).toBe(false)
+    expect(state.messages.at(-1)?.content).toBe('kept partial')
+
+    await vi.advanceTimersByTimeAsync(5_000)
+    expect(recoveryCalls).toHaveLength(2)
+    await vi.advanceTimersByTimeAsync(15_000)
+    expect(recoveryCalls).toHaveLength(3)
+    await vi.advanceTimersByTimeAsync(30_000)
+    expect(recoveryCalls).toHaveLength(4)
+    await vi.advanceTimersByTimeAsync(60_000)
+    expect(recoveryCalls).toHaveLength(4)
+    expect(modelCalls).toHaveLength(0)
+    expect(state.busy).toBe(false)
+    expect(state.controlsBlocked).toBe(false)
+    expect(state.messages.at(-1)?.content).toBe('kept partial')
+  } finally {
+    vi.useRealTimers()
+  }
+})
+
+it('ignores a late recovery after the user switches to an older variant', async () => {
+  const partial = row('assistant', 'reply-current', 'partial current')
+  partial.truncated = true
+  partial.variants = [
+    {
+      content: 'older complete', echo: '', echoSegments: [], thinking: 'older thinking',
+      thinkingSegments: [], events: [], attachments: [], replyVersionId: 'reply-old',
+      archiveEvent: { id: 'reply-old', event_at: '2026-09-19T00:30:00Z' },
+    },
+    {
+      content: 'partial current', echo: '', echoSegments: [], thinking: '',
+      thinkingSegments: [], events: [], attachments: [], replyVersionId: 'reply-current',
+      archiveEvent: partial.archiveEvent, truncated: true,
+    },
+  ]
+  partial.selectedVariantIndex = 1
+  localStorage.setItem('shenyu_pwa_session', 'A')
+  localStorage.setItem('shenyu_pwa_messages', JSON.stringify([row('user', 'u-late', 'same question'), partial]))
+  localStorage.setItem(`shenyu_pwa_inflight:${transcriptKey('', 'A')}`, JSON.stringify({ replyVersionId: 'reply-current' }))
+  const normalFetch = globalThis.fetch
+  let releaseRecovery!: () => void
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    if (url.pathname.endsWith('/reply-recovery')) {
+      await new Promise<void>(resolve => { releaseRecovery = resolve })
+      return Response.json({ user_content: 'same question', replies: [
+        { reply_version_id: 'reply-current', content: 'completed current after delay' },
+      ] })
+    }
+    return normalFetch(input, options)
+  }))
+
+  const { state } = mount()
+  for (let i = 0; i < 40 && !releaseRecovery; i++) await new Promise(resolve => setTimeout(resolve, 5))
+  expect(releaseRecovery).toBeTypeOf('function')
+  state.switchMessageVariant(1, -1); await nextTick()
+  expect(state.messages[1].content).toBe('older complete')
+  expect(state.messages[1].selectedVariantIndex).toBe(0)
+  releaseRecovery()
+  await flush(); await flush()
+  expect(state.messages[1].content).toBe('older complete')
+  expect(state.messages[1].thinking).toBe('older thinking')
+  expect(state.messages[1].selectedVariantIndex).toBe(0)
+  expect(state.messages[1].variants?.[1].content).toBe('partial current')
+})
+
+it('keeps a completed reply healthy when receipt removal fails, including on reopen', async () => {
+  const { state } = mount(); await flush()
+  const originalRemove = window.localStorage.removeItem.bind(window.localStorage)
+  const removeReceipt = vi.spyOn(window.localStorage, 'removeItem').mockImplementation((key: string) => {
+    if (String(key).startsWith('shenyu_pwa_inflight:')) throw new DOMException('receipt remove failed', 'QuotaExceededError')
+    return originalRemove(key)
+  })
+  const normalFetch = globalThis.fetch
+  const calls: string[] = []
+  vi.stubGlobal('fetch', vi.fn(async (input: string, options?: RequestInit) => {
+    const url = new URL(String(input), window.location.href)
+    calls.push(url.pathname)
+    if (url.pathname === '/v1/chat/completions') {
+      return new Response('data: {"choices":[{"delta":{"content":"complete with stale receipt"}}]}\n\ndata: [DONE]\n\n', {
+        headers: { 'Content-Type': 'text/event-stream' },
+      })
+    }
+    return normalFetch(input, options)
+  }))
+  try {
+    state.draft = 'finish despite remove failure'
+    await state.submit(); await flush(); await flush()
+    expect(state.messages.at(-1)?.content).toBe('complete with stale receipt')
+    expect(state.messages.at(-1)?.truncated).toBeUndefined()
+    expect(state.receiptStorageError).toContain('恢复凭据')
+    const recoveryBeforeReopen = calls.filter(path => path.endsWith('/reply-recovery')).length
+
+    apps.splice(0).forEach(app => app.unmount())
+    await nextTick()
+    const reopened = mount(); await flush(); await new Promise(resolve => setTimeout(resolve, 40))
+    expect(reopened.state.messages.at(-1)?.content).toBe('complete with stale receipt')
+    expect(reopened.state.messages.at(-1)?.truncated).toBeUndefined()
+    expect(calls.filter(path => path.endsWith('/reply-recovery'))).toHaveLength(recoveryBeforeReopen)
+  } finally {
+    removeReceipt.mockRestore()
+  }
+})
+
 it('keeps active text streaming free of full transcript checkpoints', async () => {
   const { state } = mount(); await flush()
   const save = vi.spyOn(TranscriptStore.prototype, 'save')
