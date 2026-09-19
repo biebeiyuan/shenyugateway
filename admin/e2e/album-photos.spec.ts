@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 
 const BASE = process.env.E2E_BASE_URL || `http://127.0.0.1:${process.env.E2E_PORT || 18110}`
 const TOKEN = process.env.E2E_GATEWAY_TOKEN || 'shenyu-e2e-smoke'
-const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAPAAAACgCAIAAAC9uXYyAAABxklEQVR4nO3SUQkAIBTAwNc/jyEMYRhLCMI4uAD72Kx9IGO+F8BDhibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNygWst6SSJ8vkWgAAAABJRU5ErkJggg=='
+const PNG = 'iVBORw0KGgoAAAANSUhEUgAAAPAAAACgCAIAAAC9uXYyAAABxklEQVR4nO3SUQkAIBTAwNc/jyEMYRhLCMI4uAD72Kx9IGO+F8BDhibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNiqFJMTQphibF0KQYmhRDk2JoUgxNygWst6SSJ8vkWgAAAABJRU5ErkJggg=='
 const EVENT_AT = '2026-09-19T00:00:00Z'
 const reference = (id = 'call-old', photo_id = 'phot_one') => ({id, photo_id, title:'想留的', content:'以前写下的话', name:'想留的', mime:'image/png'})
 const userMedia = [
@@ -103,7 +103,12 @@ for (const width of [390,1280]) test(`PWA album references survive send, reload,
   expect(state.imageRequests.every(url=>!url.includes(TOKEN))).toBe(true)
   expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true)
   expect(state.errors).toEqual([])
-  await page.screenshot({path:info.outputPath(`album-${width}.png`)})
+  // Capture the completed handoff, not the sidebar's closing transition or
+  // the top of the conversation while its restored images are still loading.
+  await expect(page.locator('.sidebar')).not.toHaveClass(/sidebar-open/)
+  await expect.poll(()=>shared.evaluate(image=>(image as HTMLImageElement).naturalWidth)).toBeGreaterThan(0)
+  await shared.scrollIntoViewIfNeeded()
+  await page.screenshot({path:info.outputPath(`album-${width}.png`),animations:'disabled'})
 })
 
 test('PWA distinguishes a temporary photo load error and retries',async({page})=>{
